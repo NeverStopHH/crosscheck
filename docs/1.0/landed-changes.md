@@ -26,10 +26,13 @@ phone call.
    holidays are ignored in this version). Older changes you already have are
    ordinary history.
 3. **Stop once per file per session, and say why.** An interruptive "ask",
-   never a block — the same single decision literal as the live tripwire,
-   sharing its once-per-file marker, so a file stops you at most once per
-   session whichever of the two found something. Headless sessions use the
-   existing `CROSSCHECK_TRIPWIRE=notice`.
+   never a block — the same single decision literal as the live tripwire.
+   Headless sessions use the existing `CROSSCHECK_TRIPWIRE=notice`.
+   *Refined during review, pending Nick's confirmation:* once per file per
+   session **per reason**. The landed-change stop has its own marker, so it
+   cannot use up the live one: a teammate who starts on the same file later
+   in the session is still named, once. When both reasons apply at the same
+   moment it is one stop that says both.
 4. **"Landed" means merged into a landing branch, and a team names its own.**
    Not every company has `main` and `staging`. The committed `.crosscheck.json`
    may list them — `"landingBranches": ["main", "staging"]` — and without that
@@ -43,27 +46,58 @@ phone call.
 
 **Git is the authority on WHAT; the hub adds WHY.** Whether a change landed
 and whether your checkout has it are facts about commits, and your own clone
-answers them without trusting anyone:
+answers them without trusting anyone (`connector-core/src/landed-changes/`).
 
-- *Missing*: `git log --no-merges --cherry-pick --left-only <landing>...HEAD -- <file>`,
+- *Missing* — asked first, because it is the half that matters:
+  `git log --no-merges --cherry-pick --left-only <landing>...HEAD -- <file>`,
   meaning commits reachable from the landing branch, not from your HEAD, and
   not patch-equivalent to anything you already have (a change that reached
-  you by cherry-pick or a different squash is not "missing"). No clock is
-  involved, by design: a merged feature branch keeps its original commit
-  dates, so a date filter would hide exactly the changes ancestry sees.
-- *Recent and present*: `git log --first-parent --since=<window> <landing> -- <file>`,
-  the landing branch's own first-parent line, whose merge and squash commits
-  carry the time the change LANDED rather than when it was written, then kept
-  only if it is an ancestor of HEAD and inside the two-working-day window.
-  This is the one time-shaped question here, and it is time-shaped by
-  decision 2, so this module is the second entry on the staleness-axis
-  allowlist. Its failure direction is known: a fast-forward push keeps old
-  commit dates, so such a change reads as older than it is, and the reader,
-  who already HAS it, is not told. That is the low-stakes direction.
-- Your own commits (author email equals your `git config user.email`) never
-  warn you.
-- Every git call is bounded and fails open: a slow or broken probe means no
-  warning, never a blocked edit.
+  you by cherry-pick is not "missing"). No clock is involved, by design: a
+  merged feature branch keeps its original commit dates, so a date filter
+  would hide exactly the changes ancestry sees. Then:
+  - work that is *arriving* is not missing: while you resolve a merge,
+    everything MERGE_HEAD brings; during a cherry-pick, exactly the one
+    commit being picked;
+  - a file with *nothing an edit could undo* is not warned about: its
+    content already equals the landing branch's, or the landing branch made
+    no net change to it (a change and its revert) *and* nobody but you
+    touched it on your side — without that second condition, a branch
+    carrying a teammate's work that the landing branch has since reverted
+    would bring the reverted work back, silently;
+  - a landing branch git cannot answer for in time is named in the stop
+    ("not checked in time"); what the other branches know is still said. While
+    the missing half is incomplete, a stop about recent work alone waits, so
+    it cannot spend the once-per-file marker on the half that matters least.
+- *Recent and present* — asked second, and allowed to run out of time
+  without costing the missing half: a change in HEAD whose FIRST arrival on
+  any landing branch falls inside the two-working-day window. Git is asked
+  for the window itself (`--first-parent --since=<window start>`, local
+  midnight on your calendar), where merge and squash commits carry the time
+  a change LANDED. A change some landing branch already had when the window
+  opened is dropped (a release merge or back-merge re-lands old work), and
+  so is one that only re-lands content a landing branch already had (a
+  squash release) — unless that content is from the change's own ancestry,
+  because returning to an ancestor's content is a revert, and a revert is
+  new. This is the one time-shaped question here, and it is time-shaped by
+  decision 2, so its module is the second entry on the staleness-axis
+  allowlist.
+- Your own commits never warn you. You are recognised by git's own author
+  identity passed through the repo's `.mailmap`, exactly as every author in
+  the log is — so if GitHub writes your squash merges under another address,
+  map it there.
+- A shallow clone answers "unknown" (its boundary commit reads as touching
+  every file) and `doctor` warns. A blobless partial clone is probed without
+  patch identity, since that would need the network.
+- Every git call is bounded, non-interactive and never fetches, at most
+  eight at once; the whole probe has a deadline no longer than one hub call.
+  A slow or broken probe means no warning, never a blocked edit.
+- Only a COMPLETE answer of "nothing" is cached — keyed on the file, HEAD,
+  the merge or cherry-pick in progress (by its commits), every landing
+  branch's tip, your identity and `.mailmap`, and your calendar day — so a
+  file is walked once per state of the repo, not once per edit, and a cache
+  hit costs the five git calls that compute the key. An answer with an
+  unchecked branch, a failed or timed-out recent half, or a limit reached
+  with nothing shown is asked again next time.
 
 The hub's part (a later step) is the reason: the teammate's work context for
 that file — intent, decisions, rejected approaches — matched to the commit
@@ -81,7 +115,8 @@ Each step is one PR into `feat/landed-changes-flow`, then one PR to `main`.
 
 1. **The reader's warning, from git alone**: landing branches (config and
    auto-detection), the two probes, the working-day window, own-commit
-   exclusion, and the PreToolUse ask sharing the tripwire marker.
+   exclusion, the PreToolUse ask with its own once-per-file marker, and the
+   `doctor` line.
 2. **Background fetch** of the landing branches.
 3. **The why from the hub**: the teammate context behind the commit.
 4. **The author's notice**: briefing and live prompt, exactly once.
@@ -92,3 +127,15 @@ Each step is one PR into `feat/landed-changes-flow`, then one PR to `main`.
   live tripwire has).
 - Remotes other than `origin`, and wildcard landing branches (`release/*`).
 - Public holidays in the working-day window.
+- A file you RENAMED is probed under its new name only, so a teammate's
+  change to the old name is not seen.
+- A first-parent commit with an old or skewed date (a fast-forward push)
+  ends git's date walk early, so a recent change can read as older than it
+  is. Recent half only, and the reader already has the change.
+- A `merge --squash` in progress leaves no marker, so its incoming commits
+  read as missing until it is committed.
+- A stacked branch on which you ALSO edited the file is warned about the
+  landed squash of the work it already contains (the content differs, and
+  patch identity cannot see through a squash).
+- A recent change that sets a file back to content a landing branch already
+  had reads as a re-landing and is not mentioned. Recent half only.

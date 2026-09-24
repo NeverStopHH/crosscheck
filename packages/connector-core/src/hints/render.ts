@@ -500,9 +500,11 @@ const commitBlock = (
   const shown = commits.slice(0, MAX_LANDED_COMMITS_SHOWN);
   const rest = commits.length - shown.length;
   const more = options.isPartial ? "or more" : "more";
+  const restLine =
+    rest > 0 ? [`(+${String(rest)} ${more})`] : options.isPartial ? ["(and possibly more)"] : [];
   return [
     ...shown.map(line),
-    ...(rest > 0 ? [`(+${String(rest)} ${more})`] : []),
+    ...restLine,
     `${options.seeLabel}: git show ${shown.map((commit) => safeId(commit.shortSha)).join(" ")}`,
   ];
 };
@@ -530,6 +532,9 @@ const landedLines = (landed: LandedChanges, repoRelativeFile: string, now: Date)
               ),
             { isPartial: landed.moreMissing, seeLabel: "To see them" },
           ),
+          ...(landed.unchecked.length === 0
+            ? []
+            : [`Not checked in time: ${branchList(landed.unchecked)}; changes there may be missing too.`]),
         ];
   const recent =
     landed.recent.length === 0

@@ -3,51 +3,67 @@
  * contain them (docs/1.0/landed-changes.md)? The reader's own clone answers,
  * from commits, trusting nobody; the git itself lives in git-queries.ts.
  *
- *   MISSING, at any age: on a landing branch, not in HEAD, not patch-equal
- *   to anything HEAD has, and not the work a merge or cherry-pick in progress
- *   is bringing in. Dropped when the file has nothing net an edit could undo
- *   — its content already equals the landing branch's, or the landing branch
- *   made no net change to it (a change and its revert).
+ *   MISSING, at any age — asked FIRST, because it is the half that matters:
+ *   on a landing branch, not in HEAD, not patch-equal to anything HEAD has,
+ *   and not arriving (the work of a merge in progress, or the one commit of a
+ *   cherry-pick in progress). Dropped only when the file certainly has
+ *   nothing an edit could undo (git-queries.ts hasNothingNetToUndo). A
+ *   landing branch git cannot answer for is named in `unchecked` — what the
+ *   others know is still said, never silenced by the one that is slow.
  *
- *   RECENT AND PRESENT: a change in HEAD whose FIRST arrival on any landing
- *   branch falls inside the working-day window. First arrival, because a
- *   release merge (staging into main) or a back-merge (main into staging)
- *   re-lands old work on a second branch, and that work is not new: a change
- *   some landing branch already had when the scan window opened is dropped,
- *   and one seen on several branches inside it is dated by the earliest.
+ *   RECENT AND PRESENT — asked second, and allowed to run out of time: a
+ *   change in HEAD whose FIRST arrival on any landing branch falls inside
+ *   the working-day window. Not reachable from any landing branch as it
+ *   stood when the window opened (a release merge or back-merge re-lands old
+ *   work), and not merely re-landing content a landing branch already had
+ *   (a squash release) — where a match with the change's OWN ancestry is a
+ *   revert, and a revert is new. Past the deadline, the missing half stands.
  *
  * UNREADABLE MEANS UNKNOWN. A shallow clone's boundary commit "touches" every
- * path, so it answers null rather than "every file changed yesterday"; so
- * does a probe that runs past its deadline — which also stops it spawning
- * further git. The caller treats unknown as silence, so a slow or odd repo
- * costs a warning, never an edit.
+ * path, so it answers null rather than "every file changed yesterday".
+ *
+ * ONLY A COMPLETE ANSWER IS CACHED. Every answer is computed under a key over
+ * what it depends on — the file, HEAD, the merge or pick in progress (by its
+ * commits), every landing branch's tip, the reader's identity and `.mailmap`,
+ * and the reader's calendar day. A COMPLETE answer carries that key, and a
+ * caller that saw it answer "nothing" before gets "nothing" back after the
+ * five git calls that compute the key, instead of the whole walk. An answer
+ * with an unchecked branch, a failed or timed-out recent half, or a limit hit
+ * with nothing shown carries no key, so it is asked again next time.
  *
  * The reader's own commits never warn the reader, and they are filtered only
  * AFTER git has been asked for a generous number, so they cannot use up the
  * probe's reach and hide a teammate's change behind them.
  *
- * KNOWN LIMITS, both in the low-stakes direction or documented in the design
- * note: a fast-forward push keeps old commit dates, so such a change can
- * read as older than it is; and a file the reader RENAMED is probed under
- * its new name only, so a teammate's change to the old name is not seen.
+ * KNOWN LIMITS (docs/1.0/landed-changes.md): a first-parent commit with an
+ * old or skewed date ends git's `--since` walk, so a change can read as older
+ * than it is (recent half only); a file the reader RENAMED is probed under
+ * its new name only; a `merge --squash` in progress leaves no marker, so its
+ * incoming commits read as missing.
  */
-import { LANDED_GIT_TIMEOUT_MS, LANDED_PROBE_BUDGET_MS, LANDED_RECENT_SCAN_DAYS } from "../constants.ts";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+
+import { LANDED_GIT_TIMEOUT_MS, LANDED_PROBE_BUDGET_MS } from "../constants.ts";
 import { readLandingBranches, resolveLandingRefs } from "./landing-branches.ts";
 import type { LandingRef } from "./landing-branches.ts";
 import {
   changesLandedBy,
+  fileAt,
   hasNothingNetToUndo,
-  isAncestorOfHead,
   isPartialClone,
-  landedBefore,
+  isReachableFromAny,
+  isSameContent,
   landingsOn,
   missingOn,
+  quietGitRunner,
   readOwnEmail,
   readRepoState,
+  stillMissingAfterMerge,
   tipAt,
 } from "./git-queries.ts";
-import type { GitContext, LandingCommit, MissingAnswer, ParsedCommit } from "./git-queries.ts";
-import { isRecentLanding } from "./working-days.ts";
+import type { FileAtRev, GitContext, GitRunner, MissingAnswer, ParsedCommit, RepoState } from "./git-queries.ts";
+import { isRecentLanding, localDayKey, recentWindowStart } from "./working-days.ts";
 
 export interface LandedCommit extends ParsedCommit {
   /** Landing branches it was seen on, in the team's order. */
@@ -63,34 +79,41 @@ export interface LandedChanges {
   readonly recent: readonly LandedCommit[];
   /** A landing branch had more missing commits than one probe reads. */
   readonly moreMissing: boolean;
+  /** Landing branches git could not answer for: changes there may be missing too. */
+  readonly unchecked: readonly string[];
+  /** Set on a COMPLETE answer only — the only kind a caller may cache. */
+  readonly key: string | null;
 }
 
-const DAY_MS = 86_400_000;
-const EMPTY: LandedChanges = { missing: [], recent: [], moreMissing: false };
+/** Git processes one probe runs at once: a hot file must not fork a storm. */
+const MAX_PARALLEL_GIT = 8;
+const KEY_CHARS = 32;
+const MAILMAP_FILE = ".mailmap";
 
-interface RefAnswer {
-  readonly ref: LandingRef;
-  readonly missing: MissingAnswer | null;
-  readonly landings: readonly LandingCommit[] | null;
-  /** The branch as it stood when the scan window opened. */
-  readonly oldTip: string | null;
-}
+const nothing = (key: string | null): LandedChanges => ({
+  missing: [],
+  recent: [],
+  moreMissing: false,
+  unchecked: [],
+  key,
+});
 
-interface RefOptions {
-  readonly cherryPick: boolean;
-  readonly arriving: readonly string[];
-  readonly since: Date;
-}
-
-const answerFor = async (context: GitContext, ref: LandingRef, options: RefOptions): Promise<RefAnswer> => {
-  const [missing, landings, oldTip] = await Promise.all([
-    missingOn(context, ref, options),
-    landingsOn(context, ref, options.since),
-    tipAt(context, ref, options.since),
-  ]);
-  const isMoot =
-    missing !== null && missing.commits.length > 0 && (await hasNothingNetToUndo(context, ref));
-  return { ref, missing: isMoot ? { commits: [], isCapped: false } : missing, landings, oldTip };
+/** At most `size` tasks at once; the rest wait their turn, in order. */
+const semaphore = (size: number): (<T>(task: () => Promise<T>) => Promise<T>) => {
+  const waiting: (() => void)[] = [];
+  const state = { active: 0 };
+  return async (task) => {
+    if (state.active >= size) {
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    }
+    state.active += 1;
+    try {
+      return await task();
+    } finally {
+      state.active -= 1;
+      waiting.shift()?.();
+    }
+  };
 };
 
 interface Sighting {
@@ -132,45 +155,139 @@ const grouped = (
     .sort((a, b) => timeOf(b) - timeOf(a));
 };
 
-interface Window {
+interface Probe {
+  readonly context: GitContext;
+  readonly state: RepoState;
+  readonly refs: readonly LandingRef[];
+  readonly selfEmail: string | null;
+  readonly cherryPick: boolean;
   readonly now: Date;
   readonly timeZone: string;
 }
 
-const recentPresent = async (
-  context: GitContext,
-  answers: readonly RefAnswer[],
-  selfEmail: string | null,
-  window: Window,
-): Promise<readonly LandedCommit[]> => {
-  const sightings = (
-    await Promise.all(
-      answers.flatMap(({ ref, landings }) =>
-        (landings ?? []).map(async (landing) =>
-          (await changesLandedBy(context, landing)).map((change) => ({
-            branch: ref.branch,
-            change,
-            landedAt: landing.itself.committedAt,
-          })),
-        ),
-      ),
-    )
-  ).flat();
-  const oldTips = answers.map(({ oldTip }) => oldTip).filter((tip): tip is string => tip !== null);
-  const inWindow = grouped(sightings, selfEmail, (commit) => commit.landedAt?.getTime() ?? 0).filter(
-    (commit) => commit.landedAt !== null && isRecentLanding(commit.landedAt, window.now, window.timeZone),
+/** One landing branch's missing commits — `answer` null when it cannot say. */
+const missingFor = async (
+  probe: Probe,
+  ref: LandingRef,
+): Promise<{ readonly branch: string; readonly answer: MissingAnswer | null }> => {
+  const { context, state } = probe;
+  const unknown = { branch: ref.branch, answer: null };
+  const answer = await missingOn(context, ref, { cherryPick: probe.cherryPick, headSha: state.headSha });
+  const isMerging = state.mergeHeads.length > 0;
+  const stillMissing = isMerging ? await stillMissingAfterMerge(context, ref, state) : null;
+  if (answer === null || (isMerging && stillMissing === null)) {
+    return unknown;
+  }
+  const notArriving = answer.commits.filter(
+    (commit) => commit.sha !== state.pickedSha && (stillMissing === null || stillMissing.has(commit.sha)),
   );
-  const kept = await Promise.all(
-    inWindow.map(async (commit) => {
-      const [wasAlreadyLanded, isPresent] = await Promise.all([
-        landedBefore(context, commit.sha, oldTips),
-        isAncestorOfHead(context, commit.sha),
-      ]);
-      return wasAlreadyLanded === false && isPresent ? commit : null;
+  // The limit was spent BEFORE the arriving work was taken out: what lies
+  // beyond it may still be missing, and nothing here can say.
+  if (answer.isCapped && notArriving.length < answer.commits.length) {
+    return unknown;
+  }
+  const isMoot =
+    notArriving.length > 0 &&
+    (await hasNothingNetToUndo(context, ref, { headSha: state.headSha, selfEmail: probe.selfEmail }));
+  return { branch: ref.branch, answer: { commits: isMoot ? [] : notArriving, isCapped: answer.isCapped } };
+};
+
+/**
+ * Did `sha` only re-land content a landing branch already had before the
+ * window — a squash release of staging into main, say? True when the file as
+ * `sha` left it equals the file at an old tip that is NOT in `sha`'s own
+ * ancestry: matching an ancestor's content is a revert back to it, and a
+ * revert is new. Unknown is not "yes".
+ */
+const isRelanding = async (
+  context: GitContext,
+  sha: string,
+  atCommit: FileAtRev,
+  oldTipFiles: readonly { readonly tip: string; readonly file: FileAtRev }[],
+): Promise<boolean> => {
+  const matching = oldTipFiles.filter(({ file }) => atCommit.kind !== "unknown" && isSameContent(atCommit, file));
+  const ancestry = await Promise.all(matching.map(({ tip }) => isReachableFromAny(context, tip, [sha])));
+  return ancestry.some((isAncestor) => isAncestor === false);
+};
+
+const recentFor = async (
+  probe: Probe,
+): Promise<{ readonly commits: readonly LandedCommit[]; readonly isComplete: boolean }> => {
+  const { context } = probe;
+  const windowStart = recentWindowStart(probe.now, probe.timeZone);
+  const perRef = await Promise.all(
+    probe.refs.map(async (ref) => {
+      const [landings, old] = await Promise.all([landingsOn(context, ref, windowStart), tipAt(context, ref, windowStart)]);
+      return { ref, landings, old };
     }),
   );
-  return kept.filter((commit): commit is LandedCommit => commit !== null);
+  const inWindow = perRef.flatMap(({ ref, landings }) =>
+    (landings ?? [])
+      .filter((landing) => isRecentLanding(landing.itself.committedAt, probe.now, probe.timeZone))
+      .map((landing) => ({ ref, landing })),
+  );
+  const landed = await Promise.all(
+    inWindow.map(async ({ ref, landing }) => ({ ref, landing, changes: await changesLandedBy(context, landing) })),
+  );
+  const oldTips = perRef.map(({ old }) => old.tip).filter((tip): tip is string => tip !== null);
+  const oldTipFiles = await Promise.all(oldTips.map(async (tip) => ({ tip, file: await fileAt(context, tip) })));
+  const sightings = landed.flatMap(({ ref, landing, changes }) =>
+    (changes ?? []).map((change) => ({ branch: ref.branch, change, landedAt: landing.itself.committedAt })),
+  );
+  const judged = await Promise.all(
+    grouped(sightings, probe.selfEmail, (commit) => commit.landedAt?.getTime() ?? 0).map(async (commit) => {
+      const [wasAlreadyLanded, isPresent, atCommit] = await Promise.all([
+        isReachableFromAny(context, commit.sha, oldTips),
+        isReachableFromAny(context, commit.sha, [probe.state.headSha]),
+        fileAt(context, commit.sha),
+      ]);
+      if (wasAlreadyLanded === null || isPresent === null) {
+        return { commit: null, isKnown: false };
+      }
+      const isNew = !wasAlreadyLanded && isPresent;
+      const relands = isNew && (await isRelanding(context, commit.sha, atCommit, oldTipFiles));
+      return { commit: isNew && !relands ? commit : null, isKnown: true };
+    }),
+  );
+  const isComplete =
+    perRef.every(({ landings, old }) => landings !== null && old.isAnswered) &&
+    landed.every(({ changes }) => changes !== null) &&
+    judged.every(({ isKnown }) => isKnown);
+  return {
+    commits: judged.map(({ commit }) => commit).filter((commit): commit is LandedCommit => commit !== null),
+    isComplete,
+  };
 };
+
+const readMailmap = async (root: string): Promise<string> => {
+  const file = Bun.file(join(root, MAILMAP_FILE));
+  return (await file.exists()) ? file.text() : "";
+};
+
+const cacheKey = (
+  input: LandedProbeInput,
+  depends: {
+    readonly state: RepoState;
+    readonly refs: readonly LandingRef[];
+    readonly selfEmail: string | null;
+    readonly mailmap: string;
+  },
+): string =>
+  createHash("sha256")
+    .update(
+      [
+        input.file,
+        depends.state.headSha,
+        `merging:${depends.state.mergeHeads.join(",")}`,
+        `picking:${depends.state.pickedSha ?? ""}`,
+        ...depends.refs.map((ref) => `${ref.branch}=${ref.tip}`),
+        `self:${depends.selfEmail ?? ""}`,
+        `mailmap:${createHash("sha256").update(depends.mailmap).digest("hex")}`,
+        localDayKey(input.now, input.timeZone),
+      ].join("\n"),
+    )
+    .digest("hex")
+    .slice(0, KEY_CHARS);
 
 export interface LandedProbeInput {
   /** The root of the worktree the edited file lives in. */
@@ -181,67 +298,95 @@ export interface LandedProbeInput {
   /** The reader's timezone — the calendar "recent" is counted on. */
   readonly timeZone: string;
   readonly timeoutMs?: number;
-  /** The whole probe's deadline; past it the answer is unknown (null). */
+  /** The whole probe's deadline; past it the answer is what is known by then. */
   readonly budgetMs?: number;
+  /** Keys this caller already saw answer "nothing" (LandedChanges.key). */
+  readonly knownCleanKeys?: readonly string[];
+  /**
+   * How one git command runs. Injectable like repo identity's `resolveHost`:
+   * the tests delay or fail single calls to reach the deadline and failure
+   * paths deterministically, and count calls to prove the cache is used.
+   */
+  readonly runGit?: GitRunner;
 }
 
-const probe = async (input: LandedProbeInput, isCancelled: () => boolean): Promise<LandedChanges | null> => {
+/** Answers null for unknown; `progress` holds the missing half as soon as it is known. */
+const run = async (
+  input: LandedProbeInput,
+  isCancelled: () => boolean,
+  progress: { value: LandedChanges | null },
+): Promise<LandedChanges | null> => {
+  const timeoutMs = input.timeoutMs ?? LANDED_GIT_TIMEOUT_MS;
+  const limit = semaphore(MAX_PARALLEL_GIT);
+  const runGit = input.runGit ?? quietGitRunner(input.root, timeoutMs);
   const context: GitContext = {
     root: input.root,
     file: input.file,
-    timeoutMs: input.timeoutMs ?? LANDED_GIT_TIMEOUT_MS,
+    run: (args) => limit(() => runGit(args)),
     isCancelled,
   };
   const setting = await readLandingBranches(input.root);
-  const [refs, state, isPartial, selfEmail] = await Promise.all([
-    resolveLandingRefs(input.root, setting, context.timeoutMs),
+  const [refs, state, isPartial, selfEmail, mailmap] = await Promise.all([
+    resolveLandingRefs(input.root, setting, timeoutMs),
     readRepoState(context),
     isPartialClone(context),
     readOwnEmail(context),
+    readMailmap(input.root),
   ]);
   if (refs === null || state === null || state.isShallow) {
     return null;
   }
   if (refs.length === 0) {
-    return EMPTY;
+    return nothing(null);
   }
-  const options: RefOptions = {
-    cherryPick: !isPartial,
-    arriving: state.arriving,
-    since: new Date(input.now.getTime() - LANDED_RECENT_SCAN_DAYS * DAY_MS),
-  };
-  const answers = await Promise.all(refs.map((ref) => answerFor(context, ref, options)));
-  if (answers.every(({ missing, landings }) => missing === null && landings === null)) {
-    return null;
+  const key = cacheKey(input, { state, refs, selfEmail, mailmap });
+  if (input.knownCleanKeys?.includes(key) === true) {
+    return nothing(key);
   }
-  return {
-    missing: grouped(
-      answers.flatMap(({ ref, missing }) =>
-        (missing?.commits ?? []).map((change) => ({ branch: ref.branch, change, landedAt: null })),
-      ),
-      selfEmail,
-      (commit) => commit.committedAt.getTime(),
+  const probe: Probe = { context, state, refs, selfEmail, cherryPick: !isPartial, now: input.now, timeZone: input.timeZone };
+  const perRef = await Promise.all(refs.map((ref) => missingFor(probe, ref)));
+  const missing = grouped(
+    perRef.flatMap(({ branch, answer }) =>
+      (answer?.commits ?? []).map((change) => ({ branch, change, landedAt: null })),
     ),
-    recent: await recentPresent(context, answers, selfEmail, { now: input.now, timeZone: input.timeZone }),
-    moreMissing: answers.some(({ missing }) => missing?.isCapped === true),
+    selfEmail,
+    (commit) => commit.committedAt.getTime(),
+  );
+  const missingHalf: LandedChanges = {
+    missing,
+    recent: [],
+    moreMissing: perRef.some(({ answer }) => answer?.isCapped === true),
+    unchecked: perRef.filter(({ answer }) => answer === null).map(({ branch }) => branch),
+    key: null,
   };
+  progress.value = missingHalf;
+  const recent = await recentFor(probe);
+  const isComplete =
+    missingHalf.unchecked.length === 0 &&
+    !(missingHalf.moreMissing && missing.length === 0) &&
+    recent.isComplete &&
+    !isCancelled();
+  return { ...missingHalf, recent: recent.commits, key: isComplete ? key : null };
 };
 
 /**
  * The landed changes to `file` this checkout is missing, and the recent ones
- * it has — or null when that cannot be known in time.
+ * it has. Past the deadline: the missing half when it is known (with no
+ * key: an answer cut short is never cached), else null.
  */
 export const findLandedChanges = async (input: LandedProbeInput): Promise<LandedChanges | null> => {
   let isPastDeadline = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<null>((resolve) => {
+  const progress: { value: LandedChanges | null } = { value: null };
+  const deadline = new Promise<"deadline">((resolve) => {
     timer = setTimeout(() => {
       isPastDeadline = true;
-      resolve(null);
+      resolve("deadline");
     }, input.budgetMs ?? LANDED_PROBE_BUDGET_MS);
   });
   try {
-    return await Promise.race([probe(input, () => isPastDeadline).catch(() => null), deadline]);
+    const outcome = await Promise.race([run(input, () => isPastDeadline, progress).catch(() => null), deadline]);
+    return outcome === "deadline" ? progress.value : outcome;
   } finally {
     clearTimeout(timer);
   }

@@ -296,6 +296,7 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
       deliveredHintHashes: [],
       tripwireAskedFiles: [],
       landedAskedFiles: [],
+      landedCleanKeys: [],
     });
     const producer = {
       developerId: SELF,

@@ -93,7 +93,8 @@ export const commitFile = async (
   options: GitOptions = {},
 ): Promise<string> => {
   await writeInto(clone, relativePath, content);
-  await gitIn(clone, ["add", relativePath]);
+  // Literally: a name like ":colon.ts" is a file here, not pathspec magic.
+  await gitIn(clone, ["add", "--", `:(literal)${relativePath}`]);
   await gitIn(clone, ["commit", "-q", "-m", message], options);
   return gitIn(clone, ["rev-parse", "HEAD"]);
 };

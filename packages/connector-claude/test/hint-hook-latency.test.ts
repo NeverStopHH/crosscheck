@@ -94,6 +94,7 @@ const fixture = async (
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
     landedAskedFiles: [],
+    landedCleanKeys: [],
     ...stateOverrides,
   });
   return {

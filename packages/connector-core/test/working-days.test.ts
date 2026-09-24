@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { isRecentLanding, workingDaysSince } from "../src/landed-changes/working-days.ts";
+import { isRecentLanding, recentWindowStart, workingDaysSince } from "../src/landed-changes/working-days.ts";
 
 const BERLIN = "Europe/Berlin";
 const THURSDAY_NOON = new Date("2026-09-24T12:00:00Z");
@@ -48,6 +48,30 @@ describe("workingDaysSince", () => {
 
   test("a landing time ahead of the reader's clock counts as now, not as a negative age", () => {
     expect(workingDaysSince(new Date("2026-09-26T09:00:00Z"), THURSDAY_NOON, BERLIN)).toBe(0);
+  });
+});
+
+describe("recentWindowStart", () => {
+  test("is local midnight of the earliest day that still counts, as an instant", () => {
+    // Thursday → Tuesday 00:00 in Berlin (UTC+2 in September)
+    expect(recentWindowStart(THURSDAY_NOON, BERLIN).toISOString()).toBe("2026-09-21T22:00:00.000Z");
+    // Monday → the Thursday before: Friday and Monday are the two working days
+    expect(recentWindowStart(MONDAY_NOON, BERLIN).toISOString()).toBe("2026-09-23T22:00:00.000Z");
+  });
+
+  test("counts local midnight across a daylight-saving change", () => {
+    // New York switched to summer time on Sunday 2026-03-08; the window seen
+    // from the Monday after opens on Thursday 00:00, still winter time (UTC-5)
+    const monday = new Date("2026-03-09T15:00:00Z");
+
+    expect(recentWindowStart(monday, "America/New_York").toISOString()).toBe("2026-03-05T05:00:00.000Z");
+  });
+
+  test("agrees with isRecentLanding at its own edge", () => {
+    const start = recentWindowStart(THURSDAY_NOON, BERLIN);
+
+    expect(isRecentLanding(start, THURSDAY_NOON, BERLIN)).toBe(true);
+    expect(isRecentLanding(new Date(start.getTime() - 1), THURSDAY_NOON, BERLIN)).toBe(false);
   });
 });
 

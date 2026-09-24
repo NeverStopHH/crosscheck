@@ -87,7 +87,7 @@ describe("resolveLandingRefs", () => {
     const refs = await resolveLandingRefs(repos.reader, { kind: "auto" });
 
     // Assert
-    expect(refs).toEqual([
+    expect(refs?.map(({ branch, ref }) => ({ branch, ref }))).toEqual([
       { branch: "main", ref: "refs/remotes/origin/main" },
       { branch: "staging", ref: "refs/remotes/origin/staging" },
     ]);
@@ -104,8 +104,11 @@ describe("resolveLandingRefs", () => {
       branches: ["integration", "release"],
     });
 
-    // Assert
-    expect(refs).toEqual([{ branch: "integration", ref: "refs/remotes/origin/integration" }]);
+    // Assert — and each carries the commit it points at
+    expect(refs?.map(({ branch, ref }) => ({ branch, ref }))).toEqual([
+      { branch: "integration", ref: "refs/remotes/origin/integration" },
+    ]);
+    expect(refs?.[0]?.tip).toMatch(/^[0-9a-f]{40}$/);
   });
 
   test("an invalid list falls back to auto-detection rather than to nothing", async () => {

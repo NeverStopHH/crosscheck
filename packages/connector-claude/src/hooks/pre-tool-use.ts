@@ -9,9 +9,11 @@
  * teammate commits to the file have landed on a landing branch — missing
  * from this checkout at any age, or already in it and recent — and needs no
  * hub at all: a clone is the authority on what it contains, so a dead hub
- * costs the live half and never the landed one. Both run in parallel, both
- * fail open, and they share the once-per-file marker, so a file stops a
- * session at most once whichever of the two found something.
+ * costs the live half and never the landed one. Both run in parallel and
+ * both fail open. Each reason has its own once-per-file marker: a file stops
+ * a session at most once per reason, and when both apply at once it is ONE
+ * stop that says both — so a landed-change stop never uses up the live one
+ * for a teammate who starts on the file later.
  *
  * THE LADDER STOPS AT "ask" STRUCTURALLY: this module contains exactly one
  * permission decision literal, `ASK_DECISION`, and every other branch returns
@@ -72,6 +74,7 @@ import {
   updateSessionState,
   withKnownWorktreeRoot,
   withLandedAsked,
+  withLandedClean,
   withTripwireAsked,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -140,9 +143,23 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
-/** Something landed worth a word: missing at any age, or present and recent. */
-const landedWorthSaying = (landed: LandedChanges | null): LandedChanges | null =>
-  landed !== null && (landed.missing.length > 0 || landed.recent.length > 0) ? landed : null;
+/**
+ * Something landed worth a word: missing at any age, or present and recent.
+ * While the missing half is INCOMPLETE — a landing branch git could not
+ * answer for, or a limit reached with nothing shown — a stop about recent
+ * work alone would spend the once-per-file marker on the half that matters
+ * least; it waits, and the next edit asks again.
+ */
+const landedWorthSaying = (landed: LandedChanges | null): LandedChanges | null => {
+  if (landed === null) {
+    return null;
+  }
+  if (landed.missing.length > 0) {
+    return landed;
+  }
+  const isMissingIncomplete = landed.unchecked.length > 0 || landed.moreMissing;
+  return !isMissingIncomplete && landed.recent.length > 0 ? landed : null;
+};
 
 export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (!isEditTool(ctx.payload.tool_name)) {
@@ -204,7 +221,10 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (asked.live && asked.landed) {
     return "";
   }
-  const found = await findReasons(ctx, edited, asked);
+  const found = await findReasons(ctx, edited, asked, state.landedCleanKeys);
+  if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {
+    await rememberClean(ctx, found.cleanKey);
+  }
   if (found.teammate === null && found.landed === null) {
     return "";
   }
@@ -236,6 +256,8 @@ interface Reasons {
 
 interface FoundReasons extends Reasons {
   readonly coverage?: CoverageRecord;
+  /** The probe answered "nothing" under this key (landed-changes/probe.ts). */
+  readonly cleanKey: string | null;
 }
 
 const NO_REASONS: Reasons = { teammate: null, landed: null };
@@ -251,6 +273,7 @@ const findReasons = async (
   ctx: HookContext,
   edited: EditedFile,
   asked: { readonly live: boolean; readonly landed: boolean },
+  knownCleanKeys: readonly string[],
 ): Promise<FoundReasons> => {
   const [result, probed] = await Promise.all([
     asked.live ? null : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file),
@@ -262,14 +285,29 @@ const findReasons = async (
           now: ctx.now(),
           timeZone: resolveTimeZone(ctx.env),
           budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
+          knownCleanKeys,
         }),
   ]);
   const hub = result?.ok === true ? result.data : null;
+  const landed = landedWorthSaying(probed);
   return {
     teammate: hub?.sessions[0] ?? null,
-    landed: landedWorthSaying(probed),
+    landed,
+    cleanKey: probed !== null && landed === null ? probed.key : null,
     ...(hub === null ? {} : { coverage: hub.coverage }),
   };
+};
+
+/**
+ * A probe key that answered "nothing" is remembered, so the next edit of the
+ * same file in the same state of the repo costs the five git calls that
+ * compute the key, not the walk. Only a COMPLETE answer carries a key.
+ * Best effort: a busy lock only means the next edit asks again.
+ */
+const rememberClean = async (ctx: HookContext, key: string): Promise<void> => {
+  await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
+    fresh.landedCleanKeys.includes(key) ? null : withLandedClean(fresh, key),
+  );
 };
 
 /**

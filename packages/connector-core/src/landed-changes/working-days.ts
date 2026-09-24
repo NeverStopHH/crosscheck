@@ -63,8 +63,64 @@ export const workingDaysSince = (landedAt: Date, now: Date, timeZone: string): n
   return days.filter(isWorkingDay).length;
 };
 
+/** The reader's calendar day, `2026-09-24` — part of what a cached answer is keyed on. */
+export const localDayKey = (now: Date, timeZone: string): string => dayFormatter(timeZone).format(now);
+
 export const isRecentLanding = (landedAt: Date, now: Date, timeZone: string): boolean =>
   workingDaysSince(landedAt, now, timeZone) <= LANDED_RECENT_WORKING_DAYS;
+
+const wallClockFormatter = (timeZone: string): Intl.DateTimeFormat => {
+  const fields = {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  } as const;
+  try {
+    return new Intl.DateTimeFormat("en-CA", { ...fields, timeZone });
+  } catch {
+    return new Intl.DateTimeFormat("en-CA", fields);
+  }
+};
+
+/** How far the zone's wall clock is ahead of UTC at `instantMs`. */
+const zoneOffsetMs = (instantMs: number, formatter: Intl.DateTimeFormat): number => {
+  const part = (type: Intl.DateTimeFormatPartTypes): number =>
+    Number(formatter.formatToParts(instantMs).find((p) => p.type === type)?.value ?? Number.NaN);
+  const wall = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+  return wall - Math.floor(instantMs / 1000) * 1000;
+};
+
+/**
+ * The instant the zone's calendar day `dayMs` (a UTC-midnight stamp of that
+ * date) begins. Two passes, so a day that starts inside a daylight-saving
+ * change still lands on its own midnight.
+ */
+const zonedMidnight = (dayMs: number, timeZone: string): Date => {
+  const formatter = wallClockFormatter(timeZone);
+  const first = dayMs - zoneOffsetMs(dayMs, formatter);
+  return new Date(dayMs - zoneOffsetMs(first, formatter));
+};
+
+/**
+ * The first instant that still counts as recent: local midnight of the
+ * earliest calendar day a landing on which is at most the window's working
+ * days old. What `isRecentLanding` answers per instant, this answers once,
+ * so git can be asked for the window itself rather than a guess around it.
+ */
+export const recentWindowStart = (now: Date, timeZone: string): Date => {
+  const today = calendarDay(now, dayFormatter(timeZone));
+  const inWindow = Array.from({ length: MAX_DAYS_WALKED }, (_, index) => today - index * DAY_MS).filter(
+    (day) =>
+      Array.from({ length: Math.round((today - day) / DAY_MS) }, (_, index) => day + (index + 1) * DAY_MS).filter(
+        isWorkingDay,
+      ).length <= LANDED_RECENT_WORKING_DAYS,
+  );
+  return zonedMidnight(Math.min(...inWindow), timeZone);
+};
 
 /**
  * The reader's timezone: `TZ` when the environment sets one, otherwise the

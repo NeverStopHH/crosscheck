@@ -68,6 +68,7 @@ const sessionState = (repoRoot: string): SessionState => ({
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   landedAskedFiles: [],
+  landedCleanKeys: [],
   briefingSolvedRefs: [],
   foreignRepoDrops: 0,
   outsideRootDrops: 0,

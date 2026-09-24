@@ -66,6 +66,8 @@ export interface LandingRef {
   readonly branch: string;
   /** As git is handed it: `refs/remotes/origin/staging`. */
   readonly ref: string;
+  /** The commit it points at in this clone — what a cached answer is keyed on. */
+  readonly tip: string;
 }
 
 const INVALID_REASON =
@@ -93,7 +95,8 @@ export const readLandingBranches = async (repoRoot: string): Promise<LandingBran
   parseLandingBranches(await readJsonOrNull(repoConfigPath(repoRoot)));
 
 interface OriginRefs {
-  readonly existing: ReadonlySet<string>;
+  /** Branch name → the commit it points at. */
+  readonly existing: ReadonlyMap<string, string>;
   /** The branch origin/HEAD points at, when it is a symref. */
   readonly headBranch: string | null;
 }
@@ -111,7 +114,7 @@ const readOriginRefs = async (
   const outcome = await runGitOutcome(
     [
       "for-each-ref",
-      "--format=%(refname)\t%(symref)",
+      "--format=%(refname)\t%(symref)\t%(objectname)",
       ORIGIN_HEAD,
       ...names.map((name) => `${ORIGIN_PREFIX}${name}`),
     ],
@@ -130,10 +133,10 @@ const readOriginRefs = async (
   const head = rows.find(([ref]) => ref === ORIGIN_HEAD);
   const headBranch = branchOf(head?.[1]);
   return {
-    existing: new Set(
+    existing: new Map(
       rows
-        .map(([ref]) => branchOf(ref))
-        .filter((branch): branch is string => branch !== null && branch !== "HEAD"),
+        .map(([ref, , tip]): [string | null, string] => [branchOf(ref), tip ?? ""])
+        .filter((row): row is [string, string] => row[0] !== null && row[0] !== "HEAD"),
     ),
     headBranch: headBranch !== null && isBranchName(headBranch) ? headBranch : null,
   };
@@ -171,5 +174,9 @@ export const resolveLandingRefs = async (
     setting.kind === "configured"
       ? setting.branches.filter((name) => origin.existing.has(name))
       : autoDetected(origin);
-  return branches.map((branch) => ({ branch, ref: `${ORIGIN_PREFIX}${branch}` }));
+  return branches.map((branch) => ({
+    branch,
+    ref: `${ORIGIN_PREFIX}${branch}`,
+    tip: origin.existing.get(branch) ?? "",
+  }));
 };

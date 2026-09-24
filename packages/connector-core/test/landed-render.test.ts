@@ -46,6 +46,8 @@ const missingOnly = (commits: readonly LandedCommit[], moreMissing = false): Lan
   missing: commits,
   recent: [],
   moreMissing,
+  unchecked: [],
+  key: null,
 });
 
 describe("a landed change the checkout is missing", () => {
@@ -95,6 +97,26 @@ describe("a landed change the checkout is missing", () => {
     expect(text).toContain("(+2 or more)");
   });
 
+  test("says there may be more even when every commit read fits on the stop", () => {
+    // Arrange — the probe stopped reading, but after the reader's own commits
+    // were filtered out only one teammate commit remained
+    const text = renderEditWarning({ live: null, landed: missingOnly([commit()], true), file: FILE, now: NOW });
+
+    // Assert
+    expect(text).toContain("(and possibly more)");
+  });
+
+  test("names a landing branch it could not check", () => {
+    // Arrange
+    const landed: LandedChanges = { ...missingOnly([commit()]), unchecked: ["develop"] };
+
+    // Act
+    const text = renderEditWarning({ live: null, landed, file: FILE, now: NOW });
+
+    // Assert
+    expect(text).toContain("Not checked in time: develop; changes there may be missing too.");
+  });
+
   test("a change on two landing branches says both", () => {
     const text = renderEditWarning({
       live: null,
@@ -114,6 +136,8 @@ describe("a recent landed change the checkout already has", () => {
       missing: [],
       recent: [commit({ landedAt: new Date("2026-09-23T12:00:00Z") })],
       moreMissing: false,
+      unchecked: [],
+      key: null,
     };
 
     // Act

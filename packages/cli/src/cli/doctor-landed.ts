@@ -16,7 +16,7 @@ import {
   resolveLandingRefs,
 } from "@crosscheck/connector-core/landed-changes/landing-branches.ts";
 import type { LandingBranchesSetting } from "@crosscheck/connector-core/landed-changes/landing-branches.ts";
-import { readRepoState } from "@crosscheck/connector-core/landed-changes/git-queries.ts";
+import { quietGitRunner, readRepoState } from "@crosscheck/connector-core/landed-changes/git-queries.ts";
 import {
   LANDED_GIT_TIMEOUT_MS,
   LANDED_RECENT_WORKING_DAYS,
@@ -63,7 +63,12 @@ export const checkLandedChanges = async (repoRoot: string): Promise<Check> => {
   const [refs, state] = await Promise.all([
     resolveLandingRefs(repoRoot, setting),
     // The probe's own question, so doctor and the stop cannot disagree.
-    readRepoState({ root: repoRoot, file: "", timeoutMs: LANDED_GIT_TIMEOUT_MS, isCancelled: () => false }),
+    readRepoState({
+      root: repoRoot,
+      file: "",
+      run: quietGitRunner(repoRoot, LANDED_GIT_TIMEOUT_MS),
+      isCancelled: () => false,
+    }),
   ]);
   if (refs === null || state === null) {
     return warn("git did not answer, so the landed-change stop fails open in this clone");

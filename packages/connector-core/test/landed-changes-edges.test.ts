@@ -29,6 +29,7 @@ import { join } from "node:path";
 
 import { MAX_LANDED_COMMITS_SCANNED } from "../src/constants.ts";
 import { findLandedChanges } from "../src/landed-changes/probe.ts";
+import type { LandedChanges } from "../src/landed-changes/probe.ts";
 import {
   KEN,
   MIKE,
@@ -46,7 +47,11 @@ const NOW = new Date("2026-09-24T12:00:00Z");
 const BERLIN = "Europe/Berlin";
 const FILE = "src/lines.ts";
 const ORIGINAL_CONTENT = "export const offset = 1;\n";
-const NOTHING = { missing: [], recent: [], moreMissing: false };
+/** Nothing to say — whatever the cache key. */
+const expectNothing = (changes: LandedChanges | null): void => {
+  expect(changes?.missing).toEqual([]);
+  expect(changes?.recent).toEqual([]);
+};
 
 const cleanups: string[] = [];
 
@@ -136,6 +141,15 @@ describe("work that landed twice, or is arriving", () => {
     // into main yesterday; Nick's branch is cut from main after the release
     const r = await repos("promotion");
     await landWithMergeCommit(r, { ...JUNE_LANDING, author: KEN, subject: "Ken change" });
+    // A later June change moves the file on, so Ken's commit no longer
+    // carries any branch's old content: only "landed before" can drop it
+    await landWithMergeCommit(r, {
+      ...JUNE_LANDING,
+      content: "export const offset = 3;\n",
+      subject: "Mike follow-up",
+      writtenAt: "2026-06-04T10:00:00Z",
+      landedAt: "2026-06-05T10:00:00Z",
+    });
     await mergeOnOrigin(r, "staging", "main", "2026-09-23T15:00:00Z");
     await readerFetches(r);
     await gitIn(r.reader, ["checkout", "-q", "-B", "nick/after-release", "origin/main"]);
@@ -144,7 +158,7 @@ describe("work that landed twice, or is arriving", () => {
     const changes = await find(r.reader);
 
     // Assert
-    expect(changes).toEqual(NOTHING);
+    expectNothing(changes);
   });
 
   test("a back-merge of main into staging does not make June's hotfix recent", async () => {
@@ -159,7 +173,7 @@ describe("work that landed twice, or is arriving", () => {
     const changes = await find(r.reader);
 
     // Assert
-    expect(changes).toEqual(NOTHING);
+    expectNothing(changes);
   });
 
   test("while the reader resolves a merge, the commits being merged are not missing", async () => {
@@ -176,6 +190,95 @@ describe("work that landed twice, or is arriving", () => {
 
     // Assert
     expect(changes?.missing).toEqual([]);
+  });
+});
+
+describe("work that landed twice, or is arriving — what must still be said", () => {
+  test("a release that also carries genuinely new work still reports that work", async () => {
+    // Arrange — Ken's change landed in June; Mike's landed on Tuesday; both
+    // reached main in yesterday's release; Nick's branch is cut after it
+    const r = await repos("release-new");
+    await landWithMergeCommit(r, { ...JUNE_LANDING, author: KEN, subject: "Ken change" });
+    await landWithMergeCommit(r, {
+      ...JUNE_LANDING,
+      content: "export const offset = 3;\n",
+      subject: "Mike new",
+      writtenAt: "2026-09-21T10:00:00Z",
+      landedAt: "2026-09-22T10:00:00Z",
+    });
+    await mergeOnOrigin(r, "staging", "main", "2026-09-23T15:00:00Z");
+    await readerFetches(r);
+    await gitIn(r.reader, ["checkout", "-q", "-B", "nick/after-release", "origin/main"]);
+
+    // Act
+    const changes = await find(r.reader);
+
+    // Assert
+    expect(changes?.recent.map((c) => c.subject)).toEqual(["Mike new"]);
+  });
+
+  test("a change released days after it landed is not recent", async () => {
+    // Arrange — Ken's change landed on staging on Friday the 18th (four
+    // working days ago), inside a week but outside the window; staging was
+    // released into main yesterday
+    const r = await repos("release-late");
+    await landWithMergeCommit(r, {
+      ...JUNE_LANDING,
+      author: KEN,
+      subject: "Ken change",
+      writtenAt: "2026-09-17T10:00:00Z",
+      landedAt: "2026-09-18T10:00:00Z",
+    });
+    await mergeOnOrigin(r, "staging", "main", "2026-09-23T15:00:00Z");
+    await readerFetches(r);
+    await gitIn(r.reader, ["checkout", "-q", "-B", "nick/after-release", "origin/main"]);
+
+    // Act
+    const changes = await find(r.reader);
+
+    // Assert
+    expect(changes?.recent).toEqual([]);
+  });
+
+  test("a squash release of old work is not recent", async () => {
+    // Arrange — June's staging content squashed into main yesterday
+    const r = await repos("squash-release");
+    await landWithMergeCommit(r, { ...JUNE_LANDING, author: KEN, subject: "Ken change" });
+    await gitIn(r.teammate, ["fetch", "-q", "origin"]);
+    await gitIn(r.teammate, ["checkout", "-q", "-B", "main", "origin/main"]);
+    await gitIn(r.teammate, ["merge", "-q", "--squash", "origin/staging"]);
+    await gitIn(r.teammate, ["commit", "-q", "-m", "Release 2026-09-23"], { as: KEN, date: "2026-09-23T15:00:00Z" });
+    await gitIn(r.teammate, ["push", "-q", "origin", "main"]);
+    await readerFetches(r);
+    await gitIn(r.reader, ["checkout", "-q", "-B", "nick/after-release", "origin/main"]);
+
+    // Act
+    const changes = await find(r.reader);
+
+    // Assert
+    expect(changes?.recent).toEqual([]);
+  });
+
+  test("a cherry-pick in progress hides only the commit being picked, not what came before it", async () => {
+    // Arrange — staging has Ken's T1 then Mike's T2; Nick picks T2 and conflicts
+    const r = await repos("pick-in-progress");
+    await commitFile(r.reader, FILE, "export const offset = 5;\n", "Nick's offset", { as: NICK });
+    await landWithSquash(r, { ...JUNE_LANDING, subject: "T1", author: KEN });
+    const t2 = await landWithSquash(r, {
+      ...JUNE_LANDING,
+      content: "export const offset = 3;\n",
+      subject: "T2",
+      landedAt: "2026-06-03T10:00:00Z",
+    });
+    await readerFetches(r);
+    await gitIn(r.reader, ["cherry-pick", t2], { as: NICK }).catch(() => undefined);
+    expect(await gitIn(r.reader, ["rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD"])).toBe(t2);
+
+    // Act
+    const changes = await find(r.reader);
+
+    // Assert — Nick does not get T1 from this pick
+    expect(changes?.missing.map((c) => c.subject)).toEqual(["T1"]);
   });
 });
 
@@ -268,7 +371,93 @@ describe("nothing an edit could undo", () => {
   });
 });
 
+describe("reverts the reader would bring back — the dangerous direction", () => {
+  test("a revert of the PR the reader stacked on is missing", async () => {
+    // Arrange — Nick builds on Mike's two-commit PR; the PR lands on staging
+    // as one squash, and Ken reverts it. Merging Nick's branch would bring it back.
+    const r = await repos("stacked-revert");
+    await gitIn(r.teammate, ["checkout", "-q", "-b", "mike/base", "origin/main"]);
+    await commitFile(r.teammate, FILE, "export const offset = 2;\n", "Base part 1", { as: MIKE });
+    await commitFile(r.teammate, FILE, "export const offset = 3;\n", "Base part 2", { as: MIKE });
+    await gitIn(r.teammate, ["push", "-q", "origin", "mike/base"]);
+    await readerFetches(r);
+    await gitIn(r.reader, ["checkout", "-q", "-B", "nick/stacked", "origin/mike/base"]);
+    await gitIn(r.teammate, ["checkout", "-q", "-B", "staging", "origin/staging"]);
+    await gitIn(r.teammate, ["merge", "-q", "--squash", "mike/base"]);
+    await gitIn(r.teammate, ["commit", "-q", "-m", "Base PR (#1)"], { as: MIKE, date: "2026-06-01T10:00:00Z" });
+    await commitFile(r.teammate, FILE, ORIGINAL_CONTENT, 'Revert "Base PR (#1)"', {
+      as: KEN,
+      date: "2026-06-02T10:00:00Z",
+    });
+    await gitIn(r.teammate, ["push", "-q", "origin", "staging"]);
+    await readerFetches(r);
+
+    // Act
+    const changes = await find(r.reader);
+
+    // Assert
+    expect(changes?.missing.map((c) => c.subject)).toContain('Revert "Base PR (#1)"');
+  });
+
+  test("a revert of a fix the reader cherry-picked is missing", async () => {
+    // Arrange — Nick picked Mike's fix; staging then reverted it
+    const r = await repos("picked-revert");
+    const fix = await landWithSquash(r, { ...JUNE_LANDING, subject: "Mike fix" });
+    await readerFetches(r);
+    await gitIn(r.reader, ["cherry-pick", fix], { as: NICK });
+    await landWithSquash(r, {
+      ...JUNE_LANDING,
+      content: ORIGINAL_CONTENT,
+      subject: 'Revert "Mike fix"',
+      author: KEN,
+      landedAt: "2026-06-03T10:00:00Z",
+    });
+    await readerFetches(r);
+
+    // Act
+    const changes = await find(r.reader);
+
+    // Assert
+    expect(changes?.missing.map((c) => c.subject)).toEqual(['Revert "Mike fix"']);
+  });
+});
+
 describe("what the probe reports", () => {
+  test("an answer carries a cache key that moves when a landing branch does", async () => {
+    // Arrange
+    const r = await repos("cache-key");
+    const before = await find(r.reader);
+
+    // Act — a teammate lands, and Nick fetches it
+    await landWithMergeCommit(r, JUNE_LANDING);
+    await readerFetches(r);
+    const after = await find(r.reader);
+
+    // Assert
+    expect(before?.key).toMatch(/\S/);
+    expect(after?.key).not.toBe(before?.key);
+    expect(after?.missing).toHaveLength(1);
+  });
+
+  test("a key the caller already knows as clean is answered as nothing, with that key", async () => {
+    // Arrange
+    const r = await repos("cache-hit");
+    const first = await find(r.reader);
+
+    // Act
+    const second = await findLandedChanges({
+      root: r.reader,
+      file: FILE,
+      now: NOW,
+      timeZone: BERLIN,
+      budgetMs: SEMANTICS_BUDGET_MS,
+      knownCleanKeys: [first?.key ?? "none"],
+    });
+
+    // Assert
+    expect(second).toEqual(first);
+  });
+
   test("a subject carrying the field separator is still reported, not dropped", async () => {
     // Arrange
     const r = await repos("separator");
@@ -280,6 +469,19 @@ describe("what the probe reports", () => {
 
     // Assert
     expect(changes?.missing).toHaveLength(1);
+  });
+
+  test("a file whose name starts with a colon is a file, not pathspec magic", async () => {
+    // Arrange — a teammate's change to ":colon.ts" the reader lacks
+    const r = await repos("colon-name");
+    await landWithSquash(r, { ...JUNE_LANDING, file: ":colon.ts", subject: "Colon change" });
+    await readerFetches(r);
+
+    // Act
+    const changes = await find(r.reader, ":colon.ts");
+
+    // Assert
+    expect(changes?.missing.map((c) => c.subject)).toEqual(["Colon change"]);
   });
 
   test("says when there are more missing changes than it looked at", async () => {

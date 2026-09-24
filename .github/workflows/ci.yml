@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 767
+    # PRINTS: 783
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -154,7 +154,7 @@ jobs:
     # PRINTS: doctor.ts 1
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 8
-    # PRINTS: hooks/pre-tool-use.ts 8
+    # PRINTS: hooks/pre-tool-use.ts 9
     # PRINTS: hooks/runner.ts 2
     # PRINTS: hooks/session-start.ts 1
     # PRINTS: hooks/stop.ts 1
@@ -204,7 +204,7 @@ jobs:
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 8
+    # PRINTS: hints/render.ts 10
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 1
     # PRINTS: http/coverage.ts 1
@@ -213,9 +213,9 @@ jobs:
     # PRINTS: http/pilot.ts 2
     # PRINTS: http/verdict.ts 1
     # PRINTS: kit.ts 1
-    # PRINTS: landed-changes/git-queries.ts 9
+    # PRINTS: landed-changes/git-queries.ts 11
     # PRINTS: landed-changes/landing-branches.ts 3
-    # PRINTS: landed-changes/probe.ts 7
+    # PRINTS: landed-changes/probe.ts 18
     # PRINTS: landed-changes/working-days.ts 3
     # PRINTS: mcp/render-intent-chain.ts 1
     # PRINTS: mcp/render-referee.ts 3
@@ -381,7 +381,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-queries.ts 9
+    # PRINTS: git-queries.ts 11
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 3
@@ -414,10 +414,10 @@ jobs:
     # PRINTS: pins.ts 11
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 8
-    # PRINTS: pre-tool-use.ts 8
+    # PRINTS: pre-tool-use.ts 9
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
-    # PRINTS: probe.ts 8
+    # PRINTS: probe.ts 19
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
@@ -433,7 +433,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 53
+    # PRINTS: render.ts 55
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 2
     # PRINTS: retention-registry.ts 8

@@ -84,6 +84,7 @@ const freshState = (
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   landedAskedFiles: [],
+  landedCleanKeys: [],
   briefingSolvedRefs: [],
   probedFingerprints: [],
   foreignRepoDrops: 0,

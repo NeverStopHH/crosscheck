@@ -7,11 +7,11 @@
  * nobody is active — and the two changes meet in review, or in production.
  *
  * Now the edit stops once, with the reason: which commits landed where, by
- * whom, and how to see them. The same single "ask" as the live tripwire,
- * the same once-per-file marker (a file stops a session at most once,
- * whichever of the two found something), the same `notice` knob for
- * headless sessions — and it does not depend on the hub answering, because
- * the reader's own clone is the authority on what it contains.
+ * whom, and how to see them. The same single "ask" as the live tripwire and
+ * the same `notice` knob for headless sessions; a once-per-file marker of its
+ * own (one stop per file per reason, so it never uses up the live one); and
+ * it does not depend on the hub answering, because the reader's own clone is
+ * the authority on what it contains.
  *
  * Real clones throughout (connector-core fixtures/landing-repos.ts). The
  * hook reads the real clock, so dates here are relative to now.
@@ -161,11 +161,12 @@ describe("a teammate's landed change the checkout does not contain", () => {
   });
 
   test("never stops the same file twice in one session", async () => {
-    // Arrange
+    // Arrange — and the first edit DID stop, or the second's silence proves nothing
     const { repos, env } = await fixture("once");
     await mikeLands(repos, 90 * DAY_MS);
     await readerFetches(repos);
-    await runHook("pre-tool-use", editPayload(repos.reader, FILE), env);
+    const first = await runHook("pre-tool-use", editPayload(repos.reader, FILE), env);
+    expect(outputOf(first)?.permissionDecision).toBe("ask");
 
     // Act
     const second = await runHook("pre-tool-use", editPayload(repos.reader, FILE), env);
@@ -258,9 +259,8 @@ describe("a teammate's landed change the checkout already has", () => {
 
   test("stays silent once it is older than that", async () => {
     // Arrange — landed five calendar days ago, which always spans at least
-    // three working days, and is still inside the probe's seven-day scan: so
-    // it is the working-day window that silences it, not the scan's edge
-    const { repos, env } = await fixture("stale");
+    // three working days
+    const { repos, home, env } = await fixture("stale");
     await mikeLands(repos, 5 * DAY_MS);
     await readerFetches(repos);
     await gitIn(repos.reader, ["merge", "-q", "--no-edit", "origin/staging"], { as: NICK });
@@ -268,7 +268,21 @@ describe("a teammate's landed change the checkout already has", () => {
     // Act
     const stdout = await runHook("pre-tool-use", editPayload(repos.reader, FILE), env);
 
-    // Assert
+    // Assert — silent, AND the probe really answered "nothing": its key is
+    // remembered, which a timeout or a git error would not leave behind
     expect(stdout).toBe("");
+    expect((await readSessionState(home, SESSION_ID))?.landedCleanKeys).toHaveLength(1);
+  });
+
+  test("remembers a clean answer once, so the next edit does not walk again", async () => {
+    // Arrange — nothing landed on the file at all
+    const { repos, home, env } = await fixture("clean-cache");
+
+    // Act
+    await runHook("pre-tool-use", editPayload(repos.reader, FILE), env);
+    await runHook("pre-tool-use", editPayload(repos.reader, FILE), env);
+
+    // Assert — one key for one state of the repo, not one per edit
+    expect((await readSessionState(home, SESSION_ID))?.landedCleanKeys).toHaveLength(1);
   });
 });

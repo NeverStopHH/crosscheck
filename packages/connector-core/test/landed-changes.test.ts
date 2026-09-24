@@ -190,7 +190,8 @@ describe("a teammate's landed change the reader's checkout does not contain", ()
     const changes = await find(r.reader);
 
     // Assert
-    expect(changes).toEqual({ missing: [], recent: [], moreMissing: false });
+    expect(changes?.missing).toEqual([]);
+    expect(changes?.recent).toEqual([]);
   });
 });
 
@@ -252,7 +253,8 @@ describe("a teammate's landed change the reader already has", () => {
     const changes = await find(r.reader);
 
     // Assert
-    expect(changes).toEqual({ missing: [], recent: [], moreMissing: false });
+    expect(changes?.missing).toEqual([]);
+    expect(changes?.recent).toEqual([]);
   });
 
   test("a squash that landed yesterday is recent, credited to the squash's author", async () => {
@@ -291,7 +293,7 @@ describe("when git cannot answer", () => {
     expect(changes).toBeNull();
   });
 
-  test("a probe past its deadline answers unknown, never a partial answer", async () => {
+  test("a probe past its deadline before anything is known answers unknown", async () => {
     // Arrange — a real missing change, and no time at all to find it
     const r = await repos("deadline");
     await landWithMergeCommit(r, OLD_LANDING);

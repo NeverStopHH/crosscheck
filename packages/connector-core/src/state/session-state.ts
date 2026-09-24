@@ -147,6 +147,15 @@ const SessionStateObjectSchema = z.looseObject({
    */
   landedAskedFiles: z.array(z.string().min(1)).default([]),
   /**
+   * Landed-change probe answers that said NOTHING, by their key (file, HEAD,
+   * every landing branch's tip, merge state, the reader's day — see
+   * landed-changes/probe.ts). A key seen here again is answered "nothing"
+   * after the five git calls that compute it instead of the whole walk, so an
+   * edit-heavy session pays the probe once per file per state of the repo,
+   * not once per edit. Only complete answers carry a key.
+   */
+  landedCleanKeys: z.array(z.string().min(1)).default([]),
+  /**
    * Work contexts the SessionStart briefing already pointed at as "solved
    * before" (VISION.md §1). A SEPARATE list from deliveredHintRefs on
    * purpose: the prompt path folds these into its seen-set so the same tree
@@ -1205,7 +1214,21 @@ export const withKnownWorktreeRoot = (
   };
 };
 
-/** FIFO cap, same shape as withSeenTargets: asks are once per file. */
+/** Remembers a probe key that answered "nothing", same FIFO cap as the markers. */
+export const withLandedClean = (
+  state: SessionState,
+  key: string,
+): SessionState => {
+  const merged = [...state.landedCleanKeys, key];
+  return {
+    ...state,
+    landedCleanKeys:
+      merged.length <= MAX_TRIPWIRE_ASKED_FILES
+        ? merged
+        : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
+  };
+};
+
 /** Remembers a landed-change stop on `file`, same FIFO cap as the live one. */
 export const withLandedAsked = (
   state: SessionState,
@@ -1221,6 +1244,7 @@ export const withLandedAsked = (
   };
 };
 
+/** FIFO cap, same shape as withSeenTargets: asks are once per file. */
 export const withTripwireAsked = (
   state: SessionState,
   file: string,
@@ -1389,6 +1413,7 @@ export const deriveSessionState = (
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
     landedAskedFiles: [],
+    landedCleanKeys: [],
     briefingSolvedRefs: [],
     probedFingerprints: [],
     foreignRepoDrops: 0,
