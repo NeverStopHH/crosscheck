@@ -506,6 +506,8 @@ describe("bootstrap.sql DDL sync", () => {
       "pilot_attributions_pin_idx",
       "CREATE TABLE IF NOT EXISTS pilot_counters",
       "PRIMARY KEY (repo, day, surface, counter)",
+      "pilot_counters_day_idx",
+      "pilot_attributions_answered_idx",
       "CREATE TABLE IF NOT EXISTS pilot_sessions",
       "ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_id text",
       "ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_version integer",
@@ -530,6 +532,24 @@ describe("bootstrap.sql DDL sync", () => {
       "pilot_counters",
       "pilot_marks",
       "pilot_sessions",
+    ]);
+  });
+
+  test("the two retention indexes really exist after a bootstrap", async () => {
+    // Arrange — the reaper deletes by day and by answer time across every
+    // repo (07 §4); without these the prune is a scan every pass. Asked of
+    // the database, which only ever saw the SQL.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexname AS i FROM pg_indexes WHERE indexname IN ('pilot_counters_day_idx', 'pilot_attributions_answered_idx') ORDER BY indexname`,
+    );
+
+    // Assert
+    expect(rows.rows.map((row) => String(row["i"]))).toEqual([
+      "pilot_attributions_answered_idx",
+      "pilot_counters_day_idx",
     ]);
   });
 

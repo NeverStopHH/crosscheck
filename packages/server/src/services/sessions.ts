@@ -7,7 +7,7 @@ import {
   SESSION_REAP_MAX_PER_PASS,
   SESSION_REAP_STALE_HOURS,
 } from "../constants.ts";
-import { recordPilotSession } from "./pilot.ts";
+import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
 import { agentSessions } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { recordSessionEvent } from "./session-events.ts";
@@ -340,6 +340,12 @@ export const reapStaleSessions = async (
   // a delivery date. The hub SAYS so — SESSION_EVENT_RETENTION is `off` and
   // `doctor` prints it — and `pruneSessionEvents` stays, uncalled, until 01a's
   // referential predicate switches retention back on from here.
+  // THE PILOT'S MEASUREMENT DOES PRUNE HERE (07 §4), and the refusal above
+  // is not contradicted by it: those rows are the causal skeleton, these are
+  // tallies and ranked guesses (services/pilot.ts says why). BEFORE the early
+  // return below, because a retirement that only happens when there is also
+  // a session to close is the defect D2's first sweep had.
+  await prunePilotMeasurements(deps);
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db

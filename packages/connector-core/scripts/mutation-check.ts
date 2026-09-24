@@ -8885,6 +8885,61 @@ export const MUTATIONS: readonly Mutation[] = [
       "a team to ignore the line that reports a real outage",
   },
   {
+    // 07 §4. The reaper is the one pass that can retire a row keyed by its day.
+    label: "the pilot's measurement never ages out",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  await prunePilotMeasurements(deps);",
+    to: "  void prunePilotMeasurements;",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "counters and attributions grow for ever with traffic, on the one table the " +
+      "spec made UPSERT-only precisely so its size would be bounded",
+  },
+  {
+    // 07 §4. The boundary day stays: the report's widest window still reads it.
+    label: "the prune removes rows a report can read",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    .where(lt(pilotCounters.day, utcDay(cutoff)));",
+    to: "    .where(lt(pilotCounters.day, utcDay(deps.now())));",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "a report at the widest window finds its own oldest days gone, and the " +
+      "figures fall for a reason nobody changed — read as a product effect",
+  },
+  {
+    // 07 §4. Attributions age out with the counters.
+    label: "attributions never age out",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    .where(lt(pilotAttributions.answeredAt, cutoff));",
+    to: "    .where(lt(pilotAttributions.answeredAt, new Date(0)));",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "every suspect answer is kept for ever, on a table the spec bounded by the " +
+      "same retention as the proof that reads it",
+  },
+  {
+    // 07 §4. The prune is an index range, not a scan every fifteen minutes.
+    label: "the counter prune scans the table",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS pilot_counters_day_idx",
+    to: "CREATE INDEX IF NOT EXISTS pilot_counters_day_idx_off",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "on a hub with many repos the reaper reads millions of counter rows every " +
+      "pass, since the primary key leads with repo and the prune is by day",
+  },
+  {
+    // 07 §4. Same for attributions: the timestamp must lead.
+    label: "the attribution prune scans the table",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS pilot_attributions_answered_idx",
+    to: "CREATE INDEX IF NOT EXISTS pilot_attributions_answered_idx_off",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "the reaper's age delete reads every attribution on the hub each pass, because " +
+      "the existing index puts repo first",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -9404,7 +9459,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
- * PRINTS: packages/server/test/ddl-sync.test.ts 4
+ * PRINTS: packages/server/test/ddl-sync.test.ts 6
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
@@ -9421,6 +9476,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-marks.test.ts 7
  * PRINTS: packages/server/test/pilot-repairs.test.ts 3
  * PRINTS: packages/server/test/pilot-report.test.ts 10
+ * PRINTS: packages/server/test/pilot-retention.test.ts 3
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1

@@ -1062,6 +1062,10 @@ CREATE INDEX IF NOT EXISTS pilot_attributions_repo_answered_idx
   ON pilot_attributions (repo, answered_at DESC);
 CREATE INDEX IF NOT EXISTS pilot_attributions_pin_idx
   ON pilot_attributions (pin_id);
+-- The reaper's age prune (07 4) runs across every repo, so the timestamp
+-- leads; behind repo it would be a scan every fifteen minutes.
+CREATE INDEX IF NOT EXISTS pilot_attributions_answered_idx
+  ON pilot_attributions (answered_at);
 
 -- PROOF 5 ONLY, because proof 5 alone cannot be re-derived (07 3.5): the
 -- answers are rendered and gone. UPSERT-only, and bounded by repos x days x
@@ -1075,6 +1079,10 @@ CREATE TABLE IF NOT EXISTS pilot_counters (
   updated_at timestamptz NOT NULL,
   PRIMARY KEY (repo, day, surface, counter)
 );
+-- The reaper retires days past retention across every repo; the primary key
+-- leads with repo, so without this the prune is a scan.
+CREATE INDEX IF NOT EXISTS pilot_counters_day_idx
+  ON pilot_counters (day);
 
 -- THE 50-SESSION MEASUREMENT, REDUCED TO ITS RESIDUE (07 3.6). Five of the
 -- handover's six per-session facts are already stored or recomputable; these

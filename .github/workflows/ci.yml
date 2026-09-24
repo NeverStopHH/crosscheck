@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 630
+    # PRINTS: 635
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -257,7 +257,7 @@ jobs:
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/server/src/constants.ts 1
-    # PRINTS: packages/server/src/db/bootstrap.sql 4
+    # PRINTS: packages/server/src/db/bootstrap.sql 6
     # PRINTS: packages/server/src/routes/absences.ts 1
     # PRINTS: packages/server/src/routes/pins.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
@@ -284,7 +284,7 @@ jobs:
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pilot-candidates.ts 7
     # PRINTS: packages/server/src/services/pilot-report.ts 10
-    # PRINTS: packages/server/src/services/pilot.ts 17
+    # PRINTS: packages/server/src/services/pilot.ts 19
     # PRINTS: packages/server/src/services/pins.ts 5
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
@@ -295,7 +295,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 10
     # PRINTS: packages/server/src/services/session-events.ts 4
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 4
+    # PRINTS: packages/server/src/services/sessions.ts 5
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
     # PRINTS: packages/server/src/services/solved.ts 1
@@ -312,7 +312,7 @@ jobs:
     # PRINTS: answer-question.ts 1
     # PRINTS: ask-teammate.ts 1
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 4
+    # PRINTS: bootstrap.sql 6
     # PRINTS: briefing.ts 2
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 5
@@ -380,7 +380,7 @@ jobs:
     # PRINTS: pilot-mark.ts 1
     # PRINTS: pilot-render.ts 10
     # PRINTS: pilot-report.ts 10
-    # PRINTS: pilot.ts 21
+    # PRINTS: pilot.ts 23
     # PRINTS: pin-observability.ts 1
     # PRINTS: pin-render.ts 3
     # PRINTS: pin-sweep.ts 2
@@ -425,7 +425,7 @@ jobs:
     # PRINTS: session-start.ts 3
     # PRINTS: session-state.ts 19
     # PRINTS: session.ts 3
-    # PRINTS: sessions.ts 5
+    # PRINTS: sessions.ts 6
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2

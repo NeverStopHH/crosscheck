@@ -20,7 +20,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, lt, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -32,7 +32,7 @@ import {
   pins,
   sessionEvents,
 } from "../db/schema.ts";
-import { PILOT_MAX_SESSIONS } from "../constants.ts";
+import { PILOT_MAX_SESSIONS, PILOT_RETENTION_DAYS } from "../constants.ts";
 import { COVERAGE_SOURCES, isJudgeable, readCoverage } from "./coverage.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { CoverageRecord } from "./coverage.ts";
@@ -588,4 +588,45 @@ export const writePilotMark = async (
   return inserted[0] === undefined
     ? { id: input.refId, repeated: true }
     : { id, repeated: false };
+};
+
+const MS_PER_RETENTION_DAY = 86_400_000;
+
+/**
+ * THE MEASUREMENT AGES OUT (07 §4) — `pilot_counters` and
+ * `pilot_attributions`, past PILOT_RETENTION_DAYS, from the reaper's pass.
+ *
+ * NOT THE SWEEP NICK WITHDREW, and the difference is the point. The
+ * `session_events` age sweep stays off because those rows are very nearly the
+ * causal skeleton — "forget content before you forget causality". These two
+ * hold no causality: a counter is a per-day tally, and an attribution is a
+ * ranked GUESS an answer made, not an order anybody proved. They are the
+ * measurement, and the report's widest window is this same number, so nothing
+ * a report can read is removed: the boundary day is kept.
+ *
+ * `pilot_sessions` is NOT pruned: it is capped by count, and fifty rows ARE
+ * the measurement. `pilot_marks` are a person's word and are not listed for
+ * retention by the spec; they are bounded by people typing.
+ *
+ * FROM THE REAPER, because neither table is revisited by its own writer in a
+ * way that could retire it — a counter row is keyed by its day, and nothing
+ * writes yesterday again. Both deletes are index ranges (the `day` and
+ * `answered_at` indexes), so a hub with a thousand repos does not scan
+ * millions of rows every fifteen minutes.
+ *
+ * NO FUTURE CLAMP, and that is a measured absence rather than a skipped step:
+ * `commit_evidence` clamps because its timestamps are sender-controlled. Both
+ * of these are stamped by the hub's own clock (`deps.now()`), so no sender can
+ * write a row that outruns retention.
+ */
+export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
+  const cutoff = new Date(
+    deps.now().getTime() - PILOT_RETENTION_DAYS * MS_PER_RETENTION_DAY,
+  );
+  await deps.db
+    .delete(pilotCounters)
+    .where(lt(pilotCounters.day, utcDay(cutoff)));
+  await deps.db
+    .delete(pilotAttributions)
+    .where(lt(pilotAttributions.answeredAt, cutoff));
 };

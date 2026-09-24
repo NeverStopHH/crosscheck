@@ -1025,6 +1025,9 @@ export const pilotAttributions = pgTable(
     ),
     // Proof 3 joins an answer to the repair of the pin it was about.
     index("pilot_attributions_pin_idx").on(table.pinId),
+    // The reaper's age prune runs across every repo, so it needs the
+    // timestamp leading, not second behind repo.
+    index("pilot_attributions_answered_idx").on(table.answeredAt),
   ],
 );
 
@@ -1064,6 +1067,9 @@ export const pilotCounters = pgTable(
     primaryKey({
       columns: [table.repo, table.day, table.surface, table.counter],
     }),
+    // The reaper retires days past PILOT_RETENTION_DAYS across every repo;
+    // the primary key leads with repo, so without this the prune is a scan.
+    index("pilot_counters_day_idx").on(table.day),
   ],
 );
 
