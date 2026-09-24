@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 647
+    # PRINTS: 654
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -215,6 +215,7 @@ jobs:
     # PRINTS: mcp/session.ts 1
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
+    # PRINTS: mcp/tools/get-diagnosis.ts 2
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
@@ -265,6 +266,7 @@ jobs:
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 2
+    # PRINTS: packages/server/src/routes/work-contexts.ts 1
     # PRINTS: packages/server/src/services/absences.ts 4
     # PRINTS: packages/server/src/services/calibration.ts 1
     # PRINTS: packages/server/src/services/ci-coverage.ts 3
@@ -285,7 +287,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 9
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pilot-candidates.ts 7
-    # PRINTS: packages/server/src/services/pilot-report.ts 14
+    # PRINTS: packages/server/src/services/pilot-report.ts 18
     # PRINTS: packages/server/src/services/pilot.ts 19
     # PRINTS: packages/server/src/services/pins.ts 5
     # PRINTS: packages/server/src/services/presence.ts 1
@@ -359,6 +361,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
+    # PRINTS: get-diagnosis.ts 2
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
@@ -383,7 +386,7 @@ jobs:
     # PRINTS: pilot-candidates.ts 7
     # PRINTS: pilot-mark.ts 1
     # PRINTS: pilot-render.ts 10
-    # PRINTS: pilot-report.ts 14
+    # PRINTS: pilot-report.ts 18
     # PRINTS: pilot.ts 24
     # PRINTS: pin-observability.ts 1
     # PRINTS: pin-render.ts 3
@@ -457,6 +460,7 @@ jobs:
     # PRINTS: verdict-render.ts 2
     # PRINTS: verdict.ts 5
     # PRINTS: waivers.ts 3
+    # PRINTS: work-contexts.ts 1
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7
     name: Mutation proof

@@ -91,7 +91,13 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // does not want to be counted as a reader (V1-X1).
     if (wantsTelemetry(c.req.query("telemetry"))) {
       try {
-        await markHintsPulled(deps, c.get("developer").id, c.req.param("id"));
+        const session = c.req.query("session");
+        await markHintsPulled(
+          deps,
+          c.get("developer").id,
+          c.req.param("id"),
+          session === undefined || session.length === 0 ? undefined : session,
+        );
       } catch (error) {
         console.error("[crosscheck] marking hint deliveries pulled failed", error);
       }

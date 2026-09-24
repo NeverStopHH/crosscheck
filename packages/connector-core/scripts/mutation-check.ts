@@ -9074,6 +9074,83 @@ export const MUTATIONS: readonly Mutation[] = [
       "and a bare `crosscheck noise` marks it three days later",
   },
   {
+    // 07, corrected by adversarial review. A session cannot open a pointer after it ended.
+    label: "a blanket pull stamp from a later read counts as an open",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  AND hd.pulled_at <= COALESCE(s.ended_at, s.reaped_at, 'infinity'::timestamptz)",
+    to: "  AND hd.pulled_at IS NOT NULL",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "one read weeks later, from another session, turns a pointer the receiving " +
+      "session ignored into an opened one and erases the duplicate work it did",
+  },
+  {
+    // 07. Nor before it was shown the pointer.
+    label: "a pull before its delivery counts as an open",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  AND hd.pulled_at >= hd.delivered_at",
+    to: "  AND hd.pulled_at IS NOT NULL",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a read that happened before the pointer arrived is credited to the pointer, " +
+      "so proof 1 counts opens nothing surfaced",
+  },
+  {
+    // 07 §8.4, corrected. The prior work a report names is this repo's.
+    label: "another repo's title is printed as this repo's prior work",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    JOIN agent_sessions owner ON owner.id = wc.session_id AND owner.repo = ${repo}",
+    to: "    JOIN agent_sessions owner ON owner.id = wc.session_id",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a delivery's ref is the client's word, so a pointer at a repo that never " +
+      "enrolled prints that repo's work-context titles in this repo's report",
+  },
+  {
+    // 07 §3.7. The target is sessions that opened something, so the rate is sessions over sessions.
+    label: "the opened rate counts deliveries over sessions",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "      SELECT count(DISTINCT s.id)::int AS n\n      FROM agent_sessions s\n      JOIN hint_deliveries hd ON hd.session_id = s.id",
+    to: "      SELECT count(*)::int AS n\n      FROM agent_sessions s\n      JOIN hint_deliveries hd ON hd.session_id = s.id",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "one session that opened five pointers reads 500 per 100, and the declared " +
+      "target of eight is passed by a factor nobody measured",
+  },
+  {
+    // 07, corrected. The hub stamps only the reading session's deliveries when it is told which.
+    label: "a named reading session is ignored",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "          session === undefined || session.length === 0 ? undefined : session,",
+    to: "          undefined,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "every read stamps all of the developer's sessions, so a pointer another " +
+      "session ignored reads as opened",
+  },
+  {
+    // 07, corrected. An ambiguous session pick must not stamp anybody's open.
+    label: "an ambiguous reader stamps a guessed session",
+    file: `${CORE}/src/mcp/tools/get-diagnosis.ts`,
+    from: "    own === null || own.sessionAmbiguous",
+    to: "    own === null",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "with two sessions in one worktree the newest is stamped as having opened " +
+      "a pointer, whichever of them actually read it",
+  },
+  {
+    // 07, corrected. An unambiguous reader names itself.
+    label: "a known reading session is never named",
+    file: `${CORE}/src/mcp/tools/get-diagnosis.ts`,
+    from: "      : { sessionId: own.crosscheckSessionId },",
+    to: "      : \"no_telemetry\",",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "no read from an agent is ever counted as an open again, and proof 1 and " +
+      "proof 4 read zero opens on a team that opens pointers every day",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -9548,7 +9625,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
- * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
+ * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
@@ -9599,7 +9676,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-deliveries.test.ts 4
+ * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
@@ -9610,7 +9687,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
  * PRINTS: packages/server/test/pilot-marks.test.ts 7
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
- * PRINTS: packages/server/test/pilot-report.test.ts 14
+ * PRINTS: packages/server/test/pilot-report.test.ts 18
  * PRINTS: packages/server/test/pilot-retention.test.ts 3
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4
  * PRINTS: packages/server/test/pins.test.ts 4

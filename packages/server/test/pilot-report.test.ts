@@ -18,6 +18,7 @@
  * and the rule every figure obeys: measured, or `unavailable` with a reason.
  */
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -343,6 +344,82 @@ describe("proof 2 — collisions", () => {
   });
 });
 
+/**
+ * WHAT COUNTS AS "OPENED", AND WHOSE WORK IT NAMES (corrected by adversarial
+ * review). A blanket pull stamp from a later read, a pull that predates its
+ * delivery, and a pointer at another repo's work were all read as this repo's
+ * evidence of a pointer opened.
+ */
+describe("proof 1 — what an open is", () => {
+  const endSession = async (world: World, id: string, endedHoursAgo: number) => {
+    await world.harness.db
+      .update(agentSessions)
+      .set({ endedAt: at(endedHoursAgo) })
+      .where(eq(agentSessions.id, id));
+  };
+
+  test("a pull after the receiving session ended is not an open", async () => {
+    // Arrange — s_old was shown the pointer, ignored it and did the same
+    // work; the developer read the context weeks later from another session,
+    // and the legacy stamp marked s_old's delivery too
+    const world = await setup();
+    await session(world, "s_prior");
+    await context(world, "wc_prior", "s_prior", "Widen the filter row");
+    await touch(world, "wc_prior", ["src/a.ts", "src/b.ts"], 90);
+    await session(world, "s_old", 80);
+    await endSession(world, "s_old", 50);
+    await context(world, "wc_old", "s_old", "the same work, again");
+    await deliver(world, "hd_1", "s_old", "wc_prior", "prompt_hint", 70, 10);
+    await touch(world, "wc_old", ["src/a.ts", "src/b.ts"], 60);
+
+    // Act
+    const out = await report(world);
+
+    // Assert — not opened, and the duplicate work it did still counts
+    expect(out.duplicateWork.opened).toBe(0);
+    expect(out.duplicateWork.openedAnyway).toBe(1);
+  });
+
+  test("a pull before its delivery is not an open", async () => {
+    // Arrange
+    const world = await setup();
+    await session(world, "s_prior");
+    await context(world, "wc_prior", "s_prior", "Widen the filter row");
+    await session(world, "s_x");
+    await deliver(world, "hd_1", "s_x", "wc_prior", "prompt_hint", 10, 20);
+
+    // Act & Assert
+    expect((await report(world)).duplicateWork.opened).toBe(0);
+  });
+
+  test("another repo's work is never named as this repo's prior work", async () => {
+    // Arrange — a delivery's ref is the client's word; this one points at a
+    // work context in a repo that never enrolled
+    const world = await setup();
+    await world.harness.db.insert(agentSessions).values({
+      id: "s_b",
+      developerId: world.developer.developerId,
+      agentKind: "claude-code",
+      repo: "github.com/acme/secret",
+      branch: "main",
+      baseCommit: "abc1234",
+      status: "implementing",
+      startedAt: at(100),
+      lastHeartbeatAt: at(100),
+    });
+    await context(world, "wc_b", "s_b", "SECRET-B-TITLE");
+    await session(world, "s_x");
+    await deliver(world, "hd_1", "s_x", "wc_b", "prompt_hint", 10, 5);
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(JSON.stringify(out)).not.toContain("SECRET-B-TITLE");
+    expect(out.duplicateWork.priorWork).toEqual([]);
+  });
+});
+
 describe("proof 3 — attribution accuracy", () => {
   const seedPin = async (
     world: World,
@@ -519,6 +596,27 @@ describe("proof 3 — attribution accuracy", () => {
     expect(out.attribution.repaired[0]?.namedFiles).toEqual(["docs/notes.md"]);
     expect(out.attribution.supersededAnswers).toBe(1);
     expect(out.attribution.answersAfterRepair).toBe(1);
+  });
+});
+
+describe("proof 4 — sessions over sessions", () => {
+  test("a session that opened five pointers is ONE session that opened something", async () => {
+    // Arrange — the target is "one session in twelve received something it
+    // opened"; counting deliveries read 500 per 100 over one session
+    const world = await setup();
+    await session(world, "s_prior", 100);
+    await context(world, "wc_prior", "s_prior", "prior");
+    await session(world, "s_x", 20);
+    for (let index = 0; index < 5; index += 1) {
+      await deliver(world, `hd_${String(index)}`, "s_x", "wc_prior", "prompt_hint", 10, 5);
+    }
+
+    // Act — a window that holds s_x and not s_prior
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.sessions).toBe(1);
+    expect(out.precision.openedPer100).toEqual({ kind: "measured", value: 100 });
   });
 });
 

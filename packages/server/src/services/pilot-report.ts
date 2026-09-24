@@ -227,6 +227,25 @@ const zeroChannels = (): Record<DeliveryChannel, number> =>
 const POINTED = sql`CASE WHEN hd.ref_kind = 'work_context' THEN hd.ref_id
   ELSE (SELECT c.work_context_id FROM claims c WHERE c.id = hd.ref_id) END`;
 
+/**
+ * WHEN A PULL COUNTS AS AN OPEN (corrected by adversarial review).
+ *
+ * `pulled_at` is written by `markHintsPulled`, which — for a client that does
+ * not say which session is reading — stamps EVERY unpulled delivery of that
+ * developer for the work context, across all their sessions, with no time
+ * bound. One read then turned a pointer another session had ignored into an
+ * "opened" one, weeks later, and erased the "opened anyway" it had earned. So a
+ * pull counts only when it happened AFTER the delivery and WHILE the receiving
+ * session was alive: a session cannot have opened a pointer before it was
+ * shown one, or after it ended. (A current connector also sends its session,
+ * so the hub marks only the reader's own deliveries; this bound is what keeps
+ * an older one's blanket stamp from reading as an open.)
+ */
+const OPENED_AT = sql`CASE WHEN hd.pulled_at IS NOT NULL
+  AND hd.pulled_at >= hd.delivered_at
+  AND hd.pulled_at <= COALESCE(s.ended_at, s.reaped_at, 'infinity'::timestamptz)
+  THEN hd.pulled_at END`;
+
 const readDuplicateWork = async (
   deps: Deps,
   repo: string,
@@ -244,7 +263,7 @@ const readDuplicateWork = async (
   }>(sql`
     SELECT hd.channel AS channel,
            count(*)::int AS surfaced,
-           count(hd.pulled_at)::int AS opened
+           count(${OPENED_AT})::int AS opened
     FROM hint_deliveries hd
     JOIN agent_sessions s ON s.id = hd.session_id
     WHERE ${windowed}
@@ -263,7 +282,8 @@ const readDuplicateWork = async (
     opened_anyway: number;
   }>(sql`
     WITH d AS (
-      SELECT hd.id AS delivery_id, hd.session_id, hd.delivered_at, hd.pulled_at,
+      SELECT hd.id AS delivery_id, hd.session_id, hd.delivered_at,
+             ${OPENED_AT} AS pulled_at,
              ${POINTED} AS pointed
       FROM hint_deliveries hd
       JOIN agent_sessions s ON s.id = hd.session_id
@@ -297,22 +317,31 @@ const readDuplicateWork = async (
         AS opened_anyway
     FROM shared`);
 
+  // THE PRIOR WORK IS THIS REPO'S (corrected by adversarial review). A
+  // delivery's ref is the client's word, so without the repo join a pointer
+  // at another repo's work context — one that never enrolled — printed that
+  // repo's title in this repo's report. Bounded in SQL, with the total beside
+  // it, so the cost of a report does not grow with how much was opened.
   const named = await deps.db.execute<{
     work_context_id: string;
     title: string;
     opened_by: number;
+    total: number;
   }>(sql`
     SELECT wc.id AS work_context_id, wc.title AS title,
-           count(DISTINCT d.session_id)::int AS opened_by
+           count(DISTINCT d.session_id)::int AS opened_by,
+           count(*) OVER ()::int AS total
     FROM (
       SELECT hd.session_id, ${POINTED} AS pointed
       FROM hint_deliveries hd
       JOIN agent_sessions s ON s.id = hd.session_id
-      WHERE ${windowed} AND hd.pulled_at IS NOT NULL
+      WHERE ${windowed} AND ${OPENED_AT} IS NOT NULL
     ) d
     JOIN work_contexts wc ON wc.id = d.pointed
+    JOIN agent_sessions owner ON owner.id = wc.session_id AND owner.repo = ${repo}
     GROUP BY wc.id, wc.title
-    ORDER BY opened_by DESC, wc.id ASC`);
+    ORDER BY opened_by DESC, wc.id ASC
+    LIMIT ${PILOT_REPORT_MAX_PRIOR_WORK}`);
 
   const byChannel = zeroChannels();
   let surfaced = 0;
@@ -326,18 +355,19 @@ const readDuplicateWork = async (
     surfaced += row.surfaced;
     opened += row.opened;
   }
-  const allNamed = named.rows.map((row) => ({
+  const priorWork = named.rows.map((row) => ({
     workContextId: row.work_context_id,
     title: row.title,
     openedBySessions: row.opened_by,
   }));
+  const priorWorkTotal = named.rows[0]?.total ?? 0;
   return {
     surfaced,
     opened,
     converged: overlap.rows[0]?.converged ?? 0,
     byChannel,
-    priorWork: allNamed.slice(0, PILOT_REPORT_MAX_PRIOR_WORK),
-    priorWorkBeyondList: Math.max(0, allNamed.length - PILOT_REPORT_MAX_PRIOR_WORK),
+    priorWork,
+    priorWorkBeyondList: Math.max(0, priorWorkTotal - priorWork.length),
     openedAnyway: overlap.rows[0]?.opened_anyway ?? 0,
   };
 };
@@ -597,7 +627,17 @@ const readPrecision = async (
   since: Date,
   until: Date,
 ): Promise<ProofPrecision> => {
-  const [sessionRows, opened, marks] = await Promise.all([
+  // SESSIONS OVER SESSIONS (corrected by adversarial review). The target is
+  // "one session in twelve receiving something it opened" (§3.7), so the
+  // numerator counts SESSIONS — those that started in the window and opened
+  // at least one unasked pointer — never deliveries, which counted pointers
+  // to sessions that started earlier and read 500 per 100 over one session.
+  // The off-target rate is the same unit: sessions with at least one noise
+  // mark on a delivery to them. The mark count itself is still printed.
+  const windowSessions = sql`s.repo = ${repo}
+    AND s.started_at >= ${since.toISOString()}::timestamptz
+    AND s.started_at < ${until.toISOString()}::timestamptz`;
+  const [sessionRows, opened, noisy, marks] = await Promise.all([
     deps.db
       .select({ n: sql<number>`count(*)::int` })
       .from(agentSessions)
@@ -609,13 +649,19 @@ const readPrecision = async (
         ),
       ),
     deps.db.execute<{ n: number }>(sql`
-      SELECT count(*)::int AS n
-      FROM hint_deliveries hd
-      JOIN agent_sessions s ON s.id = hd.session_id
-      WHERE s.repo = ${repo} AND hd.pulled_at IS NOT NULL
+      SELECT count(DISTINCT s.id)::int AS n
+      FROM agent_sessions s
+      JOIN hint_deliveries hd ON hd.session_id = s.id
+      WHERE ${windowSessions}
         AND hd.channel <> 'suspect'
-        AND hd.delivered_at >= ${since.toISOString()}::timestamptz
-        AND hd.delivered_at < ${until.toISOString()}::timestamptz`),
+        AND ${OPENED_AT} IS NOT NULL`),
+    deps.db.execute<{ n: number }>(sql`
+      SELECT count(DISTINCT s.id)::int AS n
+      FROM pilot_marks m
+      JOIN hint_deliveries hd ON hd.id = m.ref_id
+      JOIN agent_sessions s ON s.id = hd.session_id
+      WHERE m.ref_kind = 'hint_delivery' AND m.mark = 'off_target'
+        AND ${windowSessions}`),
     deps.db
       .select({ mark: pilotMarks.mark, n: sql<number>`count(*)::int` })
       .from(pilotMarks)
@@ -641,7 +687,7 @@ const readPrecision = async (
     openedPer100: per100(opened.rows[0]?.n ?? 0),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
     offTargetMarks: offTarget,
-    offTargetPer100: per100(offTarget),
+    offTargetPer100: per100(noisy.rows[0]?.n ?? 0),
     offTargetCeilingPer100: PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100,
     surfaceOkMarks: markCount("surface_ok"),
   };

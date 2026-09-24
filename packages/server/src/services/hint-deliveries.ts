@@ -174,6 +174,7 @@ const listClaimRefCandidates = (
   deps: Deps,
   developerId: string,
   workContextId: string,
+  sessionId: string | undefined,
 ): Promise<readonly { id: string }[]> =>
   deps.db
     .select({ id: hintDeliveries.id })
@@ -184,6 +185,7 @@ const listClaimRefCandidates = (
       and(
         isNull(hintDeliveries.pulledAt),
         eq(agentSessions.developerId, developerId),
+        sessionId === undefined ? undefined : eq(hintDeliveries.sessionId, sessionId),
         eq(hintDeliveries.refKind, "claim"),
         eq(claims.workContextId, workContextId),
       ),
@@ -195,6 +197,7 @@ const listContextRefCandidates = (
   deps: Deps,
   developerId: string,
   workContextId: string,
+  sessionId: string | undefined,
 ): Promise<readonly { id: string }[]> =>
   deps.db
     .select({ id: hintDeliveries.id })
@@ -204,6 +207,7 @@ const listContextRefCandidates = (
       and(
         isNull(hintDeliveries.pulledAt),
         eq(agentSessions.developerId, developerId),
+        sessionId === undefined ? undefined : eq(hintDeliveries.sessionId, sessionId),
         eq(hintDeliveries.refKind, "work_context"),
         eq(hintDeliveries.refId, workContextId),
       ),
@@ -222,10 +226,17 @@ export const markHintsPulled = async (
   deps: Deps,
   developerId: string,
   workContextId: string,
+  /**
+   * THE READING SESSION, when the client can name it (07, corrected). Without
+   * it every unpulled delivery of this developer for the tree is stamped —
+   * across all their sessions — so one read turned a pointer another session
+   * had ignored into an "opened" one. With it, only that session's are.
+   */
+  sessionId?: string,
 ): Promise<void> => {
   const [claimRefs, contextRefs] = await Promise.all([
-    listClaimRefCandidates(deps, developerId, workContextId),
-    listContextRefCandidates(deps, developerId, workContextId),
+    listClaimRefCandidates(deps, developerId, workContextId, sessionId),
+    listContextRefCandidates(deps, developerId, workContextId, sessionId),
   ]);
   const ids = [...new Set([...claimRefs, ...contextRefs].map((row) => row.id))];
   if (ids.length === 0) {

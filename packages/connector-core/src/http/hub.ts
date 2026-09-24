@@ -1099,15 +1099,34 @@ const DiagnosisEnvelopeSchema = z
     };
   });
 
+/**
+ * WHO IS READING, for the pull stamp (07, corrected by adversarial review).
+ * A session id makes the hub mark only that session's deliveries as opened;
+ * `no_telemetry` reads without marking anything. Omitted, the hub marks the
+ * developer's deliveries in every session — the pre-1.0 behaviour, kept only
+ * for callers that cannot say.
+ */
+export type DiagnosisReader =
+  | { readonly sessionId: string }
+  | "no_telemetry";
+
 export const getDiagnosis = (
   ctx: HubContext,
   workContextId: string,
-): Promise<HubResult<Diagnosis>> =>
-  hubRequest(ctx, {
+  reader?: DiagnosisReader,
+): Promise<HubResult<Diagnosis>> => {
+  const query =
+    reader === undefined
+      ? ""
+      : reader === "no_telemetry"
+        ? "?telemetry=0"
+        : `?session=${encodeURIComponent(reader.sessionId)}`;
+  return hubRequest(ctx, {
     method: "GET",
-    path: `/api/work-contexts/${encodeURIComponent(workContextId)}/diagnosis`,
+    path: `/api/work-contexts/${encodeURIComponent(workContextId)}/diagnosis${query}`,
     schema: DiagnosisEnvelopeSchema,
   });
+};
 
 /**
  * The same tree, with NO hint telemetry (trial finding V1-X1).

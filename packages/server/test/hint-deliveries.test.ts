@@ -6,6 +6,7 @@ import { hintDeliveries } from "../src/db/schema.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
+  registerTestSession,
   jsonRequest,
   postRecords,
   recordEnvelope,
@@ -335,6 +336,32 @@ describe("get_diagnosis marks deliveries pulled (the precision loop)", () => {
     expect(response.status).toBe(200);
     const rows = await listDeliveryRows(harness);
     expect(rows[0]?.pulledAt).toBeNull();
+  });
+
+  test("a read that names its session stamps only that session's deliveries", async () => {
+    // Arrange — one developer, two sessions, both shown the same claim. The
+    // read comes from ses_01; ses_03 never opened anything (07, corrected).
+    const { harness, developer } = await seedContextWithClaim();
+    await registerTestSession(harness, developer.apiKey, { id: "ses_03" });
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("hint_delivery", deliveryBody()),
+        recordEnvelope("hint_delivery", deliveryBody({ sessionId: "ses_03" }), {
+          sessionId: "ses_03",
+        }),
+      ],
+    });
+
+    // Act
+    await harness.app.request(
+      `/api/work-contexts/${WORK_CONTEXT_ID}/diagnosis?session=ses_01`,
+      jsonRequest("GET", developer.apiKey),
+    );
+
+    // Assert
+    const rows = await listDeliveryRows(harness);
+    const pulled = Object.fromEntries(rows.map((row) => [row.sessionId, row.pulledAt !== null]));
+    expect(pulled).toEqual({ ses_01: true, ses_03: false });
   });
 
   test("a pulled timestamp is not rewritten by a second read", async () => {
