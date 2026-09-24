@@ -77,6 +77,9 @@ const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
     repaired: [],
     repairedBeyondBound: 0,
     noRepairYet: 0,
+    repairedWithoutBreakCommit: 0,
+    supersededAnswers: 0,
+    answersAfterRepair: 0,
   },
   precision: {
     sessions: 0,

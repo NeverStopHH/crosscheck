@@ -344,7 +344,12 @@ describe("proof 2 — collisions", () => {
 });
 
 describe("proof 3 — attribution accuracy", () => {
-  const seedPin = async (world: World, id: string, commit: string) => {
+  const seedPin = async (
+    world: World,
+    id: string,
+    commit: string,
+    brokeAtCommit: string | null = "b0b0b0b",
+  ) => {
     await world.harness.db.insert(pins).values({
       id,
       repo: REPO,
@@ -354,6 +359,8 @@ describe("proof 3 — attribution accuracy", () => {
       verifiedAt: at(200),
       checkRecipe: "bun test",
       captureMode: "human",
+      brokeAt: at(40),
+      brokeAtCommit,
       createdAt: at(200),
     });
     await world.harness.db.insert(pinFiles).values({
@@ -364,12 +371,29 @@ describe("proof 3 — attribution accuracy", () => {
     });
   };
 
+  const repairPin = async (world: World, repairs: string, hoursAgo = 5) => {
+    await world.harness.db.insert(pins).values({
+      id: `${repairs}_fix`,
+      repo: REPO,
+      surface: "playback",
+      verifiedBy: world.developer.developerId,
+      verifiedAtCommit: "def5678",
+      verifiedAt: at(hoursAgo),
+      checkRecipe: "bun test",
+      captureMode: "human",
+      repairsPinId: repairs,
+      repairsPinVersion: 1,
+      createdAt: at(hoursAgo),
+    });
+  };
+
   const answer = async (
     world: World,
     id: string,
     pinId: string,
     topSessionId: string,
     judgeable: boolean,
+    answeredHoursAgo = 30,
   ) => {
     await world.harness.db.insert(pilotAttributions).values({
       id,
@@ -381,7 +405,7 @@ describe("proof 3 — attribution accuracy", () => {
       topLift: 0.8,
       candidates: 2,
       coverageJudgeable: judgeable,
-      answeredAt: at(30),
+      answeredAt: at(answeredHoursAgo),
     });
   };
 
@@ -421,45 +445,80 @@ describe("proof 3 — attribution accuracy", () => {
     expect(out.attribution.attributions).toBe(1);
   });
 
-  test("a repaired attribution carries its fix range and what it named", async () => {
-    // Arrange — the named session touched the pinned file; the pin was
-    // later repaired by a re-pin at a later commit.
+  test("the fix range starts where the break was RECORDED, not where it last worked", async () => {
+    // Arrange — the pin was verified working at abc1234 and recorded broken
+    // at b0b0b0b. Diffing from abc1234 would include the break itself, so any
+    // session that touched the pinned file would read as a hit.
     const world = await setup();
     await session(world, "s_x");
     await context(world, "wc_x", "s_x", "rework playback");
-    await touch(world, "wc_x", ["src/player.ts", "src/unrelated.ts"], 60);
-    await seedPin(world, "pin_1", "abc1234");
-    await world.harness.db.insert(pins).values({
-      id: "pin_fix",
-      repo: REPO,
-      surface: "playback",
-      verifiedBy: world.developer.developerId,
-      verifiedAtCommit: "def5678",
-      verifiedAt: at(5),
-      checkRecipe: "bun test",
-      captureMode: "human",
-      repairsPinId: "pin_1",
-      repairsPinVersion: 1,
-      createdAt: at(5),
-    });
+    await touch(world, "wc_x", ["src/player.ts", "src/config.ts"], 60);
+    await seedPin(world, "pin_1", "abc1234", "b0b0b0b");
+    await repairPin(world, "pin_1");
     await answer(world, "pa_1", "pin_1", "s_x", true);
 
     // Act
     const out = await report(world);
 
-    // Assert — the CLI will diff abc1234..def5678 and look for src/player.ts
+    // Assert — the pinned files every candidate touched are handed over
+    // SEPARATELY from what only this session touched, because only the
+    // second can tell one candidate from another.
     expect(out.attribution.repaired).toEqual([
       {
         pinId: "pin_1",
-        repairPinId: "pin_fix",
-        brokenCommit: "abc1234",
+        repairPinId: "pin_1_fix",
+        brokenCommit: "b0b0b0b",
         repairCommit: "def5678",
-        // ONLY the pinned files the session touched — the overlap that
-        // ranked it — never everything the session ever edited.
-        namedFiles: ["src/player.ts"],
+        pinnedFiles: ["src/player.ts"],
+        namedFiles: ["src/config.ts"],
       },
     ]);
     expect(out.attribution.noRepairYet).toBe(0);
+  });
+
+  test("a break recorded without its commit is counted, never scored", async () => {
+    // Arrange — breaks recorded before the commit was stored
+    const world = await setup();
+    await session(world, "s_x");
+    await seedPin(world, "pin_1", "abc1234", null);
+    await repairPin(world, "pin_1");
+    await answer(world, "pa_1", "pin_1", "s_x", true);
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.attribution.repaired).toEqual([]);
+    expect(out.attribution.repairedWithoutBreakCommit).toBe(1);
+  });
+
+  test("one verdict per repaired break: the last answer before the repair", async () => {
+    // Arrange — three answers on one break. The breaker was named first, an
+    // innocent later, and the fixer only after the repair existed. Scoring all
+    // three would count one fix three times, and the fixer's answer was given
+    // with the fix already in hand.
+    const world = await setup();
+    for (const id of ["s_breaker", "s_innocent", "s_fixer"]) {
+      await session(world, id);
+      await context(world, `wc_${id}`, id, id);
+    }
+    await touch(world, "wc_s_breaker", ["src/player.ts", "src/config.ts"], 60);
+    await touch(world, "wc_s_innocent", ["src/player.ts", "docs/notes.md"], 60);
+    await touch(world, "wc_s_fixer", ["src/player.ts"], 4);
+    await seedPin(world, "pin_1", "abc1234");
+    await repairPin(world, "pin_1", 5);
+    await answer(world, "pa_1", "pin_1", "s_breaker", true, 30);
+    await answer(world, "pa_2", "pin_1", "s_innocent", true, 20);
+    await answer(world, "pa_3", "pin_1", "s_fixer", true, 2);
+
+    // Act
+    const out = await report(world);
+
+    // Assert — the innocent's answer is the one people last acted on
+    expect(out.attribution.repaired).toHaveLength(1);
+    expect(out.attribution.repaired[0]?.namedFiles).toEqual(["docs/notes.md"]);
+    expect(out.attribution.supersededAnswers).toBe(1);
+    expect(out.attribution.answersAfterRepair).toBe(1);
   });
 });
 

@@ -185,7 +185,11 @@ const attributionLines = (view: PilotView): readonly string[] => {
     "3. attribution accuracy — each repair's fix diff, scored on this clone",
     `${INDENT}ranked answers on recorded-break pins ${count(proof.answers)} · attributions ${count(proof.attributions)} · repaired ${count(proof.repaired.length + proof.repairedBeyondBound)}`,
     `${INDENT}hit ${count(tally(view.fixes, "hit"))} · miss ${count(tally(view.fixes, "miss"))} · excluded (coverage gap at answer time) ${count(proof.excluded)} · no repair pin yet ${count(proof.noRepairYet)}`,
-    `${INDENT}not scored: empty range ${count(tally(view.fixes, "empty"))} · too broad ${count(tally(view.fixes, "too_broad"))} · not resolvable on this clone ${count(unresolvable)}`,
+    `${INDENT}not scored: the fix touched only pinned files ${count(tally(view.fixes, "not_discriminating"))} · empty range ${count(tally(view.fixes, "empty"))} · too broad ${count(tally(view.fixes, "too_broad"))} · not resolvable on this clone ${count(unresolvable)}`,
+    `${INDENT}one verdict per fix: ${count(proof.supersededAnswers)} earlier answer(s) replaced · ${count(proof.answersAfterRepair)} given after the repair, not scored`,
+    ...(proof.repairedWithoutBreakCommit > 0
+      ? [`${INDENT}${count(proof.repairedWithoutBreakCommit)} repaired break(s) recorded no commit at the break, so there is no fix range to score`]
+      : []),
     ...(proof.repairedBeyondBound > 0
       ? [`${INDENT}(+${count(proof.repairedBeyondBound)} repaired past the diff bound, not scored)`]
       : []),

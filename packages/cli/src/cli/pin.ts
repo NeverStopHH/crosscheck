@@ -36,8 +36,10 @@ import {
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext, PinSweepUpdate } from "@crosscheck/connector-core/http/hub.ts";
 import {
+  COMMIT_SHA_PATTERN,
   MAX_PIN_FILES,
   MAX_SPEAKING_PIN_FILES,
+  NO_COMMIT_SHA,
   PIN_PRESENCE_TERMINAL,
   PinSchema,
 } from "@crosscheck/schema";
@@ -389,7 +391,17 @@ export const runPin = async (
     if (!isInteractive()) {
       return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
     }
-    const broken = await breakPin(resolved.ctx, resolved.repoId, args.broke);
+    // THE COMMIT IS SENT when git named one: proof 3's fix range starts at
+    // the break, not at the last commit the surface worked on (07 §3.4).
+    const broken = await breakPin(
+      resolved.ctx,
+      resolved.repoId,
+      args.broke,
+      COMMIT_SHA_PATTERN.test(resolved.baseCommit) &&
+        resolved.baseCommit !== NO_COMMIT_SHA
+        ? resolved.baseCommit
+        : undefined,
+    );
     if (!broken.ok) {
       return failureResult(broken);
     }

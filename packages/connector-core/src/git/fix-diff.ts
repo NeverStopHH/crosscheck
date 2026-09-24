@@ -8,9 +8,16 @@
  * diff runs HERE, on the reader's clone, inside `crosscheck pilot` — one
  * bounded `git diff --name-only` per repaired attribution.
  *
- * FIVE OUTCOMES, AND ONLY TWO OF THEM SCORE. `hit` and `miss` are verdicts on
- * the answer; the other three are statements that no verdict exists, and each
+ * SIX OUTCOMES, AND ONLY TWO OF THEM SCORE. `hit` and `miss` are verdicts on
+ * the answer; the other four are statements that no verdict exists, and each
  * is printed as itself rather than folded into a miss:
+ *
+ *   · `not_discriminating` — the fix changed pinned files and nothing only the
+ *     named session had touched. Every candidate touched a pinned file — that
+ *     is what made it a candidate — so this fix cannot tell one candidate
+ *     from another. Corrected: the first version scored the pinned overlap,
+ *     and every ranked answer on a one-file pin read as a hit, including one
+ *     naming a session that never broke anything.
  *
  *   · `empty` — nothing in history changed between the two verifications.
  *     Whatever broke was not in the code the answer searched (a flag, a
@@ -19,8 +26,12 @@
  *     five-hundred-file clean-up touches the named file by accident, and a hit
  *     scored on it would reward the answer for the size of the fix.
  *   · `unresolvable` — this clone cannot answer: a commit it never fetched, a
- *     git that did not answer in time, an id that is not a commit id, or an
- *     answer that named no file at all.
+ *     git that did not answer in time, or an id that is not a commit id.
+ *
+ * THE RANGE IS THE FIX, NOT THE BREAK: from the commit where the break was
+ * RECORDED to the commit where it was re-verified. From the last-working
+ * commit it contained the breaking change itself, and a revert fix netted to
+ * nothing.
  */
 import { COMMIT_SHA_PATTERN } from "@crosscheck/schema";
 
@@ -30,6 +41,7 @@ import { runGitOutcome } from "./git.ts";
 export const FIX_DIFF_OUTCOMES = [
   "hit",
   "miss",
+  "not_discriminating",
   "empty",
   "too_broad",
   "unresolvable",
@@ -38,11 +50,13 @@ export const FIX_DIFF_OUTCOMES = [
 export type FixDiffOutcome = (typeof FIX_DIFF_OUTCOMES)[number];
 
 export interface FixRange {
-  /** Where the broken invariant was last verified working. */
+  /** Where the break was recorded — the fix range starts after the break. */
   readonly brokenCommit: string;
   /** Where a human re-verified it after the fix. */
   readonly repairCommit: string;
-  /** The pinned files the named session had touched — what the answer named. */
+  /** The pin's files, which every candidate touched. */
+  readonly pinnedFiles: readonly string[];
+  /** Files ONLY the named session touched, outside the pin — what tells it apart. */
   readonly namedFiles: readonly string[];
 }
 
@@ -65,8 +79,7 @@ export const scoreFix = async (
   // this machine's git arguments".
   if (
     !COMMIT_SHA_PATTERN.test(range.brokenCommit) ||
-    !COMMIT_SHA_PATTERN.test(range.repairCommit) ||
-    range.namedFiles.length === 0
+    !COMMIT_SHA_PATTERN.test(range.repairCommit)
   ) {
     return "unresolvable";
   }
@@ -96,6 +109,14 @@ export const scoreFix = async (
   if (changed.length > PILOT_FIX_DIFF_MAX_FILES) {
     return "too_broad";
   }
+  // POSITIVE EVIDENCE OR NOTHING. A hit needs the fix to have gone into work
+  // only the named session did; a miss needs the fix to have gone entirely
+  // elsewhere. Between the two — the fix touched the pinned files everyone
+  // touched — the answer is neither right nor wrong on this evidence.
   const named = new Set(range.namedFiles);
-  return changed.some((path) => named.has(path)) ? "hit" : "miss";
+  if (changed.some((path) => named.has(path))) {
+    return "hit";
+  }
+  const pinned = new Set(range.pinnedFiles);
+  return changed.some((path) => pinned.has(path)) ? "not_discriminating" : "miss";
 };

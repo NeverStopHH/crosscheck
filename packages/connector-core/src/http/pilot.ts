@@ -62,6 +62,7 @@ const RepairSchema = z.looseObject({
   repairPinId: z.string().min(1),
   brokenCommit: z.string().min(1),
   repairCommit: z.string().min(1),
+  pinnedFiles: z.array(z.string().min(1)),
   namedFiles: z.array(z.string().min(1)),
 });
 
@@ -103,6 +104,9 @@ export const PilotReportSchema = z.looseObject({
     repaired: z.array(RepairSchema),
     repairedBeyondBound: CountSchema,
     noRepairYet: CountSchema,
+    repairedWithoutBreakCommit: CountSchema,
+    supersededAnswers: CountSchema,
+    answersAfterRepair: CountSchema,
   }),
   precision: z.looseObject({
     sessions: CountSchema,

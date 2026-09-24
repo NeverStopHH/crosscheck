@@ -71,11 +71,15 @@ const report = (): Record<string, unknown> => ({
         repairPinId: "pin_repair",
         brokenCommit,
         repairCommit,
+        pinnedFiles: ["src/workbench/Player.tsx"],
         namedFiles: [NAMED],
       },
     ],
     repairedBeyondBound: 0,
     noRepairYet: 0,
+    repairedWithoutBreakCommit: 0,
+    supersededAnswers: 0,
+    answersAfterRepair: 0,
   },
   precision: {
     sessions: 3,
@@ -216,6 +220,26 @@ describe("crosscheck pilot", () => {
     // Assert
     expect(result.stdout).not.toContain("‮");
     expect(result.stdout).not.toContain("\\u202e");
+  });
+
+  test("a hub that sends more repairs than the bound cannot make this machine diff them all", async () => {
+    // Arrange — the hub bounds its own list; a hostile or broken one might not
+    answer = () => {
+      const base = report();
+      const attribution = base.attribution as Record<string, unknown>;
+      const one = (attribution.repaired as unknown[])[0];
+      return {
+        ...base,
+        attribution: { ...attribution, repaired: Array.from({ length: 30 }, () => one) },
+      };
+    };
+
+    // Act
+    const result = await run(["--json"]);
+    const parsed = JSON.parse(result.stdout) as { fixes: unknown[] };
+
+    // Assert
+    expect(parsed.fixes).toHaveLength(25);
   });
 
   test("--by-developer is refused by name, and nothing is asked", async () => {

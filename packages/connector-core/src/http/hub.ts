@@ -2299,12 +2299,22 @@ export const breakPin = (
   ctx: HubContext,
   repo: string,
   pinId: string,
+  /**
+   * The reader's HEAD when the check failed (07 §3.4). Proof 3's fix range
+   * starts here, so it holds the fix and not the break. Omitted, the break is
+   * still recorded; proof 3 then counts it and never scores it.
+   */
+  brokeAtCommit?: string,
 ): Promise<HubResult<{ readonly id: string }>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/pins/${encodeURIComponent(pinId)}/broke`,
     schema: CreatedPinSchema,
-    body: { repo, presence: PIN_PRESENCE_TERMINAL },
+    body: {
+      repo,
+      presence: PIN_PRESENCE_TERMINAL,
+      ...(brokeAtCommit === undefined ? {} : { brokeAtCommit }),
+    },
   });
 
 export interface PinSweepUpdate {

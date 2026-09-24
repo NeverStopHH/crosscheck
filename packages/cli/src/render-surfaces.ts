@@ -229,6 +229,7 @@ const pilotWith = (payload: string): PilotView => {
     repairPinId: payload,
     brokenCommit: payload,
     repairCommit: payload,
+    pinnedFiles: [payload],
     namedFiles: [payload],
   };
   return {
@@ -261,6 +262,9 @@ const pilotWith = (payload: string): PilotView => {
         repaired: [repair],
         repairedBeyondBound: 1,
         noRepairYet: 1,
+        repairedWithoutBreakCommit: 1,
+        supersededAnswers: 1,
+        answersAfterRepair: 1,
       },
       precision: {
         sessions: 1,

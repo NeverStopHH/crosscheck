@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 636
+    # PRINTS: 645
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -129,10 +129,10 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor.ts 40
     # PRINTS: packages/cli/src/cli/noise.ts 5
     # PRINTS: packages/cli/src/cli/pilot-render.ts 10
-    # PRINTS: packages/cli/src/cli/pilot.ts 2
+    # PRINTS: packages/cli/src/cli/pilot.ts 3
     # PRINTS: packages/cli/src/cli/pin-observability.ts 1
     # PRINTS: packages/cli/src/cli/pin-render.ts 3
-    # PRINTS: packages/cli/src/cli/pin.ts 1
+    # PRINTS: packages/cli/src/cli/pin.ts 2
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 6
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
@@ -195,7 +195,7 @@ jobs:
     # PRINTS: flows/register-session.ts 2
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/claim-drift.ts 5
-    # PRINTS: git/fix-diff.ts 6
+    # PRINTS: git/fix-diff.ts 7
     # PRINTS: git/pin-sweep.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
@@ -260,7 +260,7 @@ jobs:
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 6
     # PRINTS: packages/server/src/routes/absences.ts 1
-    # PRINTS: packages/server/src/routes/pins.ts 1
+    # PRINTS: packages/server/src/routes/pins.ts 3
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 2
@@ -284,7 +284,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 9
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pilot-candidates.ts 7
-    # PRINTS: packages/server/src/services/pilot-report.ts 10
+    # PRINTS: packages/server/src/services/pilot-report.ts 14
     # PRINTS: packages/server/src/services/pilot.ts 19
     # PRINTS: packages/server/src/services/pins.ts 5
     # PRINTS: packages/server/src/services/presence.ts 1
@@ -354,7 +354,7 @@ jobs:
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 3
-    # PRINTS: fix-diff.ts 6
+    # PRINTS: fix-diff.ts 7
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
     # PRINTS: ghost-overlap.ts 4
@@ -381,13 +381,13 @@ jobs:
     # PRINTS: pilot-candidates.ts 7
     # PRINTS: pilot-mark.ts 1
     # PRINTS: pilot-render.ts 10
-    # PRINTS: pilot-report.ts 10
-    # PRINTS: pilot.ts 23
+    # PRINTS: pilot-report.ts 14
+    # PRINTS: pilot.ts 24
     # PRINTS: pin-observability.ts 1
     # PRINTS: pin-render.ts 3
     # PRINTS: pin-sweep.ts 2
-    # PRINTS: pin.ts 2
-    # PRINTS: pins.ts 6
+    # PRINTS: pin.ts 3
+    # PRINTS: pins.ts 8
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 8
     # PRINTS: pre-tool-use.ts 5

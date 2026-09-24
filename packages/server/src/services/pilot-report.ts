@@ -41,7 +41,7 @@
  * VERIFY: grep -c 'from(sessionEvents)' packages/server/src/services/pilot.ts
  * PRINTS: 1
  */
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { DELIVERY_CHANNELS } from "@crosscheck/schema";
 import type {
   DeliveryChannel,
@@ -52,6 +52,7 @@ import {
   GHOST_MIN_SHARED_TARGETS,
   PILOT_CONVERGENCE_WINDOW_HOURS,
   PILOT_MAX_SESSIONS,
+  PILOT_FIX_DIFF_MAX_NAMED_FILES,
   PILOT_REPORT_MAX_PRIOR_WORK,
   PILOT_REPORT_MAX_REPAIRS,
   PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100,
@@ -134,8 +135,16 @@ export interface ScorableRepair {
   /** Where a human re-verified it after the fix. */
   readonly repairCommit: string;
   /**
-   * WHAT THE ANSWER NAMED: the pinned files the top session had touched —
-   * the overlap that ranked it. A fix touching one of these is a hit.
+   * The pin's own files. EVERY candidate touched at least one of them — that
+   * is what made it a candidate — so a fix that changed only these cannot
+   * tell one candidate from another, and the CLI says so instead of scoring.
+   */
+  readonly pinnedFiles: readonly string[];
+  /**
+   * WHAT ONLY THIS ANSWER NAMED: files the named session touched OUTSIDE the
+   * pin. Corrected: this carried "the pinned files the session touched", which
+   * every candidate shares, so every ranked answer on a one-file pin scored
+   * the same — a hit that did not depend on who was named.
    */
   readonly namedFiles: readonly string[];
 }
@@ -151,6 +160,12 @@ export interface ProofAttribution {
   /** Repaired attributions beyond the diff bound, counted not dropped. */
   readonly repairedBeyondBound: number;
   readonly noRepairYet: number;
+  /** Repaired breaks recorded before the break commit was stored: counted, never scored. */
+  readonly repairedWithoutBreakCommit: number;
+  /** Earlier answers on a repaired break that a later one replaced: one verdict per fix. */
+  readonly supersededAnswers: number;
+  /** Answers given once the repair already existed — the fix was in hand, so not scored. */
+  readonly answersAfterRepair: number;
 }
 
 export interface ProofPrecision {
@@ -416,6 +431,7 @@ const readAttribution = async (
       pinId: pilotAttributions.pinId,
       topSessionId: pilotAttributions.topSessionId,
       judgeable: pilotAttributions.coverageJudgeable,
+      answeredAt: pilotAttributions.answeredAt,
     })
     .from(pilotAttributions)
     .where(
@@ -426,12 +442,10 @@ const readAttribution = async (
         gte(pilotAttributions.answeredAt, since),
         lt(pilotAttributions.answeredAt, until),
       ),
-    );
+    )
+    .orderBy(asc(pilotAttributions.answeredAt));
 
-  const byAttribution = new Map<
-    string,
-    { pinId: string; topSessionId: string; judgeable: boolean }
-  >();
+  const byAttribution = new Map<string, { pinId: string; judgeable: boolean }>();
   for (const row of answers) {
     if (row.topSessionId === null) {
       continue;
@@ -440,7 +454,6 @@ const readAttribution = async (
     const seen = byAttribution.get(key);
     byAttribution.set(key, {
       pinId: row.pinId,
-      topSessionId: row.topSessionId,
       judgeable: (seen?.judgeable ?? false) || row.judgeable,
     });
   }
@@ -457,59 +470,98 @@ const readAttribution = async (
               repairPinId: pins.id,
               repairsPinId: pins.repairsPinId,
               repairCommit: pins.verifiedAtCommit,
+              repairedAt: pins.createdAt,
             })
             .from(pins)
             .where(and(eq(pins.repo, repo), inArray(pins.repairsPinId, pinIds))),
           deps.db
-            .select({ id: pins.id, commit: pins.verifiedAtCommit })
+            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit })
             .from(pins)
             .where(inArray(pins.id, pinIds)),
         ]);
-  const brokenCommit = new Map(broken.map((row) => [row.id, row.commit]));
-  const repairOf = new Map<string, { repairPinId: string; repairCommit: string }>();
+  const brokeAtCommit = new Map(broken.map((row) => [row.id, row.brokeAtCommit]));
+  const repairOf = new Map<
+    string,
+    { repairPinId: string; repairCommit: string; repairedAt: Date }
+  >();
   for (const row of repairs) {
     if (row.repairsPinId !== null) {
-      repairOf.set(row.repairsPinId, {
-        repairPinId: row.repairPinId,
-        repairCommit: row.repairCommit,
-      });
+      repairOf.set(row.repairsPinId, row);
     }
   }
 
-  const repaired = scorable.filter((row) => repairOf.has(row.pinId));
-  const scored: ScorableRepair[] = [];
-  for (const row of repaired.slice(0, PILOT_REPORT_MAX_REPAIRS)) {
-    const repair = repairOf.get(row.pinId);
-    const commit = brokenCommit.get(row.pinId);
-    if (repair === undefined || commit === undefined) {
+  // ONE VERDICT PER REPAIRED BREAK. The answer scored is the LAST judgeable
+  // one given before the repair existed — the answer people last acted on.
+  // Earlier ones are superseded, and answers given once the repair was in
+  // place are not scored at all: the fix was already in hand.
+  let supersededAnswers = 0;
+  let answersAfterRepair = 0;
+  let repairedWithoutBreakCommit = 0;
+  const chosen: { pinId: string; topSessionId: string }[] = [];
+  for (const pinId of pinIds) {
+    const repair = repairOf.get(pinId);
+    if (repair === undefined) {
       continue;
     }
-    const files = await deps.db
-      .selectDistinct({ path: pinFiles.path })
-      .from(pinFiles)
-      .innerJoin(
-        workContextTargets,
-        and(
-          eq(workContextTargets.kind, "file"),
-          eq(workContextTargets.value, pinFiles.path),
-        ),
-      )
+    const onBreak = answers.filter(
+      (row) => row.pinId === pinId && row.topSessionId !== null,
+    );
+    const before = onBreak.filter(
+      (row) => row.judgeable && row.answeredAt < repair.repairedAt,
+    );
+    answersAfterRepair += onBreak.filter(
+      (row) => row.answeredAt >= repair.repairedAt,
+    ).length;
+    const last = before.at(-1);
+    if (last === undefined || last.topSessionId === null) {
+      continue;
+    }
+    supersededAnswers += before.length - 1;
+    if ((brokeAtCommit.get(pinId) ?? null) === null) {
+      repairedWithoutBreakCommit += 1;
+      continue;
+    }
+    chosen.push({ pinId, topSessionId: last.topSessionId });
+  }
+
+  const scored: ScorableRepair[] = [];
+  for (const row of chosen.slice(0, PILOT_REPORT_MAX_REPAIRS)) {
+    const repair = repairOf.get(row.pinId);
+    const commit = brokeAtCommit.get(row.pinId) ?? null;
+    if (repair === undefined || commit === null) {
+      continue;
+    }
+    const pinned = (
+      await deps.db
+        .select({ path: pinFiles.path })
+        .from(pinFiles)
+        .where(eq(pinFiles.pinId, row.pinId))
+    ).map((file) => file.path);
+    const outside = await deps.db
+      .selectDistinct({ path: workContextTargets.value })
+      .from(workContextTargets)
       .innerJoin(
         workContexts,
         eq(workContexts.id, workContextTargets.workContextId),
       )
       .where(
         and(
-          eq(pinFiles.pinId, row.pinId),
+          eq(workContextTargets.kind, "file"),
           eq(workContexts.sessionId, row.topSessionId),
+          pinned.length === 0
+            ? undefined
+            : notInArray(workContextTargets.value, pinned),
         ),
-      );
+      )
+      .orderBy(asc(workContextTargets.value))
+      .limit(PILOT_FIX_DIFF_MAX_NAMED_FILES);
     scored.push({
       pinId: row.pinId,
       repairPinId: repair.repairPinId,
       brokenCommit: commit,
       repairCommit: repair.repairCommit,
-      namedFiles: files.map((file) => file.path).sort(),
+      pinnedFiles: [...pinned].sort(),
+      namedFiles: outside.map((file) => file.path),
     });
   }
 
@@ -518,8 +570,11 @@ const readAttribution = async (
     attributions: byAttribution.size,
     excluded,
     repaired: scored,
-    repairedBeyondBound: Math.max(0, repaired.length - PILOT_REPORT_MAX_REPAIRS),
-    noRepairYet: scorable.length - repaired.length,
+    repairedBeyondBound: Math.max(0, chosen.length - PILOT_REPORT_MAX_REPAIRS),
+    noRepairYet: pinIds.filter((pinId) => !repairOf.has(pinId)).length,
+    repairedWithoutBreakCommit,
+    supersededAnswers,
+    answersAfterRepair,
   };
 };
 
@@ -693,6 +748,9 @@ const notEnrolled = (): Omit<
     repaired: [],
     repairedBeyondBound: 0,
     noRepairYet: 0,
+    repairedWithoutBreakCommit: 0,
+    supersededAnswers: 0,
+    answersAfterRepair: 0,
   },
   precision: {
     sessions: 0,

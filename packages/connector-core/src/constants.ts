@@ -2025,6 +2025,18 @@ export const PILOT_FIX_DIFF_MAX_FILES = PIN_SWEEP_MAX_PATHS;
 export const PILOT_FIX_DIFF_CONCURRENCY = 4;
 
 /**
+ * How many repairs `crosscheck pilot` will diff, whatever the hub sent. The
+ * hub already bounds its list at PILOT_REPORT_MAX_REPAIRS; this is the same
+ * number held on the side that spawns the processes, so a hub that answers
+ * with ten thousand repairs cannot make a reader's machine run ten thousand
+ * `git diff`s:
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(s.PILOT_REPORT_MAX_REPAIRS === c.PILOT_FIX_DIFF_MAX_REPAIRS)'
+ * PRINTS: true
+ */
+export const PILOT_FIX_DIFF_MAX_REPAIRS = 25;
+
+/**
  * How far back `crosscheck noise` with no argument looks for the delivery a
  * person means (07 §3.2).
  *

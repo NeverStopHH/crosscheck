@@ -8430,15 +8430,114 @@ export const MUTATIONS: readonly Mutation[] = [
       "change could have fixed",
   },
   {
-    // 07 §3.4. An answer that named no file has nothing to be right or wrong about.
-    label: "an answer that named no file is scored a miss",
+    // 07 §3.4, corrected by adversarial review. The fix range starts at the RECORDED break.
+    label: "the fix range starts where the surface last worked",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit })",
+    to: "            .select({ id: pins.id, brokeAtCommit: pins.verifiedAtCommit })",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the range contains the breaking change itself, so every session that touched " +
+      "the pinned file scores a hit and a revert fix nets to nothing",
+  },
+  {
+    // 07 §3.4. One verdict per fix: the last answer given BEFORE the repair existed.
+    label: "an answer given with the fix in hand is scored",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "      (row) => row.judgeable && row.answeredAt < repair.repairedAt,",
+    to: "      (row) => row.judgeable,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the fixer asks suspect after repairing and is scored as though the product " +
+      "found the culprit before anybody knew",
+  },
+  {
+    // 07 §3.4. A break with no recorded commit has no fix range.
+    label: "a break without its commit is silently dropped",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    if ((brokeAtCommit.get(pinId) ?? null) === null) {",
+    to: "    if (brokeAtCommit.get(pinId) === \"never\") {",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every break recorded before the column existed vanishes from proof 3 instead " +
+      "of being counted, so the denominator shrinks without saying why",
+  },
+  {
+    // 07 §3.4. What the answer named is what ONLY it touched — never the pinned files every candidate shares.
+    label: "the named files include the pin everyone touched",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "            : notInArray(workContextTargets.value, pinned),",
+    to: "            : undefined,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every ranked answer on a pin carries the pinned file, so the fix diff " +
+      "cannot tell the breaker from an innocent and both score a hit",
+  },
+  {
+    // 07 §3.4. A fix that changed only pinned files cannot tell candidates apart.
+    label: "a fix of the pinned file alone scores a hit",
     file: `${CORE}/src/git/fix-diff.ts`,
-    from: "    range.namedFiles.length === 0",
-    to: "    range.namedFiles.length === -1",
+    from: "  return changed.some((path) => pinned.has(path)) ? \"not_discriminating\" : \"miss\";",
+    to: "  return changed.some((path) => pinned.has(path)) ? \"hit\" : \"miss\";",
     test: `${CORE}/test/fix-diff.test.ts`,
     because:
-      "hub-side data gaps become misses, so proof 3 punishes the product for " +
-      "evidence it never had",
+      "the attribution scores right whoever was named, because every candidate " +
+      "touched the file the fix changed",
+  },
+  {
+    // 07 §3.4. A hit needs positive evidence: the fix went into the named session's own work.
+    label: "any change in the fix range scores a hit",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "  if (changed.some((path) => named.has(path))) {",
+    to: "  if (changed.length > 0) {",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "proof 3 reads 100% for any repo with any fixes, which is the product " +
+      "grading itself on the one proof that could embarrass it",
+  },
+  {
+    // 07 §3.4. The break commit reaches every reader's `git diff`.
+    label: "any string is accepted as a break commit",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "  brokeAtCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),",
+    to: "  brokeAtCommit: z.string().optional(),",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "a flag-shaped value is stored and handed to `crosscheck pilot` on every " +
+      "reader's machine, where only the client's second check stands in its way",
+  },
+  {
+    // 07 §3.4. The no-commit placeholder is not a commit.
+    label: "the placeholder commit becomes a range start",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "        parsed.data.brokeAtCommit === NO_COMMIT_SHA",
+    to: "        parsed.data.brokeAtCommit === \"never\"",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "`0000000` is stored as where the break was seen, and every diff over it " +
+      "fails as unresolvable instead of being counted as having no commit",
+  },
+  {
+    // 07 §3.4. The CLI sends the clone's HEAD with the break.
+    label: "a break is recorded without its commit",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "        ? resolved.baseCommit\n        : undefined,",
+    to: "        ? undefined\n        : undefined,",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "no new break ever carries a commit, so proof 3 counts every repair as " +
+      "unscorable for ever while reading as a feature that works",
+  },
+  {
+    // 07 §3.4. The side that spawns the processes holds the bound.
+    label: "a hub can make the reader run unbounded git diffs",
+    file: `${CLI}/src/cli/pilot.ts`,
+    from: "      result.data.attribution.repaired.slice(0, PILOT_FIX_DIFF_MAX_REPAIRS),",
+    to: "      result.data.attribution.repaired.slice(0),",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "a hostile or broken hub answers with thousands of repairs and `crosscheck " +
+      "pilot` spawns a git process for every one on the reader's machine",
   },
   {
     // 07 §5. The pilot parse is STRICT: a count that did not arrive must not read as zero.
@@ -9326,11 +9425,11 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/pilot-cli.test.ts 3
+ * PRINTS: packages/cli/test/pilot-cli.test.ts 4
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 3
+ * PRINTS: packages/cli/test/pins-cli.test.ts 4
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
@@ -9408,7 +9507,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
- * PRINTS: packages/connector-core/test/fix-diff.test.ts 6
+ * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -9488,8 +9587,8 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 5
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
  * PRINTS: packages/server/test/pilot-marks.test.ts 7
- * PRINTS: packages/server/test/pilot-repairs.test.ts 3
- * PRINTS: packages/server/test/pilot-report.test.ts 10
+ * PRINTS: packages/server/test/pilot-repairs.test.ts 5
+ * PRINTS: packages/server/test/pilot-report.test.ts 14
  * PRINTS: packages/server/test/pilot-retention.test.ts 3
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4
  * PRINTS: packages/server/test/pins.test.ts 4
