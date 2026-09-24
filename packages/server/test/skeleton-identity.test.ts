@@ -295,6 +295,25 @@ describe("the backfill of rows that predate the columns", () => {
     });
   });
 
+  test("the backfill walks page by page and reaches the same values at any page size", async () => {
+    // Arrange — more rows than a page, so every loop has to turn its cursor
+    const w = await world();
+    await touch(w, "wc_a", [FILE, "src/z.ts", "src/q.ts"]);
+    await claimAndSupersede(w);
+    const complete = await identities(w.harness);
+
+    for (const batch of [1, 2]) {
+      await forgetIdentity(w.harness);
+
+      // Act
+      const report = await backfillSkeletonIdentity(deps(w.harness), { batch });
+
+      // Assert
+      expect(await identities(w.harness), `page size ${String(batch)}`).toEqual(complete);
+      expect(report.providers, `page size ${String(batch)}`).toBe(complete.length);
+    }
+  });
+
   test("a row it cannot resolve stays NULL and is counted, never guessed", async () => {
     // Arrange — a file.modified row whose target this hub does not hold
     const w = await world();

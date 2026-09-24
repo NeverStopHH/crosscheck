@@ -110,13 +110,6 @@ export interface SkeletonBackfillReport {
   readonly unresolvedFileRefs: number;
 }
 
-const countOf = async (db: DbExecutor, statement: SQL): Promise<number> => {
-  const result = await db.execute(
-    sql`WITH changed AS (${statement} RETURNING 1) SELECT count(*)::int AS n FROM changed`,
-  );
-  return Number((result.rows[0] as { n?: number } | undefined)?.n ?? 0);
-};
-
 /**
  * EVERY FILE A PIN WATCHES HAS ITS IDENTITY IN THE PIN'S HISTORY — checked
  * row by row on every start, never inferred from "the pin has some history".
@@ -163,13 +156,51 @@ const seedPinFileRefs = async (deps: Deps): Promise<number> => {
   return byPin.size;
 };
 
+/**
+ * ONE PAGE AT A TIME, never one UPDATE over the table. PGlite serves one
+ * statement at a time, so a whole-table UPDATE on a large hub would hold every
+ * hook request behind it for as long as it ran. Each page is a keyset slice
+ * of the rows still missing a value (`pending`), and `write` is the UPDATE
+ * restricted to that page's ids; a page whose rows cannot be filled still
+ * moves the cursor, so the walk ends.
+ */
+const pagedUpdate = async (
+  deps: Deps,
+  batch: number,
+  pending: SQL,
+  write: (page: SQL) => SQL,
+): Promise<number> => {
+  let cursor = "";
+  let written = 0;
+  for (;;) {
+    const result = await deps.db.execute(sql`
+      WITH page AS (
+        SELECT se.id FROM session_events se
+         WHERE ${pending} AND se.id > ${cursor}
+         ORDER BY se.id
+         LIMIT ${batch}
+      ),
+      written AS (${write(sql`SELECT id FROM page`)} RETURNING 1)
+      SELECT (SELECT count(*)::int FROM written) AS written,
+             (SELECT max(id) FROM page) AS last`);
+    const row = (result.rows[0] ?? {}) as { written?: number; last?: string | null };
+    written += Number(row.written ?? 0);
+    if (row.last === null || row.last === undefined) {
+      return written;
+    }
+    cursor = String(row.last);
+  }
+};
+
 /** Exact: one `agent_kind` per session, so the copy cannot disagree with its source. */
-const backfillProviders = (deps: Deps): Promise<number> =>
-  countOf(
-    deps.db,
-    sql`UPDATE session_events se SET provider = s.agent_kind
-          FROM agent_sessions s
-         WHERE s.id = se.session_id AND se.provider IS NULL`,
+const backfillProviders = (deps: Deps, batch: number): Promise<number> =>
+  pagedUpdate(
+    deps,
+    batch,
+    sql`se.provider IS NULL`,
+    (page) => sql`UPDATE session_events se SET provider = s.agent_kind
+                    FROM agent_sessions s
+                   WHERE s.id = se.session_id AND se.id IN (${page})`,
   );
 
 /**
@@ -177,20 +208,22 @@ const backfillProviders = (deps: Deps): Promise<number> =>
  * INVALIDATING claim's — the edge's `from` side, the assertion this session
  * made — because an edge has no work context of its own.
  */
-const backfillClaimContexts = async (deps: Deps): Promise<number> =>
-  (await countOf(
-    deps.db,
-    sql`UPDATE session_events se SET work_context_id = c.work_context_id
-          FROM claims c
-         WHERE se.kind = 'claim.created' AND se.ref_kind = 'claim'
-           AND c.id = se.ref_id AND se.work_context_id IS NULL`,
+const backfillClaimContexts = async (deps: Deps, batch: number): Promise<number> =>
+  (await pagedUpdate(
+    deps,
+    batch,
+    sql`se.kind = 'claim.created' AND se.ref_kind = 'claim' AND se.work_context_id IS NULL`,
+    (page) => sql`UPDATE session_events se SET work_context_id = c.work_context_id
+                    FROM claims c
+                   WHERE c.id = se.ref_id AND se.id IN (${page})`,
   )) +
-  (await countOf(
-    deps.db,
-    sql`UPDATE session_events se SET work_context_id = c.work_context_id
-          FROM claim_edges e JOIN claims c ON c.id = e.from_claim_id
-         WHERE se.kind = 'claim.invalidated' AND se.ref_kind = 'claim_edge'
-           AND e.id = se.ref_id AND se.work_context_id IS NULL`,
+  (await pagedUpdate(
+    deps,
+    batch,
+    sql`se.kind = 'claim.invalidated' AND se.ref_kind = 'claim_edge' AND se.work_context_id IS NULL`,
+    (page) => sql`UPDATE session_events se SET work_context_id = c.work_context_id
+                    FROM claim_edges e JOIN claims c ON c.id = e.from_claim_id
+                   WHERE e.id = se.ref_id AND se.id IN (${page})`,
   ));
 
 interface TargetMatch {
@@ -210,6 +243,7 @@ interface TargetMatch {
 const targetPage = async (
   deps: Deps,
   cursor: string,
+  batch: number,
 ): Promise<readonly TargetMatch[]> => {
   const result = await deps.db.execute(sql`
     WITH batch AS (
@@ -220,7 +254,7 @@ const targetPage = async (
               OR (se.kind = 'file.modified' AND se.file_ref IS NULL))
          AND se.id > ${cursor}
        ORDER BY se.id
-       LIMIT ${SKELETON_BACKFILL_BATCH}
+       LIMIT ${batch}
     ),
     digests AS (
       SELECT t.work_context_id, t.value,
@@ -255,13 +289,14 @@ const targetPage = async (
 
 const backfillTargets = async (
   deps: Deps,
+  batch: number,
 ): Promise<{ readonly workContexts: number; readonly fileRefs: number; readonly unresolved: number }> => {
   let cursor = "";
   let workContexts = 0;
   let fileRefs = 0;
   let unresolved = 0;
   for (;;) {
-    const page = await targetPage(deps, cursor);
+    const page = await targetPage(deps, cursor, batch);
     const last = page.at(-1);
     if (last === undefined) {
       return { workContexts, fileRefs, unresolved };
@@ -310,11 +345,19 @@ const backfillTargets = async (
  */
 export const backfillSkeletonIdentity = async (
   deps: Deps,
+  options: { readonly batch?: number } = {},
 ): Promise<SkeletonBackfillReport> => {
+  const batch = options.batch ?? SKELETON_BACKFILL_BATCH;
   const pinsSeeded = await seedPinFileRefs(deps);
-  const providers = await backfillProviders(deps);
-  const claimContexts = await backfillClaimContexts(deps);
-  const targets = await backfillTargets(deps);
+  const providers = await backfillProviders(deps, batch);
+  const claimContexts = await backfillClaimContexts(deps, batch);
+  const targets = await backfillTargets(deps, batch);
+  // EVERY UPDATE LEFT A DEAD ROW VERSION BEHIND, and PGlite runs no
+  // autovacuum: without this the backfill would double the table for good.
+  // Once, only when something was written — so every later start skips it.
+  if (providers + claimContexts + targets.workContexts + targets.fileRefs > 0) {
+    await deps.db.execute(sql`VACUUM session_events`);
+  }
   return {
     pinsSeeded,
     providers,

@@ -10274,6 +10274,26 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "the person is told the file is not in git and goes looking for a typo in a path that is fine, in another repository",
   },
+  {
+    // 01a §4.1. The column backfill walks every page.
+    label: "the column backfill stops after one page",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    cursor = String(row.last);",
+    to: "    return written;",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "on any hub larger than a page, every vendor and context past the first page stays NULL for ever, and the report says the backfill finished",
+  },
+  {
+    // 01a §4.1. The file-identity backfill walks every page.
+    label: "the file-identity backfill stops after one page",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    cursor = last.id;",
+    to: "    return { workContexts, fileRefs, unresolved };",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "every pre-deploy edit past the first page stays unresolved, and the repo's file-bearing sessions are kept for ever without anyone being told why",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -10526,7 +10546,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
- * PRINTS: packages/server/test/skeleton-identity.test.ts 14
+ * PRINTS: packages/server/test/skeleton-identity.test.ts 16
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
