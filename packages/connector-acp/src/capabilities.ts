@@ -96,6 +96,13 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "permission requests originate agent-side on session/request_permission, so intercepting one would mean answering on the agent's behalf ON the forward path — the proxy forwards permission traffic untouched, never answers it, and never blocks a tool call",
     },
+    // 07 §8.6, PIL-8: the pilot channel this host cannot feed, printed by
+    // this connector's doctor on every run rather than read as a zero.
+    {
+      name: "pilot tripwire channel",
+      sentence:
+        "never fed from this host: the proxy forwards permission traffic untouched and asks nothing before an edit, so the pilot report's tripwire figure counts only sessions on hosts that can ask — a low figure on a team working here means fewer sessions that could have asked, not fewer collisions",
+    },
     {
       name: "agent reasoning capture",
       sentence:

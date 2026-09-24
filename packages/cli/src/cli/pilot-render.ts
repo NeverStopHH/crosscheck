@@ -77,19 +77,26 @@ const isKnownReason = (reason: string): reason is PilotUnavailableReason =>
 
 const count = (value: number): string => value.toLocaleString("en-US");
 
+/**
+ * `unavailable — <why>`, or `unavailable (<word>)` for a reason this client
+ * has no sentence for. Exported because `doctor` prints the same absences and
+ * must use the same words — two phrasings of one absence would read as two
+ * different facts.
+ */
+export const unavailableClause = (reason: string): string =>
+  isKnownReason(reason)
+    ? `unavailable — ${REASON_SENTENCE[reason]}`
+    : `unavailable (${bareUntrusted(reason)})`;
+
 /** `<label> <value>`, or `<label> unavailable — <why>`. Never a digit for "not measured". */
 const figure = (
   label: string,
   value: PilotFigure,
   decimals: number = 0,
-): string => {
-  if (value.kind === "measured") {
-    return `${label} ${decimals === 0 ? count(value.value) : value.value.toFixed(decimals)}`;
-  }
-  return isKnownReason(value.reason)
-    ? `${label} unavailable — ${REASON_SENTENCE[value.reason]}`
-    : `${label} unavailable (${bareUntrusted(value.reason)})`;
-};
+): string =>
+  value.kind === "measured"
+    ? `${label} ${decimals === 0 ? count(value.value) : value.value.toFixed(decimals)}`
+    : `${label} ${unavailableClause(value.reason)}`;
 
 /** A wire instant as a UTC day, or "unknown" — never the raw string. */
 const isoDay = (iso: string): string => {

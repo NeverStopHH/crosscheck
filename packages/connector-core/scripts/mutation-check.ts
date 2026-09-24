@@ -8512,8 +8512,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 07 §5. An unavailable figure prints its reason, never a digit.
     label: "an unavailable figure prints as zero",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: "    ? `${label} unavailable — ${REASON_SENTENCE[value.reason]}`",
-    to: "    ? `${label} 0`",
+    from: "    : `${label} ${unavailableClause(value.reason)}`;",
+    to: "    : `${label} 0`;",
     test: `${CLI}/test/pilot-render.test.ts`,
     because:
       "`ghost 0` and `ci regressed 0` print where nothing was recorded, and a " +
@@ -8523,8 +8523,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 07 §5. A reason a newer hub knows is printed as the word.
     label: "a reason this client has no sentence for is hidden",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: "    : `${label} unavailable (${bareUntrusted(value.reason)})`;",
-    to: "    : `${label} unavailable`;",
+    from: "    : `unavailable (${bareUntrusted(reason)})`;",
+    to: "    : `unavailable`;",
     test: `${CLI}/test/pilot-render.test.ts`,
     because:
       "the reader learns that a figure is missing but never which absence it " +
@@ -8783,6 +8783,106 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "tripwire and hint deliveries of one context share a primary key, so the hub " +
       "silently keeps one channel and drops the other",
+  },
+  {
+    // 07 PIL-3. Answers over answers — never against the surfaces that produced them.
+    label: "the qualifier gate weighs answers against surfaces",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const missed = Math.max(0, required - emitted);",
+    to: "  const missed = Math.max(0, required - counted.length);",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "a repo whose every answer carried its qualifier WARNs whenever the answers " +
+      "outnumber the surfaces, and one whose answers went out bare can read clean",
+  },
+  {
+    // 07 PIL-3. Qualifiers emitted, not answers emitted — the same unit on both sides.
+    label: "the qualifier gate counts answers as qualifiers",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    (sum, counters) => sum + (counters.qualifier_emitted ?? 0),",
+    to: "    (sum, counters) => sum + (counters.answers_emitted ?? 0),",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "every answer is counted as having carried a qualifier it may never have " +
+      "needed, so a bare answer over a gap hides behind the total",
+  },
+  {
+    // 07 PIL-8. A rung that cannot exist is a line; an empty day is not.
+    label: "an empty day is printed as a missing capability",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      value.kind === \"unavailable\" && isRungRefusal(value.reason)",
+    to: "      value.kind === \"unavailable\"",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "`nothing was flagged` prints beside the rungs that cannot exist, and an " +
+      "ordinary quiet morning reads like something this install lacks",
+  },
+  {
+    // 07 §3.6, D2. Enrolment is said either way.
+    label: "doctor reports pilot health on a repo nobody enrolled",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (!report.enrolled) {\n    return [\n      check(",
+    to: "  if (report.days < 0) {\n    return [\n      check(",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "a repo that never agreed to be measured is shown qualifier lines as if it " +
+      "were, and nobody on it can tell whether they are being counted",
+  },
+  {
+    // 07 §5. An old hub is `not measured`, a silent one is a WARN — #50's ladder.
+    label: "a hub without the report reads as a hub that failed",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (result.status === HTTP_NOT_FOUND) {\n      return [check(\"PASS\", \"pilot\", \"not measured (this hub has no pilot report)\")];",
+    to: "    if (result.status === 0) {\n      return [check(\"PASS\", \"pilot\", \"not measured (this hub has no pilot report)\")];",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "every install on a hub older than the pilot WARNs about a report it was " +
+      "never going to have, and the WARN that means \"did not answer\" loses its meaning",
+  },
+  {
+    // 07 §3.6. The cap refuses and COUNTS; the line says so.
+    label: "a full session set is reported as a healthy one",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "        set.refused > 0",
+    to: "        set.refused > 99",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "the measurement silently stopped growing at fifty sessions and doctor says " +
+      "nothing, so a reader believes later sessions are in the set",
+  },
+  {
+    // 07 §8.6, PIL-8. Cursor cannot ask before an edit, so it feeds no tripwire count.
+    label: "Cursor's missing tripwire channel is silent",
+    file: `${CURSOR}/src/capabilities.ts`,
+    from: "      name: \"pilot tripwire channel\",",
+    to: "      name: \"pilot tripwire\",",
+    test: `${CORE}/test/pilot-platform-refusals.test.ts`,
+    because:
+      "a team working in Cursor reads a low tripwire figure as few collisions, when " +
+      "it is few sessions that could have asked",
+  },
+  {
+    // 07 §8.6, PIL-8. The ACP proxy forwards permission traffic untouched.
+    label: "ACP's missing tripwire channel is silent",
+    file: `${ACP}/src/capabilities.ts`,
+    from: "      name: \"pilot tripwire channel\",",
+    to: "      name: \"pilot tripwire\",",
+    test: `${CORE}/test/pilot-platform-refusals.test.ts`,
+    because:
+      "a team working through Zed or JetBrains reads a low tripwire figure as few " +
+      "collisions, when it is few sessions that could have asked",
+  },
+  {
+    // 07 §5. A strict parse's refusal is a fact about the answer, not an outage.
+    label: "an unparseable pilot answer is a WARN",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (result.kind !== \"http\") {",
+    to: "    if (result.kind === \"network\") {",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "every install on a hub whose report this client cannot read WARNs on " +
+      "every doctor run, and a WARN that fires for a version mismatch teaches " +
+      "a team to ignore the line that reports a real outage",
   },
   {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
@@ -9152,6 +9252,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
+ * PRINTS: packages/cli/test/doctor-pilot.test.ts 7
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
@@ -9261,6 +9362,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
+ * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1

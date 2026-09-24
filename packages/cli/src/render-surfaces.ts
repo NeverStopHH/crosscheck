@@ -351,7 +351,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // command WRITES and false of the three it PASSES THROUGH. Taking either
     // side alone would have restored a claim the other branch had just proven
     // false.
-    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency and hub-reachable checks. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts",
+    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency, pilot and hub-reachable checks. The pilot lines' reason words are the shared vocabulary's own sentences (unavailableClause), never hub text. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts",
   },
   {
     kind: "composite",

@@ -253,6 +253,22 @@ export const PILOT_UNAVAILABLE_REASONS = [
 ] as const;
 
 /**
+ * THE REASONS THAT NAME A RUNG WHICH CANNOT EXIST HERE, as opposed to a figure
+ * that is merely empty today (07 §8.6, PIL-8).
+ *
+ * `nothing_flagged` and `no_sessions` will change on their own the day
+ * something happens; these two will not change until somebody builds or
+ * installs something. That difference is what `doctor` prints: a rung that
+ * cannot exist gets a PASS line with its reason, every time, and an empty day
+ * gets no line at all — printing it would make an ordinary quiet morning read
+ * like a missing capability.
+ */
+export const PILOT_RUNG_REFUSALS = [
+  "ghost_lines_not_recorded",
+  "no_ci_reporter",
+] as const satisfies readonly (typeof PILOT_UNAVAILABLE_REASONS)[number][];
+
+/**
  * What the HUB may hold. "both" is derived on ingest — never sent — when the
  * same (context, kind, value) arrives from the other lane: the primary key
  * collapses the two rows into one, and without this third value whichever

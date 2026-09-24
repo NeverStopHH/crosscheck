@@ -217,6 +217,13 @@ import {
   readProjectWiring,
 } from "./doctor-global.ts";
 import type { GlobalWiring } from "./doctor-global.ts";
+import { getPilotReport } from "@crosscheck/connector-core/http/pilot.ts";
+import type {
+  PilotFigure,
+  PilotReport,
+} from "@crosscheck/connector-core/http/pilot.ts";
+import { PILOT_RUNG_REFUSALS } from "@crosscheck/schema";
+import { unavailableClause } from "./pilot-render.ts";
 import type { CliResult } from "./login.ts";
 
 export type CheckLevel = "PASS" | "WARN" | "FAIL";
@@ -2135,6 +2142,139 @@ const checkPins = (
 
 
 /**
+ * THE PILOT'S OWN HEALTH (07 §5) — whether this repo is measured, how full
+ * the session set is, and the rungs of the report that cannot exist here.
+ *
+ * ENROLMENT IS SAID EITHER WAY. A repo that is measured and one that is not
+ * must never read alike: the first is a team that agreed to be counted, the
+ * second one that did not, and a doctor that stayed silent about both would
+ * leave nobody able to tell which they are on.
+ *
+ * ONE WARN, AND IT DIVIDES ANSWERS BY ANSWERS (PIL-3). An answer that needed
+ * a coverage qualifier and went out without one is 03's rule failing in the
+ * wild — the one thing proof 5 exists to catch. It is counted over the
+ * answers that needed one, never against the number of surfaces or days that
+ * produced them: #50 learned measured that a gate weighing one unit against
+ * another cannot tell a starved lane from a healthy one with nothing to find.
+ *
+ * A RUNG THAT CANNOT EXIST IS A PASS LINE WITH ITS REASON (PIL-8), printed
+ * every time, never an absence and never a zero. A figure that is merely
+ * empty today (`nothing_flagged`, `no_sessions`) is NOT a rung and gets no
+ * line — an ordinary quiet day must not read like a missing capability.
+ *
+ * ONE DAY, because `doctor` runs often and the lines here are about the
+ * pilot's plumbing, not its results; `crosscheck pilot` is the report.
+ */
+const DOCTOR_PILOT_WINDOW_DAYS = 1;
+
+/** Each report figure, by the name its doctor line prints. */
+const pilotFigures = (
+  report: PilotReport,
+): readonly (readonly [string, PilotFigure])[] => [
+  ["tripwire collisions", report.collisions.tripwireFlagged],
+  ["ghost collisions", report.collisions.ghostFlagged],
+  ["both landed", report.collisions.bothLanded],
+  ["ci regressed", report.collisions.ciRegressed],
+  ["opened per 100", report.precision.openedPer100],
+  ["off-target per 100", report.precision.offTargetPer100],
+];
+
+const isRungRefusal = (reason: string): boolean =>
+  (PILOT_RUNG_REFUSALS as readonly string[]).includes(reason);
+
+const pilotQualifierCheck = (report: PilotReport): Check => {
+  const counted = report.integrity.flatMap((row) =>
+    row.counters === null ? [] : [row.counters],
+  );
+  if (counted.length === 0) {
+    return check(
+      "PASS",
+      "pilot qualifiers",
+      "not measured (no answer surface has counted anything in the last day)",
+    );
+  }
+  const required = counted.reduce(
+    (sum, counters) => sum + (counters.qualifier_required ?? 0),
+    0,
+  );
+  const emitted = counted.reduce(
+    (sum, counters) => sum + (counters.qualifier_emitted ?? 0),
+    0,
+  );
+  const missed = Math.max(0, required - emitted);
+  return missed > 0
+    ? check(
+        "WARN",
+        "pilot qualifiers",
+        `${String(missed)} of ${String(required)} answer(s) that needed a coverage qualifier went out without one — an answer over a gap read as a complete one`,
+      )
+    : check(
+        "PASS",
+        "pilot qualifiers",
+        `every answer that needed a coverage qualifier carried one (${String(emitted)} of ${String(required)})`,
+      );
+};
+
+const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
+  if (!result.ok) {
+    // THE LADDER THE OTHER HUB-READ LINES USE: a hub too old for the route, a
+    // hub the reachability line already reports unreachable, and an answer
+    // that did not parse are all "not measured" — repeating an outage here
+    // would count one failure twice. Only a hub that ANSWERED with an error
+    // is a WARN, because that is a fact the other lines do not carry.
+    if (result.status === HTTP_NOT_FOUND) {
+      return [check("PASS", "pilot", "not measured (this hub has no pilot report)")];
+    }
+    if (result.kind !== "http") {
+      return [
+        check(
+          "PASS",
+          "pilot",
+          result.kind === "network"
+            ? "not measured (the hub could not be reached)"
+            : "not measured (this hub's answer did not parse)",
+        ),
+      ];
+    }
+    return [
+      check(
+        "WARN",
+        "pilot",
+        `state unknown — the hub did not answer (${hubSaid(result.message)}); this says nothing about whether this repo is measured`,
+      ),
+    ];
+  }
+  const report = result.data;
+  if (!report.enrolled) {
+    return [
+      check(
+        "PASS",
+        "pilot",
+        "not enrolled — nothing on this repo is measured; enrolment is a team decision, off by default",
+      ),
+    ];
+  }
+  const set = report.sessionSet;
+  return [
+    check(
+      "PASS",
+      "pilot",
+      `enrolled · session set ${String(set.used)} of ${String(set.cap)}${
+        set.refused > 0
+          ? ` — full: ${String(set.refused)} later session(s) refused at the cap and counted, never dropped`
+          : ""
+      }`,
+    ),
+    pilotQualifierCheck(report),
+    ...pilotFigures(report).flatMap(([name, value]) =>
+      value.kind === "unavailable" && isRungRefusal(value.reason)
+        ? [check("PASS", `pilot ${name}`, unavailableClause(value.reason))]
+        : [],
+    ),
+  ];
+};
+
+/**
  * DID THIS HUB PRODUCE AN IMPOSSIBLE VERDICT (04 §3.7, VER-8).
  *
  * A legality violation is a BUG IN THE HUB, not a fact about this repo: nine
@@ -3440,6 +3580,7 @@ export const runDoctor = async (
     ghostOverlapCheck,
     privacyCheck,
     intentLedgerCheck,
+    pilotReport,
   ] = await Promise.all([
     // ONE GET for both: the absence findings and the coverage record ride
     // the same response (03 §3.5), so reading them twice would be a second
@@ -3469,6 +3610,12 @@ export const runDoctor = async (
     checkGhostOverlap(hubCtx, identity.repoId),
     checkPrivacy(hubCtx),
     checkIntentLedger(hubCtx),
+    // 07 §5: the pilot's plumbing, one day's window — the report itself is
+    // `crosscheck pilot`'s, and this only asks whether the pieces are there.
+    getPilotReport(hubCtx, {
+      repo: identity.repoId,
+      days: DOCTOR_PILOT_WINDOW_DAYS,
+    }),
   ]);
   // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
   // only known once the registry above has answered, so it cannot join the
@@ -3494,6 +3641,7 @@ export const runDoctor = async (
       now,
     ),
     verdictLegalityCheck,
+    ...checkPilot(pilotReport),
     ...checkClaimValidity(claimValiditySummary),
     ...checkCi(ciVerdict),
     ...checkEvidenceAxes(ciVerdict, claimValiditySummary),

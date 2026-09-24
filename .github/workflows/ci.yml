@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 621
+    # PRINTS: 630
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,7 +126,7 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
-    # PRINTS: packages/cli/src/cli/doctor.ts 33
+    # PRINTS: packages/cli/src/cli/doctor.ts 40
     # PRINTS: packages/cli/src/cli/noise.ts 5
     # PRINTS: packages/cli/src/cli/pilot-render.ts 10
     # PRINTS: packages/cli/src/cli/pilot.ts 2
@@ -137,7 +137,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/status.ts 6
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 2
-    # PRINTS: packages/connector-acp/src/capabilities.ts 2
+    # PRINTS: packages/connector-acp/src/capabilities.ts 3
     # PRINTS: packages/connector-acp/src/capture/engine.ts 11
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 1
@@ -236,7 +236,7 @@ jobs:
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
-    # PRINTS: packages/connector-cursor/src/capabilities.ts 1
+    # PRINTS: packages/connector-cursor/src/capabilities.ts 2
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
     # PRINTS: packages/connector-cursor/src/doctor.ts 6
@@ -315,7 +315,7 @@ jobs:
     # PRINTS: bootstrap.sql 4
     # PRINTS: briefing.ts 2
     # PRINTS: calibration.ts 1
-    # PRINTS: capabilities.ts 3
+    # PRINTS: capabilities.ts 5
     # PRINTS: capture-bookkeeping.ts 6
     # PRINTS: capture-health.ts 2
     # PRINTS: capture-targets.ts 2
@@ -343,7 +343,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 7
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor.ts 41
+    # PRINTS: doctor.ts 48
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 11
     # PRINTS: enums.ts 2
