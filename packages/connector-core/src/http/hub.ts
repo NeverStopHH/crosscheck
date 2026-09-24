@@ -1099,15 +1099,34 @@ const DiagnosisEnvelopeSchema = z
     };
   });
 
+/**
+ * WHO IS READING, for the pull stamp (07, corrected by adversarial review).
+ * A session id makes the hub mark only that session's deliveries as opened;
+ * `no_telemetry` reads without marking anything. Omitted, the hub marks the
+ * developer's deliveries in every session — the pre-1.0 behaviour, kept only
+ * for callers that cannot say.
+ */
+export type DiagnosisReader =
+  | { readonly sessionId: string }
+  | "no_telemetry";
+
 export const getDiagnosis = (
   ctx: HubContext,
   workContextId: string,
-): Promise<HubResult<Diagnosis>> =>
-  hubRequest(ctx, {
+  reader?: DiagnosisReader,
+): Promise<HubResult<Diagnosis>> => {
+  const query =
+    reader === undefined
+      ? ""
+      : reader === "no_telemetry"
+        ? "?telemetry=0"
+        : `?session=${encodeURIComponent(reader.sessionId)}`;
+  return hubRequest(ctx, {
     method: "GET",
-    path: `/api/work-contexts/${encodeURIComponent(workContextId)}/diagnosis`,
+    path: `/api/work-contexts/${encodeURIComponent(workContextId)}/diagnosis${query}`,
     schema: DiagnosisEnvelopeSchema,
   });
+};
 
 /**
  * The same tree, with NO hint telemetry (trial finding V1-X1).
@@ -2299,12 +2318,22 @@ export const breakPin = (
   ctx: HubContext,
   repo: string,
   pinId: string,
+  /**
+   * The reader's HEAD when the check failed (07 §3.4). Proof 3's fix range
+   * starts here, so it holds the fix and not the break. Omitted, the break is
+   * still recorded; proof 3 then counts it and never scores it.
+   */
+  brokeAtCommit?: string,
 ): Promise<HubResult<{ readonly id: string }>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/pins/${encodeURIComponent(pinId)}/broke`,
     schema: CreatedPinSchema,
-    body: { repo, presence: PIN_PRESENCE_TERMINAL },
+    body: {
+      repo,
+      presence: PIN_PRESENCE_TERMINAL,
+      ...(brokeAtCommit === undefined ? {} : { brokeAtCommit }),
+    },
   });
 
 export interface PinSweepUpdate {

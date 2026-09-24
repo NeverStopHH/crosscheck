@@ -10,6 +10,7 @@
  * returns.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { hintDeliveryId } from "@crosscheck/schema";
 import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
@@ -142,7 +143,8 @@ const deliverPointer = async (contextId: string): Promise<void> => {
   const response = await post("/api/records", readerKey, {
     records: [
       envelope("hint_delivery", {
-        id: `hd_${crypto.randomUUID().replace(/-/g, "")}`,
+        // Derived, as the hub now requires (07 §3.1).
+        id: hintDeliveryId(SESSION_ID, contextId),
         sessionId: SESSION_ID,
         refKind: "work_context",
         refId: contextId,

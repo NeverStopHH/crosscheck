@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
+import { MAX_COMMIT_CLOCK_SKEW_MS, deliveryIdFor } from "@crosscheck/schema";
+
 import { hintDeliveries } from "../src/db/schema.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
+  registerTestSession,
   jsonRequest,
   postRecords,
   recordEnvelope,
@@ -16,16 +19,29 @@ import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const SECOND_SESSION_ID = "ses_02";
 
+/**
+ * A delivery body whose id is DERIVED from its own session, ref and channel —
+ * which the hub now requires (07 §3.1) — unless a test sets one on purpose.
+ */
 const deliveryBody = (
   overrides: Record<string, unknown> = {},
-): Record<string, unknown> => ({
-  id: "hd_0123456789abcdef0123456789abcdef",
-  sessionId: "ses_01",
-  refKind: "claim",
-  refId: "clm_01",
-  deliveredAt: TEST_START_ISO,
-  ...overrides,
-});
+): Record<string, unknown> => {
+  const body: Record<string, unknown> = {
+    sessionId: "ses_01",
+    refKind: "claim",
+    refId: "clm_01",
+    deliveredAt: TEST_START_ISO,
+    ...overrides,
+  };
+  return {
+    id: deliveryIdFor(
+      String(body["sessionId"]),
+      String(body["refId"]),
+      String(body["channel"] ?? "unknown"),
+    ),
+    ...body,
+  };
+};
 
 const listDeliveryRows = (harness: TestHarness) =>
   harness.db.select().from(hintDeliveries);
@@ -127,6 +143,90 @@ describe("hint_delivery ingest", () => {
  * boundary: an enum that quietly accepts anything is a text column with a
  * comment, and the report built on it would count buckets nobody defined.
  */
+/**
+ * A DELIVERY ID IS COMPUTED, AND THE HUB CHECKS IT WAS (07 §3.1, corrected).
+ *
+ * Found by an adversarial review: the id is deterministic, so a teammate who
+ * can see your session id could post `hd(your session, ref)` under their own
+ * session first. The primary key then dropped your genuine delivery as a
+ * duplicate, and with it your right to call that intervention noise.
+ */
+describe("a delivery id cannot be squatted", () => {
+  test("an id derived from somebody else's session is refused", async () => {
+    // Arrange — Robin computes Nick's delivery id and posts it as his own
+    const { harness, developer } = await seedContextWithClaim();
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin-squat@example.com", {
+      id: SECOND_SESSION_ID,
+    });
+    const nicksId = deliveryIdFor("ses_01", "clm_01", "unknown");
+
+    // Act
+    const squat = await postRecords(
+      harness,
+      robin,
+      recordEnvelope(
+        "hint_delivery",
+        { ...deliveryBody({ sessionId: SECOND_SESSION_ID }), id: nicksId },
+        { sessionId: SECOND_SESSION_ID },
+      ),
+    );
+    const genuine = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("hint_delivery", deliveryBody()),
+    );
+
+    // Assert — refused, and Nick's own delivery then lands as his
+    expect(squat.data?.rejected).toBe(1);
+    expect(genuine.data?.accepted).toBe(1);
+    const rows = await listDeliveryRows(harness);
+    expect(rows.map((row) => [row.id, row.sessionId])).toEqual([[nicksId, "ses_01"]]);
+  });
+
+  test("a tripwire delivery must carry the tripwire namespace", async () => {
+    // Arrange
+    const { harness, developer } = await seedContextWithClaim();
+
+    // Act — the bare id on the tripwire channel is somebody else's slot
+    const wrong = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("hint_delivery", {
+        ...deliveryBody({ channel: "tripwire" }),
+        id: deliveryIdFor("ses_01", "clm_01", "prompt_hint"),
+      }),
+    );
+    const right = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("hint_delivery", deliveryBody({ channel: "tripwire" })),
+    );
+
+    // Assert
+    expect(wrong.data?.rejected).toBe(1);
+    expect(right.data?.accepted).toBe(1);
+  });
+
+  test("a delivery dated in the future is held to the hub's clock", async () => {
+    // Arrange — stamped 2099, it would sit at the top of every noise
+    // candidate list for good
+    const { harness, developer } = await seedContextWithClaim();
+
+    // Act
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("hint_delivery", deliveryBody({ deliveredAt: "2099-01-01T00:00:00.000Z" })),
+    );
+
+    // Assert — no later than now plus the allowed skew
+    const stored = (await listDeliveryRows(harness))[0]?.deliveredAt;
+    expect(stored?.getTime()).toBeLessThanOrEqual(
+      new Date(TEST_START_ISO).getTime() + MAX_COMMIT_CLOCK_SKEW_MS,
+    );
+  });
+});
+
 describe("the delivery channel (07 §3.1)", () => {
   test("a connector older than the column stores `unknown`, not a refusal", async () => {
     // Arrange — no `channel` key at all, which is every connector today
@@ -189,7 +289,6 @@ describe("get_diagnosis marks deliveries pulled (the precision loop)", () => {
         recordEnvelope(
           "hint_delivery",
           deliveryBody({
-            id: "hd_ffffffffffffffffffffffffffffffff",
             refKind: "work_context",
             refId: WORK_CONTEXT_ID,
           }),
@@ -237,6 +336,32 @@ describe("get_diagnosis marks deliveries pulled (the precision loop)", () => {
     expect(response.status).toBe(200);
     const rows = await listDeliveryRows(harness);
     expect(rows[0]?.pulledAt).toBeNull();
+  });
+
+  test("a read that names its session stamps only that session's deliveries", async () => {
+    // Arrange — one developer, two sessions, both shown the same claim. The
+    // read comes from ses_01; ses_03 never opened anything (07, corrected).
+    const { harness, developer } = await seedContextWithClaim();
+    await registerTestSession(harness, developer.apiKey, { id: "ses_03" });
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("hint_delivery", deliveryBody()),
+        recordEnvelope("hint_delivery", deliveryBody({ sessionId: "ses_03" }), {
+          sessionId: "ses_03",
+        }),
+      ],
+    });
+
+    // Act
+    await harness.app.request(
+      `/api/work-contexts/${WORK_CONTEXT_ID}/diagnosis?session=ses_01`,
+      jsonRequest("GET", developer.apiKey),
+    );
+
+    // Assert
+    const rows = await listDeliveryRows(harness);
+    const pulled = Object.fromEntries(rows.map((row) => [row.sessionId, row.pulledAt !== null]));
+    expect(pulled).toEqual({ ses_01: true, ses_03: false });
   });
 
   test("a pulled timestamp is not rewritten by a second read", async () => {
@@ -302,15 +427,16 @@ describe("GET /api/hints/stats — delivered/pulled per repo (trial finding #20)
         recordEnvelope(
           "hint_delivery",
           deliveryBody({
-            id: "hd_ffffffffffffffffffffffffffffffff",
             refKind: "work_context",
             refId: "wc_elsewhere",
           }),
         ),
         recordEnvelope(
           "hint_delivery",
+          // Its own ref, so its DERIVED id is its own: the window, not the
+          // id check, is what must keep it out of the count.
           deliveryBody({
-            id: "hd_00000000000000000000000000000000",
+            refId: "clm_before_window",
             deliveredAt: "2026-06-01T09:00:00.000Z",
           }),
         ),
@@ -344,7 +470,7 @@ describe("GET /api/hints/stats — delivered/pulled per repo (trial finding #20)
       robin,
       recordEnvelope(
         "hint_delivery",
-        deliveryBody({ id: "hd_11111111111111111111111111111111", sessionId: SECOND_SESSION_ID }),
+        deliveryBody({ sessionId: SECOND_SESSION_ID }),
         { sessionId: SECOND_SESSION_ID },
       ),
     );

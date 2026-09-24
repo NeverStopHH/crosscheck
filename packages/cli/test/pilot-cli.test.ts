@@ -71,11 +71,15 @@ const report = (): Record<string, unknown> => ({
         repairPinId: "pin_repair",
         brokenCommit,
         repairCommit,
+        pinnedFiles: ["src/workbench/Player.tsx"],
         namedFiles: [NAMED],
       },
     ],
     repairedBeyondBound: 0,
     noRepairYet: 0,
+    repairedWithoutBreakCommit: 0,
+    supersededAnswers: 0,
+    answersAfterRepair: 0,
   },
   precision: {
     sessions: 3,
@@ -216,6 +220,54 @@ describe("crosscheck pilot", () => {
     // Assert
     expect(result.stdout).not.toContain("‮");
     expect(result.stdout).not.toContain("\\u202e");
+  });
+
+  test("a hub that sends more repairs than the bound cannot make this machine diff them all", async () => {
+    // Arrange — the hub bounds its own list; a hostile or broken one might not
+    answer = () => {
+      const base = report();
+      const attribution = base.attribution as Record<string, unknown>;
+      const one = (attribution.repaired as unknown[])[0];
+      return {
+        ...base,
+        attribution: { ...attribution, repaired: Array.from({ length: 30 }, () => one) },
+      };
+    };
+
+    // Act
+    const result = await run(["--json"]);
+    const parsed = JSON.parse(result.stdout) as { fixes: unknown[] };
+
+    // Assert
+    expect(parsed.fixes).toHaveLength(25);
+  });
+
+  test("--json never needs a backslash, and keys that clean alike keep both values", async () => {
+    // Arrange — a hostile hub: a lone surrogate in a title, and two channel
+    // keys that differ only by an invisible character (adversarial review)
+    answer = () => {
+      const base = report();
+      const work = base.duplicateWork as Record<string, unknown>;
+      return {
+        ...base,
+        duplicateWork: {
+          ...work,
+          byChannel: { ...(work.byChannel as Record<string, number>), briefing: 3, "briefing\u200b": 7 },
+          priorWork: [{ workContextId: "wc_1", title: "Fix \ud800 playback", openedBySessions: 1 }],
+        },
+      };
+    };
+
+    // Act
+    const result = await run(["--json"]);
+    const parsed = JSON.parse(result.stdout) as {
+      report: { duplicateWork: { byChannel: Record<string, number> } };
+    };
+
+    // Assert
+    expect(result.stdout).not.toContain("\\");
+    expect(Object.values(parsed.report.duplicateWork.byChannel)).toContain(7);
+    expect(Object.values(parsed.report.duplicateWork.byChannel)).toContain(3);
   });
 
   test("--by-developer is refused by name, and nothing is asked", async () => {

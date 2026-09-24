@@ -49,18 +49,23 @@ const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
         repairPinId: "pin_b",
         brokenCommit: "abc1234",
         repairCommit: "def5678",
-        namedFiles: ["src/workbench/usePlayback.ts"],
+        pinnedFiles: ["src/workbench/usePlayback.ts"],
+        namedFiles: ["src/config.ts"],
       },
       {
         pinId: "pin_c",
         repairPinId: "pin_d",
         brokenCommit: "abc1234",
         repairCommit: "def5678",
-        namedFiles: ["src/workbench/usePlayback.ts"],
+        pinnedFiles: ["src/workbench/usePlayback.ts"],
+        namedFiles: ["src/config.ts"],
       },
     ],
     repairedBeyondBound: 0,
     noRepairYet: 2,
+    repairedWithoutBreakCommit: 0,
+    supersededAnswers: 0,
+    answersAfterRepair: 0,
   },
   precision: {
     sessions: 1208,
@@ -215,7 +220,10 @@ describe("renderPilot", () => {
 
     // Assert
     expect(out).toContain("api-search: not instrumented");
-    expect(out).toContain("api-suspect: answers 12 · qualifier required 3 · emitted 3 · missed 0");
+    expect(out).toContain("api-suspect: answers 12 · qualifier required 3");
+    // No "emitted" or "missed": a hub-side count of those could only ever
+    // equal "required", and printing it would claim a check nobody ran.
+    expect(out).not.toContain("missed");
   });
 
   test("each coverage source gets its own line, never one number", () => {
@@ -242,8 +250,41 @@ describe("renderPilot", () => {
 
     // Assert
     expect(out).toContain("hit 0 · miss 0");
-    expect(out).toContain("not scored: empty range 1 · too broad 0 · not resolvable on this clone 1");
+    expect(out).toContain(
+      "not scored: the fix touched only pinned files 0 · empty range 1 · too broad 0 · not resolvable on this clone 1",
+    );
     expect(out).toContain("git fetch");
+  });
+
+  test("a fix that touched only pinned files is neither a hit nor a miss", () => {
+    // Arrange & Act — every candidate touched the pinned files, so this fix
+    // cannot say which one broke it
+    const out = renderPilot(view({}, ["not_discriminating", "hit"]));
+
+    // Assert
+    expect(out).toContain("hit 1 · miss 0");
+    expect(out).toContain("the fix touched only pinned files 1");
+  });
+
+  test("one verdict per fix is said, and so is a break with no recorded commit", () => {
+    // Arrange
+    const base = report();
+
+    // Act
+    const out = renderPilot(
+      view({
+        attribution: {
+          ...base.attribution,
+          supersededAnswers: 2,
+          answersAfterRepair: 1,
+          repairedWithoutBreakCommit: 3,
+        },
+      }),
+    );
+
+    // Assert
+    expect(out).toContain("one verdict per fix: 2 earlier answer(s) replaced · 1 given after the repair, not scored");
+    expect(out).toContain("3 repaired break(s) recorded no commit at the break");
   });
 
   test("the precision figures are a pull and a floor, and say so", () => {

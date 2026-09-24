@@ -705,6 +705,16 @@ export const pins = pgTable(
     brokeAt: timestamptz("broke_at"),
     brokeBy: text("broke_by").references(() => developers.id),
     /**
+     * WHERE THE BREAK WAS OBSERVED (07 §3.4, corrected): the reader's HEAD when
+     * they recorded the check failing. Proof 3's fix range runs from HERE to
+     * the repair's commit, so it holds the fix and not the break — from the
+     * last-working commit instead, the range contained the breaking change
+     * itself, and every session that touched the pinned file scored a hit.
+     * NULL for a break recorded before this column existed: counted, never
+     * scored.
+     */
+    brokeAtCommit: text("broke_at_commit"),
+    /**
      * WHAT A SWEEP REWROTE. A sweep moves the paths a pin watches, and those
      * paths are what `suspect` intersects — so a rewrite silently changes
      * which sessions an answer names. Recorded rather than refused: `anyone

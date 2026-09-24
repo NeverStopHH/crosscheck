@@ -6,7 +6,7 @@
  * `value ?? 0`, skips an empty channel, or cuts the list away from the count
  * it explains would print a tidier report that says something nobody
  * measured. So: an unavailable figure prints its reason and never a digit, a
- * surface nobody counted prints `not instrumented` and never `missed 0`, and
+ * surface nobody counted prints `not instrumented` and never a zero, and
  * an opened count that cannot name the prior work it pointed at is withheld.
  *
  * TWO WORDS NEVER APPEAR (§8.1). "Prevented" is a counterfactual nobody
@@ -70,6 +70,7 @@ const REASON_SENTENCE: Readonly<Record<PilotUnavailableReason, string>> = {
   no_ci_reporter: "no CI reporter writes to this hub",
   no_sessions: "no sessions in this window",
   nothing_flagged: "nothing was flagged",
+  no_asking_host: "no session in this window ran on a host that can ask before an edit",
 };
 
 const isKnownReason = (reason: string): reason is PilotUnavailableReason =>
@@ -185,7 +186,11 @@ const attributionLines = (view: PilotView): readonly string[] => {
     "3. attribution accuracy — each repair's fix diff, scored on this clone",
     `${INDENT}ranked answers on recorded-break pins ${count(proof.answers)} · attributions ${count(proof.attributions)} · repaired ${count(proof.repaired.length + proof.repairedBeyondBound)}`,
     `${INDENT}hit ${count(tally(view.fixes, "hit"))} · miss ${count(tally(view.fixes, "miss"))} · excluded (coverage gap at answer time) ${count(proof.excluded)} · no repair pin yet ${count(proof.noRepairYet)}`,
-    `${INDENT}not scored: empty range ${count(tally(view.fixes, "empty"))} · too broad ${count(tally(view.fixes, "too_broad"))} · not resolvable on this clone ${count(unresolvable)}`,
+    `${INDENT}not scored: the fix touched only pinned files ${count(tally(view.fixes, "not_discriminating"))} · empty range ${count(tally(view.fixes, "empty"))} · too broad ${count(tally(view.fixes, "too_broad"))} · not resolvable on this clone ${count(unresolvable)}`,
+    `${INDENT}one verdict per fix: ${count(proof.supersededAnswers)} earlier answer(s) replaced · ${count(proof.answersAfterRepair)} given after the repair, not scored`,
+    ...(proof.repairedWithoutBreakCommit > 0
+      ? [`${INDENT}${count(proof.repairedWithoutBreakCommit)} repaired break(s) recorded no commit at the break, so there is no fix range to score`]
+      : []),
     ...(proof.repairedBeyondBound > 0
       ? [`${INDENT}(+${count(proof.repairedBeyondBound)} repaired past the diff bound, not scored)`]
       : []),
@@ -220,10 +225,11 @@ const surfaceLines = (
     return [`${INDENT}${name}: not instrumented — it counted nothing in this window`];
   }
   const at = (key: string): number => counters[key] ?? 0;
-  const required = at("qualifier_required");
-  const emitted = at("qualifier_emitted");
   return [
-    `${INDENT}${name}: answers ${count(at("answers_emitted"))} · qualifier required ${count(required)} · emitted ${count(emitted)} · missed ${count(Math.max(0, required - emitted))}`,
+    // "Emitted" and "missed" are NOT printed: the hub attaches the record to
+    // every answer it builds, so a hub-side count could only equal the number
+    // required. Whether a surface printed it is the render registry's fact.
+    `${INDENT}${name}: answers ${count(at("answers_emitted"))} · qualifier required ${count(at("qualifier_required"))} (whether each reached its reader is held by the render registry, not counted here)`,
     `${INDENT}  judgeable ${count(at("judgeable"))} · not judgeable ${count(at("not_judgeable"))}`,
     ...COVERAGE_SOURCES.map(
       (source) =>
@@ -261,8 +267,15 @@ const sessionSetLines = (report: PilotReport): readonly string[] => {
  * So the one printable character JSON escapes becomes `'` before it gets the
  * chance, and the output never needs a backslash at all.
  */
+/**
+ * A lone surrogate is replaced too: `JSON.stringify` writes one as `\ud800`,
+ * which is the backslash escape this output promises never to contain
+ * (found by adversarial review).
+ */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 const jsonSafe = (raw: string): string =>
-  sanitizeUntrusted(raw, MAX_PIN_PATH_CHARS)
+  sanitizeUntrusted(raw.replace(LONE_SURROGATE, "\uFFFD"), MAX_PIN_PATH_CHARS)
     .replaceAll('"', "'")
     .replaceAll("\\", "");
 
@@ -274,11 +287,20 @@ const cleanDeep =(value: unknown): unknown => {
     return value.map(cleanDeep);
   }
   if (value !== null && typeof value === "object") {
+    // TWO KEYS THAT CLEAN TO ONE must not overwrite each other: a count that
+    // arrived would read as the other key's zero (found by adversarial
+    // review). The later one keeps its value under a numbered name.
+    const seen = new Set<string>();
     return Object.fromEntries(
-      Object.entries(value).map(([key, inner]) => [
-        jsonSafe(key),
-        cleanDeep(inner),
-      ]),
+      Object.entries(value).map(([key, inner]) => {
+        const base = jsonSafe(key);
+        let name = base;
+        for (let copy = 2; seen.has(name); copy += 1) {
+          name = `${base} #${String(copy)}`;
+        }
+        seen.add(name);
+        return [name, cleanDeep(inner)];
+      }),
     );
   }
   return value;

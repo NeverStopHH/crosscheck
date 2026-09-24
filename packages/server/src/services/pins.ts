@@ -291,13 +291,14 @@ export const markPinBroke = async (
   developerId: string,
   repo: string,
   pinId: string,
+  brokeAtCommit: string | null = null,
 ): Promise<BreakPinOutcome> => {
   // SCOPED BY REPO, like every other read on this table. Scoped by pin id
   // alone, one checkout's retraction reached any pin on the hub — and this
   // is the row `crosscheck suspect` reads before it names anybody.
   const updated = await deps.db
     .update(pins)
-    .set({ brokeAt: deps.now(), brokeBy: developerId })
+    .set({ brokeAt: deps.now(), brokeBy: developerId, brokeAtCommit })
     .where(and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt)))
     .returning({ id: pins.id });
   if (updated[0] !== undefined) {

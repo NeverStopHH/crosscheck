@@ -194,3 +194,67 @@ describe("re-pinning a surface somebody recorded broken", () => {
     expect((await repairOf(harness, "pin_repair")).version).toBe(2);
   });
 });
+
+describe("recording where a break was observed (07 §3.4, corrected)", () => {
+  const breakWith = async (
+    harness: TestHarness,
+    developer: TestDeveloper,
+    id: string,
+    brokeAtCommit: string,
+  ): Promise<Response> =>
+    harness.app.request(
+      `/api/pins/${id}/broke`,
+      jsonRequest("POST", developer.apiKey, {
+        repo: REPO,
+        presence: PIN_PRESENCE_TERMINAL,
+        brokeAtCommit,
+      }),
+    );
+
+  const brokeAtCommitOf = async (harness: TestHarness, id: string) =>
+    (
+      await harness.db
+        .select({ commit: pins.brokeAtCommit })
+        .from(pins)
+        .where(eq(pins.id, id))
+    )[0]?.commit ?? null;
+
+  test("the commit a break was recorded at is stored — proof 3's range starts there", async () => {
+    // Arrange
+    const { harness, developer } = await setup();
+    await pin(harness, developer, "pin_a");
+
+    // Act
+    const response = await breakWith(harness, developer, "pin_a", "b0b0b0b");
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(await brokeAtCommitOf(harness, "pin_a")).toBe("b0b0b0b");
+  });
+
+  test("the no-commit placeholder is stored as no commit, never as a range start", async () => {
+    // Arrange
+    const { harness, developer } = await setup();
+    await pin(harness, developer, "pin_a");
+
+    // Act
+    await breakWith(harness, developer, "pin_a", "0000000");
+
+    // Assert
+    expect(await brokeAtCommitOf(harness, "pin_a")).toBeNull();
+  });
+
+  test("a value that is not a commit id is refused — it reaches every reader's git", async () => {
+    // Arrange
+    const { harness, developer } = await setup();
+    await pin(harness, developer, "pin_a");
+
+    // Act
+    const response = await breakWith(harness, developer, "pin_a", "--output=x");
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(await brokeAtCommitOf(harness, "pin_a")).toBeNull();
+  });
+});
+

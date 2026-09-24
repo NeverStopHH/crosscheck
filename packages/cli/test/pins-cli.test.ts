@@ -19,6 +19,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
+import { sql } from "drizzle-orm";
+import { runGit } from "@crosscheck/connector-core/git/git.ts";
 import type { Db } from "@crosscheck/server";
 
 import { sweepPins } from "@crosscheck/connector-core/http/hub.ts";
@@ -284,6 +286,14 @@ describe("crosscheck suspect", () => {
     const pinId = /- (pin_[\w-]+) «/.exec(listed.stdout)?.[1] ?? "";
     const broke = await runFor(nickKey, ["pin", "--broke", pinId]);
     expect(broke.stdout).toContain("retracted");
+    // 07 §3.4: the break carries the commit it was observed at — this
+    // clone's HEAD — so proof 3's fix range starts after the break.
+    const stored = await db.execute(
+      sql`SELECT broke_at_commit AS c FROM pins WHERE id = ${pinId}`,
+    );
+    expect(String(stored.rows[0]?.["c"] ?? "")).toBe(
+      (await runGit(["rev-parse", "HEAD"], repo)) ?? "no head",
+    );
 
     // Act
     const after = await runFor(nickKey, ["suspect", pinId]);

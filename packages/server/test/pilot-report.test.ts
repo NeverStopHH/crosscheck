@@ -18,6 +18,7 @@
  * and the rule every figure obeys: measured, or `unavailable` with a reason.
  */
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -321,6 +322,44 @@ describe("proof 2 — collisions", () => {
     });
   });
 
+  test("a repo whose window held no session able to ask reads unavailable, not zero", async () => {
+    // Arrange — only a Cursor session (found by adversarial review: this was
+    // a measured 0, which reads as "no collisions")
+    const world = await setup();
+    await world.harness.db.insert(agentSessions).values({
+      id: "s_cursor",
+      developerId: world.developer.developerId,
+      agentKind: "cursor-ide",
+      repo: REPO,
+      branch: "main",
+      baseCommit: "abc1234",
+      status: "implementing",
+      startedAt: at(10),
+      lastHeartbeatAt: at(10),
+    });
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.collisions.tripwireFlagged).toEqual({
+      kind: "unavailable",
+      reason: "no_asking_host",
+    });
+  });
+
+  test("a session that could ask and was never flagged is a measured zero", async () => {
+    // Arrange
+    const world = await setup();
+    await session(world, "s_claude", 10);
+
+    // Act & Assert — here zero means zero
+    expect((await report(world)).collisions.tripwireFlagged).toEqual({
+      kind: "measured",
+      value: 0,
+    });
+  });
+
   test("a tripwire flag whose two sides both landed is counted", async () => {
     // Arrange — the receiving session's work and the flagged work both
     // reached the default branch: the collision really happened.
@@ -343,8 +382,89 @@ describe("proof 2 — collisions", () => {
   });
 });
 
+/**
+ * WHAT COUNTS AS "OPENED", AND WHOSE WORK IT NAMES (corrected by adversarial
+ * review). A blanket pull stamp from a later read, a pull that predates its
+ * delivery, and a pointer at another repo's work were all read as this repo's
+ * evidence of a pointer opened.
+ */
+describe("proof 1 — what an open is", () => {
+  const endSession = async (world: World, id: string, endedHoursAgo: number) => {
+    await world.harness.db
+      .update(agentSessions)
+      .set({ endedAt: at(endedHoursAgo) })
+      .where(eq(agentSessions.id, id));
+  };
+
+  test("a pull after the receiving session ended is not an open", async () => {
+    // Arrange — s_old was shown the pointer, ignored it and did the same
+    // work; the developer read the context weeks later from another session,
+    // and the legacy stamp marked s_old's delivery too
+    const world = await setup();
+    await session(world, "s_prior");
+    await context(world, "wc_prior", "s_prior", "Widen the filter row");
+    await touch(world, "wc_prior", ["src/a.ts", "src/b.ts"], 90);
+    await session(world, "s_old", 80);
+    await endSession(world, "s_old", 50);
+    await context(world, "wc_old", "s_old", "the same work, again");
+    await deliver(world, "hd_1", "s_old", "wc_prior", "prompt_hint", 70, 10);
+    await touch(world, "wc_old", ["src/a.ts", "src/b.ts"], 60);
+
+    // Act
+    const out = await report(world);
+
+    // Assert — not opened, and the duplicate work it did still counts
+    expect(out.duplicateWork.opened).toBe(0);
+    expect(out.duplicateWork.openedAnyway).toBe(1);
+  });
+
+  test("a pull before its delivery is not an open", async () => {
+    // Arrange
+    const world = await setup();
+    await session(world, "s_prior");
+    await context(world, "wc_prior", "s_prior", "Widen the filter row");
+    await session(world, "s_x");
+    await deliver(world, "hd_1", "s_x", "wc_prior", "prompt_hint", 10, 20);
+
+    // Act & Assert
+    expect((await report(world)).duplicateWork.opened).toBe(0);
+  });
+
+  test("another repo's work is never named as this repo's prior work", async () => {
+    // Arrange — a delivery's ref is the client's word; this one points at a
+    // work context in a repo that never enrolled
+    const world = await setup();
+    await world.harness.db.insert(agentSessions).values({
+      id: "s_b",
+      developerId: world.developer.developerId,
+      agentKind: "claude-code",
+      repo: "github.com/acme/secret",
+      branch: "main",
+      baseCommit: "abc1234",
+      status: "implementing",
+      startedAt: at(100),
+      lastHeartbeatAt: at(100),
+    });
+    await context(world, "wc_b", "s_b", "SECRET-B-TITLE");
+    await session(world, "s_x");
+    await deliver(world, "hd_1", "s_x", "wc_b", "prompt_hint", 10, 5);
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(JSON.stringify(out)).not.toContain("SECRET-B-TITLE");
+    expect(out.duplicateWork.priorWork).toEqual([]);
+  });
+});
+
 describe("proof 3 — attribution accuracy", () => {
-  const seedPin = async (world: World, id: string, commit: string) => {
+  const seedPin = async (
+    world: World,
+    id: string,
+    commit: string,
+    brokeAtCommit: string | null = "b0b0b0b",
+  ) => {
     await world.harness.db.insert(pins).values({
       id,
       repo: REPO,
@@ -354,6 +474,8 @@ describe("proof 3 — attribution accuracy", () => {
       verifiedAt: at(200),
       checkRecipe: "bun test",
       captureMode: "human",
+      brokeAt: at(40),
+      brokeAtCommit,
       createdAt: at(200),
     });
     await world.harness.db.insert(pinFiles).values({
@@ -364,12 +486,29 @@ describe("proof 3 — attribution accuracy", () => {
     });
   };
 
+  const repairPin = async (world: World, repairs: string, hoursAgo = 5) => {
+    await world.harness.db.insert(pins).values({
+      id: `${repairs}_fix`,
+      repo: REPO,
+      surface: "playback",
+      verifiedBy: world.developer.developerId,
+      verifiedAtCommit: "def5678",
+      verifiedAt: at(hoursAgo),
+      checkRecipe: "bun test",
+      captureMode: "human",
+      repairsPinId: repairs,
+      repairsPinVersion: 1,
+      createdAt: at(hoursAgo),
+    });
+  };
+
   const answer = async (
     world: World,
     id: string,
     pinId: string,
     topSessionId: string,
     judgeable: boolean,
+    answeredHoursAgo = 30,
   ) => {
     await world.harness.db.insert(pilotAttributions).values({
       id,
@@ -381,7 +520,7 @@ describe("proof 3 — attribution accuracy", () => {
       topLift: 0.8,
       candidates: 2,
       coverageJudgeable: judgeable,
-      answeredAt: at(30),
+      answeredAt: at(answeredHoursAgo),
     });
   };
 
@@ -421,45 +560,101 @@ describe("proof 3 — attribution accuracy", () => {
     expect(out.attribution.attributions).toBe(1);
   });
 
-  test("a repaired attribution carries its fix range and what it named", async () => {
-    // Arrange — the named session touched the pinned file; the pin was
-    // later repaired by a re-pin at a later commit.
+  test("the fix range starts where the break was RECORDED, not where it last worked", async () => {
+    // Arrange — the pin was verified working at abc1234 and recorded broken
+    // at b0b0b0b. Diffing from abc1234 would include the break itself, so any
+    // session that touched the pinned file would read as a hit.
     const world = await setup();
     await session(world, "s_x");
     await context(world, "wc_x", "s_x", "rework playback");
-    await touch(world, "wc_x", ["src/player.ts", "src/unrelated.ts"], 60);
-    await seedPin(world, "pin_1", "abc1234");
-    await world.harness.db.insert(pins).values({
-      id: "pin_fix",
-      repo: REPO,
-      surface: "playback",
-      verifiedBy: world.developer.developerId,
-      verifiedAtCommit: "def5678",
-      verifiedAt: at(5),
-      checkRecipe: "bun test",
-      captureMode: "human",
-      repairsPinId: "pin_1",
-      repairsPinVersion: 1,
-      createdAt: at(5),
-    });
+    await touch(world, "wc_x", ["src/player.ts", "src/config.ts"], 60);
+    await seedPin(world, "pin_1", "abc1234", "b0b0b0b");
+    await repairPin(world, "pin_1");
     await answer(world, "pa_1", "pin_1", "s_x", true);
 
     // Act
     const out = await report(world);
 
-    // Assert — the CLI will diff abc1234..def5678 and look for src/player.ts
+    // Assert — the pinned files every candidate touched are handed over
+    // SEPARATELY from what only this session touched, because only the
+    // second can tell one candidate from another.
     expect(out.attribution.repaired).toEqual([
       {
         pinId: "pin_1",
-        repairPinId: "pin_fix",
-        brokenCommit: "abc1234",
+        repairPinId: "pin_1_fix",
+        brokenCommit: "b0b0b0b",
         repairCommit: "def5678",
-        // ONLY the pinned files the session touched — the overlap that
-        // ranked it — never everything the session ever edited.
-        namedFiles: ["src/player.ts"],
+        pinnedFiles: ["src/player.ts"],
+        namedFiles: ["src/config.ts"],
       },
     ]);
     expect(out.attribution.noRepairYet).toBe(0);
+  });
+
+  test("a break recorded without its commit is counted, never scored", async () => {
+    // Arrange — breaks recorded before the commit was stored
+    const world = await setup();
+    await session(world, "s_x");
+    await seedPin(world, "pin_1", "abc1234", null);
+    await repairPin(world, "pin_1");
+    await answer(world, "pa_1", "pin_1", "s_x", true);
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.attribution.repaired).toEqual([]);
+    expect(out.attribution.repairedWithoutBreakCommit).toBe(1);
+  });
+
+  test("one verdict per repaired break: the last answer before the repair", async () => {
+    // Arrange — three answers on one break. The breaker was named first, an
+    // innocent later, and the fixer only after the repair existed. Scoring all
+    // three would count one fix three times, and the fixer's answer was given
+    // with the fix already in hand.
+    const world = await setup();
+    for (const id of ["s_breaker", "s_innocent", "s_fixer"]) {
+      await session(world, id);
+      await context(world, `wc_${id}`, id, id);
+    }
+    await touch(world, "wc_s_breaker", ["src/player.ts", "src/config.ts"], 60);
+    await touch(world, "wc_s_innocent", ["src/player.ts", "docs/notes.md"], 60);
+    await touch(world, "wc_s_fixer", ["src/player.ts"], 4);
+    await seedPin(world, "pin_1", "abc1234");
+    await repairPin(world, "pin_1", 5);
+    await answer(world, "pa_1", "pin_1", "s_breaker", true, 30);
+    await answer(world, "pa_2", "pin_1", "s_innocent", true, 20);
+    await answer(world, "pa_3", "pin_1", "s_fixer", true, 2);
+
+    // Act
+    const out = await report(world);
+
+    // Assert — the innocent's answer is the one people last acted on
+    expect(out.attribution.repaired).toHaveLength(1);
+    expect(out.attribution.repaired[0]?.namedFiles).toEqual(["docs/notes.md"]);
+    expect(out.attribution.supersededAnswers).toBe(1);
+    expect(out.attribution.answersAfterRepair).toBe(1);
+  });
+});
+
+describe("proof 4 — sessions over sessions", () => {
+  test("a session that opened five pointers is ONE session that opened something", async () => {
+    // Arrange — the target is "one session in twelve received something it
+    // opened"; counting deliveries read 500 per 100 over one session
+    const world = await setup();
+    await session(world, "s_prior", 100);
+    await context(world, "wc_prior", "s_prior", "prior");
+    await session(world, "s_x", 20);
+    for (let index = 0; index < 5; index += 1) {
+      await deliver(world, `hd_${String(index)}`, "s_x", "wc_prior", "prompt_hint", 10, 5);
+    }
+
+    // Act — a window that holds s_x and not s_prior
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.sessions).toBe(1);
+    expect(out.precision.openedPer100).toEqual({ kind: "measured", value: 100 });
   });
 });
 

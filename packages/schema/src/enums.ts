@@ -250,7 +250,22 @@ export const PILOT_UNAVAILABLE_REASONS = [
   "no_sessions",
   /** Nothing was flagged, so nothing can have landed. */
   "nothing_flagged",
+  /**
+   * No session in the window ran on a host that can ask before an edit, so a
+   * tripwire count of zero would read as "no collisions" when it means "no
+   * session that could have asked" (corrected by adversarial review).
+   */
+  "no_asking_host",
 ] as const;
+
+/**
+ * THE HOSTS THAT CAN ASK BEFORE AN EDIT — and therefore feed the tripwire
+ * channel. Cursor treats ask as advisory and ACP forwards permission traffic
+ * untouched (each manifest declares the refusal), so a session on either can
+ * never produce a tripwire delivery, and counting it would dilute the figure
+ * with sessions that were never able to contribute.
+ */
+export const TRIPWIRE_ASKING_HOSTS = ["claude-code"] as const;
 
 /**
  * THE REASONS THAT NAME A RUNG WHICH CANNOT EXIST HERE, as opposed to a figure

@@ -860,6 +860,17 @@ export const PILOT_REPORT_MAX_PRIOR_WORK = 10;
 export const PILOT_REPORT_MAX_REPAIRS = 25;
 
 /**
+ * How many of the named session's own files one repair hands the CLI (07
+ * §3.4). They are compared against the fix diff, which the CLI bounds at
+ * PILOT_FIX_DIFF_MAX_FILES, so a longer list could only ever match files a
+ * too-broad fix already disqualified:
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(s.PILOT_FIX_DIFF_MAX_NAMED_FILES === c.PILOT_FIX_DIFF_MAX_FILES)'
+ * PRINTS: true
+ */
+export const PILOT_FIX_DIFF_MAX_NAMED_FILES = 200;
+
+/**
  * How many deliveries `crosscheck noise` offers a person to choose between
  * (07 §3.2). One is marked without asking; more are listed and the person
  * names the one they meant. Five is a list somebody reads in a glance; past

@@ -8008,8 +8008,8 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${SERVER}/src/services/pilot.ts`,
     from:
       "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
-      "  const now = deps.now();\n  const taken = await deps.db",
-    to: "  const now = deps.now();\n  const taken = await deps.db",
+      "  const now = deps.now();\n  // THIS SESSION IS NOT COUNTED",
+    to: "  const now = deps.now();\n  // THIS SESSION IS NOT COUNTED",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
     because:
       "every session on the hub leaves a stored residue — its coverage " +
@@ -8430,15 +8430,114 @@ export const MUTATIONS: readonly Mutation[] = [
       "change could have fixed",
   },
   {
-    // 07 §3.4. An answer that named no file has nothing to be right or wrong about.
-    label: "an answer that named no file is scored a miss",
+    // 07 §3.4, corrected by adversarial review. The fix range starts at the RECORDED break.
+    label: "the fix range starts where the surface last worked",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit })",
+    to: "            .select({ id: pins.id, brokeAtCommit: pins.verifiedAtCommit })",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the range contains the breaking change itself, so every session that touched " +
+      "the pinned file scores a hit and a revert fix nets to nothing",
+  },
+  {
+    // 07 §3.4. One verdict per fix: the last answer given BEFORE the repair existed.
+    label: "an answer given with the fix in hand is scored",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "      (row) => row.judgeable && row.answeredAt < repair.repairedAt,",
+    to: "      (row) => row.judgeable,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the fixer asks suspect after repairing and is scored as though the product " +
+      "found the culprit before anybody knew",
+  },
+  {
+    // 07 §3.4. A break with no recorded commit has no fix range.
+    label: "a break without its commit is silently dropped",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    if ((brokeAtCommit.get(pinId) ?? null) === null) {",
+    to: "    if (brokeAtCommit.get(pinId) === \"never\") {",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every break recorded before the column existed vanishes from proof 3 instead " +
+      "of being counted, so the denominator shrinks without saying why",
+  },
+  {
+    // 07 §3.4. What the answer named is what ONLY it touched — never the pinned files every candidate shares.
+    label: "the named files include the pin everyone touched",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "            : notInArray(workContextTargets.value, pinned),",
+    to: "            : undefined,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every ranked answer on a pin carries the pinned file, so the fix diff " +
+      "cannot tell the breaker from an innocent and both score a hit",
+  },
+  {
+    // 07 §3.4. A fix that changed only pinned files cannot tell candidates apart.
+    label: "a fix of the pinned file alone scores a hit",
     file: `${CORE}/src/git/fix-diff.ts`,
-    from: "    range.namedFiles.length === 0",
-    to: "    range.namedFiles.length === -1",
+    from: "  return changed.some((path) => pinned.has(path)) ? \"not_discriminating\" : \"miss\";",
+    to: "  return changed.some((path) => pinned.has(path)) ? \"hit\" : \"miss\";",
     test: `${CORE}/test/fix-diff.test.ts`,
     because:
-      "hub-side data gaps become misses, so proof 3 punishes the product for " +
-      "evidence it never had",
+      "the attribution scores right whoever was named, because every candidate " +
+      "touched the file the fix changed",
+  },
+  {
+    // 07 §3.4. A hit needs positive evidence: the fix went into the named session's own work.
+    label: "any change in the fix range scores a hit",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "  if (changed.some((path) => named.has(path))) {",
+    to: "  if (changed.length > 0) {",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "proof 3 reads 100% for any repo with any fixes, which is the product " +
+      "grading itself on the one proof that could embarrass it",
+  },
+  {
+    // 07 §3.4. The break commit reaches every reader's `git diff`.
+    label: "any string is accepted as a break commit",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "  brokeAtCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),",
+    to: "  brokeAtCommit: z.string().optional(),",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "a flag-shaped value is stored and handed to `crosscheck pilot` on every " +
+      "reader's machine, where only the client's second check stands in its way",
+  },
+  {
+    // 07 §3.4. The no-commit placeholder is not a commit.
+    label: "the placeholder commit becomes a range start",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "        parsed.data.brokeAtCommit === NO_COMMIT_SHA",
+    to: "        parsed.data.brokeAtCommit === \"never\"",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "`0000000` is stored as where the break was seen, and every diff over it " +
+      "fails as unresolvable instead of being counted as having no commit",
+  },
+  {
+    // 07 §3.4. The CLI sends the clone's HEAD with the break.
+    label: "a break is recorded without its commit",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "        ? resolved.baseCommit\n        : undefined,",
+    to: "        ? undefined\n        : undefined,",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "no new break ever carries a commit, so proof 3 counts every repair as " +
+      "unscorable for ever while reading as a feature that works",
+  },
+  {
+    // 07 §3.4. The side that spawns the processes holds the bound.
+    label: "a hub can make the reader run unbounded git diffs",
+    file: `${CLI}/src/cli/pilot.ts`,
+    from: "      result.data.attribution.repaired.slice(0, PILOT_FIX_DIFF_MAX_REPAIRS),",
+    to: "      result.data.attribution.repaired.slice(0),",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "a hostile or broken hub answers with thousands of repairs and `crosscheck " +
+      "pilot` spawns a git process for every one on the reader's machine",
   },
   {
     // 07 §5. The pilot parse is STRICT: a count that did not arrive must not read as zero.
@@ -8765,9 +8864,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §3.1. The tripwire's delivery id is its own namespace.
     label: "a tripwire delivery takes the hint's id",
-    file: `${CORE}/src/capture/records.ts`,
-    from: "        channel === \"tripwire\"",
-    to: "        channel === \"suspect\"",
+    file: `${SCHEMA}/src/delivery-id.ts`,
+    from: "  channel === \"tripwire\"",
+    to: "  channel === \"suspect\"",
     test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
     because:
       "a session hinted about a context and later tripped on its file keeps only " +
@@ -8776,35 +8875,13 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §3.1. `\n` cannot occur in a ref id, so the namespaced input never equals a bare one.
     label: "the tripwire namespace collapses into the hint's",
-    file: `${CORE}/src/capture/records.ts`,
+    file: `${SCHEMA}/src/delivery-id.ts`,
     from: "): string => hintDeliveryId(receiverSessionId, `${refId}\\ntripwire`);",
     to: "): string => hintDeliveryId(receiverSessionId, refId);",
     test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
     because:
       "tripwire and hint deliveries of one context share a primary key, so the hub " +
       "silently keeps one channel and drops the other",
-  },
-  {
-    // 07 PIL-3. Answers over answers — never against the surfaces that produced them.
-    label: "the qualifier gate weighs answers against surfaces",
-    file: `${CLI}/src/cli/doctor.ts`,
-    from: "  const missed = Math.max(0, required - emitted);",
-    to: "  const missed = Math.max(0, required - counted.length);",
-    test: `${CLI}/test/doctor-pilot.test.ts`,
-    because:
-      "a repo whose every answer carried its qualifier WARNs whenever the answers " +
-      "outnumber the surfaces, and one whose answers went out bare can read clean",
-  },
-  {
-    // 07 PIL-3. Qualifiers emitted, not answers emitted — the same unit on both sides.
-    label: "the qualifier gate counts answers as qualifiers",
-    file: `${CLI}/src/cli/doctor.ts`,
-    from: "    (sum, counters) => sum + (counters.qualifier_emitted ?? 0),",
-    to: "    (sum, counters) => sum + (counters.answers_emitted ?? 0),",
-    test: `${CLI}/test/doctor-pilot.test.ts`,
-    because:
-      "every answer is counted as having carried a qualifier it may never have " +
-      "needed, so a bare answer over a gap hides behind the total",
   },
   {
     // 07 PIL-8. A rung that cannot exist is a line; an empty day is not.
@@ -8899,8 +8976,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 07 §4. The boundary day stays: the report's widest window still reads it.
     label: "the prune removes rows a report can read",
     file: `${SERVER}/src/services/pilot.ts`,
-    from: "    .where(lt(pilotCounters.day, utcDay(cutoff)));",
-    to: "    .where(lt(pilotCounters.day, utcDay(deps.now())));",
+    from: "        lt(pilotCounters.day, utcDay(cutoff)),",
+    to: "        lt(pilotCounters.day, utcDay(deps.now())),",
     test: `${SERVER}/test/pilot-retention.test.ts`,
     because:
       "a report at the widest window finds its own oldest days gone, and the " +
@@ -8951,6 +9028,184 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "the tripwire's added spool append can grow into the 800 ms PreToolUse " +
       "budget with nothing naming the number that grew",
+  },
+  {
+    // 07 §3.1, corrected by adversarial review. A deterministic id is a computable one.
+    label: "a teammate can squat another developer's delivery id",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "  if (body.id !== deliveryIdFor(body.sessionId, body.refId, body.channel)) {",
+    to: "  if (body.id === \"never\") {",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "a teammate who can see your session id posts your delivery first, your real " +
+      "one is dropped as a duplicate, and your own noise mark is refused as not yours",
+  },
+  {
+    // 07 §3.2. A sender's clock is bounded by the hub's.
+    label: "a delivery dated in the future is stored as dated",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      deps.now().getTime() + MAX_COMMIT_CLOCK_SKEW_MS,",
+    to: "      Number.POSITIVE_INFINITY,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "a delivery stamped 2099 sits at the top of every noise candidate list for good, " +
+      "and a bare `crosscheck noise` marks it three days later",
+  },
+  {
+    // 07, corrected by adversarial review. A session cannot open a pointer after it ended.
+    label: "a blanket pull stamp from a later read counts as an open",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  AND hd.pulled_at <= COALESCE(s.ended_at, s.reaped_at, 'infinity'::timestamptz)",
+    to: "  AND hd.pulled_at IS NOT NULL",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "one read weeks later, from another session, turns a pointer the receiving " +
+      "session ignored into an opened one and erases the duplicate work it did",
+  },
+  {
+    // 07. Nor before it was shown the pointer.
+    label: "a pull before its delivery counts as an open",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  AND hd.pulled_at >= hd.delivered_at",
+    to: "  AND hd.pulled_at IS NOT NULL",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a read that happened before the pointer arrived is credited to the pointer, " +
+      "so proof 1 counts opens nothing surfaced",
+  },
+  {
+    // 07 §8.4, corrected. The prior work a report names is this repo's.
+    label: "another repo's title is printed as this repo's prior work",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    JOIN agent_sessions owner ON owner.id = wc.session_id AND owner.repo = ${repo}",
+    to: "    JOIN agent_sessions owner ON owner.id = wc.session_id",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a delivery's ref is the client's word, so a pointer at a repo that never " +
+      "enrolled prints that repo's work-context titles in this repo's report",
+  },
+  {
+    // 07 §3.7. The target is sessions that opened something, so the rate is sessions over sessions.
+    label: "the opened rate counts deliveries over sessions",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "      SELECT count(DISTINCT s.id)::int AS n\n      FROM agent_sessions s\n      JOIN hint_deliveries hd ON hd.session_id = s.id",
+    to: "      SELECT count(*)::int AS n\n      FROM agent_sessions s\n      JOIN hint_deliveries hd ON hd.session_id = s.id",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "one session that opened five pointers reads 500 per 100, and the declared " +
+      "target of eight is passed by a factor nobody measured",
+  },
+  {
+    // 07, corrected. The hub stamps only the reading session's deliveries when it is told which.
+    label: "a named reading session is ignored",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "          session === undefined || session.length === 0 ? undefined : session,",
+    to: "          undefined,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "every read stamps all of the developer's sessions, so a pointer another " +
+      "session ignored reads as opened",
+  },
+  {
+    // 07, corrected. An ambiguous session pick must not stamp anybody's open.
+    label: "an ambiguous reader stamps a guessed session",
+    file: `${CORE}/src/mcp/tools/get-diagnosis.ts`,
+    from: "    own === null || own.sessionAmbiguous",
+    to: "    own === null",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "with two sessions in one worktree the newest is stamped as having opened " +
+      "a pointer, whichever of them actually read it",
+  },
+  {
+    // 07, corrected. An unambiguous reader names itself.
+    label: "a known reading session is never named",
+    file: `${CORE}/src/mcp/tools/get-diagnosis.ts`,
+    from: "      : { sessionId: own.crosscheckSessionId },",
+    to: "      : \"no_telemetry\",",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "no read from an agent is ever counted as an open again, and proof 1 and " +
+      "proof 4 read zero opens on a team that opens pointers every day",
+  },
+  {
+    // 07 §5, corrected by adversarial review. A count written from the same
+    // record it would verify is a tautology, and a tautology reads as a check.
+    label: "the hub counts qualifier emission it cannot observe",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    ...(required ? [\"qualifier_required\"] : []),",
+    to: "    ...(required ? [\"qualifier_required\", \"qualifier_emitted\"] : []),",
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "\"missed\" is zero by construction and doctor prints a PASS over it, so " +
+      "proof 5's headline says 03's rule held in the wild when nothing measured it",
+  },
+  {
+    // 07 §3.6, corrected. A session that already holds a slot is not counted against itself.
+    label: "a revived session's true end is refused at the cap",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        ne(pilotSessions.sessionId, input.sessionId),",
+    to: "        ne(pilotSessions.sessionId, \"never\"),",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "in a full set the second, true end of a revived session is booked as a " +
+      "refusal and its row keeps saying `reaped`",
+  },
+  {
+    // 07 §4, corrected. The refusal count lives as long as the set it describes.
+    label: "the session set's refusal count ages out",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        ne(pilotCounters.counter, PILOT_SESSIONS_REFUSED),",
+    to: "        ne(pilotCounters.counter, \"never\"),",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "after ninety days a full set reads `0 refused` while its fifty rows stay, " +
+      "and the measurement looks like the whole population",
+  },
+  {
+    // 07 §8.4, corrected. Another person's delivery gets the same answer as none.
+    label: "a refusal code reveals what a colleague was shown",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    return \"unknown_ref\";\n  }\n  if (!target.unsolicited) {",
+    to: "    return \"wrong_repo\";\n  }\n  if (!target.unsolicited) {",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "anybody who computes a colleague's delivery id learns from the refusal " +
+      "whether that ref was shown to them — a per-person history",
+  },
+  {
+    // 07 §8.6, PIL-8, corrected by adversarial review. Zero asks from sessions
+    // that could not ask is not a measurement of collisions.
+    label: "a repo with no asking host reads a measured tripwire zero",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    tripwireFlagged: couldAsk ? measured(flagged) : unavailable(\"no_asking_host\"),",
+    to: "    tripwireFlagged: measured(flagged),",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a team working only in Cursor or through ACP reads \"tripwire 0\" as no " +
+      "collisions, when no session in the window could have asked at all",
+  },
+  {
+    // 07 §5, corrected. `--json` promises no backslash escape, lone surrogates included.
+    label: "a lone surrogate reaches --json as an escape",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  sanitizeUntrusted(raw.replace(LONE_SURROGATE, \"\\uFFFD\"), MAX_PIN_PATH_CHARS)",
+    to: "  sanitizeUntrusted(raw, MAX_PIN_PATH_CHARS)",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "`JSON.stringify` writes an unpaired surrogate as `\\\\ud800`, the escape class " +
+      "no renderer here may hand an agent",
+  },
+  {
+    // 07 §5, corrected. Two keys that clean alike keep both values.
+    label: "a cleaned key overwrites a count that arrived",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "        for (let copy = 2; seen.has(name); copy += 1) {",
+    to: "        for (let copy = 2; seen.has(name) && copy < 0; copy += 1) {",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "a count the hub sent reads as another key's zero in --json, which is the " +
+      "strict parse's own rule broken one step later",
   },
   {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
@@ -9320,17 +9575,17 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
- * PRINTS: packages/cli/test/doctor-pilot.test.ts 7
+ * PRINTS: packages/cli/test/doctor-pilot.test.ts 5
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/pilot-cli.test.ts 3
+ * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 3
+ * PRINTS: packages/cli/test/pins-cli.test.ts 4
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
@@ -9408,7 +9663,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
- * PRINTS: packages/connector-core/test/fix-diff.test.ts 6
+ * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -9427,7 +9682,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
- * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
+ * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
@@ -9478,20 +9733,20 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-deliveries.test.ts 2
+ * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
- * PRINTS: packages/server/test/pilot-counters.test.ts 5
+ * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
- * PRINTS: packages/server/test/pilot-marks.test.ts 7
- * PRINTS: packages/server/test/pilot-repairs.test.ts 3
- * PRINTS: packages/server/test/pilot-report.test.ts 10
- * PRINTS: packages/server/test/pilot-retention.test.ts 3
- * PRINTS: packages/server/test/pilot-sessions.test.ts 4
+ * PRINTS: packages/server/test/pilot-marks.test.ts 8
+ * PRINTS: packages/server/test/pilot-repairs.test.ts 5
+ * PRINTS: packages/server/test/pilot-report.test.ts 19
+ * PRINTS: packages/server/test/pilot-retention.test.ts 4
+ * PRINTS: packages/server/test/pilot-sessions.test.ts 5
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8

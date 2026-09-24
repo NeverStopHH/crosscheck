@@ -20,7 +20,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, lt, sql } from "drizzle-orm";
+import { and, asc, eq, lt, ne, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -193,12 +193,12 @@ export const countCoverageAnswer = async (
   const names = [
     "answers_emitted",
     ...(required ? ["qualifier_required"] : []),
-    // COUNTED, NEVER ASSUMED. 03 makes every answer carry the record and
-    // nothing counted whether it did — which is this proof's whole sentence.
-    // The hub emits it on the same object it just built, so this tracks
-    // `answers_emitted` today; the day it does not, the gap is a number
-    // rather than a discovery.
-    ...(required ? ["qualifier_emitted"] : []),
+    // NO "EMITTED" COUNTER, and that is a correction (adversarial review).
+    // One was written here whenever `qualifier_required` was, from the same
+    // record, so "missed" could never be anything but zero and doctor's PASS
+    // on it measured nothing. Whether a qualifier REACHED its reader is a fact
+    // about rendering, which the render-surface registry and its corpus hold;
+    // the hub cannot count it, so it says so rather than counting a tautology.
     judgeable ? "judgeable" : "not_judgeable",
     ...COVERAGE_SOURCES.map(
       (source) => `coverage_${source}_${stateOf(source)}`,
@@ -347,10 +347,19 @@ export const recordPilotSession = async (
     return;
   }
   const now = deps.now();
+  // THIS SESSION IS NOT COUNTED AGAINST ITSELF (corrected by adversarial
+  // review): a revived session that ends again already HOLDS a slot, and
+  // counting that slot made a full set refuse its true second end — booked
+  // as a refusal, with its row left saying `reaped`.
   const taken = await deps.db
     .select({ n: sql<number>`count(*)::int` })
     .from(pilotSessions)
-    .where(eq(pilotSessions.repo, input.repo));
+    .where(
+      and(
+        eq(pilotSessions.repo, input.repo),
+        ne(pilotSessions.sessionId, input.sessionId),
+      ),
+    );
   if ((taken[0]?.n ?? 0) >= PILOT_MAX_SESSIONS) {
     await deps.db
       .insert(pilotCounters)
@@ -358,7 +367,7 @@ export const recordPilotSession = async (
         repo: input.repo,
         day: utcDay(now),
         surface: "pilot-sessions",
-        counter: "pilot_sessions_refused",
+        counter: PILOT_SESSIONS_REFUSED,
         value: 1,
         updatedAt: now,
       })
@@ -428,7 +437,6 @@ export type MarkRefusal =
   | "not_enrolled"
   | "unknown_ref"
   | "wrong_repo"
-  | "not_yours"
   | "not_unsolicited"
   | "pin_broken";
 
@@ -510,7 +518,11 @@ const refuseMark = (
     return "wrong_repo";
   }
   if (target.recipient !== null && target.recipient !== input.markedBy) {
-    return "not_yours";
+    // THE SAME ANSWER AS "NO SUCH DELIVERY" (corrected by adversarial review).
+    // A distinct refusal told anybody who computed `hd(your session, ref)`
+    // whether you had been shown that ref — a per-person history from a
+    // refusal code, which §8.4 refuses.
+    return "unknown_ref";
   }
   if (!target.unsolicited) {
     return "not_unsolicited";
@@ -592,6 +604,9 @@ export const writePilotMark = async (
 
 const MS_PER_RETENTION_DAY = 86_400_000;
 
+/** The one counter that describes the session set rather than a day's traffic. */
+const PILOT_SESSIONS_REFUSED = "pilot_sessions_refused";
+
 /**
  * THE MEASUREMENT AGES OUT (07 §4) — `pilot_counters` and
  * `pilot_attributions`, past PILOT_RETENTION_DAYS, from the reaper's pass.
@@ -625,7 +640,15 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
   );
   await deps.db
     .delete(pilotCounters)
-    .where(lt(pilotCounters.day, utcDay(cutoff)));
+    .where(
+      and(
+        lt(pilotCounters.day, utcDay(cutoff)),
+        // THE REFUSAL COUNT LIVES AS LONG AS THE SET IT DESCRIBES (corrected
+        // by adversarial review): `pilot_sessions` is never pruned, so aging
+        // this out made a full set read as the whole population again.
+        ne(pilotCounters.counter, PILOT_SESSIONS_REFUSED),
+      ),
+    );
   await deps.db
     .delete(pilotAttributions)
     .where(lt(pilotAttributions.answeredAt, cutoff));

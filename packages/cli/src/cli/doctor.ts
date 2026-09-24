@@ -2182,38 +2182,21 @@ const pilotFigures = (
 const isRungRefusal = (reason: string): boolean =>
   (PILOT_RUNG_REFUSALS as readonly string[]).includes(reason);
 
-const pilotQualifierCheck = (report: PilotReport): Check => {
-  const counted = report.integrity.flatMap((row) =>
-    row.counters === null ? [] : [row.counters],
+/**
+ * NOT COUNTED, AND SAID (corrected by adversarial review). This line used to
+ * WARN when "qualifier emitted" fell short of "qualifier required" — but the
+ * hub wrote the first whenever it wrote the second, from the same record, so
+ * the WARN could never fire and the PASS measured nothing. Whether a
+ * qualifier reached its reader is a fact about rendering, held by the
+ * render-surface registry and its corpus; the hub cannot count it, so the
+ * line says that instead of a number.
+ */
+const pilotQualifierCheck = (): Check =>
+  check(
+    "PASS",
+    "pilot qualifiers",
+    "not counted on the hub — every answer the hub builds carries its coverage record, so a count here could only equal the number required; whether a surface printed it is held by the render registry and its corpus",
   );
-  if (counted.length === 0) {
-    return check(
-      "PASS",
-      "pilot qualifiers",
-      "not measured (no answer surface has counted anything in the last day)",
-    );
-  }
-  const required = counted.reduce(
-    (sum, counters) => sum + (counters.qualifier_required ?? 0),
-    0,
-  );
-  const emitted = counted.reduce(
-    (sum, counters) => sum + (counters.qualifier_emitted ?? 0),
-    0,
-  );
-  const missed = Math.max(0, required - emitted);
-  return missed > 0
-    ? check(
-        "WARN",
-        "pilot qualifiers",
-        `${String(missed)} of ${String(required)} answer(s) that needed a coverage qualifier went out without one — an answer over a gap read as a complete one`,
-      )
-    : check(
-        "PASS",
-        "pilot qualifiers",
-        `every answer that needed a coverage qualifier carried one (${String(emitted)} of ${String(required)})`,
-      );
-};
 
 const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
   if (!result.ok) {
@@ -2265,7 +2248,7 @@ const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
           : ""
       }`,
     ),
-    pilotQualifierCheck(report),
+    pilotQualifierCheck(),
     ...pilotFigures(report).flatMap(([name, value]) =>
       value.kind === "unavailable" && isRungRefusal(value.reason)
         ? [check("PASS", `pilot ${name}`, unavailableClause(value.reason))]

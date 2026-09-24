@@ -66,46 +66,14 @@ export type TargetKind = "file" | "symbol" | "component" | "error_fingerprint";
 
 export type HintRefKind = "claim" | "work_context";
 
-/** 128 bits of SHA-256 — the id stays deterministic AND filename-short. */
-const HINT_DELIVERY_ID_HASH_CHARS = 32;
-
 /**
- * DETERMINISTIC, from (receiving session, ref): the seen-set already
- * guarantees one delivery per ref per session, so this pair is unique — and a
- * spool replay of the same envelope re-sends the same primary key, which the
- * hub answers with `duplicate` instead of a second telemetry row.
+ * DETERMINISTIC, from (receiving session, ref) — and derived in
+ * `@crosscheck/schema` (delivery-id.ts), because the hub now CHECKS the id it
+ * is sent against the same derivation. Re-exported under the names this module
+ * has always had, so no importer changes.
  */
-export const hintDeliveryId = (
-  receiverSessionId: string,
-  refId: string,
-): string =>
-  `hd_${new Bun.CryptoHasher("sha256")
-    .update(`${receiverSessionId}\n${refId}`)
-    .digest("hex")
-    .slice(0, HINT_DELIVERY_ID_HASH_CHARS)}`;
-
-/**
- * A tripwire ask's delivery id — ITS OWN NAMESPACE (07 §3.1).
- *
- * The seen-set that makes (session, ref) unique covers the briefing and the
- * mid-prompt hint, and nothing else: the tripwire asks per FILE, whatever
- * those two already showed. So a session hinted about a context at its first
- * prompt and tripped on that context's file an hour later is two deliveries
- * on two channels — and under one id the hub would keep whichever arrived
- * first and answer the other `duplicate`, losing the one proof 2 counts.
- *
- * NOT a namespace for every channel: briefing and hint rows already on hubs,
- * and records already spooled, carry the bare id, and changing it would make
- * a replay of either a second row. `\n` cannot occur in a ref id, so the two
- * inputs can never produce the same hash input.
- *
- * Still deterministic per (session, context): a session tripping on two files
- * of ONE teammate context is one collision, one row.
- */
-export const tripwireDeliveryId = (
-  receiverSessionId: string,
-  refId: string,
-): string => hintDeliveryId(receiverSessionId, `${refId}\ntripwire`);
+export { hintDeliveryId, tripwireDeliveryId } from "@crosscheck/schema";
+import { deliveryIdFor } from "@crosscheck/schema";
 
 /**
  * Delivery telemetry (DESIGN.md §4): refs only, never the rendered text.
@@ -128,10 +96,7 @@ export const hintDeliveryRecord = (
   buildEnvelope(
     "hint_delivery",
     {
-      id:
-        channel === "tripwire"
-          ? tripwireDeliveryId(receiverSessionId, refId)
-          : hintDeliveryId(receiverSessionId, refId),
+      id: deliveryIdFor(receiverSessionId, refId, channel),
       sessionId: receiverSessionId,
       refKind,
       refId,

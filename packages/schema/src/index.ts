@@ -11,6 +11,7 @@ export {
   PILOT_MARK_REF_KINDS,
   PILOT_RUNG_REFUSALS,
   PILOT_UNAVAILABLE_REASONS,
+  TRIPWIRE_ASKING_HOSTS,
   PULLED_DELIVERY_CHANNEL,
   SUSPECT_FALSIFIER_KINDS,
   SUSPECT_OUTCOMES,
@@ -288,3 +289,8 @@ export {
   fileRef,
 } from "./file-ref.ts";
 export type { CanonicalPath, CanonicalPathRefusal } from "./file-ref.ts";
+export {
+  deliveryIdFor,
+  hintDeliveryId,
+  tripwireDeliveryId,
+} from "./delivery-id.ts";

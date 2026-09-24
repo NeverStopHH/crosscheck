@@ -21,6 +21,7 @@ import {
   EXIT_UNREACHABLE,
   EXIT_USAGE,
   PILOT_FIX_DIFF_CONCURRENCY,
+  PILOT_FIX_DIFF_MAX_REPAIRS,
 } from "@crosscheck/connector-core/constants.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
@@ -145,7 +146,10 @@ export const runPilot = async (
   }
   const view = {
     report: result.data,
-    fixes: await scoreFixes(identity.root, result.data.attribution.repaired),
+    fixes: await scoreFixes(
+      identity.root,
+      result.data.attribution.repaired.slice(0, PILOT_FIX_DIFF_MAX_REPAIRS),
+    ),
   };
   return {
     stdout: args.json ? pilotJson(view) : renderPilot(view),

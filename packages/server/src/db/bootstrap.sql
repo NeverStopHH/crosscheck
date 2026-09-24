@@ -1013,6 +1013,9 @@ ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NU
 -- point at a pin whose watched file set had silently become a different one.
 ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_id text;
 ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_version integer;
+-- 07 3.4, corrected: where the break was OBSERVED. Proof 3's fix range starts here, not at
+-- the last-working commit, which would put the breaking change inside the range.
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_at_commit text;
 
 -- THE ONLY HUMAN INPUT THE PILOT TAKES (07 3.2), and never a question. Two
 -- gestures riding things somebody does anyway; capture_mode is HUB-STAMPED

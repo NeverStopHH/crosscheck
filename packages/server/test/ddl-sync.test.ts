@@ -511,6 +511,7 @@ describe("bootstrap.sql DDL sync", () => {
       "CREATE TABLE IF NOT EXISTS pilot_sessions",
       "ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_id text",
       "ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_version integer",
+      "ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_at_commit text",
     ]) {
       expect(bootstrapSql, fragment).toContain(fragment);
     }
