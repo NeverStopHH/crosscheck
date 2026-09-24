@@ -785,3 +785,66 @@ describe("the verdict rides as a sibling field (04 §5)", () => {
     expect(verdict.evidence.support).toBe("unsupported");
   });
 });
+
+/**
+ * A PIN AND A TOUCH MEET HOWEVER EITHER WAS SPELLED (1.0 spec 01a §3.3d).
+ *
+ * The intersection is an exact-string join. Before one canonical form was
+ * applied at every door, a pin typed as `./src/x.ts` against a touch of
+ * `src/x.ts` intersected to nothing, and the answer read "no session touched
+ * this surface" — an exoneration produced by a spelling, the direction nobody
+ * reports. Each case here was measured failing that way before the fix.
+ */
+describe("a pin and a touch meet however either was spelled", () => {
+  const rankedAfterBreak = async (
+    pinFiles: readonly string[],
+    touchedFiles: readonly string[],
+  ): Promise<SuspectView> => {
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-spell@example.com");
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    await createPin(harness, nick.apiKey, pinBody({ files: [...pinFiles] }));
+    await seedTouches(harness, nick, {
+      sessionId: "ses_nick",
+      contextId: "wc_nick",
+      title: "Workbench filters",
+      files: touchedFiles,
+    });
+    await breakPin(harness, nick.apiKey);
+    return (await suspect(harness, nick.apiKey, "pin=pin_playback")).view;
+  };
+
+  test("a pin typed with ./ still finds the session that touched the file", async () => {
+    // Arrange & Act
+    const view = await rankedAfterBreak([`./${PINNED_A}`, `${PINNED_B}/`], [PINNED_A, PINNED_B]);
+
+    // Assert
+    expect(view.scope.files).toEqual([PINNED_A, PINNED_B]);
+    expect(view.totals.sessionsTouching).toBe(1);
+    expect(view.candidates.map((row) => row.sessionId)).toEqual(["ses_nick"]);
+  });
+
+  test("a touch a connector sent with ./ still meets the pin", async () => {
+    // Arrange & Act — the hub canonicalises a file target at ingest, so a
+    // connector that is not ours cannot spell its way out of the answer
+    const view = await rankedAfterBreak([PINNED_A, PINNED_B], [`./${PINNED_A}`, `src//workbench/usePlayback.ts`]);
+
+    // Assert
+    expect(view.totals.sessionsTouching).toBe(1);
+    expect(view.candidates.map((row) => row.sessionId)).toEqual(["ses_nick"]);
+  });
+
+  test("a decomposed file name meets its composed pin", async () => {
+    // Arrange — git stores `café` composed; a macOS filesystem can hand the
+    // connector the decomposed spelling
+    const composed = "src/workbench/café.ts";
+    const decomposed = "src/workbench/café.ts";
+
+    // Act
+    const view = await rankedAfterBreak([composed, PINNED_B], [decomposed, PINNED_B]);
+
+    // Assert
+    expect(view.candidates.map((row) => row.sessionId)).toEqual(["ses_nick"]);
+    expect(view.candidates[0]?.overlap).toBe(2);
+  });
+});

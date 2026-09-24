@@ -281,3 +281,10 @@ export type {
   EvidenceWho,
   VerificationRefKind,
 } from "./evidence-axes.ts";
+export {
+  CANONICAL_PATH_REFUSALS,
+  FILE_REF_DOMAIN,
+  canonicalRepoPath,
+  fileRef,
+} from "./file-ref.ts";
+export type { CanonicalPath, CanonicalPathRefusal } from "./file-ref.ts";

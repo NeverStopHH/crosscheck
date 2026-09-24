@@ -13,10 +13,22 @@
  */
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
+import { canonicalRepoPath } from "@crosscheck/schema";
+
 import { realpathBestEffort } from "../config/paths.ts";
 
-/** POSIX separators on the wire: a Windows target must match a macOS one. */
-const toPosix = (path: string): string => path.split(sep).join("/");
+/**
+ * POSIX separators on the wire — a Windows target must match a macOS one —
+ * and the ONE spelling the hub and the pin door share (01a §3.3d): NFC, so a
+ * decomposed name a macOS filesystem handed back meets the composed name git
+ * stores. A path that cannot be made canonical is sent as it is: the hub keeps
+ * it, and a touch is evidence nobody should drop here.
+ */
+const toPosix = (path: string): string => {
+  const posix = path.split(sep).join("/");
+  const canonical = canonicalRepoPath(posix);
+  return canonical.ok ? canonical.path : posix;
+};
 
 /**
  * The file's path relative to the repo root, POSIX-separated — or null when

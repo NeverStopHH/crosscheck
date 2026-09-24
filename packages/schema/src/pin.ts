@@ -118,7 +118,13 @@ const PinShapeSchema = z.object({
   id: pinId,
   repo: z.string().min(1),
   surface: z.string().min(1).max(MAX_PIN_SURFACE_CHARS),
-  files: z.array(pinPath).min(1).max(MAX_PIN_FILES),
+  // Deduplicated AFTER canonicalisation: `src/x.ts` and `./src/x.ts` are one
+  // file, and counting it twice would move a pin across the speaking cap.
+  files: z
+    .array(pinPath)
+    .min(1)
+    .max(MAX_PIN_FILES)
+    .transform((files) => [...new Set(files)]),
   /**
    * Optional ONLY above the speaking cap (the refinement below). Nick's
    * decision, verbatim: mandatory for speaking pins, optional for

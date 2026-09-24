@@ -16,6 +16,8 @@ import type {
   WorkContext,
 } from "@crosscheck/schema";
 
+import { canonicalRepoPath } from "@crosscheck/schema";
+
 import { EVENT_KINDS } from "../constants.ts";
 import {
   agentSessions,
@@ -586,6 +588,12 @@ export const seqKindFor = (
     ? "emitted"
     : "observed";
 
+/** A file target's value in its one spelling, or as sent when it has none (01a §3.3d). */
+const canonicalFileValue = (raw: string): string => {
+  const canonical = canonicalRepoPath(raw);
+  return canonical.ok ? canonical.path : raw;
+};
+
 export const ingestTarget = async (
   deps: Deps,
   developerId: string,
@@ -604,6 +612,13 @@ export const ingestTarget = async (
     );
   }
   const source = body.source;
+  // ONE SPELLING PER FILE (01a §3.3d). `suspect` and the retention graph join
+  // a pin to a touch by exact string, so a connector that sent `./src/x.ts`
+  // would otherwise be a touch no pin ever meets — an exoneration produced by
+  // a spelling. A value that cannot be made canonical is KEPT as sent: a
+  // touch is evidence, and dropping it would be deciding the question it
+  // exists to answer.
+  const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;
   const eventKind = TARGET_EVENT_KINDS[body.kind as keyof typeof TARGET_EVENT_KINDS];
   /**
    * PROJECTED ON BOTH BRANCHES, accepted AND duplicate. The git lane's
@@ -623,7 +638,7 @@ export const ingestTarget = async (
       seq,
       seqKind: seqKindFor(source, seq),
       refKind: "target_digest",
-      refId: targetDigest(body.workContextId, body.kind, body.value),
+      refId: targetDigest(body.workContextId, body.kind, value),
     });
   };
   const inserted = await deps.db
@@ -631,7 +646,7 @@ export const ingestTarget = async (
     .values({
       workContextId: body.workContextId,
       kind: body.kind,
-      value: body.value,
+      value,
       source,
       // First-seen age for the targets-only pointer (#19). onConflictDoNothing
       // below means a duplicate touch never bumps it — the honest age.
@@ -653,7 +668,7 @@ export const ingestTarget = async (
         and(
           eq(workContextTargets.workContextId, body.workContextId),
           eq(workContextTargets.kind, body.kind),
-          eq(workContextTargets.value, body.value),
+          eq(workContextTargets.value, value),
           sql`${workContextTargets.source} NOT IN (${source}, 'both')`,
         ),
       );

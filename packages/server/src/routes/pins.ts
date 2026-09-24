@@ -42,6 +42,7 @@ import {
   PinSchema,
   SAFE_ID_PATTERN,
   describeUnstorableText,
+  repoRelativePath,
   unstorableTextPath,
 } from "@crosscheck/schema";
 
@@ -82,7 +83,10 @@ const SweepBodySchema = z.object({
       z.object({
         pinId: z.string().min(1).max(MAX_RECORD_ID_LENGTH).regex(SAFE_ID_PATTERN),
         path: PinPathSchema,
-        newPath: PinPathSchema.nullable(),
+        // The NEW path is stored, so it takes the one spelling (01a §3.3d).
+        // The old one is a lookup key for a row already stored, possibly in a
+        // pre-canonical spelling, so it is matched as sent.
+        newPath: repoRelativePath.nullable(),
       }),
     )
     .max(MAX_PIN_SWEEP_UPDATES),
