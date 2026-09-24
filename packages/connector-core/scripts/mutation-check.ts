@@ -8940,6 +8940,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "the existing index puts repo first",
   },
   {
+    // 07 PIL-9. The budget is measured, not asserted — and a measurement nobody
+    // can see fail is an assertion again. The anchor also pins the test's
+    // existence: delete it and this `from` no longer matches.
+    label: "the counted ask's cost is no longer measured",
+    file: `${CONNECTOR}/test/capture-latency.test.ts`,
+    from: "const TRIPWIRE_RECORD_ALLOWANCE_MS = 5;",
+    to: "const TRIPWIRE_RECORD_ALLOWANCE_MS = 0;",
+    test: `${CONNECTOR}/test/capture-latency.test.ts`,
+    because:
+      "the tripwire's added spool append can grow into the 800 ms PreToolUse " +
+      "budget with nothing naming the number that grew",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -9338,6 +9351,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
+ * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1

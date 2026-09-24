@@ -166,6 +166,17 @@ export interface PilotMarkRequest {
  * a pin takes `surface_ok` (PILOT_MARK_BY_REF_KIND), so a crossed pair has no
  * way to be sent. `presence` states what this process observed — a person at
  * a terminal — and the hub stamps what that is worth.
+ *
+ * NO AGENT PATH REACHES THIS (07 PIL-6, D3). An agent marking the product's
+ * own interventions off-target would be the product grading itself, so the
+ * only callers are the two human commands, each behind the TTY gate — and the
+ * complete list of callers is pinned, so the day an MCP tool gains one, CI
+ * goes red instead of the pilot quietly measuring the model's taste:
+ *
+ * VERIFY: grep -rl postPilotMark packages --include='*.ts' | grep /src/ | sort
+ * PRINTS: packages/cli/src/cli/noise.ts
+ * PRINTS: packages/cli/src/cli/pin.ts
+ * PRINTS: packages/connector-core/src/http/pilot.ts
  */
 export const postPilotMark = (
   ctx: HubContext,
