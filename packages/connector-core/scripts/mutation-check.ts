@@ -8884,28 +8884,6 @@ export const MUTATIONS: readonly Mutation[] = [
       "silently keeps one channel and drops the other",
   },
   {
-    // 07 PIL-3. Answers over answers — never against the surfaces that produced them.
-    label: "the qualifier gate weighs answers against surfaces",
-    file: `${CLI}/src/cli/doctor.ts`,
-    from: "  const missed = Math.max(0, required - emitted);",
-    to: "  const missed = Math.max(0, required - counted.length);",
-    test: `${CLI}/test/doctor-pilot.test.ts`,
-    because:
-      "a repo whose every answer carried its qualifier WARNs whenever the answers " +
-      "outnumber the surfaces, and one whose answers went out bare can read clean",
-  },
-  {
-    // 07 PIL-3. Qualifiers emitted, not answers emitted — the same unit on both sides.
-    label: "the qualifier gate counts answers as qualifiers",
-    file: `${CLI}/src/cli/doctor.ts`,
-    from: "    (sum, counters) => sum + (counters.qualifier_emitted ?? 0),",
-    to: "    (sum, counters) => sum + (counters.answers_emitted ?? 0),",
-    test: `${CLI}/test/doctor-pilot.test.ts`,
-    because:
-      "every answer is counted as having carried a qualifier it may never have " +
-      "needed, so a bare answer over a gap hides behind the total",
-  },
-  {
     // 07 PIL-8. A rung that cannot exist is a line; an empty day is not.
     label: "an empty day is printed as a missing capability",
     file: `${CLI}/src/cli/doctor.ts`,
@@ -9149,6 +9127,18 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "no read from an agent is ever counted as an open again, and proof 1 and " +
       "proof 4 read zero opens on a team that opens pointers every day",
+  },
+  {
+    // 07 §5, corrected by adversarial review. A count written from the same
+    // record it would verify is a tautology, and a tautology reads as a check.
+    label: "the hub counts qualifier emission it cannot observe",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    ...(required ? [\"qualifier_required\"] : []),",
+    to: "    ...(required ? [\"qualifier_required\", \"qualifier_emitted\"] : []),",
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "\"missed\" is zero by construction and doctor prints a PASS over it, so " +
+      "proof 5's headline says 03's rule held in the wild when nothing measured it",
   },
   {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
@@ -9518,7 +9508,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
- * PRINTS: packages/cli/test/doctor-pilot.test.ts 7
+ * PRINTS: packages/cli/test/doctor-pilot.test.ts 5
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
@@ -9683,7 +9673,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
- * PRINTS: packages/server/test/pilot-counters.test.ts 5
+ * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
  * PRINTS: packages/server/test/pilot-marks.test.ts 7
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5

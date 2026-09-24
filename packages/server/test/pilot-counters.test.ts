@@ -117,7 +117,7 @@ describe("proof 5 counts what 03 made mandatory", () => {
     expect(tallies.has("judgeable")).toBe(false);
   });
 
-  test("an OBSERVED gap requires the qualifier, and the emission is counted", async () => {
+  test("an OBSERVED gap requires the qualifier — and no tautological emission is counted", async () => {
     // Arrange — somebody's sessions went quiet: a gap the hub can see.
     const harness = await setup();
 
@@ -127,7 +127,9 @@ describe("proof 5 counts what 03 made mandatory", () => {
     // Assert
     const tallies = await counted(harness);
     expect(tallies.get("qualifier_required")).toBe(1);
-    expect(tallies.get("qualifier_emitted")).toBe(1);
+    // Written from the same record it would claim to verify, an "emitted"
+    // count could only ever equal "required" — so it is not written at all.
+    expect(tallies.has("qualifier_emitted")).toBe(false);
   });
 
   test("a complete record is judgeable and needs no qualifier", async () => {

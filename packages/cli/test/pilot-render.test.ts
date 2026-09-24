@@ -220,7 +220,10 @@ describe("renderPilot", () => {
 
     // Assert
     expect(out).toContain("api-search: not instrumented");
-    expect(out).toContain("api-suspect: answers 12 · qualifier required 3 · emitted 3 · missed 0");
+    expect(out).toContain("api-suspect: answers 12 · qualifier required 3");
+    // No "emitted" or "missed": a hub-side count of those could only ever
+    // equal "required", and printing it would claim a check nobody ran.
+    expect(out).not.toContain("missed");
   });
 
   test("each coverage source gets its own line, never one number", () => {

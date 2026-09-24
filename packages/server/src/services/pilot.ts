@@ -193,12 +193,12 @@ export const countCoverageAnswer = async (
   const names = [
     "answers_emitted",
     ...(required ? ["qualifier_required"] : []),
-    // COUNTED, NEVER ASSUMED. 03 makes every answer carry the record and
-    // nothing counted whether it did — which is this proof's whole sentence.
-    // The hub emits it on the same object it just built, so this tracks
-    // `answers_emitted` today; the day it does not, the gap is a number
-    // rather than a discovery.
-    ...(required ? ["qualifier_emitted"] : []),
+    // NO "EMITTED" COUNTER, and that is a correction (adversarial review).
+    // One was written here whenever `qualifier_required` was, from the same
+    // record, so "missed" could never be anything but zero and doctor's PASS
+    // on it measured nothing. Whether a qualifier REACHED its reader is a fact
+    // about rendering, which the render-surface registry and its corpus hold;
+    // the hub cannot count it, so it says so rather than counting a tautology.
     judgeable ? "judgeable" : "not_judgeable",
     ...COVERAGE_SOURCES.map(
       (source) => `coverage_${source}_${stateOf(source)}`,

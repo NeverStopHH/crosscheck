@@ -155,48 +155,14 @@ describe("the pilot doctor lines", () => {
     expect(stdout).toContain("4 later session(s) refused at the cap and counted");
   });
 
-  test("an answer that went out without its qualifier is a WARN, answers over answers", async () => {
-    // Arrange — three answers needed the qualifier, two carried it.
-    const stdout = await doctor(
-      serving({
-        integrity: [
-          { surface: "api-suspect", counters: { qualifier_required: 2, qualifier_emitted: 2 } },
-          { surface: "api-search", counters: { qualifier_required: 1, qualifier_emitted: 0 } },
-        ],
-      }),
-    );
-
-    // Assert
-    expect(stdout).toContain(
-      "WARN  pilot qualifiers  1 of 3 answer(s) that needed a coverage qualifier went out without one",
-    );
-  });
-
-  test("every qualifier carried is a PASS, however many surfaces counted", async () => {
-    // Arrange — three answers over TWO surfaces, so a gate that weighed the
-    // answers against the surfaces that produced them (PIL-3's mixed-unit
-    // shape) would find one "missing" and invent a WARN.
-    const stdout = await doctor(
-      serving({
-        integrity: [
-          { surface: "api-suspect", counters: { qualifier_required: 2, qualifier_emitted: 2 } },
-          { surface: "api-search", counters: { qualifier_required: 1, qualifier_emitted: 1 } },
-        ],
-      }),
-    );
-
-    // Assert
-    expect(stdout).toContain(
-      "PASS  pilot qualifiers  every answer that needed a coverage qualifier carried one (3 of 3)",
-    );
-  });
-
-  test("no counted surface is 'not measured', never a clean bill", async () => {
-    // Arrange & Act
+  test("qualifier emission is NOT counted, and the line says why", async () => {
+    // Arrange & Act — a hub-side "emitted" count could only equal "required",
+    // so a WARN or PASS over it would be a check nobody ran
     const stdout = await doctor(serving({}));
 
     // Assert
-    expect(stdout).toContain("PASS  pilot qualifiers  not measured");
+    expect(stdout).toContain("PASS  pilot qualifiers  not counted on the hub");
+    expect(stdout).not.toContain("WARN  pilot");
   });
 
   test("a rung that cannot exist here is a PASS line with its reason (PIL-8)", async () => {

@@ -6,7 +6,7 @@
  * `value ?? 0`, skips an empty channel, or cuts the list away from the count
  * it explains would print a tidier report that says something nobody
  * measured. So: an unavailable figure prints its reason and never a digit, a
- * surface nobody counted prints `not instrumented` and never `missed 0`, and
+ * surface nobody counted prints `not instrumented` and never a zero, and
  * an opened count that cannot name the prior work it pointed at is withheld.
  *
  * TWO WORDS NEVER APPEAR (§8.1). "Prevented" is a counterfactual nobody
@@ -224,10 +224,11 @@ const surfaceLines = (
     return [`${INDENT}${name}: not instrumented — it counted nothing in this window`];
   }
   const at = (key: string): number => counters[key] ?? 0;
-  const required = at("qualifier_required");
-  const emitted = at("qualifier_emitted");
   return [
-    `${INDENT}${name}: answers ${count(at("answers_emitted"))} · qualifier required ${count(required)} · emitted ${count(emitted)} · missed ${count(Math.max(0, required - emitted))}`,
+    // "Emitted" and "missed" are NOT printed: the hub attaches the record to
+    // every answer it builds, so a hub-side count could only equal the number
+    // required. Whether a surface printed it is the render registry's fact.
+    `${INDENT}${name}: answers ${count(at("answers_emitted"))} · qualifier required ${count(at("qualifier_required"))} (whether each reached its reader is held by the render registry, not counted here)`,
     `${INDENT}  judgeable ${count(at("judgeable"))} · not judgeable ${count(at("not_judgeable"))}`,
     ...COVERAGE_SOURCES.map(
       (source) =>
