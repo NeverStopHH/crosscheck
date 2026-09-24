@@ -1993,6 +1993,60 @@ export const PIN_SWEEP_MAX_HOPS = 3;
  */
 export const PIN_SWEEP_MAX_GIT_CALLS = 40;
 
+// ── The pilot (1.0 spec 07) ─────────────────────────────────────────────────
+
+/**
+ * How many files one repair's fix diff may name before it stops being
+ * evidence (07 §3.4).
+ *
+ * DERIVED, not restated: it IS `PIN_SWEEP_MAX_PATHS` (§3.7 says so by name),
+ * because both bound "how much of a repository one answer may walk" and the
+ * sweep already settled what that costs. It lives HERE because the diff runs
+ * in `crosscheck pilot` on the reader's clone — the hub holds no repository
+ * and never runs git, and a hub-side copy was a constant nothing read.
+ *
+ * PAST IT THE FIX IS `too_broad`, never a hit: a fix that touched five
+ * hundred files touches the named one by accident, and scoring that as the
+ * attribution being right would reward the answer for the size of the
+ * clean-up.
+ */
+export const PILOT_FIX_DIFF_MAX_FILES = PIN_SWEEP_MAX_PATHS;
+
+/**
+ * How many fix diffs `crosscheck pilot` runs at once. The report hands back at
+ * most PILOT_REPORT_MAX_REPAIRS (25) repairs, each one `git diff` bounded by
+ * GIT_TIMEOUT_MS; one after another that is 37.5 s of somebody waiting in the
+ * worst case, four at a time under eleven, and four processes is nothing a
+ * developer machine notices.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(Math.ceil(25 / c.PILOT_FIX_DIFF_CONCURRENCY) * c.GIT_TIMEOUT_MS)'
+ * PRINTS: 10500
+ */
+export const PILOT_FIX_DIFF_CONCURRENCY = 4;
+
+/**
+ * How many repairs `crosscheck pilot` will diff, whatever the hub sent. The
+ * hub already bounds its list at PILOT_REPORT_MAX_REPAIRS; this is the same
+ * number held on the side that spawns the processes, so a hub that answers
+ * with ten thousand repairs cannot make a reader's machine run ten thousand
+ * `git diff`s:
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(s.PILOT_REPORT_MAX_REPAIRS === c.PILOT_FIX_DIFF_MAX_REPAIRS)'
+ * PRINTS: true
+ */
+export const PILOT_FIX_DIFF_MAX_REPAIRS = 25;
+
+/**
+ * How far back `crosscheck noise` with no argument looks for the delivery a
+ * person means (07 §3.2).
+ *
+ * The gesture is typed BESIDE the session that got a bad intervention, so the
+ * one they mean is recent; an hour covers a long turn and the coffee after it.
+ * Past it the person names the id they saw, because "the most recent" of a
+ * morning's deliveries is a guess, and a guessed mark is noise about noise.
+ */
+export const NOISE_MARK_WINDOW_MINUTES = 60;
+
 /**
  * The git evidence lane's deadline (regression-guard Stage 1). One `git diff
  * --name-only HEAD` inside the Stop hook's spare budget, at the same 250 ms

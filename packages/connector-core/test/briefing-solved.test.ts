@@ -126,7 +126,7 @@ describe("briefing solved-before section", () => {
     expect(lines[topicAt + 1] ?? "").not.toContain("root cause");
     expect(briefing).toContain("shared error fingerprint with current work");
     expect(briefing).toContain(
-      "  root cause · confidence 0.90 · provenance declared: «",
+      "  root cause · confidence 0.90 · no evidence label (this hub does not report one) · provenance declared: «",
     );
   });
 
@@ -391,7 +391,7 @@ describe("briefing solved-before section", () => {
     );
     const fileAt = lines.findIndex((line) => line.includes("get_diagnosis wc_file"));
     expect(lines[fingerprintAt + 1]).toBe(
-      "  root cause · confidence 0.90 · provenance declared: " +
+      "  root cause · confidence 0.90 · no evidence label (this hub does not report one) · provenance declared: " +
         "«The ingestion mapping drops the key id on rotation»",
     );
     expect(lines[fileAt + 1] ?? "").not.toContain("root cause");
@@ -570,5 +570,48 @@ describe("briefing solved-before validity", () => {
     // Assert
     expect(briefing).toContain(CAUSE);
     expect(briefing).not.toContain("validity");
+  });
+});
+
+describe("EV-5 — the solved root cause carries its evidence labels", () => {
+  test("a real label prints beside the confidence, WITHOUT a commit hash", () => {
+    // Arrange — the briefing asserts this body at SessionStart, unasked, with
+    // a confidence beside it. That is 08 §3.6's failure mode at its sharpest,
+    // so the hedge travels with the number.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause: "The ingestion mapping drops the key id on rotation",
+          rootCauseAxes: {
+            who: "agent_derived",
+            support: "repository_verified",
+            supportReason: "red_then_green",
+            observedAt: "2026-03-01T09:00:00.000Z",
+            verifiedAtCommit: "e4f5a6b1c2",
+          },
+        }),
+      ]),
+    );
+
+    // Assert — the label, and NOT the hash: 02's rule for an unsolicited
+    // surface, which the full clause on `get_diagnosis` is free to carry.
+    expect(briefing).toContain("it failed before and passes now");
+    expect(briefing).not.toContain("e4f5a6b");
+  });
+
+  test("a body that travelled without a check says THAT, not nothing", () => {
+    // Arrange — null means "no check travelled with this body", which is a
+    // different sentence from "this hub reports no labels".
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause: "The ingestion mapping drops the key id on rotation",
+          rootCauseAxes: null,
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain("no evidence label (no check travelled with this body)");
   });
 });

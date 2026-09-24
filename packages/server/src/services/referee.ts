@@ -48,6 +48,9 @@ import {
 import type { CandidateSide, ContradictionView } from "./contradictions.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import type { ClaimValidityInput } from "./claim-validity.ts";
+import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import type { ClaimAxesRow } from "./evidence-axes.ts";
+import type { EvidenceAxes } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 
@@ -70,7 +73,49 @@ export const REFEREE_EVIDENCE_WALK_DEPTH = 2;
 const SUPPORTS_EDGE_KIND = "supports";
 const REJECTED_APPROACH_KIND = "rejected_approach";
 
+/**
+ * The evidence labels for a set of claim rows, grouped by the repo each row's
+ * own session belongs to.
+ *
+ * GROUPED, because a case file may cite a claim from another repository and
+ * the ladder resolves CI runs and test results BY REPO. Deriving a foreign
+ * claim against this brief's repo would answer about the wrong repository —
+ * and answer in the exonerating direction, since a test id that resolves
+ * nowhere reads as `ref_unresolved` rather than as a mistake.
+ */
+const axesForRows = async (
+  db: Db,
+  rows: readonly {
+    readonly claim: typeof claims.$inferSelect;
+    readonly repo: string;
+  }[],
+): Promise<ReadonlyMap<string, EvidenceAxes>> => {
+  const byRepo = new Map<string, ClaimAxesRow[]>();
+  for (const row of rows) {
+    const bucket = byRepo.get(row.repo) ?? [];
+    bucket.push(row.claim);
+    byRepo.set(row.repo, bucket);
+  }
+  const all = new Map<string, EvidenceAxes>();
+  for (const [repo, claimRows] of byRepo) {
+    const derived = await readEvidenceAxes({ db, repo, claims: claimRows });
+    for (const [id, value] of derived) {
+      all.set(id, value);
+    }
+  }
+  return all;
+};
+
 export interface RefereeClaimView {
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * The referee brief exists to let a reader CHECK a position instead of
+   * believing it, and it prints a confidence beside every claim. A number with
+   * no evidence label is the one thing that surface must not hand somebody
+   * (08 §3.6), so the labels travel with it here as everywhere else.
+   */
+  readonly axes: EvidenceAxes;
   readonly id: string;
   readonly workContextId: string;
   readonly kind: string;
@@ -136,12 +181,16 @@ const loadClaims = async (
       claim: claims,
       authorDeveloperId: agentSessions.developerId,
       authorDeveloperName: developers.name,
+      // The repo the claim's OWN session belongs to. The ladder resolves CI
+      // by repo, and a case file can cite a claim from another one.
+      repo: agentSessions.repo,
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
     .where(inArray(claims.id, [...ids]))
     .limit(ids.length);
+  const axes = await axesForRows(db, rows);
   return rows.map((row) => ({
     view: {
       id: row.claim.id,
@@ -153,6 +202,7 @@ const loadClaims = async (
       provenance: row.claim.provenance,
       authorDeveloperId: row.authorDeveloperId,
       authorDeveloperName: row.authorDeveloperName,
+      axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
       createdAt: row.claim.createdAt.toISOString(),
     },
     evidenceRefs: row.claim.evidenceRefs,
@@ -258,6 +308,9 @@ const listRuledOut = async (
       claim: claims,
       authorDeveloperId: agentSessions.developerId,
       authorDeveloperName: developers.name,
+      // The repo the claim's OWN session belongs to. The ladder resolves CI
+      // by repo, and a case file can cite a claim from another one.
+      repo: agentSessions.repo,
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
@@ -272,6 +325,7 @@ const listRuledOut = async (
     .orderBy(desc(claims.createdAt))
     .limit(REFEREE_MAX_RULED_OUT_PER_SIDE + 1);
   const truncated = rows.length > REFEREE_MAX_RULED_OUT_PER_SIDE;
+  const axes = await axesForRows(db, rows);
   return {
     ruledOut: rows.slice(0, REFEREE_MAX_RULED_OUT_PER_SIDE).map((row) => ({
       id: row.claim.id,
@@ -283,6 +337,7 @@ const listRuledOut = async (
       provenance: row.claim.provenance,
       authorDeveloperId: row.authorDeveloperId,
       authorDeveloperName: row.authorDeveloperName,
+      axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
       createdAt: row.claim.createdAt.toISOString(),
     })),
     truncated,

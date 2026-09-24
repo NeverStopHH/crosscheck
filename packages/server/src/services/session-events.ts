@@ -15,7 +15,7 @@
  * DELIVERED batch as far as the spool is concerned, and the work is gone. The
  * record survives; only its position is lost, and the loss is counted.
  */
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { isSeqStamp } from "@crosscheck/schema";
 import type {
   EventRefKind,
@@ -26,8 +26,7 @@ import type {
   SessionEventKind,
 } from "@crosscheck/schema";
 
-import { SESSION_EVENT_RETENTION_DAYS } from "../constants.ts";
-import { sessionEvents } from "../db/schema.ts";
+import { agentSessions, sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type { OrderedEvent } from "./session-order.ts";
 import type { Clock } from "../types.ts";
@@ -39,8 +38,6 @@ interface Deps {
 
 /** 128 bits of SHA-256 — deterministic AND short, the hint-delivery shape. */
 const SESSION_EVENT_ID_HASH_CHARS = 32;
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export interface SessionEventIdInput {
   readonly sessionId: string;
@@ -115,6 +112,16 @@ export interface RecordSessionEventInput {
   readonly refId: string;
   /** Overrides the reason an absent `seq` would otherwise carry (a reap). */
   readonly absentReason?: SeqReason;
+  /**
+   * The work context of the RECORD this row projects (01a §3.2). Omitted for
+   * the session-level kinds, which belong to no one work context.
+   */
+  readonly workContextId?: string;
+  /**
+   * `file.modified` only (01a §3.3d): the touched file's identity, or null
+   * when its path has no canonical spelling — UNRESOLVED, and kept (§3.3e).
+   */
+  readonly fileRef?: string | null;
 }
 
 /**
@@ -188,22 +195,25 @@ export const recordSessionEvent = async (
       refKind: input.refKind,
       refId: input.refId,
     });
-    await deps.db
-      .insert(sessionEvents)
-      .values({
-        id,
-        sessionId: input.sessionId,
-        seqEpoch,
-        seqN,
-        seqAfter,
-        kind: input.kind,
-        seqKind: input.seqKind,
-        seqReason,
-        refKind: input.refKind,
-        refId: input.refId,
-        observedAt: deps.now(),
-      })
-      .onConflictDoNothing();
+    // ONE CONDITIONAL INSERT (01a §3.3g). The vendor is read from the session
+    // row in the same statement — exact, since a session has one agent kind,
+    // and no caller can pass one that is not it — and NOTHING is written into
+    // a session whose skeleton the sweep has retired: a claim or a spool
+    // flush that arrives afterwards would rebuild part of a skeleton, and
+    // part of a skeleton reads as an order (`usable`) that the whole one may
+    // have contradicted. The record itself is still stored by its caller;
+    // only this projection is withheld. A check and an insert as two awaited
+    // statements would let a sweep fall between them.
+    await deps.db.execute(sql`
+      INSERT INTO session_events
+        (id, session_id, seq_epoch, seq_n, seq_after, kind, seq_kind, seq_reason,
+         ref_kind, ref_id, observed_at, provider, work_context_id, file_ref)
+      SELECT ${id}, s.id, ${seqEpoch}, ${seqN}, ${seqAfter}, ${input.kind}, ${input.seqKind},
+             ${seqReason}, ${input.refKind}, ${input.refId}, ${deps.now()}, s.agent_kind,
+             ${input.workContextId ?? null}, ${input.fileRef ?? null}
+        FROM agent_sessions s
+       WHERE s.id = ${input.sessionId} AND s.skeleton_retired_at IS NULL
+      ON CONFLICT DO NOTHING`);
     return id;
   };
   if (stamp === null) {
@@ -238,62 +248,13 @@ export const recordSessionEvent = async (
   };
 };
 
-/**
- * DORMANT — NOTHING CALLS THIS. The age sweep was withdrawn before its first
- * deploy (Nick's D-D, 2026-09-17; the refusal is written where the call was,
- * in services/sessions.ts `reapStaleSessions`), because the rows it deletes are
- * very nearly the causal skeleton — see the last paragraph below. Spec 01a
- * narrows this predicate to "past the age AND referenced by nothing" and calls
- * it again; until then the hub declares SESSION_EVENT_RETENTION `off`, and
- * test/session-event-retention.test.ts keeps the age half tested directly.
- *
- * What follows is the history of the shape 01a inherits.
- *
- * RETENTION, ON THE ONE PASS THE HUB ALREADY RUNS — and the first version of
- * this could never fire at all.
- *
- * It was keyed on ONE session and called in-band on a write for that same
- * session. A session is TERMINAL: after `session.ended` no record is ever
- * ingested for it again, so the key was never revisited and the rows could
- * only be retired while the session was still alive — when every row is
- * younger than the session itself. It could only ever fire inside a session
- * that had been alive for more than thirty days.
- *
- * THE HOUSE PATTERN IT COPIED DOES NOT HAVE THIS SHAPE. `ingestCommitEvidence`
- * prunes keyed by REPO, which every later session of every teammate revisits —
- * that constant's own comment names "the next ingest for their repo" as the
- * bound on the table's growth. Nothing revisits an ended session.
- *
- * SO IT SWEEPS BY AGE, from inside `reapStaleSessions`. That is not a second
- * job to forget to start — it is the hub's ONE standalone pass, on a timer —
- * and it runs BEFORE that pass's own early return, because a retirement that
- * only happens when there is also a session to close is the same defect with a
- * different key. `session_events_observed_at_idx` is what keeps it an index
- * range rather than a scan of every event on the hub.
- *
- * WHAT THIRTY DAYS COSTS, chosen rather than discovered: a claim older than
- * thirty days keeps its body and loses its position, so a verdict on old work
- * can still say WHAT was claimed and no longer WHETHER the reason predated the
- * change.
- *
- * AND IT RETIRES THE SKELETON WITH THE DETAIL — the part to weigh before this
- * shape is read as final. Every column here is already a ref or an enum (no
- * body, no prose, no path — non-negotiable #6), so the row this DELETE removes
- * IS very nearly the causal skeleton: the ids, the kind, the epoch and the
- * position. No setting on this sweep keeps `A happens-before B` while letting
- * the surrounding detail go, because the surrounding detail was never in this
- * table — it is in the rows `ref_id` points at, each on its own retention. So
- * retiring content sooner than proven order is a change to the MODEL, a tier
- * that outlives what it orders, and not a different number in this constant.
+/*
+ * RETENTION is not here any more. D2's age sweep (`pruneSessionEvents`) was
+ * withdrawn before its first deploy (Nick's D-D) because the rows it deleted
+ * are very nearly the causal skeleton; spec 01a replaces it with a sweep
+ * generated from a declared retention graph — services/retention.ts, which
+ * says what it removes and why nothing else goes.
  */
-export const pruneSessionEvents = async (deps: Deps): Promise<void> => {
-  const cutoff = new Date(
-    deps.now().getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY,
-  );
-  await deps.db
-    .delete(sessionEvents)
-    .where(lt(sessionEvents.observedAt, cutoff));
-};
 
 export interface SessionEventCounts {
   readonly total: number;

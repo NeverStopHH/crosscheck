@@ -28,6 +28,18 @@ describe("toRepoRelative", () => {
     );
   });
 
+  test("a decomposed name comes out composed, the spelling git stores (01a §3.3d)", async () => {
+    // Arrange — `é` as `e` plus a combining accent, as a macOS filesystem can
+    // hand it back; a pin names the composed form git reports.
+    const decomposed = "src/cafe\u0301.ts";
+
+    // Act
+    const path = await toRepoRelative("/repo", "/repo", decomposed);
+
+    // Assert
+    expect(path).toBe("src/caf\u00e9.ts");
+  });
+
   test("returns null for paths outside the repo root", async () => {
     expect(await toRepoRelative("/repo", "/repo", "../outside.ts")).toBeNull();
     expect(await toRepoRelative("/repo", "/repo", "/etc/passwd")).toBeNull();

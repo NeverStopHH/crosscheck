@@ -35,6 +35,10 @@
  * "they ignored the notice" is how a trial ends socially rather than
  * technically.
  */
+import type {
+  SuspectFalsifierKind,
+  SuspectOutcome,
+} from "@crosscheck/schema";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
 
 import {
@@ -66,29 +70,19 @@ interface Deps {
 }
 
 /**
- * WHY the surface is believed broken — printed before any row, because a
- * ranking whose premise is unstated is an accusation with the evidence left
- * off.
+ * WHY the surface is believed broken, and WHAT the answer turned out to be —
+ * printed before any row, because a ranking whose premise is unstated is an
+ * accusation with the evidence left off.
+ *
+ * DECLARED IN `@crosscheck/schema`, re-exported here so every existing reader
+ * keeps its import. 07 §3.3 stores both on `pilot_attributions` and requires
+ * them to be these enums VERBATIM rather than a parallel set — and a drizzle
+ * column needs the values as data, which a union type cannot give. The arrays
+ * are the single declaration; these two names are the same thing seen from
+ * the service that produces them. `db/schema.ts` cannot reach a service
+ * without a cycle, which is why the vocabulary moved rather than being copied.
  */
-export type SuspectFalsifierKind =
-  /** A pin whose check recipe was run and recorded failing. */
-  | "recorded_break"
-  /** A live pin: nobody has recorded running its check and failing. */
-  | "not_recorded_broken"
-  /** A briefing-only pin with no recipe — nothing to have run. */
-  | "no_check_recipe"
-  /** No pin at all: the reader named the files, so the reader is the falsifier. */
-  | "reader_named_files";
-
-export type SuspectOutcome =
-  /** A separated top candidate; rows printed with scores. */
-  | "ranked"
-  /** Rows printed with scores, and no clear air between the top two. */
-  | "no_separation"
-  /** Nothing touched these files in the window. */
-  | "no_touch"
-  /** The falsifier gate, or this team's attribution setting, printed no rows. */
-  | "withheld";
+export type { SuspectFalsifierKind, SuspectOutcome };
 
 export interface SuspectCandidate {
   readonly sessionId: string;
@@ -119,6 +113,16 @@ export interface SuspectView {
   readonly scope: {
     readonly kind: "pin" | "paths";
     readonly pinId: string | null;
+    /**
+     * WHICH VERSION of the pinned invariant this answer is about (04 §3.5),
+     * null where the reader named paths and there is no invariant at all.
+     *
+     * Carried HERE rather than re-read by the verdict layer: the answer below
+     * intersected THIS version's file set, and a second read could see a
+     * sweep that landed in between — the verdict would then be about an
+     * invariant the candidate list was never computed against.
+     */
+    readonly pinVersion: number | null;
     readonly surface: string | null;
     readonly files: readonly string[];
     /**
@@ -155,6 +159,16 @@ export interface SuspectView {
 export interface SuspectScope {
   readonly kind: "pin" | "paths";
   readonly pinId: string | null;
+  /**
+   * WHICH VERSION of the pinned invariant this scope is (04 §3.5), null where
+   * the reader named paths and there is no invariant at all.
+   *
+   * Carried rather than re-read: the answer below intersected THIS version's
+   * file set, and a second read could see a sweep that landed in between —
+   * the verdict would then be about an invariant the candidate list was never
+   * computed against.
+   */
+  readonly pinVersion: number | null;
   readonly surface: string | null;
   readonly files: readonly string[];
   /** Of `files`, the ones the pin registry already marks as gone. */
@@ -187,6 +201,7 @@ export const resolveSuspectScope = async (
       scope: {
         kind: "paths",
         pinId: null,
+        pinVersion: null,
         surface: null,
         files: input.paths,
         // The reader named these by hand; the hub holds no status for them.
@@ -219,6 +234,7 @@ export const resolveSuspectScope = async (
     scope: {
       kind: "pin",
       pinId: pin.id,
+      pinVersion: pin.version,
       surface: pin.surface,
       files: pin.files.map((file) => file.path),
       missingFiles: pin.files
@@ -535,6 +551,7 @@ export const suspectSessions = async (
     scope: {
       kind: input.scope.kind,
       pinId: input.scope.pinId,
+      pinVersion: input.scope.pinVersion,
       surface: input.scope.surface,
       files: input.scope.files,
       missingFiles: input.scope.missingFiles,

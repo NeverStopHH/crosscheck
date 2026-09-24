@@ -5071,41 +5071,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "a confident sentence about an ordering nobody observed",
   },
   {
-    // CSK-14 (Nick's D-D, 2026-09-17): the age sweep D2 shipped is WITHDRAWN
-    // before its first deploy, because the rows it deletes are very nearly the
-    // causal skeleton. This puts the call back where it ran.
-    label: "the withdrawn age sweep runs again",
+    // CSK-14's successor (01a §3.3g): the sweep runs from the reaper's own
+    // timer pass, the one standalone pass this hub starts.
+    label: "the skeleton sweep is never called",
     file: `${SERVER}/src/services/sessions.ts`,
-    from: "  // Candidates first, then one UPDATE by id",
-    to:
-      "  await (await import(\"./session-events.ts\")).pruneSessionEvents(deps);\n" +
-      "  // Candidates first, then one UPDATE by id",
+    from: "  if (options.developerId === undefined) {\n    await sweepSkeleton(",
+    to: "  if (options.developerId === \"never\") {\n    await sweepSkeleton(",
     test: `${SERVER}/test/session-event-retention.test.ts`,
     because:
-      "DATA LOSS: every position older than thirty days is deleted on the " +
-      "next reaper pass — ids, kind, epoch and position, which later causal " +
-      "statements are ordered against — while the hub still declares its " +
-      "retention `off` and doctor prints that it keeps everything",
+      "the table grows without bound again while the hub declares a sweep " +
+      "that runs, and doctor prints a retention nothing applies",
   },
   {
-    // The cutoff is the half of the dormant sweep spec 01a keeps. Zero retires
-    // a position the moment it is written, which reads as a working sweep in
-    // every count; the retention test calls the sweep directly to hold it.
-    label: "a position is retired the moment it is written",
-    file: `${SERVER}/src/services/session-events.ts`,
-    from: "    deps.now().getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY,",
-    to: "    deps.now().getTime(),",
-    test: `${SERVER}/test/session-event-retention.test.ts`,
+    // 01a §3.3a. The window is the session's, and it is not zero.
+    label: "a session is retired the moment it ends",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "  new Date(now.getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY);",
+    to: "  new Date(now.getTime());",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
     because:
-      "DATA LOSS ONCE 01a CALLS IT: a live session's own order is swept out " +
-      "from under it on the next pass, so AT-4 is unanswerable for work in " +
-      "progress — and 01a would inherit a cutoff nobody had tested",
+      "DATA LOSS: yesterday's session loses its order before anybody could " +
+      "ask a question of it, and AT-4 is unanswerable for recent work",
   },
   {
     // CSK-14's other half: the refusal is only a refusal if doctor prints it.
     label: "doctor goes quiet about the withdrawn retention",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "    checkSessionEventRetention(eventRetention),\n",
+    from: "    checkSessionEventRetention(\n      eventRetention,\n      skeletonRetention === null || \"unreadable\" in skeletonRetention\n        ? null\n        : skeletonRetention.windowDays,\n    ),\n",
     to: "",
     test: `${CLI}/test/seq-doctor-hub.test.ts`,
     because:
@@ -5116,8 +5108,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // The hub is the only one who can state its retention.
     label: "the hub stops declaring its retention",
     file: `${SERVER}/src/routes/sessions.ts`,
-    from: "    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION });",
-    to: "    return ok(c, { sessions: orders });",
+    from: "    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION, skeleton });",
+    to: "    return ok(c, { sessions: orders, skeleton });",
     test: `${CLI}/test/seq-doctor-hub.test.ts`,
     because:
       "SILENT: every doctor against the one hub that did decide reads `not " +
@@ -6495,8 +6487,13 @@ export const MUTATIONS: readonly Mutation[] = [
     // record on the suspect verdict and gates UNATTRIBUTED on it.
     label: "a ranking names a session with no statement of what was watched",
     file: `${SERVER}/src/routes/suspect.ts`,
-    from: "    return ok(c, { ...view, coverage });",
-    to: "    return ok(c, { ...view });",
+    // TWO ANCHORS SHARE THIS LINE, and that is the point: it carries two
+    // obligations, so each is proven separately. 04 §5 appended `verdict`
+    // beside `coverage`, which moved the line this anchor pointed at — the
+    // registry scan caught the orphan rather than leaving a guard that looks
+    // registered and can never fire.
+    from: "    return ok(c, { ...view, coverage, verdict });",
+    to: "    return ok(c, { ...view, verdict });",
     test: `${SERVER}/test/coverage.test.ts`,
     because:
       "the one surface whose answer is a person carries no coverage block, " +
@@ -7623,6 +7620,2690 @@ export const MUTATIONS: readonly Mutation[] = [
       "hub — and N grows with every spec that adds a check, which is how 05 " +
       "pushed the latency case past its bound without touching it",
   },
+  // ── 1.0 spec 08 §3.2a: the WHO axis cannot be forged ─────────────────────
+  {
+    // AT-3's write path. A claim's capture mode is a TRUST LABEL, and `human`
+    // is the one value that makes a reader treat the sentence as a person's
+    // word. Seven writers stamp a mode and none has ever written it (08 §1.3),
+    // but the field rode the wire verbatim into the row, so a hand-rolled POST
+    // under a developer bearer key could mint one. This widens the claim's
+    // vocabulary back to the pins' three-value set.
+    label: "a claim body may call itself human-captured again",
+    file: "packages/schema/src/enums.ts",
+    from: 'export const CLAIM_CAPTURE_MODES = ["auto", "agent"] as const;',
+    to: 'export const CLAIM_CAPTURE_MODES = ["auto", "agent", "human"] as const;',
+    test: "packages/schema/test/claim.test.ts",
+    because:
+      "any process holding the plaintext bearer key in ~/.crosscheck can post " +
+      "a claim labelled as a human's word, and every teammate's briefing then " +
+      "reads a machine's sentence as something a person vouched for",
+  },
+  {
+    // §3.4's whole point: the pointer is STORED, unresolved, at ingest. This
+    // drops it on the floor while still accepting the record — the claim lands
+    // looking exactly like one nobody attached a check to.
+    label: "ingest discards the verification ref it was sent",
+    file: "packages/server/src/services/record-handlers.ts",
+    from: "      verificationRef: body.verificationRef ?? null,",
+    to: "      verificationRef: null,",
+    test: "packages/server/test/records.test.ts",
+    because:
+      "every claim reads `unsupported` / `no_verification_ref` no matter what " +
+      "its author attached, so the one axis 08 exists to add is silently " +
+      "empty — and an absence is indistinguishable from an honest one",
+  },
+  {
+    // The cap is DERIVED from 05's test-id cap so the two cannot drift. This
+    // makes it a second literal, which is the drift.
+    label: "the verification ref cap becomes a literal again",
+    file: "packages/schema/src/evidence-axes.ts",
+    from:
+      "export const MAX_VERIFICATION_REF_CHARS =\n" +
+      "  MAX_CI_TEST_ID_CHARS + MAX_VERIFICATION_REF_KIND_CHARS + 1;",
+    to: "export const MAX_VERIFICATION_REF_CHARS = 400;",
+    test: "packages/server/test/ddl-sync.test.ts",
+    because:
+      "the wire accepts a ref the column's CHECK refuses, so the database " +
+      "rejects the row after the route said yes and the claim lands with no " +
+      "pointer — a write failure wearing the face of an honest absence",
+  },
+  {
+    // THE INVERSION THIS PROJECT EXISTS TO REFUSE, in one clause. A crashed or
+    // truncated run reports no non-green rows, so its empty list is
+    // indistinguishable from a pass unless `completed` is required. This drops
+    // that requirement from the GREEN half of the red/green pair.
+    label: "a crashed CI run can establish a green again",
+    file: "packages/server/src/services/evidence-axes.ts",
+    from:
+      "        eq(ciRuns.leg, red.leg),\n" +
+      '        eq(ciRuns.outcome, "completed"),\n' +
+      "        inArray(ciRuns.commitSha, laterCommits),",
+    to:
+      "        eq(ciRuns.leg, red.leg),\n" +
+      "        inArray(ciRuns.commitSha, laterCommits),",
+    test: "packages/server/test/evidence-axes.test.ts",
+    because:
+      "a run whose runner DIED reads as proof the test now passes, so a claim " +
+      "nobody verified is printed `repository_verified` — an absence promoted " +
+      "to the strongest evidence label the product has",
+  },
+  {
+    // Principle 5 as one line: a claim with nothing attached must resolve
+    // DOWNWARD. This makes the default rung the observed one instead.
+    label: "a claim with no verification ref reads as observed",
+    file: "packages/server/src/services/evidence-axes.ts",
+    from: '      axes.set(claim.id, unsupported("no_verification_ref"));',
+    to: '      axes.set(claim.id, toolObserved("ci_observed", null));',
+    test: "packages/server/test/evidence-axes.test.ts",
+    because:
+      "every claim ever written — including all of them from before 08, which " +
+      "attached nothing because nothing could — claims a machine observed it, " +
+      "so missing evidence STRENGTHENS the conclusion it is missing from",
+  },
+  {
+    // The ONE place hub bytes reach this clause's output, and therefore the
+    // one place that has to be checked. This prints the field unchecked.
+    label: "the axes clause prints an unchecked commit field",
+    file: `${CORE}/src/evidence/render.ts`,
+    from: "  return HEX.test(candidate) ? candidate.slice(0, SHORT_SHA_CHARS) : null;",
+    to: "  return candidate.slice(0, SHORT_SHA_CHARS);",
+    test: `${CORE}/test/evidence-axes-render.test.ts`,
+    because:
+      "the clause lands beside every confidence the product prints, so a hub " +
+      "that puts text where a sha belongs gets seven characters of its own " +
+      "choosing onto every answer surface, including an agent's context",
+  },
+  {
+    // The axes reach a reader through exactly one line of this renderer. This
+    // drops them while leaving every other fact in place, so the claim still
+    // prints a confidence — with nothing beside it saying whether anything ran.
+    label: "the diagnosis tree stops printing the evidence axes",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "    ...axesFacts(claim, now),",
+    to: "    ...[],",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a reader gets `confidence 0.80` and no evidence label at all, which is " +
+      "the state 08 exists to end — and they fill the gap themselves, upward",
+  },
+  {
+    // The ONE author-written field 08 adds, and the only thing standing
+    // between it and the reader is this frame. Unframed, a ci_test id — 300
+    // characters somebody else chose — lands raw in an agent's context.
+    label: "the check pointer is printed unframed",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  return `\\n  check ${quotedBody(ref, MAX_VERIFICATION_REF_CHARS)}`;",
+    to: "  return `\\n  check ${ref}`;",
+    test: `${CORE}/test/mcp-injection.test.ts`,
+    because:
+      "a claim's check pointer is author text, so an unframed one puts a " +
+      "teammate's chosen bytes into the tree unquoted — and the corpus shows " +
+      "it also SPLITS lines, which is how a payload invents a section",
+  },
+  // ── 1.0 spec 08 §3.6 / EV-4: the invented number decides nothing ─────────
+  {
+    // THE MUTATION EV-4 EXISTS FOR, and the one a comparison grep cannot see.
+    // Hints are ordered newest-first; this orders them by the confidence a
+    // model made up. Measured: the comparison directive stays at 2 while the
+    // operation directive goes red — which is why EV-4 needs two.
+    label: "hints are ranked by the confidence a model invented",
+    file: "packages/server/src/services/hints.ts",
+    from: "      (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),",
+    to: "      (a, b) => b.claim.confidence - a.claim.confidence,",
+    test: `${CORE}/test/confidence-gates-nothing.test.ts`,
+    because:
+      "a number nothing measured decides WHICH findings a teammate is shown " +
+      "and in what order — the moment the invented figure becomes " +
+      "load-bearing, and it would read as a ranking somebody earned",
+  },
+  {
+    // EV-5 on the surface it matters most. A hint is UNSOLICITED: nobody asked
+    // for it, it lands in an agent's context, and this drops the hedge while
+    // leaving the confidence in place.
+    label: "an unsolicited hint prints a bare confidence again",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...axesFact(claim.axes),",
+    to: "    ...[],",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because:
+      "two decimals nobody measured arrive in a teammate's context with " +
+      "nothing beside them saying whether anything was run — and a number " +
+      "without a hedge is read as a measurement",
+  },
+  {
+    // The briefing asserts a root cause at SessionStart that nobody asked
+    // for, with a confidence beside it. This drops the hedge and leaves the
+    // number — 08 §3.6's failure mode, on the surface a session opens with.
+    label: "the briefing's solved root cause prints a bare confidence",
+    file: `${CORE}/src/briefing/render.ts`,
+    from:
+      "  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · ${axes} · provenance declared${validityLabel}`;",
+    to: "  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · provenance declared${validityLabel}`;",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "the first thing a session is told is somebody else's root cause at " +
+      "confidence 0.90, with nothing saying whether a single check was ever " +
+      "run behind it",
+  },
+  // ── 1.0 spec 08 §3.7: the calibration measurement ────────────────────────
+  {
+    // THE RAN-DENOMINATOR DEFECT, in #50's own words about CI lanes: "a lane
+    // that never runs looks exactly like a quiet one". This stops counting the
+    // claims that named no check, so the verified count is measured against
+    // only the claims that could ever have been verified.
+    label: "calibration hides the claims that could never be verified",
+    file: "packages/server/src/services/calibration.ts",
+    from:
+      "    if (row.claim.verificationRef === null) {\n" +
+      "      tally.withoutVerificationRef += 1;\n" +
+      "    } else {\n" +
+      "      tally.withVerificationRef += 1;\n" +
+      "    }",
+    to:
+      "    if (row.claim.verificationRef !== null) {\n" +
+      "      tally.withVerificationRef += 1;\n" +
+      "    }",
+    test: "packages/server/test/calibration.test.ts",
+    because:
+      "the one measurement that decides whether a model's confidence is worth " +
+      "printing becomes a flattering hit rate over a denominator chosen by " +
+      "omission — and it would read as the provider doing well",
+  },
+  {
+    // AT-10: a rung that CANNOT exist is a doctor refusal, never a silence.
+    // This makes the CI leg permanently false, so a repo with no reporter is
+    // told nothing — and its claims sit at tool_observed for ever.
+    label: "doctor stops saying repository_verified is unreachable",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  const noCi = ciVerdict.data.coverage.state === "unavailable";',
+    to: "  const noCi = false;",
+    test: `${CLI}/test/doctor-evidence-axes.test.ts`,
+    because:
+      "a repo whose findings all failed verification and a repo where nothing " +
+      "could ever check them look identical on every surface, and a reader " +
+      "concludes the second team's work does not hold up",
+  },
+  // ── 1.0 spec 04 §3.3: the verdict may not name nobody out of a blind spot ─
+  {
+    // AT-5, AND IT IS THE DEFECT THAT SHIPS TODAY. `crosscheck suspect` already
+    // prints "whatever broke it is not in crosscheck's record" with no
+    // knowledge of whether anything was being recorded. This removes the
+    // coverage test again, so a gap reads as an answer.
+    label: "a coverage gap is reported as nobody having done it",
+    file: "packages/server/src/services/verdict.ts",
+    from:
+      "    return isJudgeable(coverage)\n" +
+      '      ? { attribution: "UNATTRIBUTED", basis: "no_touch_complete" }\n' +
+      '      : { attribution: "INDETERMINATE", basis: "coverage_gap" };',
+    to: '    return { attribution: "UNATTRIBUTED", basis: "no_touch_complete" };',
+    test: "packages/server/test/verdict.test.ts",
+    because:
+      "the product tells a team that nobody in the record touched a surface, " +
+      "while a lane was not recording — a false exoneration stated as a fact, " +
+      "which is the one thing principle 1 exists to prevent",
+  },
+  {
+    // §3.5: a waiver is granted against a VERSION. Without the bump a sweep
+    // moves the paths a pin watches while old waivers go on covering them —
+    // a silent widening of what a human agreed to, and one an agent can cause
+    // on purpose by renaming a file.
+    label: "a pin sweep no longer versions the invariant",
+    file: "packages/server/src/services/pins.ts",
+    from:
+      "      await deps.db\n" +
+      "        .update(pins)\n" +
+      "        .set({ version: sql`${pins.version} + 1` })\n" +
+      "        .where(inArray(pins.id, ids));",
+    to: "      // the bump no longer happens",
+    test: "packages/server/test/pins.test.ts",
+    because:
+      "a human's waiver keeps covering a fence whose watched paths somebody " +
+      "else moved, so consent granted for one invariant silently travels to " +
+      "another — which is the exact shape principle 4 exists to stop",
+  },
+  {
+    // §3.6: a revoke closes the fence and the search STOPS. Skipping it lets an
+    // older grant underneath a revocation answer as live — a permission a human
+    // explicitly took back, still in force.
+    label: "a revoked fence waiver stops closing the fence",
+    file: "packages/server/src/services/waivers.ts",
+    from:
+      "  const revoked = new Set(\n" +
+      "    rows\n" +
+      '      .filter((row) => row.kind === "revoke")\n' +
+      "      .map((row) => row.supersedes)\n" +
+      "      .filter((id): id is string => id !== null),\n" +
+      "  );",
+    to: "  const revoked = new Set<string>();",
+    test: "packages/server/test/waivers.test.ts",
+    because:
+      "a PROTECTED_CONFLICT stays lifted by a waiver somebody revoked, so the " +
+      "product reports a human-verified invariant as acceptably broken on the " +
+      "strength of permission that was withdrawn",
+  },
+  {
+    // §3.6: expires_at is SENDER-SUPPLIED, so it is clamped. Without the
+    // ceiling a date far enough out is a permanent permission wearing an
+    // expiry, and nothing would ever look at it again.
+    label: "a fence waiver may be granted for any length of time",
+    file: "packages/server/src/services/waivers.ts",
+    from: "  if (input.expiresAt.getTime() > ceiling) {",
+    to: "  if (false) {",
+    test: "packages/server/test/waivers.test.ts",
+    because:
+      "a PROTECTED_CONFLICT can be silenced for a decade by one request, and " +
+      "the waiver outlives the attribution window that would have shown " +
+      "anybody the sessions it was granted against",
+  },
+  {
+    // §5: the verdict rides as a SIBLING field, the shape coverage already
+    // uses. Dropping it leaves `suspect` answering exactly what it answered
+    // before — an enum about one query's rows, with no dimension saying
+    // whether anybody may be named.
+    label: "the suspect route stops shipping its verdict",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "    return ok(c, { ...view, coverage, verdict });",
+    to: "    return ok(c, { ...view, coverage });",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "the route answers with a ranking and no attribution dimension, so " +
+      "every reader is back to reading the outcome enum as a verdict — which " +
+      "is the unqualified naming this spec exists to refuse, and it silently " +
+      "drops the one field that says a human-protected invariant is in play",
+  },
+  {
+    // VER-1. 03 §5.1's empty-result rule applied to suspect-render.ts's
+    // `no_touch` sentence — the surface 03's list does not name and its
+    // refusal 8 hands here. The pair with VER-2 is the guard: both fixtures
+    // name nobody, and only one is entitled to say nobody is there.
+    label: "a hole in the archive is printed as an exoneration",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from:
+      'const UNSUPPORTED_NO_TOUCH_BASES: readonly string[] = [\n' +
+      '  "coverage_gap",\n' +
+      '  "pin_paths_missing",\n' +
+      "];",
+    to: "const UNSUPPORTED_NO_TOUCH_BASES: readonly string[] = [];",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because:
+      "\"whatever broke it is not in crosscheck's record\" is printed over a " +
+      "gap we know about, so one reaped session exonerates every agent " +
+      "session on the repo and the reader is told the opposite of what the " +
+      "verdict two lines up computed",
+  },
+  {
+    // The Principle-5 case on the CLIENT side. An old hub sends no verdict;
+    // falling silent leaves the ranking looking fully qualified, which is the
+    // pre-04 defect wearing a post-04 build number.
+    label: "a hub that reports no verdict is read as having no objection",
+    file: `${CLI}/src/cli/verdict-render.ts`,
+    from: "    ? [NO_VERDICT_FROM_HUB]",
+    to: "    ? []",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because:
+      "a 1.0 hub that predates this spec answers `suspect` with a bare " +
+      "ranking, and a reader who is told nothing about whether anybody may " +
+      "be named reads the rows as the answer — missing evidence strengthening " +
+      "a conclusion, which is the one thing it may never do",
+  },
+  {
+    // §5: ABOVE the falsifier lines. Not cosmetic — the verdict is the
+    // licence the document is read under, not a conclusion drawn from it.
+    label: "the qualification arrives after the reader has read the accusation",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from:
+      "    ...verdictLines(view.verdict, now),\n" +
+      "    ...falsifierLines(view, now),",
+    to:
+      "    ...falsifierLines(view, now),\n" +
+      "    ...verdictLines(view.verdict, now),",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because:
+      "a ranking whose qualification is printed underneath it is an " +
+      "accusation with the exoneration in a footnote, and the reader has " +
+      "already named somebody in their head by the time they reach it",
+  },
+  {
+    // The one author-written span on a verdict. NOT guarded by the corpus:
+    // the registry proves the character invariants over this slot and stays
+    // green with the frame removed — measured, see the module header.
+    label: "a teammate's waiver reason reaches a terminal unframed",
+    file: `${CLI}/src/cli/verdict-render.ts`,
+    from: "      : quotedBody(waiver.reason, MAX_WAIVER_REASON_CHARS);",
+    to: "      : bareUntrusted(waiver.reason);",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because:
+      "the guillemets are what tell a model that a sentence is quoted data " +
+      "rather than instruction, and this is the one span on the surface a " +
+      "person wrote — sanitized text with no frame is exactly the shape an " +
+      "injection needs on a surface an agent runs through Bash",
+  },
+  {
+    // The last hop nothing else covers. The compiler forces every writer to
+    // NAME a channel; only this says it named the right one.
+    label: "the briefing books its deliveries as somebody else's channel",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: '          "briefing",',
+    to: '          "prompt_hint",',
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because:
+      "SessionStart deliveries are counted against the mid-prompt budget, so " +
+      "both pull rates stay plausible and neither measures anything — the " +
+      "unsolicited channel's whole cost argument is computed from the wrong " +
+      "denominator",
+  },
+  {
+    // The consent gate on the THIRD writer. Three writers, three gates, and
+    // the registry scan refused a shared `from` twice before this — each
+    // anchor carries enough of its own context to name one place.
+    label: "a hub records session residue for teams that never agreed",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
+      "  const now = deps.now();\n  // THIS SESSION IS NOT COUNTED",
+    to: "  const now = deps.now();\n  // THIS SESSION IS NOT COUNTED",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "every session on the hub leaves a stored residue — its coverage " +
+      "snapshot and its sequence statistic — for teams that declined to be " +
+      "measured, which is the most surveillance-shaped of the three writes " +
+      "and the one a works-council question would find first",
+  },
+  {
+    // 07 §3.6 and 01 §3.1 together. `seq` is a PAIR, and across two epochs
+    // first..last is two unrelated counters subtracted from each other.
+    label: "a restarted counter is handed a span it does not have",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (epochs.size > 1) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "the pilot report prints a confident span for exactly the sessions " +
+      "whose order is broken — a SessionStart re-fire, a busy-lock fallback, " +
+      "two homes on one host key — and 01's epoch-split refusal stops at the " +
+      "counting layer instead of reaching it",
+  },
+  {
+    // The other half of the same honesty: a session with half its events
+    // unordered must not read like one with all of them ordered.
+    label: "records with no place in the order are not counted as missing",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  const nullRecords = rows.length - positioned.length;",
+    to: "  const nullRecords = 0;",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "a session whose emitter could not allocate a single position reports " +
+      "a clean sequence, so the one number that says how much of this " +
+      "session's order is unusable reads zero on the sessions where it is " +
+      "everything",
+  },
+  {
+    // §3.6's cap. A measurement that hit its own ceiling and said nothing
+    // reports fifty sessions as though that were the population.
+    label: "a measurement hits its own cap and says nothing",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if ((taken[0]?.n ?? 0) >= PILOT_MAX_SESSIONS) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "the fifty-session set silently becomes unbounded, so the cost of " +
+      "measuring scales with the thing measured — and the refusal count that " +
+      "was the only way to know the ceiling had been reached never exists",
+  },
+  {
+    // The SAME consent gate on the other writer. Two writers, two gates,
+    // each removable on its own — so each carries its own anchor.
+    label: "a hub counts answers for teams that never agreed",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
+      "  const now = deps.now();\n  const day = utcDay(now);",
+    to: "  const now = deps.now();\n  const day = utcDay(now);",
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "every repo on the hub starts accumulating coverage tallies, so the " +
+      "answer to \"what does this tool record about us\" is wrong for every " +
+      "team that declined — and the off-by-default flag that was the whole " +
+      "answer becomes decoration",
+  },
+  {
+    // 07 §7. PIL-1. `unknown` is the honest bucket for rows older than the column.
+    label: "the channel nobody can attribute is folded away",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "Object.fromEntries(DELIVERY_CHANNELS.map((channel) => [channel, 0]))",
+    to: "Object.fromEntries(DELIVERY_CHANNELS.filter((c) => c !== \"unknown\").map((channel) => [channel, 0]))",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every delivery written before the channel column existed disappears from the split, so the channel buckets stop adding up to the total and the history worth counting reads as though it never happened",
+  },
+  {
+    // 07 §7. PIL-2. A count is printed beside the prior work it counted.
+    label: "an opened count is printed without the work it named",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    title: row.title,",
+    to: "    title: \"\",",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "proof 1 prints \"opened 74\" with nothing a reader can check it against — the counterfactual claim without the counterfactual, which is the one thing the spec forbids this line to be",
+  },
+  {
+    // 07 §7. PIL-4. A surface that counted nothing is not a perfect surface.
+    label: "an uninstrumented surface reads as one that never missed",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "        mine.length === 0\n          ? null",
+    to: "        false\n          ? null",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a surface nobody wired prints as an empty row of counters that renders as \"missed 0\", so the proof about honest qualification certifies a surface it never observed",
+  },
+  {
+    // 07 §7. PIL-5. An attribution made where a lane was blind should not have been made.
+    label: "an answer given under a coverage gap is scored as a hit or a miss",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  const scorable = [...byAttribution.values()].filter((row) => row.judgeable);",
+    to: "  const scorable = [...byAttribution.values()];",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the accuracy figure absorbs exactly the answers principle 1 says must not be given, so a product that names people out of blind spots can report a high accuracy BECAUSE it does",
+  },
+  {
+    // 07 §7. PIL-7. One epoch or the span is refused.
+    label: "a restarted counter is reported as a readable sequence",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    spanned: rows.filter((row) => row.epochs === 1).length,",
+    to: "    spanned: rows.filter((row) => (row.epochs ?? 0) >= 1).length,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "sessions whose order is broken are counted among those whose order can be read, so the set looks more instrumented than it is on exactly the sessions 01 says cannot be ordered",
+  },
+  {
+    // 07 §7. Convergence is credited only inside the window after opening.
+    label: "work done days later is credited to a pointer somebody opened",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "               AND mine.created_at < d.pulled_at\n                   + make_interval(hours => ${PILOT_CONVERGENCE_WINDOW_HOURS})",
+    to: "",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "any later work on the same files counts as having built on the prior work, so convergence rises with how long a team keeps editing a module rather than with what the pointer did",
+  },
+  {
+    // 07 §7. Overlap from before the pointer was shown belongs to neither figure.
+    label: "work done before the pointer arrived is credited to it",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "       AND mine.created_at >= d.delivered_at",
+    to: "",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a session that had already done the work before being told is counted as converging or as duplicating anyway, so the pointer is credited or blamed for something it could not have caused",
+  },
+  {
+    // 07 §7. A ghost line never reaches the hub, and a zero would say there were none.
+    label: "ghost collisions nobody recorded are reported as none",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    ghostFlagged: unavailable(\"ghost_lines_not_recorded\"),",
+    to: "    ghostFlagged: measured(0),",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "proof 2 states that the briefing flagged no ghost collisions, when the truth is that the hub was never told about any — an absence of evidence printed as evidence of absence",
+  },
+  {
+    // 07 §7. Proof 4 is about what arrived UNASKED.
+    label: "a pulled answer is counted as proactive precision",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "        AND hd.channel <> 'suspect'",
+    to: "",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a reader who ASKED `suspect` and opened the answer is counted as a proactive intervention that helped, so proof 4 grows with how often people ask rather than with what the product volunteered",
+  },
+  {
+    // 07 §7. One attribution per (pin, named session), however often it was asked.
+    label: "each re-run of the same question is scored as a separate attribution",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    const key = JSON.stringify([row.pinId, row.topSessionId]);",
+    to: "    const key = JSON.stringify([row.pinId, row.topSessionId, answers.indexOf(row)]);",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "proof 3's accuracy is weighted by how many times somebody re-ran `suspect`, so one correct answer asked five times outweighs four different wrong ones",
+  },
+  {
+    // 07 §3.4. The invisible direction of error: one fix counted against
+    // two breaks hands proof 3 a hit it never earned.
+    label: "one fix is counted against a break that already has one",
+    file: `${SERVER}/src/services/pins.ts`,
+    from:
+      "        sql`NOT EXISTS (SELECT 1 FROM pins AS repair WHERE " +
+      "repair.repairs_pin_id = ${pins.id})`,",
+    to: "        sql`TRUE`,",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "a surface re-pinned twice after one break scores the same fix " +
+      "against the same attribution twice, so proof 3's accuracy rises with " +
+      "how often somebody re-pins rather than with whether the answer was " +
+      "right",
+  },
+  {
+    // A repair is a repair OF A BREAK. Without the break filter every re-pin
+    // of any surface becomes one.
+    label: "every re-pin is read as a repair, broken or not",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "        sql`${pins.brokeAt} IS NOT NULL`,",
+    to: "        sql`TRUE`,",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "a second pin on a surface nobody recorded broken is linked as its fix, " +
+      "so proof 3 grows a denominator of repairs to breaks that never " +
+      "happened and scores attributions nobody ever gave",
+  },
+  {
+    // The whole link. Without it proof 3 has nothing to measure.
+    label: "a repair is looked up and then thrown away",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "        repairsPinId: repaired?.id ?? null,",
+    to: "        repairsPinId: null,",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "every break reads \"no repair pin yet\" for ever, so proof 3 can " +
+      "never produce a hit or a miss — and the report says so in words that " +
+      "sound like a fact about the team rather than about the hub",
+  },
+  {
+    // 07 §3.2. The noise FIGURE has to count people, not keystrokes — and
+    // the unique key is the database's, but the service is what turns a
+    // second attempt into an answer rather than a second row.
+    label: "one person's second keystroke becomes a second complaint",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "    .onConflictDoNothing()\n" +
+      "    .returning({ id: pilotMarks.id });",
+    to: "    .returning({ id: pilotMarks.id });",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "the one figure that says whether this product is worth installing is " +
+      "inflated by the gesture designed to make complaining cheap, so a " +
+      "single frustrated person reads as a team — and the target it is " +
+      "measured against was set before anybody could know that",
+  },
+  {
+    // AT-3 on the pilot's own surface. A mark IS the measurement of whether
+    // this product is useful.
+    label: "an agent gets to grade its own homework",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "      captureMode: HUMAN_CAPTURE_MODE,\n      createdAt: deps.now(),",
+    to: '      captureMode: "auto",\n      createdAt: deps.now(),',
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "the trust label on the pilot's only human input stops saying a human " +
+      "made it, so proof 4's proactive-precision figure is computed over " +
+      "marks nobody can attribute to a person — measuring the product with " +
+      "the product's own word",
+  },
+  {
+    // A gesture that appears to do nothing is one a team stops making.
+    label: "a typed gesture answers as though it had worked",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: '    return { refusal: "not_enrolled" };',
+    to: "    return { id: input.refId, repeated: true };",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "somebody marks an intervention off-target on a repo nobody enrolled " +
+      "and is told it was already recorded, so they stop marking — and the " +
+      "pilot's only human signal dries up for a reason nobody can see",
+  },
+  {
+    // 07 §3.5. A declared surface nothing writes is a report line that reads
+    // zero for ever and looks like a finding — the declaration and the call
+    // site sit in different files, and nothing else holds them together.
+    label: "a report line reads zero because nothing ever wrote it",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: '  "api-search",',
+    to: '  "api-search",\n  "api-contradictions",',
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "proof 5 prints a surface that emitted no answers as though it had " +
+      "emitted none — a zero that means \"not measured\" rendered as a zero " +
+      "that means \"nothing happened\", which is AT-9's exact confusion on " +
+      "the proof about honest qualification",
+  },
+  {
+    // The other direction: a route that stops naming its own answer.
+    label: "one answer surface is counted under another's name",
+    file: `${SERVER}/src/routes/absences.ts`,
+    from: '      surface: "api-absences",',
+    to: '      surface: "api-suspect",',
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "two surfaces with different readers and different obligations are " +
+      "added together, so a qualifier missing on one is hidden by an answer " +
+      "that carried it on the other — the same collapse the delivery channel " +
+      "exists to undo one layer up",
+  },
+  {
+    // 07 §3.5. Two conditions that look alike and are not: a qualifier is
+    // required on a positively OBSERVED gap; judgeability also demands that
+    // agent_event and git be complete.
+    label: "a fresh install is reported as failing to qualify its answers",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "  const required = input.coverage.sources.some(\n" +
+      '    (row) => row.state === "incomplete",\n' +
+      "  );",
+    to: "  const required = !isJudgeable(input.coverage);",
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "every hub that has reported nothing yet counts a qualifier as " +
+      "REQUIRED and unemitted, so proof 5 opens by accusing the product of " +
+      "the exact failure it exists to detect — on precisely the installs " +
+      "with no evidence either way",
+  },
+  {
+    // 00 §8.1 forbids a scalar over the five sources, and this storage is
+    // what makes the collapse unrepresentable rather than discouraged.
+    label: "the five evidence sources collapse into one number",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "    ...COVERAGE_SOURCES.map(\n" +
+      "      (source) => `coverage_${source}_${stateOf(source)}`,\n" +
+      "    ),",
+    to: '    `coverage_overall_${judgeable ? "complete" : "incomplete"}`,',
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "the one storage decision that made a five-source collapse impossible " +
+      "is undone, so a repo with a blind git lane and a reporting agent lane " +
+      "is indistinguishable from the reverse — and every argument this " +
+      "product makes about WHICH lane was watching loses its evidence",
+  },
+  {
+    // 07 §3.3 and §3.6 together. Enrolment is CONSENT, not a display flag:
+    // a hub running for a team that never agreed stores nothing at all.
+    label: "a hub records attributions for teams that never agreed",
+    file: `${SERVER}/src/services/pilot.ts`,
+    // THE FOLLOWING LINE DISAMBIGUATES. Both pilot writers carry the same
+    // gate, so the bare `if` matched twice and the registry scan refused it —
+    // which is the scan doing its job: an anchor that could mutate either of
+    // two places proves nothing about which one it guarded.
+    from:
+      "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
+      "  const top = input.view.candidates[0];",
+    to: "  const top = input.view.candidates[0];",
+    test: `${SERVER}/test/pilot-attributions.test.ts`,
+    because:
+      "every repo on the hub starts accumulating attribution rows, so a " +
+      "works-council question about what this tool records is answered " +
+      "wrongly by the product itself — and the off-by-default flag that was " +
+      "the whole answer becomes decoration",
+  },
+  {
+    // §3.3. `no_separation` prints rows and names NOBODY on purpose.
+    label: "an answer that named nobody records the first row as the suspect",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: '  const named = input.view.outcome === "ranked";',
+    to: "  const named = true;",
+    test: `${SERVER}/test/pilot-attributions.test.ts`,
+    because:
+      "proof 3 scores this product against attributions it explicitly " +
+      "declined to make, so the accuracy figure is computed over answers " +
+      "nobody was ever given — and the one outcome that exists to say " +
+      "\"too close to call\" is recorded as a name",
+  },
+  {
+    // §3.3's other refusal. NOT catchable through the route: the call is
+    // wrapped so instrumentation can never cost a reader their answer, so a
+    // route test cannot tell "gated out" from "threw and was swallowed".
+    // Measured; the guard is a direct service call.
+    label: "an answer with no invariant to be wrong about is recorded anyway",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (input.pinId === null) {\n    return;\n  }",
+    to: "  if (false) {\n    return;\n  }",
+    test: `${SERVER}/test/pilot-attributions.test.ts`,
+    because:
+      "proof 3's denominator grows with reader-named answers that no repair " +
+      "can ever confirm or refute, so the accuracy figure falls toward zero " +
+      "the more the product is used — and the fall reads as the product " +
+      "getting worse",
+  },
+  {
+    // 07 §3.4. Rename detection prints only the new name, so the named path vanishes from the diff.
+    label: "a fix that renamed the named file is scored a miss",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "      \"--no-renames\",",
+    to: "      \"--find-renames\",",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "proof 3 marks a right attribution wrong whenever the fix moved the file " +
+      "it named, and the accuracy figure falls for the teams that refactor as " +
+      "they repair",
+  },
+  {
+    // 07 §3.4. git quotes a non-ASCII path in newline output; the quoted spelling never matches.
+    label: "a named file with a non-ASCII name never matches its fix",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "      \"-z\",",
+    to: "      \"--no-color\",",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "every attribution naming a file with an umlaut, a CJK name or an accent " +
+      "scores as a miss, so proof 3 is wrong in a direction nobody would think " +
+      "to look for",
+  },
+  {
+    // 07 §3.4. Past the bound a fix touches the named file by accident.
+    label: "a sweeping clean-up scores as a hit",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "  if (changed.length > PILOT_FIX_DIFF_MAX_FILES) {",
+    to: "  if (changed.length > PILOT_FIX_DIFF_MAX_FILES * 10) {",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "a vendored drop or a formatter run that also fixed the bug counts as the " +
+      "attribution being right, rewarding the answer for the size of the fix",
+  },
+  {
+    // 07 §3.4. The ids come off the wire; `--output=<file>` is a real git diff option.
+    label: "a hub-chosen string reaches this machine's git command line",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "    !COMMIT_SHA_PATTERN.test(range.brokenCommit) ||",
+    to: "    range.brokenCommit.length === 0 ||",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "a hub answer shaped like a flag makes `crosscheck pilot` write a file on " +
+      "the reader's machine and score the empty stdout as an empty range",
+  },
+  {
+    // 07 §3.4. Nothing changed between the verifications: the break was not in the searched code.
+    label: "an empty fix range is scored",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "  if (changed.length === 0) {\n    return \"empty\";",
+    to: "  if (changed.length === -1) {\n    return \"empty\";",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "an environmental break — a flag, a deploy, data — counts as a miss " +
+      "against the answer, which blames the attribution for something no code " +
+      "change could have fixed",
+  },
+  {
+    // 07 §3.4, corrected by adversarial review. The fix range starts at the RECORDED break.
+    label: "the fix range starts where the surface last worked",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit })",
+    to: "            .select({ id: pins.id, brokeAtCommit: pins.verifiedAtCommit })",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the range contains the breaking change itself, so every session that touched " +
+      "the pinned file scores a hit and a revert fix nets to nothing",
+  },
+  {
+    // 07 §3.4. One verdict per fix: the last answer given BEFORE the repair existed.
+    label: "an answer given with the fix in hand is scored",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "      (row) => row.judgeable && row.answeredAt < repair.repairedAt,",
+    to: "      (row) => row.judgeable,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the fixer asks suspect after repairing and is scored as though the product " +
+      "found the culprit before anybody knew",
+  },
+  {
+    // 07 §3.4. A break with no recorded commit has no fix range.
+    label: "a break without its commit is silently dropped",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    if ((brokeAtCommit.get(pinId) ?? null) === null) {",
+    to: "    if (brokeAtCommit.get(pinId) === \"never\") {",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every break recorded before the column existed vanishes from proof 3 instead " +
+      "of being counted, so the denominator shrinks without saying why",
+  },
+  {
+    // 07 §3.4. What the answer named is what ONLY it touched — never the pinned files every candidate shares.
+    label: "the named files include the pin everyone touched",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "            : notInArray(workContextTargets.value, pinned),",
+    to: "            : undefined,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every ranked answer on a pin carries the pinned file, so the fix diff " +
+      "cannot tell the breaker from an innocent and both score a hit",
+  },
+  {
+    // 07 §3.4. A fix that changed only pinned files cannot tell candidates apart.
+    label: "a fix of the pinned file alone scores a hit",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "  return changed.some((path) => pinned.has(path)) ? \"not_discriminating\" : \"miss\";",
+    to: "  return changed.some((path) => pinned.has(path)) ? \"hit\" : \"miss\";",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "the attribution scores right whoever was named, because every candidate " +
+      "touched the file the fix changed",
+  },
+  {
+    // 07 §3.4. A hit needs positive evidence: the fix went into the named session's own work.
+    label: "any change in the fix range scores a hit",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "  if (changed.some((path) => named.has(path))) {",
+    to: "  if (changed.length > 0) {",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "proof 3 reads 100% for any repo with any fixes, which is the product " +
+      "grading itself on the one proof that could embarrass it",
+  },
+  {
+    // 07 §3.4. The break commit reaches every reader's `git diff`.
+    label: "any string is accepted as a break commit",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "  brokeAtCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),",
+    to: "  brokeAtCommit: z.string().optional(),",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "a flag-shaped value is stored and handed to `crosscheck pilot` on every " +
+      "reader's machine, where only the client's second check stands in its way",
+  },
+  {
+    // 07 §3.4. The no-commit placeholder is not a commit.
+    label: "the placeholder commit becomes a range start",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "        parsed.data.brokeAtCommit === NO_COMMIT_SHA",
+    to: "        parsed.data.brokeAtCommit === \"never\"",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "`0000000` is stored as where the break was seen, and every diff over it " +
+      "fails as unresolvable instead of being counted as having no commit",
+  },
+  {
+    // 07 §3.4. The CLI sends the clone's HEAD with the break.
+    label: "a break is recorded without its commit",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "        ? resolved.baseCommit\n        : undefined,",
+    to: "        ? undefined\n        : undefined,",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "no new break ever carries a commit, so proof 3 counts every repair as " +
+      "unscorable for ever while reading as a feature that works",
+  },
+  {
+    // 07 §3.4. The side that spawns the processes holds the bound.
+    label: "a hub can make the reader run unbounded git diffs",
+    file: `${CLI}/src/cli/pilot.ts`,
+    from: "      result.data.attribution.repaired.slice(0, PILOT_FIX_DIFF_MAX_REPAIRS),",
+    to: "      result.data.attribution.repaired.slice(0),",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "a hostile or broken hub answers with thousands of repairs and `crosscheck " +
+      "pilot` spawns a git process for every one on the reader's machine",
+  },
+  {
+    // 07 §5. The pilot parse is STRICT: a count that did not arrive must not read as zero.
+    label: "a missing pilot count is read as zero",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "    surfaced: CountSchema,",
+    to: "    surfaced: CountSchema.default(0),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because:
+      "a hub that dropped a field prints `surfaced 0` beside a real `opened 74`, " +
+      "an unmeasured figure looking like a measured one on the report that " +
+      "decides whether the product works",
+  },
+  {
+    // 07 PIL-4 at the client: `{}` is a surface that answered nothing, `null` one nobody counted.
+    label: "an uninstrumented surface arrives as an empty record",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "      counters: z.record(z.string(), CountSchema).nullable(),",
+    to: "      counters: z.record(z.string(), CountSchema).nullable().transform((value) => value ?? {}),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because:
+      "every surface nobody counted prints `missed 0`, which is AT-9's exact " +
+      "confusion — an uninstrumented surface looking like a perfect one",
+  },
+  {
+    // 07 PIL-1. A bucket that reads zero really had none; dropping it hides a channel.
+    label: "an empty channel bucket is left off the report",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  return `${INDENT}by channel: ${[...known, ...extra].map(cell).join(\" · \")}`;",
+    to: "  return `${INDENT}by channel: ${[...known, ...extra].filter((channel) => byChannel[channel] !== 0).map(cell).join(\" · \")}`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "a channel that delivered nothing disappears instead of reading zero, so " +
+      "a reader cannot tell a quiet tripwire from one that was never counted",
+  },
+  {
+    // 07 PIL-1. A known channel the hub did not send is not a zero.
+    label: "a channel the hub did not report reads as zero",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "      ? `${bareUntrusted(channel)} not reported`",
+    to: "      ? `${bareUntrusted(channel)} 0`",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "version skew between hub and client prints a measured-looking zero for " +
+      "a channel nobody counted",
+  },
+  {
+    // 07 PIL-2. A bare opened count is the counterfactual claim without the counterfactual.
+    label: "an opened count prints with no prior work named",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  const unnamed = work.opened > 0 && work.priorWork.length === 0;",
+    to: "  const unnamed = work.opened < 0;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "proof 1 claims duplicate work was surfaced and opened without naming a " +
+      "single piece of the work it says was duplicated",
+  },
+  {
+    // 07 PIL-4. `value ?? 0` at the render.
+    label: "a surface nobody counted prints `missed 0`",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    return [`${INDENT}${name}: not instrumented — it counted nothing in this window`];",
+    to: "    return [`${INDENT}${name}: answers 0 · qualifier required 0 · emitted 0 · missed 0`];",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "an uninstrumented answer surface reads as one that never missed a " +
+      "qualifier, which is the product grading itself perfect on what it did " +
+      "not measure",
+  },
+  {
+    // 07 §5. An unavailable figure prints its reason, never a digit.
+    label: "an unavailable figure prints as zero",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    : `${label} ${unavailableClause(value.reason)}`;",
+    to: "    : `${label} 0`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "`ghost 0` and `ci regressed 0` print where nothing was recorded, and a " +
+      "reader concludes there were no ghost collisions and no regressions",
+  },
+  {
+    // 07 §5. A reason a newer hub knows is printed as the word.
+    label: "a reason this client has no sentence for is hidden",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    : `unavailable (${bareUntrusted(reason)})`;",
+    to: "    : `unavailable`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "the reader learns that a figure is missing but never which absence it " +
+      "was, which is the one thing the reason vocabulary exists to say",
+  },
+  {
+    // 07 §3.4. Empty, too-broad and unresolvable fixes are statements that no verdict exists.
+    label: "an unscorable fix is counted as a miss",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    `${INDENT}hit ${count(tally(view.fixes, \"hit\"))} · miss ${count(tally(view.fixes, \"miss\"))} ·",
+    to: "    `${INDENT}hit ${count(tally(view.fixes, \"hit\"))} · miss ${count(view.fixes.length - tally(view.fixes, \"hit\"))} ·",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "a fix range this clone never fetched counts against the attribution, so " +
+      "proof 3 falls on any machine that is behind the default branch",
+  },
+  {
+    // 07 §3.6, D2. Figures over a repo nobody enrolled are measuring it anyway.
+    label: "a repo nobody enrolled is shown figures",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (!report.enrolled) {",
+    to: "  if (report.days < 0) {",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "an un-enrolled repo prints a page of zeros that reads as a measurement, " +
+      "on a team that never agreed to be measured",
+  },
+  {
+    // 07 §5. `--json` reaches an agent through Bash exactly as the text form does.
+    label: "--json hands a teammate's text over raw",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    return jsonSafe(value);",
+    to: "    return value;",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "a title carrying a bidi override or an instruction reaches whatever agent " +
+      "ran `crosscheck pilot --json`, uncleaned and unframed — the injection path " +
+      "the corpus closes, reopened by a flag",
+  },
+  {
+    // 07 §5. A `"` serializes as `\"`, and a backslash is how text smuggles an escape.
+    label: "--json output contains a backslash escape",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    .replaceAll('\"', \"'\")",
+    to: "    .replaceAll('\"', '\"')",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "a title with a quote in it puts an escape sequence into an agent's " +
+      "context, the character class no renderer here is allowed to emit",
+  },
+  {
+    // 07 §8.4. Refused by name: a silent absence would invite someone to build it.
+    label: "a per-developer breakdown is silently accepted",
+    file: `${CLI}/src/cli/pilot.ts`,
+    from: "  if (argv.includes(PILOT_FLAG_BY_DEVELOPER)) {",
+    to: "  if (argv.includes(\"--by-person\")) {",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "`--by-developer` quietly prints the repo report, so the refusal of " +
+      "employee measurement looks like a missing feature somebody should add",
+  },
+  {
+    // 07 §5. The window is whole days; anything else is a usage error before the hub is asked.
+    label: "a malformed window reaches the hub",
+    file: `${CLI}/src/cli/pilot.ts`,
+    from: "const WHOLE_DAYS = /^[1-9]\\d*$/;",
+    to: "const WHOLE_DAYS = /^.+$/;",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "`--days two` asks the hub for NaN days and prints its validation error " +
+      "instead of the usage line that says what the flag takes",
+  },
+  {
+    // 07 §3.2. Only the caller's own deliveries are candidates.
+    label: "noise offers a teammate's delivery",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        eq(agentSessions.developerId, input.developerId),",
+    to: "        eq(agentSessions.repo, input.repo),",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "the first thing a person meets after typing `crosscheck noise` is a delivery " +
+      "they never received, and the mark route's refusal of it",
+  },
+  {
+    // 07 §3.2. A pulled answer is not an intervention.
+    label: "noise offers an answer somebody asked for",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        ne(hintDeliveries.channel, PULLED_DELIVERY_CHANNEL),",
+    to: "        ne(hintDeliveries.channel, \"unknown\"),",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a disliked `suspect` answer is offered as the intervention to mark, and " +
+      "asking a question becomes a way to inflate the noise figure",
+  },
+  {
+    // 07 §3.2. The window is the hub's to hold.
+    label: "noise candidates ignore the window",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        gte(hintDeliveries.deliveredAt, since),",
+    to: "        gte(hintDeliveries.deliveredAt, new Date(0)),",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a morning-old pointer is offered as \"the one that just happened\", and the " +
+      "mark lands on an intervention nobody meant",
+  },
+  {
+    // 07 §3.2. The sessions named are the ones live on the caller's machine.
+    label: "noise candidates ignore the sessions named",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "          : inArray(hintDeliveries.sessionId, [...input.sessions]),",
+    to: "          : undefined,",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a delivery to the caller's session on another laptop is offered as the one " +
+      "beside them, and the mark lands on the wrong intervention",
+  },
+  {
+    // 07 §3.2. The ref a person saw narrows to that ref.
+    label: "noise ignores the ref the person named",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        input.ref === null ? undefined : eq(hintDeliveries.refId, input.ref),",
+    to: "        undefined,",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "`crosscheck noise wc_…` marks whatever arrived last instead of the pointer " +
+      "the person named",
+  },
+  {
+    // 07 §3.2. One row past the bound is read so the cut can be said.
+    label: "the candidate cut is silent",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "    .limit(NOISE_MARK_MAX_CANDIDATES + 1);",
+    to: "    .limit(NOISE_MARK_MAX_CANDIDATES);",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a list of five reads as all there were, and a person picks from a list the " +
+      "one they meant is not on",
+  },
+  {
+    // 07 §3.6, D2. The read is refused where the mark would be.
+    label: "noise lists deliveries on a repo nobody enrolled",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "  if (!settings.pilotEnrolled) {",
+    to: "  if (!settings.pilotEnrolled && input.repo === \"\") {",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a person picks a delivery from a list and only then learns nothing is " +
+      "measured here, a dead end the refusal exists to put first",
+  },
+  {
+    // 07 §3.2. Proof 4 is about what arrived unasked.
+    label: "a pulled answer can be marked noise",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        unsolicited: row.channel !== PULLED_DELIVERY_CHANNEL,",
+    to: "        unsolicited: row.channel !== \"unknown\",",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "a verdict on an answer somebody asked for is counted as an interruption, and " +
+      "the off-target figure rises with every question a team asks",
+  },
+  {
+    // 07 §3.2. "This machine" is the live state files, not every session the caller has.
+    label: "noise reaches past this machine's live sessions",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "    sessions,\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,",
+    to: "    sessions: [],\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "the delivery beside the person loses to a newer one on their other laptop, " +
+      "and the mark lands on an intervention they are not looking at",
+  },
+  {
+    // 07 §3.2. With no id, only the last NOISE_MARK_WINDOW_MINUTES.
+    label: "noise with no id reaches back past the hour",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n  });",
+    to: "  });",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "a ninety-minute-old pointer is marked as the one that just happened, which " +
+      "is a guess, and a guessed mark is noise about noise",
+  },
+  {
+    // 07 §3.2. Several candidates are listed, never guessed.
+    label: "noise guesses between several candidates",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  if (candidates.length > 1 || more) {",
+    to: "  if (candidates.length > 99 || more) {",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "of two recent interventions the newer is marked whether or not it was the " +
+      "one the person meant",
+  },
+  {
+    // 07 §3.2, D3. An agent marking the product's interventions is the product grading itself.
+    label: "an agent can mark noise",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  if (!isInteractive()) {",
+    to: "  if (!isInteractive() && id === \"never\") {",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "the pilot's only human signal can be written by the model it measures, so " +
+      "the off-target figure reports the model's taste",
+  },
+  {
+    // 07 §3.2. Ids are checked before anything is sent.
+    label: "noise sends an id that is not an id",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  if (extra.length > 0 || (id !== undefined && !SAFE_ID_PATTERN.test(id))) {",
+    to: "  if (extra.length > 0) {",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "a mistyped id travels to the hub and comes back as a refusal about the id " +
+      "rather than the usage line that says what to type",
+  },
+  {
+    // 07 §3.2, D5. "The check passed" is a human's word or nothing.
+    label: "an agent can say a pin's check passed",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  if (!isInteractive()) {\n    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };\n  }\n  const result = await postPilotMark(",
+    to: "  if (!isInteractive() && pinId === \"never\") {\n    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };\n  }\n  const result = await postPilotMark(",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "an agent vouches that a surface works on a human's behalf, the exact hole " +
+      "the pin's human gate was built to close",
+  },
+  {
+    // 07 §3.1. Proof 2 reads the `tripwire` channel; a mislabelled ask is a hint.
+    label: "a tripwire ask is booked as a prompt hint",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "        \"tripwire\",\n        {",
+    to: "        \"prompt_hint\",\n        {",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "proof 2's tripwire bucket reads zero on a team whose tripwire fires every " +
+      "day, and proof 1's hint count is inflated by collisions it never surfaced",
+  },
+  {
+    // 07 §3.1. The tripwire's delivery id is its own namespace.
+    label: "a tripwire delivery takes the hint's id",
+    file: `${SCHEMA}/src/delivery-id.ts`,
+    from: "  channel === \"tripwire\"",
+    to: "  channel === \"suspect\"",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "a session hinted about a context and later tripped on its file keeps only " +
+      "the first row, and the collision proof 2 counts is answered `duplicate`",
+  },
+  {
+    // 07 §3.1. `\n` cannot occur in a ref id, so the namespaced input never equals a bare one.
+    label: "the tripwire namespace collapses into the hint's",
+    file: `${SCHEMA}/src/delivery-id.ts`,
+    from: "): string => hintDeliveryId(receiverSessionId, `${refId}\\ntripwire`);",
+    to: "): string => hintDeliveryId(receiverSessionId, refId);",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "tripwire and hint deliveries of one context share a primary key, so the hub " +
+      "silently keeps one channel and drops the other",
+  },
+  {
+    // 07 PIL-8. A rung that cannot exist is a line; an empty day is not.
+    label: "an empty day is printed as a missing capability",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      value.kind === \"unavailable\" && isRungRefusal(value.reason)",
+    to: "      value.kind === \"unavailable\"",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "`nothing was flagged` prints beside the rungs that cannot exist, and an " +
+      "ordinary quiet morning reads like something this install lacks",
+  },
+  {
+    // 07 §3.6, D2. Enrolment is said either way.
+    label: "doctor reports pilot health on a repo nobody enrolled",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (!report.enrolled) {\n    return [\n      check(",
+    to: "  if (report.days < 0) {\n    return [\n      check(",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "a repo that never agreed to be measured is shown qualifier lines as if it " +
+      "were, and nobody on it can tell whether they are being counted",
+  },
+  {
+    // 07 §5. An old hub is `not measured`, a silent one is a WARN — #50's ladder.
+    label: "a hub without the report reads as a hub that failed",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (result.status === HTTP_NOT_FOUND) {\n      return [check(\"PASS\", \"pilot\", \"not measured (this hub has no pilot report)\")];",
+    to: "    if (result.status === 0) {\n      return [check(\"PASS\", \"pilot\", \"not measured (this hub has no pilot report)\")];",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "every install on a hub older than the pilot WARNs about a report it was " +
+      "never going to have, and the WARN that means \"did not answer\" loses its meaning",
+  },
+  {
+    // 07 §3.6. The cap refuses and COUNTS; the line says so.
+    label: "a full session set is reported as a healthy one",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "        set.refused > 0",
+    to: "        set.refused > 99",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "the measurement silently stopped growing at fifty sessions and doctor says " +
+      "nothing, so a reader believes later sessions are in the set",
+  },
+  {
+    // 07 §8.6, PIL-8. Cursor cannot ask before an edit, so it feeds no tripwire count.
+    label: "Cursor's missing tripwire channel is silent",
+    file: `${CURSOR}/src/capabilities.ts`,
+    from: "      name: \"pilot tripwire channel\",",
+    to: "      name: \"pilot tripwire\",",
+    test: `${CORE}/test/pilot-platform-refusals.test.ts`,
+    because:
+      "a team working in Cursor reads a low tripwire figure as few collisions, when " +
+      "it is few sessions that could have asked",
+  },
+  {
+    // 07 §8.6, PIL-8. The ACP proxy forwards permission traffic untouched.
+    label: "ACP's missing tripwire channel is silent",
+    file: `${ACP}/src/capabilities.ts`,
+    from: "      name: \"pilot tripwire channel\",",
+    to: "      name: \"pilot tripwire\",",
+    test: `${CORE}/test/pilot-platform-refusals.test.ts`,
+    because:
+      "a team working through Zed or JetBrains reads a low tripwire figure as few " +
+      "collisions, when it is few sessions that could have asked",
+  },
+  {
+    // 07 §5. A strict parse's refusal is a fact about the answer, not an outage.
+    label: "an unparseable pilot answer is a WARN",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (result.kind !== \"http\") {",
+    to: "    if (result.kind === \"network\") {",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "every install on a hub whose report this client cannot read WARNs on " +
+      "every doctor run, and a WARN that fires for a version mismatch teaches " +
+      "a team to ignore the line that reports a real outage",
+  },
+  {
+    // 07 §4. The reaper is the one pass that can retire a row keyed by its day.
+    label: "the pilot's measurement never ages out",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  await prunePilotMeasurements(deps);",
+    to: "  void prunePilotMeasurements;",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "counters and attributions grow for ever with traffic, on the one table the " +
+      "spec made UPSERT-only precisely so its size would be bounded",
+  },
+  {
+    // 07 §4. The boundary day stays: the report's widest window still reads it.
+    label: "the prune removes rows a report can read",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        lt(pilotCounters.day, utcDay(cutoff)),",
+    to: "        lt(pilotCounters.day, utcDay(deps.now())),",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "a report at the widest window finds its own oldest days gone, and the " +
+      "figures fall for a reason nobody changed — read as a product effect",
+  },
+  {
+    // 07 §4. Attributions age out with the counters.
+    label: "attributions never age out",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    .where(lt(pilotAttributions.answeredAt, cutoff));",
+    to: "    .where(lt(pilotAttributions.answeredAt, new Date(0)));",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "every suspect answer is kept for ever, on a table the spec bounded by the " +
+      "same retention as the proof that reads it",
+  },
+  {
+    // 07 §4. The prune is an index range, not a scan every fifteen minutes.
+    label: "the counter prune scans the table",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS pilot_counters_day_idx",
+    to: "CREATE INDEX IF NOT EXISTS pilot_counters_day_idx_off",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "on a hub with many repos the reaper reads millions of counter rows every " +
+      "pass, since the primary key leads with repo and the prune is by day",
+  },
+  {
+    // 07 §4. Same for attributions: the timestamp must lead.
+    label: "the attribution prune scans the table",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS pilot_attributions_answered_idx",
+    to: "CREATE INDEX IF NOT EXISTS pilot_attributions_answered_idx_off",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "the reaper's age delete reads every attribution on the hub each pass, because " +
+      "the existing index puts repo first",
+  },
+  {
+    // 07 PIL-9. The budget is measured, not asserted — and a measurement nobody
+    // can see fail is an assertion again. The anchor also pins the test's
+    // existence: delete it and this `from` no longer matches.
+    label: "the counted ask's cost is no longer measured",
+    file: `${CONNECTOR}/test/capture-latency.test.ts`,
+    from: "const TRIPWIRE_RECORD_ALLOWANCE_MS = 5;",
+    to: "const TRIPWIRE_RECORD_ALLOWANCE_MS = 0;",
+    test: `${CONNECTOR}/test/capture-latency.test.ts`,
+    because:
+      "the tripwire's added spool append can grow into the 800 ms PreToolUse " +
+      "budget with nothing naming the number that grew",
+  },
+  {
+    // 07 §3.1, corrected by adversarial review. A deterministic id is a computable one.
+    label: "a teammate can squat another developer's delivery id",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "  if (body.id !== deliveryIdFor(body.sessionId, body.refId, body.channel)) {",
+    to: "  if (body.id === \"never\") {",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "a teammate who can see your session id posts your delivery first, your real " +
+      "one is dropped as a duplicate, and your own noise mark is refused as not yours",
+  },
+  {
+    // 07 §3.2. A sender's clock is bounded by the hub's.
+    label: "a delivery dated in the future is stored as dated",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      deps.now().getTime() + MAX_COMMIT_CLOCK_SKEW_MS,",
+    to: "      Number.POSITIVE_INFINITY,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "a delivery stamped 2099 sits at the top of every noise candidate list for good, " +
+      "and a bare `crosscheck noise` marks it three days later",
+  },
+  {
+    // 07, corrected by adversarial review. A session cannot open a pointer after it ended.
+    label: "a blanket pull stamp from a later read counts as an open",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  AND hd.pulled_at <= COALESCE(s.ended_at, s.reaped_at, 'infinity'::timestamptz)",
+    to: "  AND hd.pulled_at IS NOT NULL",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "one read weeks later, from another session, turns a pointer the receiving " +
+      "session ignored into an opened one and erases the duplicate work it did",
+  },
+  {
+    // 07. Nor before it was shown the pointer.
+    label: "a pull before its delivery counts as an open",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  AND hd.pulled_at >= hd.delivered_at",
+    to: "  AND hd.pulled_at IS NOT NULL",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a read that happened before the pointer arrived is credited to the pointer, " +
+      "so proof 1 counts opens nothing surfaced",
+  },
+  {
+    // 07 §8.4, corrected. The prior work a report names is this repo's.
+    label: "another repo's title is printed as this repo's prior work",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    JOIN agent_sessions owner ON owner.id = wc.session_id AND owner.repo = ${repo}",
+    to: "    JOIN agent_sessions owner ON owner.id = wc.session_id",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a delivery's ref is the client's word, so a pointer at a repo that never " +
+      "enrolled prints that repo's work-context titles in this repo's report",
+  },
+  {
+    // 07 §3.7. The target is sessions that opened something, so the rate is sessions over sessions.
+    label: "the opened rate counts deliveries over sessions",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "      SELECT count(DISTINCT s.id)::int AS n\n      FROM agent_sessions s\n      JOIN hint_deliveries hd ON hd.session_id = s.id",
+    to: "      SELECT count(*)::int AS n\n      FROM agent_sessions s\n      JOIN hint_deliveries hd ON hd.session_id = s.id",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "one session that opened five pointers reads 500 per 100, and the declared " +
+      "target of eight is passed by a factor nobody measured",
+  },
+  {
+    // 07, corrected. The hub stamps only the reading session's deliveries when it is told which.
+    label: "a named reading session is ignored",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "          session === undefined || session.length === 0 ? undefined : session,",
+    to: "          undefined,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "every read stamps all of the developer's sessions, so a pointer another " +
+      "session ignored reads as opened",
+  },
+  {
+    // 07, corrected. An ambiguous session pick must not stamp anybody's open.
+    label: "an ambiguous reader stamps a guessed session",
+    file: `${CORE}/src/mcp/tools/get-diagnosis.ts`,
+    from: "    own === null || own.sessionAmbiguous",
+    to: "    own === null",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "with two sessions in one worktree the newest is stamped as having opened " +
+      "a pointer, whichever of them actually read it",
+  },
+  {
+    // 07, corrected. An unambiguous reader names itself.
+    label: "a known reading session is never named",
+    file: `${CORE}/src/mcp/tools/get-diagnosis.ts`,
+    from: "      : { sessionId: own.crosscheckSessionId },",
+    to: "      : \"no_telemetry\",",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "no read from an agent is ever counted as an open again, and proof 1 and " +
+      "proof 4 read zero opens on a team that opens pointers every day",
+  },
+  {
+    // 07 §5, corrected by adversarial review. A count written from the same
+    // record it would verify is a tautology, and a tautology reads as a check.
+    label: "the hub counts qualifier emission it cannot observe",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    ...(required ? [\"qualifier_required\"] : []),",
+    to: "    ...(required ? [\"qualifier_required\", \"qualifier_emitted\"] : []),",
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "\"missed\" is zero by construction and doctor prints a PASS over it, so " +
+      "proof 5's headline says 03's rule held in the wild when nothing measured it",
+  },
+  {
+    // 07 §3.6, corrected. A session that already holds a slot is not counted against itself.
+    label: "a revived session's true end is refused at the cap",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        ne(pilotSessions.sessionId, input.sessionId),",
+    to: "        ne(pilotSessions.sessionId, \"never\"),",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "in a full set the second, true end of a revived session is booked as a " +
+      "refusal and its row keeps saying `reaped`",
+  },
+  {
+    // 07 §4, corrected. The refusal count lives as long as the set it describes.
+    label: "the session set's refusal count ages out",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        ne(pilotCounters.counter, PILOT_SESSIONS_REFUSED),",
+    to: "        ne(pilotCounters.counter, \"never\"),",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "after ninety days a full set reads `0 refused` while its fifty rows stay, " +
+      "and the measurement looks like the whole population",
+  },
+  {
+    // 07 §8.4, corrected. Another person's delivery gets the same answer as none.
+    label: "a refusal code reveals what a colleague was shown",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    return \"unknown_ref\";\n  }\n  if (!target.unsolicited) {",
+    to: "    return \"wrong_repo\";\n  }\n  if (!target.unsolicited) {",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "anybody who computes a colleague's delivery id learns from the refusal " +
+      "whether that ref was shown to them — a per-person history",
+  },
+  {
+    // 07 §8.6, PIL-8, corrected by adversarial review. Zero asks from sessions
+    // that could not ask is not a measurement of collisions.
+    label: "a repo with no asking host reads a measured tripwire zero",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    tripwireFlagged: couldAsk ? measured(flagged) : unavailable(\"no_asking_host\"),",
+    to: "    tripwireFlagged: measured(flagged),",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a team working only in Cursor or through ACP reads \"tripwire 0\" as no " +
+      "collisions, when no session in the window could have asked at all",
+  },
+  {
+    // 07 §5, corrected. `--json` promises no backslash escape, lone surrogates included.
+    label: "a lone surrogate reaches --json as an escape",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  sanitizeUntrusted(raw.replace(LONE_SURROGATE, \"\\uFFFD\"), MAX_PIN_PATH_CHARS)",
+    to: "  sanitizeUntrusted(raw, MAX_PIN_PATH_CHARS)",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "`JSON.stringify` writes an unpaired surrogate as `\\\\ud800`, the escape class " +
+      "no renderer here may hand an agent",
+  },
+  {
+    // 07 §5, corrected. Two keys that clean alike keep both values.
+    label: "a cleaned key overwrites a count that arrived",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "        for (let copy = 2; seen.has(name); copy += 1) {",
+    to: "        for (let copy = 2; seen.has(name) && copy < 0; copy += 1) {",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "a count the hub sent reads as another key's zero in --json, which is the " +
+      "strict parse's own rule broken one step later",
+  },
+  {
+    // 07 §3.2. Proof 4 counts people interrupted, and only the person a
+    // delivery reached was interrupted by it.
+    label: "anybody may call somebody else's delivery noise",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (target.recipient !== null && target.recipient !== input.markedBy) {",
+    to: '  if (target.recipient === "") {',
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "a teammate's opinion of a session they never sat in is counted as an " +
+      "interruption somebody received, so the noise figure measures taste " +
+      "and one vocal reviewer can make the product look noisy for everyone",
+  },
+  {
+    // 07 §3.2, §3.4. A repair is recorded by re-pinning, which carries the
+    // commit and the files; "ok" carries neither.
+    label: "a pin recorded broken is marked ok",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (target.broken) {",
+    to: '  if (target.broken && target.repo === "") {',
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "the break stays unrepaired in the record while proof 4 counts the " +
+      "surface as fine, and proof 3 never gets the fix range it needs to " +
+      "score the attribution that named the breaking session",
+  },
+  {
+    // 07 §3.2. Each ref kind has exactly one gesture, and the report counts
+    // marks by their word — the pairing is the only thing that routes a mark
+    // to the proof it belongs to.
+    label: "a mark may be crossed with the wrong ref kind",
+    file: `${SCHEMA}/src/pilot-mark.ts`,
+    from: "PILOT_MARK_BY_REF_KIND[body.refKind] === body.mark",
+    to: "PILOT_MARK_BY_REF_KIND[body.refKind] !== undefined",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "an `off_target` about a pin is counted as a noisy delivery and a " +
+      "`surface_ok` about a delivery as a verified surface, so each figure " +
+      "silently absorbs marks that belong to the other",
+  },
+  {
+    // 07 §3.2. The unique key is what keeps a noise FIGURE from being a
+    // keystroke count — and the anchor sits on the SQL, not on drizzle:
+    // measured, the harness builds from bootstrap.sql, so weakening the
+    // drizzle declaration leaves every test in this repository green.
+    label: "a second keystroke becomes a second complaint",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx",
+    to: "CREATE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "one person typing `crosscheck noise` twice is counted as two people " +
+      "finding this product noisy, so the one figure that measures whether " +
+      "it is worth installing is inflated by the gesture it was designed to " +
+      "make cheap",
+  },
+  {
+    // 07 §3.1-§3.6. A measurement table in one authority and not the other
+    // fails silently TWICE: nothing is stored, and no proof reports that its
+    // inputs are missing.
+    label: "a measurement table exists on one deployment and not the other",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE TABLE IF NOT EXISTS pilot_counters (",
+    to: "CREATE TABLE IF NOT EXISTS pilot_counters_disabled (",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "proof 5 is the one that cannot be re-derived from anything else, so " +
+      "a hub missing this table loses the coverage-integrity measurement for " +
+      "good — and reports the other four as though nothing were absent",
+  },
+  {
+    // 07 §3.6. The one default a shipped change may never flip: a team is
+    // measured because it agreed to be, not because a release said so.
+    label: "a release enrols every team in the pilot",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  pilotEnrolled: false,",
+    to: "  pilotEnrolled: true,",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because:
+      "every repo that has never configured anything starts reporting pilot " +
+      "numbers, so the measurement is collected from teams that never opted " +
+      "in — and the absent-row and column-default paths, which exist to " +
+      "agree, now disagree with each other as well",
+  },
+  {
+    // 07 §3.1 and §3.6, one anchor. A column added only to the CREATE TABLE
+    // never reaches a hub that already has the table — and NO harness test
+    // can catch it, because every harness builds a fresh database where the
+    // CREATE carries the column and the ALTER never runs.
+    label: "a new column reaches only hubs that do not exist yet",
+    file: "packages/server/src/db/bootstrap.sql",
+    from:
+      "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text " +
+      "NOT NULL DEFAULT 'unknown';",
+    to: "-- (migration removed)",
+    test: "packages/server/test/ddl-sync.test.ts",
+    because:
+      "every hub that has ever run keeps a hint_deliveries table with no " +
+      "channel, so the pilot report counts five proofs out of one bucket " +
+      "that means nobody can tell — and nothing anywhere says the column is " +
+      "missing rather than merely unset",
+  },
+  {
+    // The writer's half. A channel the connector chose and the hub discards
+    // is worse than no column: the report looks measured and is not.
+    label: "the channel a writer chose is replaced by the bucket for not knowing",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      channel: body.channel,",
+    to: '      channel: "unknown",',
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "the briefing and the mid-prompt hint both land in `unknown`, so the " +
+      "one split every pilot proof rests on is silently undone at the last " +
+      "hop — and the connector, the wire and the column all still say it works",
+  },
+  {
+    // An enum that accepts anything is a text column with a comment on it.
+    label: "the delivery channel stops being a closed vocabulary",
+    file: `${SCHEMA}/src/enums.ts`,
+    from: "export const DeliveryChannelSchema = z.enum(DELIVERY_CHANNELS);",
+    to: "export const DeliveryChannelSchema = z.string();",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "any word a caller invents becomes a bucket in the pilot report, so " +
+      "the five proofs are counted over categories nobody defined and a " +
+      "typo silently splits a channel in two",
+  },
+  {
+    // VER-8's measurement, and the failure mode a latency test dies of:
+    // `percentile([])` is 0, and 0 is under every ceiling anybody will ever
+    // write. INT-11's anchor guards the same class from the other side — a
+    // budget the timeout pre-empts.
+    label: "a benchmark measures nothing and reports itself green",
+    file: "packages/server/test/verdict-latency.test.ts",
+    from:
+      "      for (let index = 0; index < SAMPLES; index += 1) {\n" +
+      "        const started = performance.now();\n" +
+      "        const waiver =",
+    to:
+      "      for (let index = 0; index < 0; index += 1) {\n" +
+      "        const started = performance.now();\n" +
+      "        const waiver =",
+    test: "packages/server/test/verdict-latency.test.ts",
+    because:
+      "the one figure this spec owes before merge is produced by a loop that " +
+      "never ran, so the allowance passes on an empty sample and §6's " +
+      "measurement refusal is discharged by a number nobody measured",
+  },
+  {
+    // VER-8's OTHER half. Failing closed is only half of non-negotiable #4:
+    // a downgrade nobody is told about hides the bug that caused it, and the
+    // only remaining trace reads exactly like an ordinary blind spot.
+    label: "a hub bug degrades every verdict and nothing says so",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  return verdict.basis === "legality_violation"',
+    to: "  return false",
+    test: `${CLI}/test/doctor-verdict-legality.test.ts`,
+    because:
+      "a hub producing impossible verdicts answers `cannot tell` for ever " +
+      "while `doctor` reports it healthy, so the defect is indistinguishable " +
+      "from a repo that is genuinely hard to attribute — and nobody goes " +
+      "looking",
+  },
+  {
+    // #50's ladder on this rung: *could not reach* is WARN, never PASS.
+    label: "an unreachable verdict reads as a verdict that was checked",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from:
+      "      `could not reach a verdict — the hub did not answer " +
+      "(${hubSaid(suspect.message)}); this says nothing about whether " +
+      "verdicts here are legal`,",
+    to: '      "not measured (the hub did not answer)",',
+    test: `${CLI}/test/doctor-verdict-legality.test.ts`,
+    because:
+      "a green meaning \"could not check\" is worse than no check at all — " +
+      "it is the fail-silent shape #50's ladder exists to remove, on the one " +
+      "line that reports defects in the hub itself",
+  },
+  {
+    // VER-8. Legality is what stops the nine impossible combinations from
+    // being SHOWN to somebody — a verdict that says UNATTRIBUTED under a gap
+    // is an exoneration the record cannot support.
+    label: "an illegal verdict is shown rather than withheld",
+    file: "packages/server/src/services/verdict.ts",
+    from:
+      '  if (verdict.attribution === "UNATTRIBUTED" && ' +
+      "!isJudgeable(verdict.coverage)) {",
+    to: "  if (false) {",
+    test: "packages/server/test/verdict.test.ts",
+    because:
+      "AT-5 stops being a type rule and becomes a mapping convention, so any " +
+      "path that reaches UNATTRIBUTED some other way prints \"nobody did " +
+      "this\" over an archive that was not watching",
+  },
+  {
+    // The table's own completeness. A rule with no fixture is a branch
+    // nobody ever reached, and it would ship looking enforced.
+    label: "a legality rule ships with no fixture behind it",
+    file: "packages/server/src/services/verdict.ts",
+    from:
+      '  "protection asserted where no pin exists",\n' +
+      "] as const;",
+    to:
+      '  "protection asserted where no pin exists",\n' +
+      '  "a tenth rule nobody wrote a fixture for",\n' +
+      "] as const;",
+    test: "packages/server/test/verdict.test.ts",
+    because:
+      "the expected set is derived from this list, so a rule added without a " +
+      "case beside it would otherwise be enforced only where somebody " +
+      "happened to hit it — which is how §7 came to ask for ten rules where " +
+      "§3.7 lists nine",
+  },
+  {
+    // VER-4 / AT-6, and the guard is 06's INT-7 rather than a second walker.
+    // MEASURED: this exact edit reddens intent-ledger-authority.test.ts today,
+    // and so do the same edits to services/waivers.ts and
+    // routes/fence-waivers.ts — the walk discovers every src module of every
+    // package, so it already covers 04's ground. A second walker would be a
+    // second copy of a subtle rule, with the weaker copy the one nobody
+    // re-reads, which is the shape INT-7's own header refuses.
+    label: "a verdict path reaches the intent ledger",
+    file: "packages/server/src/services/verdict.ts",
+    from: 'import { isJudgeable } from "./coverage.ts";',
+    to:
+      'import { isJudgeable } from "./coverage.ts";\n' +
+      'import { workContextIntents } from "../db/schema.ts";',
+    test: "packages/server/test/intent-ledger-authority.test.ts",
+    because:
+      "an agent that widens its own intent would be one predicate away from " +
+      "waiving a human-verified invariant, and the wrong answer there is the " +
+      "PERMISSIVE one — the fence stops firing, nothing goes red, and the " +
+      "surface that would have told you is the one that stopped telling you",
+  },
+  {
+    // §3.5 on the BATCHED reader. The single reader gets version scoping from
+    // its WHERE clause; this one re-applies it in memory, so it is a second
+    // place the rule can be lost.
+    label: "a sweep's new invariant inherits the old one's permission",
+    file: "packages/server/src/services/waivers.ts",
+    from:
+      "    const forPin = (byPin.get(pin.id) ?? []).filter(\n" +
+      "      (row) => row.pinVersion === pin.version,\n" +
+      "    );",
+    to: "    const forPin = byPin.get(pin.id) ?? [];",
+    test: "packages/server/test/waivers.test.ts",
+    because:
+      "a waiver granted against the paths a pin watched BEFORE a sweep keeps " +
+      "holding the fence open over the paths it watches after, so consent to " +
+      "one broken behaviour silently becomes consent to a different one",
+  },
+  {
+    // §5: `pin list` carries the guard AND its exception. A registry that
+    // prints "verified by Nick, watching" over a fence somebody opened is
+    // telling a reader the opposite of the operative fact.
+    label: "the registry prints the guard and hides the exception",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "    fileLine(pin),\n    ...waiverLines(pin, now),",
+    to: "    fileLine(pin),",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because:
+      "a pin under a live waiver reads exactly like one nobody has waived, " +
+      "so the reader plans around a guard that is not currently guarding " +
+      "anything and finds out when the surface breaks",
+  },
+  {
+    // The one instant on a pin row that points FORWARD. Every other stamp is
+    // an age, and reusing the age helper is the natural mistake.
+    label: "an open fence is dated as though it had already lapsed",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "until ${waiver.expiresAt} (${untilOf(waiver.expiresAt, now)})",
+    to: "until ${waiver.expiresAt} (${ageOf(waiver.expiresAt, now)})",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because:
+      "the deadline a person has to plan against renders as a negative age " +
+      "labelled \"ago\", so a fence with two days left reads as one that " +
+      "closed two days ago and nobody goes looking for it",
+  },
+  {
+    // The bare class is a PROMISE, and the corpus cannot keep it: a sanitized
+    // reason carries none of the character classes the corpus forbids.
+    label: "a teammate's prose reaches the one surface that promised not to print it",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from:
+      "  return `${String(expiries.length)} live waiver(s) — next expires " +
+      "${next}; run crosscheck pin list to see who opened which, and why`;",
+    to:
+      "  return `${String(expiries.length)} live waiver(s) — next expires " +
+      '${next}: ${registry.pins[0]?.liveWaiver?.reason ?? ""}`;',
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because:
+      "`status` and `doctor` are registered bare — no frame, no notice — so " +
+      "author-written text printed there reaches a model as instruction " +
+      "rather than as quoted data, on the two commands every session runs",
+  },
+  {
+    // The inverted parse rule, on the axis that matters: a verdict this
+    // client invented is indistinguishable downstream from one the hub
+    // computed.
+    label: "an unreadable verdict is completed from the client's own defaults",
+    file: `${CORE}/src/http/verdict.ts`,
+    from: "    basis: z.string().min(1),",
+    to: '    basis: z.string().min(1).default("coverage_gap"),',
+    test: `${CORE}/test/verdict-wire.test.ts`,
+    because:
+      "a response that cannot say what its basis is parses into a verdict " +
+      "carrying this build's guess, and every reader downstream reads that " +
+      "guess on the hub's authority",
+  },
+  {
+    // 01a §3.3d. One spelling: Unicode NFC, the form git stores.
+    label: "a decomposed file name is stored as a second spelling",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: '    .normalize("NFC")',
+    to: '    .normalize("NFD")',
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "a macOS filesystem's decomposed `café` and git's composed one become " +
+      "two files, so a pin on one never meets a touch of the other",
+  },
+  {
+    // 01a §3.3d. `./src/x.ts` is `src/x.ts`.
+    label: "a `.` segment survives canonicalisation",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: '    .filter((segment) => segment.length > 0 && segment !== ".");',
+    to: "    .filter((segment) => segment.length > 0);",
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "a pin typed `./src/x.ts` is stored in a spelling no touch carries, and " +
+      "`suspect` answers that nobody touched the file",
+  },
+  {
+    // 01a §3.3d. `..` can leave the repository.
+    label: "a `..` segment is accepted as a repo path",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: '  if (segments.includes("..")) {',
+    to: '  if (segments.includes("...")) {',
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "`../secrets.ts` is stored as a pinned file that is not in the repo at " +
+      "all, and names a path no git command here can answer for",
+  },
+  {
+    // 01a §3.3d. CR and LF are the file identity's field separator.
+    label: "a newline passes into the file identity",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: "const CONTROL = /[\\u0000\\r\\n]/;",
+    to: "const CONTROL = /[\\u0000]/;",
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "two different (repo, path) pairs hash the same bytes, so one file's " +
+      "pin keeps another file's sessions alive or lets them be deleted",
+  },
+  {
+    // 01a §3.3d. The domain tag keeps a file identity out of every other digest's space.
+    label: "the file identity drops its domain tag",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: '    .update([FILE_REF_DOMAIN, repoIdentity, canonicalPath].join("\\n"))',
+    to: '    .update(["", repoIdentity, canonicalPath].join("\\n"))',
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "a file identity can equal another digest built from the same fields, " +
+      "and the retention graph joins through exactly this value",
+  },
+  {
+    // 01a §3.3d. The wire rule stores the canonical spelling, not the typed one.
+    label: "the repo-path rule validates but stores the path as typed",
+    file: `${SCHEMA}/src/repo-path.ts`,
+    from: "    return canonical.path;",
+    to: "    return raw;",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "a pin typed `./src/x.ts` passes the door and is stored in that spelling, " +
+      "so the session that touched `src/x.ts` is never named",
+  },
+  {
+    // 01a §3.3d. One file counted once, after canonicalisation.
+    label: "a pin counts one file twice when it was typed two ways",
+    file: `${SCHEMA}/src/pin.ts`,
+    from: "    .transform((files) => [...new Set(files)]),",
+    to: "    .transform((files) => [...files]),",
+    test: `${SCHEMA}/test/pin.test.ts`,
+    because:
+      "`src/x.ts` and `./src/x.ts` count as two, moving a pin across the " +
+      "speaking cap and inserting the same row twice",
+  },
+  {
+    // 01a §3.3d. A touch the connector sent as `./src/x.ts` is `src/x.ts`.
+    label: "the hub canonicalises every target except files",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '  const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;',
+    to: '  const value = body.kind === "file" ? body.value : canonicalFileValue(body.value);',
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "a touch sent in a non-canonical spelling meets no pin, so an old or " +
+      "foreign connector exonerates the session that did the damage",
+  },
+  {
+    // 01a §3.3d. The connector sends the composed name git stores.
+    label: "the connector sends a decomposed name as it found it",
+    file: `${CORE}/src/capture/target-paths.ts`,
+    from: "  return canonical.ok ? canonical.path : posix;",
+    to: "  return canonical.ok ? posix : posix;",
+    test: `${CORE}/test/target-paths.test.ts`,
+    because:
+      "on macOS a touch of `café.ts` arrives decomposed and meets no pin on " +
+      "the name git tracks",
+  },
+  {
+    // 01a §3.3d, CSK-28. The door admits only a file git tracks in exactly that spelling.
+    label: "the pin door admits a path git does not track",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    const entry = exact.get(path);",
+    to: "    const entry = exact.get(path) ?? { path, gitlink: false };",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a wrong case or an untracked path is stored as a pin that watches " +
+      "nothing while reading as registered, and 01a's sweep deletes behind it",
+  },
+  {
+    // 01a §3.3d. A directory is not a file.
+    label: "the pin door calls a directory an untracked file",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    if (tracked.some((file) => file.path.startsWith(`${path}/`))) {",
+    to: "    if (tracked.some((file) => file.path === path)) {",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a person who pinned `src` is told git tracks nothing there, which is " +
+      "false, instead of being told to name the files",
+  },
+  {
+    // 01a §3.3d. No answer from git is not "untracked".
+    label: "a git that did not answer reads as tracking nothing",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "  if (!listed.ok) {\n    return null;\n  }\n  const byPath",
+    to: "  if (!listed.ok) {\n    return [];\n  }\n  const byPath",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a timeout or a broken repo tells the person their file is not in git, " +
+      "and they go looking for a mistake they did not make",
+  },
+  {
+    // 01a §3.3d. The door returns one path per file.
+    label: "the pin door passes a file typed twice through twice",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    ? { ok: true, paths: [...new Set(paths)] }",
+    to: "    ? { ok: true, paths }",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "`./src/x.ts src/x.ts` reaches the hub as two entries, and the local " +
+      "schema's file count disagrees with the hub's",
+  },
+  {
+    // 01a §3.3d. The suggestion is resolved where the person stood, as git names it.
+    label: "the suggestion ignores where the person stood",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "  const meant = canonicalRepoPath(`${prefix}${raw}`);",
+    to: "  const meant = canonicalRepoPath(raw);",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a person in `src/` who typed `x.ts` is refused with no spelling to use, " +
+      "and a symlinked checkout never gets one",
+  },
+  {
+    // 01a §3.3d. The CLI asks from the person's directory, not the repo root.
+    label: "the CLI asks the door from the repo root, not the person's directory",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  const door = await resolvePinPaths(resolved.repoRoot, cwd, args.files);",
+    to: "  const door = await resolvePinPaths(resolved.repoRoot, resolved.repoRoot, args.files);",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "the refusal never offers the repo-relative spelling, so a person in a " +
+      "subdirectory is told their file is not in git and nothing else",
+  },
+  {
+    // 01a §3.3d, CSK-15 (a). A pin's identity history starts with the pin.
+    label: "a new pin is stored with no identity history",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "      distinctPaths.map((path) => pinFileRefRow(input.id, input.repo, path)),",
+    to: "      [],",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "the retention graph finds no pin behind any session, so a pinned file's " +
+      "history reads as referenced by nothing and the sweep deletes it",
+  },
+  {
+    // 01a §3.3d, CSK-20 (a). A rename keeps the old name reachable.
+    label: "a rename records no identity for the new name",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "        pinFileRefRow(update.pinId, repo, update.newPath),\n      ],",
+    to: "      ],",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "after the weekly rename the pin watches a file no identity names, and " +
+      "every session that touches it afterwards is unprotected",
+  },
+  {
+    // 01a §3.3d. The touch's identity is computed from the SESSION's repo.
+    label: "a touch's identity drops the repo it happened in",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),',
+    to: '      ...(body.kind === "file" ? { fileRef: touchFileRef("", value) } : {}),',
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "no touch ever equals a pin's identity, so every pin protects nothing, " +
+      "and two repos with the same path would share one if it did",
+  },
+  {
+    // 01a §3.2. The vendor is copied from the session row, exactly.
+    label: "the skeleton row stops recording its vendor",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "             ${seqReason}, ${input.refKind}, ${input.refId}, ${deps.now()}, s.agent_kind,",
+    to: "             ${seqReason}, ${input.refKind}, ${input.refId}, ${deps.now()}, NULL,",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "which vendor produced an order becomes a join through the session row, " +
+      "and a guarantee table keyed by provider has nothing to key on",
+  },
+  {
+    // 01a §3.2. A touch's row carries the context of the record it projects.
+    label: "a touch's row forgets its work context",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      workContextId: body.workContextId,\n      // THE FILE",
+    to: "      workContextId: `${body.workContextId}_other`,\n      // THE FILE",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "the skeleton cannot say which context an edit belonged to without a " +
+      "join through content, which is what redaction will remove",
+  },
+  {
+    // 01a §3.2. A claim row carries its claim's context.
+    label: "a claim's row forgets its work context",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '    refId: body.id,\n    workContextId: body.workContextId,\n  });',
+    to: '    refId: body.id,\n  });',
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "a claim's position cannot be placed in its context once the claim " +
+      "body is redacted, and the order answer needs the context, not the body",
+  },
+  {
+    // 01a §3.2. An invalidation takes the invalidating claim's context.
+    label: "an invalidation takes the invalidated claim's context",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    const invalidatingContext = found.find((row) => row.id === body.fromClaimId)?.workContextId;",
+    to: "    const invalidatingContext = found.find((row) => row.id === body.toClaimId)?.workContextId;",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "a supersession is filed under the context of the claim it retired, so " +
+      "the context that made the assertion shows no invalidation at all",
+  },
+  {
+    // 01a §4.1, §3.3e. The backfill never guesses a file.
+    label: "the backfill guesses a file for a touch it cannot find",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "        match.kind === \"file.modified\" && match.value !== null\n          ? touchFileRef(match.repo, match.value)\n          : null,",
+    to: "        match.kind === \"file.modified\"\n          ? touchFileRef(match.repo, match.value ?? \"src/index.ts\")\n          : null,",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "an unreachable row gets a plausible identity, reads as resolved, and " +
+      "the sweep deletes a session it was never able to judge",
+  },
+  {
+    // 01a §4.1. The digest is recomputed in targetDigest's own field order.
+    label: "the backfill recomputes the target digest in another order",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "               t.work_context_id || E'\\\\n' || t.kind || E'\\\\n' || t.value, 'UTF8')), 'hex') AS digest",
+    to: "               t.work_context_id || E'\\\\n' || t.value || E'\\\\n' || t.kind, 'UTF8')), 'hex') AS digest",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "no existing row matches its target, every pre-deploy edit stays " +
+      "unresolved, and the repo's file-bearing sessions are kept for ever",
+  },
+  {
+    // 01a §3.3e. A legacy renamed pin's lost names are unresolved, not absent.
+    label: "a legacy renamed pin is seeded as if its history were complete",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    if (!row.has_history && Number(row.renamed) > 0) {",
+    to: "    if (!row.has_history && Number(row.renamed) > 99) {",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "the sessions that touched the names the pin watched before the rename " +
+      "are referenced by nothing the hub holds, and the sweep deletes them",
+  },
+  {
+    // 01a §4.3. The seed runs once per legacy pin.
+    label: "the seed rewrites every pin on every start",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    const absent = missing.filter((entry) => !known.has(`${entry.pinId}\\n${String(entry.fileRef)}`));",
+    to: "    const absent = missing.filter(() => true);",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "every start walks every pin on the hub, and a renamed pin's current " +
+      "name is re-derived as if it were the only one it ever had",
+  },
+  {
+    // 01a CSK-1, CSK-22. A claim keeps its whole session.
+    label: "the claims root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM claims c WHERE c.author_session_id = ${session}`,",
+    to: "      sql`SELECT 1 WHERE false`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: a month after it ended, the session behind every live claim loses its order, and no claim can say whether its reason predated the change",
+  },
+  {
+    // 01a CSK-22. A claim edge keeps its author session.
+    label: "the claim-edge root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM claim_edges ce WHERE ce.author_session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM claim_edges ce WHERE ce.author_session_id = 'nobody'`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: the session that recorded a supersession or a contradiction loses the positions the edge is ordered against",
+  },
+  {
+    // 01a CSK-22, §3.3d. A pin reaches a session through the file identity.
+    label: "the pin root joins on the wrong identity",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      JOIN pin_file_refs pr ON pr.file_ref = pe.file_ref",
+    to: "      JOIN pin_file_refs pr ON pr.file_ref = pe.ref_id",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: no pin ever reaches a session, so the history of every change to a human's pinned surface is deleted after thirty days",
+  },
+  {
+    // 01a CSK-22. An intent version keeps its author session.
+    label: "the intent root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM work_context_intents wi WHERE wi.author_session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM work_context_intents wi WHERE wi.author_session_id = 'nobody'`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: 06's timing answer loses the edit positions it compares an intent against, and reads `absent` for work that declared its intent",
+  },
+  {
+    // 01a CSK-22, D-E. A pilot session record keeps its session until Nick decides.
+    label: "the pilot-session root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM pilot_sessions ps WHERE ps.session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM pilot_sessions ps WHERE ps.session_id = 'nobody'`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a decision that is Nick's (D-E) is taken by a registry edit: the measured sessions lose their skeleton before he has ruled",
+  },
+  {
+    // 01a CSK-22, D-E. A pilot attribution keeps its top session until Nick decides.
+    label: "the pilot-attribution root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM pilot_attributions pa WHERE pa.top_session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM pilot_attributions pa WHERE pa.top_session_id = 'nobody'`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a decision that is Nick's (D-E) is taken by a registry edit: the session an attribution named loses its skeleton first",
+  },
+  {
+    // 01a CSK-16. Belonging is not dependence.
+    label: "a work context retains its session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM claims c WHERE c.author_session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM work_contexts c WHERE c.session_id = ${session}`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "every session has a work context, so nothing is ever swept again: unbounded storage by another route",
+  },
+  {
+    // 01a §3.3a, CSK-21. A session goes whole or not at all.
+    label: "the sweep removes part of a session",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible)",
+    to: "      DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible) AND kind <> 'session.ended'",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "the session's order is re-derived from the rows left behind, and a missing row can turn `broken` into `usable` \u2014 missing evidence strengthening the answer",
+  },
+  {
+    // 01a CSK-21. The age is the session's, never a row's.
+    label: "the sweep reintroduces a row-age term",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible)",
+    to: "      DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible) AND observed_at < ${input.cutoff}",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a session straddling the cutoff is swept in part, and its order is judged from the half that is left",
+  },
+  {
+    // 01a CSK-23. A reap is an inference, not an end.
+    label: "a reaped session is swept",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      SELECT id FROM judged\n       WHERE NOT reaped\n",
+    to: "      SELECT id FROM judged\n       WHERE true\n",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: a session the hub only guessed had ended loses its skeleton, and a later record that revives it lands in a session with no history",
+  },
+  {
+    // 01a §3.3g. A swept session is done.
+    label: "a swept session stays a candidate for ever",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "       WHERE s.ended_at IS NOT NULL AND s.skeleton_retired_at IS NULL\n         AND s.ended_at < ${input.cutoff}\n         AND EXISTS (SELECT 1 FROM session_events se WHERE se.session_id = s.id)\n",
+    to: "       WHERE s.ended_at IS NOT NULL\n         AND s.ended_at < ${input.cutoff}\n",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "agent_sessions rows are never removed, so the oldest swept sessions fill every later pass's limit and the sweep stops retiring anything",
+  },
+  {
+    // 01a CSK-15, §3.3e. Unresolved is KEEP.
+    label: "the sweep ignores what it cannot resolve",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "         AND NOT unresolved\n",
+    to: "",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: an unresolvable reference reads as \"no pin references this\", and the sweep deletes behind a pin it could not match",
+  },
+  {
+    // 01a CSK-15 (b). A touch with no identity is unresolved.
+    label: "a touch with no file identity reads as resolved",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "     AND (pe.file_ref IS NULL",
+    to: "     AND (false",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a legacy or unparseable touch is deleted as if no pin could reference it",
+  },
+  {
+    // 01a CSK-15 (c). A pin's NULL identity is unresolved for its repo.
+    label: "a pin's NULL identity reads as no pin",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "                      WHERE pr.file_ref IS NULL AND p.repo = s.repo)",
+    to: "                      WHERE pr.file_ref IS NULL AND p.repo = 'nowhere')",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "the sessions that touched the names a legacy pin watched before its rename are deleted, the one history the pin exists to keep",
+  },
+  {
+    // 01a CSK-28. A pinned file git lost is unresolved, not absent.
+    label: "a missing pinned file reads as present",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "                      WHERE pf.status <> 'present' AND pf.repo = s.repo)",
+    to: "                      WHERE pf.status = 'renamed' AND pf.repo = s.repo)",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a pin whose file left the index matches nothing, and every session that touched that file is deleted as unreferenced",
+  },
+  {
+    // 01a §3.3e. The freeze is the pin's repo's, not the hub's.
+    label: "an unresolved pin freezes every repo on the hub",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "                      WHERE pf.status <> 'present' AND pf.repo = s.repo)",
+    to: "                      WHERE pf.status <> 'present')",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "one lost pin anywhere stops retention for every team on the hub, and nobody in those teams can see why",
+  },
+  {
+    // 01a §3.3e. A pin with no history is unresolved until seeded.
+    label: "an unseeded pin reads as no pin",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "                        AND NOT EXISTS (SELECT 1 FROM pin_file_refs pr WHERE pr.pin_id = p.id)))`;",
+    to: "                        AND false))`;",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "between a deploy and the seed, every session behind a legacy pin is deletable",
+  },
+  {
+    // 01a §3.3g. The interim mode holds every file-bearing session.
+    label: "the interim mode holds the wrong sessions",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "         ${input.mode === \"interim\" ? sql`AND NOT file_bearing` : sql``}",
+    to: "         ${input.mode === \"full\" ? sql`AND NOT file_bearing` : sql``}",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "the hub ships deleting file-bearing sessions before the file identity has been proven on real pins \u2014 the one thing Nick's interim rule forbids",
+  },
+  {
+    // 01a CSK-18, D-B7. One statement, one snapshot.
+    label: "the sweep runs outside a transaction",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "    const result = await deps.db.transaction((tx) => tx.execute(statement));",
+    to: "    const result = await deps.db.execute(statement);",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a later multi-statement form of the sweep loses the snapshot silently, and a root committed between check and delete no longer protects",
+  },
+  {
+    // 01a CSK-17. A failed sweep deletes nothing and stops nothing else.
+    label: "a failed sweep takes the reap down",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "  } catch (error) {\n    console.error(\"[crosscheck] skeleton sweep failed; nothing was deleted\", error);\n    return recorded(deps.db, now, { kind: \"failed\" });\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "one broken root clause stops the hub's reaper for good, and 104 never-ended sessions are back",
+  },
+  {
+    // 01a CSK-17. A failure is counted.
+    label: "a failed sweep is not counted",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      outcome.kind === \"failed\" ? state.failures + 1 : outcome.kind === \"swept\" ? 0 : state.failures,",
+    to: "      outcome.kind === \"failed\" ? state.failures : outcome.kind === \"swept\" ? 0 : state.failures,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "SILENT: the sweep fails every pass and doctor prints a clean line",
+  },
+  {
+    // 01a CSK-26. A root nobody built stops the sweep.
+    label: "an unbuilt root lets the sweep run",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "    .filter((root) => root.status === \"not_built\")",
+    to: "    .filter(() => false)",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: sessions are swept before the table that was always going to reference them exists",
+  },
+  {
+    // 01a §5, CSK-19 (b). The report counts with the sweep's own clause.
+    label: "the report counts what a root does NOT reach",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      sql`(SELECT count(*) FILTER (WHERE ${flag(index)} AND NOT reaped)::int FROM judged) AS ${flag(index)}`,",
+    to: "      sql`(SELECT count(*) FILTER (WHERE NOT ${flag(index)} AND NOT reaped)::int FROM judged) AS ${flag(index)}`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "doctor tells an operator a root keeps the sessions it is about to lose",
+  },
+  {
+    // 01a §3.3f, CSK-12. Every session-bearing column is declared.
+    label: "a session-bearing relation is dropped from the registry",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "  {\n    table: \"hint_deliveries\",\n    column: \"session_id\",\n    semantics: \"non_retaining_edge\",\n    reason: \"records what was shown to a session and reads no position\",\n  },\n",
+    to: "",
+    test: `${SERVER}/test/retention-registry.test.ts`,
+    because:
+      "a relation the registry does not know about is one nobody decided on, and the next such relation arrives as a silent deletion",
+  },
+  {
+    // 01a §6. The hub-wide sweep stays off the hook path.
+    label: "the SessionStart pass runs the hub-wide sweep",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  if (options.developerId === undefined) {\n    await sweepSkeleton(",
+    to: "  if (options.developerId !== \"-\") {\n    await sweepSkeleton(",
+    test: `${SERVER}/test/session-event-retention.test.ts`,
+    because:
+      "every SessionStart pays for a hub-wide delete on a hook's budget, charged to whichever developer opened a session",
+  },
+  {
+    // 01a §5. doctor says what the sweep keeps.
+    label: "doctor goes quiet about what the sweep keeps",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    checkSkeletonRetention(skeletonRetention, eventRetention),\n",
+    to: "",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "every conservative KEEP in 01a becomes an unseen cost, indistinguishable from a leak",
+  },
+  {
+    // 01a §5. A report this CLI cannot read is not an absent one.
+    label: "a newer hub's held sweep reads as working",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    held: facts.success && (facts.data.heldBy?.length ?? 0) > 0,",
+    to: "    held: false,",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "a newer hub that reports its sweep held, in a form this CLI cannot read, is printed as a PASS about a sweep that deletes nothing",
+  },
+  {
+    // 01a CSK-26. A held sweep WARNs.
+    label: "a held sweep reads as working",
+    file: `${CLI}/src/cli/doctor-retention.ts`,
+    from: "  if (report.heldBy.length > 0) {",
+    to: "  if (report.heldBy.length > 99) {",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "the table grows without bound while doctor prints a PASS about a sweep that is not running",
+  },
+  {
+    // 01a §5. A hub's sweep failures are that hub's.
+    label: "one hub reports another hub's sweep failures",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "const ledgerKey = (db: Db): object => db;",
+    to: "const ledgerKey = (_db: Db): object => EMPTY_LEDGER;",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a healthy hub WARNs about a failure it never had, and a person goes looking for a broken sweep that is somebody else's",
+  },
+  {
+    // 01a §5. The window in the sentence is the hub's number.
+    label: "doctor prints its own retention window instead of the hub's",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      : `more than ${String(windowDays)} days ago`,",
+    to: "      : \"more than 30 days ago\",",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "a hub that keeps sessions longer, or shorter, is described by a number compiled into the CLI, and the operator plans around a window the hub does not apply",
+  },
+  {
+    // 01a CSK-10. The skeleton carries a hash of a path, never the path.
+    label: "a touch's row stores the path instead of its identity",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),',
+    to: '      ...(body.kind === "file" ? { fileRef: value } : {}),',
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "the skeleton, which outlives every content policy, carries the paths a redaction exists to hide",
+  },
+  {
+    // 01a §3.3g. A retired skeleton is never partly rebuilt.
+    label: "a late record rebuilds part of a retired skeleton",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "       WHERE s.id = ${input.sessionId} AND s.skeleton_retired_at IS NULL",
+    to: "       WHERE s.id = ${input.sessionId}",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a claim flushed by a successor lands one row in a swept session, and that single row reads as a usable order the whole skeleton may have contradicted",
+  },
+  {
+    // 01a §3.3g. The sweep leaves its tombstone.
+    label: "the sweep leaves no tombstone",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      UPDATE agent_sessions SET skeleton_retired_at = ${input.now}",
+    to: "      UPDATE agent_sessions SET skeleton_retired_at = NULL",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "every later projection believes the session still has its skeleton and writes a fragment of one",
+  },
+  {
+    // 01a §3.3a. A session's own end outranks the reaper's guess.
+    label: "a reaped session's own end is dropped",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "        or(isNull(agentSessions.endedAt), isNotNull(agentSessions.reapedAt)),",
+    to: "        isNull(agentSessions.endedAt),",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "an idle session reaped for silence stays reaped for ever: its SessionEnd is answered 'ended' and thrown away, its last position is never written, and doctor calls it one that has not ended",
+  },
+  {
+    // 01a §6. Each pass resumes where the last stopped.
+    label: "every pass starts at the oldest candidate again",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "        : { cursor: { endedAt: String(lastEnded), id: String(lastId) }, tally },",
+    to: "        : { cursor: null, tally },",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "the oldest kept sessions fill every window for ever, and nothing newer than them is ever judged or retired",
+  },
+  {
+    // 01a §6. A pass judges a window, never the hub.
+    label: "a pass judges every candidate",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "       LIMIT ${input.window}\n",
+    to: "       LIMIT ${input.window * 1000}\n",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a pass grows with every session the hub has ever decided to keep, and every hook waits behind it on a one-statement database",
+  },
+  {
+    // 01a §5. A cycle is reported only once it is complete.
+    label: "a cycle is published after every window",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      Number(row[\"window_size\"] ?? 0) < window ||",
+    to: "      true ||",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "doctor prints one window's counts as if they were the hub's, and the numbers jump with every pass",
+  },
+  {
+    // 01a §3.3d. A monorepo path is never silently the root file.
+    label: "the pin door pins the root file when the subdirectory one was meant",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "      if (fromHere !== null && fromHere !== path) {",
+    to: "      if (fromHere !== null && fromHere === path) {",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a person in packages/server who pins src/index.ts protects the repo root's src/index.ts, and suspect names whoever touched the wrong file",
+  },
+  {
+    // 01a §3.3d. A submodule is not a file.
+    label: "the pin door pins a submodule as a file",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    byPath.set(path, { path, gitlink: entry.startsWith(`${GITLINK_MODE} `) });",
+    to: "    byPath.set(path, { path, gitlink: false });",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "the pin matches only commits that move the submodule pointer, never an edit inside it, and reads as watching the code",
+  },
+  {
+    // 01a §3.3d. A rename keeps the name it leaves.
+    label: "a rename forgets the name it leaves",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "        pinFileRefRow(update.pinId, repo, update.path),\n",
+    to: "",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "a pin renamed before its history was seeded loses the old name, and the sessions that touched it are referenced by nothing",
+  },
+  {
+    // 01a §3.3e. One unusable repo string is unresolved, not a crash.
+    label: "one unusable repo string throws out of the identity",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "  } catch {\n    return null;\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "a single legacy row stops the start-up backfill for the whole hub on every start, and an ingest fails after its target row was already stored",
+  },
+  {
+    // 01a §5. doctor names interim's reason only in interim.
+    label: "doctor prints interim's reason in full mode",
+    file: `${CLI}/src/cli/doctor-retention.ts`,
+    from: "    ...(mode === \"interim\" && report.fileBearing > 0",
+    to: "    ...(report.fileBearing > 0",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "under full, doctor says file-bearing sessions are being kept while the sweep is retiring them",
+  },
+  {
+    // 01a §3.3a. The reported end replaces the reaper's inferred row.
+    label: "a reaped session keeps the reaper's end beside its own",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "          eq(sessionEvents.seqReason, \"reaped_end\"),",
+    to: "          eq(sessionEvents.seqReason, \"sequenced\"),",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a session that ended on its own keeps two ends, or \u2014 with no position \u2014 keeps only the reaper's, and reads `reaped_end` for ever",
+  },
+  {
+    // 01a §3.3a. A disproven reap is balanced in the ledger.
+    label: "the ledger reads two ends for one start",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    await appendEvent(deps, EVENT_KINDS.SESSION_STARTED, {\n      sessionId: row.id,\n      developerId,\n      repo: row.repo,\n      branch: row.branch,\n      revivedAfterReap: true,\n    });\n",
+    to: "",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "/api/events shows a session ending twice, and the feed tells the team it ended twice",
+  },
+  {
+    // 01a §5. A failure a later pass got past is history.
+    label: "one failed pass WARNs for the life of the hub",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      outcome.kind === \"failed\" ? state.failures + 1 : outcome.kind === \"swept\" ? 0 : state.failures,",
+    to: "      outcome.kind === \"failed\" ? state.failures + 1 : state.failures,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "doctor WARNs and exits non-zero for days after the fault is gone, and a WARN nobody can clear is one people learn to ignore",
+  },
+  {
+    // 01a §5. Mode off runs no pass.
+    label: "mode off records a pass that never ran",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "    return { kind: \"off\" };",
+    to: "    return recorded(deps.db, now, { kind: \"off\" });",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "doctor prints a last-pass time beside a mode line that says nothing runs",
+  },
+  {
+    // 01a §5. doctor judges nothing in mode off.
+    label: "doctor reports a cycle for a hub that sweeps nothing",
+    file: `${CLI}/src/cli/doctor-retention.ts`,
+    from: "  if (mode === \"off\") {\n    return { level: \"PASS\", name: NAME, detail: \"nothing is swept in this mode, so nothing is judged either\" };\n  }\n",
+    to: "",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "a hub that retires nothing is described as waiting for its first cycle",
+  },
+  {
+    // 01a §3.3d. A file inside a submodule is the submodule's.
+    label: "a path inside a submodule reads as untracked",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    if (await insideSubmodule(repoRoot, path)) {",
+    to: "    if ((await insideSubmodule(repoRoot, path)) && false) {",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "the person is told the file is not in git and goes looking for a typo in a path that is fine, in another repository",
+  },
+  {
+    // 01a §4.1. The column backfill walks every page.
+    label: "the column backfill stops after one page",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    cursor = String(row.last);",
+    to: "    return written;",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "on any hub larger than a page, every vendor and context past the first page stays NULL for ever, and the report says the backfill finished",
+  },
+  {
+    // 01a §4.1. The file-identity backfill walks every page.
+    label: "the file-identity backfill stops after one page",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    cursor = last.id;",
+    to: "    return { workContexts, fileRefs, unresolved };",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "every pre-deploy edit past the first page stays unresolved, and the repo's file-bearing sessions are kept for ever without anyone being told why",
+  },
+  {
+    // 01a §3.3d. A legacy pin path takes the one spelling at the upgrade.
+    label: "a legacy pin keeps a spelling no touch carries",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    if (!canonical.ok || canonical.path === row.path) {",
+    to: "    if (true || !canonical.ok || canonical.path === row.path) {",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "after the upgrade the hub canonicalises every touch, so a pin stored as ./src/x.ts meets none of them and suspect answers that nobody touched the surface",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7677,21 +10358,29 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
+ * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
+ * PRINTS: packages/cli/test/doctor-pilot.test.ts 5
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
+ * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/pilot-cli.test.ts 6
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
+ * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 3
+ * PRINTS: packages/cli/test/pins-cli.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
- * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
+ * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 13
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
+ * PRINTS: packages/cli/test/verdict-render.test.ts 4
+ * PRINTS: packages/cli/test/waiver-render.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
@@ -7705,6 +10394,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
+ * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
@@ -7733,12 +10423,13 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
- * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
- * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
+ * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
@@ -7748,6 +10439,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
+ * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5
@@ -7758,12 +10450,14 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
+ * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
+ * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
- * PRINTS: packages/connector-core/test/hint-render.test.ts 3
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -7771,20 +10465,23 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
- * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
+ * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
- * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
- * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
+ * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
+ * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
+ * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
+ * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
- * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 4
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 5
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
@@ -7796,8 +10493,10 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
+ * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
+ * PRINTS: packages/connector-core/test/verdict-wire.test.ts 1
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
@@ -7806,8 +10505,12 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
+ * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
@@ -7817,18 +10520,30 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
+ * PRINTS: packages/server/test/ddl-sync.test.ts 6
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
+ * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
+ * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
- * PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
+ * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
- * PRINTS: packages/server/test/pins.test.ts 3
+ * PRINTS: packages/server/test/pilot-attributions.test.ts 3
+ * PRINTS: packages/server/test/pilot-counters.test.ts 6
+ * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
+ * PRINTS: packages/server/test/pilot-marks.test.ts 8
+ * PRINTS: packages/server/test/pilot-repairs.test.ts 5
+ * PRINTS: packages/server/test/pilot-report.test.ts 19
+ * PRINTS: packages/server/test/pilot-retention.test.ts 4
+ * PRINTS: packages/server/test/pilot-sessions.test.ts 5
+ * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
- * PRINTS: packages/server/test/records.test.ts 1
+ * PRINTS: packages/server/test/records.test.ts 2
+ * PRINTS: packages/server/test/retention-registry.test.ts 1
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
@@ -7841,14 +10556,20 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
+ * PRINTS: packages/server/test/skeleton-identity.test.ts 17
+ * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
  * PRINTS: packages/server/test/solved-fanout.test.ts 2
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
- * PRINTS: packages/server/test/suspect.test.ts 2
+ * PRINTS: packages/server/test/suspect.test.ts 5
+ * PRINTS: packages/server/test/team-settings.test.ts 1
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/verdict-latency.test.ts 1
+ * PRINTS: packages/server/test/verdict.test.ts 3
+ * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();

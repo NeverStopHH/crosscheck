@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
+import { hintDeliveryId } from "@crosscheck/schema";
 import type { Db, Embedder } from "@crosscheck/server";
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
@@ -414,6 +415,109 @@ describe("get_diagnosis", () => {
     expect(result.isError).toBe(true);
     expect(result.text).toContain("wc_nope");
     expect(result.text).toContain("search_related_work");
+  });
+});
+
+/**
+ * GET_DIAGNOSIS STAMPS ONLY ITS OWN SESSION'S OPENS (07, corrected by
+ * adversarial review). Before, one read stamped every unpulled delivery the
+ * developer had for the tree, in every session, so a pointer another session
+ * had ignored read as opened. An unambiguous own session is now named to the
+ * hub; an ambiguous pick reads without stamping anything.
+ */
+describe("get_diagnosis and the pull stamp", () => {
+  const deliverTo = async (developer: Developer, sessionId: string, refId: string) => {
+    const response = await fetch(`${hubUrl}/api/records`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${developer.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        cx: "0.1",
+        id: `env_${crypto.randomUUID()}`,
+        ts: new Date().toISOString(),
+        producer: { developerId: developer.developerId, agentKind: "claude-code", sessionId },
+        kind: "hint_delivery",
+        body: {
+          id: hintDeliveryId(sessionId, refId),
+          sessionId,
+          refKind: "work_context",
+          refId,
+          channel: "prompt_hint",
+          deliveredAt: new Date().toISOString(),
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    return hintDeliveryId(sessionId, refId);
+  };
+
+  /** The repo's opened-delivery count, as the hub's own stats route reports it. */
+  const pulledCount = async (developer: Developer): Promise<number> => {
+    const response = await fetch(
+      `${hubUrl}/api/hints/stats?repo=${encodeURIComponent(REPO_ID)}`,
+      { headers: { Authorization: `Bearer ${developer.apiKey}` } },
+    );
+    const body = (await response.json()) as { data: { pulled: number } };
+    return body.data.pulled;
+  };
+
+  test("an unambiguous session is named, and its delivery reads as opened", async () => {
+    // Arrange
+    const carol = await setUpDeveloper("carol-mcp", "Carol", "carol-mcp@example.com", "Carol's work");
+    await deliverTo(carol, carol.sessionId, alice.workContextId);
+    const before = await pulledCount(carol);
+
+    // Act
+    await call(carol, "get_diagnosis", { workContextId: alice.workContextId });
+
+    // Assert
+    expect(await pulledCount(carol)).toBe(before + 1);
+  });
+
+  test("an ambiguous pick reads without stamping anything", async () => {
+    // Arrange — two sessions of Dave's in the SAME worktree: the MCP server
+    // cannot tell which one is calling, so it must not guess
+    const dave = await setUpDeveloper("dave-mcp", "Dave", "dave-mcp@example.com", "Dave's work");
+    const second = `${dave.sessionId}-second`;
+    await fetch(`${hubUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${dave.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: second,
+        agentKind: "claude-code",
+        repo: REPO_ID,
+        branch: "main",
+        baseCommit: "a1b2c3d4",
+        status: "analyzing",
+      }),
+    });
+    await writeSessionState(dave.home, {
+      hostSessionKey: "dave-mcp-second-uuid",
+      crosscheckSessionId: second,
+      workContextId: `wc_${second}`,
+      repoId: REPO_ID,
+      repoRoot: dave.repo,
+      hubUrl,
+      developerId: dave.developerId,
+      startedAt: new Date().toISOString(),
+      lastHeartbeatAt: new Date().toISOString(),
+    });
+    // Delivered to the NEWER session — the one a guess would pick — so a
+    // guess that stamped would be seen here, not hidden by picking the other
+    await deliverTo(dave, second, alice.workContextId);
+    const before = await pulledCount(dave);
+
+    // Act
+    const result = await call(dave, "get_diagnosis", { workContextId: alice.workContextId });
+
+    // Assert — the tree was read, and nothing was counted as opened
+    expect(result.isError).toBe(false);
+    expect(await pulledCount(dave)).toBe(before);
   });
 });
 

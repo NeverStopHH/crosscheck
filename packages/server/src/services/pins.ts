@@ -37,8 +37,11 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { pinFileRefRow, recordPinFileRefs } from "./skeleton-identity.ts";
 import { readTeamSettings } from "./team-settings.ts";
-import type { Db } from "../db/client.ts";
+import { readLiveWaiver, readLiveWaivers } from "./waivers.ts";
+import type { LiveWaiver } from "./waivers.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 /**
@@ -72,12 +75,23 @@ export interface PinView {
   readonly verifiedByName: string;
   readonly verifiedAtCommit: string;
   readonly verifiedAt: string;
+  /** Which version of this invariant (04 §3.5) — what a waiver is granted against. */
+  readonly version: number;
   readonly brokeAt: string | null;
   readonly brokeByName: string | null;
   /** Pinned paths a sweep has rewritten — 0 on a pin nobody has moved. */
   readonly renamedPaths: number;
   readonly renamedAt: string | null;
   readonly renamedByName: string | null;
+  /**
+   * The open fence on THIS pin at THIS version, or null (04 §5).
+   *
+   * On the listing rather than behind a second call, for the reason the
+   * coverage denominator travels with the registry: "4 pins, 1 broken"
+   * printed without "and one of them is waived until Friday" is a listing
+   * that hides the decision a reader most needs to see.
+   */
+  readonly liveWaiver: LiveWaiver | null;
   /** Small enough to speak AND falsifiable — Stage 2's eligibility, printed now. */
   readonly speaking: boolean;
   /** Paths the sweep could not find at HEAD; > 0 means the pin is rotting. */
@@ -165,6 +179,51 @@ export const untouchedByDeveloper = async (
  * existing id is either a replayed request or somebody overwriting another
  * person's pin, and both want the 409 rather than a silent rewrite.
  */
+/**
+ * WHICH BROKEN PIN A NEW ONE REPAIRS, if any (07 §3.4).
+ *
+ * THE MOST RECENTLY BROKEN, NOT-YET-REPAIRED PIN ON THE SAME SURFACE. A pin
+ * that broke, was repaired, and broke again is repaired by the NEXT pin, not
+ * this one — so "not yet repaired" is what keeps one fix from being counted
+ * against two breaks.
+ *
+ * AN EXACT SURFACE MATCH, and the direction of the error is stated. The
+ * surface is a sentence somebody typed, so a re-pin worded differently does
+ * not link. That UNDER-links: proof 3 prints the break as "no repair pin yet",
+ * which is true of what the record says. Fuzzy matching would OVER-link —
+ * scoring an attribution against a fix for a different surface — and a
+ * wrong hit is worse than a missing one, because it cannot be seen.
+ *
+ * THE VERSION IS READ NOW, at the moment the lookup resolves, because that is
+ * the invariant being repaired. A sweep after this point produces a different
+ * one, and the repair must not silently follow it.
+ *
+ * NO FOREIGN KEY on the column, deliberately: pins are never deleted in this
+ * product — a retraction is `broke_at`, not a DELETE — and this lookup only
+ * ever writes an id it just read, so integrity holds by construction without
+ * a constraint an existing hub would need a guarded ALTER to acquire.
+ */
+const findRepairedPin = async (
+  db: DbExecutor,
+  repo: string,
+  surface: string,
+): Promise<{ readonly id: string; readonly version: number } | null> => {
+  const rows = await db
+    .select({ id: pins.id, version: pins.version })
+    .from(pins)
+    .where(
+      and(
+        eq(pins.repo, repo),
+        eq(pins.surface, surface),
+        sql`${pins.brokeAt} IS NOT NULL`,
+        sql`NOT EXISTS (SELECT 1 FROM pins AS repair WHERE repair.repairs_pin_id = ${pins.id})`,
+      ),
+    )
+    .orderBy(desc(pins.brokeAt), asc(pins.id))
+    .limit(1);
+  return rows[0] ?? null;
+};
+
 export const createPin = async (
   deps: Deps,
   developerId: string,
@@ -172,6 +231,7 @@ export const createPin = async (
 ): Promise<CreatePinOutcome> => {
   const now = deps.now();
   return deps.db.transaction(async (tx) => {
+    const repaired = await findRepairedPin(tx, input.repo, input.surface);
     const inserted = await tx
       .insert(pins)
       .values({
@@ -189,6 +249,11 @@ export const createPin = async (
         captureMode: HUMAN_CAPTURE_MODE,
         brokeAt: null,
         brokeBy: null,
+        // 07 §3.4: LOOKED UP, NEVER ASKED. Re-pinning a surface somebody
+        // recorded broken is the repair, and the person typing it is not asked
+        // to say so — a question here would be the survey §8.3 refuses.
+        repairsPinId: repaired?.id ?? null,
+        repairsPinVersion: repaired?.version ?? null,
         createdAt: now,
       })
       .onConflictDoNothing({ target: pins.id })
@@ -207,6 +272,14 @@ export const createPin = async (
         path,
         status: "present" as const,
       })),
+    );
+    // THE PIN'S IDENTITY HISTORY STARTS IN THE SAME TRANSACTION (01a §3.3d),
+    // so no committed pin is ever without one — which is what lets the
+    // start-up seed treat "no history" as "a pin from before the table".
+    await recordPinFileRefs(
+      tx,
+      distinctPaths.map((path) => pinFileRefRow(input.id, input.repo, path)),
+      now,
     );
     return { outcome: "created", id: input.id } as const;
   });
@@ -227,13 +300,14 @@ export const markPinBroke = async (
   developerId: string,
   repo: string,
   pinId: string,
+  brokeAtCommit: string | null = null,
 ): Promise<BreakPinOutcome> => {
   // SCOPED BY REPO, like every other read on this table. Scoped by pin id
   // alone, one checkout's retraction reached any pin on the hub — and this
   // is the row `crosscheck suspect` reads before it names anybody.
   const updated = await deps.db
     .update(pins)
-    .set({ brokeAt: deps.now(), brokeBy: developerId })
+    .set({ brokeAt: deps.now(), brokeBy: developerId, brokeAtCommit })
     .where(and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt)))
     .returning({ id: pins.id });
   if (updated[0] !== undefined) {
@@ -302,6 +376,7 @@ const toPinView = (
     readonly verifiedByName: string;
     readonly verifiedAtCommit: string;
     readonly verifiedAt: Date;
+    readonly version: number;
     readonly brokeAt: Date | null;
     readonly renamedPaths: number;
     readonly renamedAt: Date | null;
@@ -309,6 +384,7 @@ const toPinView = (
   files: readonly PinFileView[],
   brokeByName: string | null,
   renamedByName: string | null,
+  liveWaiver: LiveWaiver | null,
 ): PinView => ({
   id: row.id,
   repo: row.repo,
@@ -320,11 +396,13 @@ const toPinView = (
   verifiedByName: row.verifiedByName,
   verifiedAtCommit: row.verifiedAtCommit,
   verifiedAt: row.verifiedAt.toISOString(),
+  version: row.version,
   brokeAt: iso(row.brokeAt),
   brokeByName,
   renamedPaths: Number(row.renamedPaths),
   renamedAt: iso(row.renamedAt),
   renamedByName,
+  liveWaiver,
   speaking: isSpeakingPin({
     files: files.map((file) => file.path),
     check: row.checkRecipe ?? undefined,
@@ -356,6 +434,9 @@ export const listPins = async (
       verifiedByName: developers.name,
       verifiedAtCommit: pins.verifiedAtCommit,
       verifiedAt: pins.verifiedAt,
+      // WHICH VERSION of this invariant (04 §3.5). A waiver is granted against
+      // a version, so every reader that could resolve one needs it.
+      version: pins.version,
       brokeAt: pins.brokeAt,
       brokeBy: pins.brokeBy,
       renamedPaths: pins.renamedPaths,
@@ -404,6 +485,15 @@ export const listPins = async (
     bucket.push({ path: file.path, status: file.status });
     filesByPin.set(file.pinId, bucket);
   }
+  // ONE query for every open fence on this page, scoped to the version each
+  // pin is at right now (04 §3.5) — a waiver granted before a sweep does not
+  // reach across the version the sweep produced.
+  const waivers = await readLiveWaivers({
+    db: deps.db,
+    repo,
+    pins: rows.map((row) => ({ id: row.id, version: row.version })),
+    now: deps.now(),
+  });
   return {
     pins: rows.map((row) =>
       toPinView(
@@ -411,6 +501,7 @@ export const listPins = async (
         filesByPin.get(row.id) ?? [],
         row.brokeBy === null ? null : breakerNames.get(row.brokeBy) ?? null,
         row.renamedBy === null ? null : breakerNames.get(row.renamedBy) ?? null,
+        waivers.get(row.id) ?? null,
       ),
     ),
     coverage: await readCoverage(deps, repo),
@@ -433,6 +524,7 @@ export const readPin = async (
       verifiedByName: developers.name,
       verifiedAtCommit: pins.verifiedAtCommit,
       verifiedAt: pins.verifiedAt,
+      version: pins.version,
       brokeAt: pins.brokeAt,
       brokeBy: pins.brokeBy,
       renamedPaths: pins.renamedPaths,
@@ -468,6 +560,16 @@ export const readPin = async (
     files.map((file) => ({ path: file.path, status: file.status })),
     await nameOf(row.brokeBy),
     await nameOf(row.renamedBy),
+    // ONE pin, so the single read rather than the batched one — and at THIS
+    // pin's current version, which is what a verdict computed from this view
+    // is entitled to treat as consent.
+    await readLiveWaiver({
+      db: deps.db,
+      repo: row.repo,
+      pinId: row.id,
+      pinVersion: row.version,
+      now: deps.now(),
+    }),
   );
 };
 
@@ -541,6 +643,52 @@ export const applyPinSweep = async (
     settings.pinPolicy === "touched_files"
       ? new Set(await untouchedByDeveloper(deps, developerId, repo, proposed))
       : new Set<string>();
+  // THE VERSION BUMP, ONCE PER PIN, BEFORE THE FIRST PATH MOVES (04 §3.5).
+  //
+  // A waiver is granted against a VERSION. This loop is not transactional, so
+  // the honest question is which failure costs the smaller lie:
+  //
+  //   bump first — a crash here orphans that pin's waivers, the verdict falls
+  //                back to PROTECTED_CONFLICT, and a human re-grants;
+  //   bump last  — a crash leaves paths MOVED while old waivers still cover
+  //                them, which is a silent widening of what a human agreed to
+  //                and one an agent could cause on purpose by renaming a file.
+  //
+  // The first is a nuisance somebody notices. The second is the failure this
+  // whole spec exists to prevent, so the bump goes first.
+  //
+  // THE PRE-PASS IS DELIBERATELY NOT PERFECT, and the cost is named rather than
+  // hidden: it can see ownership, the policy denial and whether a path actually
+  // moves, but not whether the pin still holds the old path — that read happens
+  // per row inside the loop. A rename rejected there still costs a spurious
+  // bump and a re-grant. Paying that is the same trade as above, one rung down.
+  const renaming = [
+    ...new Set(
+      updates
+        .filter(
+          (update) =>
+            update.newPath !== null &&
+            update.newPath !== update.path &&
+            !forbidden.has(update.newPath),
+        )
+        .map((update) => update.pinId),
+    ),
+  ];
+  if (renaming.length > 0) {
+    const owned = await deps.db
+      .select({ id: pins.id })
+      .from(pins)
+      .where(and(eq(pins.repo, repo), inArray(pins.id, renaming)));
+    const ids = owned.map((row) => row.id);
+    if (ids.length > 0) {
+      // ONE statement for the whole request: the spec says once per sweep per
+      // pin, and a bump inside the loop would count renames rather than sweeps.
+      await deps.db
+        .update(pins)
+        .set({ version: sql`${pins.version} + 1` })
+        .where(inArray(pins.id, ids));
+    }
+  }
   let applied = 0;
   let ignored = 0;
   let renamed = 0;
@@ -598,6 +746,19 @@ export const applyPinSweep = async (
         set: { status: "present" },
       })
       .returning({ path: pinFiles.path });
+    // BEFORE the old row goes, and never removed after (01a §3.3d): the pin
+    // keeps every name it has watched, so a rename cannot shorten the
+    // retention of the sessions that touched the file under its old name.
+    await recordPinFileRefs(
+      deps.db,
+      [
+        // The OLD name too: a pin whose history is partial (seeded late, or
+        // from before the table) must not lose the name it is leaving.
+        pinFileRefRow(update.pinId, repo, update.path),
+        pinFileRefRow(update.pinId, repo, update.newPath),
+      ],
+      deps.now(),
+    );
     if (update.newPath !== update.path) {
       await deps.db
         .delete(pinFiles)

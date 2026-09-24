@@ -9,6 +9,7 @@
  * asks at 23:00: how many of these did it show me, and did I ever open one.
  */
 import { describe, expect, test } from "bun:test";
+import { hintDeliveryId } from "@crosscheck/schema";
 
 import {
   addTestDeveloperWithSession,
@@ -100,8 +101,8 @@ const unsolvedTreeRecords = (): readonly Record<string, unknown>[] => [
   ),
 ];
 
+/** A delivery record whose id is DERIVED, as the hub now requires (07 §3.1). */
 const deliveryRecord = (
-  id: string,
   refId: string,
   sessionId: string = SESSION,
   developerId?: string,
@@ -109,7 +110,7 @@ const deliveryRecord = (
   recordEnvelope(
     "hint_delivery",
     {
-      id,
+      id: hintDeliveryId(sessionId, refId),
       sessionId,
       refKind: "work_context",
       refId,
@@ -145,8 +146,8 @@ describe("GET /api/solved-matches?counts=1", () => {
       ...unsolvedTreeRecords(),
     ]);
     await seed(context, [
-      deliveryRecord("hd_0000000000000000000000000000000a", SOLVED_ID),
-      deliveryRecord("hd_0000000000000000000000000000000b", UNSOLVED_ID),
+      deliveryRecord(SOLVED_ID),
+      deliveryRecord(UNSOLVED_ID),
     ]);
 
     // Act
@@ -163,7 +164,7 @@ describe("GET /api/solved-matches?counts=1", () => {
     const context = await createHarnessWithSession();
     await seed(context, solvedTreeRecords(SOLVED_ID));
     await seed(context, [
-      deliveryRecord("hd_0000000000000000000000000000000a", SOLVED_ID),
+      deliveryRecord(SOLVED_ID),
     ]);
     const before = await fetchCounts(context.harness, context.developer.apiKey);
     expect(before).toMatchObject({ shown: 1, pulled: 0 });
@@ -195,9 +196,7 @@ describe("GET /api/solved-matches?counts=1", () => {
       "/api/records",
       jsonRequest("POST", teammate.apiKey, {
         records: [
-          deliveryRecord(
-            "hd_0000000000000000000000000000000c",
-            SOLVED_ID,
+          deliveryRecord(SOLVED_ID,
             "ses_ken",
             teammate.developerId,
           ),

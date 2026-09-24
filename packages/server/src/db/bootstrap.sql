@@ -134,6 +134,11 @@ CREATE TABLE IF NOT EXISTS hint_deliveries (
   session_id text NOT NULL REFERENCES agent_sessions(id),
   ref_kind text NOT NULL,
   ref_id text NOT NULL,
+  -- WHICH SURFACE handed this ref over (07 3.1). DEFAULT 'unknown' and never
+  -- back-filled: two writers existed before this column and a stored row
+  -- cannot be attributed to either, so guessing would manufacture the
+  -- measurement the pilot report exists to take.
+  channel text NOT NULL DEFAULT 'unknown',
   delivered_at timestamptz NOT NULL,
   pulled_at timestamptz
 );
@@ -548,6 +553,61 @@ CREATE INDEX IF NOT EXISTS session_events_session_kind_idx
 CREATE INDEX IF NOT EXISTS session_events_observed_at_idx
   ON session_events (observed_at);
 
+-- THE SKELETON'S OWN IDENTITY (1.0 spec 01a §3.2, §3.3d): which vendor, which
+-- work context, and — on file.modified rows only — which FILE, so that the
+-- retention graph can join a human's pin to a session's touch without reading
+-- a content row. Added by ALTER, never only in the CREATE above, because every
+-- existing hub already has the table. New rows arrive complete; the rows that
+-- predate the columns are filled at start by services/skeleton-identity.ts,
+-- and what it cannot reach stays NULL — for file_ref that is UNRESOLVED
+-- (§3.3e), and the sweep keeps its whole session.
+ALTER TABLE session_events ADD COLUMN IF NOT EXISTS provider text;
+ALTER TABLE session_events ADD COLUMN IF NOT EXISTS work_context_id text;
+ALTER TABLE session_events ADD COLUMN IF NOT EXISTS file_ref text;
+CREATE INDEX IF NOT EXISTS session_events_file_ref_idx
+  ON session_events (file_ref)
+  WHERE file_ref IS NOT NULL;
+
+-- EVERY FILE IDENTITY A PIN HAS EVER WATCHED (01a §3.3d), append-only: the
+-- pin sweep follows a rename by replacing the pin_files row, and a retention
+-- graph that read pin_files alone would sever the pin from every session that
+-- touched the old name. A NULL file_ref is UNRESOLVED, with its reason, and
+-- at most one per pin; the sweep reads it as "cannot tell" for the repo.
+CREATE TABLE IF NOT EXISTS pin_file_refs (
+  pin_id text NOT NULL REFERENCES pins(id),
+  file_ref text,
+  unresolved_reason text,
+  first_seen timestamptz NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pin_file_refs_pin_ref_idx
+  ON pin_file_refs (pin_id, file_ref);
+CREATE UNIQUE INDEX IF NOT EXISTS pin_file_refs_unresolved_idx
+  ON pin_file_refs (pin_id)
+  WHERE file_ref IS NULL;
+CREATE INDEX IF NOT EXISTS pin_file_refs_file_ref_idx
+  ON pin_file_refs (file_ref);
+
+-- THE SKELETON SWEEP'S PROBES (01a §3.3g): the candidate sessions by end, and
+-- one index per root the sweep asks about once per candidate. Postgres does
+-- not index a foreign key's referencing side on its own, so without these the
+-- NOT EXISTS clauses are a scan each, per session, per pass.
+-- THE TOMBSTONE (01a §3.3g): set by the sweep in the statement that retires a
+-- session's skeleton, and read by every later projection, which then writes
+-- nothing — a record that arrives after the sweep must not rebuild part of
+-- a skeleton, because part of one reads as an order the whole may have
+-- contradicted.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS skeleton_retired_at timestamptz;
+-- THE SWEEP'S CANDIDATES, in cursor order: every ended session not yet
+-- retired, reaped ones included so the report can count them (they are never
+-- retired). Retired ones leave the index, so a cycle never re-walks the dead.
+CREATE INDEX IF NOT EXISTS agent_sessions_ended_idx
+  ON agent_sessions (ended_at, id)
+  WHERE ended_at IS NOT NULL AND skeleton_retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS claims_author_session_idx
+  ON claims (author_session_id);
+CREATE INDEX IF NOT EXISTS claim_edges_author_session_idx
+  ON claim_edges (author_session_id);
+
 -- TEAM-level settings for the regression guard, one row per repo. ABSENT
 -- MEANS DEFAULTS ("anyone" may pin; `suspect` names sessions) — nothing
 -- bootstraps rows here, so a hub that was never configured behaves exactly
@@ -558,6 +618,10 @@ CREATE TABLE IF NOT EXISTS team_settings (
   repo text PRIMARY KEY,
   pin_policy text NOT NULL,
   suspect_attribution text NOT NULL,
+  -- IS THIS REPO IN THE PILOT (07 3.6). Off unless somebody says otherwise,
+  -- and an absent row means the same thing: this table's rule is that a
+  -- missing row is defaults, so the two paths into "not enrolled" agree.
+  pilot_enrolled boolean NOT NULL DEFAULT false,
   updated_at timestamptz NOT NULL,
   updated_by text REFERENCES developers(id)
 );
@@ -925,6 +989,228 @@ BEGIN
     ALTER TABLE ci_test_results DROP CONSTRAINT IF EXISTS ci_test_results_test_id_length_check;
     ALTER TABLE ci_test_results ADD CONSTRAINT ci_test_results_test_id_length_check
       CHECK (char_length(test_id) <= 300);
+  END IF;
+END
+$$;
+
+-- ── Evidence axes (1.0 spec 08) ─────────────────────────────────────────────
+
+-- ONE POINTER AT A MACHINE-PRODUCED OBSERVATION, and the only column 08 adds.
+-- "<kind>:<value>" — error_fingerprint:sha256:<hex>, or ci_test:<test_id>.
+--
+-- NO DEFAULT AND NO BACKFILL, unlike spec 02's commit_binding above, and the
+-- difference is deliberate. 02 could default because "bound to the author's
+-- base commit" is a defensible guess about an existing row. There is no
+-- defensible guess here: nothing in a historical claim names a check, and
+-- inferring one from its prose is intent inference from agent text, which 00
+-- §8.6 cuts. NULL is therefore the TRUTH about every pre-08 row — it resolves
+-- to unsupported / no_verification_ref — and not a placeholder standing in for
+-- a value somebody should later supply.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS verification_ref text;
+
+-- The wire's bound reaching the store, the shape claims_body_length_check uses.
+-- 321 = MAX_CI_TEST_ID_CHARS (300) + MAX_VERIFICATION_REF_KIND_CHARS (20) + 1
+-- for the colon; the TypeScript side DERIVES it rather than repeating 300, and
+-- test/ddl-sync.test.ts reddens the build when this number and the constant
+-- disagree.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'claims_verification_ref_length_check'
+      AND conrelid = 'claims'::regclass
+      AND pg_get_constraintdef(oid) = 'CHECK ((char_length(verification_ref) <= 321))'
+  ) THEN
+    ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_verification_ref_length_check;
+    ALTER TABLE claims ADD CONSTRAINT claims_verification_ref_length_check
+      CHECK (char_length(verification_ref) <= 321);
+  END IF;
+END
+$$;
+
+-- ── Verdict semantics and fence authority (1.0 spec 04) ─────────────────────
+
+-- WHICH VERSION OF THIS INVARIANT (§3.5). A waiver is granted against a
+-- version, not against a pin: without this column a sweep could move the paths
+-- a pin watches while old waivers went on covering them, which is a silent
+-- widening of what a human agreed to.
+--
+-- DEFAULT 1, and the default is the truth about every existing row: nobody has
+-- swept them since versions existed, so they are all still their first version.
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+
+-- WHICH SURFACE HANDED A REF OVER (07 3.1). The CREATE TABLE above carries
+-- this column for a fresh hub; every hub that already exists needs the ALTER,
+-- and without it the pilot report reads `unknown` for ever on exactly the
+-- installs that have the history worth counting.
+--
+-- DEFAULT 'unknown' IS THE TRUTH ABOUT EVERY EXISTING ROW, not a placeholder:
+-- two writers existed before this column and a stored row cannot be
+-- attributed to either. Nothing is back-filled, and the report prints
+-- 'unknown' as its own bucket rather than folding it into a guess.
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown';
+
+-- The same column for a hub that already has the table. 07 3.6 found this
+-- missing: the spec's migration list named four new tables and one pins
+-- column and no team_settings alteration at all, so the flag the whole
+-- section depends on had no way to reach an existing hub.
+ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NULL DEFAULT false;
+
+-- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
+
+-- WHICH BROKEN PIN THIS ONE REPAIRS (07 3.4), and at which version of that
+-- invariant. Both nullable: nothing is repaired retroactively, so proof 3's
+-- denominator starts at the first repair after this lands.
+--
+-- The VERSION is the half neither spec had noticed it needed. 04 bumps
+-- pins.version inside applyPinSweep, so a repair recorded after a sweep would
+-- point at a pin whose watched file set had silently become a different one.
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_id text;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_version integer;
+-- 07 3.4, corrected: where the break was OBSERVED. Proof 3's fix range starts here, not at
+-- the last-working commit, which would put the breaking change inside the range.
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_at_commit text;
+
+-- THE ONLY HUMAN INPUT THE PILOT TAKES (07 3.2), and never a question. Two
+-- gestures riding things somebody does anyway; capture_mode is HUB-STAMPED
+-- and may never be carried by a body, because a mark is a human's word about
+-- whether this product was useful.
+--
+-- ONE MARK PER PERSON PER THING, or the noise figure would count keystrokes.
+CREATE TABLE IF NOT EXISTS pilot_marks (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  ref_kind text NOT NULL,
+  ref_id text NOT NULL,
+  mark text NOT NULL,
+  marked_by text NOT NULL REFERENCES developers(id),
+  capture_mode text NOT NULL,
+  created_at timestamptz NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
+  ON pilot_marks (ref_kind, ref_id, marked_by);
+CREATE INDEX IF NOT EXISTS pilot_marks_repo_created_idx
+  ON pilot_marks (repo, created_at DESC);
+
+-- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
+-- nothing and its window ends NOW, so an answer cannot be reconstructed later
+-- and proof 3 would be unanswerable in principle. Append-only: rewriting an
+-- answer because the world moved is rewriting the measurement to match the
+-- outcome.
+--
+-- coverage_judgeable is read at ANSWER time. An attribution emitted under a
+-- gap should not have been emitted, and counting it later as a hit or a miss
+-- would launder that failure into a precision figure.
+CREATE TABLE IF NOT EXISTS pilot_attributions (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  pin_id text NOT NULL REFERENCES pins(id),
+  outcome text NOT NULL,
+  falsifier text NOT NULL,
+  top_session_id text REFERENCES agent_sessions(id),
+  top_lift double precision,
+  candidates integer NOT NULL,
+  coverage_judgeable boolean NOT NULL,
+  answered_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS pilot_attributions_repo_answered_idx
+  ON pilot_attributions (repo, answered_at DESC);
+CREATE INDEX IF NOT EXISTS pilot_attributions_pin_idx
+  ON pilot_attributions (pin_id);
+-- The pilot-attribution root's probe (01a §3.3g).
+CREATE INDEX IF NOT EXISTS pilot_attributions_top_session_idx
+  ON pilot_attributions (top_session_id);
+-- The reaper's age prune (07 4) runs across every repo, so the timestamp
+-- leads; behind repo it would be a scan every fifteen minutes.
+CREATE INDEX IF NOT EXISTS pilot_attributions_answered_idx
+  ON pilot_attributions (answered_at);
+
+-- PROOF 5 ONLY, because proof 5 alone cannot be re-derived (07 3.5): the
+-- answers are rendered and gone. UPSERT-only, and bounded by repos x days x
+-- surfaces x counters rather than by traffic.
+CREATE TABLE IF NOT EXISTS pilot_counters (
+  repo text NOT NULL,
+  day text NOT NULL,
+  surface text NOT NULL,
+  counter text NOT NULL,
+  value bigint NOT NULL,
+  updated_at timestamptz NOT NULL,
+  PRIMARY KEY (repo, day, surface, counter)
+);
+-- The reaper retires days past retention across every repo; the primary key
+-- leads with repo, so without this the prune is a scan.
+CREATE INDEX IF NOT EXISTS pilot_counters_day_idx
+  ON pilot_counters (day);
+
+-- THE 50-SESSION MEASUREMENT, REDUCED TO ITS RESIDUE (07 3.6). Five of the
+-- handover's six per-session facts are already stored or recomputable; these
+-- two are not. coverage is a SNAPSHOT of what the hub said at observed_at and
+-- is never read back as current coverage.
+--
+-- seq is a PAIR (01 3.1). seq_epochs > 1 means the counter restarted, and the
+-- report prints no span at all — 01's epoch-split refusal reaching the
+-- counting layer rather than being re-argued here.
+CREATE TABLE IF NOT EXISTS pilot_sessions (
+  session_id text PRIMARY KEY REFERENCES agent_sessions(id),
+  repo text NOT NULL,
+  observed_at timestamptz NOT NULL,
+  end_reason text NOT NULL,
+  coverage jsonb NOT NULL,
+  seq_epoch text,
+  seq_first integer,
+  seq_last integer,
+  seq_gaps integer,
+  seq_null_records integer,
+  seq_epochs integer
+);
+
+CREATE INDEX IF NOT EXISTS pilot_sessions_repo_observed_idx
+  ON pilot_sessions (repo, observed_at DESC);
+
+-- WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (§3.6).
+--
+-- Append-only in both directions: a revoke is a new row naming the grant it
+-- supersedes, never an edit. A team that can only see the current permission
+-- has no account of how it got there.
+CREATE TABLE IF NOT EXISTS fence_waivers (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  pin_id text NOT NULL REFERENCES pins(id),
+  pin_version integer NOT NULL,
+  kind text NOT NULL,
+  granted_by text NOT NULL REFERENCES developers(id),
+  -- Hub-stamped "human", never taken from a body: here that assertion would
+  -- be a permission.
+  capture_mode text NOT NULL,
+  -- keep in sync with MAX_WAIVER_REASON_CHARS in @crosscheck/schema
+  reason text NOT NULL CONSTRAINT fence_waivers_reason_length_check CHECK (char_length(reason) <= 200),
+  expires_at timestamptz,
+  supersedes text,
+  created_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS fence_waivers_pin_idx
+  ON fence_waivers (repo, pin_id, pin_version, created_at DESC);
+
+-- THE SHAPE OF THE TWO KINDS, as a database fact rather than a service promise.
+-- A grant expires and supersedes nothing; a revoke supersedes a grant and never
+-- expires. Without it a grant with no expiry is a permanent permission nobody
+-- agreed to, and a revoke with an expiry is a permission that comes BACK on its
+-- own.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'fence_waivers_shape_check'
+      AND conrelid = 'fence_waivers'::regclass
+  ) THEN
+    ALTER TABLE fence_waivers ADD CONSTRAINT fence_waivers_shape_check
+      CHECK ((kind = 'grant' AND expires_at IS NOT NULL AND supersedes IS NULL)
+          OR (kind = 'revoke' AND expires_at IS NULL AND supersedes IS NOT NULL));
   END IF;
 END
 $$;

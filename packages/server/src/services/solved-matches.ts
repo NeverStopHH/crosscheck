@@ -46,6 +46,9 @@ import {
 } from "./solved.ts";
 import { loadClaimValidities } from "./claim-validity.ts";
 import { notMutedCondition } from "./visibility.ts";
+import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import type { ClaimAxesRow } from "./evidence-axes.ts";
+import type { EvidenceAxes } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -109,6 +112,12 @@ export interface SolvedMatchView {
    * finding and only this number tells the two apart on the line.
    */
   readonly rootCauseConfidence: number | null;
+  /**
+   * The evidence labels for that root cause (1.0 spec 08 §3.1), or null when
+   * no body travels at all. Derived against the repo the SOLVED tree lives in,
+   * which a cross-repo match makes different from the asking one.
+   */
+  readonly rootCauseAxes: EvidenceAxes | null;
   /**
    * How much the claim `rootCause` quotes is still worth about the CODE
    * (1.0 spec 02 §5). Null when there is no body to judge, and when the
@@ -473,6 +482,47 @@ const toMatchViews = async (
     now,
     [...rootCauses.values()].map((cause) => cause.claimId),
   );
+  // WAS ANYTHING RUN behind each root cause (08 §3.1) — and derived PER REPO,
+  // which is the only correct way to do it here.
+  //
+  // A solved match may be CROSS-REPO: `row.repo` is where the solved tree
+  // lives, which is not necessarily the repo that asked. The ladder resolves
+  // CI runs and test results BY REPO, so deriving one of these against the
+  // asking repo would answer a question about the wrong repository — and
+  // answer it in the exonerating direction, since a test id that resolves
+  // nowhere reads as `ref_unresolved` rather than as a mistake. So the rows
+  // are grouped by the repo each one actually belongs to.
+  const causeRepos = new Map<string, string>();
+  for (const winner of winners) {
+    const cause = rootCauses.get(winner.id);
+    const repoOfRow = display.get(winner.id)?.repo;
+    if (cause !== undefined && repoOfRow !== undefined) {
+      causeRepos.set(cause.claimId, repoOfRow);
+    }
+  }
+  const byRepo = new Map<string, ClaimAxesRow[]>();
+  for (const [contextId, cause] of rootCauses) {
+    const repoOfRow = causeRepos.get(cause.claimId);
+    if (repoOfRow === undefined) {
+      continue;
+    }
+    const bucket = byRepo.get(repoOfRow) ?? [];
+    bucket.push({
+      id: cause.claimId,
+      workContextId: contextId,
+      verificationRef: cause.verificationRef,
+      commitBinding: cause.commitBinding,
+      observedAtCommit: cause.observedAtCommit,
+    });
+    byRepo.set(repoOfRow, bucket);
+  }
+  const axesByClaim = new Map<string, EvidenceAxes>();
+  for (const [repoOfRows, rows] of byRepo) {
+    const derived = await readEvidenceAxes({ db, repo: repoOfRows, claims: rows });
+    for (const [claimId, value] of derived) {
+      axesByClaim.set(claimId, value);
+    }
+  }
   return winners.flatMap((winner) => {
     const row = display.get(winner.id);
     const solvedAt = solvedInfo.get(winner.id);
@@ -490,6 +540,15 @@ const toMatchViews = async (
         matchedTargetKind: matchKindOf(winner),
         rootCause: rootCauses.get(winner.id)?.body ?? null,
         rootCauseConfidence: rootCauses.get(winner.id)?.confidence ?? null,
+        rootCauseAxes: (() => {
+          const cause = rootCauses.get(winner.id);
+          if (cause === undefined) {
+            return null;
+          }
+          // The weakest rung for a body that travels without one — never an
+          // omission, which a reader would take for "no label reported".
+          return axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES;
+        })(),
         rootCauseValidity: validityOf(rootCauses.get(winner.id), validities),
       },
     ];

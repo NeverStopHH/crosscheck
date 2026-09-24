@@ -9,6 +9,7 @@
  * non-fatal to the read it rides on.
  */
 import { and, count, eq, gte, inArray, isNull } from "drizzle-orm";
+import { MAX_COMMIT_CLOCK_SKEW_MS, deliveryIdFor } from "@crosscheck/schema";
 import type { HintDelivery } from "@crosscheck/schema";
 
 import {
@@ -127,6 +128,26 @@ export const ingestHintDelivery = async (
   if (sessionIssue !== null) {
     return rejectedOutcome(sessionIssue);
   }
+  // THE ID MUST COME FROM THE SESSION IT NAMES (07 §3.1, corrected). It is
+  // deterministic, so it is computable: without this check a teammate could
+  // post `hd(your session, ref)` under their own session first, and the
+  // primary key would drop YOUR genuine delivery as a duplicate — and with it
+  // your right to call that intervention noise.
+  if (body.id !== deliveryIdFor(body.sessionId, body.refId, body.channel)) {
+    return rejectedOutcome(
+      "id: a delivery id is derived from its receiving session, ref and channel, and this one is not",
+    );
+  }
+  // A SENDER'S CLOCK IS BOUNDED BY OURS. `deliveredAt` orders the noise
+  // candidates and dates proofs 1 and 2; one stamped in 2099 would sit at the
+  // top of every candidate list for good and be marked by a bare
+  // `crosscheck noise` three days later.
+  const deliveredAt = new Date(
+    Math.min(
+      Date.parse(body.deliveredAt),
+      deps.now().getTime() + MAX_COMMIT_CLOCK_SKEW_MS,
+    ),
+  );
   const inserted = await deps.db
     .insert(hintDeliveries)
     .values({
@@ -134,7 +155,12 @@ export const ingestHintDelivery = async (
       sessionId: body.sessionId,
       refKind: body.refKind,
       refId: body.refId,
-      deliveredAt: new Date(body.deliveredAt),
+      // WHICH SURFACE handed it over (07 §3.1). The schema defaults an absent
+      // field to `unknown`, so a connector older than the column stores the
+      // honest word rather than being refused — and the pilot report prints
+      // that bucket as itself instead of folding it into a guess.
+      channel: body.channel,
+      deliveredAt,
     })
     .onConflictDoNothing()
     .returning({ id: hintDeliveries.id });
@@ -148,6 +174,7 @@ const listClaimRefCandidates = (
   deps: Deps,
   developerId: string,
   workContextId: string,
+  sessionId: string | undefined,
 ): Promise<readonly { id: string }[]> =>
   deps.db
     .select({ id: hintDeliveries.id })
@@ -158,6 +185,7 @@ const listClaimRefCandidates = (
       and(
         isNull(hintDeliveries.pulledAt),
         eq(agentSessions.developerId, developerId),
+        sessionId === undefined ? undefined : eq(hintDeliveries.sessionId, sessionId),
         eq(hintDeliveries.refKind, "claim"),
         eq(claims.workContextId, workContextId),
       ),
@@ -169,6 +197,7 @@ const listContextRefCandidates = (
   deps: Deps,
   developerId: string,
   workContextId: string,
+  sessionId: string | undefined,
 ): Promise<readonly { id: string }[]> =>
   deps.db
     .select({ id: hintDeliveries.id })
@@ -178,6 +207,7 @@ const listContextRefCandidates = (
       and(
         isNull(hintDeliveries.pulledAt),
         eq(agentSessions.developerId, developerId),
+        sessionId === undefined ? undefined : eq(hintDeliveries.sessionId, sessionId),
         eq(hintDeliveries.refKind, "work_context"),
         eq(hintDeliveries.refId, workContextId),
       ),
@@ -196,10 +226,17 @@ export const markHintsPulled = async (
   deps: Deps,
   developerId: string,
   workContextId: string,
+  /**
+   * THE READING SESSION, when the client can name it (07, corrected). Without
+   * it every unpulled delivery of this developer for the tree is stamped —
+   * across all their sessions — so one read turned a pointer another session
+   * had ignored into an "opened" one. With it, only that session's are.
+   */
+  sessionId?: string,
 ): Promise<void> => {
   const [claimRefs, contextRefs] = await Promise.all([
-    listClaimRefCandidates(deps, developerId, workContextId),
-    listContextRefCandidates(deps, developerId, workContextId),
+    listClaimRefCandidates(deps, developerId, workContextId, sessionId),
+    listContextRefCandidates(deps, developerId, workContextId, sessionId),
   ]);
   const ids = [...new Set([...claimRefs, ...contextRefs].map((row) => row.id))];
   if (ids.length === 0) {

@@ -3,17 +3,28 @@ import { ClaimValiditySchema } from "@crosscheck/schema";
 import type { ClaimRevalidationEntry } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import {
-  MAX_CI_LANE_FIELD_CHARS,
+  EvidenceAxesSchema,
   MAX_CI_TEST_ID_CHARS,
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
+  MAX_RECORD_ID_LENGTH,
+  MAX_REPORTED_UNRESOLVED_PINS,
+  RETENTION_ROOT_NAMES,
+  SAFE_ID_PATTERN,
   SESSION_EVENT_RETENTION_MODES,
+  MAX_CI_LANE_FIELD_CHARS,
 } from "@crosscheck/schema";
-import type { SeqField, SessionEventRetentionMode } from "@crosscheck/schema";
+import type {
+  SeqField,
+  SessionEventRetentionMode,
+  SkeletonRetentionReport,
+} from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
 import { parseCoverage } from "./coverage.ts";
+import { parseVerdict, WaiverRefSchema } from "./verdict.ts";
+import type { VerdictView } from "./verdict.ts";
 import type { HubContext, HubResult } from "./client.ts";
 import type { CoverageRecord } from "./coverage.ts";
 
@@ -324,7 +335,66 @@ export type SessionOrderEntry = z.infer<typeof SessionOrderEntrySchema>;
 export interface SessionOrderReport {
   readonly broken: readonly SessionOrderEntry[];
   readonly retention: SessionEventRetentionMode | "unknown" | null;
+  /**
+   * What the sweep keeps and why (01a §5). null: the hub sent none. An
+   * UnreadableSkeletonReport: it sent one this connector cannot read in full —
+   * a newer hub's root, say — and a report read in part would print counts
+   * that are not the hub's; the two facts that decide a WARN are still read.
+   */
+  readonly skeleton: SkeletonRetentionReport | UnreadableSkeletonReport | null;
 }
+
+/** A newer hub's report, reduced to what still has to reach the reader. */
+export interface UnreadableSkeletonReport {
+  readonly unreadable: true;
+  readonly held: boolean;
+  readonly sweepFailures: number | null;
+}
+
+const COUNT = z.number().int().nonnegative();
+const ISO = z.iso.datetime();
+/** Pin ids are hub-minted `SAFE_ID_PATTERN` ids; anything else is not printed. */
+const PIN_ID = z.string().max(MAX_RECORD_ID_LENGTH).regex(SAFE_ID_PATTERN);
+
+/** STRICT: every count present and an integer, every root one this connector can name. */
+const SkeletonRetentionReportSchema: z.ZodType<SkeletonRetentionReport> = z.object({
+  windowDays: COUNT,
+  heldBy: z.array(z.enum(RETENTION_ROOT_NAMES)),
+  completedAt: ISO.nullable(),
+  lastPassAt: ISO.nullable(),
+  aged: COUNT,
+  swept: COUNT,
+  keptBy: z.array(z.object({ root: z.enum(RETENTION_ROOT_NAMES), sessions: COUNT })),
+  unresolved: COUNT,
+  fileBearing: COUNT,
+  reapedAwaitingEnd: COUNT,
+  unresolvedPins: COUNT,
+  unresolvedPinIds: z.array(PIN_ID).max(MAX_REPORTED_UNRESOLVED_PINS),
+  sweepFailures: COUNT,
+});
+
+const WarningFactsSchema = z.looseObject({
+  heldBy: z.array(z.unknown()).optional(),
+  sweepFailures: COUNT.optional(),
+});
+
+const parseSkeleton = (
+  value: unknown,
+): SkeletonRetentionReport | UnreadableSkeletonReport | null => {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = SkeletonRetentionReportSchema.safeParse(value);
+  if (parsed.success) {
+    return parsed.data;
+  }
+  const facts = WarningFactsSchema.safeParse(value);
+  return {
+    unreadable: true,
+    held: facts.success && (facts.data.heldBy?.length ?? 0) > 0,
+    sweepFailures: facts.success ? (facts.data.sweepFailures ?? null) : null,
+  };
+};
 
 const isRetentionMode = (value: unknown): value is SessionEventRetentionMode =>
   (SESSION_EVENT_RETENTION_MODES as readonly unknown[]).includes(value);
@@ -333,6 +403,7 @@ const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
   .looseObject({
     sessions: z.array(z.unknown()),
     retention: z.unknown().optional(),
+    skeleton: z.unknown().optional(),
   })
   .transform((value) => ({
     broken: value.sessions
@@ -345,6 +416,7 @@ const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
         : isRetentionMode(value.retention)
           ? value.retention
           : "unknown",
+    skeleton: parseSkeleton(value.skeleton),
   }));
 
 /**
@@ -512,6 +584,15 @@ export const SolvedMatchEntrySchema = z.looseObject({
    * render because DESIGN.md §4's rule is about what reaches the reader.
    */
   rootCauseConfidence: z.number().min(0).max(1).nullable().optional(),
+  /**
+   * The evidence labels for that root cause (1.0 spec 08 §3.1).
+   *
+   * The briefing asserts this body UNASKED, with a confidence beside it — the
+   * shape §3.6 names as the failure mode — so the labels travel with it.
+   * Null when no body travels at all; absent when the hub does not report
+   * them, which the renderer says out loud rather than passing over.
+   */
+  rootCauseAxes: EvidenceAxesSchema.nullable().optional(),
   /**
    * How much the claim `rootCause` quotes is still worth about the CODE
    * (1.0 spec 02 §5, the `briefing solved` row of its table).
@@ -832,6 +913,32 @@ export const DiagnosisClaimSchema = z.looseObject({
    * work context's own file targets, which over-fires by construction.
    */
   affectedPaths: z.array(z.string().min(1)).optional(),
+  /**
+   * The pointer the author attached at a machine-produced observation
+   * (1.0 spec 08 §3.4), or null/absent when they attached none.
+   *
+   * AUTHOR-WRITTEN TEXT, and the only field 08 adds that is. A `ci_test` id is
+   * up to 300 characters of somebody's test name, so §5 confines it to
+   * `get_diagnosis` — the surface a reader ASKED for — and it is framed as
+   * quoted data there like every other untrusted slot. It never reaches the
+   * axes clause, which is why that clause can land unframed on unsolicited
+   * surfaces.
+   */
+  verificationRef: z.string().nullable().optional(),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * OPTIONAL for the reason `validity` is, one field up: the absence means
+   * "this hub did not answer", not "unknown". A hub too old to know about the
+   * axes omits it and the renderer prints no clause at all, rather than a rung
+   * nobody measured.
+   *
+   * PARSED, NOT CAST — `EvidenceAxesSchema` holds strict enums on all three
+   * labels. A hub sending a reason this build has never heard of fails the
+   * parse and the reader gets no axes, which is the fail-closed direction: an
+   * unnamed trust label on a claim is worse than no label.
+   */
+  axes: EvidenceAxesSchema.optional(),
 });
 
 export type DiagnosisClaim = z.infer<typeof DiagnosisClaimSchema>;
@@ -1061,15 +1168,34 @@ const DiagnosisEnvelopeSchema = z
     };
   });
 
+/**
+ * WHO IS READING, for the pull stamp (07, corrected by adversarial review).
+ * A session id makes the hub mark only that session's deliveries as opened;
+ * `no_telemetry` reads without marking anything. Omitted, the hub marks the
+ * developer's deliveries in every session — the pre-1.0 behaviour, kept only
+ * for callers that cannot say.
+ */
+export type DiagnosisReader =
+  | { readonly sessionId: string }
+  | "no_telemetry";
+
 export const getDiagnosis = (
   ctx: HubContext,
   workContextId: string,
-): Promise<HubResult<Diagnosis>> =>
-  hubRequest(ctx, {
+  reader?: DiagnosisReader,
+): Promise<HubResult<Diagnosis>> => {
+  const query =
+    reader === undefined
+      ? ""
+      : reader === "no_telemetry"
+        ? "?telemetry=0"
+        : `?session=${encodeURIComponent(reader.sessionId)}`;
+  return hubRequest(ctx, {
     method: "GET",
-    path: `/api/work-contexts/${encodeURIComponent(workContextId)}/diagnosis`,
+    path: `/api/work-contexts/${encodeURIComponent(workContextId)}/diagnosis${query}`,
     schema: DiagnosisEnvelopeSchema,
   });
+};
 
 /**
  * The same tree, with NO hint telemetry (trial finding V1-X1).
@@ -1255,6 +1381,22 @@ export const HintClaimCandidateSchema = z.looseObject({
    * reader sees, since `unknown` is injectable anyway, but is worth saying.
    */
   validity: ClaimValiditySchema.optional(),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * ON THE HINT WIRE BECAUSE A HINT IS UNSOLICITED. 08 §3.6 names
+   * `confidence 0.80` standing alone as the failure mode — two decimals read
+   * as a measurement — and a hint is the surface where that does the most
+   * damage: nobody asked for it, and it lands directly in an agent's context
+   * beside a number nothing measured. The labels are what let the reader
+   * discount it.
+   *
+   * The REF is deliberately NOT here. It is author-written text, and §5
+   * confines it to `get_diagnosis` — the surface a reader asked for. The
+   * clause carries no author text at all, which is what lets it ride an
+   * unsolicited surface.
+   */
+  axes: EvidenceAxesSchema.optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1348,6 +1490,15 @@ export const AnsweredQuestionSchema = z.looseObject({
   // not a number, and the row is dropped rather than rendered.
   confidence: z.number().min(0).max(1),
   provenance: z.string().min(1),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this answer (1.0 spec 08 §3.1).
+   *
+   * An answer IS an ordinary declared claim (DESIGN.md §5), it carries a
+   * confidence, and it arrives unsolicited in a briefing — so it needs the
+   * labels for exactly the reason a hint does. Optional: a hub that does not
+   * report them says so on the surface rather than going quiet.
+   */
+  axes: EvidenceAxesSchema.optional(),
   answererDeveloperName: z.string().min(1),
   answeredAt: z.string().min(1),
 });
@@ -1646,6 +1797,16 @@ export const RefereeClaimSchema = z.looseObject({
   // (DESIGN.md §4), and a hub that will not state it does not get the row
   // rendered — a derived draft must never pass for a vouched claim.
   provenance: z.string().min(1),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * Optional, like every other surface's: absent means this hub does not
+   * report one, which the renderer says out loud rather than passing over.
+   * The brief exists to let a reader CHECK a position instead of believing
+   * it, so a confidence with no evidence label is precisely the thing it must
+   * not hand somebody.
+   */
+  axes: EvidenceAxesSchema.optional(),
   authorDeveloperName: z.string().min(1).optional(),
   createdAt: z.string().min(1),
 });
@@ -1949,6 +2110,16 @@ export const ConferenceClaimSchema = z.looseObject({
   confidence: z.number().min(0).max(1),
   provenance: z.string().min(1),
   body: z.string(),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * A conference report is read AT STANDUP, and VISION §2 calls this the
+   * riskiest of the four capabilities for exactly that reason: a confidently
+   * wrong finding delivered to a room is worse than three honest ones. A
+   * confidence with no evidence label is the most persuasive version of that
+   * failure, so the labels travel with the number here too.
+   */
+  axes: EvidenceAxesSchema.optional(),
   authorDeveloperName: z.string().min(1).optional(),
   createdAt: z.string().min(1),
 });
@@ -2107,6 +2278,15 @@ export const PinEntrySchema = z.looseObject({
   renamedPaths: z.number().int().min(0).default(0),
   renamedAt: z.string().nullable().default(null),
   renamedByName: z.string().nullable().default(null),
+  /**
+   * The open fence on this pin, if one is live (04 §5).
+   *
+   * The SAME shape the verdict carries, so a waiver cannot mean two things
+   * depending on which command a reader typed. Nullish, so a hub that predates
+   * the table reads as "no fence is open" — which is the safe direction here:
+   * the absent reading UNDERSTATES permission rather than inventing it.
+   */
+  liveWaiver: WaiverRefSchema.nullish().transform((value) => value ?? null),
 });
 
 export type PinEntry = z.infer<typeof PinEntrySchema>;
@@ -2207,12 +2387,22 @@ export const breakPin = (
   ctx: HubContext,
   repo: string,
   pinId: string,
+  /**
+   * The reader's HEAD when the check failed (07 §3.4). Proof 3's fix range
+   * starts here, so it holds the fix and not the break. Omitted, the break is
+   * still recorded; proof 3 then counts it and never scores it.
+   */
+  brokeAtCommit?: string,
 ): Promise<HubResult<{ readonly id: string }>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/pins/${encodeURIComponent(pinId)}/broke`,
     schema: CreatedPinSchema,
-    body: { repo, presence: PIN_PRESENCE_TERMINAL },
+    body: {
+      repo,
+      presence: PIN_PRESENCE_TERMINAL,
+      ...(brokeAtCommit === undefined ? {} : { brokeAtCommit }),
+    },
   });
 
 export interface PinSweepUpdate {
@@ -2349,6 +2539,17 @@ export interface SuspectView {
    * surface where an unqualified answer costs the most: a name.
    */
   readonly coverage: CoverageRecord;
+  /**
+   * Whether anybody may be named at all, and on what basis (04 §3).
+   *
+   * `null` MEANS THE HUB DID NOT REPORT ONE, and the renderer says so out
+   * loud — it does not fall silent and it does not invent one. A ranking with
+   * no verdict beside it reads as a fully qualified answer, which is the
+   * unqualified naming 04 exists to refuse; see http/verdict.ts for why this
+   * block inherits coverage's inverted parse rule rather than this file's
+   * usual tolerant one.
+   */
+  readonly verdict: VerdictView | null;
 }
 
 const SuspectViewSchema = z
@@ -2378,6 +2579,7 @@ const SuspectViewSchema = z
     attribution: z.string().min(1).default("sessions"),
     candidates: z.array(z.unknown()).default([]),
     coverage: z.unknown().optional(),
+    verdict: z.unknown().optional(),
   })
   .transform(
     (value): SuspectView => ({
@@ -2387,6 +2589,7 @@ const SuspectViewSchema = z
       totals: value.totals,
       attribution: value.attribution,
       coverage: parseCoverage(value.coverage),
+      verdict: parseVerdict(value.verdict),
       candidates: value.candidates
         .map((row) => SuspectCandidateSchema.safeParse(row))
         .filter((parsed) => parsed.success)
@@ -2427,6 +2630,10 @@ export const TeamSettingsSchema = z.looseObject({
   repo: z.string().min(1),
   pinPolicy: z.string().min(1),
   suspectAttribution: z.string().min(1),
+  // 07 §3.6. Defaulted, so a hub that predates the column reads as NOT
+  // enrolled — the safe direction: a client must never report a team as
+  // being measured because the hub could not say.
+  pilotEnrolled: z.boolean().default(false),
   updatedAt: z.string().nullable().default(null),
 });
 

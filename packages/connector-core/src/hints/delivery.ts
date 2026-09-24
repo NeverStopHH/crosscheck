@@ -10,6 +10,7 @@ import {
   withDeliveredHint,
 } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
+import type { DeliveryChannel } from "@crosscheck/schema";
 
 /**
  * Recording a delivered hint — spool the `hint_deliveries` row, then CLAIM
@@ -35,6 +36,15 @@ export interface PendingHintDelivery {
   readonly refKind: HintRefKind;
   readonly refId: string;
   readonly bodyHash: string | null;
+  /**
+   * WHICH SURFACE is handing this over (07 §3.1).
+   *
+   * On the delivery and not on the recorder, because three callers reach this
+   * function and they are not the same channel — and required, so a fourth
+   * cannot quietly book itself as `unknown` on the one record the pilot
+   * report counts.
+   */
+  readonly channel: DeliveryChannel;
 }
 
 /**
@@ -74,6 +84,7 @@ export const rememberHintDelivery = async (
     state.crosscheckSessionId,
     delivery.refKind,
     delivery.refId,
+    delivery.channel,
     producer,
     target.now,
   );

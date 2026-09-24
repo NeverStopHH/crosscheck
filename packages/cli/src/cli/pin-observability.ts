@@ -216,6 +216,37 @@ export const guardSettingsSentence = (settings: TeamSettings): string => {
  * broken, then what is suppressed, then the settings that explain the shape
  * of all three. A reader who stops after one line still has the denominator.
  */
+/**
+ * HOW MANY FENCES ARE OPEN, AND UNTIL WHEN — and nothing else (04 §5).
+ *
+ * This module is registered `framing: "bare"`, and that registration is a
+ * promise: it prints paths, glob patterns, counts and machine timestamps, and
+ * NEVER another person's prose. So a waiver reaches `status` and `doctor` as a
+ * number and an instant. The reason and the granter's name stay on `pin list`
+ * and on the `suspect` verdict, which are framed surfaces carrying the
+ * quoted-data notice and can hold a teammate's sentence safely.
+ *
+ * WHY IT IS HERE AT ALL rather than only on those framed surfaces: an open
+ * fence SUPPRESSES a `PROTECTED_CONFLICT`, so `status` would otherwise report
+ * a repo as quiet precisely because somebody silenced it. A count and a
+ * deadline are enough to send a reader to `crosscheck pin list`, which is the
+ * whole job of this line.
+ *
+ * THE EARLIEST EXPIRY, not the latest — the next moment the answer a reader is
+ * looking at can change on its own.
+ */
+const waiverSentence = (registry: PinRegistry): string | null => {
+  const expiries = registry.pins
+    .map((pin) => pin.liveWaiver?.expiresAt)
+    .filter((value): value is string => value !== undefined && value !== "")
+    .sort();
+  const next = expiries[0];
+  if (next === undefined) {
+    return null;
+  }
+  return `${String(expiries.length)} live waiver(s) — next expires ${next}; run crosscheck pin list to see who opened which, and why`;
+};
+
 export const pinStatusLines = (
   registry: PinRegistry,
   patterns: readonly string[],
@@ -224,12 +255,14 @@ export const pinStatusLines = (
 ): readonly string[] => {
   const orphans = orphanSentence(orphanedPins(registry));
   const shadows = shadowedPinPaths(registry, patterns);
+  const waivers = waiverSentence(registry);
   return [
     pinCoverageSentence(registry, now),
     ...(orphans === null ? [] : [`  ${orphans}`]),
     ...(shadows.length === 0
       ? []
       : [`  ${shadowSentence(shadows, patterns.length)}`]),
+    ...(waivers === null ? [] : [`  ${waivers}`]),
     ...(settings === null ? [] : [guardSettingsSentence(settings)]),
   ];
 };

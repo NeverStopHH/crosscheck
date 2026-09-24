@@ -18,7 +18,20 @@ import type {
 import { renderPinList } from "./cli/pin-render.ts";
 import { pinStatusLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
+import { verdictLines } from "./cli/verdict-render.ts";
 import { hubFailureLine } from "./cli/revalidate.ts";
+import { pilotFailureLine, pilotJson, renderPilot } from "./cli/pilot-render.ts";
+import type { PilotView } from "./cli/pilot-render.ts";
+import {
+  candidateListLines,
+  markFailureLine,
+  markRecordedLine,
+  noLiveSessionLine,
+  nothingRecentLine,
+  refNeverReachedLine,
+} from "./cli/pilot-mark.ts";
+import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
+import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
 const ISO = "2026-08-25T11:00:00.000Z";
@@ -44,6 +57,17 @@ const pinWith = (payload: string): PinEntry => ({
   renamedPaths: 1,
   renamedAt: ISO,
   renamedByName: payload,
+  // 04 §5: `cli-pin-list`'s fixture gains the reason slot too. The waiver line
+  // interpolates a granter's name and a teammate's sentence, and a corpus that
+  // planted only in the surface label would leave both unattacked while the
+  // registry counted this surface green.
+  liveWaiver: {
+    id: "fw_11111111-2222-4333-8444-555555555555",
+    pinVersion: 1,
+    expiresAt: ISO,
+    reason: payload,
+    grantedByName: payload,
+  },
 });
 
 /**
@@ -104,6 +128,39 @@ const candidateWith = (payload: string): SuspectCandidate => ({
   isSelf: false,
 });
 
+/**
+ * A verdict with the payload in EVERY slot a renderer of this type reads —
+ * and the one that matters is `waiver.reason`.
+ *
+ * 04 §5 names this explicitly, and 03's COV-7 is why: reusing the suspect
+ * fixture without a waiver leaves the new clause unattacked while the registry
+ * still counts the surface green. The reason is the only author-written string
+ * on a verdict; a corpus that plants only in the surface label never reaches
+ * it. `protected_ok` because that is the ONE protection value that renders a
+ * waiver at all — a `PROTECTED_CONFLICT` fixture has no live fence, so its
+ * reason slot does not exist to attack.
+ */
+const verdictWith = (payload: string): VerdictView => ({
+  attribution: payload,
+  protection: "protected_ok",
+  basis: payload,
+  falsifier: payload,
+  behaviorDelta: payload,
+  deltaLane: payload,
+  deltaReason: payload,
+  explanationTiming: payload,
+  timingReason: payload,
+  invariant: { pinId: "pin_11111111-2222-4333-8444-555555555555", version: 1 },
+  waiver: {
+    id: "fw_11111111-2222-4333-8444-555555555555",
+    pinVersion: 1,
+    expiresAt: ISO,
+    reason: payload,
+    grantedByName: payload,
+  },
+  computedAt: ISO,
+});
+
 const suspectWith = (payload: string): SuspectView => ({
   outcome: "ranked",
   falsifier: { kind: "recorded_break", at: ISO, check: payload },
@@ -151,7 +208,81 @@ const suspectWith = (payload: string): SuspectView => ({
       { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
     ],
   },
+  // The suspect surface renders the verdict block too, so its own fixture
+  // carries one — otherwise `cli-suspect` would attack every slot on the
+  // document EXCEPT the block this spec added to it.
+  verdict: verdictWith(payload),
 });
+
+/**
+ * A pilot report with the payload in EVERY slot the wire can fill: the title
+ * (the one author-written span), and also the repo, a channel key, every
+ * reason word, a surface name, a counter key and the ids. Every figure is
+ * `unavailable` with the payload as its reason, so the "printed as the word"
+ * branch — the one a newer hub reaches — is in the corpus rather than only
+ * written.
+ */
+const pilotWith = (payload: string): PilotView => {
+  const unavailable = { kind: "unavailable" as const, reason: payload };
+  const repair = {
+    pinId: payload,
+    repairPinId: payload,
+    brokenCommit: payload,
+    repairCommit: payload,
+    pinnedFiles: [payload],
+    namedFiles: [payload],
+  };
+  return {
+    report: {
+      repo: payload,
+      enrolled: true,
+      sinceIso: payload,
+      untilIso: payload,
+      days: 56,
+      sessionSet: { used: 1, cap: 50, refused: 1, spanned: 1, restarted: 1, notRecorded: 1 },
+      duplicateWork: {
+        surfaced: 3,
+        opened: 1,
+        converged: 1,
+        byChannel: { briefing: 1, [payload]: 1 },
+        priorWork: [{ workContextId: payload, title: payload, openedBySessions: 1 }],
+        priorWorkBeyondList: 1,
+        openedAnyway: 1,
+      },
+      collisions: {
+        tripwireFlagged: unavailable,
+        ghostFlagged: unavailable,
+        bothLanded: unavailable,
+        ciRegressed: unavailable,
+      },
+      attribution: {
+        answers: 1,
+        attributions: 1,
+        excluded: 1,
+        repaired: [repair],
+        repairedBeyondBound: 1,
+        noRepairYet: 1,
+        repairedWithoutBreakCommit: 1,
+        supersededAnswers: 1,
+        answersAfterRepair: 1,
+      },
+      precision: {
+        sessions: 1,
+        openedPer100: unavailable,
+        openedTargetPer100: 8,
+        offTargetMarks: 1,
+        offTargetPer100: unavailable,
+        offTargetCeilingPer100: 20,
+        surfaceOkMarks: 1,
+      },
+      integrity: [
+        { surface: payload, counters: { answers_emitted: 1, [payload]: 1 } },
+        { surface: payload, counters: null },
+      ],
+    },
+    fixes: [{ repair, outcome: "unresolvable" }],
+  };
+};
 
 export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
@@ -174,6 +305,9 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
           repo: payload,
           pinPolicy: payload,
           suspectAttribution: payload,
+          // A BOOLEAN, so there is no payload slot here — and that is the
+          // fact worth keeping: enrolment is a switch, never author text.
+          pilotEnrolled: true,
           updatedAt: ISO,
         },
         NOW,
@@ -221,7 +355,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // command WRITES and false of the three it PASSES THROUGH. Taking either
     // side alone would have restored a claim the other branch had just proven
     // false.
-    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency and hub-reachable checks. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts",
+    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency, pilot and hub-reachable checks. The pilot lines' reason words are the shared vocabulary's own sentences (unavailableClause), never hub text. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts",
   },
   {
     kind: "composite",
@@ -257,6 +391,97 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // tool prints it back").
     framing: "bare",
     render: (payload) => hubFailureLine(payload),
+  },
+  {
+    kind: "corpus",
+    name: "cli-verdict",
+    delivery: "pulled",
+    module: "src/cli/verdict-render.ts",
+    framing: "framed",
+    // THE ARRAY TAIL, per 00 §9.1a — appended after `cli-claim-revalidate`
+    // (02), which is where 05's `cli-ci-report` would have gone had 05 added
+    // one. It did not: 05 rendered its CI block inside `cli/status.ts`, an
+    // already-registered module, and covered it with a probe in
+    // test/ci-status-render.test.ts. So this is the next tail slot, and 07's
+    // `cli-pilot` follows it.
+    //
+    // THE PAYLOAD IS PLANTED IN THE WAIVER REASON, not only in the labels.
+    // That slot is the whole point of this registration: a verdict is enum
+    // words the renderer maps to its own sentences, and `waiver.reason` is
+    // the single span on the surface that a teammate wrote.
+    render: (payload) =>
+      quotingText(...verdictLines(verdictWith(payload), NOW)),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot",
+    delivery: "pulled",
+    module: "src/cli/pilot-render.ts",
+    framing: "framed",
+    // 07 §5, THE ARRAY TAIL after `cli-verdict`, last of the eight specs. A
+    // person typed it and is waiting, so `pulled`. FRAMED because proof 1
+    // names the prior work each opened pointer pointed at, and that is a
+    // teammate's title — planted here in the title slot, the most exposed
+    // one, and in every other slot the wire can fill: repo, channel key,
+    // reason word, surface name, counter key and ids. The document carries
+    // the not-enrolled form and all three failure lines too, so no sentence
+    // this module writes goes unattacked.
+    render: (payload) => {
+      const view = pilotWith(payload);
+      return [
+        renderPilot(view),
+        renderPilot({ ...view, report: { ...view.report, enrolled: false } }),
+        pilotFailureLine("network", payload),
+        pilotFailureLine("malformed", payload),
+        pilotFailureLine("http", payload),
+      ].join("\n");
+    },
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot-json",
+    delivery: "pulled",
+    module: "src/cli/pilot-render.ts",
+    // `--json` reaches an agent that ran the command through Bash exactly as
+    // the text form does, so it is attacked too. SANITIZED, not framed: JSON
+    // has no frame, so the class is the character invariants and no « » at
+    // all — every string, keys included, cleaned before it is serialized.
+    framing: "sanitized",
+    render: (payload) => pilotJson(pilotWith(payload)),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot-mark",
+    delivery: "pulled",
+    module: "src/cli/pilot-mark.ts",
+    // `crosscheck noise` and `crosscheck pin --ok`. BARE: ids, channel words,
+    // ages and the hub's own refusal sentence, never a teammate's prose —
+    // the person typed this beside the session and already knows what the
+    // intervention said. Every sentence the module writes is in the document,
+    // with the payload in every slot the wire fills.
+    framing: "bare",
+    render: (payload) => {
+      const candidate = {
+        id: payload,
+        sessionId: payload,
+        channel: payload,
+        refKind: payload,
+        refId: payload,
+        deliveredAt: payload,
+      };
+      return [
+        markRecordedLine("hint_delivery", payload, false),
+        markRecordedLine("hint_delivery", payload, true),
+        markRecordedLine("pin", payload, false),
+        markRecordedLine("pin", payload, true),
+        candidateListLines([candidate, candidate], true, 60, NOW),
+        noLiveSessionLine(),
+        nothingRecentLine(60),
+        refNeverReachedLine(payload),
+        markFailureLine("network", payload),
+        markFailureLine("http", payload),
+      ].join("\n");
+    },
   },
 ];
 

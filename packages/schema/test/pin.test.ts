@@ -177,4 +177,23 @@ describe("PinSchema", () => {
       expect(parsed.success, path).toBe(false);
     }
   });
+
+  test("stores each file in its one spelling, once (01a §3.3d)", () => {
+    // Arrange — the spellings a person types at the door
+    const parsed = PinSchema.safeParse(
+      pin({ files: ["./src/workbench/usePlayback.ts", "src//workbench/usePlayback.ts", "src/x.ts/"] }),
+    );
+
+    // Assert — canonical, and the duplicate is one file, not two
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.files).toEqual(["src/workbench/usePlayback.ts", "src/x.ts"]);
+  });
+
+  test("refuses a path carrying a newline — the file identity's separator", () => {
+    // Arrange & Act
+    const parsed = PinSchema.safeParse(pin({ files: ["src/x.ts\nsrc/y.ts"] }));
+
+    // Assert
+    expect(parsed.success).toBe(false);
+  });
 });

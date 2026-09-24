@@ -9,6 +9,8 @@ import {
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
+  MAX_VERIFICATION_REF_CHARS,
+  MAX_WAIVER_REASON_CHARS,
   NO_COMMIT_SHA,
 } from "@crosscheck/schema";
 
@@ -41,6 +43,10 @@ const guardedBlockNamed = (sql: string, constraintName: string): string => {
   return matching[0] ?? "";
 };
 
+const WAIVER_REASON_CHECK_PATTERN =
+  /fence_waivers_reason_length_check CHECK \(char_length\(reason\) <= (\d+)\)/;
+const VERIFICATION_REF_CHECK_PATTERN =
+  /claims_verification_ref_length_check\s+CHECK \(char_length\(verification_ref\) <= (\d+)\)/;
 const CI_TEST_ID_CHECK_PATTERN =
   /ci_test_results_test_id_length_check\s+CHECK \(char_length\(test_id\) <= (\d+)\)/;
 const INTENT_SUMMARY_CHECK_PATTERN =
@@ -409,6 +415,231 @@ describe("bootstrap.sql DDL sync", () => {
     expect(Number(match?.[1])).toBe(MAX_CI_TEST_ID_CHARS);
   });
 
+  test("fence_waivers reason CHECK matches MAX_WAIVER_REASON_CHARS", async () => {
+    // Arrange: a waiver's reason is AUTHOR-WRITTEN TEXT and one of only two
+    // untrusted slots a verdict line may carry. A cap that drifts between the
+    // two authorities lets one deployment store a sentence the other refuses —
+    // and the refusal would land on a person trying to lift a fence, at the
+    // moment they are least able to guess what went wrong.
+    //
+    // This case exists because the drift happened WHILE IT WAS BEING WRITTEN:
+    // the SQL said 400, the constant says 200.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const match = bootstrapSql.match(WAIVER_REASON_CHECK_PATTERN);
+
+    // Assert
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBe(MAX_WAIVER_REASON_CHARS);
+  });
+
+  test("the fence table and the pin version exist in both authorities", async () => {
+    // drizzle is the migration authority and bootstrap.sql is what a real
+    // Postgres hub runs; a table in one and not the other is a hub that
+    // accepts a write on one deployment and 42P01s on the other.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    for (const fragment of [
+      "CREATE TABLE IF NOT EXISTS fence_waivers",
+      "fence_waivers_pin_idx",
+      "ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+  });
+
+  test("07's two new columns reach an EXISTING hub, not only a fresh one", async () => {
+    // The trap this case exists for: a column added only to the CREATE TABLE
+    // is a column no hub that already has the table will ever get, because
+    // the CREATE is IF NOT EXISTS. And no harness test can catch it — every
+    // harness builds a FRESH database, where the CREATE carries the column
+    // and the ALTER never runs. So the SQL is read as text, here, on purpose.
+    //
+    // The cost of missing one is not a crash: `hint_deliveries.channel` would
+    // read `unknown` for ever and `team_settings.pilot_enrolled` would be a
+    // flag nobody can set, both looking like honest defaults.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert — both halves of each, because either alone is a deployment that
+    // differs from the other.
+    for (const fragment of [
+      "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown'",
+      "channel text NOT NULL DEFAULT 'unknown',",
+      "ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NULL DEFAULT false",
+      "pilot_enrolled boolean NOT NULL DEFAULT false,",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+  });
+
+  test("the channel column really exists after a bootstrap", async () => {
+    // Arrange — the assertions above read SQL as text. This one asks the
+    // database, which is the only authority that settles whether the two
+    // statements above actually ran.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT column_default AS d FROM information_schema.columns WHERE table_name = 'hint_deliveries' AND column_name = 'channel'`,
+    );
+
+    // Assert
+    expect(rows.rows.length).toBe(1);
+    expect(String(rows.rows[0]?.d ?? "")).toContain("unknown");
+  });
+
+  test("07's four tables exist in BOTH authorities, not one", async () => {
+    // drizzle is the migration authority and bootstrap.sql is what a real
+    // Postgres hub runs. A table in one and not the other is a hub that
+    // accepts a write on one deployment and 42P01s on the other — and for a
+    // measurement table that failure is silent twice over: nothing is stored
+    // and no proof says it is missing its inputs.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    for (const fragment of [
+      "CREATE TABLE IF NOT EXISTS pilot_marks",
+      "pilot_marks_ref_marker_idx",
+      "CREATE TABLE IF NOT EXISTS pilot_attributions",
+      "pilot_attributions_pin_idx",
+      "CREATE TABLE IF NOT EXISTS pilot_counters",
+      "PRIMARY KEY (repo, day, surface, counter)",
+      "pilot_counters_day_idx",
+      "pilot_attributions_answered_idx",
+      "CREATE TABLE IF NOT EXISTS pilot_sessions",
+      "ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_id text",
+      "ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_version integer",
+      "ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_at_commit text",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+  });
+
+  test("the four pilot tables really exist after a bootstrap", async () => {
+    // Arrange — the case above reads SQL as text. This one asks the database,
+    // which is the only authority that settles whether the statements ran.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT table_name AS t FROM information_schema.tables WHERE table_name LIKE 'pilot_%' ORDER BY table_name`,
+    );
+
+    // Assert
+    expect(rows.rows.map((row) => String(row["t"]))).toEqual([
+      "pilot_attributions",
+      "pilot_counters",
+      "pilot_marks",
+      "pilot_sessions",
+    ]);
+  });
+
+  test("the two retention indexes really exist after a bootstrap", async () => {
+    // Arrange — the reaper deletes by day and by answer time across every
+    // repo (07 §4); without these the prune is a scan every pass. Asked of
+    // the database, which only ever saw the SQL.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexname AS i FROM pg_indexes WHERE indexname IN ('pilot_counters_day_idx', 'pilot_attributions_answered_idx') ORDER BY indexname`,
+    );
+
+    // Assert
+    expect(rows.rows.map((row) => String(row["i"]))).toEqual([
+      "pilot_attributions_answered_idx",
+      "pilot_counters_day_idx",
+    ]);
+  });
+
+  test("one person marking twice is one mark, not two complaints", async () => {
+    // Arrange — the unique key is what keeps the noise figure from counting
+    // keystrokes, and it is a DATABASE fact rather than a service promise.
+    //
+    // MEASURED WHILE WRITING THIS: the harness builds its database from
+    // `bootstrap.sql`, NOT from the drizzle schema, so weakening drizzle's
+    // `uniqueIndex` to `index` leaves every test in this repository green.
+    // The two authorities are held together by the text assertions above;
+    // this one asks the database, and the database only ever saw the SQL.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexdef AS d FROM pg_indexes WHERE indexname = 'pilot_marks_ref_marker_idx'`,
+    );
+
+    // Assert
+    const definition = String(rows.rows[0]?.["d"] ?? "");
+    expect(definition).toContain("UNIQUE");
+    expect(definition).toContain("ref_kind");
+    expect(definition).toContain("ref_id");
+    expect(definition).toContain("marked_by");
+  });
+
+  test("a waiver's two kinds have a shape the DATABASE enforces", async () => {
+    // Arrange — a grant expires and supersedes nothing; a revoke supersedes a
+    // grant and never expires. Left to a service, a grant with no expiry is a
+    // permanent permission nobody agreed to, and a revoke with an expiry is a
+    // permission that comes BACK on its own.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const guarded = guardedBlockNamed(bootstrapSql, "fence_waivers_shape_check");
+
+    // Assert
+    expect(guarded).toContain("kind = 'grant'");
+    expect(guarded).toContain("expires_at IS NOT NULL AND supersedes IS NULL");
+    expect(guarded).toContain("kind = 'revoke'");
+    expect(guarded).toContain("expires_at IS NULL AND supersedes IS NOT NULL");
+  });
+
+  test("claims verification_ref CHECK matches MAX_VERIFICATION_REF_CHARS", async () => {
+    // Arrange: the same two-authorities problem as the test id above, with one
+    // extra turn of the screw — this bound is DERIVED (05's test-id cap plus a
+    // kind plus a colon), so raising MAX_CI_TEST_ID_CHARS silently raises the
+    // TypeScript side and leaves this literal behind. A ref that fits the wire
+    // and not the column would be refused by the database after the route said
+    // yes, and the claim would land with its pointer missing — which reads as
+    // `no_verification_ref`, i.e. "nobody attached a check". A write error that
+    // presents itself as an honest absence is exactly what principle 5 forbids.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const match = bootstrapSql.match(VERIFICATION_REF_CHECK_PATTERN);
+
+    // Assert
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBe(MAX_VERIFICATION_REF_CHARS);
+  });
+
+  test("the verification_ref CHECK is added to hubs that predate the column", async () => {
+    // bootstrap.sql runs top to bottom on EVERY hub start, and the claims
+    // CREATE TABLE is IF NOT EXISTS — so on an existing hub the table is
+    // untouched and only the ALTERs below it apply. A column added to the
+    // CREATE alone would never reach a hub that already has the table, and the
+    // constraint would exist on fresh installs only.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const guarded = guardedBlockNamed(
+      bootstrapSql,
+      "claims_verification_ref_length_check",
+    );
+
+    // Assert — the column arrives idempotently, and the constraint is created
+    // only when it is absent or differs, so a restart is a no-op rather than a
+    // DROP/ADD churning a live table.
+    expect(bootstrapSql).toContain(
+      "ALTER TABLE claims ADD COLUMN IF NOT EXISTS verification_ref text;",
+    );
+    expect(guarded).toContain("IF NOT EXISTS (");
+    expect(guarded).toContain(
+      "ALTER TABLE claims ADD CONSTRAINT claims_verification_ref_length_check",
+    );
+  });
+
   test("the two CI tables exist in both authorities, with their indexes", async () => {
     // drizzle is the migration authority and bootstrap.sql is what a real
     // Postgres hub actually runs; a table in one and not the other is a hub
@@ -428,5 +659,65 @@ describe("bootstrap.sql DDL sync", () => {
     // And the cascade, which retention depends on: an orphan result row would
     // assert a failure belonging to a run nobody can look up.
     expect(bootstrapSql).toContain("REFERENCES ci_runs(id) ON DELETE CASCADE");
+  });
+
+  test("01a's identity columns reach an EXISTING hub, by ALTER", async () => {
+    // A column only in a CREATE TABLE IF NOT EXISTS is a column no hub that
+    // already has session_events will ever get, and no fresh-harness test
+    // can see the difference — so the SQL is read as text.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    for (const fragment of [
+      "ALTER TABLE session_events ADD COLUMN IF NOT EXISTS provider text;",
+      "ALTER TABLE session_events ADD COLUMN IF NOT EXISTS work_context_id text;",
+      "ALTER TABLE session_events ADD COLUMN IF NOT EXISTS file_ref text;",
+      "CREATE TABLE IF NOT EXISTS pin_file_refs",
+      "pin_id text NOT NULL REFERENCES pins(id)",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+  });
+
+  test("01a's identity indexes really exist after a bootstrap", async () => {
+    // Arrange — the pin root's join and the one-NULL-per-pin rule both live
+    // in indexes; asked of the database, which only ever saw the SQL.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexname AS i, indexdef AS d FROM pg_indexes WHERE indexname IN ('session_events_file_ref_idx', 'pin_file_refs_pin_ref_idx', 'pin_file_refs_unresolved_idx', 'pin_file_refs_file_ref_idx') ORDER BY indexname`,
+    );
+
+    // Assert
+    expect(rows.rows.map((row) => String(row["i"]))).toEqual([
+      "pin_file_refs_file_ref_idx",
+      "pin_file_refs_pin_ref_idx",
+      "pin_file_refs_unresolved_idx",
+      "session_events_file_ref_idx",
+    ]);
+    const unresolved = rows.rows.find((row) => row["i"] === "pin_file_refs_unresolved_idx");
+    expect(String(unresolved?.["d"])).toContain("UNIQUE");
+    expect(String(unresolved?.["d"])).toContain("WHERE (file_ref IS NULL)");
+  });
+
+  test("the skeleton sweep's probes are indexed on a real bootstrap", async () => {
+    // Arrange — each root is asked once per candidate session; an unindexed
+    // referencing column is a scan per session per pass (01a §6)
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexname AS i FROM pg_indexes WHERE indexname IN ('agent_sessions_ended_idx', 'claims_author_session_idx', 'claim_edges_author_session_idx', 'pilot_attributions_top_session_idx', 'work_context_intents_session_idx') ORDER BY indexname`,
+    );
+
+    // Assert
+    expect(rows.rows.map((row) => String(row["i"]))).toEqual([
+      "agent_sessions_ended_idx",
+      "claim_edges_author_session_idx",
+      "claims_author_session_idx",
+      "pilot_attributions_top_session_idx",
+      "work_context_intents_session_idx",
+    ]);
   });
 });

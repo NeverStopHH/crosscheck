@@ -4,6 +4,7 @@
  *   crosscheck pin "<surface>" --files a.ts b.ts [--check "…"]
  *   crosscheck pin list
  *   crosscheck pin --broke <id>
+ *   crosscheck pin --ok <id>
  *   crosscheck pin --sweep
  *
  * THE HUMAN GATE, and why it is a TTY. The hub refuses any pin and any
@@ -27,6 +28,11 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { sweepPinPaths } from "@crosscheck/connector-core/git/pin-sweep.ts";
+import { resolvePinPaths } from "@crosscheck/connector-core/git/pin-paths.ts";
+import type {
+  PinPathRefusal,
+  PinPathRefusalReason,
+} from "@crosscheck/connector-core/git/pin-paths.ts";
 import {
   breakPin,
   createPin,
@@ -35,23 +41,29 @@ import {
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext, PinSweepUpdate } from "@crosscheck/connector-core/http/hub.ts";
 import {
+  COMMIT_SHA_PATTERN,
   MAX_PIN_FILES,
   MAX_SPEAKING_PIN_FILES,
+  NO_COMMIT_SHA,
   PIN_PRESENCE_TERMINAL,
   PinSchema,
 } from "@crosscheck/schema";
+import { postPilotMark } from "@crosscheck/connector-core/http/pilot.ts";
 import { renderPinList } from "./pin-render.ts";
+import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
 import type { CliResult } from "./login.ts";
 
 export const PIN_FLAG_FILES = "--files";
 export const PIN_FLAG_CHECK = "--check";
 export const PIN_FLAG_BROKE = "--broke";
 export const PIN_FLAG_SWEEP = "--sweep";
+export const PIN_FLAG_OK = "--ok";
 
 export const PIN_USAGE = [
   'usage: crosscheck pin "<surface>" --files <path…> [--check "<30-second recipe>"]',
   "   or: crosscheck pin list           this repo's registry and its coverage",
   "   or: crosscheck pin --broke <id>   you ran the check and it failed",
+  "   or: crosscheck pin --ok <id>      you ran the check and it passed",
   "   or: crosscheck pin --sweep        re-resolve pinned paths against git",
   "",
   "  A pin says a named surface WORKS right now: the files behind it, the",
@@ -134,6 +146,7 @@ interface PinArgs {
   readonly files: readonly string[];
   readonly check: string | undefined;
   readonly broke: string | null;
+  readonly ok: string | null;
   readonly sweep: boolean;
   readonly list: boolean;
 }
@@ -147,6 +160,7 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
   let surface: string | null = null;
   let check: string | undefined;
   let broke: string | null = null;
+  let ok: string | null = null;
   let sweep = false;
   let list = false;
   let index = 0;
@@ -170,6 +184,11 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
       index += 2;
       continue;
     }
+    if (token === PIN_FLAG_OK) {
+      ok = argv[index + 1] ?? null;
+      index += 2;
+      continue;
+    }
     if (token === PIN_FLAG_SWEEP) {
       sweep = true;
       index += 1;
@@ -185,7 +204,7 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
     }
     index += 1;
   }
-  return { surface, files, check, broke, sweep, list };
+  return { surface, files, check, broke, ok, sweep, list };
 };
 
 const listPins = async (
@@ -273,18 +292,59 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   };
 };
 
+/** Why the door refused a path, in the person's terms (01a §3.3d, CSK-28). */
+const PIN_PATH_REFUSAL_SENTENCE: Readonly<Record<PinPathRefusalReason, string>> = {
+  not_tracked:
+    "git tracks no file at this path — pin paths are repo-relative and case-sensitive, and the file must be in git",
+  directory: "this is a directory, and a pin watches files — name the files",
+  submodule: "this is a submodule — git tracks a commit pointer here, not the files inside it; pin them from inside the submodule's own repo",
+  ambiguous: "git tracks this path from the repo root AND from the directory you are in — pin paths are repo-relative, so say which: the root one as typed from the repo root, or the other by its full path",
+  git_unanswered: "git did not answer, so nothing was stored",
+  empty: "this is not a file path",
+  absolute: "an absolute path is never a repo file — give it relative to the repo root",
+  parent_segment: "a path with `..` can leave the repository — give it relative to the repo root",
+  control_character: "a path with a newline or NUL in it cannot be a pinned file",
+  backslash: "use forward slashes — a backslash is ambiguous between systems",
+};
+
+const refusedPaths = (refused: readonly PinPathRefusal[]): CliResult => ({
+  stdout: [
+    "nothing was pinned — every file must be one git tracks, spelled as git spells it:",
+    ...refused.map(
+      (row) =>
+        `  ${JSON.stringify(row.path)}: ${PIN_PATH_REFUSAL_SENTENCE[row.reason]}${
+          row.suggestion === null
+            ? ""
+            : row.reason === "ambiguous"
+              ? ` — from here it would be ${JSON.stringify(row.suggestion)}`
+              : ` — git tracks ${JSON.stringify(row.suggestion)}; pin that`
+        }`,
+    ),
+    "",
+  ].join("\n"),
+  exitCode: EXIT_USAGE,
+});
+
 const create = async (
   resolved: Resolved,
   args: PinArgs,
   surface: string,
+  cwd: string,
 ): Promise<CliResult> => {
+  // THE DOOR ASKS GIT FIRST (01a §3.3d, CSK-28). A path git does not track in
+  // exactly that spelling would be stored as an identity that matches no
+  // touch, and the pin would protect nothing while reading as registered.
+  const door = await resolvePinPaths(resolved.repoRoot, cwd, args.files);
+  if (!door.ok) {
+    return refusedPaths(door.refused);
+  }
   // The SAME schema the hub applies, run locally first: a refusal a person
   // reads in their own terminal beats a 400 they have to decode.
   const parsed = PinSchema.safeParse({
     id: `pin_${crypto.randomUUID()}`,
     repo: resolved.repoId,
     surface,
-    files: args.files,
+    files: door.paths,
     ...(args.check === undefined ? {} : { check: args.check }),
     presence: PIN_PRESENCE_TERMINAL,
     verifiedAtCommit: resolved.baseCommit,
@@ -321,6 +381,38 @@ const create = async (
   };
 };
 
+/**
+ * `--ok <id>` — the symmetric half of `--broke` (07 §3.2, D5): whoever ran the
+ * recipe and watched it PASS gets the same one-line gesture as whoever watched
+ * it fail. It is a pilot mark rather than a pin write — it changes nothing the
+ * register says, it records that a notice was right — and it takes the same
+ * human gate, because "the check passed" is a human's word or nothing.
+ */
+const confirmPin = async (
+  resolved: Resolved,
+  pinId: string,
+  isInteractive: InteractiveProbe,
+): Promise<CliResult> => {
+  if (!isInteractive()) {
+    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+  }
+  const result = await postPilotMark(resolved.ctx, {
+    repo: resolved.repoId,
+    refKind: "pin",
+    refId: pinId,
+  });
+  if (!result.ok) {
+    return {
+      stdout: markFailureLine(result.kind, result.message),
+      exitCode: result.kind === "network" ? EXIT_UNREACHABLE : EXIT_FAIL,
+    };
+  }
+  return {
+    stdout: markRecordedLine("pin", pinId, result.data.repeated),
+    exitCode: EXIT_OK,
+  };
+};
+
 export const runPin = async (
   argv: readonly string[],
   env: Env,
@@ -345,7 +437,17 @@ export const runPin = async (
     if (!isInteractive()) {
       return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
     }
-    const broken = await breakPin(resolved.ctx, resolved.repoId, args.broke);
+    // THE COMMIT IS SENT when git named one: proof 3's fix range starts at
+    // the break, not at the last commit the surface worked on (07 §3.4).
+    const broken = await breakPin(
+      resolved.ctx,
+      resolved.repoId,
+      args.broke,
+      COMMIT_SHA_PATTERN.test(resolved.baseCommit) &&
+        resolved.baseCommit !== NO_COMMIT_SHA
+        ? resolved.baseCommit
+        : undefined,
+    );
     if (!broken.ok) {
       return failureResult(broken);
     }
@@ -358,11 +460,14 @@ export const runPin = async (
       exitCode: EXIT_OK,
     };
   }
+  if (args.ok !== null) {
+    return confirmPin(resolved, args.ok, isInteractive);
+  }
   if (args.surface === null || args.files.length === 0) {
     return { stdout: PIN_USAGE, exitCode: EXIT_USAGE };
   }
   if (!isInteractive()) {
     return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
   }
-  return create(resolved, args, args.surface);
+  return create(resolved, args, args.surface, cwd);
 };

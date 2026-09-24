@@ -9,6 +9,7 @@
  * not read like a human-vouched claim on this surface either.
  */
 import type { FC } from "hono/jsx";
+import { NO_AXES_READABLE, axesLabel } from "@crosscheck/schema";
 
 import {
   UI_MAX_ARTIFACT_CHARS,
@@ -43,6 +44,12 @@ const ClaimCard: FC<{ readonly claim: ClaimView; readonly nowMs: number }> = ({
     <span class="label">
       confidence {claim.confidence.toFixed(CONFIDENCE_DECIMALS)}
     </span>{" "}
+    {/* THE LABELS TRAVEL WITH THE NUMBER (08 §3.6, EV-5). This page is where
+        a person reads a tree, and a bare confidence reads as a measurement
+        here exactly as it does in an agent's context. The vocabulary comes
+        from @crosscheck/schema so the hub and the connectors cannot describe
+        one claim two different ways. */}
+    <span class="label">{axesLabel(claim.axes) || NO_AXES_READABLE}</span>{" "}
     <span class={`label provenance-${claim.provenance}`}>
       {capped(claim.provenance, UI_MAX_LABEL_CHARS)}
     </span>{" "}

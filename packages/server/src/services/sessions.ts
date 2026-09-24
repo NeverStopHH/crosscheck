@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
 import type { SeqField, SessionStatus } from "@crosscheck/schema";
 
 import {
@@ -7,12 +7,15 @@ import {
   SESSION_REAP_MAX_PER_PASS,
   SESSION_REAP_STALE_HOURS,
 } from "../constants.ts";
-import { agentSessions } from "../db/schema.ts";
+import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
+import { agentSessions, sessionEvents } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { RegisterSessionBody } from "../http/schemas.ts";
+import { sweepSkeleton } from "./retention.ts";
+import type { RetentionRelation } from "./retention-registry.ts";
 
 const DEFAULT_END_STATUS: SessionStatus = "done";
 
@@ -219,10 +222,21 @@ export const endSession = async (
   }
 
   const finalStatus = status ?? DEFAULT_END_STATUS;
+  // A REAPED END IS AN INFERENCE; THIS ONE IS REPORTED. The reaper closes a
+  // session it only presumes dead (`reaped_at`), and the session's own
+  // SessionEnd is exactly the fact that settles it — so it replaces the
+  // inferred end rather than being dropped as "already ended". Dropping it
+  // left an idle session reaped for ever: never explicitly ended, never
+  // eligible for 01a's sweep, and its `session.ended` position never written.
   const updated = await deps.db
     .update(agentSessions)
-    .set({ endedAt: deps.now(), status: finalStatus })
-    .where(and(eq(agentSessions.id, sessionId), isNull(agentSessions.endedAt)))
+    .set({ endedAt: deps.now(), status: finalStatus, reapedAt: null })
+    .where(
+      and(
+        eq(agentSessions.id, sessionId),
+        or(isNull(agentSessions.endedAt), isNotNull(agentSessions.reapedAt)),
+      ),
+    )
     .returning();
   const row = updated[0];
   if (row === undefined) {
@@ -232,6 +246,33 @@ export const endSession = async (
       return { outcome: "not_found" };
     }
     return { outcome: "ended", session: toSessionView(alreadyEnded) };
+  }
+  if (existing.reapedAt !== null) {
+    // THE REAP IS DISPROVEN, and both records say so the way a revival does.
+    // The ledger gets the balancing start `reviveReapedSession` writes, so it
+    // never reads two ends for one start. And the reaper's own `session.ended`
+    // row — `reaped_end`, the hub's inference from silence — gives way to the
+    // reported one: left in place, an end with no position would hash to the
+    // same id and be dropped, keeping the session's reason `reaped_end` for a
+    // session that ended on its own, and one WITH a position would leave the
+    // session two ends. The inferred row is the hub's, not the connector's,
+    // and it is withdrawn by the fact it stood in for.
+    await appendEvent(deps, EVENT_KINDS.SESSION_STARTED, {
+      sessionId: row.id,
+      developerId,
+      repo: row.repo,
+      branch: row.branch,
+      revivedAfterReap: true,
+    });
+    await deps.db
+      .delete(sessionEvents)
+      .where(
+        and(
+          eq(sessionEvents.sessionId, row.id),
+          eq(sessionEvents.kind, "session.ended"),
+          eq(sessionEvents.seqReason, "reaped_end"),
+        ),
+      );
   }
   await appendEvent(deps, EVENT_KINDS.SESSION_ENDED, {
     sessionId: row.id,
@@ -250,6 +291,25 @@ export const endSession = async (
     refKind: "session",
     refId: row.id,
   });
+  // 07 §3.6: this session's residue, at the moment it ended. HUB-SIDE and
+  // AFTER the ledger write, so the sequence statistic includes the position
+  // this end just allocated — reading it first would report every session as
+  // one event short of its own ending.
+  //
+  // Wrapped: a measurement must never turn somebody's SessionEnd into an
+  // error. A connector that cannot end its session leaks an open session into
+  // every teammate's presence list, which is a far worse failure than a
+  // missing pilot row.
+  try {
+    await recordPilotSession(deps, {
+      sessionId: row.id,
+      repo: row.repo,
+      developerId,
+      endReason: "reported",
+    });
+  } catch {
+    // `doctor` reports the pilot's own health; a request does not.
+  }
   return { outcome: "ended", session: toSessionView(row) };
 };
 
@@ -260,6 +320,8 @@ export interface ReapStaleSessionsOptions {
   readonly limit?: number;
   /** Confine the pass to one developer's own sessions (the SessionStart path). */
   readonly developerId?: string;
+  /** The retention registry the sweep is generated from; tests substitute one. */
+  readonly retentionRegistry?: readonly RetentionRelation[];
 }
 
 export interface ReapResult {
@@ -309,17 +371,25 @@ export const reapStaleSessions = async (
     options.limit ?? SESSION_REAP_MAX_PER_PASS,
     SESSION_REAP_MAX_PER_PASS,
   );
-  // NO RETENTION SWEEP RUNS HERE, and that is a documented refusal rather
-  // than a gap. D2's age sweep ran from this spot, on the one standalone pass
-  // this hub starts, and it retired every `session_events` row older than
-  // SESSION_EVENT_RETENTION_DAYS — which is very nearly the causal skeleton
-  // itself, since every column of that table is a ref or an enum. Nick's D-D
-  // (2026-09-17) withdrew it before its first deploy: shipping a mechanism
-  // already known to delete what later causal statements need, and trusting
-  // spec 01a to arrive within thirty days, would make data survival depend on
-  // a delivery date. The hub SAYS so — SESSION_EVENT_RETENTION is `off` and
-  // `doctor` prints it — and `pruneSessionEvents` stays, uncalled, until 01a's
-  // referential predicate switches retention back on from here.
+  // THE SKELETON SWEEP RUNS HERE (01a §3.3g), on the hub's own timer pass —
+  // never on the SessionStart pass, which carries a developer id: the sweep
+  // is hub-wide, and a hook should not pay for it (§6). BEFORE the early
+  // return below, because a retirement that only happens when there is also
+  // a session to close is the defect D2's first sweep had. It catches its own
+  // failure (services/retention.ts): a sweep that errors deletes nothing, is
+  // counted, and does not take this pass's reap down with it (CSK-17).
+  if (options.developerId === undefined) {
+    await sweepSkeleton(
+      deps,
+      options.retentionRegistry === undefined ? {} : { registry: options.retentionRegistry },
+    );
+  }
+  // THE PILOT'S MEASUREMENT DOES PRUNE HERE (07 §4), and the refusal above
+  // is not contradicted by it: those rows are the causal skeleton, these are
+  // tallies and ranked guesses (services/pilot.ts says why). BEFORE the early
+  // return below, because a retirement that only happens when there is also
+  // a session to close is the defect D2's first sweep had.
+  await prunePilotMeasurements(deps);
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db
@@ -385,6 +455,21 @@ export const reapStaleSessions = async (
       refKind: "session",
       refId: row.id,
     });
+    // 07 §3.6, the other half. `end_reason` keeps this apart from a reported
+    // end because the trial found 104 of 127 sessions never closed: a
+    // measurement that folded the two together would be counting mostly this
+    // one and calling it the other.
+    try {
+      await recordPilotSession(deps, {
+        sessionId: row.id,
+        repo: row.repo,
+        developerId: row.developerId,
+        endReason: "reaped",
+      });
+    } catch {
+      // A reap pass must finish. One unstorable measurement must not leave
+      // the remaining stale sessions open.
+    }
   }
   return { ended: updated.map(toSessionView) };
 };

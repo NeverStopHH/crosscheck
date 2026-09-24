@@ -112,6 +112,7 @@ import {
   getHintStats,
   getOpenSessions,
   getPins,
+  getSuspect,
   getIntentPositions,
   getPrivacySettings,
   getQuestions,
@@ -120,8 +121,10 @@ import {
 } from "@crosscheck/connector-core/http/hub.ts";
 import type {
   AbsencesOutcome,
+  CiVerdict,
   ClaimValiditySummary,
   GhostCheckEntry,
+  PinRegistry,
 } from "@crosscheck/connector-core/http/hub.ts";
 import {
   formatQuestionCounts,
@@ -132,6 +135,7 @@ import {
   solvedPrecisionWarning,
 } from "@crosscheck/connector-core/hints/precision.ts";
 import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
+import { safeId } from "@crosscheck/connector-core/mcp/render.ts";
 import {
   formatGitLaneCost,
   gitLaneWarning,
@@ -150,6 +154,7 @@ import {
   shadowSentence,
   shadowedPinPaths,
 } from "./pin-observability.ts";
+import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -213,6 +218,13 @@ import {
   readProjectWiring,
 } from "./doctor-global.ts";
 import type { GlobalWiring } from "./doctor-global.ts";
+import { getPilotReport } from "@crosscheck/connector-core/http/pilot.ts";
+import type {
+  PilotFigure,
+  PilotReport,
+} from "@crosscheck/connector-core/http/pilot.ts";
+import { PILOT_RUNG_REFUSALS } from "@crosscheck/schema";
+import { unavailableClause } from "./pilot-render.ts";
 import type { CliResult } from "./login.ts";
 
 export type CheckLevel = "PASS" | "WARN" | "FAIL";
@@ -1944,10 +1956,30 @@ const checkEventSeq = (
  */
 const RETENTION_SENTENCES: Readonly<Record<SessionEventRetentionMode, string>> = {
   off: "off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here",
+  interim: "interim — a session's events go, all of them together, only once it ended on its own {window}, nothing still depends on its order, and it touched no file; every session that touched a file is kept, until a person switches this hub to full",
+  full: "full — a session's events go, all of them together, only once it ended on its own {window} and nothing still depends on its order: no claim, no pinned file under any name the pin has had, no intent, no pilot record",
 };
+
+/**
+ * THE WINDOW IS THE HUB'S NUMBER, not this CLI's: it arrives in the hub's
+ * retention report, and a hub that sent none gets the words, never a guess.
+ */
+const RETENTION_WINDOW = "{window}";
+
+const retentionSentence = (
+  mode: SessionEventRetentionMode,
+  windowDays: number | null,
+): string =>
+  RETENTION_SENTENCES[mode].replace(
+    RETENTION_WINDOW,
+    windowDays === null
+      ? "longer ago than the hub's retention window"
+      : `more than ${String(windowDays)} days ago`,
+  );
 
 const checkSessionEventRetention = (
   mode: SessionEventRetentionMode | "unknown" | null,
+  windowDays: number | null,
 ): Check =>
   check(
     "PASS",
@@ -1956,7 +1988,7 @@ const checkSessionEventRetention = (
       ? "not measured"
       : mode === "unknown"
         ? "the hub declares a retention mode this crosscheck cannot name — upgrade the CLI to read what it keeps"
-        : RETENTION_SENTENCES[mode],
+        : retentionSentence(mode, windowDays),
   );
 
 /**
@@ -2029,13 +2061,7 @@ const ciCoverageDetail = (coverage: CiCoverage): string => {
   return `${lanes}${truncated}${pending}`;
 };
 
-const checkCi = async (
-  ctx: HubContext,
-  repoId: string,
-  commitSha: string,
-  defaultRef: string,
-): Promise<readonly Check[]> => {
-  const verdict = await getCiVerdict(ctx, repoId, commitSha, defaultRef);
+const checkCi = (verdict: HubResult<CiVerdict>): readonly Check[] => {
   if (!verdict.ok) {
     // FOUR FAILURES, THREE OF THEM NOT THIS HUB'S FAULT — the shape
     // `plan overlap` already uses twenty lines up, and the distinction is the
@@ -2099,13 +2125,17 @@ const checkCi = async (
   ];
 };
 
-const checkPins = async (
-  ctx: HubContext,
-  repoId: string,
+/**
+ * PURE OVER A REGISTRY ALREADY IN HAND, the shape 08 gave `checkCi` and
+ * `checkClaimValidity`. Two lines read this answer now — the pin coverage
+ * lines here and 04's verdict-legality rung below — and fetching it twice
+ * would be a second round trip for bytes already fetched.
+ */
+const checkPins = (
+  registry: HubResult<PinRegistry>,
   patterns: readonly string[],
   now: Date,
-): Promise<readonly Check[]> => {
-  const registry = await getPins(ctx, repoId);
+): readonly Check[] => {
   if (!registry.ok) {
     return registry.status === HTTP_NOT_FOUND
       ? [check("PASS", "pins", "not measured (this hub has no pin registry)")]
@@ -2129,6 +2159,204 @@ const checkPins = async (
       ? check("PASS", "pin denylist", shadowLine)
       : check("WARN", "pin denylist", shadowLine),
   ];
+};
+
+
+/**
+ * THE PILOT'S OWN HEALTH (07 §5) — whether this repo is measured, how full
+ * the session set is, and the rungs of the report that cannot exist here.
+ *
+ * ENROLMENT IS SAID EITHER WAY. A repo that is measured and one that is not
+ * must never read alike: the first is a team that agreed to be counted, the
+ * second one that did not, and a doctor that stayed silent about both would
+ * leave nobody able to tell which they are on.
+ *
+ * ONE WARN, AND IT DIVIDES ANSWERS BY ANSWERS (PIL-3). An answer that needed
+ * a coverage qualifier and went out without one is 03's rule failing in the
+ * wild — the one thing proof 5 exists to catch. It is counted over the
+ * answers that needed one, never against the number of surfaces or days that
+ * produced them: #50 learned measured that a gate weighing one unit against
+ * another cannot tell a starved lane from a healthy one with nothing to find.
+ *
+ * A RUNG THAT CANNOT EXIST IS A PASS LINE WITH ITS REASON (PIL-8), printed
+ * every time, never an absence and never a zero. A figure that is merely
+ * empty today (`nothing_flagged`, `no_sessions`) is NOT a rung and gets no
+ * line — an ordinary quiet day must not read like a missing capability.
+ *
+ * ONE DAY, because `doctor` runs often and the lines here are about the
+ * pilot's plumbing, not its results; `crosscheck pilot` is the report.
+ */
+const DOCTOR_PILOT_WINDOW_DAYS = 1;
+
+/** Each report figure, by the name its doctor line prints. */
+const pilotFigures = (
+  report: PilotReport,
+): readonly (readonly [string, PilotFigure])[] => [
+  ["tripwire collisions", report.collisions.tripwireFlagged],
+  ["ghost collisions", report.collisions.ghostFlagged],
+  ["both landed", report.collisions.bothLanded],
+  ["ci regressed", report.collisions.ciRegressed],
+  ["opened per 100", report.precision.openedPer100],
+  ["off-target per 100", report.precision.offTargetPer100],
+];
+
+const isRungRefusal = (reason: string): boolean =>
+  (PILOT_RUNG_REFUSALS as readonly string[]).includes(reason);
+
+/**
+ * NOT COUNTED, AND SAID (corrected by adversarial review). This line used to
+ * WARN when "qualifier emitted" fell short of "qualifier required" — but the
+ * hub wrote the first whenever it wrote the second, from the same record, so
+ * the WARN could never fire and the PASS measured nothing. Whether a
+ * qualifier reached its reader is a fact about rendering, held by the
+ * render-surface registry and its corpus; the hub cannot count it, so the
+ * line says that instead of a number.
+ */
+const pilotQualifierCheck = (): Check =>
+  check(
+    "PASS",
+    "pilot qualifiers",
+    "not counted on the hub — every answer the hub builds carries its coverage record, so a count here could only equal the number required; whether a surface printed it is held by the render registry and its corpus",
+  );
+
+const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
+  if (!result.ok) {
+    // THE LADDER THE OTHER HUB-READ LINES USE: a hub too old for the route, a
+    // hub the reachability line already reports unreachable, and an answer
+    // that did not parse are all "not measured" — repeating an outage here
+    // would count one failure twice. Only a hub that ANSWERED with an error
+    // is a WARN, because that is a fact the other lines do not carry.
+    if (result.status === HTTP_NOT_FOUND) {
+      return [check("PASS", "pilot", "not measured (this hub has no pilot report)")];
+    }
+    if (result.kind !== "http") {
+      return [
+        check(
+          "PASS",
+          "pilot",
+          result.kind === "network"
+            ? "not measured (the hub could not be reached)"
+            : "not measured (this hub's answer did not parse)",
+        ),
+      ];
+    }
+    return [
+      check(
+        "WARN",
+        "pilot",
+        `state unknown — the hub did not answer (${hubSaid(result.message)}); this says nothing about whether this repo is measured`,
+      ),
+    ];
+  }
+  const report = result.data;
+  if (!report.enrolled) {
+    return [
+      check(
+        "PASS",
+        "pilot",
+        "not enrolled — nothing on this repo is measured; enrolment is a team decision, off by default",
+      ),
+    ];
+  }
+  const set = report.sessionSet;
+  return [
+    check(
+      "PASS",
+      "pilot",
+      `enrolled · session set ${String(set.used)} of ${String(set.cap)}${
+        set.refused > 0
+          ? ` — full: ${String(set.refused)} later session(s) refused at the cap and counted, never dropped`
+          : ""
+      }`,
+    ),
+    pilotQualifierCheck(),
+    ...pilotFigures(report).flatMap(([name, value]) =>
+      value.kind === "unavailable" && isRungRefusal(value.reason)
+        ? [check("PASS", `pilot ${name}`, unavailableClause(value.reason))]
+        : [],
+    ),
+  ];
+};
+
+/**
+ * DID THIS HUB PRODUCE AN IMPOSSIBLE VERDICT (04 §3.7, VER-8).
+ *
+ * A legality violation is a BUG IN THE HUB, not a fact about this repo: nine
+ * combinations are forbidden because each would say something the record
+ * cannot support — `UNATTRIBUTED` where a lane was blind, candidates listed
+ * under a verdict that names nobody. `computeVerdict` fails closed to
+ * `INDETERMINATE` / `legality_violation` when it meets one, and non-negotiable
+ * #4 is *fail, never silently*: a downgrade nobody is told about hides the bug
+ * that caused it, and the surface that would have reported it is the one that
+ * stopped reporting.
+ *
+ * MEASURED AGAINST A REAL PIN, not a synthetic verdict. A self-check the hub
+ * runs on a fixture it built proves the fixture legal and nothing about the
+ * verdicts it actually serves. So this asks `suspect` about one pin the
+ * registry really holds and reads the answer that a person would have read.
+ *
+ * ONE PIN, AND THE LINE SAYS SO. A sweep over every pin would put the registry
+ * size into the latency of `doctor`, which every session runs. One is a smoke
+ * test, and a smoke test that claims to be a sweep is worse than no check —
+ * the detail names the pin it asked about.
+ *
+ * #50's LADDER, unchanged: *not measured* is PASS, *could not reach* is WARN.
+ * A repo with no pins has no verdict to be wrong about; a hub that did not
+ * answer has told us nothing, and a green meaning "could not check" is worse
+ * than no check at all.
+ */
+const checkVerdictLegality = async (
+  ctx: HubContext,
+  repoId: string,
+  registry: HubResult<PinRegistry>,
+): Promise<Check> => {
+  if (!registry.ok) {
+    // The pins line already carries this outage. Repeating it here would
+    // report one failure twice.
+    return check(
+      "PASS",
+      "verdict legality",
+      "not measured (the pin registry did not answer; see the pins line)",
+    );
+  }
+  const pin = registry.data.pins[0];
+  if (pin === undefined) {
+    return check(
+      "PASS",
+      "verdict legality",
+      "not measured (no pins on this repo, so there is no verdict to check)",
+    );
+  }
+  const suspect = await getSuspect(ctx, { repo: repoId, pinId: pin.id });
+  if (!suspect.ok) {
+    return check(
+      "WARN",
+      "verdict legality",
+      `could not reach a verdict — the hub did not answer (${hubSaid(suspect.message)}); this says nothing about whether verdicts here are legal`,
+    );
+  }
+  const verdict = suspect.data.verdict;
+  if (verdict === null) {
+    // An older 1.0 hub. NOT a failure of this repo, and not a pass either:
+    // saying PASS would report "verdicts here are legal" about a hub that
+    // computes none.
+    return check(
+      "PASS",
+      "verdict legality",
+      "not measured (this hub reports no verdict, so `suspect` answers a ranking without one)",
+    );
+  }
+  return verdict.basis === "legality_violation"
+    ? check(
+        "FAIL",
+        "verdict legality",
+        `the hub withheld a verdict it could not legally state, on pin ${safeId(pin.id)} — this is a defect in the hub, not in this repo; the answer degraded to ${verdict.attribution} rather than showing an impossible combination`,
+      )
+    : check(
+        "PASS",
+        "verdict legality",
+        `checked 1 of ${String(registry.data.pins.length)} pin(s): the verdict on ${safeId(pin.id)} states a legal combination (${verdict.attribution} · ${verdict.protection})`,
+      );
 };
 
 /**
@@ -2244,11 +2472,92 @@ const claimCurrencyCheck = (summary: ClaimValiditySummary): Check =>
       "diagnosis or runs `crosscheck revalidate`",
   );
 
-const checkClaimValidity = async (
-  ctx: HubContext,
-  repoId: string,
-): Promise<readonly Check[]> => {
-  const summary = await getClaimValiditySummary(ctx, repoId);
+/**
+ * CAN `repository_verified` BE REACHED HERE AT ALL (1.0 spec 08 §3.5, §8.5).
+ *
+ * AT-10'S RULE: a rung that CANNOT EXIST is a doctor refusal, never a silent
+ * absence. Without it, a repo with no CI reporter and a repo whose every claim
+ * failed verification look identical on every surface — both print
+ * `tool_observed` for ever — and a reader concludes the team's findings do not
+ * hold up, when the truth is that nothing here could ever have checked them.
+ * That is this project's defect in one line: an absence reading as a finding.
+ *
+ * TWO LEGS, REPORTED SEPARATELY, because the remedies are different people's
+ * work. No CI coverage is a reporter somebody has to stand up (05); no claim
+ * commit binding is a connector too old to send one (02). A single "evidence
+ * axes unavailable" would send both readers to the wrong place.
+ *
+ * DERIVED FROM ANSWERS ALREADY IN HAND — the same two responses the CI and
+ * claim-binding lines read. This line asks a question neither of them asks:
+ * not "is CI reporting" and not "are claims bound", but "can the two ever
+ * COMBINE into a red-then-green pair here".
+ *
+ * A HUB THAT DID NOT ANSWER GETS NO LINE. Silence about CI is already a line
+ * of its own twenty lines up, and repeating it here as an evidence-axes
+ * failure would report one hub outage twice and imply a second thing is wrong.
+ */
+const checkEvidenceAxes = (
+  ciVerdict: HubResult<CiVerdict>,
+  claimValidity: HubResult<ClaimValiditySummary>,
+): readonly Check[] => {
+  // §8.5, stated rather than left absent: a profiler trace, a flame graph and
+  // a benchmark have NO RUNG in 1.0. Somebody who attaches one gets
+  // `ref_malformed` from the ladder, and without this line they would read
+  // that as a bug in their ref rather than as a capability that does not
+  // exist.
+  const runtime = check(
+    "PASS",
+    "evidence axes",
+    "runtime tool evidence: no_platform_rung (a profiler trace, flame graph " +
+      "or benchmark cannot be verified by this hub in 1.0)",
+  );
+  if (!ciVerdict.ok || !claimValidity.ok) {
+    // Both outages already have their own lines. Saying nothing HERE is not a
+    // silent absence — it is declining to report one failure twice.
+    return [runtime];
+  }
+  // `unavailable` and not `incomplete`: a repo with no reporter has nothing to
+  // be incomplete ABOUT, and an incomplete lane can still produce a pair.
+  const noCi = ciVerdict.data.coverage.state === "unavailable";
+  // EVERY claim unbound, not "some". A single bound claim makes the rung
+  // reachable, and warning while one exists would be crying wolf at a repo
+  // that is working.
+  //
+  // `total > 0` guards the empty repo: with no claims at all this says nothing
+  // about binding, and `unbound === total` would be trivially true — a WARN
+  // about a limitation nobody has met yet.
+  const summary = claimValidity.data;
+  const noBinding = summary.total > 0 && summary.unbound === summary.total;
+  if (!noCi && !noBinding) {
+    return [
+      check(
+        "PASS",
+        "evidence axes",
+        "repository_verified is reachable: this repo reports CI and binds claims to commits",
+      ),
+      runtime,
+    ];
+  }
+  // NAMED IN THE ORDER SOMEBODY WOULD FIX THEM: without CI there is nothing to
+  // pair at all, so it is the first sentence even when both are missing.
+  const reason = noCi
+    ? "no ci coverage"
+    : "no claim commit binding";
+  return [
+    check(
+      "WARN",
+      "evidence axes",
+      `repository_verified unreachable: ${reason} — every claim on this repo ` +
+        "stops at tool_observed, which is a limit of this setup rather than a " +
+        "judgement about the findings",
+    ),
+    runtime,
+  ];
+};
+
+const checkClaimValidity = (
+  summary: HubResult<ClaimValiditySummary>,
+): readonly Check[] => {
   if (!summary.ok) {
     return summary.status === HTTP_NOT_FOUND
       ? [
@@ -3269,12 +3578,13 @@ export const runDoctor = async (
     absenceAndCoverage,
     questionsCheck,
     solvedMatchesCheck,
-    pinChecks,
-    claimValidityChecks,
-    ciChecks,
+    pinRegistry,
+    claimValiditySummary,
+    ciVerdict,
     ghostOverlapCheck,
     privacyCheck,
     intentLedgerCheck,
+    pilotReport,
   ] = await Promise.all([
     // ONE GET for both: the absence findings and the coverage record ride
     // the same response (03 §3.5), so reading them twice would be a second
@@ -3282,32 +3592,63 @@ export const runDoctor = async (
     absenceAndCoverageChecks(hubCtx, identity.repoId),
     checkQuestions(hubCtx, identity.repoId, now),
     checkSolvedMatches(hubCtx, identity.repoId),
-    checkPins(
+    // FETCHED, NOT CHECKED, for the reason the two reads below give: the pin
+    // coverage lines and 04's verdict-legality rung both read this registry.
+    getPins(hubCtx, identity.repoId),
+    // FETCHED, NOT CHECKED, because THREE lines read these two answers: the
+    // claim-binding line, the CI line, and 08's evidence-axes line, which is a
+    // statement about whether the other two can combine. Calling the endpoints
+    // again for it would be a second round trip for bytes already in hand —
+    // the rule the absence-and-coverage read above already follows.
+    getClaimValiditySummary(hubCtx, identity.repoId),
+    // SPEC 05 §8: every refusal a reader could mistake for a working feature
+    // gets a line. `identity.baseCommit` is this checkout's HEAD — the commit
+    // somebody standing here would ask about — and the default branch travels
+    // from the same clone because the hub holds no repository.
+    getCiVerdict(
       hubCtx,
       identity.repoId,
+      identity.baseCommit,
+      identity.branch ?? "main",
+    ),
+    checkGhostOverlap(hubCtx, identity.repoId),
+    checkPrivacy(hubCtx),
+    checkIntentLedger(hubCtx),
+    // 07 §5: the pilot's plumbing, one day's window — the report itself is
+    // `crosscheck pilot`'s, and this only asks whether the pieces are there.
+    getPilotReport(hubCtx, {
+      repo: identity.repoId,
+      days: DOCTOR_PILOT_WINDOW_DAYS,
+    }),
+  ]);
+  // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
+  // only known once the registry above has answered, so it cannot join the
+  // concurrent block. One extra round trip on a command that already makes a
+  // dozen, and the alternative — fetching the registry twice — costs the same
+  // trip and reads worse.
+  const verdictLegalityCheck = await checkVerdictLegality(
+    hubCtx,
+    identity.repoId,
+    pinRegistry,
+  );
+
+  const hubChecks: readonly Check[] = [
+    ...absenceAndCoverage,
+    questionsCheck,
+    solvedMatchesCheck,
+    ...checkPins(
+      pinRegistry,
       // The EFFECTIVE list, defaults included: the shadowing question is
       // about what actually suppresses capture, not about what this
       // developer added on top of it.
       resolveDenylist(config.denylist ?? undefined),
       now,
     ),
-    checkClaimValidity(hubCtx, identity.repoId),
-    // SPEC 05 §8: every refusal a reader could mistake for a working feature
-    // gets a line. `identity.baseCommit` is this checkout's HEAD — the commit
-    // somebody standing here would ask about — and the default branch travels
-    // from the same clone because the hub holds no repository.
-    checkCi(hubCtx, identity.repoId, identity.baseCommit, identity.branch ?? "main"),
-    checkGhostOverlap(hubCtx, identity.repoId),
-    checkPrivacy(hubCtx),
-    checkIntentLedger(hubCtx),
-  ]);
-  const hubChecks: readonly Check[] = [
-    ...absenceAndCoverage,
-    questionsCheck,
-    solvedMatchesCheck,
-    ...pinChecks,
-    ...claimValidityChecks,
-    ...ciChecks,
+    verdictLegalityCheck,
+    ...checkPilot(pilotReport),
+    ...checkClaimValidity(claimValiditySummary),
+    ...checkCi(ciVerdict),
+    ...checkEvidenceAxes(ciVerdict, claimValiditySummary),
     ghostOverlapCheck,
     privacyCheck,
     intentLedgerCheck,
@@ -3365,6 +3706,7 @@ export const runDoctor = async (
       }))
     : null;
   const eventRetention = orderReport.ok ? orderReport.data.retention : null;
+  const skeletonRetention = orderReport.ok ? orderReport.data.skeleton : null;
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -3460,7 +3802,13 @@ export const runDoctor = async (
     checkGhostCost(liveStates.states),
     checkGitLane(liveStates.states),
     checkEventSeq(liveStates.states, brokenOrders),
-    checkSessionEventRetention(eventRetention),
+    checkSessionEventRetention(
+      eventRetention,
+      skeletonRetention === null || "unreadable" in skeletonRetention
+        ? null
+        : skeletonRetention.windowDays,
+    ),
+    checkSkeletonRetention(skeletonRetention, eventRetention),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),

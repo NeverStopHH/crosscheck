@@ -96,7 +96,7 @@ describe("the conference report", () => {
       `Ken, last active 3h ago: «Session store migration» — get_diagnosis ${CONTEXT_B}`,
     );
     expect(report).toContain(
-      "Nick recorded root_cause (likely_root_cause) · confidence 0.8 · provenance declared · 3h ago: «The refresh path trusts a rotated kid»",
+      "Nick recorded root_cause (likely_root_cause) · confidence 0.8 · no evidence label (this hub does not report one) · provenance declared · 3h ago: «The refresh path trusts a rotated kid»",
     );
     // And it says what it read, so a quiet team reads differently from a
     // short read.

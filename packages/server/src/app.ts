@@ -4,6 +4,7 @@ import { fail } from "./http/envelope.ts";
 import { absencesRoutes } from "./routes/absences.ts";
 import { claimRevalidationsRoutes } from "./routes/claim-revalidations.ts";
 import { ciRunsRoutes } from "./routes/ci-runs.ts";
+import { fenceWaiverRoutes } from "./routes/fence-waivers.ts";
 import { conferenceRoutes } from "./routes/conference.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
@@ -16,6 +17,8 @@ import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
 import { recordsRoutes } from "./routes/records.ts";
+import { pilotMarkRoutes } from "./routes/pilot-marks.ts";
+import { pilotRoutes } from "./routes/pilot.ts";
 import { searchRoutes } from "./routes/search.ts";
 import { sessionsRoutes } from "./routes/sessions.ts";
 import { settingsRoutes } from "./routes/settings.ts";
@@ -39,6 +42,8 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/hints", hintsRoutes(deps));
   app.route("/api/contradictions", contradictionsRoutes(deps));
   app.route("/api/absences", absencesRoutes(deps));
+  app.route("/api/pilot-marks", pilotMarkRoutes(deps));
+  app.route("/api/pilot", pilotRoutes(deps));
   app.route("/api/solved-matches", solvedMatchesRoutes(deps));
   app.route("/api/ghost-checks", ghostChecksRoutes(deps));
   // The conference corpus (VISION.md §2). Never a hook and never automatic:
@@ -79,6 +84,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // agent kind and a session — and CI has none of the three. Write is a
   // dedicated token, read is any member.
   app.route("/api/ci-runs", ciRunsRoutes(deps));
+  app.route("/api/fence-waivers", fenceWaiverRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));

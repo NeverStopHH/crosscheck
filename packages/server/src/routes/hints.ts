@@ -22,6 +22,7 @@ import {
 } from "../services/hint-deliveries.ts";
 import { COVERAGE_SESSION_WINDOW_DAYS } from "../constants.ts";
 import { readCoverage } from "../services/coverage.ts";
+import { countCoverageAnswer } from "../services/pilot.ts";
 import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
 import { listUndeliveredAnswers } from "../services/questions.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
@@ -81,6 +82,13 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       listUndeliveredAnswers(deps, c.get("developer").id, parsed.data.repo),
       readCoverage(deps, c.get("developer").id, parsed.data.repo),
     ]);
+    // 07 §3.5, proof 5: this answer carried a coverage record, and
+    // whether it did is what 03 made mandatory and nobody counted.
+    await countCoverageAnswer(deps, {
+      repo: parsed.data.repo,
+      surface: "api-hints-candidates",
+      coverage,
+    });
     return ok(c, { candidates, answers, coverage });
   });
 
@@ -111,6 +119,13 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         },
       }),
     ]);
+    // 07 §3.5, proof 5: this answer carried a coverage record, and
+    // whether it did is what 03 made mandatory and nobody counted.
+    await countCoverageAnswer(deps, {
+      repo: parsed.data.repo,
+      surface: "api-hints-tripwire",
+      coverage,
+    });
     return ok(c, { sessions, coverage });
   });
 

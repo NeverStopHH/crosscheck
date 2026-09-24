@@ -108,29 +108,74 @@ export const DEFAULT_PORT = 7100;
  */
 export const COMMIT_EVIDENCE_RETENTION_DAYS = 30;
 /**
- * DORMANT: how old a canonical event must be before a sweep may even consider
- * retiring it (spec 01 §10 D2). NOTHING READS THIS ON A RUNNING HUB. D2's
- * sweep retired every row past this age, and a row in `session_events` is very
- * nearly the causal skeleton itself — ids, kind, epoch, position — so the call
- * was withdrawn before its first deploy (Nick's D-D, 2026-09-17; the refusal
- * sits where the call was, in services/sessions.ts `reapStaleSessions`).
- *
- * WHAT WILL USE IT: spec 01a's referential predicate, which keeps this value
- * and narrows the sweep to rows past this age that nothing references any
- * more. Until that lands `SESSION_EVENT_RETENTION` below says `off`, and
- * `pruneSessionEvents` — which still applies this cutoff when called
- * directly, and is tested that way — is called by nobody.
+ * HOW LONG AFTER IT ENDED a session's skeleton may be retired — and only
+ * then if nothing still depends on its order (spec 01a §3.3). The age is the
+ * SESSION'S, never a row's: a long session is never swept in part, because
+ * its order state is read off the whole set of its rows. The value is D2's
+ * thirty days; its meaning is 01a's — the earliest a sweep may ask, not the
+ * day a row goes (services/retention.ts).
  */
 export const SESSION_EVENT_RETENTION_DAYS = 30;
+
+/**
+ * Rows per page of the start-up identity backfill (01a §4.1,
+ * services/skeleton-identity.ts). Each page recomputes the target digests of
+ * its own sessions' work contexts only, so the cost of a page is bounded by
+ * the page, never by the hub; the number bounds one UPDATE's VALUES list.
+ */
+export const SKELETON_BACKFILL_BATCH = 500;
 
 /**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says
- * why the hub is the one that must say it). `off`: no row is ever retired, and
- * the table grows without bound by decision rather than by oversight.
+ * why the hub is the one that must say it).
+ *
+ * `interim` (01a §3.3g, Nick's rule): the referential sweep runs, and no
+ * session that touched a file is swept at all. Moving to `full` is a
+ * person's decision — never a default a build flips on its own — and today
+ * it would NOT be sound, whatever CSK-15 and CSK-20 say. Its proof that no
+ * pin references a session rests on four things the adversarial review of
+ * the first build found stale or unverified, each of which must be closed
+ * first (spec §12.7):
+ *
+ *   1. `pin_files.status` is refreshed only when a person runs
+ *      `crosscheck pin --sweep`, and never for a pin recorded broken — so a
+ *      file renamed in git leaves the pin reading `present` and matching
+ *      nothing until then;
+ *   2. pins stored by an older CLI or the raw route, and every legacy pin
+ *      the seed resolves, never passed the git door;
+ *   3. the touch side is canonicalised but not resolved through git (case on
+ *      a case-insensitive disk, a tracked symlinked directory, a non-ASCII
+ *      path the git lane reads C-quoted);
+ *   4. the repo identity on each side is computed on each machine.
+ *
+ * `off` stays a value, for a hub that must retire nothing.
  */
-export const SESSION_EVENT_RETENTION: SessionEventRetentionMode = "off";
+export const SESSION_EVENT_RETENTION: SessionEventRetentionMode = "interim";
+
+/**
+ * Candidate sessions JUDGED per sweep pass, oldest end first, resuming after
+ * the last pass's cursor (01a §6). The bound is on what a pass judges, not
+ * only on what it deletes: a kept session stays a candidate for good, so a
+ * pass bounded by deletions alone would grow with everything the hub has ever
+ * decided to keep — on a database that serves one statement at a time, so
+ * every hook request waits behind it. The pass runs on the hub's own timer
+ * (never on a SessionStart request), and every session is judged again once
+ * per cycle of passes.
+ *
+ * MEASURED (2026-09-24, embedded PGlite 0.3 / PostgreSQL 17, one laptop) by
+ * `bun packages/server/scripts/measure-skeleton-sweep.ts [interim|full]`, at
+ * the shape the review asked for — 400 000 rows over 20 000 aged sessions,
+ * half of every session's rows file touches, 200 pins, a third kept by a
+ * claim, every generated clause evaluated for every judged session: a pass of
+ * 250 took 67 ms median (73 max) in interim and 71 ms (76 max) in full, which
+ * retired 8 003 sessions over the cycle; 500 took 141 ms, twice the stall a
+ * hook would wait behind on a one-statement-at-a-time database. A cycle over
+ * 20 000 sessions is 81 passes — about 20 hours at one pass per 15 minutes,
+ * well inside the 30-day window it serves. The report read costs 0.4 ms.
+ */
+export const SESSION_EVENT_SWEEP_WINDOW = 250;
 /**
  * Evidence older than this never fires a finding. Every SessionStart of every
  * connected teammate refreshes collection, so evidence this stale means nobody
@@ -604,6 +649,25 @@ export const SUSPECT_TOP_CANDIDATES = 3;
  */
 export const SUSPECT_SEPARATION_RATIO = 1.5;
 
+/**
+ * HOW LONG A FENCE MAY STAY OPEN (1.0 spec 04 §3.6).
+ *
+ * PINNED EQUAL TO `SUSPECT_WINDOW_DAYS`, and the equality is the argument: a
+ * waiver silences a `PROTECTED_CONFLICT`, and `suspect` looks back exactly that
+ * far. A waiver allowed to outlive the window would silence a conflict for
+ * longer than anybody could still see the sessions that caused it — permission
+ * outliving the evidence it was granted against.
+ *
+ * IT ADOPTS THE CORPORA'S FLOOR RULE IN A MAXIMUM'S DIRECTION: never raised to
+ * make a case pass. If fourteen days turns out to be too short for a real team,
+ * the answer is a second grant with a second reason, which leaves a record;
+ * raising the ceiling leaves none.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");console.log(c.MAX_WAIVER_DAYS === c.SUSPECT_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const MAX_WAIVER_DAYS = 14;
+
 // ── Coverage integrity (docs/1.0/03-coverage-integrity.md) ──────────────────
 
 /**
@@ -721,3 +785,151 @@ export const CI_LANE_QUORUM_COMMITS = 3;
  * PRINTS: true
  */
 export const CI_RETENTION_DAYS = 30;
+
+/**
+ * HOW FAR BACK THE CALIBRATION MEASUREMENT LOOKS (1.0 spec 08 §3.7).
+ *
+ * A DELIBERATE NON-TUNING, in `SUSPECT_SEPARATION_RATIO`'s sense: the brief
+ * says "months", and no dataset in this project justifies a second number. It
+ * will be worth tuning once there is data to tune it against — which is the
+ * whole point of the measurement, and the reason a number picked now would be
+ * picked from nothing.
+ */
+export const CALIBRATION_WINDOW_DAYS = 90;
+
+/**
+ * How many provider cells one report may carry.
+ *
+ * A cell is an `agent_kind`, and the field is one this hub does not control:
+ * a connector states it. So the cap is a bound on somebody else's vocabulary
+ * rather than on a list this project maintains — eight is far above the four
+ * kinds that exist, and a report that hits it says so through `claimsRead`
+ * against `claimsTotal` rather than quietly showing the first eight.
+ */
+export const CALIBRATION_MAX_CELLS = 8;
+
+/**
+ * How many claims one report reads.
+ *
+ * MATCHED TO `DIAGNOSIS_MAX_CLAIMS` by name and by argument: both bound "how
+ * many claims may one answer be built from", and two different numbers would
+ * be two different answers to that question. Newest-first before the cap, so
+ * the bound is never spent at random:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");const d=await import("./packages/server/src/services/diagnosis.ts");console.log(c.CALIBRATION_MAX_CLAIMS === d.DIAGNOSIS_MAX_CLAIMS)'
+ * PRINTS: true
+ */
+export const CALIBRATION_MAX_CLAIMS = 500;
+
+/**
+ * THE 50-SESSION SET (1.0 spec 07 §3.6).
+ *
+ * The pilot's per-session residue is bounded because it is a MEASUREMENT, not
+ * a log: fifty sessions is the size the handover asked for, and a table that
+ * grew with traffic would make the cost of measuring scale with the thing
+ * being measured.
+ *
+ * THE 51st WRITE IS REFUSED AND COUNTED, never dropped silently — the cap is
+ * a fact the report states about itself, which is non-negotiable #4 applied
+ * to this project's own instrumentation.
+ */
+export const PILOT_MAX_SESSIONS = 50;
+
+/**
+ * How long a pilot row survives.
+ *
+ * MATCHED TO `HINT_STATS_MAX_WINDOW_DAYS` by name, not by coincidence: the
+ * hint statistics and the pilot proofs are read over the same history, and
+ * two different horizons would let a proof be computed over rows its own
+ * inputs had already lost.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");const h=await import("./packages/server/src/services/hint-deliveries.ts");console.log(c.PILOT_RETENTION_DAYS === h.HINT_STATS_MAX_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const PILOT_RETENTION_DAYS = 90;
+
+/**
+ * The report's default window: eight weeks.
+ *
+ * Shorter than retention on purpose. A default equal to the horizon would
+ * make every report include the oldest rows the hub still holds, so the day
+ * retention pruned one the numbers would move for a reason nobody changed —
+ * and a reader would read that as a product effect.
+ */
+export const PILOT_REPORT_DEFAULT_WINDOW_DAYS = 56;
+
+/**
+ * How long after a pointer is opened a second investigation still counts as
+ * having CONVERGED on it rather than having started independently.
+ *
+ * Two days, and the direction of the error is stated: too long over-counts
+ * convergence, which flatters this product. It is bounded rather than open
+ * for exactly that reason.
+ */
+export const PILOT_CONVERGENCE_WINDOW_HOURS = 48;
+
+/**
+ * DECLARED INTENT, SET BEFORE ANY MEASUREMENT — the injection corpus's floor
+ * rule verbatim: *"the floors encode today's intent, not measured truth"*.
+ *
+ * Eight helpful interventions per hundred sessions is about one session in
+ * twelve receiving something it opened, against ceilings of five hints per
+ * session and one per prompt. Twenty off-target marks per hundred is the
+ * most noise this product may make while still being worth installing.
+ *
+ * NEITHER IS LOWERED TO MAKE A MEASUREMENT PASS. A target moved after the
+ * fact is not a target, and the report prints both the figure and the target
+ * so a reader can see the gap rather than be told it closed.
+ */
+export const PILOT_TARGET_HELPFUL_PER_100_SESSIONS = 8;
+export const PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100 = 20;
+
+/**
+ * How many opened pointers proof 1 NAMES (07 §5, PIL-2).
+ *
+ * Every opened count is printed beside the prior work it named, because a
+ * bare number is the counterfactual claim without the counterfactual. Ten is
+ * a list a person reads on one screen; the rest are counted and the cut is
+ * printed, so the list never reads as the whole.
+ */
+export const PILOT_REPORT_MAX_PRIOR_WORK = 10;
+
+/**
+ * How many repaired attributions one report hands the CLI to diff (07 §3.4).
+ *
+ * Each costs one bounded `git diff --name-only` on the reader's machine, and
+ * a report is a command somebody is waiting on. Twenty-five is well past what
+ * a pilot produces in eight weeks; a report that hits it says so rather than
+ * scoring a sample as though it were the population.
+ */
+export const PILOT_REPORT_MAX_REPAIRS = 25;
+
+/**
+ * How many of the named session's own files one repair hands the CLI (07
+ * §3.4). They are compared against the fix diff, which the CLI bounds at
+ * PILOT_FIX_DIFF_MAX_FILES, so a longer list could only ever match files a
+ * too-broad fix already disqualified:
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(s.PILOT_FIX_DIFF_MAX_NAMED_FILES === c.PILOT_FIX_DIFF_MAX_FILES)'
+ * PRINTS: true
+ */
+export const PILOT_FIX_DIFF_MAX_NAMED_FILES = 200;
+
+/**
+ * How many deliveries `crosscheck noise` offers a person to choose between
+ * (07 §3.2). One is marked without asking; more are listed and the person
+ * names the one they meant. Five is a list somebody reads in a glance; past
+ * it the cut is said, and the person names what they saw instead.
+ */
+export const NOISE_MARK_MAX_CANDIDATES = 5;
+
+/**
+ * How many local sessions one candidates request may name. It is the
+ * connector's bound on the scan that produced them, so a full scan always
+ * fits and nothing past it can be sent:
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(s.NOISE_MARK_MAX_SESSIONS === c.STATUS_MAX_SESSION_STATES)'
+ * PRINTS: true
+ */
+export const NOISE_MARK_MAX_SESSIONS = 50;
+

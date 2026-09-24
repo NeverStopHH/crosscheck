@@ -119,6 +119,13 @@ const CLAIM_LINE =
 const EDGE_LINE = /^- [\w.:-]* .* [\w.:-]* · by .+?(: «[^«»]*»)?$/;
 const EXTERNAL_LINE = /^- [\w.:-]* · .* · in work context [\w.:-]*$/;
 const MORE_LINE = /^\(\+\d+ .+ not shown\)$/;
+/**
+ * The author's pointer at a check, beneath the claim it belongs to (08 §3.4).
+ *
+ * Indented, and framed EXACTLY ONCE — the whole reason it is not on the claim's
+ * own line, which already opens a pair for the body.
+ */
+const REF_LINE = /^  check «[^«»]*»$/;
 const NOTE_LINE = /^Note: .+$/;
 
 /*
@@ -151,6 +158,7 @@ const DIAGNOSIS_LINE_SHAPES = [
   SECTION_HEADER,
   TARGET_LINE,
   CLAIM_LINE,
+  REF_LINE,
   EDGE_LINE,
   EXTERNAL_LINE,
   MORE_LINE,
@@ -185,11 +193,12 @@ const SEARCH_LINE_SHAPES = [
  * one edge, one foreign reference, (since trial finding #16) the session intent
  * on its own line, (since the diagnosis names the files an investigation
  * touched) one captured target under its own header, and (since the intent
- * ledger) the amendment history — eighteen lines, and no payload may change
+ * ledger) the amendment history, and since 08 the first claim's check
+ * pointer — nineteen lines, and no payload may change
  * that number. A payload that split its own bullet in two, or invented a
  * section, moves it whether or not it also smuggled a character through.
  *
- * SIX OF THE EIGHTEEN ARE THE HISTORY: its header, then for v2 a version line,
+ * SIX OF THE NINETEEN ARE THE HISTORY: its header, then for v2 a version line,
  * its `why` and its `scope`, and for v1 a version line and its `scope` (v1 is
  * the first declaration and amends nothing, so it has no reason to give).
  *
@@ -200,8 +209,17 @@ const SEARCH_LINE_SHAPES = [
  * deliberately: a section one row shorter than the count in its own header is
  * the silent shortening the whole file exists to catch. Only the HEAD intent
  * line may go, because nothing counts it.
+ *
+ * THE NINETEENTH IS THE CHECK POINTER (08 §3.4): the first claim carries a
+ * `verificationRef`, which renders beneath it rather than on its line, because
+ * that line already opens a « » pair for the body and a line opens the frame at
+ * most once. The fixture gives the field a CLEAN DEFAULT instead of planting it
+ * only for its own slot, so the line is present for every slot and this stays a
+ * constant — a field that appeared only when it was the planted slot would move
+ * the count for an innocent reason, and this test could not tell that from a
+ * payload splitting a line.
  */
-const EXPECTED_DIAGNOSIS_LINES = 18;
+const EXPECTED_DIAGNOSIS_LINES = 19;
 
 /**
  * The intent line is the one line a payload can legitimately REMOVE: an
@@ -260,6 +278,21 @@ const assertDocument = (
   });
 };
 
+/**
+ * HOW MANY UNTRUSTED SLOTS A DIAGNOSIS TREE HAS — a directive, never a
+ * sentence, because more than one spec appends to this list.
+ *
+ * NO SPEC MAY PIN THIS NUMBER. 08 §5 wrote `PRINTS: 19` for its own addition
+ * while 06 §5 wrote `PRINTS: 20` for two of its own, on the same array;
+ * whichever landed second would have reddened the other, and with both landed
+ * the answer is neither. The number therefore lives HERE, beside the loop that
+ * reads it, and is re-derived by running the command — which is the rule 00
+ * §9.2 already makes binding for ci.yml's listings, generalised to any count
+ * over a list several specs append to.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(c.MCP_DIAGNOSIS_SLOTS.length)'
+ * PRINTS: 19
+ */
 describe("diagnosis invariants over the injection corpus", () => {
   test("hold for every payload in every untrusted field of a tree", () => {
     for (const entry of INJECTION_CORPUS) {

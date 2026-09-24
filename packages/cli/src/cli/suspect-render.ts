@@ -29,6 +29,7 @@ import {
   MAX_PIN_SURFACE_CHARS,
 } from "@crosscheck/schema";
 import { MAX_WORK_CONTEXT_TITLE_CHARS } from "@crosscheck/connector-core/constants.ts";
+import { verdictLines } from "./verdict-render.ts";
 import type {
   SuspectCandidate,
   SuspectView,
@@ -181,6 +182,29 @@ const boundLines = (view: SuspectView): readonly string[] =>
  * separated suspect" are different facts, and a reader who cannot tell them
  * apart learns nothing from either.
  */
+/**
+ * THE `no_touch` SENTENCE IS A CLAIM ABOUT THE WORLD, and it may only be made
+ * when the record supports it (04 VER-1, 03 §5.1's empty-result rule applied
+ * to this surface — the one 03's list does not name and its refusal 8 hands
+ * to the verdict spec).
+ *
+ * "Whatever broke it is not in crosscheck's record" asserts that we looked
+ * everywhere we can look and found nobody. Under a coverage gap that is false
+ * — we did not look everywhere — and the sentence turns a hole in the archive
+ * into an exoneration of every agent session on the repo. The verdict block
+ * above already says what IS true, in `coverage_gap`'s own words, so the
+ * unsupported claim is dropped rather than contradicted one line later.
+ *
+ * AN ABSENT VERDICT DOES NOT SUPPRESS IT. A hub that reports no verdict has
+ * told us nothing about coverage either way, and withholding the outcome
+ * sentence on top of the missing verdict would leave this surface saying less
+ * than the hub actually knows — Principle 5 in the other direction.
+ */
+const UNSUPPORTED_NO_TOUCH_BASES: readonly string[] = [
+  "coverage_gap",
+  "pin_paths_missing",
+];
+
 const outcomeLine = (view: SuspectView): string => {
   const touched = `${String(view.totals.sessionsTouching)} session(s) touched this surface in the last ${String(view.totals.windowDays)} days`;
   switch (view.outcome) {
@@ -189,7 +213,10 @@ const outcomeLine = (view: SuspectView): string => {
     case "no_separation":
       return `${touched}; NO SEPARATED SUSPECT — the top scores are too close to call.`;
     case "no_touch":
-      return `no session touched this surface in the last ${String(view.totals.windowDays)} days. Whatever broke it is not in crosscheck's record.`;
+      return view.verdict !== null &&
+        UNSUPPORTED_NO_TOUCH_BASES.includes(view.verdict.basis)
+        ? `no session touched this surface in the last ${String(view.totals.windowDays)} days.`
+        : `no session touched this surface in the last ${String(view.totals.windowDays)} days. Whatever broke it is not in crosscheck's record.`;
     default:
       return view.attribution === "counts_only"
         ? `${touched}. This team's setting prints counts only, so no session is named.`
@@ -279,6 +306,11 @@ export const renderSuspect = (view: SuspectView, now: Date): string => {
   return [
     `crosscheck suspect: ${surface}`,
     QUOTED_DATA_NOTICE,
+    // 04 §5: ABOVE the falsifier lines. The verdict is not a conclusion drawn
+    // from the premise below it — it is the licence under which the whole
+    // document is read, and a reader who meets the rows first has already
+    // read them as an accusation by the time the qualification arrives.
+    ...verdictLines(view.verdict, now),
     ...falsifierLines(view, now),
     scopeLine(view),
     // 03 §5.1's SOFT rule, above the outcome because it is the same kind of

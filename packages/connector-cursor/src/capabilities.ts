@@ -68,6 +68,13 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "not possible — Cursor treats ask as advisory in preToolUse and enforces only a hard deny, and crosscheck never hard-blocks",
     },
+    // 07 §8.6, PIL-8: the pilot channel this host cannot feed, printed by
+    // this connector's doctor on every run rather than read as a zero.
+    {
+      name: "pilot tripwire channel",
+      sentence:
+        "never fed from this host: with no pre-edit ask there is no ask to count, so the pilot report's tripwire figure counts only sessions on hosts that can ask — a low figure on a team working here means fewer sessions that could have asked, not fewer collisions",
+    },
     {
       name: "prompt-time injection",
       sentence:

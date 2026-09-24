@@ -71,9 +71,11 @@ forward-compat shape for `TargetSchema.source` (`crosscheck-pins:schema/src/sess
 **`unknown` is the honest default, not a placeholder:** two writers exist today and a stored row
 cannot be attributed to either, so it is never back-filled and the report prints it as its own
 bucket, the way `absences.ts:23-30` keeps `inactive` and `unconnected` apart. **The tripwire
-channel costs PreToolUse nothing:** the ask is already booked in session state by
-`withTripwireAsked`, and the record is appended by the **next** hook that already appends — the
-record-then-act order `stop.ts:9-15` states as a contract.
+channel costs PreToolUse one spool append.** *Corrected in the build (§11.1): this line said the record
+is appended by the **next** hook that already appends. That hook may never fire — a denied edit fires no
+PostToolUse, and a closed session fires nothing (104 of 127 trial sessions never closed) — so the record is
+appended in PreToolUse itself, right after the atomic claim, in its own delivery-id namespace. Measured:
+0.11 ms p95 for the append, 34 ms for the whole tripping path against the 800 ms budget.*
 
 ### 3.2 `pilot_marks` — the only human input, and it is never a question
 
@@ -90,8 +92,12 @@ refused (§8.3)**:
 - **`crosscheck noise [refId]`** — one word, typed beside the session that got a bad intervention.
   With no argument it resolves the most recent unsolicited delivery to a live session of this repo
   on this machine within `NOISE_MARK_WINDOW_MINUTES = 60`; on more than one candidate it prints
-  them and takes the id. No free text, no prompt, no question.
-- **`crosscheck pin ok <id>`** — the missing symmetric half of #50's `crosscheck pin break`.
+  them and takes the id. No free text, no prompt, no question. *Corrected (§11.2): the id it takes is a
+  delivery id **or the work-context / claim id the hint printed** — hints print ref ids, never `hd_` ids,
+  so an argument named `refId` that accepted only delivery ids named something nobody ever sees.*
+- **`crosscheck pin --ok <id>`** — the missing symmetric half of #50's `crosscheck pin --broke`.
+  *Corrected (§11.2): #50 shipped the retraction as the flag `--broke`, not a `break` subcommand, so the
+  symmetric half is a flag too.*
   Whoever ran the recipe and watched it **pass** gets the same one-line gesture as whoever watched
   it fail, which is what makes a pin notice falsifiable in both directions.
 
@@ -203,8 +209,10 @@ so. §4 carries the migration.
 Hub (`server/src/constants.ts`, appended below #50's `SUSPECT_*` block): `PILOT_MAX_SESSIONS = 50`
 · `PILOT_RETENTION_DAYS = 90` · `PILOT_REPORT_DEFAULT_WINDOW_DAYS = 56` ·
 `PILOT_CONVERGENCE_WINDOW_HOURS = 48` · `PILOT_TARGET_HELPFUL_PER_100_SESSIONS = 8` ·
-`PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100 = 20` · `PILOT_FIX_DIFF_MAX_FILES = 200`. Connector
-(below #50's `PIN_SWEEP_*` block): `NOISE_MARK_WINDOW_MINUTES = 60`. **Inherited by name, per 00
+`PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100 = 20`. Connector (below #50's `PIN_SWEEP_*` block):
+`NOISE_MARK_WINDOW_MINUTES = 60` · `PILOT_FIX_DIFF_MAX_FILES = PIN_SWEEP_MAX_PATHS`. *Corrected (§11.3):
+`PILOT_FIX_DIFF_MAX_FILES` was listed as a hub constant, but the diff runs in the CLI and the hub never read
+it; it now lives beside the sweep bound it equals, derived rather than restated.* **Inherited by name, per 00
 §10 Q10, not silently:** `HINT_STATS_MAX_WINDOW_DAYS = 90` is what `PILOT_RETENTION_DAYS` matches;
 `GHOST_MIN_SHARED_TARGETS = 2` (`server/src/constants.ts:370`) is the shared-target threshold for
 *"a duplicate investigation was opened anyway"*; `SUSPECT_WINDOW_DAYS = 14` bounds proof 3;
@@ -240,7 +248,7 @@ the measurement.
 
 ```
 repo: <repoId> · 2026-07-20..2026-09-14 · 1,208 sessions · 50-session set 31/50, 0 refused
-1. duplicate work surfaced            (never "prevented" — §8.1)
+1. duplicate work surfaced — what a pointer stopped cannot be observed, so it is never claimed
    surfaced 312 · opened 74 · converged 31
    by channel: briefing 208 · prompt_hint 96 · tripwire 8 · suspect 0 · unknown 0
    each opened pointer names its prior work: «<title>» wc_8f21 · opened by 2 sessions
@@ -249,7 +257,7 @@ repo: <repoId> · 2026-07-20..2026-09-14 · 1,208 sessions · 50-session set 31/
    flagged 41 (tripwire 8 · ghost 33) · both landed 17 · ci regressed: unavailable
 3. attribution accuracy   ranked answers on recorded-break pins 6 · repaired 4
    hit 3 · miss 1 · excluded (coverage gap at answer time) 1 · no repair pin yet 2
-4. proactive precision   helpful per 100 sessions 6.1 (target 8, declared first)
+4. proactive precision   opened per 100 sessions 6.1 (target 8, declared before measuring)
    off-target marks per 100 0.9 (target max 20) — FLOOR: marks voluntary (§8.3)
 5. coverage integrity in the wild
    answers 4,102 · qualifier required 388 · emitted 388 · missed 0
@@ -272,6 +280,10 @@ takes the file 3 → 6.
   render: (payload) => renderPilot(pilotWith(payload), NOW) }
 ```
 
+*Corrected (§11.4): the mockup above printed the word "prevented" and the label "helpful", both of which
+§8.1 refuses — the word may not appear at all, and a pull is the model's call, not a human verdict. The
+shipped report says what the refusal says.*
+
 `corpus`, not composite: proof 1's counterfactual **names the prior work**, so a teammate's title
 and declared intent reach the line, with the payload planted in the title slot — the most exposed
 one. `delivery: "pulled"`: a human typed it and is waiting (`render-surfaces.ts:71-95`).
@@ -293,12 +305,13 @@ meta-test makes an undeclared rung a red build
 `USER_PROMPT_SUBMIT_BUDGET_RATIO × HTTP_TIMEOUT_MS` and `PRE_TOOL_USE_BUDGET_RATIO ×
 HTTP_TIMEOUT_MS` both stay 800 (`connector-core/src/constants.ts:56-57`, `PRINTS: 800 800`).
 
-- **PreToolUse (800 ms): zero added.** The ask is already booked in session state; its record is
-  appended by the next hook that already appends (§3.1), so nothing new spends `spareMs`
-  (`config/hook-budget.ts:48-55`).
+- **PreToolUse (800 ms): one spool append, measured.** *Corrected (§11.1): this line said zero, on the
+  premise that a later hook would append the record. The record is appended at the claim instead, because a
+  later hook may never fire; the append takes no lock, and PIL-9 measures it (0.11 ms p95, named allowance
+  5 ms) on the tripping path the dead-hub latency runs could not reach.*
 - **UserPromptSubmit (800 ms): one enum field** on a record it already builds
-  (`capture/records.ts:85`), plus the drain of booked tripwire asks — spool appends, which take no
-  lock (`spool/append.ts:1-27`).
+  (`capture/records.ts:85`). *Corrected (§11.1): there is no drain of booked tripwire asks — the
+  ask's record is written where the ask is claimed.*
 - **Stop: zero.** #50 already spends Stop's `spareMs` on the git lane
   (`crosscheck-pins:connector-claude/src/hooks/stop.ts`, +62/−1). **SessionStart / SessionEnd:
   zero new round trips** — `pilot_sessions` is written **hub-side** from data the hub already has,
@@ -485,3 +498,126 @@ would measure the model's taste.
 new human gesture.** One word, typed only by someone who ran the recipe, and the only way a pin
 notice becomes falsifiable in both directions. *Default: ship it*; without it proof 4's pin half
 has no denominator and only the hint half survives.
+
+## 11. Corrections from the build
+
+What building this spec found, recorded here so the text above stays readable and every correction
+names its reason. Each is also marked inline where the old sentence stood.
+
+**11.1 — The tripwire record is written at the claim, not by a later hook.** §3.1 and §6 deferred the
+record to "the next hook that already appends" so PreToolUse would add nothing. That hook may never fire:
+a denied edit fires no PostToolUse, and a session that is simply closed fires nothing at all — the trial
+measured 104 of 127 sessions that never closed. Deferral would lose exactly the asks proof 2 counts. The
+record is appended in PreToolUse right after the atomic claim (a racing sibling that lost the claim records
+nothing), costs one lock-free spool append, and is measured under PIL-9: 0.11 ms p95 over 50 runs against a
+named 5 ms allowance, and 34 ms for the whole tripping path against the 800 ms budget. **The tripwire takes
+its own delivery-id namespace:** the seen-set that makes (session, ref) unique covers briefing and hint only,
+so a session hinted about a context and later tripped on its file is two deliveries, and one id would make
+the hub keep the first and answer the second `duplicate`. Briefing and hint ids are unchanged, so rows
+already stored and records already spooled replay as themselves.
+
+**11.2 — The gestures, as a person can actually make them.** `pin ok` is `pin --ok` (#50's retraction is
+the flag `--broke`). `crosscheck noise <id>` takes a delivery id **or the work-context / claim id the hint
+printed**, which is the only id a person ever sees; with no id it asks the hub for the caller's own unasked
+deliveries to the sessions live on this machine within the hour (`GET /api/pilot-marks/candidates`, bounded
+at five with one row read past the bound so the cut is said). The mark route refuses four things the text
+did not name: a delivery somebody **else** received (proof 4 counts people interrupted, and only the
+recipient was — answered exactly like a nonexistent id, §11.9), a **crossed pair** such as `off_target` about a pin (each ref kind takes exactly one
+word, `PILOT_MARK_BY_REF_KIND`, because the report counts marks by their word), "ok" about a pin recorded
+**broken** (`pin_broken` — a repair needs the commit and files only a re-pin records), and a mark on a
+**pulled** answer (`not_unsolicited` — a disliked `suspect` answer is a verdict on the answer, and counting it
+would make asking a question the way to inflate the noise figure).
+
+**11.3 — Where the constants live.** `PILOT_FIX_DIFF_MAX_FILES` moved to connector-core, derived from
+`PIN_SWEEP_MAX_PATHS`, with `PILOT_FIX_DIFF_CONCURRENCY = 4` (25 diffs one after another would keep somebody
+waiting over half a minute). The hub gained `PILOT_REPORT_MAX_PRIOR_WORK = 10`, `PILOT_REPORT_MAX_REPAIRS =
+25`, `NOISE_MARK_MAX_CANDIDATES = 5` and `NOISE_MARK_MAX_SESSIONS = 50` (the connector's
+`STATUS_MAX_SESSION_STATES`, checked by a VERIFY). `PILOT_UNAVAILABLE_REASONS`, `PILOT_RUNG_REFUSALS`,
+`PILOT_MARK_BY_REF_KIND` and `PULLED_DELIVERY_CHANNEL` are in `@crosscheck/schema`, because the hub picks
+the reason and the CLI writes its sentence.
+
+**11.4 — The report.** §5's mockup printed "prevented" and "helpful", both refused by §8.1; the shipped
+report says surfaced / opened / converged and "opened per 100". An opened count whose prior work cannot be
+listed is **withheld**, not printed bare (PIL-2 applied to the edge the text did not cover). Proof 2's ghost
+figure is `unavailable (ghost_lines_not_recorded)`: a ghost line repeats for as long as the overlap lasts and
+is never booked as a delivery, so the mockup's `ghost 33` had no writer. The fix diff (§3.4) has **six**
+outcomes, not two — `hit`, `miss`, and four that are not verdicts and are never folded into a miss:
+`not_discriminating` (the fix touched only pinned files, which every candidate touched), `empty` (nothing
+changed in the fix range), `too_broad` (past the bound a fix touches the named file by accident) and
+`unresolvable` (a range this clone never fetched, an id that is not a commit id). The range runs from the
+commit the break was **recorded** at to the repair's commit (§11.9). It runs with
+renames off, so a fix that moved the named file is still a hit, and NUL-separated, so a named file with a
+non-ASCII name is matched as written. The client parse is **strict** — a count that did not arrive must not
+read as zero. `--json` is not the raw wire: every string is cleaned, `"` becomes `'` so the output needs no
+backslash escape, and it is its own corpus surface. The registry therefore gains three surfaces, not one:
+`cli-pilot` (framed), `cli-pilot-json` (sanitized) and `cli-pilot-mark` (bare — the marks print ids,
+channel words, ages and the hub's sentence, so a corpus surface replaced the composite this spec named).
+
+**11.5 — `doctor`.** `checkPilot` follows the ladder every other hub-read line uses: 404, unreachable and
+unparseable are "not measured"; only a hub that answered with an error is a WARN. The qualifier line prints "not counted
+on the hub" with its reason — the WARN it once carried read a tautology (§11.9), so `checkPilot` has no
+ratio WARN and PIL-3 holds because none exists. The rungs that cannot exist are the two reasons in `PILOT_RUNG_REFUSALS`; an
+empty day (`nothing_flagged`, `no_sessions`) gets no line.
+
+**11.6 — Retention (§4).** Counters and attributions prune from the reaper, before its early return, and
+keep the boundary day the report's widest window still reads. It is not the withdrawn `session_events`
+sweep: these rows are tallies and ranked guesses, not the causal skeleton. There is no future-dated clamp on
+these two — both timestamps are the hub's own clock. `hint_deliveries.delivered_at` IS sender-controlled,
+and is clamped at ingest (§11.9). Two indexes (`pilot_counters_day_idx`,
+`pilot_attributions_answered_idx`) keep both deletes index ranges across every repo.
+
+**11.7 — What is still not measured.** The `suspect` channel has no writer; it is reserved. The ghost half
+of proof 2 has none by design. `ci regressed` waits for 05's reporter. None of these reads as a zero.
+
+**11.8 — What 07 owes 01a's retention registry, declared.** 01a §3.3b lists "07's `pilot_sessions` and
+`pilot_attributions`" as `root`, with liveness `undefined_pending_spec (07)`, and keeps the skeleton sweep
+off until 07 declares. **07 declares both as `non_retaining_edge`, not `root` — a correction to 01a's
+provisional row, for Nick to confirm (below).**
+
+- `pilot_attributions.top_session_id` — `non_retaining_edge`. **Reason:** proof 3 scores an attribution
+  against the fix diff and the named session's `work_context_targets`; it never compares that session's
+  order, so nothing it needs is in the skeleton. Its own lifetime is `PILOT_RETENTION_DAYS` (§11.6).
+- `pilot_sessions.session_id` — `non_retaining_edge`. **Reason:** the row stores the sequence residue it
+  needs (`seq_epoch`, first / last, gaps, epochs) at the moment the session ends or is reaped, precisely so
+  the report never re-reads the skeleton. Its lifetime is the fifty-row cap.
+
+**The positive proof to delete** (01a's sixth principle: retention requires positive proof to delete) is
+machine-checked rather than asserted: the report reads `session_events` zero times, and the only pilot
+reader of that table is `readSeqResidue`, run once at session end or reap — two `VERIFY:` directives in
+`services/pilot-report.ts` pin both counts, so a later report path that starts reading the skeleton turns
+CI red before it can depend on rows the sweep may retire.
+
+**Why not `root`, which 01a assumed.** A root keeps its session's whole skeleton alive while the root is
+live. Declared as roots, fifty measured sessions per enrolled repo would keep every event for ninety days
+and the pilot sessions for ever — retention the pilot never reads, bought with the data-minimisation cost
+01a exists to stop paying. **D-E for Nick:** confirm `non_retaining_edge` for both. *Alternative:* `root`
+with liveness "while the row exists", which is safe and wasteful — nothing breaks, the sweep simply keeps
+more than anything reads. The kept / swept / by-root counters 01a §9 assigns to 07 are that sweep's own
+output and land with it.
+
+**11.9 — What two adversarial reviews changed.** Both ran after the build, read-only, with probes; every
+finding below was reproduced before it was fixed, and each fix carries a mutation anchor.
+
+- **Proof 3 scored a hit whoever was named** (CRITICAL). The range started at the last-working commit, so it
+  held the break itself; "named files" were the pinned files every candidate touched; and every answer was
+  scored. Now: `pins.broke_at_commit` (sent by `pin --broke`) starts the range; only files the named session
+  touched OUTSIDE the pin can make a hit; one verdict per repaired break (the last answer before the repair).
+- **One read made every session's pointer "opened"** (HIGH). `markHintsPulled` stamped all of a developer's
+  sessions. The MCP tool now names its session (or reads without stamping when the pick is ambiguous), the
+  hub stamps only that session, and the report counts a pull as an open only between delivery and the
+  receiving session's end. Proof 4 is sessions over sessions.
+- **A delivery id could be squatted** (HIGH). Ingest now requires the id to be derived from its own session,
+  ref and channel (`deliveryIdFor`, shared in the schema).
+- **"Qualifier emitted" was a tautology** (HIGH) — written whenever "required" was. Not counted any more;
+  whether a qualifier reached its reader is the render registry's fact.
+- **MEDIUM:** refusal codes revealed a colleague's deliveries (merged into `unknown_ref`); another repo's
+  titles reached the prior-work list (scoped to the repo, bounded in SQL); a future `deliveredAt` pinned
+  itself atop the noise candidates (clamped); a Cursor-only repo read `tripwire 0` (now `unavailable
+  (no_asking_host)`); the refusal count aged out while the set stood (kept); the TTY gate was documented as
+  a wall (it is evidence; a pty or the raw key pass it, and every mark is attributable).
+- **LOW:** a revived session in a full set counted as refused; a lone surrogate and colliding keys in
+  `--json`; the CLI now bounds the repairs it diffs itself.
+- **Still open, named:** a client chooses its own delivery channel, so a connector could inflate the
+  tripwire bucket with its own rows; deliveries from before a repo enrolled are counted in proofs 1–2 (no
+  `enrolled_at` exists); every `suspect` answer appends an attribution row, bounded only by retention.
+

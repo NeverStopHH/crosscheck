@@ -2,6 +2,19 @@ export {
   ARTIFACT_SENSITIVITIES,
   ArtifactSensitivitySchema,
   CAPTURE_MODES,
+  CLAIM_CAPTURE_MODES,
+  DELIVERY_CHANNELS,
+  DeliveryChannelSchema,
+  PILOT_END_REASONS,
+  PILOT_MARKS,
+  PILOT_MARK_BY_REF_KIND,
+  PILOT_MARK_REF_KINDS,
+  PILOT_RUNG_REFUSALS,
+  PILOT_UNAVAILABLE_REASONS,
+  TRIPWIRE_ASKING_HOSTS,
+  PULLED_DELIVERY_CHANNEL,
+  SUSPECT_FALSIFIER_KINDS,
+  SUSPECT_OUTCOMES,
   CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
   CLAIM_REVALIDATION_BASES,
@@ -9,6 +22,7 @@ export {
   CLAIM_STATUSES,
   CLAIM_VALIDITY_STATES,
   CaptureModeSchema,
+  ClaimCaptureModeSchema,
   ClaimCommitBindingSchema,
   ClaimKindSchema,
   ClaimRevalidationBasisSchema,
@@ -30,6 +44,14 @@ export {
 export type {
   ArtifactSensitivity,
   CaptureMode,
+  DeliveryChannel,
+  PilotEndReason,
+  PilotMark,
+  PilotMarkRefKind,
+  PilotUnavailableReason,
+  SuspectFalsifierKind,
+  SuspectOutcome,
+  ClaimCaptureMode,
   ClaimCommitBinding,
   ClaimKind,
   ClaimRevalidationBasis,
@@ -112,6 +134,16 @@ export type {
 } from "./pin.ts";
 
 export {
+  MAX_WAIVER_REASON_CHARS,
+  WAIVER_KINDS,
+  WaiverGrantSchema,
+  WaiverRevokeSchema,
+} from "./waiver.ts";
+export type { WaiverGrant, WaiverKind, WaiverRevoke } from "./waiver.ts";
+export { PilotMarkSchema } from "./pilot-mark.ts";
+export type { PilotMarkInput } from "./pilot-mark.ts";
+
+export {
   MAX_QUESTION_BODY_LENGTH,
   MAX_RECORD_ID_LENGTH,
   QUESTION_STATUSES,
@@ -192,6 +224,9 @@ export {
   SEQ_KINDS,
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
+  RETENTION_ROOT_LIVENESS_OWNER,
+  MAX_REPORTED_UNRESOLVED_PINS,
+  RETENTION_ROOT_NAMES,
   SESSION_EVENT_RETENTION_MODES,
 } from "./session-event.ts";
 export type {
@@ -199,6 +234,8 @@ export type {
   SeqKind,
   SeqReason,
   SessionEventKind,
+  RetentionRootName,
+  SkeletonRetentionReport,
   SessionEventRetentionMode,
 } from "./session-event.ts";
 
@@ -226,3 +263,44 @@ export {
   MAX_CI_TEST_ID_CHARS,
 } from "./ci-run.ts";
 export type { CiLane, CiRunReport, CiTestResult } from "./ci-run.ts";
+export {
+  EVIDENCE_REASON_SENTENCE,
+  EVIDENCE_SUPPORT,
+  EVIDENCE_SUPPORT_REASONS,
+  EVIDENCE_WHO,
+  EVIDENCE_WHO_SENTENCE,
+  EvidenceAxesSchema,
+  EvidenceSupportReasonSchema,
+  EvidenceSupportSchema,
+  EvidenceWhoSchema,
+  MAX_VERIFICATION_REF_CHARS,
+  MAX_VERIFICATION_REF_KIND_CHARS,
+  NO_AXES_FROM_HUB,
+  NO_AXES_READABLE,
+  VERIFICATION_REF_KINDS,
+  axesLabel,
+} from "./evidence-axes.ts";
+export type {
+  EvidenceAxes,
+  EvidenceSupport,
+  EvidenceSupportReason,
+  EvidenceWho,
+  VerificationRefKind,
+} from "./evidence-axes.ts";
+export {
+  CANONICAL_PATH_REFUSALS,
+  FILE_REF_DOMAIN,
+  PIN_FILE_REF_UNRESOLVED_REASONS,
+  canonicalRepoPath,
+  fileRef,
+} from "./file-ref.ts";
+export type {
+  CanonicalPath,
+  CanonicalPathRefusal,
+  PinFileRefUnresolvedReason,
+} from "./file-ref.ts";
+export {
+  deliveryIdFor,
+  hintDeliveryId,
+  tripwireDeliveryId,
+} from "./delivery-id.ts";

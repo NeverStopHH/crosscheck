@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { canonicalRepoPath } from "./file-ref.ts";
+
 /** A repo-relative path is never long; the cap keeps one row renderable. */
 export const MAX_REPO_PATH_CHARS = 300;
 
@@ -19,8 +21,26 @@ export const MAX_REPO_PATH_CHARS = 300;
  */
 export const REPO_RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\0\\]+$/;
 
+/**
+ * AND IN ITS ONE SPELLING (01a §3.3d). The regex above admitted `./src/x.ts`,
+ * `src//x.ts`, a trailing slash and an embedded newline, and stored each
+ * verbatim — so a pin could be registered in a spelling no touch ever uses,
+ * and `suspect` answered "nobody touched it". The rule now CANONICALISES
+ * (`canonicalRepoPath`) and refuses what cannot be made canonical, with its
+ * reason, at the door both the hub and the CLI parse through.
+ */
 export const repoRelativePath = z
   .string()
   .min(1)
   .max(MAX_REPO_PATH_CHARS)
-  .regex(REPO_RELATIVE_PATH, "path is not repo-relative POSIX");
+  .transform((raw, ctx) => {
+    const canonical = canonicalRepoPath(raw);
+    if (!canonical.ok) {
+      ctx.addIssue({
+        code: "custom",
+        message: `path is not a repo-relative file path (${canonical.reason})`,
+      });
+      return z.NEVER;
+    }
+    return canonical.path;
+  });

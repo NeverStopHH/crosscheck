@@ -327,6 +327,7 @@ const suspectView = (coverage: CoverageRecord): SuspectView => ({
   attribution: "sessions",
   candidates: [],
   coverage,
+  verdict: null,
 });
 
 /**

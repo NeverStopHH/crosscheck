@@ -47,6 +47,7 @@ import {
   renderPointerHint,
   withCoverageNote,
 } from "../hints/render.ts";
+import type { DeliveryChannel } from "@crosscheck/schema";
 import { selectHint } from "../hints/select.ts";
 import type { HintSelection } from "../hints/select.ts";
 import {
@@ -80,6 +81,13 @@ interface Delivery {
   readonly refId: string;
   readonly bodyHash: string | null;
   readonly text: string;
+  /**
+   * THE MID-PROMPT CHANNEL (07 §3.1). Everything this module emits reaches a
+   * reader through UserPromptSubmit — it interrupts a turn already under way,
+   * which is what makes its pull rate a different measurement from the
+   * briefing's, and the reason the two are never one number again.
+   */
+  readonly channel: DeliveryChannel;
 }
 
 const renderSelection = async (
@@ -101,6 +109,7 @@ const renderSelection = async (
     return {
       refKind: "claim",
       refId: selection.claim.id,
+      channel: "prompt_hint",
       bodyHash: hintBodyHash(selection.claim.body),
       text: renderClaimHint({ claim: selection.claim, context, drift, now }),
     };
@@ -108,6 +117,7 @@ const renderSelection = async (
   return {
     refKind: "work_context",
     refId: context.id,
+    channel: "prompt_hint",
     bodyHash: null,
     text: renderPointerHint({
       context,
@@ -208,6 +218,7 @@ export const selectAndRenderHint = async (
       const delivery: Delivery = {
         refKind: "claim",
         refId: answer.claimId,
+        channel: "prompt_hint",
         // Hashed like every other injected body: an answer that came back to
         // this session must not be re-published as its own observation
         // (hints/echo.ts, the echo-loop exclusion).

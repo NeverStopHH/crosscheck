@@ -407,6 +407,57 @@ tell which was meant. #50 **prepended** its three surfaces, so `cli-suspect` is 
 four now append at the tail, in build order, which makes each a one-line addition
 at a different offset instead of a three-way conflict on one line.*
 
+*Corrected again, at build time, by measurement. The tail is no longer
+`cli-status`: `cli-claim-revalidate` (02) landed on 2026-09-17, three days after
+this paragraph was written, and it took that slot. **And 05 never added
+`cli-ci-report` at all** — it rendered its CI block inside `cli/status.ts`, an
+already-registered module, and covered it with a probe in
+`cli/test/ci-status-render.test.ts`, which is the alternative 05 §5's own
+preceding sentence permits. So 05 §5's* "the new `cli-ci-report` entry must be
+added … or the meta-test reddens the build" *is **false as measured**: the build
+is green with no such entry, because the meta-test walks MODULES and 05 added
+none. Two sentences of one paragraph contradict each other, and the build says
+which is operative. **Consequence for 00 §9.1a:** the tail chain is
+`cli-claim-revalidate` (02) → `cli-verdict` (04) → `cli-pilot` (07); the
+`cli-ci-report` link in it names a surface that does not exist, and 07 must not
+wait for it. `cli-verdict` is therefore surface **8**, appended after
+`cli-claim-revalidate`.*
+
+*And one thing this paragraph assumes that the corpus does not deliver.*
+Planting the payload in the reason slot buys the **character** invariants over
+that slot — invisible categories, zero-width marks, plane 14, the bounds, the
+notice, at most one `« »` pair per line. It does **not** prove the reason is
+inside a frame at all: the corpus reads the finished string and cannot know
+which span was untrusted. **Measured by doing it** — replacing `quotedBody` with
+a bare sanitize in `verdict-render.ts` leaves all **99** registry assertions
+green. So `framing: "framed"` is a document-class claim, not a per-span one, and
+the frame on the reason is pinned by `cli/test/verdict-render.test.ts` with its
+own mutation anchor. A reader who takes the registration as proof that each
+untrusted value sits in guillemets is reading more than it says.
+
+**The reason slot had to be built before it could be attacked.** §3.6 defines
+`readLiveWaiver` and this spec's `WaiverRef` as `{id, pinVersion, expiresAt}` —
+no `reason` and no granter — so the obligation two paragraphs up was
+unsatisfiable as written: there was no reason slot on a verdict to plant in.
+Both now carry `reason` and `grantedByName`, and `readLiveWaiver` reaches the
+name by the same join `listWaivers` already uses — **a LEFT join, not an inner
+one**, because that query also reads the `revoke` rows: under an inner join a
+revocation whose author is no longer on this hub drops out of the result and the
+grant it closed reads as live again, which is a fence somebody shut reopening
+itself.
+
+**An absent verdict is the client-side Principle 5 case, and §5 did not name
+it.** A 1.0 hub that predates this spec answers `suspect` with a ranking and no
+`verdict` key. This tree's convention would read a missing optional block as
+"nothing claimed" and print nothing — which leaves the pre-04 answer standing
+and reads as a fully qualified one. So `http/verdict.ts` inherits **coverage's
+inverted rule** (03 §4) rather than the default: `parseVerdict` returns `null`,
+and the renderer is required to say so out loud. It must equally not fabricate
+an `INDETERMINATE`: a verdict this client invented is indistinguishable,
+downstream, from one the hub computed. The `no_touch` suppression is gated on a
+**present** verdict for the same reason — withholding the outcome sentence on
+top of a missing verdict would make the surface say less than the hub knows.
+
 **Wire.** `GET /api/suspect` returns `{ ...suspect, coverage, verdict }` — sibling
 fields, 03 §3.5's pattern. **03 §3.5 now lists `/api/suspect` among the responses
 that gain `coverage`**; its first draft named five and omitted #50's route, while
@@ -439,6 +490,33 @@ query, capped at `SUSPECT_MAX_CANDIDATES = 50`; 03's `readCoverage`; 06's
 write: one INSERT. **No background pass, no retention job, no new scan.**
 **Measurement refusal:** I ran no benchmark, so no millisecond figure appears here;
 VER-8 requires one before merge.
+
+*Discharged at build time, and the figure lives in a test rather than in this
+paragraph — a number written down once is a number that stops being true.*
+`server/test/verdict-latency.test.ts` seeds six sessions against a two-file pin
+on embedded PGlite and prints, on the machine that ran it:
+
+```
+GET /api/suspect        p50 2.76 ms   p95 3.33 ms
+the verdict's own share p50 0.20 ms   p95 0.27 ms   (8.1% of the route's p95)
+```
+
+**The allowance is derived, not picked: 10 ms = one indexed lookup.** This spec
+adds exactly two things to the route — `readLiveWaiver`, one indexed read on
+`(repo, pin_id, pin_version)`, and `computeVerdict`, which is pure and touches no
+database. So the ceiling is the cost of one extra round trip with an order of
+magnitude of headroom, and a p95 above it does not mean *slow*, it means the added
+work stopped being one indexed read. **The ceiling is on the ADDED work, never on
+the route's total**, because a regression somewhere else in `suspect` would
+otherwise read as a verdict problem and send the next person to the wrong file.
+
+**Baseline in the same process, not against a git checkout.** Timing this branch
+against the parent commit would compare two machines' moods as much as two code
+paths; the route is timed whole, then the addition alone on the same seeded data,
+seconds apart. And the benchmark asserts that it MEASURED something before it
+asserts the ceiling: `percentile([])` is 0, 0 is under every ceiling anybody will
+ever write, and a loop that never ran would discharge this refusal with a number
+nobody measured. That failure has its own anchor.
 
 ## 7. Acceptance tests
 
@@ -493,6 +571,20 @@ The behavioural fixture stays as the second half — a session whose `set_intent
 names the pinned path, pin recorded broken, no waiver row → `PROTECTED_CONFLICT` —
 but it is documentation of intent, and the meta-test is the guard. Paired with 06's
 INT-7 from the other side.
+
+*Corrected at build time: **06's INT-7 IS that meta-test, already**, so this spec
+writes an anchor and not a second walker.* `server/test/intent-ledger-authority.test.ts`
+walks every `src` module of every workspace package and fails on any module
+outside its two-entry exempt set that reaches `workContextIntents` or
+`workContexts.intent` — a rule strictly wider than "any verdict or fence module",
+so 04's ground is inside it. **Measured, not assumed:** this paragraph's own
+mutation reddens that file today, and so do the identical edits to
+`services/waivers.ts` and `routes/fence-waivers.ts`. Building a second walker here
+would be a second copy of a subtle rule, with the weaker copy the one nobody
+re-reads — the exact shape INT-7's own header refuses, and the shape 00 §9.6
+forbids unless something checks it. VER-4 is therefore satisfied by one
+`MUTATIONS` entry naming `intent-ledger-authority.test.ts` as its guard, and the
+two specs meet at one mechanism rather than at two that must agree.
 
 **VER-5 — a waiver without an expiry cannot be stored. (AT-6.)** A grant body
 with no `expires_at`, and a direct INSERT bypassing zod, are both refused — the

@@ -28,6 +28,7 @@ import { resolveRefCommit } from "../../git/claim-drift.ts";
 import { resolveCommitDrift } from "../../git/commit-drift.ts";
 import { resolveDefaultBranchRef } from "../../git/default-branch.ts";
 import type { SolvedFileDrift } from "../../git/solved-staleness.ts";
+import { resolveOwnWorkContext } from "../session.ts";
 import { getDiagnosis, reportClaimRevalidations } from "../../http/hub.ts";
 import type { Diagnosis, HubResult } from "../../http/hub.ts";
 import type { ClaimValidity, ClaimValidityState } from "@crosscheck/schema";
@@ -109,10 +110,28 @@ export const notFoundText = (workContextId: string): string =>
  * and a second caller of the endpoint would be a second place for the 404
  * handling to drift.
  */
-export const fetchDiagnosis = (
+export const fetchDiagnosis = async (
   ctx: McpContext,
   workContextId: string,
-): Promise<HubResult<Diagnosis>> => getDiagnosis(ctx.hub, workContextId);
+): Promise<HubResult<Diagnosis>> => {
+  // WHO IS READING (07, corrected by adversarial review). An unambiguous own
+  // session is named, so only its deliveries are stamped as opened; an
+  // ambiguous one, or none, reads without stamping anything — an open that
+  // cannot be attributed is not counted, because counting it would turn a
+  // pointer another session ignored into one it opened.
+  const own = await resolveOwnWorkContext(
+    ctx.config.home,
+    ctx.identity,
+    ctx.config.hubUrl,
+  );
+  return getDiagnosis(
+    ctx.hub,
+    workContextId,
+    own === null || own.sessionAmbiguous
+      ? "no_telemetry"
+      : { sessionId: own.crosscheckSessionId },
+  );
+};
 
 export const isNotFound = (result: HubResult<unknown>): boolean =>
   !result.ok && result.status === HTTP_NOT_FOUND;

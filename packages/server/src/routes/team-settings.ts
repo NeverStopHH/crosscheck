@@ -34,10 +34,19 @@ const WriteBodySchema = z
     repo: z.string().min(1),
     pinPolicy: z.enum(TEAM_PIN_POLICIES).optional(),
     suspectAttribution: z.enum(TEAM_SUSPECT_ATTRIBUTIONS).optional(),
+    /**
+     * ENROL THIS REPO IN THE PILOT (07 §3.6) — a third team decision, and it
+     * belongs on this route for the reason the other two do: being measured
+     * is something a team agrees to, not a preference of whoever typed the
+     * command. Personal settings live on /api/settings; this is not one.
+     */
+    pilotEnrolled: z.boolean().optional(),
   })
   .refine(
     (body) =>
-      body.pinPolicy !== undefined || body.suspectAttribution !== undefined,
+      body.pinPolicy !== undefined ||
+      body.suspectAttribution !== undefined ||
+      body.pilotEnrolled !== undefined,
     { message: "name at least one setting to change" },
   );
 
@@ -67,6 +76,9 @@ export const teamSettingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         ...(parsed.data.suspectAttribution === undefined
           ? {}
           : { suspectAttribution: parsed.data.suspectAttribution }),
+        ...(parsed.data.pilotEnrolled === undefined
+          ? {}
+          : { pilotEnrolled: parsed.data.pilotEnrolled }),
       }),
     );
   });

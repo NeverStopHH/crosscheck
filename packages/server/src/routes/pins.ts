@@ -35,13 +35,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  COMMIT_SHA_PATTERN,
   MAX_PIN_PATH_CHARS,
   MAX_PIN_SWEEP_UPDATES,
+  NO_COMMIT_SHA,
   MAX_RECORD_ID_LENGTH,
   PIN_PRESENCE_TERMINAL,
   PinSchema,
   SAFE_ID_PATTERN,
   describeUnstorableText,
+  repoRelativePath,
   unstorableTextPath,
 } from "@crosscheck/schema";
 
@@ -82,7 +85,10 @@ const SweepBodySchema = z.object({
       z.object({
         pinId: z.string().min(1).max(MAX_RECORD_ID_LENGTH).regex(SAFE_ID_PATTERN),
         path: PinPathSchema,
-        newPath: PinPathSchema.nullable(),
+        // The NEW path is stored, so it takes the one spelling (01a §3.3d).
+        // The old one is a lookup key for a row already stored, possibly in a
+        // pre-canonical spelling, so it is matched as sent.
+        newPath: repoRelativePath.nullable(),
       }),
     )
     .max(MAX_PIN_SWEEP_UPDATES),
@@ -102,6 +108,13 @@ const PinIdSchema = z
 const BreakBodySchema = z.object({
   repo: z.string().min(1),
   presence: z.literal(PIN_PRESENCE_TERMINAL),
+  /**
+   * The reader's HEAD when the check failed (07 §3.4). Optional so an older
+   * CLI still retracts; its break is then counted by proof 3, never scored.
+   * The commit alphabet only — this value reaches `git diff` on every reader's
+   * machine that runs `crosscheck pilot`.
+   */
+  brokeAtCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),
 });
 
 export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -206,6 +219,10 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       c.get("developer").id,
       parsed.data.repo,
       id.data,
+      parsed.data.brokeAtCommit === undefined ||
+        parsed.data.brokeAtCommit === NO_COMMIT_SHA
+        ? null
+        : parsed.data.brokeAtCommit,
     );
     if (outcome === "not_found") {
       return fail(c, 404, "not_found", "no pin with that id in this repo");

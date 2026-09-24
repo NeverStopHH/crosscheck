@@ -85,6 +85,8 @@ import {
   targetValueCondition,
 } from "./ghost-overlap.ts";
 import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
+import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import type { EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -111,6 +113,8 @@ export interface ConferenceClaimView {
   readonly kind: string;
   readonly status: string;
   readonly confidence: number;
+  /** Was anything actually RUN behind this (1.0 spec 08 §3.1). */
+  readonly axes: EvidenceAxes;
   /** Always "declared" here; on the wire so the report can label it anyway. */
   readonly provenance: string;
   /** Cut at CONFERENCE_CLAIM_BODY_MAX_CHARS — the model and the reader see the same text. */
@@ -261,6 +265,14 @@ const listContextClaims = async (
       body: claims.body,
       authorDeveloperName: developers.name,
       createdAt: claims.createdAt,
+      // What the evidence ladder needs, off the same row. A conference report
+      // quotes a teammate's claim with a confidence beside it and is read at
+      // standup, where a number nobody measured does the most persuading.
+      workContextId: claims.workContextId,
+      verificationRef: claims.verificationRef,
+      commitBinding: claims.commitBinding,
+      observedAtCommit: claims.observedAtCommit,
+      repo: agentSessions.repo,
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
@@ -274,6 +286,21 @@ const listContextClaims = async (
     )
     .orderBy(desc(claims.createdAt), asc(claims.id))
     .limit(CONFERENCE_MAX_CLAIMS_PER_CONTEXT);
+  // One read for this context's bounded slice. Grouped by the claim's own
+  // repo for the reason every other grouped call has: the ladder resolves CI
+  // by repo, and answering against the wrong one fails in the exonerating
+  // direction.
+  const byRepo = new Map<string, typeof rows>();
+  for (const row of rows) {
+    byRepo.set(row.repo, [...(byRepo.get(row.repo) ?? []), row]);
+  }
+  const axes = new Map<string, EvidenceAxes>();
+  for (const [repo, group] of byRepo) {
+    const derived = await readEvidenceAxes({ db: deps.db, repo, claims: group });
+    for (const [id, value] of derived) {
+      axes.set(id, value);
+    }
+  }
   return rows.map((row) => ({
     id: row.id,
     kind: row.kind,
@@ -282,6 +309,7 @@ const listContextClaims = async (
     provenance: row.provenance,
     body: cutBody(row.body),
     authorDeveloperName: row.authorDeveloperName,
+    axes: axes.get(row.id) ?? UNRESOLVED_AXES,
     createdAt: row.createdAt.toISOString(),
   }));
 };

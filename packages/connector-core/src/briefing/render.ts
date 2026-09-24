@@ -26,6 +26,11 @@ import {
 } from "../constants.ts";
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
+import {
+  NO_AXES_FROM_HUB,
+  NO_AXES_READABLE,
+  axesLabel,
+} from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type {
   ContradictionEntry,
@@ -711,7 +716,19 @@ const solvedRootCauseLine = (entry: SolvedMatchEntry): string => {
   // beside confidence and provenance rather than on a line of its own.
   const word = claimValidityWord(entry.rootCauseValidity);
   const validityLabel = word === null ? "" : ` · ${word}`;
-  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · provenance declared${validityLabel}`;
+  // THE LABELS TRAVEL WITH THE NUMBER (08 §3.6, EV-5). This line is
+  // unsolicited — the briefing asserts a root cause at SessionStart that
+  // nobody asked for — so a bare confidence here is the failure mode at its
+  // sharpest. The absence of a clause is announced rather than passed over,
+  // for the same reason it is on every other surface: silence leaves the two
+  // decimals standing alone, reading as a measurement.
+  const axes =
+    entry.rootCauseAxes === undefined
+      ? NO_AXES_FROM_HUB
+      : entry.rootCauseAxes === null
+        ? "no evidence label (no check travelled with this body)"
+        : axesLabel(entry.rootCauseAxes) || NO_AXES_READABLE;
+  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · ${axes} · provenance declared${validityLabel}`;
   return `\n  root cause · ${labels}: «${body}»`;
 };
 

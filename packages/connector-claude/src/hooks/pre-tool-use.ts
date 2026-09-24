@@ -48,6 +48,11 @@
 import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
 import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  UNKNOWN_DEVELOPER_ID,
+  hintDeliveryRecord,
+} from "@crosscheck/connector-core/capture/records.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { renderTripwireReason } from "@crosscheck/connector-core/hints/render.ts";
 import {
   openToolWindow,
@@ -202,6 +207,37 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (!claimed) {
     return "";
   }
+  // THE ASK IS COUNTED (07 §3.1), and HERE — not by a later hook. Proof 2
+  // reads the `tripwire` channel, and the ask used to live only in this
+  // session's state file, which never reaches the hub. Deferring the record
+  // to the next hook that appends would lose exactly the asks that mattered:
+  // a denied edit fires no PostToolUse, and a session that is simply closed
+  // fires nothing at all (the trial: 104 of 127 never closed). A spool append
+  // takes no lock and costs microseconds beside the hub call this hook has
+  // already made, and a failed one is booked in `.drops`, never dropped
+  // silently. Appended AFTER the claim, so a racing sibling that lost the
+  // claim records nothing — and the id is deterministic per (session,
+  // context), so a replay is the hub's `duplicate`, not a second collision.
+  await appendRecords(
+    ctx.config.home,
+    ctx.repoKey,
+    ctx.payload.session_id,
+    [
+      hintDeliveryRecord(
+        state.crosscheckSessionId,
+        "work_context",
+        teammate.workContextId,
+        "tripwire",
+        {
+          developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+          agentKind: ctx.config.agentKind,
+          sessionId: state.crosscheckSessionId,
+        },
+        ctx.now(),
+      ),
+    ],
+    ctx.now(),
+  );
   // #25: additionalContext carries the SAME factual reason (incl. the
   // get_diagnosis id) to the MODEL — permissionDecisionReason for an "ask"
   // reaches the human only (hooks.md), so before this the model learned

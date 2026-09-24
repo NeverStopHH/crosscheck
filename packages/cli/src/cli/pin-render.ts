@@ -33,6 +33,7 @@ import {
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_PATH_CHARS,
   MAX_PIN_SURFACE_CHARS,
+  MAX_WAIVER_REASON_CHARS,
 } from "@crosscheck/schema";
 import type { PinEntry, PinRegistry } from "@crosscheck/connector-core/http/hub.ts";
 
@@ -44,6 +45,20 @@ const MAX_PRINTED_PATHS = 8;
 const ageOf = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? "unknown" : `${formatAge(now.getTime() - ms)} ago`;
+};
+
+/**
+ * THE OTHER DIRECTION. `ageOf` measures `now - then` and says "ago", which is
+ * right for every instant on a pin row — verified, retracted, swept — and
+ * wrong for the only one that points forward. An expiry rendered through it
+ * reads as a negative age labelled "ago", i.e. a deadline that has already
+ * passed, which is the opposite of what an open fence means.
+ */
+const untilOf = (iso: string, now: Date): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms)
+    ? "an unreadable time"
+    : `in ${formatAge(Math.max(0, ms - now.getTime()))}`;
 };
 
 /**
@@ -86,6 +101,43 @@ const fileLine = (pin: PinEntry): string => {
   return `  files: ${paths}${rest > 0 ? ` … and ${String(rest)} more` : ""}`;
 };
 
+/**
+ * THE OPEN FENCE, on the row it belongs to (04 §5).
+ *
+ * A pin is a human's statement that a surface works. A live waiver is a second
+ * human's statement that it is acceptably broken for now. Printing the first
+ * and not the second gives a reader the guard without the exception — which is
+ * exactly backwards, because it is the exception that will surprise them.
+ *
+ * TWO LINES, NOT ONE, and the split is the frame rule: the reason is another
+ * developer's prose and takes a `« »` pair, and "a line opens the frame at
+ * most once" is what makes the guillemets mean anything. The granter and the
+ * deadline go first for the reason the verdict block gives — a permission is
+ * somebody's call before it is an argument.
+ *
+ * EXPIRY AS AN INSTANT AND AS AN AGE. The ISO stamp is what a person acts on
+ * ("is that before or after the release?"); the age is what they feel. Neither
+ * alone is enough, and the pin rows already print both this way.
+ */
+const waiverLines = (pin: PinEntry, now: Date): readonly string[] => {
+  const waiver = pin.liveWaiver;
+  if (waiver === null) {
+    return [];
+  }
+  const granter =
+    waiver.grantedByName === ""
+      ? "a developer this hub did not name"
+      : bareUntrusted(waiver.grantedByName);
+  return [
+    `  WAIVED by ${granter} until ${waiver.expiresAt} (${untilOf(waiver.expiresAt, now)}) — this pin's conflict is not reported while the fence is open`,
+    `  their reason: ${
+      waiver.reason === ""
+        ? "no reason recorded"
+        : quotedBody(waiver.reason, MAX_WAIVER_REASON_CHARS)
+    }`,
+  ];
+};
+
 const pinLines = (pin: PinEntry, now: Date): readonly string[] => {
   const state =
     pin.brokeAt !== null
@@ -112,6 +164,7 @@ const pinLines = (pin: PinEntry, now: Date): readonly string[] => {
       ? ["  check: none recorded — this pin can never be falsified in 30 seconds"]
       : [`  check: ${quotedBody(pin.check, MAX_PIN_CHECK_CHARS)}`]),
     fileLine(pin),
+    ...waiverLines(pin, now),
   ];
 };
 

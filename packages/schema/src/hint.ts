@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { ClaimStatusSchema, ProvenanceSchema } from "./enums.ts";
+import {
+  ClaimStatusSchema,
+  DeliveryChannelSchema,
+  ProvenanceSchema,
+} from "./enums.ts";
 
 /** Hard cap for injected hint text — noise budget, DESIGN.md §4. */
 export const MAX_HINT_TEXT_LENGTH = 1200;
@@ -49,6 +53,16 @@ export const HintDeliverySchema = z.looseObject({
   sessionId: nonEmptyId,
   refKind: z.enum(HINT_REF_KINDS),
   refId: nonEmptyId,
+  /**
+   * WHICH SURFACE handed this ref over (07 §3.1).
+   *
+   * OPTIONAL AND DEFAULTED, the forward-compat shape `TargetSchema.source`
+   * already uses: a connector older than this spec sends no channel, and the
+   * honest reading of that is `unknown` rather than a rejected record. A
+   * required field here would make the hub refuse every delivery from an
+   * install nobody has upgraded yet — losing the very rows the pilot counts.
+   */
+  channel: DeliveryChannelSchema.default("unknown"),
   deliveredAt: z.iso.datetime(),
 });
 

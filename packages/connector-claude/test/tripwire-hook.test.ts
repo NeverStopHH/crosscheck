@@ -14,7 +14,14 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
+import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { readSpoolLines } from "@crosscheck/connector-core/spool/files.ts";
 import {
+  hintDeliveryId,
+  tripwireDeliveryId,
+} from "@crosscheck/connector-core/capture/records.ts";
+import {
+  CANDIDATE_CONTEXT_ID,
   CANDIDATE_INTENT,
   activeTeammateSession,
   startHintHub,
@@ -308,5 +315,103 @@ describe("the ask names the overlapping session's intent (trial finding #16)", (
     for (const line of reason.split("\n")) {
       expect(line.split("«").length - 1).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+/**
+ * THE ASK IS COUNTED (1.0 spec 07 §3.1). Proof 2 — collisions flagged before
+ * merge — reads the `tripwire` channel, and before this the ask was booked
+ * only in session state, which dies with the session and never reaches the
+ * hub; the trial found 104 of 127 sessions never closed, so the count was
+ * lost, not stored. The record is appended the moment the ask is CLAIMED,
+ * not by some later hook: a denied edit fires no PostToolUse, and a session
+ * that is simply closed fires nothing at all.
+ */
+describe("the ask is counted (07 §3.1)", () => {
+  const tripwireRecords = async (
+    home: string,
+    hubUrl: string,
+  ): Promise<readonly { id: string; channel: string; refId: string; sessionId: string }[]> =>
+    (await readSpoolLines(home, repoKey(hubUrl, REPO_ID)))
+      .map((line) => JSON.parse(line) as { kind: string; body: Record<string, string> })
+      .filter((record) => record.kind === "hint_delivery")
+      .map((record) => ({
+        id: record.body.id ?? "",
+        channel: record.body.channel ?? "",
+        refId: record.body.refId ?? "",
+        sessionId: record.body.sessionId ?? "",
+      }));
+
+  test("an ask is recorded as a delivery on the tripwire channel", async () => {
+    // Arrange
+    const { repo, home, hub, env } = await fixture("count");
+
+    // Act
+    await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+
+    // Assert — the teammate's work context, to this session, as a tripwire
+    expect(await tripwireRecords(home, hub.url)).toEqual([
+      {
+        id: tripwireDeliveryId(`cc_${SESSION_ID}`, CANDIDATE_CONTEXT_ID),
+        channel: "tripwire",
+        refId: CANDIDATE_CONTEXT_ID,
+        sessionId: `cc_${SESSION_ID}`,
+      },
+    ]);
+  });
+
+  test("notice mode is still a delivery — the model was told", async () => {
+    // Arrange
+    const { repo, home, hub, env } = await fixture("count-notice");
+
+    // Act
+    await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), {
+      ...env,
+      CROSSCHECK_TRIPWIRE: "notice",
+    });
+
+    // Assert
+    expect((await tripwireRecords(home, hub.url)).map((row) => row.channel)).toEqual([
+      "tripwire",
+    ]);
+  });
+
+  test("silence records nothing — no teammate, no delivery", async () => {
+    // Arrange
+    const { repo, home, hub, env } = await fixture("count-silent");
+    hub.setTripwireSessions([]);
+
+    // Act
+    await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+
+    // Assert
+    expect(await tripwireRecords(home, hub.url)).toEqual([]);
+  });
+
+  test("two files overlapping ONE teammate context are one collision", async () => {
+    // Arrange — the delivery id is (session, context), so the hub keeps one
+    // row however many of that context's files this session touched.
+    const { repo, home, hub, env } = await fixture("count-two-files");
+    await writeRepoFile(repo, "src/auth/rotate.ts", "export const b = 1;\n");
+
+    // Act
+    await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+    await runHook("pre-tool-use", editPayload(repo, "src/auth/rotate.ts"), env);
+
+    // Assert
+    const ids = new Set((await tripwireRecords(home, hub.url)).map((row) => row.id));
+    expect(ids.size).toBe(1);
+  });
+
+  test("a tripwire delivery never collides with a hint about the same context", () => {
+    // Arrange & Act — the same (session, context) pair on two channels. One
+    // id for both and the hub would keep whichever arrived first, and the
+    // channel split would lose the other one without a trace.
+    const session = `cc_${SESSION_ID}`;
+
+    // Assert
+    expect(tripwireDeliveryId(session, CANDIDATE_CONTEXT_ID)).not.toBe(
+      hintDeliveryId(session, CANDIDATE_CONTEXT_ID),
+    );
   });
 });

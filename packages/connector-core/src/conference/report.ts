@@ -57,6 +57,11 @@ import {
 } from "../constants.ts";
 import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
 import {
+  NO_AXES_FROM_HUB,
+  NO_AXES_READABLE,
+  axesLabel,
+} from "@crosscheck/schema";
+import {
   bareUntrusted,
   safeId,
   sanitizeUntrusted,
@@ -200,6 +205,12 @@ const evidenceLine = (
   const labels = [
     `${nameOf(claim.authorDeveloperName)} recorded ${bareUntrusted(claim.kind)} (${bareUntrusted(claim.status)})`,
     `confidence ${String(claim.confidence)}`,
+    // 08 §3.6, EV-5 — and VISION §2 makes this the surface where it matters
+    // most: the report is read at standup, where a number nobody measured
+    // persuades a room. The short label; ages already ride the line below.
+    claim.axes === undefined
+      ? NO_AXES_FROM_HUB
+      : axesLabel(claim.axes) || NO_AXES_READABLE,
     `provenance ${bareUntrusted(claim.provenance)}`,
     ...(age === null ? [] : [`${age} ago`]),
   ];

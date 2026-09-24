@@ -33,6 +33,11 @@ import {
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
 import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
+import {
+  NO_AXES_FROM_HUB,
+  NO_AXES_READABLE,
+  axesLabel,
+} from "@crosscheck/schema";
 import { bareUntrusted as bare, safeId } from "../briefing/sanitize.ts";
 import {
   CONFIDENCE_DECIMALS,
@@ -81,6 +86,18 @@ const claimLine = (claim: RefereeClaim): string =>
     bare(claim.kind),
     `status ${bare(claim.status)}`,
     `confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
+    // 08 §3.6 — the number never stands alone on a brief whose whole purpose
+    // is letting a reader CHECK a position rather than believe it.
+    //
+    // THE SHORT LABEL, though this is a pulled surface and the full clause
+    // would be allowed. This brief keeps every age in ONE place, its timeline
+    // section — `claimLine` takes no clock for exactly that reason — and a
+    // second time vocabulary on a claim line would read as a different fact
+    // about the same instant. The rung is what a reader needs beside the
+    // number; the when is downstairs.
+    ...(claim.axes === undefined
+      ? [NO_AXES_FROM_HUB]
+      : [axesLabel(claim.axes) || NO_AXES_READABLE]),
     // Trust label (DESIGN.md §4), bare like the hint renderer's: without it a
     // machine draft reads identically to a human-vouched declared claim.
     `provenance ${bare(claim.provenance)}`,
@@ -206,7 +223,13 @@ const timelineEntry = (
   const age = formatAge(now.getTime() - createdMs);
   return {
     line: `- ${age} ago · ${authorOf(claim)} · ${role} position ${label} · ${bare(claim.kind)} ${safeId(claim.id)}`,
-    sortKey: [claim.createdAt, claim.id, role, label].join(" "),
+    // JSON.stringify of the parts, not a separator character. A separator is
+    // a guess about what the parts cannot contain, and the guess here was a
+    // literal NUL — which made this whole MODULE grep as binary, so every
+    // `grep -r … packages/*/src` in the tree silently skipped it, including
+    // the guards that count render sites. A sort key needs to be unambiguous,
+    // not exotic.
+    sortKey: JSON.stringify([claim.createdAt, claim.id, role, label]),
   };
 };
 

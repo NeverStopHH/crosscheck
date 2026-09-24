@@ -2,6 +2,7 @@ import { PROTOCOL_VERSION } from "@crosscheck/schema";
 import type { Envelope, Intent } from "@crosscheck/schema";
 
 import { FOREIGN_SESSION_DELIVERY } from "./seq.ts";
+import type { DeliveryChannel } from "@crosscheck/schema";
 
 export interface Producer {
   readonly developerId: string;
@@ -65,39 +66,41 @@ export type TargetKind = "file" | "symbol" | "component" | "error_fingerprint";
 
 export type HintRefKind = "claim" | "work_context";
 
-/** 128 bits of SHA-256 — the id stays deterministic AND filename-short. */
-const HINT_DELIVERY_ID_HASH_CHARS = 32;
+/**
+ * DETERMINISTIC, from (receiving session, ref) — and derived in
+ * `@crosscheck/schema` (delivery-id.ts), because the hub now CHECKS the id it
+ * is sent against the same derivation. Re-exported under the names this module
+ * has always had, so no importer changes.
+ */
+export { hintDeliveryId, tripwireDeliveryId } from "@crosscheck/schema";
+import { deliveryIdFor } from "@crosscheck/schema";
 
 /**
- * DETERMINISTIC, from (receiving session, ref): the seen-set already
- * guarantees one delivery per ref per session, so this pair is unique — and a
- * spool replay of the same envelope re-sends the same primary key, which the
- * hub answers with `duplicate` instead of a second telemetry row.
+ * Delivery telemetry (DESIGN.md §4): refs only, never the rendered text.
+ *
+ * `channel` IS REQUIRED, AND THAT IS THE POINT (07 §3.1). The wire schema
+ * defaults it to `unknown` so a connector older than the column still parses
+ * — but a default HERE would let the next writer added to this codebase book
+ * its deliveries into the bucket that means "nobody can tell", silently, on
+ * the one surface whose whole purpose is being counted. Required makes the
+ * compiler ask.
  */
-export const hintDeliveryId = (
-  receiverSessionId: string,
-  refId: string,
-): string =>
-  `hd_${new Bun.CryptoHasher("sha256")
-    .update(`${receiverSessionId}\n${refId}`)
-    .digest("hex")
-    .slice(0, HINT_DELIVERY_ID_HASH_CHARS)}`;
-
-/** Delivery telemetry (DESIGN.md §4): refs only, never the rendered text. */
 export const hintDeliveryRecord = (
   receiverSessionId: string,
   refKind: HintRefKind,
   refId: string,
+  channel: DeliveryChannel,
   producer: Producer,
   now: Date,
 ): Envelope =>
   buildEnvelope(
     "hint_delivery",
     {
-      id: hintDeliveryId(receiverSessionId, refId),
+      id: deliveryIdFor(receiverSessionId, refId, channel),
       sessionId: receiverSessionId,
       refKind,
       refId,
+      channel,
       deliveredAt: now.toISOString(),
     },
     producer,

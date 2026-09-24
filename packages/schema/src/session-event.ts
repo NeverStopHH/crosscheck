@@ -141,10 +141,91 @@ export type SeqReason = (typeof SEQ_REASONS)[number];
  *         withdrawn before its first deploy — Nick's D-D, 2026-09-17 — rather
  *         than trusting a later spec to arrive inside its thirty days.
  *
- * Spec 01a's referential predicate is the next value; a connector that does
- * not know a declared mode says so rather than guessing at its meaning.
+ *   interim — spec 01a's referential sweep, with Nick's interim rule on top:
+ *         a session is retired whole only when it ENDED EXPLICITLY more than
+ *         the window ago, no declared root reaches it, nothing it touched is
+ *         unresolved — and it touched no file at all, until the file identity
+ *         has held against real pins and real touches.
+ *   full  — the same sweep without the last condition.
+ *
+ * A connector that does not know a declared mode says so rather than
+ * guessing at its meaning.
  */
-export const SESSION_EVENT_RETENTION_MODES = ["off"] as const;
+export const SESSION_EVENT_RETENTION_MODES = ["off", "interim", "full"] as const;
 
 export type SessionEventRetentionMode =
   (typeof SESSION_EVENT_RETENTION_MODES)[number];
+
+/**
+ * THE RETENTION ROOTS 01a DECLARES (§3.3b) — the relations whose rows keep a
+ * session's skeleton while they are live. A name on the wire, so `doctor` can
+ * say which root keeps how many sessions; the relation behind each name is
+ * the hub's (server services/retention-registry.ts).
+ */
+export const RETENTION_ROOT_NAMES = [
+  "claims",
+  "claim_edges",
+  "pins",
+  "intent_versions",
+  "pilot_sessions",
+  "pilot_attributions",
+] as const;
+
+export type RetentionRootName = (typeof RETENTION_ROOT_NAMES)[number];
+
+/**
+ * WHO OWES EACH ROOT'S LIVENESS RULE (01a §3.3b, §3.3c) — null where the
+ * owning feature has defined it. One map for the hub's registry and for the
+ * `doctor` sentence that names the owing spec, so the two cannot disagree.
+ * A root whose owner is named here keeps everything it reaches until that
+ * spec says when one of its rows stops being live.
+ */
+export const RETENTION_ROOT_LIVENESS_OWNER: Readonly<Record<RetentionRootName, string | null>> = {
+  claims: "02/04",
+  claim_edges: "02/04",
+  pins: null,
+  intent_versions: "06",
+  // 07 declared (§11.8); whether they retain at all is D-E, Nick's.
+  pilot_sessions: null,
+  pilot_attributions: null,
+};
+
+/** At most this many unresolved pin ids travel in the report; the count is always whole. */
+export const MAX_REPORTED_UNRESOLVED_PINS = 5;
+
+/**
+ * WHAT THE SWEEP KEEPS, AND WHY — the last COMPLETED cycle's own judgement
+ * (the sweep judges its candidates window by window and publishes each full
+ * cycle), over sessions past the retention window that still hold a
+ * skeleton. Hub-wide counts; the only ids are pins', which a person needs to
+ * find the pin. A session a second root also reaches is counted under each,
+ * and the unresolved and file-bearing counts overlap the roots too — none of
+ * these numbers is a partition, and none is summed.
+ */
+export interface SkeletonRetentionReport {
+  /** How long after its explicit end a session may first be considered — the hub's own number. */
+  readonly windowDays: number;
+  /** Declared roots whose table is not built; while any is, nothing is swept. */
+  readonly heldBy: readonly RetentionRootName[];
+  /** ISO: when the last full cycle over this hub's sessions completed; null before the first. */
+  readonly completedAt: string | null;
+  /** ISO: when any pass last ran since this hub started; null if none has. */
+  readonly lastPassAt: string | null;
+  /** Explicitly ended sessions past the window that the cycle judged. */
+  readonly aged: number;
+  /** Of those, how many the cycle retired. */
+  readonly swept: number;
+  readonly keptBy: readonly { readonly root: RetentionRootName; readonly sessions: number }[];
+  /** Kept because a file identity on either side could not be resolved (§3.3e). */
+  readonly unresolved: number;
+  /** Carrying a file touch — what the interim mode holds back, and full does not. */
+  readonly fileBearing: number;
+  /** Reaped past the window: never swept while the end is only inferred (§3.3a). */
+  readonly reapedAwaitingEnd: number;
+  /** Pins whose history holds a NULL, whose file is missing, or which have none yet. */
+  readonly unresolvedPins: number;
+  /** The first MAX_REPORTED_UNRESOLVED_PINS of them, by id. */
+  readonly unresolvedPinIds: readonly string[];
+  /** Sweep passes that failed in a row up to the last pass; a successful pass resets it. */
+  readonly sweepFailures: number;
+}

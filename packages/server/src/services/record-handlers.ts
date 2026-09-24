@@ -16,6 +16,8 @@ import type {
   WorkContext,
 } from "@crosscheck/schema";
 
+import { canonicalRepoPath } from "@crosscheck/schema";
+
 import { EVENT_KINDS } from "../constants.ts";
 import {
   agentSessions,
@@ -28,6 +30,7 @@ import {
 import { appendEvent } from "./events.ts";
 import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
+import { touchFileRef } from "./skeleton-identity.ts";
 import {
   recordSessionEvent,
   targetDigest,
@@ -176,12 +179,14 @@ const resolveWorkContextOwner = async (
   db: DbExecutor,
   workContextId: string,
 ): Promise<
-  { readonly developerId: string; readonly sessionId: string } | undefined
+  | { readonly developerId: string; readonly sessionId: string; readonly repo: string }
+  | undefined
 > => {
   const rows = await db
     .select({
       developerId: agentSessions.developerId,
       sessionId: workContexts.sessionId,
+      repo: agentSessions.repo,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -586,6 +591,12 @@ export const seqKindFor = (
     ? "emitted"
     : "observed";
 
+/** A file target's value in its one spelling, or as sent when it has none (01a §3.3d). */
+const canonicalFileValue = (raw: string): string => {
+  const canonical = canonicalRepoPath(raw);
+  return canonical.ok ? canonical.path : raw;
+};
+
 export const ingestTarget = async (
   deps: Deps,
   developerId: string,
@@ -604,6 +615,13 @@ export const ingestTarget = async (
     );
   }
   const source = body.source;
+  // ONE SPELLING PER FILE (01a §3.3d). `suspect` and the retention graph join
+  // a pin to a touch by exact string, so a connector that sent `./src/x.ts`
+  // would otherwise be a touch no pin ever meets — an exoneration produced by
+  // a spelling. A value that cannot be made canonical is KEPT as sent: a
+  // touch is evidence, and dropping it would be deciding the question it
+  // exists to answer.
+  const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;
   const eventKind = TARGET_EVENT_KINDS[body.kind as keyof typeof TARGET_EVENT_KINDS];
   /**
    * PROJECTED ON BOTH BRANCHES, accepted AND duplicate. The git lane's
@@ -623,7 +641,12 @@ export const ingestTarget = async (
       seq,
       seqKind: seqKindFor(source, seq),
       refKind: "target_digest",
-      refId: targetDigest(body.workContextId, body.kind, body.value),
+      refId: targetDigest(body.workContextId, body.kind, value),
+      workContextId: body.workContextId,
+      // THE FILE, in the identity a pin's history is written in (01a §3.3d):
+      // the SESSION's repo and the canonical path, computed here on the hub
+      // so two developers' connectors cannot disagree about it.
+      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),
     });
   };
   const inserted = await deps.db
@@ -631,7 +654,7 @@ export const ingestTarget = async (
     .values({
       workContextId: body.workContextId,
       kind: body.kind,
-      value: body.value,
+      value,
       source,
       // First-seen age for the targets-only pointer (#19). onConflictDoNothing
       // below means a duplicate touch never bumps it — the honest age.
@@ -653,7 +676,7 @@ export const ingestTarget = async (
         and(
           eq(workContextTargets.workContextId, body.workContextId),
           eq(workContextTargets.kind, body.kind),
-          eq(workContextTargets.value, body.value),
+          eq(workContextTargets.value, value),
           sql`${workContextTargets.source} NOT IN (${source}, 'both')`,
         ),
       );
@@ -893,6 +916,17 @@ export const ingestClaimWithin = async (
       captureMode: body.captureMode,
       provenance: body.provenance,
       evidenceRefs: body.evidenceRefs,
+      // STORED WITHOUT BEING RESOLVED (1.0 spec 08 §3.4), for the reason
+      // evidenceRefs are: the row it points at — a work_context_targets
+      // fingerprint or a ci_test_results row — may arrive LATER IN THIS SAME
+      // FLUSH, so checking it here would reject correct records purely for the
+      // order their batch happened to be in. Whether it resolves is a read-time
+      // question that is allowed to answer no (`ref_unresolved`).
+      //
+      // `?? null` rather than leaving it undefined: absent on the wire means
+      // `no_verification_ref`, a real answer about this claim, and the column
+      // is where that answer lives.
+      verificationRef: body.verificationRef ?? null,
       observedAtCommit: binding.observedAtCommit,
       commitBinding: binding.commitBinding,
       embedding: claimVector === null ? null : [...claimVector],
@@ -962,6 +996,7 @@ export const ingestClaimWithin = async (
     seqKind: body.provenance === "derived" ? "observed" : "emitted",
     refKind: "claim",
     refId: body.id,
+    workContextId: body.workContextId,
   });
   return accepted(body.id);
 };
@@ -1055,7 +1090,11 @@ export const ingestClaimEdge = async (
   }
   const endpointIds = [body.fromClaimId, body.toClaimId];
   const found = await deps.db
-    .select({ id: claims.id, ownerId: agentSessions.developerId })
+    .select({
+      id: claims.id,
+      ownerId: agentSessions.developerId,
+      workContextId: claims.workContextId,
+    })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .where(inArray(claims.id, endpointIds));
@@ -1100,6 +1139,7 @@ export const ingestClaimEdge = async (
     developerId,
   });
   if (INVALIDATING_EDGE_KINDS.has(body.kind)) {
+    const invalidatingContext = found.find((row) => row.id === body.fromClaimId)?.workContextId;
     await recordSessionEvent(deps, {
       sessionId: body.authorSessionId,
       kind: "claim.invalidated",
@@ -1107,6 +1147,10 @@ export const ingestClaimEdge = async (
       seqKind: "emitted",
       refKind: "claim_edge",
       refId: body.id,
+      // An edge has no work context of its own; the row takes the
+      // INVALIDATING claim's — the `from` side, the assertion this session
+      // made (01a §3.2). services/skeleton-identity.ts backfills the same way.
+      ...(invalidatingContext === undefined ? {} : { workContextId: invalidatingContext }),
     });
   }
   return accepted(body.id);

@@ -1404,3 +1404,112 @@ describe("renderSearchFilterRefusal", () => {
     }
   });
 });
+
+describe("the evidence axes on a rendered tree (08 §5)", () => {
+  test("the clause lands beside the confidence it qualifies", () => {
+    // Arrange
+    const tree = diagnosis({
+      claims: [
+        claim({
+          axes: {
+            who: "agent_derived",
+            support: "repository_verified",
+            supportReason: "red_then_green",
+            observedAt: "2026-08-11T09:00:00.000Z",
+            verifiedAtCommit: "e4f5a6b1c2d3",
+          },
+        }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert — on the CLAIM's own line, so the fitter cannot separate the
+    // qualifier from the body it qualifies: this section drops claim lines
+    // whole.
+    const line = rendered
+      .split("\n")
+      .find((row) => row.includes("clm_01") && row.includes("confidence"));
+    expect(line).toBeDefined();
+    expect(line).toContain("an agent recorded this");
+    expect(line).toContain("it failed before and passes now");
+    expect(line).toContain("e4f5a6b");
+  });
+
+  test("a hub that sends no axes says so, rather than going quiet", () => {
+    // Arrange — a hub older than 08 omits the field entirely.
+    const tree = diagnosis({ claims: [claim()] });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert — SILENCE WOULD BE THE BUG. 08 §3.6 names `confidence 0.80`
+    // standing alone as the failure mode: two decimals read as a measurement,
+    // and the clause is what lets a reader discount them. So the missing
+    // hedge is announced, never merely omitted — and the sentence names the
+    // remedy, which is upgrading the hub.
+    expect(rendered).toContain("clm_01");
+    expect(rendered).not.toContain("an agent recorded this");
+    expect(rendered).toContain("no evidence label (this hub does not report one)");
+  });
+
+  test("a claim with nothing behind it says so, out loud", () => {
+    // Arrange — the state of every claim written before 08.
+    const tree = diagnosis({
+      claims: [
+        claim({
+          axes: {
+            who: "agent_derived",
+            support: "unsupported",
+            supportReason: "no_verification_ref",
+            observedAt: null,
+            verifiedAtCommit: null,
+          },
+        }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert — the weak rung is the one that MUST print. A reader who sees a
+    // confidence and no evidence label fills the gap themselves, upward.
+    expect(rendered).toContain("no check was attached to it");
+  });
+
+  test("a rung this build cannot name loses the clause, not the claim", () => {
+    // Arrange — a newer hub sends a reason this version never heard of. It
+    // reaches the renderer only if something upstream skipped the schema, so
+    // this pins the renderer's own half of the fail-closed rule.
+    const tree = diagnosis({
+      claims: [
+        claim({
+          axes: {
+            who: "agent_derived",
+            support: "tool_observed",
+            supportReason:
+              "quantum_verified" as DiagnosisClaim["axes"] extends undefined
+                ? never
+                : NonNullable<DiagnosisClaim["axes"]>["supportReason"],
+            observedAt: null,
+            verifiedAtCommit: null,
+          },
+        }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert — the claim still renders, the unknown member's bytes never do,
+    // and the reader is told which upgrade fixes it. A DIFFERENT sentence
+    // from the old-hub one on purpose: one is a hub to upgrade, the other a
+    // CLI, and a single "no label" would send the reader to the wrong one.
+    expect(rendered).toContain("clm_01");
+    expect(rendered).not.toContain("quantum_verified");
+    expect(rendered).toContain(
+      "no evidence label (this crosscheck cannot read the one sent)",
+    );
+  });
+});

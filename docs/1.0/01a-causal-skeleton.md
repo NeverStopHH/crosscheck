@@ -7,7 +7,10 @@ whether two events may be compared, 06 supplies what is compared, and this spec 
 **Written against** `main@390849d` with **#53 (`feat/session-event-order`) assumed merged**. A position on that branch carries
 the `event-order:` prefix and one on #52 the `coverage:` prefix, following the convention 00 §9.4a set for #50.
 `main@390849d` already contains #50 and #49, so a bare line number here is post-#50 main — not the pre-#50 main the rest of
-the set binds to. **Built after 06** (§9): the sweep, the attestation and three tests need 06's ledger. Nothing here is built.
+the set binds to. **Built after 06** (§9): the sweep, the attestation and three tests need 06's ledger. **First build 2026-09-24**
+(PR #62): the pin door, the skeleton's identity columns with the pin history, and the registry with the generated
+sweep, shipped in the `interim` mode. The attestation (§3.5), the declared guarantees (§3.6, §3.7) and the redaction
+mechanism (§3.4) are not built; §12 records what the build decided and why `full` is not sound yet.
 
 **Revisions 3 and 4, 2026-09-17.** Two adversarial reviews, 47 findings then 36. Revision 3 moved the unit of retention from
 the row to the session, after the review showed that deleting part of a session can turn a `broken` causal order into
@@ -1017,3 +1020,136 @@ author against the code — not independently verified.
 | LOW: "ten mutation anchors", seventeen defined | low | §9 (one anchor per CSK) |
 | LOW: post-#50 main against the set's pre-#50 binding | low | header |
 | LOW: both pointers still say "retention by relevance" | low | README table, 01 §10 |
+
+---
+
+## 12. What the build decided (first build, 2026-09-24)
+
+The build lands in three commits on `feat/causal-skeleton`: the pin door (§3.3d), the skeleton's identity
+columns with the pin history (§3.2, §3.3d, §4.1, §4.3), and the registry with the generated sweep (§3.3,
+§5, §6). The declared causal guarantees (§3.6, §3.7), the Causal Attestation Record (§3.5) and the content
+redaction mechanism (§3.4) are **not** in it; §12.6 lists what that leaves open.
+
+**12.1 — The door resolves through git, and the suggestion comes from git too.** `crosscheck pin` asks
+`git --literal-pathspecs ls-files -z --full-name` whether it tracks exactly the typed path; a path it does
+not is refused with its reason and no pin is created. When the person stood in a subdirectory, the refusal
+offers the repo-relative spelling git tracks — offered, never stored. A path git tracks both from the root and from where the person stands is refused as `ambiguous`, naming both, and a submodule is refused as not being a file. The spelling is resolved from
+`git rev-parse --show-prefix`, not from path arithmetic: git reports the real root and the shell stands
+wherever the person `cd`-ed, so across a symlink (every macOS temp dir) `relative()` read `../../..`. The
+hub's pin route still accepts any canonical path — only the CLI can ask git, and the CLI is the only
+writer of pins.
+
+**12.2 — `pin_file_refs` carries its reason, and a legacy renamed pin is unresolved.** The table has an
+`unresolved_reason` column beside the NULL `file_ref` (`path_not_canonical`, `rename_history_unrecorded`),
+held to one NULL per pin by a partial unique index. On every start the seed checks every file of every pin
+and writes any identity the history lacks — a partial history is not a resolved one — and a pin with no
+history at all that was ever renamed (`renamed_paths > 0`) also gets the NULL marker: the names it watched before the rename were deleted from `pin_files` by the sweep that renamed them,
+so the sessions that touched them cannot be found from anything the hub holds. That is §3.3e's unresolved,
+and it freezes the repo's file-bearing sessions for as long as the pin exists — nothing in 1.0 clears a
+history that lost a name, and `doctor` names the pin so the cost is visible.
+
+**12.3 — A pin with no history at all is unresolved too.** Every pin created since this build writes its
+history in the same transaction as its files, so "no history" means "not seeded yet". The sweep's
+unresolved clause includes it, which makes the order of deploy, seed and sweep irrelevant. A rename records the
+name it leaves as well as the one it takes, so a rename before the seed loses nothing either.
+
+**12.4 — The sweep judges a window per pass, runs on the timer only, and the hub ships `interim`.** A kept
+session stays a candidate for good, and in `interim` nearly every session is kept, so a pass bounded only by
+what it deletes would grow with everything the hub has ever decided to keep — on a database that serves one
+statement at a time, with every hook waiting behind it. Each pass therefore judges the next
+`SESSION_EVENT_SWEEP_WINDOW` (250) candidates after a cursor, oldest end first, evaluates every root and the
+unresolved clause for each, deletes the eligible and tombstones them, and wraps; every session is judged
+again once per cycle. The same judgement is tallied, and each completed cycle is published as the report
+`doctor` reads, so the report costs a request nothing (0.4 ms) and its numbers are the deleting statement's
+own. The pass runs from `reapStaleSessions` only when that pass is the hub's own timer (no developer id),
+never on a SessionStart request. Measured by `packages/server/scripts/measure-skeleton-sweep.ts` at 400 000
+rows over 20 000 aged sessions, half of every session's rows file touches, 200 pins, a third kept by a
+claim: 67 ms median per pass in `interim`, 71 ms in `full` (500 took 141 ms, twice the stall). A cycle over
+20 000 sessions is 81 passes, about 20 hours at one pass per 15 minutes. `SESSION_EVENT_RETENTION =
+"interim"` (Nick's interim rule): no file-bearing session is swept. Moving to `full` is a person's decision,
+and today it would not be sound — §12.8.
+
+**12.5 — The registry's liveness, as built.** `claims`, `claim_edges` (02/04) and `work_context_intents`
+(06) are `undefined_pending_spec`: they keep everything they reach, and `doctor` names the owing spec.
+`pins` is `while_exists`. **07's two relations are registered as `root` / `while_exists`, not as the
+`non_retaining_edge` 07 §11.8 declares** — that declaration is D-E, for Nick to confirm, and until he does
+the only reversible reading is the one that keeps. 07 names this exact alternative ("safe and wasteful —
+nothing breaks"). Confirming D-E is a two-entry change in `services/retention-registry.ts`, and CSK-22's
+Record over root names moves the test with it. A swept session also needs one guard the SQL of §3.3g did
+not show: `EXISTS (… session_events …)`, because `agent_sessions` rows are never removed and already-swept
+sessions would otherwise fill every later pass's limit.
+
+**12.6 — Not built, and what that means.**
+- **§3.5 attestation, CSK-4/5/6/24.** Nothing freezes a timing answer, so once a session is swept its
+  timing is gone. In `interim` that loses nothing 06 can answer — an intent version is a root — but it must
+  land before any policy removes skeletons that a root still reaches.
+- **§3.6/§3.7 declared guarantees, CSK-7/8/9/27.** No connector declares; the coverage record carries no
+  `order`. Nothing reads a guarantee yet, so nothing over-claims — and nothing tells a reader either.
+- **§3.4 redaction.** No `content_expired_at` column exists; D-A's default (no content expiry in 1.0)
+  means nothing needs it yet. CSK-10 is built for the skeleton tables that exist (`session_events`,
+  `pin_file_refs`, with markers in a claim body, a work context, a target path and a pin); the attestation
+  and guarantee tables join it when they are built.
+- **CSK-2, CSK-13, CSK-19 (a).** CSK-2 needs the attestation fallback; CSK-13's ambiguity table needs the
+  attestation and guarantee inputs; no root has a declared liveness predicate, so (a) has no case.
+
+**12.7 — What two adversarial reviews of the build changed.** Both ran read-only against the build before
+the pull request, one on data loss and one on honesty, migration and scale. Neither found a path that
+deletes in `interim`. Every fix below carries a mutation anchor.
+
+- **The sweep's cost grew with everything it kept** (HIGH), and **the doctor report ran eleven hub-wide
+  counts inside a request with a 400 ms client timeout** (HIGH) — past a few thousand sessions `doctor`
+  would have printed "not measured" exactly while the hub was deleting. Now: the windowed cycle of §12.4,
+  and the report is the published cycle.
+- **`doctor` told people to "repair or retire" pins** (HIGH): 1.0 has no retire, and a pin whose history
+  lost a name can never be repaired. The line now names the pins by id and says what `crosscheck pin
+  --sweep` can clear and what nothing in 1.0 can.
+- **A record that arrives after the sweep rebuilt part of a skeleton** (MEDIUM, shipping mode): a successor
+  may flush a claim an ended session authored, and one row alone reads as a `usable` order. The sweep now
+  tombstones what it retires (`agent_sessions.skeleton_retired_at`, in the same statement), and every
+  projection is one conditional insert that writes nothing into a retired session.
+- **A reaped session's own SessionEnd was dropped** (MEDIUM): `endSession` answered "ended" and discarded
+  it, so an idle session stayed reaped for ever, never explicitly ended, never sweepable. A reported end now
+  replaces the inferred one.
+- **The report ignored the mode** (MEDIUM), **the pin door silently pinned the root file from a monorepo
+  subdirectory** (MEDIUM; now refused as `ambiguous`, naming both), **a partial pin history read as
+  resolved** (MEDIUM; the seed now checks every file of every pin, and a rename records the name it
+  leaves), **a sweep ledger shared by every hub in a process** (found by the full suite; now per database).
+- **LOW:** one unusable repo string made the backfill throw on every start (now `repo_not_canonical`);
+  CSK-12 saw only one spelling of a foreign key (now five, and a `not_built` root may name a table that does
+  not exist yet); a submodule passed the door as a file (now refused); a newer hub's report, unreadable in
+  part, hid a held sweep (the WARN facts are read on their own); the window in the mode sentence was
+  compiled into the CLI (it now comes from the hub); `session_events_file_ref_idx` is partial.
+
+**12.7a — What a third, verifying review of those fixes changed.** An independent verifier re-read the
+rewrite with probes and found no path to a deletion in `interim`; it confirmed the cursor across time zones,
+microsecond ties and window sizes, the one-statement snapshot, and that reaped sessions are never touched. It
+reproduced four reports that told a person something false, all fixed with anchors: a SessionEnd after a reap
+put a second end in `/api/events` and, without a position, was swallowed by the reaper's row (the ledger now
+records the disproven reap as a start, and the reaper's inferred `session.ended` row gives way to the reported
+one); one failed pass made `doctor` WARN for the life of the process (the count is now consecutive); the pin
+remedy `doctor` printed does not work for a pin recorded broken (it now says exactly what clears what); and
+mode `off` recorded passes that never ran. A path inside a submodule is refused as a submodule, and retired
+sessions leave the candidate index. The start-up backfill now walks keyset pages of 500 instead of one UPDATE
+over the whole table (so no hook waits behind it), and vacuums `session_events` once when it wrote anything,
+because PGlite runs no autovacuum and every UPDATE leaves a dead row version.
+
+**12.8 — Why `full` is not sound yet, named rather than discovered.** Its proof that "no pin references
+this session" rests on four things the data-loss review found stale or unverified; each must be closed
+before a person switches a hub to `full`, whatever CSK-15 and CSK-20 say:
+
+1. `pin_files.status` is refreshed only when a person runs `crosscheck pin --sweep`, and never for a pin
+   recorded broken — a file renamed in git leaves the pin `present` and matching nothing until then.
+2. Pins stored by an older CLI or the raw route, and every legacy pin the seed resolves, never passed the
+   git door.
+3. The touch side is canonicalised but not resolved through git: case on a case-insensitive disk, a tracked
+   symlinked directory, a non-ASCII path the git lane reads C-quoted.
+4. The repo identity on each side is computed on each machine, and fails open.
+5. Pins renamed between the rename sweep's first release and the `renamed_paths` counter (2026-08-30 to
+   09-02) carry no count, so the seed cannot give them the marker their lost names deserve.
+
+**Still open in `interim`:** a swept session reads
+`unsequenced / pre_seq_connector` rather than "retired"; the interim rule reads "touched a file" from
+projections alone, so a session whose touch was never projected is sweepable (it has no position to lose);
+the counts are hub-wide on a route every developer reads; and the cycle's cursor lives in memory, so a hub
+that restarts more often than one cycle takes (candidates ÷ 250 × 15 minutes) never judges its newest
+candidates — `doctor` then keeps saying the sweep has not finished a cycle, which is true.

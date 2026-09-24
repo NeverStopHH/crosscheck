@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 
 import {
+  bigint,
   bigserial,
   boolean,
   check,
@@ -23,6 +24,7 @@ import {
   CI_RERUN_KINDS,
   CI_RUN_OUTCOMES,
   CI_TEST_STATUSES,
+  CLAIM_CAPTURE_MODES,
   CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
   CLAIM_REVALIDATION_BASES,
@@ -38,17 +40,27 @@ import {
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
+  MAX_VERIFICATION_REF_CHARS,
+  DELIVERY_CHANNELS,
+  PILOT_END_REASONS,
+  PILOT_MARKS,
+  PILOT_MARK_REF_KINDS,
+  PIN_FILE_REF_UNRESOLVED_REASONS,
   PIN_FILE_STATUSES,
   PROVENANCES,
   QUESTION_STATUSES,
   SEQ_KINDS,
+  SUSPECT_FALSIFIER_KINDS,
+  SUSPECT_OUTCOMES,
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
   SESSION_STATUSES,
   STORED_TARGET_SOURCES,
   TARGET_KINDS,
   TEAM_PIN_POLICIES,
+  MAX_WAIVER_REASON_CHARS,
   TEAM_SUSPECT_ATTRIBUTIONS,
+  WAIVER_KINDS,
 } from "@crosscheck/schema";
 
 const timestamptz = (name: string) =>
@@ -166,10 +178,19 @@ export const agentSessions = pgTable(
      * disprove it (a record from the session) arrives after the write.
      */
     reapedAt: timestamptz("reaped_at"),
+    /**
+     * WHEN THE SWEEP RETIRED THIS SESSION'S SKELETON (01a §3.3g) — the
+     * tombstone every later projection reads, and then writes nothing.
+     */
+    skeletonRetiredAt: timestamptz("skeleton_retired_at"),
   },
   (table) => [
     index("agent_sessions_repo_idx").on(table.repo),
     index("agent_sessions_heartbeat_idx").on(table.lastHeartbeatAt),
+    // The skeleton sweep's candidates, in cursor order (01a §3.3g).
+    index("agent_sessions_ended_idx")
+      .on(table.endedAt, table.id)
+      .where(sql`${table.endedAt} IS NOT NULL AND ${table.skeletonRetiredAt} IS NULL`),
     // `GET /api/search?developer=…` (roadmap R1) filters inside every tier
     // query, and each of them joins work_contexts to this table. developer_id
     // is a foreign key, which Postgres does not index on its own, so the
@@ -283,7 +304,15 @@ export const claims = pgTable(
     body: text("body").notNull(),
     status: text("status", { enum: CLAIM_STATUSES }).notNull(),
     confidence: doublePrecision("confidence").notNull(),
-    captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
+    /**
+     * `CLAIM_CAPTURE_MODES`, not `CAPTURE_MODES`: a claim's vocabulary cannot
+     * say `human` (1.0 spec 08 §3.2a), while a PIN's can say nothing else
+     * (`:647` below keeps the full set). Narrowing the stored type as well as
+     * the wire one is not belt-and-braces — it is what stops a reader of this
+     * table from writing a branch for a value the boundary can no longer
+     * deliver. The column stays `text` with no SQL CHECK, so this emits no DDL.
+     */
+    captureMode: text("capture_mode", { enum: CLAIM_CAPTURE_MODES }).notNull(),
     provenance: text("provenance", { enum: PROVENANCES }).notNull(),
     dedupCount: integer("dedup_count").notNull().default(1),
     lastSeenAt: timestamptz("last_seen_at"),
@@ -319,12 +348,37 @@ export const claims = pgTable(
     /** Null until an embedder is configured; written once at ingest (append-only). */
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     embeddingModel: text("embedding_model"),
+    /**
+     * ONE POINTER AT A MACHINE-PRODUCED OBSERVATION (1.0 spec 08 §3.4) —
+     * `"<kind>:<value>"`, and the ONLY column 08 adds.
+     *
+     * NULLABLE, and null is a real answer rather than a gap: it resolves to
+     * `unsupported` / `no_verification_ref`. Every claim written before 08
+     * has it, which is why §4 needs no backfill — "nobody attached a check"
+     * is the truth about those rows, not a default standing in for one.
+     *
+     * WRITTEN ONCE AT INGEST AND NEVER UPDATED, so append-only survives
+     * (`hints.ts:68-70`). What changes over months is the DERIVATION in front
+     * of it: the same pointer reads `repository_verified` today and
+     * `tool_observed` / `pruned_by_retention` after CI_RETENTION_DAYS, because
+     * the axes are derived fresh per read and the world around the check moved.
+     */
+    verificationRef: text("verification_ref"),
     createdAt: timestamptz("created_at").notNull(),
   },
   (table) => [
     check(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+    // The bound is the WIRE's bound, reaching the store — the shape
+    // claims_body_length_check uses. It matters here for the same reason it
+    // does there: the schema cap alone is a promise about one code path, and
+    // a row can reach this table from a replay, a migration or a future
+    // writer that never passed through it.
+    check(
+      "claims_verification_ref_length_check",
+      sql`char_length(${table.verificationRef}) <= ${sql.raw(String(MAX_VERIFICATION_REF_CHARS))}`,
     ),
     // "No commit means no binding" as a DATABASE fact, the shape
     // questions_addressee_check uses. Without it the two columns can
@@ -342,6 +396,8 @@ export const claims = pgTable(
     // re-reads a context's claims inside EVERY ingest transaction. Without
     // it each of those is a scan of every claim on the hub. Mirrored in
     // db/bootstrap.sql.
+    // The claims root's probe, once per candidate session (01a §3.3g).
+    index("claims_author_session_idx").on(table.authorSessionId),
     index("claims_work_context_created_idx").on(
       table.workContextId,
       table.createdAt.desc(),
@@ -381,6 +437,8 @@ export const claimEdges = pgTable(
     // Serves the hints path's "is this claim a supersedes target" probe —
     // the unique index leads on from_claim_id and cannot.
     index("claim_edges_to_kind_idx").on(table.toClaimId, table.kind),
+    // The claim-edge root's probe, once per candidate session (01a §3.3g).
+    index("claim_edges_author_session_idx").on(table.authorSessionId),
   ],
 );
 
@@ -470,6 +528,18 @@ export const hintDeliveries = pgTable("hint_deliveries", {
     .references(() => agentSessions.id),
   refKind: text("ref_kind", { enum: ["claim", "work_context"] }).notNull(),
   refId: text("ref_id").notNull(),
+  /**
+   * WHICH SURFACE handed this ref over (07 §3.1) — the split every pilot
+   * proof needs, because `delivered / pulled` over a briefing and a
+   * mid-prompt hint is one number about two incomparable things.
+   *
+   * DEFAULT 'unknown' AND NEVER BACK-FILLED. Two writers existed before this
+   * column and a stored row cannot be attributed to either; guessing would
+   * manufacture the measurement this table exists to take.
+   */
+  channel: text("channel", { enum: DELIVERY_CHANNELS })
+    .notNull()
+    .default("unknown"),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
 }, (table) => [
@@ -649,6 +719,16 @@ export const pins = pgTable(
     brokeAt: timestamptz("broke_at"),
     brokeBy: text("broke_by").references(() => developers.id),
     /**
+     * WHERE THE BREAK WAS OBSERVED (07 §3.4, corrected): the reader's HEAD when
+     * they recorded the check failing. Proof 3's fix range runs from HERE to
+     * the repair's commit, so it holds the fix and not the break — from the
+     * last-working commit instead, the range contained the breaking change
+     * itself, and every session that touched the pinned file scored a hit.
+     * NULL for a break recorded before this column existed: counted, never
+     * scored.
+     */
+    brokeAtCommit: text("broke_at_commit"),
+    /**
      * WHAT A SWEEP REWROTE. A sweep moves the paths a pin watches, and those
      * paths are what `suspect` intersects — so a rewrite silently changes
      * which sessions an answer names. Recorded rather than refused: `anyone
@@ -658,6 +738,45 @@ export const pins = pgTable(
     renamedPaths: integer("renamed_paths").notNull().default(0),
     renamedAt: timestamptz("renamed_at"),
     renamedBy: text("renamed_by").references(() => developers.id),
+    /**
+     * WHICH VERSION OF THIS INVARIANT (1.0 spec 04 §3.5) — the one field the
+     * cut line names that #50's tables did not already carry.
+     *
+     * A waiver is granted against a VERSION, not against a pin. Without this
+     * column a sweep could move the paths a pin watches while old waivers went
+     * on covering them: a silent widening of what a human agreed to, which an
+     * agent could cause on purpose by renaming a file.
+     *
+     * `applyPinSweep` bumps it ONCE PER SWEEP, BEFORE the first path moves.
+     * The sweep is not transactional, so the question is which failure costs
+     * the smaller lie. Bump-first: a crash orphans that pin's waivers, the
+     * verdict falls back to PROTECTED_CONFLICT and a human re-grants.
+     * Bump-last: a crash leaves paths moved while old waivers still cover
+     * them. The first is a nuisance, the second is the silent widening.
+     */
+    version: integer("version").notNull().default(1),
+    /**
+     * WHICH BROKEN PIN THIS ONE REPAIRS (1.0 spec 07 §3.4), and at which
+     * version of that invariant.
+     *
+     * A self-FK set by `crosscheck pin "<surface>"` when a broken pin already exists
+     * for the same `(repo, surface)` — LOOKED UP, never asked. Proof 3 asks
+     * whether the fix touched what the attribution answer named, and without
+     * a link from the repair back to the break there is nothing to compare.
+     *
+     * THE VERSION IS THE SECOND HALF, and it closes an ambiguity neither
+     * spec had noticed on its own. 04 bumps `version` inside `applyPinSweep`,
+     * so a repair recorded AFTER a sweep would point at a pin whose watched
+     * file set had silently become a different one — "the invariant" having
+     * changed in between. Recording which version was repaired is what keeps
+     * a repair-after-rename from being ambiguous by construction.
+     *
+     * Both nullable: nothing is repaired retroactively, so proof 3's
+     * denominator starts at the first repair after this lands, and a pin that
+     * repairs nothing carries two nulls rather than a sentinel.
+     */
+    repairsPinId: text("repairs_pin_id"),
+    repairsPinVersion: integer("repairs_pin_version"),
     createdAt: timestamptz("created_at").notNull(),
   },
   (table) => [
@@ -765,6 +884,26 @@ export const sessionEvents = pgTable(
     refKind: text("ref_kind", { enum: EVENT_REF_KINDS }).notNull(),
     refId: text("ref_id").notNull(),
     observedAt: timestamptz("observed_at").notNull(),
+    /**
+     * WHICH VENDOR (01a §3.2), copied from `agent_sessions.agent_kind` at
+     * write. One value per session, so the copy is exact — and the skeleton
+     * answers the question without a join through the session row.
+     */
+    provider: text("provider"),
+    /**
+     * THE WORK CONTEXT OF THE RECORD THIS ROW PROJECTS (01a §3.2) — never
+     * derived from the session, because a session has no one work context:
+     * `work_contexts.session_id` is not unique, and `extend_diagnosis` files a
+     * claim into another session's context. NULL on the session-level kinds.
+     */
+    workContextId: text("work_context_id"),
+    /**
+     * THE FILE (01a §3.3d): `fileRef(session repo, canonical path)`, on
+     * `file.modified` rows only — the one value a pin's history
+     * (`pin_file_refs`) is joined to. NULL on a `file.modified` row means
+     * UNRESOLVED (§3.3e), and the retention sweep keeps its whole session.
+     */
+    fileRef: text("file_ref"),
   },
   (table) => [
     // A POSITION IS TAKEN ONCE. A second event claiming a position this
@@ -784,6 +923,46 @@ export const sessionEvents = pgTable(
     // revisits its key — and without this index that sweep would scan every
     // event on the hub every pass.
     index("session_events_observed_at_idx").on(table.observedAt),
+    // The pin root's join (01a §3.3g): a pinned file's history against the
+    // touches that carry the same identity.
+    index("session_events_file_ref_idx")
+      .on(table.fileRef)
+      .where(sql`${table.fileRef} IS NOT NULL`),
+  ],
+);
+
+/**
+ * EVERY FILE IDENTITY A PIN HAS EVER WATCHED (01a §3.3d) — append-only, and
+ * the reason a pin means the LOGICAL file. The pin sweep follows a rename by
+ * inserting the new `pin_files` row and deleting the old one, so a retention
+ * graph that read `pin_files` alone would sever the pin from every session
+ * that touched the file under its old name: the history of the very change
+ * that renamed it. So each write to `pin_files` also writes here, and nothing
+ * removes a row here while its pin exists.
+ *
+ * A NULL `file_ref` is UNRESOLVED (§3.3e), with its reason: it never matches
+ * a touch, so the sweep reads its presence as "cannot tell" for the whole
+ * repo rather than as "no pin references this". At most one per pin.
+ */
+export const pinFileRefs = pgTable(
+  "pin_file_refs",
+  {
+    pinId: text("pin_id")
+      .notNull()
+      .references(() => pins.id),
+    fileRef: text("file_ref"),
+    unresolvedReason: text("unresolved_reason", {
+      enum: PIN_FILE_REF_UNRESOLVED_REASONS,
+    }),
+    /** Hub clock; display only — it orders nothing. */
+    firstSeen: timestamptz("first_seen").notNull(),
+  },
+  (table) => [
+    uniqueIndex("pin_file_refs_pin_ref_idx").on(table.pinId, table.fileRef),
+    uniqueIndex("pin_file_refs_unresolved_idx")
+      .on(table.pinId)
+      .where(sql`${table.fileRef} IS NULL`),
+    index("pin_file_refs_file_ref_idx").on(table.fileRef),
   ],
 );
 
@@ -793,9 +972,298 @@ export const teamSettings = pgTable("team_settings", {
   suspectAttribution: text("suspect_attribution", {
     enum: TEAM_SUSPECT_ATTRIBUTIONS,
   }).notNull(),
+  /**
+   * IS THIS REPO IN THE PILOT (1.0 spec 07 §3.6) — off unless somebody says
+   * otherwise.
+   *
+   * A MUTABLE TEAM DECISION, which is what this table is for, and precisely
+   * why 04 §3.6 refuses to put a fence WAIVER here: a waiver is a permission
+   * with a deadline and an audit trail, and a row somebody can overwrite is
+   * the wrong shape for one. Enrolment is the opposite — a switch a team
+   * flips, with no history worth keeping.
+   *
+   * `DEFAULT false` AND AN ABSENT ROW AGREE. This table's own rule is that a
+   * missing row means defaults, so the two paths into "not enrolled" cannot
+   * disagree: a repo nobody has configured is not in the pilot, and neither
+   * is one configured before this column existed.
+   */
+  pilotEnrolled: boolean("pilot_enrolled").notNull().default(false),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (1.0 spec 04 §3.6).
+ *
+ * The only thing that turns a `PROTECTED_CONFLICT` into `protected_ok`. A
+ * protected conflict says a human-verified invariant is broken; a waiver says
+ * a human decided that is acceptable for now. Nothing an agent can reach
+ * writes here — `capture_mode` is HUB-STAMPED "human" and never taken from a
+ * body, which is #50's pin rule applied to the one other place a human's word
+ * is the whole point.
+ *
+ * APPEND-ONLY IN BOTH DIRECTIONS. A revoke is a new row naming the grant it
+ * supersedes, never an edit or a delete. A team that can only see the current
+ * permission has no account of how it got there, and "who opened this fence
+ * and why" is the question this table exists to answer months later.
+ *
+ * A REASON IS REQUIRED ON A REVOKE TOO. It is easy to argue that taking a
+ * permission back needs no justification — and that asymmetry is exactly what
+ * makes a revocation read as an accusation. Both directions carry a sentence.
+ *
+ * PER FENCE, PER REPO, PER VERSION. A waiver granted against version 3 says
+ * nothing about version 4: a sweep that moved the watched paths produced a
+ * different invariant, and consent does not travel across that boundary.
+ */
+/**
+ * THE ONLY HUMAN INPUT THE PILOT TAKES (1.0 spec 07 §3.2).
+ *
+ * Two gestures, each riding something a person does anyway, and neither is a
+ * question: `crosscheck noise` beside a session that got a bad intervention,
+ * `crosscheck pin --ok` beside one whose check was run and passed. No survey
+ * exists and §8.3 refuses to add one — a measurement that interrupts somebody
+ * to ask how it is going has changed the thing it measures.
+ *
+ * `capture_mode` IS HUB-STAMPED and may never be carried by a body — #50's
+ * pin rule, inherited rather than restated. A mark is a HUMAN's word about
+ * whether this product was useful, and a body that could assert `human` would
+ * let an agent grade its own homework.
+ *
+ * ONE MARK PER PERSON PER THING. The unique key is `(ref_kind, ref_id,
+ * marked_by)`, so somebody who types `crosscheck noise` twice has said one
+ * thing twice rather than made two complaints — otherwise the noise figure
+ * would count keystrokes.
+ *
+ * NO FREE TEXT ANYWHERE. Every column is an id, an enum or a timestamp
+ * (non-negotiable 6), which is also why the mark carries no reason: the
+ * gesture is the whole message.
+ */
+export const pilotMarks = pgTable(
+  "pilot_marks",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    refKind: text("ref_kind", { enum: PILOT_MARK_REF_KINDS }).notNull(),
+    refId: text("ref_id").notNull(),
+    mark: text("mark", { enum: PILOT_MARKS }).notNull(),
+    markedBy: text("marked_by")
+      .notNull()
+      .references(() => developers.id),
+    captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("pilot_marks_ref_marker_idx").on(
+      table.refKind,
+      table.refId,
+      table.markedBy,
+    ),
+    // The report asks "this repo's marks in this window", newest first.
+    index("pilot_marks_repo_created_idx").on(table.repo, table.createdAt.desc()),
+  ],
+);
+
+/**
+ * THE SUSPECT ANSWER, AS IT WAS GIVEN (1.0 spec 07 §3.3).
+ *
+ * `services/suspect.ts` persists nothing and its window ends NOW, so an
+ * answer cannot be reconstructed later — which makes proof 3 ("was the
+ * attribution right?") unanswerable in principle rather than merely hard.
+ * This table is the answer's residue, written when the route answers.
+ *
+ * APPEND-ONLY. An answer is a thing that happened at a moment; rewriting one
+ * because the world moved would be rewriting the measurement to match the
+ * outcome, which is the one thing a precision statistic may never do.
+ *
+ * `coverage_judgeable` IS THE KEY COLUMN, and it is read at ANSWER time, not
+ * at report time. Principle 1 says an attribution emitted under a coverage
+ * gap should not have been emitted; counting it later as a hit or a miss
+ * would launder that failure into a precision figure. The report excludes
+ * those rows and COUNTS THE EXCLUSION, so the gap stays visible instead of
+ * quietly improving the number.
+ *
+ * The enums are #50's, verbatim, from the shared vocabulary — a parallel set
+ * here would be a second answer to "what outcomes exist".
+ */
+export const pilotAttributions = pgTable(
+  "pilot_attributions",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    pinId: text("pin_id")
+      .notNull()
+      .references(() => pins.id),
+    outcome: text("outcome", { enum: SUSPECT_OUTCOMES }).notNull(),
+    falsifier: text("falsifier", { enum: SUSPECT_FALSIFIER_KINDS }).notNull(),
+    /** Null on every outcome that names nobody — which is most of them. */
+    topSessionId: text("top_session_id").references(() => agentSessions.id),
+    topLift: doublePrecision("top_lift"),
+    candidates: integer("candidates").notNull(),
+    coverageJudgeable: boolean("coverage_judgeable").notNull(),
+    answeredAt: timestamptz("answered_at").notNull(),
+  },
+  (table) => [
+    index("pilot_attributions_repo_answered_idx").on(
+      table.repo,
+      table.answeredAt.desc(),
+    ),
+    // Proof 3 joins an answer to the repair of the pin it was about.
+    index("pilot_attributions_pin_idx").on(table.pinId),
+    // The pilot-attribution root's probe (01a §3.3g).
+    index("pilot_attributions_top_session_idx").on(table.topSessionId),
+    // The reaper's age prune runs across every repo, so it needs the
+    // timestamp leading, not second behind repo.
+    index("pilot_attributions_answered_idx").on(table.answeredAt),
+  ],
+);
+
+/**
+ * PROOF 5 ONLY, BECAUSE PROOF 5 ALONE CANNOT BE RE-DERIVED (07 §3.5).
+ *
+ * The other four proofs are computed at report time from rows that already
+ * exist. "Did every answer surface carry its coverage qualifier" cannot be:
+ * the answers are rendered and gone, and nothing survives them. So this is
+ * the one counter table, and it is UPSERT-ONLY rather than append.
+ *
+ * BOUNDED BY REPOS × DAYS × SURFACES × COUNTERS, never by traffic — the same
+ * argument `commit_evidence` makes. A table that grew with answers would put
+ * the cost of measuring on the same curve as the thing measured.
+ *
+ * `surface` IS A REGISTERED RENDER-SURFACE NAME, controlled vocabulary, never
+ * author-written. `counter` is machine-derived and never prose — but it is a
+ * PLAIN TEXT COLUMN rather than a drizzle enum, deliberately: twenty of its
+ * values are the cross-product of 03's `COVERAGE_SOURCES × COVERAGE_STATES`,
+ * and those live in `services/coverage.ts`, which imports this file. Making
+ * the column an enum would mean moving another spec's vocabulary into the
+ * schema package for a storage detail. The list is derived and validated at
+ * the write path instead, where the dependency runs the right way.
+ */
+export const pilotCounters = pgTable(
+  "pilot_counters",
+  {
+    repo: text("repo").notNull(),
+    /** The UTC day, as `YYYY-MM-DD` — a date, not an instant. */
+    day: text("day").notNull(),
+    surface: text("surface").notNull(),
+    counter: text("counter").notNull(),
+    value: bigint("value", { mode: "number" }).notNull(),
+    updatedAt: timestamptz("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.repo, table.day, table.surface, table.counter],
+    }),
+    // The reaper retires days past PILOT_RETENTION_DAYS across every repo;
+    // the primary key leads with repo, so without this the prune is a scan.
+    index("pilot_counters_day_idx").on(table.day),
+  ],
+);
+
+/**
+ * THE 50-SESSION MEASUREMENT, REDUCED TO ITS RESIDUE (07 §3.6).
+ *
+ * The handover asked for six things per session. FIVE are already stored or
+ * recomputable — the initial intent, the diff, the changed surfaces, the CI
+ * delta and the sequence — so copying them would be a second authority for
+ * facts that already have one. Two cannot be recomputed later, and those two
+ * are this whole table.
+ *
+ * `coverage` IS A SNAPSHOT OF WHAT THE HUB SAID AT `observed_at`, never read
+ * back as current coverage. Coverage is a statement about a moment; a
+ * measurement that re-read it at report time would be describing the archive
+ * as it is now and attributing that to a session that ended weeks ago.
+ *
+ * `seq` IS A PAIR, NOT A SCALAR (01 §3.1), and this table stores both halves.
+ * A session whose counter restarted — a SessionStart re-fire, a busy-lock
+ * fallback, two homes on one host key — holds more than one epoch, and
+ * `seq_first .. seq_last` ACROSS two epochs is not a span at all. So
+ * `seq_epochs > 1` makes the report print "sequence restarted" and no span,
+ * which is 01's epoch-split refusal reaching the counting layer rather than
+ * being re-argued here.
+ *
+ * `end_reason` keeps `reported` and `reaped` apart because the trial found
+ * 104 of 127 sessions never closed: a measurement that folded them together
+ * would be counting mostly the second and calling it the first.
+ */
+export const pilotSessions = pgTable(
+  "pilot_sessions",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .references(() => agentSessions.id),
+    repo: text("repo").notNull(),
+    observedAt: timestamptz("observed_at").notNull(),
+    endReason: text("end_reason", { enum: PILOT_END_REASONS }).notNull(),
+    /** FIVE {source,state,reason} triples, enums only — never free text. */
+    coverage: jsonb("coverage").notNull(),
+    seqEpoch: text("seq_epoch"),
+    seqFirst: integer("seq_first"),
+    seqLast: integer("seq_last"),
+    seqGaps: integer("seq_gaps"),
+    seqNullRecords: integer("seq_null_records"),
+    /** > 1 means the counter restarted, and the span is refused. */
+    seqEpochs: integer("seq_epochs"),
+  },
+  (table) => [
+    index("pilot_sessions_repo_observed_idx").on(
+      table.repo,
+      table.observedAt.desc(),
+    ),
+  ],
+);
+
+export const fenceWaivers = pgTable(
+  "fence_waivers",
+  {
+    id: text("id").primaryKey(),
+    /** Denormalised for `pin_files.repo`'s reason: every read is repo-scoped. */
+    repo: text("repo").notNull(),
+    pinId: text("pin_id")
+      .notNull()
+      .references(() => pins.id),
+    pinVersion: integer("pin_version").notNull(),
+    kind: text("kind", { enum: WAIVER_KINDS }).notNull(),
+    grantedBy: text("granted_by")
+      .notNull()
+      .references(() => developers.id),
+    /**
+     * HUB-STAMPED, never on the body. The same rule #50 applied to pins, for
+     * the same reason: a body that could say "human" is a caller asserting
+     * something about itself that only the hub may decide, and here that
+     * assertion would be a permission.
+     */
+    captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
+    reason: text("reason").notNull(),
+    expiresAt: timestamptz("expires_at"),
+    supersedes: text("supersedes"),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "fence_waivers_reason_length_check",
+      sql`char_length(${table.reason}) <= ${sql.raw(String(MAX_WAIVER_REASON_CHARS))}`,
+    ),
+    // THE SHAPE OF THE TWO KINDS, AS A DATABASE FACT rather than a service
+    // promise. A grant EXPIRES and supersedes nothing; a revoke supersedes a
+    // grant and never expires. Without this a grant with no expiry is a
+    // permanent permission nobody agreed to, and a revoke with an expiry is a
+    // permission that comes BACK on its own.
+    check(
+      "fence_waivers_shape_check",
+      sql`(${table.kind} = 'grant' AND ${table.expiresAt} IS NOT NULL AND ${table.supersedes} IS NULL)
+   OR (${table.kind} = 'revoke' AND ${table.expiresAt} IS NULL AND ${table.supersedes} IS NOT NULL)`,
+    ),
+    // The one read this table has: "the live waiver for this pin at this
+    // version", newest first. `pin_id` is a foreign key, which Postgres does
+    // not index on its own.
+    index("fence_waivers_pin_idx").on(
+      table.repo,
+      table.pinId,
+      table.pinVersion,
+      table.createdAt.desc(),
+    ),
+  ],
+);
 
 /**
  * ONE ROW PER REVALIDATED CLAIM — the latest reading a clone reported of

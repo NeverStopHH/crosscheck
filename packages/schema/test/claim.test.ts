@@ -117,6 +117,107 @@ describe("ClaimSchema", () => {
   });
 });
 
+/**
+ * 1.0 spec 08 §3.2a — AT-3's write path: no agent surface can produce a HUMAN
+ * capture mode on a claim, and a body that names one is REFUSED rather than
+ * silently downgraded.
+ *
+ * These tests are the anchor for `CLAIM_CAPTURE_MODES`. Widening it back to the
+ * three-value `CAPTURE_MODES` makes the first one go red.
+ */
+describe("a claim cannot claim a human captured it", () => {
+  test("refuses captureMode human", () => {
+    // Arrange — the forgery: a hand-rolled POST under a developer bearer key,
+    // asserting that a person vouched for this sentence.
+    const input = buildClaim({ captureMode: "human" });
+
+    // Act
+    const result = ClaimSchema.safeParse(input);
+
+    // Assert
+    expect(result.success).toBe(false);
+  });
+
+  test("names the field it refused, so the caller is not left guessing", () => {
+    // Arrange & Act
+    const result = ClaimSchema.safeParse(buildClaim({ captureMode: "human" }));
+
+    const paths = result.success
+      ? []
+      : result.error.issues.map((issue) => issue.path.join("."));
+
+    // Assert
+    expect(paths).toContain("captureMode");
+  });
+
+  test("refuses rather than downgrading — no claim comes back at all", () => {
+    // Arrange & Act
+    const result = ClaimSchema.safeParse(buildClaim({ captureMode: "human" }));
+
+    // Assert — the distinction AT-3 draws in its own sentence. A downgrade
+    // would hand back a parsed claim reading `agent`, and the caller would
+    // believe a human's word had been recorded under a label it never saw.
+    expect(result.success).toBe(false);
+    expect(result.data).toBeUndefined();
+  });
+
+  test("is a refusal, not the loose object dropping a field it does not know", () => {
+    // Arrange — the contrast that makes the previous test mean something.
+    // `looseObject` carries unknown fields through untouched, so "the field
+    // disappeared" would be the normal, SILENT outcome for anything the schema
+    // has never heard of. `captureMode` is not unknown: it is DEFINED, with a
+    // vocabulary that excludes this value.
+    const unknownField = ClaimSchema.safeParse(
+      buildClaim({ capture_mode: "human" }),
+    );
+    const definedField = ClaimSchema.safeParse(
+      buildClaim({ captureMode: "human" }),
+    );
+
+    // Assert
+    expect(unknownField.success).toBe(true);
+    expect(definedField.success).toBe(false);
+  });
+
+  test("still accepts both modes the product actually writes", () => {
+    // Arrange — four writers stamp `agent`, three stamp `auto` (08 §1.3).
+    // Narrowing must not cost either of them.
+    const asAgent = ClaimSchema.safeParse(
+      buildClaim({ captureMode: "agent", provenance: "declared" }),
+    );
+    const asAuto = ClaimSchema.safeParse(
+      buildClaim({
+        captureMode: "auto",
+        provenance: "derived",
+        confidence: 0.4,
+      }),
+    );
+
+    // Assert
+    expect(asAgent.success).toBe(true);
+    expect(asAuto.success).toBe(true);
+  });
+
+  test("keeps the agent+derived pairing a discarded draft depends on", () => {
+    // Arrange — `review_draft` discard writes captureMode `agent` with
+    // provenance `derived` (review-draft.ts): the agent ACTED on the draft but
+    // did not VOUCH for it. This pairing is why the mode cannot be derived from
+    // provenance, and it has to stay parseable.
+    const discarded = buildClaim({
+      captureMode: "agent",
+      provenance: "derived",
+      status: "rejected",
+      confidence: 0.4,
+    });
+
+    // Act
+    const result = ClaimSchema.safeParse(discarded);
+
+    // Assert
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("ClaimEdgeSchema", () => {
   const VALID_EDGE = {
     id: "ce_1",

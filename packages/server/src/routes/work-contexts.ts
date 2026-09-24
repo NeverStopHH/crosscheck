@@ -5,6 +5,7 @@ import { formatIssues } from "../http/request.ts";
 import { WorkContextsQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readCoverage } from "../services/coverage.ts";
+import { countCoverageAnswer } from "../services/pilot.ts";
 import { getDiagnosis, listWorkContextsByRepo } from "../services/diagnosis.ts";
 import { markHintsPulled } from "../services/hint-deliveries.ts";
 import { parseSinceWindow } from "../services/time-window.ts";
@@ -90,7 +91,13 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // does not want to be counted as a reader (V1-X1).
     if (wantsTelemetry(c.req.query("telemetry"))) {
       try {
-        await markHintsPulled(deps, c.get("developer").id, c.req.param("id"));
+        const session = c.req.query("session");
+        await markHintsPulled(
+          deps,
+          c.get("developer").id,
+          c.req.param("id"),
+          session === undefined || session.length === 0 ? undefined : session,
+        );
       } catch (error) {
         console.error("[crosscheck] marking hint deliveries pulled failed", error);
       }
@@ -105,6 +112,13 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       c.get("developer").id,
       diagnosis.repo,
     );
+    // 07 §3.5, proof 5: this answer carried a coverage record, and
+    // whether it did is what 03 made mandatory and nobody counted.
+    await countCoverageAnswer(deps, {
+      repo: diagnosis.repo,
+      surface: "api-work-context-diagnosis",
+      coverage,
+    });
     return ok(c, { ...diagnosis, coverage });
   });
 

@@ -23,7 +23,10 @@
  * them bare safe: it is an allowlist, so it is strictly narrower than the
  * sanitizer rather than a second, weaker copy of it.
  */
-import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import {
+  MAX_CLAIM_BODY_LENGTH,
+  MAX_VERIFICATION_REF_CHARS,
+} from "@crosscheck/schema";
 import type { ClaimValidity, ClaimValidityState } from "@crosscheck/schema";
 
 import {
@@ -37,6 +40,7 @@ import {
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
+import { axesClause } from "../evidence/render.ts";
 import { renderIntentChain } from "./render-intent-chain.ts";
 import {
   coverageClause,
@@ -466,6 +470,33 @@ const validityFacts = (claim: DiagnosisClaim): readonly string[] => {
   return clause === null ? [] : [clause];
 };
 
+/**
+ * THE AUTHOR'S POINTER AT A CHECK, ON ITS OWN LINE (1.0 spec 08 §3.4, §5).
+ *
+ * ITS OWN LINE BECAUSE OF THE FRAME RULE, not for looks. This is the one
+ * author-written field 08 adds — a `ci_test` id is up to 300 characters of
+ * somebody's test name — so it has to be framed as quoted data. The claim's
+ * own line already opens a « » pair for the body, and "a line opens the frame
+ * at most once" is what makes the guillemets the renderer's rather than the
+ * author's. Two pairs on one line and that stops being checkable.
+ *
+ * PART OF THE CLAIM'S ROW, not a section of its own: the fitter drops rows
+ * whole, so the pointer can never be separated from the claim it belongs to —
+ * the same reason the validity clause sits in the claim's facts.
+ *
+ * ONLY ON THIS SURFACE. §5 confines the ref's TEXT to `get_diagnosis`, which a
+ * reader asked for; spending an unsolicited hint's characters on somebody's
+ * test name anchors a session on a file path it never chose. The axes clause
+ * carries no author text and goes everywhere; this does not.
+ */
+const refLine = (claim: DiagnosisClaim): string => {
+  const ref = claim.verificationRef;
+  if (ref === undefined || ref === null || ref.length === 0) {
+    return "";
+  }
+  return `\n  check ${quotedBody(ref, MAX_VERIFICATION_REF_CHARS)}`;
+};
+
 const claimLine = (
   claim: DiagnosisClaim,
   index: ReadonlyMap<string, string>,
@@ -511,8 +542,58 @@ const claimLine = (
     // qualifies — which is the only arrangement where "stays readable but is
     // no longer presented as a current cause" is one sentence.
     ...validityFacts(claim),
+    // 08 §5: the two evidence axes, beside the confidence they qualify.
+    //
+    // UNFRAMED, and that is a property rather than a shortcut: `axesClause`
+    // is built from enums, renderer-owned literals, an age derived from a
+    // parsed instant and a hex-checked sha — no author-written string reaches
+    // it (registered as `evidence-axes-clause`, attacked in
+    // test/evidence-axes-render.test.ts). The REF, which IS author text, is
+    // deliberately not here: this line already opens one « » pair for the
+    // body, and "a line opens the frame at most once" is what makes the
+    // guillemets the renderer's.
+    ...axesFacts(claim, now),
   ];
-  return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
+  return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}${refLine(claim)}`;
+};
+
+/**
+ * The evidence-axes clause for one claim — and when there is none, a sentence
+ * saying so rather than silence.
+ *
+ * SILENCE WOULD BE WRONG HERE, and this is the one place the `validityFacts`
+ * precedent one field up does NOT transfer. A missing validity clause leaves
+ * nothing misleading behind. A missing AXES clause leaves `confidence 0.80`
+ * standing alone, and 08 §3.6 names that exact string as the failure mode:
+ * two decimals read as a MEASUREMENT, and a reader cannot know that nothing
+ * measured it. The clause is what restores their discounting, so its absence
+ * has to be visible — the same rule this project applies everywhere else, that
+ * a gap must never be able to pass for an answer.
+ *
+ * TWO DIFFERENT ABSENCES, told apart, because the remedies differ:
+ *
+ *   the hub sent nothing      — it predates 08. The remedy is upgrading the
+ *                               hub, and the reader discounts the number
+ *                               meanwhile.
+ *   the hub sent a label this
+ *   build cannot name         — the remedy is upgrading the CLI. Printing the
+ *                               unknown member's bytes is not an option (that
+ *                               is hub-chosen text on an unframed line), and
+ *                               inventing a sentence for a rung whose meaning
+ *                               this build does not know is worse than saying
+ *                               so.
+ *
+ * Both sentences are renderer-owned literals, so this stays a line with no
+ * untrusted slot however the hub answers.
+ */
+const axesFacts = (claim: DiagnosisClaim, now: Date): readonly string[] => {
+  if (claim.axes === undefined) {
+    return ["no evidence label (this hub does not report one)"];
+  }
+  const clause = axesClause(claim.axes, now);
+  return clause.length === 0
+    ? ["no evidence label (this crosscheck cannot read the one sent)"]
+    : [clause];
 };
 
 const edgeLine = (
