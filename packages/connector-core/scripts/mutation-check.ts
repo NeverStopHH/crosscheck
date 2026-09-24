@@ -8864,9 +8864,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §3.1. The tripwire's delivery id is its own namespace.
     label: "a tripwire delivery takes the hint's id",
-    file: `${CORE}/src/capture/records.ts`,
-    from: "        channel === \"tripwire\"",
-    to: "        channel === \"suspect\"",
+    file: `${SCHEMA}/src/delivery-id.ts`,
+    from: "  channel === \"tripwire\"",
+    to: "  channel === \"suspect\"",
     test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
     because:
       "a session hinted about a context and later tripped on its file keeps only " +
@@ -8875,7 +8875,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §3.1. `\n` cannot occur in a ref id, so the namespaced input never equals a bare one.
     label: "the tripwire namespace collapses into the hint's",
-    file: `${CORE}/src/capture/records.ts`,
+    file: `${SCHEMA}/src/delivery-id.ts`,
     from: "): string => hintDeliveryId(receiverSessionId, `${refId}\\ntripwire`);",
     to: "): string => hintDeliveryId(receiverSessionId, refId);",
     test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
@@ -9050,6 +9050,28 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "the tripwire's added spool append can grow into the 800 ms PreToolUse " +
       "budget with nothing naming the number that grew",
+  },
+  {
+    // 07 §3.1, corrected by adversarial review. A deterministic id is a computable one.
+    label: "a teammate can squat another developer's delivery id",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "  if (body.id !== deliveryIdFor(body.sessionId, body.refId, body.channel)) {",
+    to: "  if (body.id === \"never\") {",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "a teammate who can see your session id posts your delivery first, your real " +
+      "one is dropped as a duplicate, and your own noise mark is refused as not yours",
+  },
+  {
+    // 07 §3.2. A sender's clock is bounded by the hub's.
+    label: "a delivery dated in the future is stored as dated",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      deps.now().getTime() + MAX_COMMIT_CLOCK_SKEW_MS,",
+    to: "      Number.POSITIVE_INFINITY,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "a delivery stamped 2099 sits at the top of every noise candidate list for good, " +
+      "and a bare `crosscheck noise` marks it three days later",
   },
   {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
@@ -9577,7 +9599,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-deliveries.test.ts 2
+ * PRINTS: packages/server/test/hint-deliveries.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2

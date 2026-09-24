@@ -21,6 +21,7 @@
  * written against is gone.
  */
 import { describe, expect, test } from "bun:test";
+import { hintDeliveryId } from "@crosscheck/schema";
 import { eq } from "drizzle-orm";
 
 import { hintDeliveries } from "../src/db/schema.ts";
@@ -38,7 +39,8 @@ import {
 import type { HarnessWithSession } from "./helpers.ts";
 
 const REPO = "github.com/acme/api";
-const DELIVERY_ID = "hd_0123456789abcdef0123456789abcdef";
+/** Derived, as the hub now requires (07 §3.1). */
+const DELIVERY_ID = hintDeliveryId("ses_01", "clm_01");
 
 /** One context, three claims, two targets, one UNPULLED hint delivery. */
 const seedTree = async (): Promise<HarnessWithSession> => {

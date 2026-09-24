@@ -18,7 +18,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+import { PIN_PRESENCE_TERMINAL, hintDeliveryId } from "@crosscheck/schema";
 
 import { hintDeliveries, pilotMarks } from "../src/db/schema.ts";
 import {
@@ -37,7 +37,8 @@ import type { TestDeveloper, TestHarness } from "./helpers.ts";
 const REPO = "github.com/acme/api";
 const OTHER_REPO = "github.com/acme/web";
 const SESSION = "cc_11111111-2222-4333-8444-555555555555";
-const DELIVERY = "hd_0123456789abcdef0123456789abcdef";
+/** Derived, as the hub now requires (07 §3.1). */
+const DELIVERY = hintDeliveryId(SESSION, `wc_${SESSION}`);
 
 const setup = async (
   options: { readonly enrolled: boolean } = { enrolled: true },

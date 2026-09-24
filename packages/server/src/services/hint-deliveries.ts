@@ -9,6 +9,7 @@
  * non-fatal to the read it rides on.
  */
 import { and, count, eq, gte, inArray, isNull } from "drizzle-orm";
+import { MAX_COMMIT_CLOCK_SKEW_MS, deliveryIdFor } from "@crosscheck/schema";
 import type { HintDelivery } from "@crosscheck/schema";
 
 import {
@@ -127,6 +128,26 @@ export const ingestHintDelivery = async (
   if (sessionIssue !== null) {
     return rejectedOutcome(sessionIssue);
   }
+  // THE ID MUST COME FROM THE SESSION IT NAMES (07 §3.1, corrected). It is
+  // deterministic, so it is computable: without this check a teammate could
+  // post `hd(your session, ref)` under their own session first, and the
+  // primary key would drop YOUR genuine delivery as a duplicate — and with it
+  // your right to call that intervention noise.
+  if (body.id !== deliveryIdFor(body.sessionId, body.refId, body.channel)) {
+    return rejectedOutcome(
+      "id: a delivery id is derived from its receiving session, ref and channel, and this one is not",
+    );
+  }
+  // A SENDER'S CLOCK IS BOUNDED BY OURS. `deliveredAt` orders the noise
+  // candidates and dates proofs 1 and 2; one stamped in 2099 would sit at the
+  // top of every candidate list for good and be marked by a bare
+  // `crosscheck noise` three days later.
+  const deliveredAt = new Date(
+    Math.min(
+      Date.parse(body.deliveredAt),
+      deps.now().getTime() + MAX_COMMIT_CLOCK_SKEW_MS,
+    ),
+  );
   const inserted = await deps.db
     .insert(hintDeliveries)
     .values({
@@ -139,7 +160,7 @@ export const ingestHintDelivery = async (
       // honest word rather than being refused — and the pilot report prints
       // that bucket as itself instead of folding it into a guess.
       channel: body.channel,
-      deliveredAt: new Date(body.deliveredAt),
+      deliveredAt,
     })
     .onConflictDoNothing()
     .returning({ id: hintDeliveries.id });

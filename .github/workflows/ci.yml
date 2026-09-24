@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 645
+    # PRINTS: 647
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -165,7 +165,7 @@ jobs:
     # PRINTS: briefing/questions.ts 2
     # PRINTS: briefing/render.ts 11
     # PRINTS: briefing/sanitize.ts 10
-    # PRINTS: capture/records.ts 3
+    # PRINTS: capture/records.ts 1
     # PRINTS: capture/touched-root.ts 5
     # PRINTS: claim-validity.ts 2
     # PRINTS: conference/report.ts 1
@@ -250,6 +250,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
+    # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/enums.ts 2
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
@@ -279,7 +280,7 @@ jobs:
     # PRINTS: packages/server/src/services/diagnosis.ts 3
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
-    # PRINTS: packages/server/src/services/hint-deliveries.ts 1
+    # PRINTS: packages/server/src/services/hint-deliveries.ts 3
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 9
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
@@ -340,6 +341,7 @@ jobs:
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
     # PRINTS: coverage.ts 13
+    # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 1
     # PRINTS: derive.ts 2
     # PRINTS: developer-lookup.ts 2
@@ -360,7 +362,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: hint-deliveries.ts 1
+    # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 3
     # PRINTS: hook-budget.ts 1
@@ -401,7 +403,7 @@ jobs:
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
     # PRINTS: record-handlers.ts 14
-    # PRINTS: records.ts 4
+    # PRINTS: records.ts 2
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: register-session.ts 2

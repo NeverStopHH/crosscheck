@@ -281,3 +281,8 @@ export type {
   EvidenceWho,
   VerificationRefKind,
 } from "./evidence-axes.ts";
+export {
+  deliveryIdFor,
+  hintDeliveryId,
+  tripwireDeliveryId,
+} from "./delivery-id.ts";
