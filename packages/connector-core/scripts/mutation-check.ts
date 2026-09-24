@@ -8008,8 +8008,8 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${SERVER}/src/services/pilot.ts`,
     from:
       "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
-      "  const now = deps.now();\n  const taken = await deps.db",
-    to: "  const now = deps.now();\n  const taken = await deps.db",
+      "  const now = deps.now();\n  // THIS SESSION IS NOT COUNTED",
+    to: "  const now = deps.now();\n  // THIS SESSION IS NOT COUNTED",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
     because:
       "every session on the hub leaves a stored residue — its coverage " +
@@ -8976,8 +8976,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 07 §4. The boundary day stays: the report's widest window still reads it.
     label: "the prune removes rows a report can read",
     file: `${SERVER}/src/services/pilot.ts`,
-    from: "    .where(lt(pilotCounters.day, utcDay(cutoff)));",
-    to: "    .where(lt(pilotCounters.day, utcDay(deps.now())));",
+    from: "        lt(pilotCounters.day, utcDay(cutoff)),",
+    to: "        lt(pilotCounters.day, utcDay(deps.now())),",
     test: `${SERVER}/test/pilot-retention.test.ts`,
     because:
       "a report at the widest window finds its own oldest days gone, and the " +
