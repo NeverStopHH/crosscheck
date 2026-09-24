@@ -9516,6 +9516,171 @@ export const MUTATIONS: readonly Mutation[] = [
       "carrying this build's guess, and every reader downstream reads that " +
       "guess on the hub's authority",
   },
+  {
+    // 01a §3.3d. One spelling: Unicode NFC, the form git stores.
+    label: "a decomposed file name is stored as a second spelling",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: '    .normalize("NFC")',
+    to: '    .normalize("NFD")',
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "a macOS filesystem's decomposed `café` and git's composed one become " +
+      "two files, so a pin on one never meets a touch of the other",
+  },
+  {
+    // 01a §3.3d. `./src/x.ts` is `src/x.ts`.
+    label: "a `.` segment survives canonicalisation",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: '    .filter((segment) => segment.length > 0 && segment !== ".");',
+    to: "    .filter((segment) => segment.length > 0);",
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "a pin typed `./src/x.ts` is stored in a spelling no touch carries, and " +
+      "`suspect` answers that nobody touched the file",
+  },
+  {
+    // 01a §3.3d. `..` can leave the repository.
+    label: "a `..` segment is accepted as a repo path",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: '  if (segments.includes("..")) {',
+    to: '  if (segments.includes("...")) {',
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "`../secrets.ts` is stored as a pinned file that is not in the repo at " +
+      "all, and names a path no git command here can answer for",
+  },
+  {
+    // 01a §3.3d. CR and LF are the file identity's field separator.
+    label: "a newline passes into the file identity",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: "const CONTROL = /[\\u0000\\r\\n]/;",
+    to: "const CONTROL = /[\\u0000]/;",
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "two different (repo, path) pairs hash the same bytes, so one file's " +
+      "pin keeps another file's sessions alive or lets them be deleted",
+  },
+  {
+    // 01a §3.3d. The domain tag keeps a file identity out of every other digest's space.
+    label: "the file identity drops its domain tag",
+    file: `${SCHEMA}/src/file-ref.ts`,
+    from: '    .update([FILE_REF_DOMAIN, repoIdentity, canonicalPath].join("\\n"))',
+    to: '    .update(["", repoIdentity, canonicalPath].join("\\n"))',
+    test: `${SCHEMA}/test/file-ref.test.ts`,
+    because:
+      "a file identity can equal another digest built from the same fields, " +
+      "and the retention graph joins through exactly this value",
+  },
+  {
+    // 01a §3.3d. The wire rule stores the canonical spelling, not the typed one.
+    label: "the repo-path rule validates but stores the path as typed",
+    file: `${SCHEMA}/src/repo-path.ts`,
+    from: "    return canonical.path;",
+    to: "    return raw;",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "a pin typed `./src/x.ts` passes the door and is stored in that spelling, " +
+      "so the session that touched `src/x.ts` is never named",
+  },
+  {
+    // 01a §3.3d. One file counted once, after canonicalisation.
+    label: "a pin counts one file twice when it was typed two ways",
+    file: `${SCHEMA}/src/pin.ts`,
+    from: "    .transform((files) => [...new Set(files)]),",
+    to: "    .transform((files) => [...files]),",
+    test: `${SCHEMA}/test/pin.test.ts`,
+    because:
+      "`src/x.ts` and `./src/x.ts` count as two, moving a pin across the " +
+      "speaking cap and inserting the same row twice",
+  },
+  {
+    // 01a §3.3d. A touch the connector sent as `./src/x.ts` is `src/x.ts`.
+    label: "the hub canonicalises every target except files",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '  const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;',
+    to: '  const value = body.kind === "file" ? body.value : canonicalFileValue(body.value);',
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "a touch sent in a non-canonical spelling meets no pin, so an old or " +
+      "foreign connector exonerates the session that did the damage",
+  },
+  {
+    // 01a §3.3d. The connector sends the composed name git stores.
+    label: "the connector sends a decomposed name as it found it",
+    file: `${CORE}/src/capture/target-paths.ts`,
+    from: "  return canonical.ok ? canonical.path : posix;",
+    to: "  return canonical.ok ? posix : posix;",
+    test: `${CORE}/test/target-paths.test.ts`,
+    because:
+      "on macOS a touch of `café.ts` arrives decomposed and meets no pin on " +
+      "the name git tracks",
+  },
+  {
+    // 01a §3.3d, CSK-28. The door admits only a file git tracks in exactly that spelling.
+    label: "the pin door admits a path git does not track",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    if (exact.has(path)) {",
+    to: "    if (exact.has(path) || path.length > 0) {",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a wrong case or an untracked path is stored as a pin that watches " +
+      "nothing while reading as registered, and 01a's sweep deletes behind it",
+  },
+  {
+    // 01a §3.3d. A directory is not a file.
+    label: "the pin door calls a directory an untracked file",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    if (tracked.some((file) => file.startsWith(`${path}/`))) {",
+    to: "    if (tracked.some((file) => file === path)) {",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a person who pinned `src` is told git tracks nothing there, which is " +
+      "false, instead of being told to name the files",
+  },
+  {
+    // 01a §3.3d. No answer from git is not "untracked".
+    label: "a git that did not answer reads as tracking nothing",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    ? listed.stdout.split(NUL).filter((path) => path.length > 0)\n    : null;",
+    to: "    ? listed.stdout.split(NUL).filter((path) => path.length > 0)\n    : [];",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a timeout or a broken repo tells the person their file is not in git, " +
+      "and they go looking for a mistake they did not make",
+  },
+  {
+    // 01a §3.3d. The door returns one path per file.
+    label: "the pin door passes a file typed twice through twice",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    ? { ok: true, paths: [...new Set(paths)] }",
+    to: "    ? { ok: true, paths }",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "`./src/x.ts src/x.ts` reaches the hub as two entries, and the local " +
+      "schema's file count disagrees with the hub's",
+  },
+  {
+    // 01a §3.3d. The suggestion is resolved where the person stood, as git names it.
+    label: "the suggestion ignores where the person stood",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "  const meant = canonicalRepoPath(`${prefix}${raw}`);",
+    to: "  const meant = canonicalRepoPath(raw);",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a person in `src/` who typed `x.ts` is refused with no spelling to use, " +
+      "and a symlinked checkout never gets one",
+  },
+  {
+    // 01a §3.3d. The CLI asks from the person's directory, not the repo root.
+    label: "the CLI asks the door from the repo root, not the person's directory",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  const door = await resolvePinPaths(resolved.repoRoot, cwd, args.files);",
+    to: "  const door = await resolvePinPaths(resolved.repoRoot, resolved.repoRoot, args.files);",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "the refusal never offers the repo-relative spelling, so a person in a " +
+      "subdirectory is told their file is not in git and nothing else",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -9585,7 +9750,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 4
+ * PRINTS: packages/cli/test/pins-cli.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
@@ -9687,6 +9852,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
+ * PRINTS: packages/connector-core/test/pin-paths.test.ts 5
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
@@ -9704,6 +9870,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
+ * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 1
@@ -9716,7 +9883,9 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
+ * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -9769,7 +9938,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
- * PRINTS: packages/server/test/suspect.test.ts 3
+ * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 1
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1

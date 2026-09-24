@@ -17,6 +17,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
+import { join } from "node:path";
 
 import { createDb, createServer } from "@crosscheck/server";
 import { sql } from "drizzle-orm";
@@ -26,6 +27,7 @@ import type { Db } from "@crosscheck/server";
 import { sweepPins } from "@crosscheck/connector-core/http/hub.ts";
 import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
 import { MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
+import { EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import type { PinEntry as PinRow } from "@crosscheck/connector-core/http/hub.ts";
 
@@ -684,10 +686,10 @@ describe("crosscheck suspect at scale", () => {
 
 describe("crosscheck pin --sweep", () => {
   test("migrates a renamed path so the pin keeps watching", async () => {
-    // Arrange: the weekly rename.
-    await git(repo, ["mv", PINNED, "src/workbench/usePlaybackState.ts"]);
-    await git(repo, ["commit", "-m", "rename the playback hook"]);
-    // A second, live pin — the first was retracted above.
+    // Arrange: a second, live pin — the first was retracted above — and THEN
+    // the weekly rename. The pin comes first because the door only admits a
+    // file git tracks (01a §3.3d): a pin on the already-renamed path is
+    // refused at creation, which is the point of the door.
     const created = await runFor(nickKey, [
       "pin",
       "Playback still plays",
@@ -697,6 +699,8 @@ describe("crosscheck pin --sweep", () => {
       "open /workbench, press Play",
     ]);
     const pinId = pinIdFrom(created.stdout);
+    await git(repo, ["mv", PINNED, "src/workbench/usePlaybackState.ts"]);
+    await git(repo, ["commit", "-m", "rename the playback hook"]);
 
     // Act
     const swept = await runFor(nickKey, ["pin", "--sweep"]);
@@ -784,5 +788,80 @@ describe("crosscheck pin --sweep", () => {
     // that it is not zero and that the sentence names the cause.
     expect(swept.stdout).toMatch(/[1-9]\d* not recorded/);
     expect(swept.stdout).toContain("this team's pin policy");
+  });
+});
+
+describe("the pin door asks git (01a §3.3d, CSK-28)", () => {
+  const pinCount = async (): Promise<number> => {
+    const rows = await db.execute(sql`SELECT count(*)::int AS n FROM pins`);
+    return Number((rows.rows[0] as { n: number }).n);
+  };
+
+  test("a tracked file typed three ways is one pin on git's spelling", async () => {
+    // Act
+    const created = await runFor(nickKey, [
+      "pin",
+      "Controls still render",
+      "--files",
+      `./${SECOND}`,
+      SECOND.replace("/", "//"),
+      SECOND,
+      "--check",
+      "open /workbench",
+    ]);
+
+    // Assert — one identity, the one every touch of this file carries
+    const pinId = pinIdFrom(created.stdout);
+    const stored = await db.execute(
+      sql`SELECT path FROM pin_files WHERE pin_id = ${pinId} ORDER BY path`,
+    );
+    expect(stored.rows).toEqual([{ path: SECOND }]);
+  });
+
+  test("a wrong case is refused and nothing is pinned", async () => {
+    // Arrange
+    const before = await pinCount();
+
+    // Act — git tracks src/workbench/PlaybackControls.tsx
+    const refused = await runFor(nickKey, [
+      "pin",
+      "Controls still render",
+      "--files",
+      SECOND.toLowerCase(),
+      "--check",
+      "open /workbench",
+    ]);
+
+    // Assert
+    expect(refused.exitCode).toBe(EXIT_USAGE);
+    expect(refused.stdout).toContain("nothing was pinned");
+    expect(refused.stdout).toContain(JSON.stringify(SECOND.toLowerCase()));
+    expect(refused.stdout).toContain("case-sensitive");
+    expect(await pinCount()).toBe(before);
+  });
+
+  test("a path typed from a subdirectory is refused with the spelling to use", async () => {
+    // Arrange — standing in src/workbench, the person typed the bare filename
+    const before = await pinCount();
+
+    // Act
+    const refused = await runCli(
+      ["pin", "Controls still render", "--files", "PlaybackControls.tsx", "--check", "open /workbench"],
+      {
+        CROSSCHECK_HOME: home,
+        HOME: home,
+        CROSSCHECK_HUB_URL: hubUrl,
+        CROSSCHECK_API_KEY: nickKey,
+        CROSSCHECK_TIMEOUT_MS: "4000",
+      },
+      join(repo, "src/workbench"),
+      undefined,
+      { isInteractive: () => true },
+    );
+
+    // Assert — offered, never stored: the person confirms which file they meant
+    expect(refused.exitCode).toBe(EXIT_USAGE);
+    expect(refused.stdout).toContain(`git tracks ${JSON.stringify(SECOND)}; pin that`);
+    expect(await pinCount()).toBe(before);
   });
 });

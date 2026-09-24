@@ -14,7 +14,7 @@
  * and the hub, applied at every door a path comes through. It never touches a
  * filesystem: what it cannot settle — case on a case-insensitive disk, a path
  * typed relative to a subdirectory — is settled by git at the pin door
- * (cli/src/cli/pin-paths.ts), not guessed here.
+ * (connector-core/src/git/pin-paths.ts), not guessed here.
  *
  * A PATH IT CANNOT MAKE CANONICAL IS REFUSED WITH ITS REASON, never passed
  * through: a stored spelling that matches nothing watches nothing while

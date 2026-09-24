@@ -28,6 +28,11 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { sweepPinPaths } from "@crosscheck/connector-core/git/pin-sweep.ts";
+import { resolvePinPaths } from "@crosscheck/connector-core/git/pin-paths.ts";
+import type {
+  PinPathRefusal,
+  PinPathRefusalReason,
+} from "@crosscheck/connector-core/git/pin-paths.ts";
 import {
   breakPin,
   createPin,
@@ -287,18 +292,55 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   };
 };
 
+/** Why the door refused a path, in the person's terms (01a §3.3d, CSK-28). */
+const PIN_PATH_REFUSAL_SENTENCE: Readonly<Record<PinPathRefusalReason, string>> = {
+  not_tracked:
+    "git tracks no file at this path — pin paths are repo-relative and case-sensitive, and the file must be in git",
+  directory: "this is a directory, and a pin watches files — name the files",
+  git_unanswered: "git did not answer, so nothing was stored",
+  empty: "this is not a file path",
+  absolute: "an absolute path is never a repo file — give it relative to the repo root",
+  parent_segment: "a path with `..` can leave the repository — give it relative to the repo root",
+  control_character: "a path with a newline or NUL in it cannot be a pinned file",
+  backslash: "use forward slashes — a backslash is ambiguous between systems",
+};
+
+const refusedPaths = (refused: readonly PinPathRefusal[]): CliResult => ({
+  stdout: [
+    "nothing was pinned — every file must be one git tracks, spelled as git spells it:",
+    ...refused.map(
+      (row) =>
+        `  ${JSON.stringify(row.path)}: ${PIN_PATH_REFUSAL_SENTENCE[row.reason]}${
+          row.suggestion === null
+            ? ""
+            : ` — git tracks ${JSON.stringify(row.suggestion)}; pin that`
+        }`,
+    ),
+    "",
+  ].join("\n"),
+  exitCode: EXIT_USAGE,
+});
+
 const create = async (
   resolved: Resolved,
   args: PinArgs,
   surface: string,
+  cwd: string,
 ): Promise<CliResult> => {
+  // THE DOOR ASKS GIT FIRST (01a §3.3d, CSK-28). A path git does not track in
+  // exactly that spelling would be stored as an identity that matches no
+  // touch, and the pin would protect nothing while reading as registered.
+  const door = await resolvePinPaths(resolved.repoRoot, cwd, args.files);
+  if (!door.ok) {
+    return refusedPaths(door.refused);
+  }
   // The SAME schema the hub applies, run locally first: a refusal a person
   // reads in their own terminal beats a 400 they have to decode.
   const parsed = PinSchema.safeParse({
     id: `pin_${crypto.randomUUID()}`,
     repo: resolved.repoId,
     surface,
-    files: args.files,
+    files: door.paths,
     ...(args.check === undefined ? {} : { check: args.check }),
     presence: PIN_PRESENCE_TERMINAL,
     verifiedAtCommit: resolved.baseCommit,
@@ -423,5 +465,5 @@ export const runPin = async (
   if (!isInteractive()) {
     return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
   }
-  return create(resolved, args, args.surface);
+  return create(resolved, args, args.surface, cwd);
 };
