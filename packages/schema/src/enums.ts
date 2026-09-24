@@ -163,6 +163,21 @@ export const PILOT_MARKS = ["off_target", "surface_ok"] as const;
 export const PILOT_MARK_REF_KINDS = ["hint_delivery", "pin"] as const;
 
 /**
+ * EACH REF KIND TAKES EXACTLY ONE WORD, because each has exactly one gesture:
+ * `crosscheck noise` sends `off_target` about a delivery, `crosscheck pin ok`
+ * sends `surface_ok` about a pin. The report counts marks by their word, so a
+ * crossed pair — noise about a pin, "ok" about a delivery — would land in the
+ * wrong proof with nothing to show it had.
+ */
+export const PILOT_MARK_BY_REF_KIND = {
+  hint_delivery: "off_target",
+  pin: "surface_ok",
+} as const satisfies Record<
+  (typeof PILOT_MARK_REF_KINDS)[number],
+  (typeof PILOT_MARKS)[number]
+>;
+
+/**
  * HOW A SESSION ENDED, and the distinction is the whole reason the pilot
  * stores it (07 §3.6).
  *

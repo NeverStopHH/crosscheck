@@ -227,4 +227,122 @@ describe("POST /api/pilot-marks", () => {
     expect(response.status).toBe(422);
     expect(body.error.code).toBe("wrong_repo");
   });
+
+  test("a delivery somebody ELSE received is not yours to call noise", async () => {
+    // Arrange — the figure is "how many people found what reached THEM
+    // noisy". A teammate's verdict on an intervention they never saw would
+    // count taste about somebody else's session as a received interruption.
+    const { harness } = await setup();
+    const teammate = await createTestDeveloper(
+      harness,
+      "Ken",
+      "ken-marks@example.com",
+    );
+
+    // Act
+    const response = await mark(harness, teammate);
+    const body = (await response.json()) as {
+      error: { code: string; message: string };
+    };
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(body.error.code).toBe("not_yours");
+    expect(body.error.message).toContain("received");
+    expect(await rows(harness)).toHaveLength(0);
+  });
+
+  test("each ref kind takes its own mark, and the other pairing is refused", async () => {
+    // Arrange — `off_target` on a pin or `surface_ok` on a delivery has no
+    // gesture behind it: no command sends it, and the report counts marks by
+    // their word, so a crossed pair would land in the wrong proof unseen.
+    const { harness, developer } = await setup();
+
+    // Act
+    const crossed = await mark(harness, developer, { mark: "surface_ok" });
+
+    // Assert — refused at the boundary, before anything is looked up
+    expect(crossed.status).toBe(400);
+    expect(await rows(harness)).toHaveLength(0);
+  });
+});
+
+describe("POST /api/pilot-marks — `crosscheck pin ok`", () => {
+  const PIN = "pin_ok_1";
+
+  const addPin = async (
+    harness: TestHarness,
+    developer: TestDeveloper,
+  ): Promise<void> => {
+    const response = await harness.app.request(
+      "/api/pins",
+      jsonRequest("POST", developer.apiKey, {
+        id: PIN,
+        repo: REPO,
+        surface: "Play button plays/pauses",
+        files: ["src/workbench/usePlayback.ts"],
+        check: "open /workbench, press Play",
+        presence: PIN_PRESENCE_TERMINAL,
+        verifiedAtCommit: "abc1234",
+      }),
+    );
+    expect(response.status, "pin").toBe(200);
+  };
+
+  const pinOk = (
+    harness: TestHarness,
+    developer: TestDeveloper,
+  ): Promise<Response> =>
+    mark(harness, developer, {
+      refKind: "pin",
+      refId: PIN,
+      mark: "surface_ok",
+    });
+
+  test("whoever ran the recipe and watched it pass may say so", async () => {
+    // Arrange — anybody, not only whoever pinned it: the falsifier is the
+    // recipe, and the person who ran it is the one who knows.
+    const { harness, developer } = await setup();
+    await addPin(harness, developer);
+    const teammate = await createTestDeveloper(
+      harness,
+      "Ken",
+      "ken-pin-ok@example.com",
+    );
+
+    // Act
+    const response = await pinOk(harness, teammate);
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect((await rows(harness))[0]?.mark).toBe("surface_ok");
+  });
+
+  test("a pin recorded BROKEN is not marked ok — the fix is a re-pin", async () => {
+    // Arrange — "ok" on a broken pin is either a mistake or a repair, and a
+    // repair needs the new commit and the files, which only `pin add`
+    // records. Accepting it here would leave the break unrepaired in the
+    // record while proof 4 counted the surface as fine.
+    const { harness, developer } = await setup();
+    await addPin(harness, developer);
+    await harness.app.request(
+      `/api/pins/${PIN}/broke`,
+      jsonRequest("POST", developer.apiKey, {
+        repo: REPO,
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+
+    // Act
+    const response = await pinOk(harness, developer);
+    const body = (await response.json()) as {
+      error: { code: string; message: string };
+    };
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(body.error.code).toBe("pin_broken");
+    expect(body.error.message).toContain("crosscheck pin add");
+    expect(await rows(harness)).toHaveLength(0);
+  });
 });

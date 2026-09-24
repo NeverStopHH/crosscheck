@@ -8372,6 +8372,46 @@ export const MUTATIONS: readonly Mutation[] = [
       "getting worse",
   },
   {
+    // 07 §3.2. Proof 4 counts people interrupted, and only the person a
+    // delivery reached was interrupted by it.
+    label: "anybody may call somebody else's delivery noise",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (target.recipient !== null && target.recipient !== input.markedBy) {",
+    to: '  if (target.recipient === "") {',
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "a teammate's opinion of a session they never sat in is counted as an " +
+      "interruption somebody received, so the noise figure measures taste " +
+      "and one vocal reviewer can make the product look noisy for everyone",
+  },
+  {
+    // 07 §3.2, §3.4. A repair is recorded by re-pinning, which carries the
+    // commit and the files; "ok" carries neither.
+    label: "a pin recorded broken is marked ok",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (target.broken) {",
+    to: '  if (target.broken && target.repo === "") {',
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "the break stays unrepaired in the record while proof 4 counts the " +
+      "surface as fine, and proof 3 never gets the fix range it needs to " +
+      "score the attribution that named the breaking session",
+  },
+  {
+    // 07 §3.2. Each ref kind has exactly one gesture, and the report counts
+    // marks by their word — the pairing is the only thing that routes a mark
+    // to the proof it belongs to.
+    label: "a mark may be crossed with the wrong ref kind",
+    file: `${SCHEMA}/src/pilot-mark.ts`,
+    from: "PILOT_MARK_BY_REF_KIND[body.refKind] === body.mark",
+    to: "PILOT_MARK_BY_REF_KIND[body.refKind] !== undefined",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "an `off_target` about a pin is counted as a noisy delivery and a " +
+      "`surface_ok` about a delivery as a verified surface, so each figure " +
+      "silently absorbs marks that belong to the other",
+  },
+  {
     // 07 §3.2. The unique key is what keeps a noise FIGURE from being a
     // keystroke count — and the anchor sits on the SQL, not on drizzle:
     // measured, the harness builds from bootstrap.sql, so weakening the
@@ -8857,7 +8897,7 @@ interface Outcome {
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 5
- * PRINTS: packages/server/test/pilot-marks.test.ts 3
+ * PRINTS: packages/server/test/pilot-marks.test.ts 6
  * PRINTS: packages/server/test/pilot-repairs.test.ts 3
  * PRINTS: packages/server/test/pilot-report.test.ts 10
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4

@@ -49,6 +49,10 @@ const REFUSAL_SENTENCE: Record<MarkRefusal, string> = {
     "nothing with that id exists on this repo — `crosscheck noise` with no argument finds the most recent one for you",
   wrong_repo:
     "that id belongs to another repo; marks are repo-scoped, because one team's noise is not another's",
+  not_yours:
+    "that delivery went to somebody else's session; a noise mark is the word of whoever received it, so they are the one to make it",
+  pin_broken:
+    "that pin is recorded broken; if you fixed it, `crosscheck pin add` on the same surface records the fix and links it to the break",
 };
 
 export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {

@@ -22,20 +22,30 @@
  */
 import { z } from "zod";
 
-import { PILOT_MARKS, PILOT_MARK_REF_KINDS } from "./enums.ts";
+import {
+  PILOT_MARKS,
+  PILOT_MARK_BY_REF_KIND,
+  PILOT_MARK_REF_KINDS,
+} from "./enums.ts";
 import { PIN_PRESENCE_TERMINAL } from "./pin.ts";
 
-export const PilotMarkSchema = z.looseObject({
-  repo: z.string().min(1),
-  refKind: z.enum(PILOT_MARK_REF_KINDS),
-  refId: z.string().min(1),
-  mark: z.enum(PILOT_MARKS),
-  /**
-   * REQUIRED, so an absent value is a parse failure and never a default. The
-   * gate has to fail CLOSED: a mark that arrived without the claim is a mark
-   * nobody can say a human made.
-   */
-  presence: z.literal(PIN_PRESENCE_TERMINAL),
-});
+export const PilotMarkSchema = z
+  .looseObject({
+    repo: z.string().min(1),
+    refKind: z.enum(PILOT_MARK_REF_KINDS),
+    refId: z.string().min(1),
+    mark: z.enum(PILOT_MARKS),
+    /**
+     * REQUIRED, so an absent value is a parse failure and never a default.
+     * The gate has to fail CLOSED: a mark that arrived without the claim is a
+     * mark nobody can say a human made.
+     */
+    presence: z.literal(PIN_PRESENCE_TERMINAL),
+  })
+  .refine((body) => PILOT_MARK_BY_REF_KIND[body.refKind] === body.mark, {
+    path: ["mark"],
+    message:
+      "a delivery takes `off_target` (crosscheck noise) and a pin takes `surface_ok` (crosscheck pin ok)",
+  });
 
 export type PilotMarkInput = z.infer<typeof PilotMarkSchema>;

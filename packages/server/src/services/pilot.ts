@@ -423,7 +423,82 @@ export const recordPilotSession = async (
 const HUMAN_CAPTURE_MODE = "human" as const;
 
 /** Why a mark was refused — an enum, so a route never invents prose. */
-export type MarkRefusal = "not_enrolled" | "unknown_ref" | "wrong_repo";
+export type MarkRefusal =
+  | "not_enrolled"
+  | "unknown_ref"
+  | "wrong_repo"
+  | "not_yours"
+  | "pin_broken";
+
+/** What a mark is about, reduced to what decides whether it may be made. */
+interface MarkTarget {
+  readonly repo: string;
+  /** Whoever received it — a delivery only; anybody may run a pin's recipe. */
+  readonly recipient: string | null;
+  readonly broken: boolean;
+}
+
+const readMarkTarget = async (
+  deps: Deps,
+  refKind: PilotMarkRefKind,
+  refId: string,
+): Promise<MarkTarget | undefined> => {
+  if (refKind === "pin") {
+    const rows = await deps.db
+      .select({ repo: pins.repo, brokeAt: pins.brokeAt })
+      .from(pins)
+      .where(eq(pins.id, refId))
+      .limit(1);
+    const row = rows[0];
+    return row === undefined
+      ? undefined
+      : { repo: row.repo, recipient: null, broken: row.brokeAt !== null };
+  }
+  const rows = await deps.db
+    .select({ repo: agentSessions.repo, recipient: agentSessions.developerId })
+    .from(hintDeliveries)
+    .innerJoin(agentSessions, eq(hintDeliveries.sessionId, agentSessions.id))
+    .where(eq(hintDeliveries.id, refId))
+    .limit(1);
+  const row = rows[0];
+  return row === undefined
+    ? undefined
+    : { repo: row.repo, recipient: row.recipient, broken: false };
+};
+
+/**
+ * WHETHER THIS PERSON MAY SAY THIS ABOUT THIS, in the order a person would
+ * want to be told: a mistyped id before a policy.
+ *
+ * NOT YOURS. Proof 4 counts how many people found what reached THEM noisy. A
+ * teammate calling somebody else's delivery noise is taste about a session
+ * they never sat in, and counting it would turn "interrupted" into "has an
+ * opinion". A pin is the opposite case: its falsifier is a recipe, and
+ * whoever ran it is the one who knows, whoever pinned it.
+ *
+ * NOT ON A BREAK. "Ok" about a pin recorded broken is either a mistake or a
+ * repair, and a repair needs the commit and the files that only `pin add`
+ * records — accepting it here would leave the break unrepaired in the record
+ * while proof 4 counted the surface as fine.
+ */
+const refuseMark = (
+  target: MarkTarget | undefined,
+  input: WriteMarkInput,
+): MarkRefusal | null => {
+  if (target === undefined) {
+    return "unknown_ref";
+  }
+  if (target.repo !== input.repo) {
+    return "wrong_repo";
+  }
+  if (target.recipient !== null && target.recipient !== input.markedBy) {
+    return "not_yours";
+  }
+  if (target.broken) {
+    return "pin_broken";
+  }
+  return null;
+};
 
 export interface WriteMarkInput {
   readonly repo: string;
@@ -465,27 +540,12 @@ export const writePilotMark = async (
     // answer a gesture must never get.
     return { refusal: "not_enrolled" };
   }
-  const known = await (input.refKind === "pin"
-    ? deps.db
-        .select({ repo: pins.repo })
-        .from(pins)
-        .where(eq(pins.id, input.refId))
-        .limit(1)
-    : deps.db
-        .select({ repo: agentSessions.repo })
-        .from(hintDeliveries)
-        .innerJoin(
-          agentSessions,
-          eq(hintDeliveries.sessionId, agentSessions.id),
-        )
-        .where(eq(hintDeliveries.id, input.refId))
-        .limit(1));
-  const row = known[0];
-  if (row === undefined) {
-    return { refusal: "unknown_ref" };
-  }
-  if (row.repo !== input.repo) {
-    return { refusal: "wrong_repo" };
+  const refusal = refuseMark(
+    await readMarkTarget(deps, input.refKind, input.refId),
+    input,
+  );
+  if (refusal !== null) {
+    return { refusal };
   }
   const id = `pm_${randomUUID()}`;
   const inserted = await deps.db
