@@ -9898,8 +9898,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 01a §3.3g. A swept session is done.
     label: "a swept session stays a candidate for ever",
     file: `${SERVER}/src/services/retention.ts`,
-    from: "         AND EXISTS (SELECT 1 FROM session_events se WHERE se.session_id = s.id)\n         ${after}",
-    to: "         ${after}",
+    from: "       WHERE s.ended_at IS NOT NULL AND s.skeleton_retired_at IS NULL\n         AND s.ended_at < ${input.cutoff}\n         AND EXISTS (SELECT 1 FROM session_events se WHERE se.session_id = s.id)\n",
+    to: "       WHERE s.ended_at IS NOT NULL\n         AND s.ended_at < ${input.cutoff}\n",
     test: `${SERVER}/test/skeleton-sweep.test.ts`,
     because:
       "agent_sessions rows are never removed, so the oldest swept sessions fill every later pass's limit and the sweep stops retiring anything",
@@ -9998,8 +9998,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 01a CSK-17. A failure is counted.
     label: "a failed sweep is not counted",
     file: `${SERVER}/src/services/retention.ts`,
-    from: "    failures: state.failures + (outcome.kind === \"failed\" ? 1 : 0),",
-    to: "    failures: state.failures,",
+    from: "      outcome.kind === \"failed\" ? state.failures + 1 : outcome.kind === \"swept\" ? 0 : state.failures,",
+    to: "      outcome.kind === \"failed\" ? state.failures : outcome.kind === \"swept\" ? 0 : state.failures,",
     test: `${SERVER}/test/skeleton-sweep.test.ts`,
     because:
       "SILENT: the sweep fails every pass and doctor prints a clean line",
@@ -10214,6 +10214,66 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "under full, doctor says file-bearing sessions are being kept while the sweep is retiring them",
   },
+  {
+    // 01a §3.3a. The reported end replaces the reaper's inferred row.
+    label: "a reaped session keeps the reaper's end beside its own",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "          eq(sessionEvents.seqReason, \"reaped_end\"),",
+    to: "          eq(sessionEvents.seqReason, \"sequenced\"),",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a session that ended on its own keeps two ends, or \u2014 with no position \u2014 keeps only the reaper's, and reads `reaped_end` for ever",
+  },
+  {
+    // 01a §3.3a. A disproven reap is balanced in the ledger.
+    label: "the ledger reads two ends for one start",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    await appendEvent(deps, EVENT_KINDS.SESSION_STARTED, {\n      sessionId: row.id,\n      developerId,\n      repo: row.repo,\n      branch: row.branch,\n      revivedAfterReap: true,\n    });\n",
+    to: "",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "/api/events shows a session ending twice, and the feed tells the team it ended twice",
+  },
+  {
+    // 01a §5. A failure a later pass got past is history.
+    label: "one failed pass WARNs for the life of the hub",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      outcome.kind === \"failed\" ? state.failures + 1 : outcome.kind === \"swept\" ? 0 : state.failures,",
+    to: "      outcome.kind === \"failed\" ? state.failures + 1 : state.failures,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "doctor WARNs and exits non-zero for days after the fault is gone, and a WARN nobody can clear is one people learn to ignore",
+  },
+  {
+    // 01a §5. Mode off runs no pass.
+    label: "mode off records a pass that never ran",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "    return { kind: \"off\" };",
+    to: "    return recorded(deps.db, now, { kind: \"off\" });",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "doctor prints a last-pass time beside a mode line that says nothing runs",
+  },
+  {
+    // 01a §5. doctor judges nothing in mode off.
+    label: "doctor reports a cycle for a hub that sweeps nothing",
+    file: `${CLI}/src/cli/doctor-retention.ts`,
+    from: "  if (mode === \"off\") {\n    return { level: \"PASS\", name: NAME, detail: \"nothing is swept in this mode, so nothing is judged either\" };\n  }\n",
+    to: "",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "a hub that retires nothing is described as waiting for its first cycle",
+  },
+  {
+    // 01a §3.3d. A file inside a submodule is the submodule's.
+    label: "a path inside a submodule reads as untracked",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    if (await insideSubmodule(repoRoot, path)) {",
+    to: "    if ((await insideSubmodule(repoRoot, path)) && false) {",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "the person is told the file is not in git and goes looking for a typo in a path that is fine, in another repository",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -10285,7 +10345,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
- * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 12
+ * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 13
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
@@ -10385,7 +10445,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
- * PRINTS: packages/connector-core/test/pin-paths.test.ts 7
+ * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
@@ -10467,7 +10527,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
  * PRINTS: packages/server/test/skeleton-identity.test.ts 14
- * PRINTS: packages/server/test/skeleton-sweep.test.ts 31
+ * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
  * PRINTS: packages/server/test/solved-fanout.test.ts 2

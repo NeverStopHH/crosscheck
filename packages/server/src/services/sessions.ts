@@ -8,7 +8,7 @@ import {
   SESSION_REAP_STALE_HOURS,
 } from "../constants.ts";
 import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
-import { agentSessions } from "../db/schema.ts";
+import { agentSessions, sessionEvents } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
@@ -246,6 +246,33 @@ export const endSession = async (
       return { outcome: "not_found" };
     }
     return { outcome: "ended", session: toSessionView(alreadyEnded) };
+  }
+  if (existing.reapedAt !== null) {
+    // THE REAP IS DISPROVEN, and both records say so the way a revival does.
+    // The ledger gets the balancing start `reviveReapedSession` writes, so it
+    // never reads two ends for one start. And the reaper's own `session.ended`
+    // row — `reaped_end`, the hub's inference from silence — gives way to the
+    // reported one: left in place, an end with no position would hash to the
+    // same id and be dropped, keeping the session's reason `reaped_end` for a
+    // session that ended on its own, and one WITH a position would leave the
+    // session two ends. The inferred row is the hub's, not the connector's,
+    // and it is withdrawn by the fact it stood in for.
+    await appendEvent(deps, EVENT_KINDS.SESSION_STARTED, {
+      sessionId: row.id,
+      developerId,
+      repo: row.repo,
+      branch: row.branch,
+      revivedAfterReap: true,
+    });
+    await deps.db
+      .delete(sessionEvents)
+      .where(
+        and(
+          eq(sessionEvents.sessionId, row.id),
+          eq(sessionEvents.kind, "session.ended"),
+          eq(sessionEvents.seqReason, "reaped_end"),
+        ),
+      );
   }
   await appendEvent(deps, EVENT_KINDS.SESSION_ENDED, {
     sessionId: row.id,

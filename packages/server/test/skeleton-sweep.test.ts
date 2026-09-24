@@ -480,6 +480,29 @@ describe("what never licenses a deletion", () => {
     expect(pass.ended.map((row) => row.id)).toContain("ses_stale");
   });
 
+  test("a later pass that succeeds clears the failure count, and off records no pass", async () => {
+    // Arrange — one failed pass
+    const w = await world();
+    const broken: readonly RetentionRelation[] = RETENTION_REGISTRY.map((relation) =>
+      relation.semantics === "root" && relation.name === "claims"
+        ? { ...relation, reaches: () => sql`SELECT 1 FROM no_such_table` }
+        : relation,
+    );
+    await sweepSkeleton(deps(w), { registry: broken });
+    expect(sweepLedger(w.harness.db).failures).toBe(1);
+
+    // Act — the fault is gone
+    await sweepSkeleton(deps(w));
+
+    // Assert — a WARN that outlives its fault is one people learn to ignore
+    expect(sweepLedger(w.harness.db).failures).toBe(0);
+
+    // And a hub whose mode is off runs no pass, so reports none
+    const off = await world();
+    await sweepSkeleton(deps(off), { mode: "off" });
+    expect(await readSkeletonRetentionReport(deps(off))).toMatchObject({ lastPassAt: null, completedAt: null });
+  });
+
   test("a failure is counted on the hub it happened on, and no other", async () => {
     // Arrange — two hubs in one process, as in every test run
     const failing = await world();
@@ -687,26 +710,67 @@ describe("a retired session stays retired (01a §3.3g)", () => {
 });
 
 describe("a reaped session's own end is kept (01a §3.3a)", () => {
-  test("SessionEnd after a reap replaces the inferred end, and the session can then be swept", async () => {
-    // Arrange — reaped for silence
-    const w = await world();
-    await started(w, "ses_idle");
+  const EPOCH = "0f1e2d3c-4b5a-4968-8776-655443322110";
+
+  const reaped = async (w: World, sessionId: string): Promise<void> => {
+    await started(w, sessionId);
     w.harness.clock.advanceSeconds((SESSION_REAP_STALE_HOURS + 1) * HOUR_SECONDS);
     await reapStaleSessions(deps(w), { developerId: w.nick.developerId });
+  };
 
-    // Act — the connector's own SessionEnd, after the reap
-    await ended(w, "ses_idle");
+  const ends = (w: World, sessionId: string) =>
+    rows(
+      w,
+      sql`SELECT seq_reason, seq_n FROM session_events
+           WHERE session_id = ${sessionId} AND kind = 'session.ended'`,
+    );
 
-    // Assert — an explicit end now, with its position written
+  const ledger = (w: World, sessionId: string) =>
+    rows(
+      w,
+      sql`SELECT kind FROM events WHERE payload->>'sessionId' = ${sessionId}
+           AND kind IN ('session_started', 'session_ended') ORDER BY id`,
+    );
+
+  test("a positioned SessionEnd after a reap is the session's one end, and the ledger balances", async () => {
+    // Arrange
+    const w = await world();
+    await reaped(w, "ses_idle");
+
+    // Act — the connector's own SessionEnd, with the position it allocated
+    await endSession(deps(w), w.nick.developerId, "ses_idle", undefined, { epoch: EPOCH, n: 7 });
+
+    // Assert — the reported end replaced the inferred one…
     expect(
       await rows(w, sql`SELECT reaped_at FROM agent_sessions WHERE id = 'ses_idle'`),
     ).toEqual([{ reaped_at: null }]);
-    expect(
-      await rows(w, sql`SELECT kind FROM session_events WHERE session_id = 'ses_idle' AND kind = 'session.ended'`),
-    ).toHaveLength(1);
+    expect(await ends(w, "ses_idle")).toEqual([{ seq_reason: "sequenced", seq_n: 7 }]);
+    // …and the ledger reads start, (reaped) end, start (the reap disproven), end
+    expect((await ledger(w, "ses_idle")).map((row) => row["kind"])).toEqual([
+      "session_started",
+      "session_ended",
+      "session_started",
+      "session_ended",
+    ]);
+
+    // And it is now an explicit end the sweep may act on
     age(w);
     await sweepSkeleton(deps(w));
     expect(await rowsOf(w, "ses_idle")).toBe(0);
+  });
+
+  test("an unpositioned SessionEnd after a reap is not swallowed by the reaper's row", async () => {
+    // Arrange
+    const w = await world();
+    await reaped(w, "ses_old_connector");
+
+    // Act — a connector from before positions: no seq at all
+    await ended(w, "ses_old_connector");
+
+    // Assert — the session's end says what it is, not "inferred from silence"
+    expect(await ends(w, "ses_old_connector")).toEqual([
+      { seq_reason: "pre_seq_connector", seq_n: null },
+    ]);
   });
 });
 

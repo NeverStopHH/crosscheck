@@ -66,7 +66,8 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
    * it retires rows (constants.ts SESSION_EVENT_RETENTION) — an enum value
    * from our own source, never a sentence, so it opens no untrusted slot in
    * what doctor prints. `skeleton` says what that retention is KEEPING and
-   * why (01a §5): counts and root names only — no id, no repo, no path.
+   * why (01a §5): counts, root names and the ids of the pins that freeze a
+   * repo — which a person needs to find them — and no session id, repo or path.
    */
   router.get("/order", async (c) => {
     const orders = await readBrokenCausalOrders(deps.db, c.get("developer").id);

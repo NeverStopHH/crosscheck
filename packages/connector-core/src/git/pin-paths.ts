@@ -128,6 +128,21 @@ const trackedFromHere = async (
     : null;
 };
 
+/**
+ * Whether a path lies INSIDE a submodule: an ancestor directory is a gitlink.
+ * Git lists nothing for such a path, and "git tracks no file here" would send
+ * the person looking for a typo in a path that is fine — in another repo.
+ */
+const insideSubmodule = async (repoRoot: string, path: string): Promise<boolean> => {
+  const segments = path.split("/");
+  const ancestors = segments.slice(0, -1).map((_segment, index) => segments.slice(0, index + 1).join("/"));
+  if (ancestors.length === 0) {
+    return false;
+  }
+  const listed = await listTracked(repoRoot, ancestors);
+  return listed?.some((entry) => entry.gitlink && ancestors.includes(entry.path)) === true;
+};
+
 export const resolvePinPaths = async (
   repoRoot: string,
   cwd: string,
@@ -172,6 +187,10 @@ export const resolvePinPaths = async (
     }
     if (tracked.some((file) => file.path.startsWith(`${path}/`))) {
       refused.push({ path: typed, reason: "directory", suggestion: null });
+      continue;
+    }
+    if (await insideSubmodule(repoRoot, path)) {
+      refused.push({ path: typed, reason: "submodule", suggestion: null });
       continue;
     }
     refused.push({ path: typed, reason: "not_tracked", suggestion: fromHere });

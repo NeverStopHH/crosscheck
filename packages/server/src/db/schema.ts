@@ -190,7 +190,7 @@ export const agentSessions = pgTable(
     // The skeleton sweep's candidates, in cursor order (01a §3.3g).
     index("agent_sessions_ended_idx")
       .on(table.endedAt, table.id)
-      .where(sql`${table.endedAt} IS NOT NULL`),
+      .where(sql`${table.endedAt} IS NOT NULL AND ${table.skeletonRetiredAt} IS NULL`),
     // `GET /api/search?developer=…` (roadmap R1) filters inside every tier
     // query, and each of them joins work_contexts to this table. developer_id
     // is a foreign key, which Postgres does not index on its own, so the

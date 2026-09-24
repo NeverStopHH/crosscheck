@@ -114,13 +114,16 @@ describe("resolvePinPaths", () => {
     const head = Bun.spawnSync({ cmd: ["git", "rev-parse", "HEAD"], cwd: repo }).stdout.toString().trim();
     await git(repo, ["update-index", "--add", "--cacheinfo", `160000,${head},vendor/lib`]);
 
-    // Act
-    const result = await resolvePinPaths(repo, repo, ["vendor/lib"]);
+    // Act — the submodule itself, and a file inside it
+    const result = await resolvePinPaths(repo, repo, ["vendor/lib", "vendor/lib/src/a.ts"]);
 
-    // Assert
+    // Assert — both are the submodule's, and neither is "not tracked"
     expect(result).toEqual({
       ok: false,
-      refused: [{ path: "vendor/lib", reason: "submodule", suggestion: null }],
+      refused: [
+        { path: "vendor/lib", reason: "submodule", suggestion: null },
+        { path: "vendor/lib/src/a.ts", reason: "submodule", suggestion: null },
+      ],
     });
   });
 

@@ -1117,6 +1117,17 @@ deletes in `interim`. Every fix below carries a mutation anchor.
   part, hid a held sweep (the WARN facts are read on their own); the window in the mode sentence was
   compiled into the CLI (it now comes from the hub); `session_events_file_ref_idx` is partial.
 
+**12.7a — What a third, verifying review of those fixes changed.** An independent verifier re-read the
+rewrite with probes and found no path to a deletion in `interim`; it confirmed the cursor across time zones,
+microsecond ties and window sizes, the one-statement snapshot, and that reaped sessions are never touched. It
+reproduced four reports that told a person something false, all fixed with anchors: a SessionEnd after a reap
+put a second end in `/api/events` and, without a position, was swallowed by the reaper's row (the ledger now
+records the disproven reap as a start, and the reaper's inferred `session.ended` row gives way to the reported
+one); one failed pass made `doctor` WARN for the life of the process (the count is now consecutive); the pin
+remedy `doctor` printed does not work for a pin recorded broken (it now says exactly what clears what); and
+mode `off` recorded passes that never ran. A path inside a submodule is refused as a submodule, and retired
+sessions leave the candidate index.
+
 **12.8 — Why `full` is not sound yet, named rather than discovered.** Its proof that "no pin references
 this session" rests on four things the data-loss review found stale or unverified; each must be closed
 before a person switches a hub to `full`, whatever CSK-15 and CSK-20 say:
@@ -1128,9 +1139,13 @@ before a person switches a hub to `full`, whatever CSK-15 and CSK-20 say:
 3. The touch side is canonicalised but not resolved through git: case on a case-insensitive disk, a tracked
    symlinked directory, a non-ASCII path the git lane reads C-quoted.
 4. The repo identity on each side is computed on each machine, and fails open.
+5. Pins renamed between the rename sweep's first release and the `renamed_paths` counter (2026-08-30 to
+   09-02) carry no count, so the seed cannot give them the marker their lost names deserve.
 
 **Still open in `interim`:** the start-up backfill runs its UPDATEs over the whole table in one statement
 each (a one-time stall on a large hub, and dead row versions PGlite never vacuums); a swept session reads
 `unsequenced / pre_seq_connector` rather than "retired"; the interim rule reads "touched a file" from
 projections alone, so a session whose touch was never projected is sweepable (it has no position to lose);
-and the counts are hub-wide on a route every developer reads.
+the counts are hub-wide on a route every developer reads; and the cycle's cursor lives in memory, so a hub
+that restarts more often than one cycle takes (candidates ÷ 250 × 15 minutes) never judges its newest
+candidates — `doctor` then keeps saying the sweep has not finished a cycle, which is true.

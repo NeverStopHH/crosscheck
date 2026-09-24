@@ -83,7 +83,7 @@ const standingParts = (report: SkeletonRetentionReport): readonly string[] => [
   ...(report.unresolvedPins === 0
     ? []
     : [
-        `${plural(report.unresolvedPins, "pin", "pins")} on this hub cannot be tied to ${report.unresolvedPins === 1 ? "its files" : "their files"} (${report.unresolvedPinIds.join(", ")}${report.unresolvedPins > report.unresolvedPinIds.length ? ", …" : ""}), and each keeps every file-bearing session of its repo: \`crosscheck pin --sweep\` clears a pin whose file is only missing, and nothing in 1.0 clears one whose history lost a name`,
+        `${plural(report.unresolvedPins, "pin", "pins")} on this hub cannot be tied to ${report.unresolvedPins === 1 ? "its files" : "their files"} (${report.unresolvedPinIds.join(", ")}${report.unresolvedPins > report.unresolvedPinIds.length ? ", …" : ""}), and each keeps every file-bearing session of its repo — a pin with no history yet clears at the hub's next start, a missing file clears when \`crosscheck pin --sweep\` in the pin's repo finds it again unless the pin is recorded broken, and nothing in 1.0 clears a history that lost a name`,
       ]),
 ];
 
@@ -97,6 +97,9 @@ export const checkSkeletonRetention = (
 ): Check => {
   if (report === null) {
     return { level: "PASS", name: NAME, detail: "not measured" };
+  }
+  if (mode === "off") {
+    return { level: "PASS", name: NAME, detail: "nothing is swept in this mode, so nothing is judged either" };
   }
   if (isUnreadable(report)) {
     const warn = report.held || (report.sweepFailures ?? 0) > 0;
@@ -128,7 +131,7 @@ export const checkSkeletonRetention = (
     return {
       level: "WARN",
       name: NAME,
-      detail: `${plural(report.sweepFailures, "sweep pass", "sweep passes")} failed since the hub started, and a failed pass deletes nothing; ${sentence}`,
+      detail: `the last ${plural(report.sweepFailures, "sweep pass", "sweep passes")} failed, and a failed pass deletes nothing; ${sentence}`,
     };
   }
   return { level: "PASS", name: NAME, detail: sentence };

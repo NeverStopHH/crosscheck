@@ -140,7 +140,8 @@ export const skeletonSweepStatement = (input: SweepStatementInput): SQL => {
     WITH candidates AS (
       SELECT s.id, s.repo, s.ended_at, s.reaped_at IS NOT NULL AS reaped
         FROM agent_sessions s
-       WHERE s.ended_at IS NOT NULL AND s.ended_at < ${input.cutoff}
+       WHERE s.ended_at IS NOT NULL AND s.skeleton_retired_at IS NULL
+         AND s.ended_at < ${input.cutoff}
          AND EXISTS (SELECT 1 FROM session_events se WHERE se.session_id = s.id)
          ${after}
        ORDER BY s.ended_at, s.id
@@ -263,7 +264,10 @@ const recorded = (
   states.set(ledgerKey(db), {
     ...state,
     ...cycle,
-    failures: state.failures + (outcome.kind === "failed" ? 1 : 0),
+    // CONSECUTIVE failures: a failure that a later pass got past is history,
+    // and a WARN that outlives the fault is one people learn to ignore.
+    failures:
+      outcome.kind === "failed" ? state.failures + 1 : outcome.kind === "swept" ? 0 : state.failures,
     lastPassAt: at,
   });
   return outcome;
@@ -303,7 +307,9 @@ export const sweepSkeleton = async (
   const mode = options.mode ?? SESSION_EVENT_RETENTION;
   const registry = options.registry ?? RETENTION_REGISTRY;
   if (mode === "off") {
-    return recorded(deps.db, now, { kind: "off" });
+    // No pass ran, so none is recorded: `doctor` must not read a pass time
+    // beside a mode line that says nothing runs.
+    return { kind: "off" };
   }
   const heldBy = heldByUnbuiltRoots(registry);
   if (heldBy.length > 0) {

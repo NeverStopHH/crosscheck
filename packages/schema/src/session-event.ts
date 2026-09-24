@@ -226,6 +226,6 @@ export interface SkeletonRetentionReport {
   readonly unresolvedPins: number;
   /** The first MAX_REPORTED_UNRESOLVED_PINS of them, by id. */
   readonly unresolvedPinIds: readonly string[];
-  /** Sweep passes that failed, since this hub process started. */
+  /** Sweep passes that failed in a row up to the last pass; a successful pass resets it. */
   readonly sweepFailures: number;
 }

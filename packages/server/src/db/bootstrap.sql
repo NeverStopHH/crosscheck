@@ -591,17 +591,18 @@ CREATE INDEX IF NOT EXISTS pin_file_refs_file_ref_idx
 -- one index per root the sweep asks about once per candidate. Postgres does
 -- not index a foreign key's referencing side on its own, so without these the
 -- NOT EXISTS clauses are a scan each, per session, per pass.
--- THE SWEEP'S CANDIDATES, in cursor order: every ended session, reaped ones
--- included so the report can count them (they are never retired).
-CREATE INDEX IF NOT EXISTS agent_sessions_ended_idx
-  ON agent_sessions (ended_at, id)
-  WHERE ended_at IS NOT NULL;
 -- THE TOMBSTONE (01a §3.3g): set by the sweep in the statement that retires a
 -- session's skeleton, and read by every later projection, which then writes
 -- nothing — a record that arrives after the sweep must not rebuild part of
 -- a skeleton, because part of one reads as an order the whole may have
 -- contradicted.
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS skeleton_retired_at timestamptz;
+-- THE SWEEP'S CANDIDATES, in cursor order: every ended session not yet
+-- retired, reaped ones included so the report can count them (they are never
+-- retired). Retired ones leave the index, so a cycle never re-walks the dead.
+CREATE INDEX IF NOT EXISTS agent_sessions_ended_idx
+  ON agent_sessions (ended_at, id)
+  WHERE ended_at IS NOT NULL AND skeleton_retired_at IS NULL;
 CREATE INDEX IF NOT EXISTS claims_author_session_idx
   ON claims (author_session_id);
 CREATE INDEX IF NOT EXISTS claim_edges_author_session_idx
