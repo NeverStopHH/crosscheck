@@ -244,7 +244,8 @@ export const startServer = async (): Promise<void> => {
   void backfillSkeletonIdentity({ db, now: () => new Date() }).then(
     (report) => {
       console.log(
-        `[crosscheck] skeleton identity: ${String(report.pinsSeeded)} pin(s) seeded, ` +
+        `[crosscheck] skeleton identity: ${String(report.pinPathsCanonicalised)} legacy pin path(s) respelled, ` +
+          `${String(report.pinsSeeded)} pin(s) seeded, ` +
           `${String(report.fileRefs)} file identities filled, ` +
           `${String(report.unresolvedFileRefs)} unresolved (kept)`,
       );

@@ -10294,6 +10294,16 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "every pre-deploy edit past the first page stays unresolved, and the repo's file-bearing sessions are kept for ever without anyone being told why",
   },
+  {
+    // 01a §3.3d. A legacy pin path takes the one spelling at the upgrade.
+    label: "a legacy pin keeps a spelling no touch carries",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    if (!canonical.ok || canonical.path === row.path) {",
+    to: "    if (true || !canonical.ok || canonical.path === row.path) {",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "after the upgrade the hub canonicalises every touch, so a pin stored as ./src/x.ts meets none of them and suspect answers that nobody touched the surface",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -10546,7 +10556,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
- * PRINTS: packages/server/test/skeleton-identity.test.ts 16
+ * PRINTS: packages/server/test/skeleton-identity.test.ts 17
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4

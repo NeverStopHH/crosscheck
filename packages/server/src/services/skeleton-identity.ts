@@ -20,12 +20,12 @@
  */
 import { canonicalRepoPath, fileRef } from "@crosscheck/schema";
 import type { PinFileRefUnresolvedReason } from "@crosscheck/schema";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 
 import { SKELETON_BACKFILL_BATCH } from "../constants.ts";
 import type { DbExecutor } from "../db/client.ts";
-import { pinFileRefs } from "../db/schema.ts";
+import { pinFileRefs, pinFiles } from "../db/schema.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
@@ -101,6 +101,8 @@ export const touchFileRef = (repo: string, value: string): string | null => {
 };
 
 export interface SkeletonBackfillReport {
+  /** Legacy pin paths moved to their one spelling (`./src/x.ts` → `src/x.ts`). */
+  readonly pinPathsCanonicalised: number;
   /** Legacy pins given an identity history. */
   readonly pinsSeeded: number;
   readonly providers: number;
@@ -124,6 +126,40 @@ export interface SkeletonBackfillReport {
  * holds. That is unresolved, and unresolved is KEEP (§3.3e) — the price is
  * the repo-wide freeze §3.3e names, printed by `doctor` with the pin's id.
  */
+/**
+ * A PIN STORED BEFORE THE DOOR TAKES THE ONE SPELLING TOO. `pin_files.path` is
+ * the string `suspect` intersects with a session's touches, exactly, and the
+ * hub now canonicalises every touch it ingests — so a legacy `./src/x.ts`
+ * would match no touch at all after the upgrade (the retention graph is fine
+ * either way: it joins on the canonical identity). Each such row is moved to
+ * its canonical path, keeping its status; where the pin already watches that
+ * path, the existing row stands and the legacy one goes. A path with no
+ * canonical spelling is left as it is: its identity is already unresolved.
+ */
+const canonicaliseLegacyPinPaths = async (deps: Deps): Promise<number> => {
+  const rows = await deps.db
+    .select({ pinId: pinFiles.pinId, repo: pinFiles.repo, path: pinFiles.path, status: pinFiles.status })
+    .from(pinFiles);
+  let moved = 0;
+  for (const row of rows) {
+    const canonical = canonicalRepoPath(row.path);
+    if (!canonical.ok || canonical.path === row.path) {
+      continue;
+    }
+    await deps.db.transaction(async (tx) => {
+      await tx
+        .insert(pinFiles)
+        .values({ pinId: row.pinId, repo: row.repo, path: canonical.path, status: row.status })
+        .onConflictDoNothing();
+      await tx
+        .delete(pinFiles)
+        .where(and(eq(pinFiles.pinId, row.pinId), eq(pinFiles.path, row.path)));
+    });
+    moved += 1;
+  }
+  return moved;
+};
+
 const seedPinFileRefs = async (deps: Deps): Promise<number> => {
   const files = await deps.db.execute(sql`
     SELECT pf.pin_id AS pin_id, pf.repo AS repo, pf.path AS path, p.renamed_paths AS renamed,
@@ -348,6 +384,7 @@ export const backfillSkeletonIdentity = async (
   options: { readonly batch?: number } = {},
 ): Promise<SkeletonBackfillReport> => {
   const batch = options.batch ?? SKELETON_BACKFILL_BATCH;
+  const pinPathsCanonicalised = await canonicaliseLegacyPinPaths(deps);
   const pinsSeeded = await seedPinFileRefs(deps);
   const providers = await backfillProviders(deps, batch);
   const claimContexts = await backfillClaimContexts(deps, batch);
@@ -359,6 +396,7 @@ export const backfillSkeletonIdentity = async (
     await deps.db.execute(sql`VACUUM session_events`);
   }
   return {
+    pinPathsCanonicalised,
     pinsSeeded,
     providers,
     workContexts: claimContexts + targets.workContexts,

@@ -286,6 +286,7 @@ describe("the backfill of rows that predate the columns", () => {
     expect(await identities(w.harness)).toEqual(complete);
     expect(await pinRefs(w.harness, "pin_a")).toEqual(history);
     expect(report).toEqual({
+      pinPathsCanonicalised: 0,
       pinsSeeded: 1,
       // session.started, two file.modified, two claim.created, one claim.invalidated
       providers: 6,
@@ -351,6 +352,29 @@ describe("the backfill of rows that predate the columns", () => {
     ]);
   });
 
+  test("a pin stored before the door takes the one spelling, so a touch still meets it", async () => {
+    // Arrange — a pin row as an older hub stored it, verbatim, and a touch the
+    // new hub canonicalised at ingest
+    const w = await world();
+    await pin(w, "pin_dotted", [FILE]);
+    await w.harness.db.execute(sql`UPDATE pin_files SET path = ${`./${FILE}`} WHERE pin_id = 'pin_dotted'`);
+    await touch(w, "wc_a", [FILE]);
+
+    // Act
+    const report = await backfillSkeletonIdentity(deps(w.harness));
+
+    // Assert — the exact-string intersection `suspect` runs now meets
+    expect(report.pinPathsCanonicalised).toBe(1);
+    expect(
+      await rows(
+        w.harness,
+        sql`SELECT pf.path FROM pin_files pf
+              JOIN work_context_targets t ON t.value = pf.path AND t.kind = 'file'
+             WHERE pf.pin_id = 'pin_dotted'`,
+      ),
+    ).toEqual([{ path: FILE }]);
+  });
+
   test("a partial history is completed, file by file", async () => {
     // Arrange — a pin with two files whose history lost one of them (a
     // failed seed, then a rename): "has some history" is not "is resolved"
@@ -405,6 +429,7 @@ describe("the backfill of rows that predate the columns", () => {
 
     // Assert
     expect(again).toEqual({
+      pinPathsCanonicalised: 0,
       pinsSeeded: 0,
       providers: 0,
       workContexts: 0,
