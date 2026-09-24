@@ -119,6 +119,8 @@ export const PIN_FILE_REF_UNRESOLVED_REASONS = [
    * found from anything the hub still holds.
    */
   "rename_history_unrecorded",
+  /** The pin's repo identity carries the identity's own separator, so no identity can be computed. */
+  "repo_not_canonical",
 ] as const;
 
 export type PinFileRefUnresolvedReason =

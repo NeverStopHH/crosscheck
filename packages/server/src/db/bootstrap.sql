@@ -565,7 +565,8 @@ ALTER TABLE session_events ADD COLUMN IF NOT EXISTS provider text;
 ALTER TABLE session_events ADD COLUMN IF NOT EXISTS work_context_id text;
 ALTER TABLE session_events ADD COLUMN IF NOT EXISTS file_ref text;
 CREATE INDEX IF NOT EXISTS session_events_file_ref_idx
-  ON session_events (file_ref);
+  ON session_events (file_ref)
+  WHERE file_ref IS NOT NULL;
 
 -- EVERY FILE IDENTITY A PIN HAS EVER WATCHED (01a §3.3d), append-only: the
 -- pin sweep follows a rename by replacing the pin_files row, and a retention
@@ -585,6 +586,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS pin_file_refs_unresolved_idx
   WHERE file_ref IS NULL;
 CREATE INDEX IF NOT EXISTS pin_file_refs_file_ref_idx
   ON pin_file_refs (file_ref);
+
+-- THE SKELETON SWEEP'S PROBES (01a §3.3g): the candidate sessions by end, and
+-- one index per root the sweep asks about once per candidate. Postgres does
+-- not index a foreign key's referencing side on its own, so without these the
+-- NOT EXISTS clauses are a scan each, per session, per pass.
+-- THE SWEEP'S CANDIDATES, in cursor order: every ended session, reaped ones
+-- included so the report can count them (they are never retired).
+CREATE INDEX IF NOT EXISTS agent_sessions_ended_idx
+  ON agent_sessions (ended_at, id)
+  WHERE ended_at IS NOT NULL;
+-- THE TOMBSTONE (01a §3.3g): set by the sweep in the statement that retires a
+-- session's skeleton, and read by every later projection, which then writes
+-- nothing — a record that arrives after the sweep must not rebuild part of
+-- a skeleton, because part of one reads as an order the whole may have
+-- contradicted.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS skeleton_retired_at timestamptz;
+CREATE INDEX IF NOT EXISTS claims_author_session_idx
+  ON claims (author_session_id);
+CREATE INDEX IF NOT EXISTS claim_edges_author_session_idx
+  ON claim_edges (author_session_id);
 
 -- TEAM-level settings for the regression guard, one row per repo. ABSENT
 -- MEANS DEFAULTS ("anyone" may pin; `suspect` names sessions) — nothing
@@ -1098,6 +1119,9 @@ CREATE INDEX IF NOT EXISTS pilot_attributions_repo_answered_idx
   ON pilot_attributions (repo, answered_at DESC);
 CREATE INDEX IF NOT EXISTS pilot_attributions_pin_idx
   ON pilot_attributions (pin_id);
+-- The pilot-attribution root's probe (01a §3.3g).
+CREATE INDEX IF NOT EXISTS pilot_attributions_top_session_idx
+  ON pilot_attributions (top_session_id);
 -- The reaper's age prune (07 4) runs across every repo, so the timestamp
 -- leads; behind repo it would be a scan every fifteen minutes.
 CREATE INDEX IF NOT EXISTS pilot_attributions_answered_idx

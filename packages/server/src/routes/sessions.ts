@@ -7,6 +7,7 @@ import {
   SessionStatusBodySchema,
 } from "../http/schemas.ts";
 import { SESSION_EVENT_RETENTION } from "../constants.ts";
+import { readSkeletonRetentionReport } from "../services/retention.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readBrokenCausalOrders } from "../services/session-order.ts";
 import {
@@ -62,13 +63,15 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
    * which answers 404 — the discipline `/api/hints/stats` already uses.
    *
    * `retention` is the other thing only the hub can say about this table: how
-   * it retires rows. Today `off`, a documented refusal (constants.ts
-   * SESSION_EVENT_RETENTION) — an enum value from our own source, never a
-   * sentence, so it opens no untrusted slot in what doctor prints.
+   * it retires rows (constants.ts SESSION_EVENT_RETENTION) — an enum value
+   * from our own source, never a sentence, so it opens no untrusted slot in
+   * what doctor prints. `skeleton` says what that retention is KEEPING and
+   * why (01a §5): counts and root names only — no id, no repo, no path.
    */
   router.get("/order", async (c) => {
     const orders = await readBrokenCausalOrders(deps.db, c.get("developer").id);
-    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION });
+    const skeleton = await readSkeletonRetentionReport(deps);
+    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION, skeleton });
   });
 
   router.post("/", async (c) => {

@@ -207,6 +207,17 @@ describe("the skeleton row carries its own identity", () => {
     ]);
   });
 
+  test("a repo identity no file identity can be computed from is unresolved, not a failure", async () => {
+    // Arrange & Act — a raw client's repo carries the identity's separator
+    const w = await world();
+    await pin(w, "pin_bad_repo", [FILE], "github.com/acme\napi");
+
+    // Assert — stored, and marked unresolved with its reason
+    expect(await pinRefs(w.harness, "pin_bad_repo")).toEqual([
+      { file_ref: null, unresolved_reason: "repo_not_canonical" },
+    ]);
+  });
+
   test("the same path in another repo is another file", async () => {
     // Arrange
     const w = await world();
@@ -321,6 +332,47 @@ describe("the backfill of rows that predate the columns", () => {
     ]);
   });
 
+  test("a partial history is completed, file by file", async () => {
+    // Arrange — a pin with two files whose history lost one of them (a
+    // failed seed, then a rename): "has some history" is not "is resolved"
+    const w = await world();
+    await pin(w, "pin_two", [FILE, "src/y.ts"]);
+    await w.harness.db.execute(
+      sql`DELETE FROM pin_file_refs WHERE pin_id = 'pin_two' AND file_ref = ${fileRef(REPO, "src/y.ts")}`,
+    );
+
+    // Act
+    const report = await backfillSkeletonIdentity(deps(w.harness));
+
+    // Assert
+    expect(report.pinsSeeded).toBe(1);
+    expect((await pinRefs(w.harness, "pin_two")).map((row) => row["file_ref"]).sort()).toEqual(
+      [fileRef(REPO, FILE), fileRef(REPO, "src/y.ts")].sort(),
+    );
+  });
+
+  test("a rename keeps the name it leaves, even on a pin with no history yet", async () => {
+    // Arrange — a pin from before the table, renamed before the seed ran
+    const w = await world();
+    await pin(w, "pin_legacy", [FILE]);
+    await w.harness.db.execute(sql`DELETE FROM pin_file_refs WHERE pin_id = 'pin_legacy'`);
+
+    // Act
+    const swept = await w.harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", w.nick.apiKey, {
+        repo: REPO,
+        updates: [{ pinId: "pin_legacy", path: FILE, newPath: "src/renamed.ts" }],
+      }),
+    );
+
+    // Assert — both names, so the sessions that touched the old one stay reachable
+    expect(swept.status).toBe(200);
+    expect((await pinRefs(w.harness, "pin_legacy")).map((row) => row["file_ref"]).sort()).toEqual(
+      [fileRef(REPO, FILE), fileRef(REPO, "src/renamed.ts")].sort(),
+    );
+  });
+
   test("a second run finds nothing to do", async () => {
     // Arrange
     const w = await world();
@@ -342,3 +394,74 @@ describe("the backfill of rows that predate the columns", () => {
     });
   });
 });
+
+/**
+ * CSK-10 — NO TEXT REACHES THE SKELETON. Every content field this build
+ * touches carries a marker; the skeleton's tables are then searched byte for
+ * byte. A file identity is a HASH of the path, so the path itself must be
+ * nowhere in them — the one place a copy of content would be easiest to slip
+ * in "for convenience".
+ */
+describe("the skeleton holds no text (CSK-10)", () => {
+  test("no marker planted in content appears in session_events or pin_file_refs", async () => {
+    // Arrange
+    const MARK = "csk10-marker";
+    const w = await world();
+    const result = await postRecords(w.harness, w.nick, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_marked",
+            sessionId: "ses_a",
+            title: `${MARK} title`,
+            description: `${MARK} description`,
+            createdAt: TEST_START_ISO,
+          }),
+          { sessionId: "ses_a" },
+        ),
+        recordEnvelope(
+          "target",
+          { workContextId: "wc_marked", kind: "file", value: `src/${MARK}-path.ts` },
+          { sessionId: "ses_a" },
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_marked",
+            workContextId: "wc_marked",
+            authorSessionId: "ses_a",
+            body: `${MARK} claim body`,
+          }),
+          { sessionId: "ses_a" },
+        ),
+      ],
+    });
+    expect(result.data?.rejected ?? -1).toBe(0);
+    const pinned = await w.harness.app.request(
+      "/api/pins",
+      jsonRequest("POST", w.nick.apiKey, {
+        id: "pin_marked",
+        repo: REPO,
+        surface: `${MARK} surface`,
+        files: [`src/${MARK}-path.ts`],
+        check: `${MARK} check`,
+        presence: PIN_PRESENCE_TERMINAL,
+        verifiedAtCommit: "abc1234",
+      }),
+    );
+    expect(pinned.status).toBe(200);
+
+    // Act
+    const skeleton = await rows(
+      w.harness,
+      sql`SELECT row_to_json(t)::text AS j FROM session_events t
+          UNION ALL SELECT row_to_json(r)::text FROM pin_file_refs r`,
+    );
+
+    // Assert — the rows exist, and none carries the marker
+    expect(skeleton.length).toBeGreaterThanOrEqual(4);
+    expect(skeleton.map((row) => String(row["j"])).join("\n")).not.toContain(MARK);
+  });
+});
+

@@ -154,6 +154,7 @@ import {
   shadowSentence,
   shadowedPinPaths,
 } from "./pin-observability.ts";
+import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -1955,10 +1956,30 @@ const checkEventSeq = (
  */
 const RETENTION_SENTENCES: Readonly<Record<SessionEventRetentionMode, string>> = {
   off: "off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here",
+  interim: "interim — a session's events go, all of them together, only once it ended on its own {window}, nothing still depends on its order, and it touched no file; every session that touched a file is kept, until a person switches this hub to full",
+  full: "full — a session's events go, all of them together, only once it ended on its own {window} and nothing still depends on its order: no claim, no pinned file under any name the pin has had, no intent, no pilot record",
 };
+
+/**
+ * THE WINDOW IS THE HUB'S NUMBER, not this CLI's: it arrives in the hub's
+ * retention report, and a hub that sent none gets the words, never a guess.
+ */
+const RETENTION_WINDOW = "{window}";
+
+const retentionSentence = (
+  mode: SessionEventRetentionMode,
+  windowDays: number | null,
+): string =>
+  RETENTION_SENTENCES[mode].replace(
+    RETENTION_WINDOW,
+    windowDays === null
+      ? "longer ago than the hub's retention window"
+      : `more than ${String(windowDays)} days ago`,
+  );
 
 const checkSessionEventRetention = (
   mode: SessionEventRetentionMode | "unknown" | null,
+  windowDays: number | null,
 ): Check =>
   check(
     "PASS",
@@ -1967,7 +1988,7 @@ const checkSessionEventRetention = (
       ? "not measured"
       : mode === "unknown"
         ? "the hub declares a retention mode this crosscheck cannot name — upgrade the CLI to read what it keeps"
-        : RETENTION_SENTENCES[mode],
+        : retentionSentence(mode, windowDays),
   );
 
 /**
@@ -3685,6 +3706,7 @@ export const runDoctor = async (
       }))
     : null;
   const eventRetention = orderReport.ok ? orderReport.data.retention : null;
+  const skeletonRetention = orderReport.ok ? orderReport.data.skeleton : null;
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -3780,7 +3802,13 @@ export const runDoctor = async (
     checkGhostCost(liveStates.states),
     checkGitLane(liveStates.states),
     checkEventSeq(liveStates.states, brokenOrders),
-    checkSessionEventRetention(eventRetention),
+    checkSessionEventRetention(
+      eventRetention,
+      skeletonRetention === null || "unreadable" in skeletonRetention
+        ? null
+        : skeletonRetention.windowDays,
+    ),
+    checkSkeletonRetention(skeletonRetention, eventRetention),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),

@@ -7,10 +7,18 @@ import {
   MAX_CI_TEST_ID_CHARS,
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
+  MAX_RECORD_ID_LENGTH,
+  MAX_REPORTED_UNRESOLVED_PINS,
+  RETENTION_ROOT_NAMES,
+  SAFE_ID_PATTERN,
   SESSION_EVENT_RETENTION_MODES,
   MAX_CI_LANE_FIELD_CHARS,
 } from "@crosscheck/schema";
-import type { SeqField, SessionEventRetentionMode } from "@crosscheck/schema";
+import type {
+  SeqField,
+  SessionEventRetentionMode,
+  SkeletonRetentionReport,
+} from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
@@ -327,7 +335,66 @@ export type SessionOrderEntry = z.infer<typeof SessionOrderEntrySchema>;
 export interface SessionOrderReport {
   readonly broken: readonly SessionOrderEntry[];
   readonly retention: SessionEventRetentionMode | "unknown" | null;
+  /**
+   * What the sweep keeps and why (01a §5). null: the hub sent none. An
+   * UnreadableSkeletonReport: it sent one this connector cannot read in full —
+   * a newer hub's root, say — and a report read in part would print counts
+   * that are not the hub's; the two facts that decide a WARN are still read.
+   */
+  readonly skeleton: SkeletonRetentionReport | UnreadableSkeletonReport | null;
 }
+
+/** A newer hub's report, reduced to what still has to reach the reader. */
+export interface UnreadableSkeletonReport {
+  readonly unreadable: true;
+  readonly held: boolean;
+  readonly sweepFailures: number | null;
+}
+
+const COUNT = z.number().int().nonnegative();
+const ISO = z.iso.datetime();
+/** Pin ids are hub-minted `SAFE_ID_PATTERN` ids; anything else is not printed. */
+const PIN_ID = z.string().max(MAX_RECORD_ID_LENGTH).regex(SAFE_ID_PATTERN);
+
+/** STRICT: every count present and an integer, every root one this connector can name. */
+const SkeletonRetentionReportSchema: z.ZodType<SkeletonRetentionReport> = z.object({
+  windowDays: COUNT,
+  heldBy: z.array(z.enum(RETENTION_ROOT_NAMES)),
+  completedAt: ISO.nullable(),
+  lastPassAt: ISO.nullable(),
+  aged: COUNT,
+  swept: COUNT,
+  keptBy: z.array(z.object({ root: z.enum(RETENTION_ROOT_NAMES), sessions: COUNT })),
+  unresolved: COUNT,
+  fileBearing: COUNT,
+  reapedAwaitingEnd: COUNT,
+  unresolvedPins: COUNT,
+  unresolvedPinIds: z.array(PIN_ID).max(MAX_REPORTED_UNRESOLVED_PINS),
+  sweepFailures: COUNT,
+});
+
+const WarningFactsSchema = z.looseObject({
+  heldBy: z.array(z.unknown()).optional(),
+  sweepFailures: COUNT.optional(),
+});
+
+const parseSkeleton = (
+  value: unknown,
+): SkeletonRetentionReport | UnreadableSkeletonReport | null => {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = SkeletonRetentionReportSchema.safeParse(value);
+  if (parsed.success) {
+    return parsed.data;
+  }
+  const facts = WarningFactsSchema.safeParse(value);
+  return {
+    unreadable: true,
+    held: facts.success && (facts.data.heldBy?.length ?? 0) > 0,
+    sweepFailures: facts.success ? (facts.data.sweepFailures ?? null) : null,
+  };
+};
 
 const isRetentionMode = (value: unknown): value is SessionEventRetentionMode =>
   (SESSION_EVENT_RETENTION_MODES as readonly unknown[]).includes(value);
@@ -336,6 +403,7 @@ const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
   .looseObject({
     sessions: z.array(z.unknown()),
     retention: z.unknown().optional(),
+    skeleton: z.unknown().optional(),
   })
   .transform((value) => ({
     broken: value.sessions
@@ -348,6 +416,7 @@ const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
         : isRetentionMode(value.retention)
           ? value.retention
           : "unknown",
+    skeleton: parseSkeleton(value.skeleton),
   }));
 
 /**

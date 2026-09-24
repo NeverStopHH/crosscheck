@@ -84,6 +84,46 @@ describe("resolvePinPaths", () => {
     await rm(links, { recursive: true, force: true });
   });
 
+  test("from a subdirectory, a path git tracks from the root AND from there is refused as ambiguous", async () => {
+    // Arrange — the monorepo shape: src/x.ts at the root, and src/src/x.ts
+    // under the directory the person stands in
+    await writeRepoFile(repo, "src/src/x.ts", "export const nested = 1;\n");
+    await git(repo, ["add", "src/src/x.ts"]);
+    await git(repo, ["commit", "-m", "nested"]);
+
+    // Act — standing in src/, typing src/x.ts
+    const result = await resolvePinPaths(repo, join(repo, "src"), ["src/x.ts"]);
+
+    // Assert — never silently the root file
+    expect(result).toEqual({
+      ok: false,
+      refused: [{ path: "src/x.ts", reason: "ambiguous", suggestion: "src/src/x.ts" }],
+    });
+  });
+
+  test("from a subdirectory, a repo-relative path git tracks only from the root is accepted", async () => {
+    // Act — standing in src/, typing the repo-relative src/Auth.ts
+    const result = await resolvePinPaths(repo, join(repo, "src"), ["src/Auth.ts"]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, paths: ["src/Auth.ts"] });
+  });
+
+  test("a submodule is not a file", async () => {
+    // Arrange — a gitlink in the index, as `git submodule add` leaves one
+    const head = Bun.spawnSync({ cmd: ["git", "rev-parse", "HEAD"], cwd: repo }).stdout.toString().trim();
+    await git(repo, ["update-index", "--add", "--cacheinfo", `160000,${head},vendor/lib`]);
+
+    // Act
+    const result = await resolvePinPaths(repo, repo, ["vendor/lib"]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      refused: [{ path: "vendor/lib", reason: "submodule", suggestion: null }],
+    });
+  });
+
   test("a directory is not a file", async () => {
     // Arrange & Act — git's pathspec would happily list every file under it
     const result = await resolvePinPaths(repo, repo, ["src"]);
@@ -115,6 +155,26 @@ describe("resolvePinPaths", () => {
       ok: false,
       refused: [{ path: "../outside.ts", reason: "parent_segment", suggestion: null }],
     });
+  });
+
+  test("a repository whose index git cannot read refuses as unanswered, not as untracked", async () => {
+    // Arrange — rev-parse still answers; ls-files cannot read the index. The
+    // person must be told git did not answer, not sent looking for a typo.
+    const broken = await makeRepo("pin-paths-broken-index");
+    await writeRepoFile(broken, "src/x.ts", "export const x = 1;\n");
+    await git(broken, ["add", "-A"]);
+    await git(broken, ["commit", "-m", "files"]);
+    await Bun.write(join(broken, ".git", "index"), "not an index");
+
+    // Act
+    const result = await resolvePinPaths(broken, broken, ["src/x.ts"]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      refused: [{ path: "src/x.ts", reason: "git_unanswered", suggestion: null }],
+    });
+    await rm(broken, { recursive: true, force: true });
   });
 
   test("a git that cannot answer refuses everything — nothing is stored unverified", async () => {

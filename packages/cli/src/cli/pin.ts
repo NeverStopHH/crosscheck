@@ -297,6 +297,8 @@ const PIN_PATH_REFUSAL_SENTENCE: Readonly<Record<PinPathRefusalReason, string>> 
   not_tracked:
     "git tracks no file at this path — pin paths are repo-relative and case-sensitive, and the file must be in git",
   directory: "this is a directory, and a pin watches files — name the files",
+  submodule: "this is a submodule — git tracks a commit pointer here, not the files inside it; pin them from inside the submodule's own repo",
+  ambiguous: "git tracks this path from the repo root AND from the directory you are in — pin paths are repo-relative, so say which: the root one as typed from the repo root, or the other by its full path",
   git_unanswered: "git did not answer, so nothing was stored",
   empty: "this is not a file path",
   absolute: "an absolute path is never a repo file — give it relative to the repo root",
@@ -313,7 +315,9 @@ const refusedPaths = (refused: readonly PinPathRefusal[]): CliResult => ({
         `  ${JSON.stringify(row.path)}: ${PIN_PATH_REFUSAL_SENTENCE[row.reason]}${
           row.suggestion === null
             ? ""
-            : ` — git tracks ${JSON.stringify(row.suggestion)}; pin that`
+            : row.reason === "ambiguous"
+              ? ` — from here it would be ${JSON.stringify(row.suggestion)}`
+              : ` — git tracks ${JSON.stringify(row.suggestion)}; pin that`
         }`,
     ),
     "",

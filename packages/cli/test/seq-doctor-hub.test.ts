@@ -204,6 +204,43 @@ const doctorOutput = async (
   return result.stdout;
 };
 
+/**
+ * `doctor` against a hub that answers ONLY the order route, with the body
+ * given — for the states a real hub in this test cannot be put in cheaply.
+ */
+const fakeHubDoctor = async (body: unknown): Promise<string> => {
+  const fake = Bun.serve({
+    port: 0,
+    fetch: (request) =>
+      new URL(request.url).pathname === "/api/sessions/order"
+        ? Response.json({ ok: true, data: body })
+        : Response.json(
+            { ok: false, error: { code: "not_found", message: "not here" } },
+            { status: 404 },
+          ),
+  });
+  const home = await makeHome("seq-doctor-hub-fake");
+  const repo = await makeRepo("seq-doctor-hub-fake", {
+    remote: "git@github.com:acme/api.git",
+  });
+  paths.push(home, repo);
+  try {
+    const result = await runCli(
+      ["doctor"],
+      {
+        CROSSCHECK_HOME: home,
+        CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(fake.port)}`,
+        CROSSCHECK_API_KEY: "k",
+        CROSSCHECK_SSH_CANONICALIZE: "off",
+      },
+      repo,
+    );
+    return result.stdout;
+  } finally {
+    fake.stop(true);
+  }
+};
+
 describe("doctor prints the order failures only the hub can see", () => {
   test("a session holding two epochs WARNs, and the line says what it costs", async () => {
     // Arrange: one session, two counters — a second home on one host session
@@ -230,13 +267,12 @@ describe("doctor prints the order failures only the hub can see", () => {
     expect(output).toContain("cannot be ordered");
   });
 
-  test("a hub that retires no position says so, and doctor prints the refusal", async () => {
-    // Arrange: CSK-14's other half. The age sweep is withdrawn, so this hub's
-    // session_events grow without bound — ON PURPOSE, until 01a's referential
-    // predicate switches retention back on. An operator has to be able to read
-    // that decision, and the only one who can state it is the hub itself: one
-    // hub serves connectors of several versions, so a sentence compiled into
-    // this CLI would describe whatever hub the CLI was built beside.
+  test("the hub declares its sweep, and doctor says what it removes and what it keeps", async () => {
+    // Arrange: 01a turned retention back on, in the interim mode. An operator
+    // has to be able to read the decision, and the only one who can state it
+    // is the hub itself: one hub serves connectors of several versions, so a
+    // sentence compiled into this CLI would describe whatever hub the CLI was
+    // built beside.
     const home = await makeHome("seq-doctor-hub-retention");
     const repo = await makeRepo("seq-doctor-hub-retention", {
       remote: "git@github.com:acme/api.git",
@@ -248,7 +284,20 @@ describe("doctor prints the order failures only the hub can see", () => {
     // Act
     const output = await doctorOutput(account, home, repo);
 
-    // Assert: PASS — a decision, not a defect — and the whole sentence.
+    // Assert: PASS — a decision, not a defect — the whole sentence, and what
+    // it is keeping, from the hub's own report.
+    expect(output).toContain(
+      "PASS  session-event retention  interim — a session's events go, all of them together, only once it ended on its own more than 30 days ago, nothing still depends on its order, and it touched no file; every session that touched a file is kept, until a person switches this hub to full",
+    );
+    // Nothing is claimed about a cycle that has not run: this hub's timer is
+    // not started in a test, and SessionStart passes never sweep
+    expect(output).toContain(
+      "PASS  skeleton retention  the sweep has not finished a cycle over this hub's sessions since the hub started (no pass has run yet)",
+    );
+  });
+
+  test("a hub that retires nothing says so, in a sentence that says what is kept", async () => {
+    // Arrange — `off` stays a mode a hub may declare.
     //
     // IT HAS TO SAY WHAT IS KEPT. The sentence used to read "off — the
     // age-based sweep is withdrawn; spec 01a's referential predicate replaces
@@ -262,9 +311,146 @@ describe("doctor prints the order failures only the hub can see", () => {
     // activity trail nothing removes. Measured: 501 rows from one 500-edit
     // session, 327,680 bytes of relation, and `reapStaleSessions` over rows
     // backdated 900 days removed none of them.
+    const output = await fakeHubDoctor({ sessions: [], retention: "off" });
+
+    // Assert
     expect(output).toContain(
       "PASS  session-event retention  off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here",
     );
+  });
+
+  test("the mode sentence carries the hub's own window, and no number without one", async () => {
+    // Act — a hub that keeps sessions 45 days, and one that sent no report
+    const withReport = await fakeHubDoctor({
+      sessions: [],
+      retention: "full",
+      skeleton: {
+        windowDays: 45,
+        heldBy: [],
+        completedAt: null,
+        lastPassAt: null,
+        aged: 0,
+        swept: 0,
+        unresolvedPinIds: [],
+        keptBy: [],
+        unresolved: 0,
+        fileBearing: 0,
+        reapedAwaitingEnd: 0,
+        unresolvedPins: 0,
+        sweepFailures: 0,
+      },
+    });
+    const withoutReport = await fakeHubDoctor({ sessions: [], retention: "full" });
+
+    // Assert
+    expect(withReport).toContain("only once it ended on its own more than 45 days ago");
+    expect(withoutReport).toContain("only once it ended on its own longer ago than the hub's retention window");
+    expect(withoutReport).toContain("PASS  skeleton retention  not measured");
+  });
+
+  test.each([
+    [
+      "what each reason keeps, with the spec that owes a root its rule",
+      "interim",
+      {
+        windowDays: 30,
+        heldBy: [],
+        completedAt: "2026-09-24T06:00:00.000Z",
+        lastPassAt: "2026-09-24T06:15:00.000Z",
+        aged: 7,
+        swept: 2,
+        keptBy: [
+          { root: "claims", sessions: 3 },
+          { root: "pins", sessions: 1 },
+          { root: "intent_versions", sessions: 0 },
+        ],
+        unresolved: 1,
+        fileBearing: 2,
+        reapedAwaitingEnd: 1,
+        unresolvedPins: 1,
+        unresolvedPinIds: ["pin_lost"],
+        sweepFailures: 0,
+      },
+      "PASS  skeleton retention  last full cycle 2026-09-24T06:00:00.000Z: 7 explicitly ended sessions past the window held a skeleton and 2 were retired; reached by claims 3 (liveness owed by 02/04), pinned files 1; 1 kept because a file identity could not be resolved; 2 touched files, which this mode keeps whatever reaches them; a session counts under every reason that keeps it; 1 reaped session past the window is never retired while the end is only inferred from silence; 1 pin on this hub cannot be tied to its files (pin_lost), and each keeps every file-bearing session of its repo: `crosscheck pin --sweep` clears a pin whose file is only missing, and nothing in 1.0 clears one whose history lost a name",
+    ],
+    [
+      "the same cycle in full mode, which keeps no file-bearing session for touching a file",
+      "full",
+      {
+        windowDays: 30,
+        heldBy: [],
+        completedAt: "2026-09-24T06:00:00.000Z",
+        lastPassAt: "2026-09-24T06:15:00.000Z",
+        aged: 3,
+        swept: 1,
+        keptBy: [{ root: "claims", sessions: 2 }],
+        unresolved: 0,
+        fileBearing: 2,
+        reapedAwaitingEnd: 0,
+        unresolvedPins: 0,
+        unresolvedPinIds: [],
+        sweepFailures: 0,
+      },
+      "PASS  skeleton retention  last full cycle 2026-09-24T06:00:00.000Z: 3 explicitly ended sessions past the window held a skeleton and 1 was retired; reached by claims 2 (liveness owed by 02/04); a session counts under every reason that keeps it",
+    ],
+    [
+      "a sweep held by a root nobody built",
+      "interim",
+      {
+        windowDays: 30,
+        heldBy: ["pilot_sessions"],
+        completedAt: null,
+        lastPassAt: "2026-09-24T06:15:00.000Z",
+        aged: 0,
+        swept: 0,
+        keptBy: [],
+        unresolved: 0,
+        fileBearing: 0,
+        reapedAwaitingEnd: 0,
+        unresolvedPins: 0,
+        unresolvedPinIds: [],
+        sweepFailures: 0,
+      },
+      "WARN  skeleton retention  the sweep is held and deletes nothing: pilot session records is declared as a retention root and not built yet",
+    ],
+    [
+      "a sweep that failed before completing a cycle",
+      "interim",
+      {
+        windowDays: 30,
+        heldBy: [],
+        completedAt: null,
+        lastPassAt: "2026-09-24T06:15:00.000Z",
+        aged: 0,
+        swept: 0,
+        keptBy: [],
+        unresolved: 0,
+        fileBearing: 0,
+        reapedAwaitingEnd: 0,
+        unresolvedPins: 0,
+        unresolvedPinIds: [],
+        sweepFailures: 2,
+      },
+      "WARN  skeleton retention  2 sweep passes failed since the hub started, and a failed pass deletes nothing; the sweep has not finished a cycle over this hub's sessions since the hub started (last pass 2026-09-24T06:15:00.000Z)",
+    ],
+    [
+      "a newer hub's report that says its sweep is held",
+      "interim",
+      { heldBy: ["a_root_from_2099"], aged: 1 },
+      "WARN  skeleton retention  the hub reports what it keeps in a form this crosscheck cannot read — upgrade the CLI to see it; it does say its sweep is held or has failed",
+    ],
+    [
+      "a newer hub's report with nothing to warn about",
+      "interim",
+      { heldBy: [], aged: 1, a_field_from_2099: true },
+      "PASS  skeleton retention  the hub reports what it keeps in a form this crosscheck cannot read — upgrade the CLI to see it",
+    ],
+  ] as const)("the skeleton line: %s", async (_label, retention, skeleton, expected) => {
+    // Act
+    const output = await fakeHubDoctor({ sessions: [], retention, skeleton });
+
+    // Assert
+    expect(output).toContain(expected);
   });
 
   test.each([

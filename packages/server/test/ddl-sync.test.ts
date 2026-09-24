@@ -700,4 +700,24 @@ describe("bootstrap.sql DDL sync", () => {
     expect(String(unresolved?.["d"])).toContain("UNIQUE");
     expect(String(unresolved?.["d"])).toContain("WHERE (file_ref IS NULL)");
   });
+
+  test("the skeleton sweep's probes are indexed on a real bootstrap", async () => {
+    // Arrange — each root is asked once per candidate session; an unindexed
+    // referencing column is a scan per session per pass (01a §6)
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexname AS i FROM pg_indexes WHERE indexname IN ('agent_sessions_ended_idx', 'claims_author_session_idx', 'claim_edges_author_session_idx', 'pilot_attributions_top_session_idx', 'work_context_intents_session_idx') ORDER BY indexname`,
+    );
+
+    // Assert
+    expect(rows.rows.map((row) => String(row["i"]))).toEqual([
+      "agent_sessions_ended_idx",
+      "claim_edges_author_session_idx",
+      "claims_author_session_idx",
+      "pilot_attributions_top_session_idx",
+      "work_context_intents_session_idx",
+    ]);
+  });
 });

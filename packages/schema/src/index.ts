@@ -224,6 +224,9 @@ export {
   SEQ_KINDS,
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
+  RETENTION_ROOT_LIVENESS_OWNER,
+  MAX_REPORTED_UNRESOLVED_PINS,
+  RETENTION_ROOT_NAMES,
   SESSION_EVENT_RETENTION_MODES,
 } from "./session-event.ts";
 export type {
@@ -231,6 +234,8 @@ export type {
   SeqKind,
   SeqReason,
   SessionEventKind,
+  RetentionRootName,
+  SkeletonRetentionReport,
   SessionEventRetentionMode,
 } from "./session-event.ts";
 

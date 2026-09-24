@@ -751,7 +751,12 @@ export const applyPinSweep = async (
     // retention of the sessions that touched the file under its old name.
     await recordPinFileRefs(
       deps.db,
-      [pinFileRefRow(update.pinId, repo, update.newPath)],
+      [
+        // The OLD name too: a pin whose history is partial (seeded late, or
+        // from before the table) must not lose the name it is leaving.
+        pinFileRefRow(update.pinId, repo, update.path),
+        pinFileRefRow(update.pinId, repo, update.newPath),
+      ],
       deps.now(),
     );
     if (update.newPath !== update.path) {

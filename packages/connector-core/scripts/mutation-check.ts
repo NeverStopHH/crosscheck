@@ -5071,41 +5071,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "a confident sentence about an ordering nobody observed",
   },
   {
-    // CSK-14 (Nick's D-D, 2026-09-17): the age sweep D2 shipped is WITHDRAWN
-    // before its first deploy, because the rows it deletes are very nearly the
-    // causal skeleton. This puts the call back where it ran.
-    label: "the withdrawn age sweep runs again",
+    // CSK-14's successor (01a §3.3g): the sweep runs from the reaper's own
+    // timer pass, the one standalone pass this hub starts.
+    label: "the skeleton sweep is never called",
     file: `${SERVER}/src/services/sessions.ts`,
-    from: "  // Candidates first, then one UPDATE by id",
-    to:
-      "  await (await import(\"./session-events.ts\")).pruneSessionEvents(deps);\n" +
-      "  // Candidates first, then one UPDATE by id",
+    from: "  if (options.developerId === undefined) {\n    await sweepSkeleton(",
+    to: "  if (options.developerId === \"never\") {\n    await sweepSkeleton(",
     test: `${SERVER}/test/session-event-retention.test.ts`,
     because:
-      "DATA LOSS: every position older than thirty days is deleted on the " +
-      "next reaper pass — ids, kind, epoch and position, which later causal " +
-      "statements are ordered against — while the hub still declares its " +
-      "retention `off` and doctor prints that it keeps everything",
+      "the table grows without bound again while the hub declares a sweep " +
+      "that runs, and doctor prints a retention nothing applies",
   },
   {
-    // The cutoff is the half of the dormant sweep spec 01a keeps. Zero retires
-    // a position the moment it is written, which reads as a working sweep in
-    // every count; the retention test calls the sweep directly to hold it.
-    label: "a position is retired the moment it is written",
-    file: `${SERVER}/src/services/session-events.ts`,
-    from: "    deps.now().getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY,",
-    to: "    deps.now().getTime(),",
-    test: `${SERVER}/test/session-event-retention.test.ts`,
+    // 01a §3.3a. The window is the session's, and it is not zero.
+    label: "a session is retired the moment it ends",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "  new Date(now.getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY);",
+    to: "  new Date(now.getTime());",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
     because:
-      "DATA LOSS ONCE 01a CALLS IT: a live session's own order is swept out " +
-      "from under it on the next pass, so AT-4 is unanswerable for work in " +
-      "progress — and 01a would inherit a cutoff nobody had tested",
+      "DATA LOSS: yesterday's session loses its order before anybody could " +
+      "ask a question of it, and AT-4 is unanswerable for recent work",
   },
   {
     // CSK-14's other half: the refusal is only a refusal if doctor prints it.
     label: "doctor goes quiet about the withdrawn retention",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "    checkSessionEventRetention(eventRetention),\n",
+    from: "    checkSessionEventRetention(\n      eventRetention,\n      skeletonRetention === null || \"unreadable\" in skeletonRetention\n        ? null\n        : skeletonRetention.windowDays,\n    ),\n",
     to: "",
     test: `${CLI}/test/seq-doctor-hub.test.ts`,
     because:
@@ -5116,8 +5108,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // The hub is the only one who can state its retention.
     label: "the hub stops declaring its retention",
     file: `${SERVER}/src/routes/sessions.ts`,
-    from: "    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION });",
-    to: "    return ok(c, { sessions: orders });",
+    from: "    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION, skeleton });",
+    to: "    return ok(c, { sessions: orders, skeleton });",
     test: `${CLI}/test/seq-doctor-hub.test.ts`,
     because:
       "SILENT: every doctor against the one hub that did decide reads `not " +
@@ -9619,8 +9611,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 01a §3.3d, CSK-28. The door admits only a file git tracks in exactly that spelling.
     label: "the pin door admits a path git does not track",
     file: `${CORE}/src/git/pin-paths.ts`,
-    from: "    if (exact.has(path)) {",
-    to: "    if (exact.has(path) || path.length > 0) {",
+    from: "    const entry = exact.get(path);",
+    to: "    const entry = exact.get(path) ?? { path, gitlink: false };",
     test: `${CORE}/test/pin-paths.test.ts`,
     because:
       "a wrong case or an untracked path is stored as a pin that watches " +
@@ -9630,8 +9622,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 01a §3.3d. A directory is not a file.
     label: "the pin door calls a directory an untracked file",
     file: `${CORE}/src/git/pin-paths.ts`,
-    from: "    if (tracked.some((file) => file.startsWith(`${path}/`))) {",
-    to: "    if (tracked.some((file) => file === path)) {",
+    from: "    if (tracked.some((file) => file.path.startsWith(`${path}/`))) {",
+    to: "    if (tracked.some((file) => file.path === path)) {",
     test: `${CORE}/test/pin-paths.test.ts`,
     because:
       "a person who pinned `src` is told git tracks nothing there, which is " +
@@ -9641,8 +9633,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 01a §3.3d. No answer from git is not "untracked".
     label: "a git that did not answer reads as tracking nothing",
     file: `${CORE}/src/git/pin-paths.ts`,
-    from: "    ? listed.stdout.split(NUL).filter((path) => path.length > 0)\n    : null;",
-    to: "    ? listed.stdout.split(NUL).filter((path) => path.length > 0)\n    : [];",
+    from: "  if (!listed.ok) {\n    return null;\n  }\n  const byPath",
+    to: "  if (!listed.ok) {\n    return [];\n  }\n  const byPath",
     test: `${CORE}/test/pin-paths.test.ts`,
     because:
       "a timeout or a broken repo tells the person their file is not in git, " +
@@ -9696,8 +9688,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 01a §3.3d, CSK-20 (a). A rename keeps the old name reachable.
     label: "a rename records no identity for the new name",
     file: `${SERVER}/src/services/pins.ts`,
-    from: "      [pinFileRefRow(update.pinId, repo, update.newPath)],",
-    to: "      [],",
+    from: "        pinFileRefRow(update.pinId, repo, update.newPath),\n      ],",
+    to: "      ],",
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because:
       "after the weekly rename the pin watches a file no identity names, and " +
@@ -9718,8 +9710,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 01a §3.2. The vendor is copied from the session row, exactly.
     label: "the skeleton row stops recording its vendor",
     file: `${SERVER}/src/services/session-events.ts`,
-    from: "        provider: sql`(SELECT ${agentSessions.agentKind} FROM ${agentSessions} WHERE ${agentSessions.id} = ${input.sessionId})`,",
-    to: "        provider: null,",
+    from: "             ${seqReason}, ${input.refKind}, ${input.refId}, ${deps.now()}, s.agent_kind,",
+    to: "             ${seqReason}, ${input.refKind}, ${input.refId}, ${deps.now()}, NULL,",
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because:
       "which vendor produced an order becomes a join through the session row, " +
@@ -9784,8 +9776,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 01a §3.3e. A legacy renamed pin's lost names are unresolved, not absent.
     label: "a legacy renamed pin is seeded as if its history were complete",
     file: `${SERVER}/src/services/skeleton-identity.ts`,
-    from: "    if (rows.length === 0 && Number(row.renamed) > 0) {",
-    to: "    if (rows.length === 0 && Number(row.renamed) > 99) {",
+    from: "    if (!row.has_history && Number(row.renamed) > 0) {",
+    to: "    if (!row.has_history && Number(row.renamed) > 99) {",
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because:
       "the sessions that touched the names the pin watched before the rename " +
@@ -9793,14 +9785,434 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     // 01a §4.3. The seed runs once per legacy pin.
-    label: "the seed re-seeds pins that already have a history",
+    label: "the seed rewrites every pin on every start",
     file: `${SERVER}/src/services/skeleton-identity.ts`,
-    from: "     WHERE NOT EXISTS (SELECT 1 FROM pin_file_refs pr WHERE pr.pin_id = p.id)\n     ORDER BY p.id`);",
-    to: "     ORDER BY p.id`);",
+    from: "    const absent = missing.filter((entry) => !known.has(`${entry.pinId}\\n${String(entry.fileRef)}`));",
+    to: "    const absent = missing.filter(() => true);",
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because:
       "every start walks every pin on the hub, and a renamed pin's current " +
       "name is re-derived as if it were the only one it ever had",
+  },
+  {
+    // 01a CSK-1, CSK-22. A claim keeps its whole session.
+    label: "the claims root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM claims c WHERE c.author_session_id = ${session}`,",
+    to: "      sql`SELECT 1 WHERE false`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: a month after it ended, the session behind every live claim loses its order, and no claim can say whether its reason predated the change",
+  },
+  {
+    // 01a CSK-22. A claim edge keeps its author session.
+    label: "the claim-edge root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM claim_edges ce WHERE ce.author_session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM claim_edges ce WHERE ce.author_session_id = 'nobody'`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: the session that recorded a supersession or a contradiction loses the positions the edge is ordered against",
+  },
+  {
+    // 01a CSK-22, §3.3d. A pin reaches a session through the file identity.
+    label: "the pin root joins on the wrong identity",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      JOIN pin_file_refs pr ON pr.file_ref = pe.file_ref",
+    to: "      JOIN pin_file_refs pr ON pr.file_ref = pe.ref_id",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: no pin ever reaches a session, so the history of every change to a human's pinned surface is deleted after thirty days",
+  },
+  {
+    // 01a CSK-22. An intent version keeps its author session.
+    label: "the intent root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM work_context_intents wi WHERE wi.author_session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM work_context_intents wi WHERE wi.author_session_id = 'nobody'`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: 06's timing answer loses the edit positions it compares an intent against, and reads `absent` for work that declared its intent",
+  },
+  {
+    // 01a CSK-22, D-E. A pilot session record keeps its session until Nick decides.
+    label: "the pilot-session root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM pilot_sessions ps WHERE ps.session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM pilot_sessions ps WHERE ps.session_id = 'nobody'`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a decision that is Nick's (D-E) is taken by a registry edit: the measured sessions lose their skeleton before he has ruled",
+  },
+  {
+    // 01a CSK-22, D-E. A pilot attribution keeps its top session until Nick decides.
+    label: "the pilot-attribution root reaches no session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM pilot_attributions pa WHERE pa.top_session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM pilot_attributions pa WHERE pa.top_session_id = 'nobody'`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a decision that is Nick's (D-E) is taken by a registry edit: the session an attribution named loses its skeleton first",
+  },
+  {
+    // 01a CSK-16. Belonging is not dependence.
+    label: "a work context retains its session",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "      sql`SELECT 1 FROM claims c WHERE c.author_session_id = ${session}`,",
+    to: "      sql`SELECT 1 FROM work_contexts c WHERE c.session_id = ${session}`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "every session has a work context, so nothing is ever swept again: unbounded storage by another route",
+  },
+  {
+    // 01a §3.3a, CSK-21. A session goes whole or not at all.
+    label: "the sweep removes part of a session",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible)",
+    to: "      DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible) AND kind <> 'session.ended'",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "the session's order is re-derived from the rows left behind, and a missing row can turn `broken` into `usable` \u2014 missing evidence strengthening the answer",
+  },
+  {
+    // 01a CSK-21. The age is the session's, never a row's.
+    label: "the sweep reintroduces a row-age term",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible)",
+    to: "      DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible) AND observed_at < ${input.cutoff}",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a session straddling the cutoff is swept in part, and its order is judged from the half that is left",
+  },
+  {
+    // 01a CSK-23. A reap is an inference, not an end.
+    label: "a reaped session is swept",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      SELECT id FROM judged\n       WHERE NOT reaped\n",
+    to: "      SELECT id FROM judged\n       WHERE true\n",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: a session the hub only guessed had ended loses its skeleton, and a later record that revives it lands in a session with no history",
+  },
+  {
+    // 01a §3.3g. A swept session is done.
+    label: "a swept session stays a candidate for ever",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "         AND EXISTS (SELECT 1 FROM session_events se WHERE se.session_id = s.id)\n         ${after}",
+    to: "         ${after}",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "agent_sessions rows are never removed, so the oldest swept sessions fill every later pass's limit and the sweep stops retiring anything",
+  },
+  {
+    // 01a CSK-15, §3.3e. Unresolved is KEEP.
+    label: "the sweep ignores what it cannot resolve",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "         AND NOT unresolved\n",
+    to: "",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: an unresolvable reference reads as \"no pin references this\", and the sweep deletes behind a pin it could not match",
+  },
+  {
+    // 01a CSK-15 (b). A touch with no identity is unresolved.
+    label: "a touch with no file identity reads as resolved",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "     AND (pe.file_ref IS NULL",
+    to: "     AND (false",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a legacy or unparseable touch is deleted as if no pin could reference it",
+  },
+  {
+    // 01a CSK-15 (c). A pin's NULL identity is unresolved for its repo.
+    label: "a pin's NULL identity reads as no pin",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "                      WHERE pr.file_ref IS NULL AND p.repo = s.repo)",
+    to: "                      WHERE pr.file_ref IS NULL AND p.repo = 'nowhere')",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "the sessions that touched the names a legacy pin watched before its rename are deleted, the one history the pin exists to keep",
+  },
+  {
+    // 01a CSK-28. A pinned file git lost is unresolved, not absent.
+    label: "a missing pinned file reads as present",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "                      WHERE pf.status <> 'present' AND pf.repo = s.repo)",
+    to: "                      WHERE pf.status = 'renamed' AND pf.repo = s.repo)",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a pin whose file left the index matches nothing, and every session that touched that file is deleted as unreferenced",
+  },
+  {
+    // 01a §3.3e. The freeze is the pin's repo's, not the hub's.
+    label: "an unresolved pin freezes every repo on the hub",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "                      WHERE pf.status <> 'present' AND pf.repo = s.repo)",
+    to: "                      WHERE pf.status <> 'present')",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "one lost pin anywhere stops retention for every team on the hub, and nobody in those teams can see why",
+  },
+  {
+    // 01a §3.3e. A pin with no history is unresolved until seeded.
+    label: "an unseeded pin reads as no pin",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "                        AND NOT EXISTS (SELECT 1 FROM pin_file_refs pr WHERE pr.pin_id = p.id)))`;",
+    to: "                        AND false))`;",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "between a deploy and the seed, every session behind a legacy pin is deletable",
+  },
+  {
+    // 01a §3.3g. The interim mode holds every file-bearing session.
+    label: "the interim mode holds the wrong sessions",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "         ${input.mode === \"interim\" ? sql`AND NOT file_bearing` : sql``}",
+    to: "         ${input.mode === \"full\" ? sql`AND NOT file_bearing` : sql``}",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "the hub ships deleting file-bearing sessions before the file identity has been proven on real pins \u2014 the one thing Nick's interim rule forbids",
+  },
+  {
+    // 01a CSK-18, D-B7. One statement, one snapshot.
+    label: "the sweep runs outside a transaction",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "    const result = await deps.db.transaction((tx) => tx.execute(statement));",
+    to: "    const result = await deps.db.execute(statement);",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a later multi-statement form of the sweep loses the snapshot silently, and a root committed between check and delete no longer protects",
+  },
+  {
+    // 01a CSK-17. A failed sweep deletes nothing and stops nothing else.
+    label: "a failed sweep takes the reap down",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "  } catch (error) {\n    console.error(\"[crosscheck] skeleton sweep failed; nothing was deleted\", error);\n    return recorded(deps.db, now, { kind: \"failed\" });\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "one broken root clause stops the hub's reaper for good, and 104 never-ended sessions are back",
+  },
+  {
+    // 01a CSK-17. A failure is counted.
+    label: "a failed sweep is not counted",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "    failures: state.failures + (outcome.kind === \"failed\" ? 1 : 0),",
+    to: "    failures: state.failures,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "SILENT: the sweep fails every pass and doctor prints a clean line",
+  },
+  {
+    // 01a CSK-26. A root nobody built stops the sweep.
+    label: "an unbuilt root lets the sweep run",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "    .filter((root) => root.status === \"not_built\")",
+    to: "    .filter(() => false)",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "DATA LOSS: sessions are swept before the table that was always going to reference them exists",
+  },
+  {
+    // 01a §5, CSK-19 (b). The report counts with the sweep's own clause.
+    label: "the report counts what a root does NOT reach",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      sql`(SELECT count(*) FILTER (WHERE ${flag(index)} AND NOT reaped)::int FROM judged) AS ${flag(index)}`,",
+    to: "      sql`(SELECT count(*) FILTER (WHERE NOT ${flag(index)} AND NOT reaped)::int FROM judged) AS ${flag(index)}`,",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "doctor tells an operator a root keeps the sessions it is about to lose",
+  },
+  {
+    // 01a §3.3f, CSK-12. Every session-bearing column is declared.
+    label: "a session-bearing relation is dropped from the registry",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "  {\n    table: \"hint_deliveries\",\n    column: \"session_id\",\n    semantics: \"non_retaining_edge\",\n    reason: \"records what was shown to a session and reads no position\",\n  },\n",
+    to: "",
+    test: `${SERVER}/test/retention-registry.test.ts`,
+    because:
+      "a relation the registry does not know about is one nobody decided on, and the next such relation arrives as a silent deletion",
+  },
+  {
+    // 01a §6. The hub-wide sweep stays off the hook path.
+    label: "the SessionStart pass runs the hub-wide sweep",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  if (options.developerId === undefined) {\n    await sweepSkeleton(",
+    to: "  if (options.developerId !== \"-\") {\n    await sweepSkeleton(",
+    test: `${SERVER}/test/session-event-retention.test.ts`,
+    because:
+      "every SessionStart pays for a hub-wide delete on a hook's budget, charged to whichever developer opened a session",
+  },
+  {
+    // 01a §5. doctor says what the sweep keeps.
+    label: "doctor goes quiet about what the sweep keeps",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    checkSkeletonRetention(skeletonRetention, eventRetention),\n",
+    to: "",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "every conservative KEEP in 01a becomes an unseen cost, indistinguishable from a leak",
+  },
+  {
+    // 01a §5. A report this CLI cannot read is not an absent one.
+    label: "a newer hub's held sweep reads as working",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    held: facts.success && (facts.data.heldBy?.length ?? 0) > 0,",
+    to: "    held: false,",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "a newer hub that reports its sweep held, in a form this CLI cannot read, is printed as a PASS about a sweep that deletes nothing",
+  },
+  {
+    // 01a CSK-26. A held sweep WARNs.
+    label: "a held sweep reads as working",
+    file: `${CLI}/src/cli/doctor-retention.ts`,
+    from: "  if (report.heldBy.length > 0) {",
+    to: "  if (report.heldBy.length > 99) {",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "the table grows without bound while doctor prints a PASS about a sweep that is not running",
+  },
+  {
+    // 01a §5. A hub's sweep failures are that hub's.
+    label: "one hub reports another hub's sweep failures",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "const ledgerKey = (db: Db): object => db;",
+    to: "const ledgerKey = (_db: Db): object => EMPTY_LEDGER;",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a healthy hub WARNs about a failure it never had, and a person goes looking for a broken sweep that is somebody else's",
+  },
+  {
+    // 01a §5. The window in the sentence is the hub's number.
+    label: "doctor prints its own retention window instead of the hub's",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      : `more than ${String(windowDays)} days ago`,",
+    to: "      : \"more than 30 days ago\",",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "a hub that keeps sessions longer, or shorter, is described by a number compiled into the CLI, and the operator plans around a window the hub does not apply",
+  },
+  {
+    // 01a CSK-10. The skeleton carries a hash of a path, never the path.
+    label: "a touch's row stores the path instead of its identity",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),',
+    to: '      ...(body.kind === "file" ? { fileRef: value } : {}),',
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "the skeleton, which outlives every content policy, carries the paths a redaction exists to hide",
+  },
+  {
+    // 01a §3.3g. A retired skeleton is never partly rebuilt.
+    label: "a late record rebuilds part of a retired skeleton",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "       WHERE s.id = ${input.sessionId} AND s.skeleton_retired_at IS NULL",
+    to: "       WHERE s.id = ${input.sessionId}",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a claim flushed by a successor lands one row in a swept session, and that single row reads as a usable order the whole skeleton may have contradicted",
+  },
+  {
+    // 01a §3.3g. The sweep leaves its tombstone.
+    label: "the sweep leaves no tombstone",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      UPDATE agent_sessions SET skeleton_retired_at = ${input.now}",
+    to: "      UPDATE agent_sessions SET skeleton_retired_at = NULL",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "every later projection believes the session still has its skeleton and writes a fragment of one",
+  },
+  {
+    // 01a §3.3a. A session's own end outranks the reaper's guess.
+    label: "a reaped session's own end is dropped",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "        or(isNull(agentSessions.endedAt), isNotNull(agentSessions.reapedAt)),",
+    to: "        isNull(agentSessions.endedAt),",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "an idle session reaped for silence stays reaped for ever: its SessionEnd is answered 'ended' and thrown away, its last position is never written, and doctor calls it one that has not ended",
+  },
+  {
+    // 01a §6. Each pass resumes where the last stopped.
+    label: "every pass starts at the oldest candidate again",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "        : { cursor: { endedAt: String(lastEnded), id: String(lastId) }, tally },",
+    to: "        : { cursor: null, tally },",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "the oldest kept sessions fill every window for ever, and nothing newer than them is ever judged or retired",
+  },
+  {
+    // 01a §6. A pass judges a window, never the hub.
+    label: "a pass judges every candidate",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "       LIMIT ${input.window}\n",
+    to: "       LIMIT ${input.window * 1000}\n",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "a pass grows with every session the hub has ever decided to keep, and every hook waits behind it on a one-statement database",
+  },
+  {
+    // 01a §5. A cycle is reported only once it is complete.
+    label: "a cycle is published after every window",
+    file: `${SERVER}/src/services/retention.ts`,
+    from: "      Number(row[\"window_size\"] ?? 0) < window ||",
+    to: "      true ||",
+    test: `${SERVER}/test/skeleton-sweep.test.ts`,
+    because:
+      "doctor prints one window's counts as if they were the hub's, and the numbers jump with every pass",
+  },
+  {
+    // 01a §3.3d. A monorepo path is never silently the root file.
+    label: "the pin door pins the root file when the subdirectory one was meant",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "      if (fromHere !== null && fromHere !== path) {",
+    to: "      if (fromHere !== null && fromHere === path) {",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "a person in packages/server who pins src/index.ts protects the repo root's src/index.ts, and suspect names whoever touched the wrong file",
+  },
+  {
+    // 01a §3.3d. A submodule is not a file.
+    label: "the pin door pins a submodule as a file",
+    file: `${CORE}/src/git/pin-paths.ts`,
+    from: "    byPath.set(path, { path, gitlink: entry.startsWith(`${GITLINK_MODE} `) });",
+    to: "    byPath.set(path, { path, gitlink: false });",
+    test: `${CORE}/test/pin-paths.test.ts`,
+    because:
+      "the pin matches only commits that move the submodule pointer, never an edit inside it, and reads as watching the code",
+  },
+  {
+    // 01a §3.3d. A rename keeps the name it leaves.
+    label: "a rename forgets the name it leaves",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "        pinFileRefRow(update.pinId, repo, update.path),\n",
+    to: "",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "a pin renamed before its history was seeded loses the old name, and the sessions that touched it are referenced by nothing",
+  },
+  {
+    // 01a §3.3e. One unusable repo string is unresolved, not a crash.
+    label: "one unusable repo string throws out of the identity",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "  } catch {\n    return null;\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "a single legacy row stops the start-up backfill for the whole hub on every start, and an ingest fails after its target row was already stored",
+  },
+  {
+    // 01a §5. doctor names interim's reason only in interim.
+    label: "doctor prints interim's reason in full mode",
+    file: `${CLI}/src/cli/doctor-retention.ts`,
+    from: "    ...(mode === \"interim\" && report.fileBearing > 0",
+    to: "    ...(report.fileBearing > 0",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "under full, doctor says file-bearing sessions are being kept while the sweep is retiring them",
   },
 ];
 
@@ -9873,7 +10285,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
- * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
+ * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 12
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
@@ -9973,7 +10385,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
- * PRINTS: packages/connector-core/test/pin-paths.test.ts 5
+ * PRINTS: packages/connector-core/test/pin-paths.test.ts 7
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
@@ -10041,6 +10453,7 @@ interface Outcome {
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2
+ * PRINTS: packages/server/test/retention-registry.test.ts 1
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
@@ -10053,7 +10466,8 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
- * PRINTS: packages/server/test/skeleton-identity.test.ts 11
+ * PRINTS: packages/server/test/skeleton-identity.test.ts 14
+ * PRINTS: packages/server/test/skeleton-sweep.test.ts 31
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
  * PRINTS: packages/server/test/solved-fanout.test.ts 2

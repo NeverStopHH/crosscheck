@@ -108,18 +108,12 @@ export const DEFAULT_PORT = 7100;
  */
 export const COMMIT_EVIDENCE_RETENTION_DAYS = 30;
 /**
- * DORMANT: how old a canonical event must be before a sweep may even consider
- * retiring it (spec 01 §10 D2). NOTHING READS THIS ON A RUNNING HUB. D2's
- * sweep retired every row past this age, and a row in `session_events` is very
- * nearly the causal skeleton itself — ids, kind, epoch, position — so the call
- * was withdrawn before its first deploy (Nick's D-D, 2026-09-17; the refusal
- * sits where the call was, in services/sessions.ts `reapStaleSessions`).
- *
- * WHAT WILL USE IT: spec 01a's referential predicate, which keeps this value
- * and narrows the sweep to rows past this age that nothing references any
- * more. Until that lands `SESSION_EVENT_RETENTION` below says `off`, and
- * `pruneSessionEvents` — which still applies this cutoff when called
- * directly, and is tested that way — is called by nobody.
+ * HOW LONG AFTER IT ENDED a session's skeleton may be retired — and only
+ * then if nothing still depends on its order (spec 01a §3.3). The age is the
+ * SESSION'S, never a row's: a long session is never swept in part, because
+ * its order state is read off the whole set of its rows. The value is D2's
+ * thirty days; its meaning is 01a's — the earliest a sweep may ask, not the
+ * day a row goes (services/retention.ts).
  */
 export const SESSION_EVENT_RETENTION_DAYS = 30;
 
@@ -135,10 +129,53 @@ export const SKELETON_BACKFILL_BATCH = 500;
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says
- * why the hub is the one that must say it). `off`: no row is ever retired, and
- * the table grows without bound by decision rather than by oversight.
+ * why the hub is the one that must say it).
+ *
+ * `interim` (01a §3.3g, Nick's rule): the referential sweep runs, and no
+ * session that touched a file is swept at all. Moving to `full` is a
+ * person's decision — never a default a build flips on its own — and today
+ * it would NOT be sound, whatever CSK-15 and CSK-20 say. Its proof that no
+ * pin references a session rests on four things the adversarial review of
+ * the first build found stale or unverified, each of which must be closed
+ * first (spec §12.7):
+ *
+ *   1. `pin_files.status` is refreshed only when a person runs
+ *      `crosscheck pin --sweep`, and never for a pin recorded broken — so a
+ *      file renamed in git leaves the pin reading `present` and matching
+ *      nothing until then;
+ *   2. pins stored by an older CLI or the raw route, and every legacy pin
+ *      the seed resolves, never passed the git door;
+ *   3. the touch side is canonicalised but not resolved through git (case on
+ *      a case-insensitive disk, a tracked symlinked directory, a non-ASCII
+ *      path the git lane reads C-quoted);
+ *   4. the repo identity on each side is computed on each machine.
+ *
+ * `off` stays a value, for a hub that must retire nothing.
  */
-export const SESSION_EVENT_RETENTION: SessionEventRetentionMode = "off";
+export const SESSION_EVENT_RETENTION: SessionEventRetentionMode = "interim";
+
+/**
+ * Candidate sessions JUDGED per sweep pass, oldest end first, resuming after
+ * the last pass's cursor (01a §6). The bound is on what a pass judges, not
+ * only on what it deletes: a kept session stays a candidate for good, so a
+ * pass bounded by deletions alone would grow with everything the hub has ever
+ * decided to keep — on a database that serves one statement at a time, so
+ * every hook request waits behind it. The pass runs on the hub's own timer
+ * (never on a SessionStart request), and every session is judged again once
+ * per cycle of passes.
+ *
+ * MEASURED (2026-09-24, embedded PGlite 0.3 / PostgreSQL 17, one laptop) by
+ * `bun packages/server/scripts/measure-skeleton-sweep.ts [interim|full]`, at
+ * the shape the review asked for — 400 000 rows over 20 000 aged sessions,
+ * half of every session's rows file touches, 200 pins, a third kept by a
+ * claim, every generated clause evaluated for every judged session: a pass of
+ * 250 took 67 ms median (73 max) in interim and 71 ms (76 max) in full, which
+ * retired 8 003 sessions over the cycle; 500 took 141 ms, twice the stall a
+ * hook would wait behind on a one-statement-at-a-time database. A cycle over
+ * 20 000 sessions is 81 passes — about 20 hours at one pass per 15 minutes,
+ * well inside the 30-day window it serves. The report read costs 0.4 ms.
+ */
+export const SESSION_EVENT_SWEEP_WINDOW = 250;
 /**
  * Evidence older than this never fires a finding. Every SessionStart of every
  * connected teammate refreshes collection, so evidence this stale means nobody

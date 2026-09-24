@@ -51,9 +51,27 @@ export const pinFileRefRow = (
   path: string,
 ): PinFileRefRow => {
   const canonical = canonicalRepoPath(path);
-  return canonical.ok
-    ? { pinId, fileRef: fileRef(repo, canonical.path), unresolvedReason: null }
-    : { pinId, fileRef: null, unresolvedReason: "path_not_canonical" };
+  if (!canonical.ok) {
+    return { pinId, fileRef: null, unresolvedReason: "path_not_canonical" };
+  }
+  const identity = identityOf(repo, canonical.path);
+  return identity === null
+    ? { pinId, fileRef: null, unresolvedReason: "repo_not_canonical" }
+    : { pinId, fileRef: identity, unresolvedReason: null };
+};
+
+/**
+ * `fileRef`, or null when the repo identity carries the identity's separator
+ * — `fileRef` refuses such a value by throwing, and one legacy row must not
+ * stop a start-up backfill for the whole hub, nor an ingest after its target
+ * row is already stored. Null is UNRESOLVED, and unresolved is kept.
+ */
+const identityOf = (repo: string, canonicalPath: string): string | null => {
+  try {
+    return fileRef(repo, canonicalPath);
+  } catch {
+    return null;
+  }
 };
 
 /**
@@ -79,7 +97,7 @@ export const recordPinFileRefs = async (
 /** A `file.modified` target's identity, or null — unresolved — when its path has none. */
 export const touchFileRef = (repo: string, value: string): string | null => {
   const canonical = canonicalRepoPath(value);
-  return canonical.ok ? fileRef(repo, canonical.path) : null;
+  return canonical.ok ? identityOf(repo, canonical.path) : null;
 };
 
 export interface SkeletonBackfillReport {
@@ -100,37 +118,44 @@ const countOf = async (db: DbExecutor, statement: SQL): Promise<number> => {
 };
 
 /**
- * A PIN WITH NO HISTORY IS A PIN FROM BEFORE THIS TABLE — every pin created
- * since writes its history in the same transaction as its files — so "no
- * row" is the whole criterion, and a re-run finds nothing to do.
+ * EVERY FILE A PIN WATCHES HAS ITS IDENTITY IN THE PIN'S HISTORY — checked
+ * row by row on every start, never inferred from "the pin has some history".
+ * A pin whose history is PARTIAL (a start whose seed failed, then a rename)
+ * would otherwise read as resolved while one of its files matched nothing.
+ * Pins are few (a hub's target is 5 000), so the whole check is two reads.
  *
- * A LEGACY PIN THAT WAS EVER RENAMED gets the NULL marker as well: the names
- * it watched before the rename were deleted from `pin_files` by the sweep
- * that renamed them, so the sessions that touched those names cannot be found
- * from anything this hub still holds. That is unresolved, and unresolved is
- * KEEP (§3.3e) — the price is the repo-wide freeze §3.3e names, printed by
- * `doctor` so a person can see it and retire the pin.
+ * A PIN WITH NO HISTORY AT ALL THAT WAS EVER RENAMED gets the NULL marker as
+ * well: it predates this table, the names it watched before the rename were
+ * deleted from `pin_files` by the sweep that renamed them, and the sessions
+ * that touched those names cannot be found from anything this hub still
+ * holds. That is unresolved, and unresolved is KEEP (§3.3e) — the price is
+ * the repo-wide freeze §3.3e names, printed by `doctor` with the pin's id.
  */
 const seedPinFileRefs = async (deps: Deps): Promise<number> => {
-  const legacy = await deps.db.execute(sql`
-    SELECT p.id AS pin_id, p.repo AS repo, p.renamed_paths AS renamed, pf.path AS path
-      FROM pins p
-      JOIN pin_files pf ON pf.pin_id = p.id
-     WHERE NOT EXISTS (SELECT 1 FROM pin_file_refs pr WHERE pr.pin_id = p.id)
-     ORDER BY p.id`);
+  const files = await deps.db.execute(sql`
+    SELECT pf.pin_id AS pin_id, pf.repo AS repo, pf.path AS path, p.renamed_paths AS renamed,
+           EXISTS (SELECT 1 FROM pin_file_refs pr WHERE pr.pin_id = pf.pin_id) AS has_history
+      FROM pin_files pf
+      JOIN pins p ON p.id = pf.pin_id
+     ORDER BY pf.pin_id, pf.path`);
+  const known = new Set(
+    (await deps.db.execute(sql`SELECT pin_id, file_ref FROM pin_file_refs`)).rows.map(
+      (row) => `${String(row["pin_id"])}\n${String(row["file_ref"])}`,
+    ),
+  );
   const byPin = new Map<string, PinFileRefRow[]>();
-  for (const raw of legacy.rows) {
-    const row = raw as { pin_id: string; repo: string; renamed: number; path: string };
-    const rows = byPin.get(row.pin_id) ?? [];
-    if (rows.length === 0 && Number(row.renamed) > 0) {
-      rows.push({
-        pinId: row.pin_id,
-        fileRef: null,
-        unresolvedReason: "rename_history_unrecorded",
-      });
+  for (const raw of files.rows) {
+    const row = raw as { pin_id: string; repo: string; path: string; renamed: number; has_history: boolean };
+    const missing: PinFileRefRow[] = [];
+    if (!row.has_history && Number(row.renamed) > 0) {
+      missing.push({ pinId: row.pin_id, fileRef: null, unresolvedReason: "rename_history_unrecorded" });
     }
-    rows.push(pinFileRefRow(row.pin_id, row.repo, row.path));
-    byPin.set(row.pin_id, rows);
+    const current = pinFileRefRow(row.pin_id, row.repo, row.path);
+    missing.push(current);
+    const absent = missing.filter((entry) => !known.has(`${entry.pinId}\n${String(entry.fileRef)}`));
+    if (absent.length > 0) {
+      byPin.set(row.pin_id, [...(byPin.get(row.pin_id) ?? []), ...absent]);
+    }
   }
   for (const rows of byPin.values()) {
     await recordPinFileRefs(deps.db, rows, deps.now());

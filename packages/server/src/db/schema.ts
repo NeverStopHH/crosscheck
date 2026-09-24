@@ -178,10 +178,19 @@ export const agentSessions = pgTable(
      * disprove it (a record from the session) arrives after the write.
      */
     reapedAt: timestamptz("reaped_at"),
+    /**
+     * WHEN THE SWEEP RETIRED THIS SESSION'S SKELETON (01a §3.3g) — the
+     * tombstone every later projection reads, and then writes nothing.
+     */
+    skeletonRetiredAt: timestamptz("skeleton_retired_at"),
   },
   (table) => [
     index("agent_sessions_repo_idx").on(table.repo),
     index("agent_sessions_heartbeat_idx").on(table.lastHeartbeatAt),
+    // The skeleton sweep's candidates, in cursor order (01a §3.3g).
+    index("agent_sessions_ended_idx")
+      .on(table.endedAt, table.id)
+      .where(sql`${table.endedAt} IS NOT NULL`),
     // `GET /api/search?developer=…` (roadmap R1) filters inside every tier
     // query, and each of them joins work_contexts to this table. developer_id
     // is a foreign key, which Postgres does not index on its own, so the
@@ -387,6 +396,8 @@ export const claims = pgTable(
     // re-reads a context's claims inside EVERY ingest transaction. Without
     // it each of those is a scan of every claim on the hub. Mirrored in
     // db/bootstrap.sql.
+    // The claims root's probe, once per candidate session (01a §3.3g).
+    index("claims_author_session_idx").on(table.authorSessionId),
     index("claims_work_context_created_idx").on(
       table.workContextId,
       table.createdAt.desc(),
@@ -426,6 +437,8 @@ export const claimEdges = pgTable(
     // Serves the hints path's "is this claim a supersedes target" probe —
     // the unique index leads on from_claim_id and cannot.
     index("claim_edges_to_kind_idx").on(table.toClaimId, table.kind),
+    // The claim-edge root's probe, once per candidate session (01a §3.3g).
+    index("claim_edges_author_session_idx").on(table.authorSessionId),
   ],
 );
 
@@ -912,7 +925,9 @@ export const sessionEvents = pgTable(
     index("session_events_observed_at_idx").on(table.observedAt),
     // The pin root's join (01a §3.3g): a pinned file's history against the
     // touches that carry the same identity.
-    index("session_events_file_ref_idx").on(table.fileRef),
+    index("session_events_file_ref_idx")
+      .on(table.fileRef)
+      .where(sql`${table.fileRef} IS NOT NULL`),
   ],
 );
 
@@ -1094,6 +1109,8 @@ export const pilotAttributions = pgTable(
     ),
     // Proof 3 joins an answer to the repair of the pin it was about.
     index("pilot_attributions_pin_idx").on(table.pinId),
+    // The pilot-attribution root's probe (01a §3.3g).
+    index("pilot_attributions_top_session_idx").on(table.topSessionId),
     // The reaper's age prune runs across every repo, so it needs the
     // timestamp leading, not second behind repo.
     index("pilot_attributions_answered_idx").on(table.answeredAt),
