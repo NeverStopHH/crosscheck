@@ -859,3 +859,21 @@ export const PILOT_REPORT_MAX_PRIOR_WORK = 10;
  */
 export const PILOT_REPORT_MAX_REPAIRS = 25;
 
+/**
+ * How many deliveries `crosscheck noise` offers a person to choose between
+ * (07 §3.2). One is marked without asking; more are listed and the person
+ * names the one they meant. Five is a list somebody reads in a glance; past
+ * it the cut is said, and the person names what they saw instead.
+ */
+export const NOISE_MARK_MAX_CANDIDATES = 5;
+
+/**
+ * How many local sessions one candidates request may name. It is the
+ * connector's bound on the scan that produced them, so a full scan always
+ * fits and nothing past it can be sent:
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(s.NOISE_MARK_MAX_SESSIONS === c.STATUS_MAX_SESSION_STATES)'
+ * PRINTS: true
+ */
+export const NOISE_MARK_MAX_SESSIONS = 50;
+

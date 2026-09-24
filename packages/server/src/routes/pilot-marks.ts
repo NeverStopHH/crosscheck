@@ -23,17 +23,43 @@
  * who marked it, so a forged mark is at least an attributable one.
  */
 import { Hono } from "hono";
+import { z } from "zod";
 import { PilotMarkSchema } from "@crosscheck/schema";
+
+import { NOISE_MARK_MAX_SESSIONS, PILOT_RETENTION_DAYS } from "../constants.ts";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { writePilotMark } from "../services/pilot.ts";
+import { readMarkCandidates } from "../services/pilot-candidates.ts";
 import type { MarkRefusal } from "../services/pilot.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const HTTP_OK = 200;
 const HTTP_CREATED = 201;
+
+const MINUTES_PER_DAY = 1440;
+
+/**
+ * THE WIDEST WINDOW IS RETENTION. A delivery older than that is gone, and a
+ * window reaching past it would promise candidates the table cannot hold.
+ * Omitted means that widest window: a person who names the ref they saw is
+ * looking for THAT delivery, however long ago it arrived.
+ */
+const MAX_WINDOW_MINUTES = PILOT_RETENTION_DAYS * MINUTES_PER_DAY;
+
+const CandidatesQuerySchema = z.object({
+  repo: z.string().min(1),
+  sessions: z.array(z.string().min(1)).max(NOISE_MARK_MAX_SESSIONS),
+  ref: z.string().min(1).optional(),
+  withinMinutes: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_WINDOW_MINUTES)
+    .default(MAX_WINDOW_MINUTES),
+});
 
 /**
  * ONE SENTENCE PER REFUSAL, chosen by an enum the service returns.
@@ -51,12 +77,43 @@ const REFUSAL_SENTENCE: Record<MarkRefusal, string> = {
     "that id belongs to another repo; marks are repo-scoped, because one team's noise is not another's",
   not_yours:
     "that delivery went to somebody else's session; a noise mark is the word of whoever received it, so they are the one to make it",
+  not_unsolicited:
+    "that was an answer somebody asked for; a noise mark is for what arrived without being asked",
   pin_broken:
-    "that pin is recorded broken; if you fixed it, `crosscheck pin add` on the same surface records the fix and links it to the break",
+    "that pin is recorded broken; if you fixed it, pin that surface again — a new pin on the same surface records the fix and links it to the break",
 };
 
 export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
+
+  /**
+   * WHICH DELIVERY `crosscheck noise` MEANS — the caller's own, unasked,
+   * recent (services/pilot-candidates.ts). A read, but refused on a repo
+   * that never enrolled, for the reason the mark itself is: the next step
+   * would be refused, and a list of things nobody may mark is a dead end.
+   */
+  router.get("/candidates", developerAuth(deps), async (c) => {
+    const parsed = CandidatesQuerySchema.safeParse({
+      repo: c.req.query("repo"),
+      sessions: c.req.queries("session") ?? [],
+      ref: c.req.query("ref"),
+      withinMinutes: c.req.query("withinMinutes"),
+    });
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    const outcome = await readMarkCandidates(deps, {
+      repo: parsed.data.repo,
+      developerId: c.get("developer").id,
+      sessions: parsed.data.sessions,
+      ref: parsed.data.ref ?? null,
+      withinMinutes: parsed.data.withinMinutes,
+    });
+    if ("refusal" in outcome) {
+      return fail(c, 422, outcome.refusal, REFUSAL_SENTENCE[outcome.refusal]);
+    }
+    return ok(c, outcome);
+  });
 
   router.post("/", developerAuth(deps), async (c) => {
     const parsed = PilotMarkSchema.safeParse(await readJsonBody(c));

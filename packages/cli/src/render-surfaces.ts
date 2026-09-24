@@ -22,6 +22,14 @@ import { verdictLines } from "./cli/verdict-render.ts";
 import { hubFailureLine } from "./cli/revalidate.ts";
 import { pilotFailureLine, pilotJson, renderPilot } from "./cli/pilot-render.ts";
 import type { PilotView } from "./cli/pilot-render.ts";
+import {
+  candidateListLines,
+  markFailureLine,
+  markRecordedLine,
+  noLiveSessionLine,
+  nothingRecentLine,
+  refNeverReachedLine,
+} from "./cli/pilot-mark.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
@@ -436,6 +444,40 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // all — every string, keys included, cleaned before it is serialized.
     framing: "sanitized",
     render: (payload) => pilotJson(pilotWith(payload)),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot-mark",
+    delivery: "pulled",
+    module: "src/cli/pilot-mark.ts",
+    // `crosscheck noise` and `crosscheck pin --ok`. BARE: ids, channel words,
+    // ages and the hub's own refusal sentence, never a teammate's prose —
+    // the person typed this beside the session and already knows what the
+    // intervention said. Every sentence the module writes is in the document,
+    // with the payload in every slot the wire fills.
+    framing: "bare",
+    render: (payload) => {
+      const candidate = {
+        id: payload,
+        sessionId: payload,
+        channel: payload,
+        refKind: payload,
+        refId: payload,
+        deliveredAt: payload,
+      };
+      return [
+        markRecordedLine("hint_delivery", payload, false),
+        markRecordedLine("hint_delivery", payload, true),
+        markRecordedLine("pin", payload, false),
+        markRecordedLine("pin", payload, true),
+        candidateListLines([candidate, candidate], true, 60, NOW),
+        noLiveSessionLine(),
+        nothingRecentLine(60),
+        refNeverReachedLine(payload),
+        markFailureLine("network", payload),
+        markFailureLine("http", payload),
+      ].join("\n");
+    },
   },
 ];
 

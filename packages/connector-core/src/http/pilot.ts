@@ -24,6 +24,8 @@
  * renderer prints each as itself.
  */
 import { z } from "zod";
+import { PILOT_MARK_BY_REF_KIND, PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+import type { PilotMarkRefKind } from "@crosscheck/schema";
 
 import { hubRequest } from "./client.ts";
 import type { HubContext, HubResult } from "./client.ts";
@@ -139,5 +141,97 @@ export const getPilotReport = (
     method: "GET",
     path: `/api/pilot/report?repo=${encodeURIComponent(request.repo)}${days}`,
     schema: PilotReportSchema,
+  });
+};
+
+// ── The two human gestures (07 §3.2) ────────────────────────────────────────
+
+const MarkResultSchema = z.looseObject({
+  id: z.string().min(1),
+  /** The person had said this already; it still counts once. */
+  repeated: z.boolean(),
+});
+
+export type MarkResult = z.infer<typeof MarkResultSchema>;
+
+export interface PilotMarkRequest {
+  readonly repo: string;
+  readonly refKind: PilotMarkRefKind;
+  readonly refId: string;
+}
+
+/**
+ * One person's one word about one thing. The WORD is derived from what the
+ * mark is about, never chosen by the caller: a delivery takes `off_target`,
+ * a pin takes `surface_ok` (PILOT_MARK_BY_REF_KIND), so a crossed pair has no
+ * way to be sent. `presence` states what this process observed — a person at
+ * a terminal — and the hub stamps what that is worth.
+ */
+export const postPilotMark = (
+  ctx: HubContext,
+  request: PilotMarkRequest,
+): Promise<HubResult<MarkResult>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/pilot-marks",
+    schema: MarkResultSchema,
+    body: {
+      repo: request.repo,
+      refKind: request.refKind,
+      refId: request.refId,
+      mark: PILOT_MARK_BY_REF_KIND[request.refKind],
+      presence: PIN_PRESENCE_TERMINAL,
+    },
+  });
+
+const MarkCandidateSchema = z.looseObject({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  channel: z.string().min(1),
+  refKind: z.string().min(1),
+  refId: z.string().min(1),
+  deliveredAt: z.string().min(1),
+});
+
+export type MarkCandidate = z.infer<typeof MarkCandidateSchema>;
+
+const MarkCandidatesSchema = z.looseObject({
+  candidates: z.array(MarkCandidateSchema),
+  more: z.boolean(),
+});
+
+export type MarkCandidates = z.infer<typeof MarkCandidatesSchema>;
+
+export interface MarkCandidatesRequest {
+  readonly repo: string;
+  /** The hub session ids live on this machine; omitted, every one of the caller's. */
+  readonly sessions?: readonly string[];
+  /** The work-context or claim id the person saw printed in a hint. */
+  readonly ref?: string;
+  /** Omitted: the hub's widest window, which is retention. */
+  readonly withinMinutes?: number;
+}
+
+/** Which of the caller's own unasked deliveries `crosscheck noise` could mean. */
+export const getMarkCandidates = (
+  ctx: HubContext,
+  request: MarkCandidatesRequest,
+): Promise<HubResult<MarkCandidates>> => {
+  const query = [
+    `repo=${encodeURIComponent(request.repo)}`,
+    ...(request.sessions ?? []).map(
+      (session) => `session=${encodeURIComponent(session)}`,
+    ),
+    ...(request.ref === undefined
+      ? []
+      : [`ref=${encodeURIComponent(request.ref)}`]),
+    ...(request.withinMinutes === undefined
+      ? []
+      : [`withinMinutes=${String(request.withinMinutes)}`]),
+  ].join("&");
+  return hubRequest(ctx, {
+    method: "GET",
+    path: `/api/pilot-marks/candidates?${query}`,
+    schema: MarkCandidatesSchema,
   });
 };

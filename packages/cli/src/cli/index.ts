@@ -31,7 +31,8 @@ import {
   runPresence,
   runUnmute,
 } from "./privacy.ts";
-import { PIN_FLAG_BROKE, PIN_FLAG_CHECK, PIN_FLAG_FILES, PIN_FLAG_SWEEP, PIN_USAGE, runPin } from "./pin.ts";
+import { PIN_FLAG_BROKE, PIN_FLAG_CHECK, PIN_FLAG_FILES, PIN_FLAG_OK, PIN_FLAG_SWEEP, PIN_USAGE, runPin } from "./pin.ts";
+import { NOISE_USAGE, runNoise } from "./noise.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { SUSPECT_USAGE, runSuspect } from "./suspect.ts";
 import {
@@ -63,13 +64,15 @@ const USAGE = [
   "                            local model pass over it and write a report",
   '  pin "<surface>" --files <path…> [--check "<recipe>"]',
   "                            record that a surface WORKS right now (humans only)",
-  "  pin list | pin --broke <id> | pin --sweep",
+  "  pin list | pin --broke <id> | pin --ok <id> | pin --sweep",
   "                            the registry and its coverage · retract a pin ·",
-  "                            re-resolve pinned paths against git after renames",
+  "                            say its check passed · re-resolve pinned paths",
   "  suspect <pin-id|path…>    which sessions touched a broken surface, and what",
   "                            they said they were doing",
   "  pilot [--days N] [--json] the five proofs for this repo, each measured",
   "                            or saying why not (per repo, never per person)",
+  "  noise [<id>]              one word: the intervention a session just got",
+  "                            was off-target (no text, no question)",
   "  revalidate                ask whether the code under this repo's recorded",
   "                            claims has moved, and record what this clone saw",
   "  presence [off|on]         hide/show your live presence to teammates",
@@ -128,10 +131,11 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   },
   pin: {
     usage: PIN_USAGE,
-    valueFlags: [PIN_FLAG_CHECK, PIN_FLAG_BROKE, PIN_FLAG_FILES],
+    valueFlags: [PIN_FLAG_CHECK, PIN_FLAG_BROKE, PIN_FLAG_OK, PIN_FLAG_FILES],
     booleanFlags: [PIN_FLAG_SWEEP],
   },
   suspect: { usage: SUSPECT_USAGE },
+  noise: { usage: NOISE_USAGE },
   pilot: {
     usage: PILOT_USAGE,
     valueFlags: [PILOT_FLAG_DAYS],
@@ -234,6 +238,12 @@ export const runCli = async (
     // on this clone, because the hub holds no repository.
     case "pilot":
       return runPilot(rest, env, cwd);
+    // 07 §3.2. The pilot's one human input: typed beside a session, gated on
+    // a person at a terminal exactly as `pin` is.
+    case "noise":
+      return options.isInteractive === undefined
+        ? runNoise(rest, env, cwd)
+        : runNoise(rest, env, cwd, options.isInteractive);
     // D5's manual trigger: the same bounded check `get_diagnosis` runs, typed
     // by a person, so a repo nobody pulls a diagnosis from stops reading
     // `unknown` forever. A pull like the two above — no hook, no injection.

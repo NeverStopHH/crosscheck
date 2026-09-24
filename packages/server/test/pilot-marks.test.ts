@@ -20,7 +20,7 @@ import { describe, expect, test } from "bun:test";
 
 import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
-import { pilotMarks } from "../src/db/schema.ts";
+import { hintDeliveries, pilotMarks } from "../src/db/schema.ts";
 import {
   TEST_ADMIN_TOKEN,
   TEST_START_ISO,
@@ -252,6 +252,31 @@ describe("POST /api/pilot-marks", () => {
     expect(await rows(harness)).toHaveLength(0);
   });
 
+  test("an answer somebody ASKED for is not noise", async () => {
+    // Arrange — the off-target figure is about what arrived unasked (§3.2).
+    // A pulled answer the reader disliked is a verdict on the answer, and
+    // counting it would make asking a question the way to inflate noise.
+    const { harness, developer } = await setup();
+    const pulled = "hd_ffffffffffffffffffffffffffffffff";
+    await harness.db.insert(hintDeliveries).values({
+      id: pulled,
+      sessionId: SESSION,
+      refKind: "work_context",
+      refId: `wc_${SESSION}`,
+      channel: "suspect",
+      deliveredAt: new Date(TEST_START_ISO),
+    });
+
+    // Act
+    const response = await mark(harness, developer, { refId: pulled });
+    const body = (await response.json()) as { error: { code: string } };
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(body.error.code).toBe("not_unsolicited");
+    expect(await rows(harness)).toHaveLength(0);
+  });
+
   test("each ref kind takes its own mark, and the other pairing is refused", async () => {
     // Arrange — `off_target` on a pin or `surface_ok` on a delivery has no
     // gesture behind it: no command sends it, and the report counts marks by
@@ -267,7 +292,7 @@ describe("POST /api/pilot-marks", () => {
   });
 });
 
-describe("POST /api/pilot-marks — `crosscheck pin ok`", () => {
+describe("POST /api/pilot-marks — `crosscheck pin --ok`", () => {
   const PIN = "pin_ok_1";
 
   const addPin = async (
@@ -320,7 +345,7 @@ describe("POST /api/pilot-marks — `crosscheck pin ok`", () => {
 
   test("a pin recorded BROKEN is not marked ok — the fix is a re-pin", async () => {
     // Arrange — "ok" on a broken pin is either a mistake or a repair, and a
-    // repair needs the new commit and the files, which only `pin add`
+    // repair needs the new commit and the files, which only a re-pin
     // records. Accepting it here would leave the break unrepaired in the
     // record while proof 4 counted the surface as fine.
     const { harness, developer } = await setup();
@@ -342,7 +367,7 @@ describe("POST /api/pilot-marks — `crosscheck pin ok`", () => {
     // Assert
     expect(response.status).toBe(422);
     expect(body.error.code).toBe("pin_broken");
-    expect(body.error.message).toContain("crosscheck pin add");
+    expect(body.error.message).toContain("pin that surface again");
     expect(await rows(harness)).toHaveLength(0);
   });
 });

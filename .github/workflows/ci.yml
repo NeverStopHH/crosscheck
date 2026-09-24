@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 604
+    # PRINTS: 618
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -127,10 +127,12 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
     # PRINTS: packages/cli/src/cli/doctor.ts 33
+    # PRINTS: packages/cli/src/cli/noise.ts 5
     # PRINTS: packages/cli/src/cli/pilot-render.ts 10
     # PRINTS: packages/cli/src/cli/pilot.ts 2
     # PRINTS: packages/cli/src/cli/pin-observability.ts 1
     # PRINTS: packages/cli/src/cli/pin-render.ts 3
+    # PRINTS: packages/cli/src/cli/pin.ts 1
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 6
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
@@ -280,8 +282,9 @@ jobs:
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 9
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
+    # PRINTS: packages/server/src/services/pilot-candidates.ts 7
     # PRINTS: packages/server/src/services/pilot-report.ts 10
-    # PRINTS: packages/server/src/services/pilot.ts 16
+    # PRINTS: packages/server/src/services/pilot.ts 17
     # PRINTS: packages/server/src/services/pins.ts 5
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
@@ -368,18 +371,20 @@ jobs:
     # PRINTS: kit.ts 1
     # PRINTS: latency.ts 1
     # PRINTS: lock.ts 2
+    # PRINTS: noise.ts 5
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: payload.ts 1
+    # PRINTS: pilot-candidates.ts 7
     # PRINTS: pilot-mark.ts 1
     # PRINTS: pilot-render.ts 10
     # PRINTS: pilot-report.ts 10
-    # PRINTS: pilot.ts 20
+    # PRINTS: pilot.ts 21
     # PRINTS: pin-observability.ts 1
     # PRINTS: pin-render.ts 3
     # PRINTS: pin-sweep.ts 2
-    # PRINTS: pin.ts 1
+    # PRINTS: pin.ts 2
     # PRINTS: pins.ts 6
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 8

@@ -4,6 +4,7 @@
  *   crosscheck pin "<surface>" --files a.ts b.ts [--check "…"]
  *   crosscheck pin list
  *   crosscheck pin --broke <id>
+ *   crosscheck pin --ok <id>
  *   crosscheck pin --sweep
  *
  * THE HUMAN GATE, and why it is a TTY. The hub refuses any pin and any
@@ -40,18 +41,22 @@ import {
   PIN_PRESENCE_TERMINAL,
   PinSchema,
 } from "@crosscheck/schema";
+import { postPilotMark } from "@crosscheck/connector-core/http/pilot.ts";
 import { renderPinList } from "./pin-render.ts";
+import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
 import type { CliResult } from "./login.ts";
 
 export const PIN_FLAG_FILES = "--files";
 export const PIN_FLAG_CHECK = "--check";
 export const PIN_FLAG_BROKE = "--broke";
 export const PIN_FLAG_SWEEP = "--sweep";
+export const PIN_FLAG_OK = "--ok";
 
 export const PIN_USAGE = [
   'usage: crosscheck pin "<surface>" --files <path…> [--check "<30-second recipe>"]',
   "   or: crosscheck pin list           this repo's registry and its coverage",
   "   or: crosscheck pin --broke <id>   you ran the check and it failed",
+  "   or: crosscheck pin --ok <id>      you ran the check and it passed",
   "   or: crosscheck pin --sweep        re-resolve pinned paths against git",
   "",
   "  A pin says a named surface WORKS right now: the files behind it, the",
@@ -134,6 +139,7 @@ interface PinArgs {
   readonly files: readonly string[];
   readonly check: string | undefined;
   readonly broke: string | null;
+  readonly ok: string | null;
   readonly sweep: boolean;
   readonly list: boolean;
 }
@@ -147,6 +153,7 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
   let surface: string | null = null;
   let check: string | undefined;
   let broke: string | null = null;
+  let ok: string | null = null;
   let sweep = false;
   let list = false;
   let index = 0;
@@ -170,6 +177,11 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
       index += 2;
       continue;
     }
+    if (token === PIN_FLAG_OK) {
+      ok = argv[index + 1] ?? null;
+      index += 2;
+      continue;
+    }
     if (token === PIN_FLAG_SWEEP) {
       sweep = true;
       index += 1;
@@ -185,7 +197,7 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
     }
     index += 1;
   }
-  return { surface, files, check, broke, sweep, list };
+  return { surface, files, check, broke, ok, sweep, list };
 };
 
 const listPins = async (
@@ -321,6 +333,38 @@ const create = async (
   };
 };
 
+/**
+ * `--ok <id>` — the symmetric half of `--broke` (07 §3.2, D5): whoever ran the
+ * recipe and watched it PASS gets the same one-line gesture as whoever watched
+ * it fail. It is a pilot mark rather than a pin write — it changes nothing the
+ * register says, it records that a notice was right — and it takes the same
+ * human gate, because "the check passed" is a human's word or nothing.
+ */
+const confirmPin = async (
+  resolved: Resolved,
+  pinId: string,
+  isInteractive: InteractiveProbe,
+): Promise<CliResult> => {
+  if (!isInteractive()) {
+    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+  }
+  const result = await postPilotMark(resolved.ctx, {
+    repo: resolved.repoId,
+    refKind: "pin",
+    refId: pinId,
+  });
+  if (!result.ok) {
+    return {
+      stdout: markFailureLine(result.kind, result.message),
+      exitCode: result.kind === "network" ? EXIT_UNREACHABLE : EXIT_FAIL,
+    };
+  }
+  return {
+    stdout: markRecordedLine("pin", pinId, result.data.repeated),
+    exitCode: EXIT_OK,
+  };
+};
+
 export const runPin = async (
   argv: readonly string[],
   env: Env,
@@ -357,6 +401,9 @@ export const runPin = async (
       ].join("\n"),
       exitCode: EXIT_OK,
     };
+  }
+  if (args.ok !== null) {
+    return confirmPin(resolved, args.ok, isInteractive);
   }
   if (args.surface === null || args.files.length === 0) {
     return { stdout: PIN_USAGE, exitCode: EXIT_USAGE };

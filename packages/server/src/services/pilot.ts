@@ -39,6 +39,7 @@ import type { CoverageRecord } from "./coverage.ts";
 import type { SuspectView } from "./suspect.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
+import { PULLED_DELIVERY_CHANNEL } from "@crosscheck/schema";
 import type { PilotMark, PilotMarkRefKind } from "@crosscheck/schema";
 
 interface Deps {
@@ -428,6 +429,7 @@ export type MarkRefusal =
   | "unknown_ref"
   | "wrong_repo"
   | "not_yours"
+  | "not_unsolicited"
   | "pin_broken";
 
 /** What a mark is about, reduced to what decides whether it may be made. */
@@ -435,6 +437,8 @@ interface MarkTarget {
   readonly repo: string;
   /** Whoever received it — a delivery only; anybody may run a pin's recipe. */
   readonly recipient: string | null;
+  /** False for an answer somebody asked for — never an intervention. */
+  readonly unsolicited: boolean;
   readonly broken: boolean;
 }
 
@@ -452,10 +456,19 @@ const readMarkTarget = async (
     const row = rows[0];
     return row === undefined
       ? undefined
-      : { repo: row.repo, recipient: null, broken: row.brokeAt !== null };
+      : {
+          repo: row.repo,
+          recipient: null,
+          unsolicited: true,
+          broken: row.brokeAt !== null,
+        };
   }
   const rows = await deps.db
-    .select({ repo: agentSessions.repo, recipient: agentSessions.developerId })
+    .select({
+      repo: agentSessions.repo,
+      recipient: agentSessions.developerId,
+      channel: hintDeliveries.channel,
+    })
     .from(hintDeliveries)
     .innerJoin(agentSessions, eq(hintDeliveries.sessionId, agentSessions.id))
     .where(eq(hintDeliveries.id, refId))
@@ -463,7 +476,12 @@ const readMarkTarget = async (
   const row = rows[0];
   return row === undefined
     ? undefined
-    : { repo: row.repo, recipient: row.recipient, broken: false };
+    : {
+        repo: row.repo,
+        recipient: row.recipient,
+        unsolicited: row.channel !== PULLED_DELIVERY_CHANNEL,
+        broken: false,
+      };
 };
 
 /**
@@ -477,7 +495,7 @@ const readMarkTarget = async (
  * whoever ran it is the one who knows, whoever pinned it.
  *
  * NOT ON A BREAK. "Ok" about a pin recorded broken is either a mistake or a
- * repair, and a repair needs the commit and the files that only `pin add`
+ * repair, and a repair needs the commit and the files that only a re-pin
  * records — accepting it here would leave the break unrepaired in the record
  * while proof 4 counted the surface as fine.
  */
@@ -493,6 +511,9 @@ const refuseMark = (
   }
   if (target.recipient !== null && target.recipient !== input.markedBy) {
     return "not_yours";
+  }
+  if (!target.unsolicited) {
+    return "not_unsolicited";
   }
   if (target.broken) {
     return "pin_broken";

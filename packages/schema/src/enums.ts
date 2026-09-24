@@ -164,7 +164,7 @@ export const PILOT_MARK_REF_KINDS = ["hint_delivery", "pin"] as const;
 
 /**
  * EACH REF KIND TAKES EXACTLY ONE WORD, because each has exactly one gesture:
- * `crosscheck noise` sends `off_target` about a delivery, `crosscheck pin ok`
+ * `crosscheck noise` sends `off_target` about a delivery, `crosscheck pin --ok`
  * sends `surface_ok` about a pin. The report counts marks by their word, so a
  * crossed pair — noise about a pin, "ok" about a delivery — would land in the
  * wrong proof with nothing to show it had.
@@ -217,6 +217,16 @@ export const DELIVERY_CHANNELS = [
   "tripwire",
   "suspect",
 ] as const;
+
+/**
+ * THE CHANNEL A READER ASKED FOR. Every other channel arrives unasked; this
+ * one is a pulled answer, so it is neither a proactive pointer (proof 4) nor
+ * something a person can call noise — a pulled answer somebody disliked is a
+ * verdict on the answer, and counting it as an interruption would make asking
+ * a question the way to inflate the noise figure.
+ */
+export const PULLED_DELIVERY_CHANNEL = "suspect" as const satisfies
+  (typeof DELIVERY_CHANNELS)[number];
 
 /**
  * WHY A PILOT FIGURE COULD NOT BE MEASURED (1.0 spec 07 §5) — an enum, so a

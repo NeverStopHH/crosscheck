@@ -735,7 +735,7 @@ export const pins = pgTable(
      * WHICH BROKEN PIN THIS ONE REPAIRS (1.0 spec 07 §3.4), and at which
      * version of that invariant.
      *
-     * A self-FK set by `crosscheck pin add` when a broken pin already exists
+     * A self-FK set by `crosscheck pin "<surface>"` when a broken pin already exists
      * for the same `(repo, surface)` — LOOKED UP, never asked. Proof 3 asks
      * whether the fix touched what the attribution answer named, and without
      * a link from the repair back to the break there is nothing to compare.
@@ -936,7 +936,7 @@ export const teamSettings = pgTable("team_settings", {
  *
  * Two gestures, each riding something a person does anyway, and neither is a
  * question: `crosscheck noise` beside a session that got a bad intervention,
- * `crosscheck pin ok` beside one whose check was run and passed. No survey
+ * `crosscheck pin --ok` beside one whose check was run and passed. No survey
  * exists and §8.3 refuses to add one — a measurement that interrupts somebody
  * to ask how it is going has changed the thing it measures.
  *

@@ -8598,6 +8598,160 @@ export const MUTATIONS: readonly Mutation[] = [
       "instead of the usage line that says what the flag takes",
   },
   {
+    // 07 §3.2. Only the caller's own deliveries are candidates.
+    label: "noise offers a teammate's delivery",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        eq(agentSessions.developerId, input.developerId),",
+    to: "        eq(agentSessions.repo, input.repo),",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "the first thing a person meets after typing `crosscheck noise` is a delivery " +
+      "they never received, and the mark route's refusal of it",
+  },
+  {
+    // 07 §3.2. A pulled answer is not an intervention.
+    label: "noise offers an answer somebody asked for",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        ne(hintDeliveries.channel, PULLED_DELIVERY_CHANNEL),",
+    to: "        ne(hintDeliveries.channel, \"unknown\"),",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a disliked `suspect` answer is offered as the intervention to mark, and " +
+      "asking a question becomes a way to inflate the noise figure",
+  },
+  {
+    // 07 §3.2. The window is the hub's to hold.
+    label: "noise candidates ignore the window",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        gte(hintDeliveries.deliveredAt, since),",
+    to: "        gte(hintDeliveries.deliveredAt, new Date(0)),",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a morning-old pointer is offered as \"the one that just happened\", and the " +
+      "mark lands on an intervention nobody meant",
+  },
+  {
+    // 07 §3.2. The sessions named are the ones live on the caller's machine.
+    label: "noise candidates ignore the sessions named",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "          : inArray(hintDeliveries.sessionId, [...input.sessions]),",
+    to: "          : undefined,",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a delivery to the caller's session on another laptop is offered as the one " +
+      "beside them, and the mark lands on the wrong intervention",
+  },
+  {
+    // 07 §3.2. The ref a person saw narrows to that ref.
+    label: "noise ignores the ref the person named",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        input.ref === null ? undefined : eq(hintDeliveries.refId, input.ref),",
+    to: "        undefined,",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "`crosscheck noise wc_…` marks whatever arrived last instead of the pointer " +
+      "the person named",
+  },
+  {
+    // 07 §3.2. One row past the bound is read so the cut can be said.
+    label: "the candidate cut is silent",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "    .limit(NOISE_MARK_MAX_CANDIDATES + 1);",
+    to: "    .limit(NOISE_MARK_MAX_CANDIDATES);",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a list of five reads as all there were, and a person picks from a list the " +
+      "one they meant is not on",
+  },
+  {
+    // 07 §3.6, D2. The read is refused where the mark would be.
+    label: "noise lists deliveries on a repo nobody enrolled",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "  if (!settings.pilotEnrolled) {",
+    to: "  if (!settings.pilotEnrolled && input.repo === \"\") {",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a person picks a delivery from a list and only then learns nothing is " +
+      "measured here, a dead end the refusal exists to put first",
+  },
+  {
+    // 07 §3.2. Proof 4 is about what arrived unasked.
+    label: "a pulled answer can be marked noise",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        unsolicited: row.channel !== PULLED_DELIVERY_CHANNEL,",
+    to: "        unsolicited: row.channel !== \"unknown\",",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "a verdict on an answer somebody asked for is counted as an interruption, and " +
+      "the off-target figure rises with every question a team asks",
+  },
+  {
+    // 07 §3.2. "This machine" is the live state files, not every session the caller has.
+    label: "noise reaches past this machine's live sessions",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "    sessions,\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,",
+    to: "    sessions: [],\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "the delivery beside the person loses to a newer one on their other laptop, " +
+      "and the mark lands on an intervention they are not looking at",
+  },
+  {
+    // 07 §3.2. With no id, only the last NOISE_MARK_WINDOW_MINUTES.
+    label: "noise with no id reaches back past the hour",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n  });",
+    to: "  });",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "a ninety-minute-old pointer is marked as the one that just happened, which " +
+      "is a guess, and a guessed mark is noise about noise",
+  },
+  {
+    // 07 §3.2. Several candidates are listed, never guessed.
+    label: "noise guesses between several candidates",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  if (candidates.length > 1 || more) {",
+    to: "  if (candidates.length > 99 || more) {",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "of two recent interventions the newer is marked whether or not it was the " +
+      "one the person meant",
+  },
+  {
+    // 07 §3.2, D3. An agent marking the product's interventions is the product grading itself.
+    label: "an agent can mark noise",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  if (!isInteractive()) {",
+    to: "  if (!isInteractive() && id === \"never\") {",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "the pilot's only human signal can be written by the model it measures, so " +
+      "the off-target figure reports the model's taste",
+  },
+  {
+    // 07 §3.2. Ids are checked before anything is sent.
+    label: "noise sends an id that is not an id",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  if (extra.length > 0 || (id !== undefined && !SAFE_ID_PATTERN.test(id))) {",
+    to: "  if (extra.length > 0) {",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "a mistyped id travels to the hub and comes back as a refusal about the id " +
+      "rather than the usage line that says what to type",
+  },
+  {
+    // 07 §3.2, D5. "The check passed" is a human's word or nothing.
+    label: "an agent can say a pin's check passed",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  if (!isInteractive()) {\n    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };\n  }\n  const result = await postPilotMark(",
+    to: "  if (!isInteractive() && pinId === \"never\") {\n    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };\n  }\n  const result = await postPilotMark(",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "an agent vouches that a surface works on a human's behalf, the exact hole " +
+      "the pin's human gate was built to close",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -8971,6 +9125,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pilot-cli.test.ts 3
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 3
@@ -9127,7 +9282,8 @@ interface Outcome {
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 5
- * PRINTS: packages/server/test/pilot-marks.test.ts 6
+ * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
+ * PRINTS: packages/server/test/pilot-marks.test.ts 7
  * PRINTS: packages/server/test/pilot-repairs.test.ts 3
  * PRINTS: packages/server/test/pilot-report.test.ts 10
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4
