@@ -85,6 +85,29 @@ export const hintDeliveryId = (
     .slice(0, HINT_DELIVERY_ID_HASH_CHARS)}`;
 
 /**
+ * A tripwire ask's delivery id — ITS OWN NAMESPACE (07 §3.1).
+ *
+ * The seen-set that makes (session, ref) unique covers the briefing and the
+ * mid-prompt hint, and nothing else: the tripwire asks per FILE, whatever
+ * those two already showed. So a session hinted about a context at its first
+ * prompt and tripped on that context's file an hour later is two deliveries
+ * on two channels — and under one id the hub would keep whichever arrived
+ * first and answer the other `duplicate`, losing the one proof 2 counts.
+ *
+ * NOT a namespace for every channel: briefing and hint rows already on hubs,
+ * and records already spooled, carry the bare id, and changing it would make
+ * a replay of either a second row. `\n` cannot occur in a ref id, so the two
+ * inputs can never produce the same hash input.
+ *
+ * Still deterministic per (session, context): a session tripping on two files
+ * of ONE teammate context is one collision, one row.
+ */
+export const tripwireDeliveryId = (
+  receiverSessionId: string,
+  refId: string,
+): string => hintDeliveryId(receiverSessionId, `${refId}\ntripwire`);
+
+/**
  * Delivery telemetry (DESIGN.md §4): refs only, never the rendered text.
  *
  * `channel` IS REQUIRED, AND THAT IS THE POINT (07 §3.1). The wire schema
@@ -105,7 +128,10 @@ export const hintDeliveryRecord = (
   buildEnvelope(
     "hint_delivery",
     {
-      id: hintDeliveryId(receiverSessionId, refId),
+      id:
+        channel === "tripwire"
+          ? tripwireDeliveryId(receiverSessionId, refId)
+          : hintDeliveryId(receiverSessionId, refId),
       sessionId: receiverSessionId,
       refKind,
       refId,

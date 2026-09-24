@@ -34,6 +34,12 @@ import {
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
+import {
+  activeTeammateSession,
+  startHintHub,
+} from "../../connector-core/test/fixtures/hint-hub.ts";
+import { hintDeliveryRecord } from "@crosscheck/connector-core/capture/records.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "capture-latency-uuid";
@@ -42,6 +48,13 @@ const BUDGET_MS = POST_TOOL_USE_BUDGET_RATIO * HTTP_TIMEOUT_MS;
 const PRE_BUDGET_MS = PRE_TOOL_USE_BUDGET_RATIO * HTTP_TIMEOUT_MS;
 /** Headroom the warm path must clear the budget by: capture is fs + spool. */
 const WARM_HEADROOM_MS = 400;
+/**
+ * What the pilot's counted ask may add to PreToolUse (07 PIL-9): one spool
+ * append. Named, so the day it grows it is this number that is argued with.
+ */
+const TRIPWIRE_RECORD_ALLOWANCE_MS = 5;
+const APPEND_SAMPLES = 50;
+const P95 = 0.95;
 
 const paths: string[] = [];
 
@@ -222,5 +235,75 @@ describe("the per-tool worktree resolution fits the PostToolUse budget", () => {
     );
     expect(coldMs).toBeLessThan(PRE_BUDGET_MS);
     expect(warmMs).toBeLessThan(PRE_BUDGET_MS - WARM_HEADROOM_MS);
+  });
+
+  /**
+   * 07 PIL-9: THE COUNTED ASK IS MEASURED, NOT ASSERTED. The one thing the
+   * pilot added to PreToolUse is a spool append on the path where the wire
+   * TRIPS — the dead-hub runs above never trip, so they could not see it.
+   * Two numbers: the whole tripping path against the hook's budget, and the
+   * added work alone against a named allowance, so a regression shows up as
+   * the thing that regressed rather than as a hook that got slower somehow.
+   */
+  test("a tripping ask, record included, clears the budget (07 PIL-9)", async () => {
+    // Arrange — a live teammate on the file, so the wire trips and records.
+    const repo = await makeRepo("prelat-trip", { remote: "git@github.com:acme/api.git" });
+    const home = await makeHome("prelat-trip");
+    paths.push(repo, home);
+    await writeRepoFile(repo, "src/auth/refresh.ts", "export const a = 1;\n");
+    const hub = startHintHub();
+    hub.setTripwireSessions([activeTeammateSession()]);
+    try {
+      await writeSessionState(home, { ...sessionState(repo), hubUrl: hub.url });
+      const payload = JSON.stringify({
+        session_id: SESSION_ID,
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_name: "Edit",
+        tool_input: { file_path: join(repo, "src/auth/refresh.ts") },
+      });
+      const hubEnv: Env = { ...env(home), CROSSCHECK_HUB_URL: hub.url };
+
+      // Act
+      const start = performance.now();
+      const stdout = await runHook("pre-tool-use", payload, hubEnv);
+      const tripMs = Math.round(performance.now() - start);
+
+      // Assert — it tripped, it recorded, and it stayed inside the budget
+      console.log(
+        `[capture-latency] pre-tool-use tripping ${String(tripMs)} ms (budget ${String(PRE_BUDGET_MS)})`,
+      );
+      expect(stdout).toContain("permissionDecision");
+      const spooled = await readSpoolLines(home, repoKey(hub.url, REPO_ID));
+      expect(spooled.some((line) => line.includes('"channel":"tripwire"'))).toBe(true);
+      expect(tripMs).toBeLessThan(PRE_BUDGET_MS);
+    } finally {
+      hub.stop();
+    }
+  });
+
+  test("the record the ask added costs one spool append, measured (07 PIL-9)", async () => {
+    // Arrange
+    const home = await makeHome("prelat-append");
+    paths.push(home);
+    const producer = { developerId: "dev_self", agentKind: "claude-code", sessionId: "cc_x" };
+    const samples: number[] = [];
+
+    // Act
+    for (let run = 0; run < APPEND_SAMPLES; run += 1) {
+      const now = new Date();
+      const record = hintDeliveryRecord("cc_x", "work_context", `wc_${String(run)}`, "tripwire", producer, now);
+      const start = performance.now();
+      await appendRecords(home, "prelat-append", "prelat-append", [record], now);
+      samples.push(performance.now() - start);
+    }
+
+    // Assert
+    const sorted = [...samples].sort((a, b) => a - b);
+    const p95 = sorted[Math.ceil(APPEND_SAMPLES * P95) - 1] ?? Number.POSITIVE_INFINITY;
+    console.log(
+      `[capture-latency] tripwire record append p95 ${p95.toFixed(2)} ms over ${String(APPEND_SAMPLES)} runs (allowance ${String(TRIPWIRE_RECORD_ALLOWANCE_MS)})`,
+    );
+    expect(p95).toBeLessThan(TRIPWIRE_RECORD_ALLOWANCE_MS);
   });
 });

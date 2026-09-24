@@ -8752,6 +8752,39 @@ export const MUTATIONS: readonly Mutation[] = [
       "the pin's human gate was built to close",
   },
   {
+    // 07 §3.1. Proof 2 reads the `tripwire` channel; a mislabelled ask is a hint.
+    label: "a tripwire ask is booked as a prompt hint",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "        \"tripwire\",\n        {",
+    to: "        \"prompt_hint\",\n        {",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "proof 2's tripwire bucket reads zero on a team whose tripwire fires every " +
+      "day, and proof 1's hint count is inflated by collisions it never surfaced",
+  },
+  {
+    // 07 §3.1. The tripwire's delivery id is its own namespace.
+    label: "a tripwire delivery takes the hint's id",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "        channel === \"tripwire\"",
+    to: "        channel === \"suspect\"",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "a session hinted about a context and later tripped on its file keeps only " +
+      "the first row, and the collision proof 2 counts is answered `duplicate`",
+  },
+  {
+    // 07 §3.1. `\n` cannot occur in a ref id, so the namespaced input never equals a bare one.
+    label: "the tripwire namespace collapses into the hint's",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "): string => hintDeliveryId(receiverSessionId, `${refId}\\ntripwire`);",
+    to: "): string => hintDeliveryId(receiverSessionId, refId);",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "tripwire and hint deliveries of one context share a primary key, so the hub " +
+      "silently keeps one channel and drops the other",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -9177,7 +9210,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
- * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5

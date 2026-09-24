@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 618
+    # PRINTS: 621
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -152,7 +152,7 @@ jobs:
     # PRINTS: doctor.ts 1
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 8
-    # PRINTS: hooks/pre-tool-use.ts 4
+    # PRINTS: hooks/pre-tool-use.ts 5
     # PRINTS: hooks/runner.ts 2
     # PRINTS: hooks/session-start.ts 1
     # PRINTS: hooks/stop.ts 1
@@ -164,7 +164,7 @@ jobs:
     # PRINTS: briefing/questions.ts 2
     # PRINTS: briefing/render.ts 11
     # PRINTS: briefing/sanitize.ts 10
-    # PRINTS: capture/records.ts 1
+    # PRINTS: capture/records.ts 3
     # PRINTS: capture/touched-root.ts 5
     # PRINTS: claim-validity.ts 2
     # PRINTS: conference/report.ts 1
@@ -388,7 +388,7 @@ jobs:
     # PRINTS: pins.ts 6
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 8
-    # PRINTS: pre-tool-use.ts 4
+    # PRINTS: pre-tool-use.ts 5
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 1
@@ -399,7 +399,7 @@ jobs:
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
     # PRINTS: record-handlers.ts 14
-    # PRINTS: records.ts 2
+    # PRINTS: records.ts 4
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: register-session.ts 2
