@@ -60,6 +60,17 @@ export const runBoundedCommand = async (
 };
 
 /**
+ * A command that did not answer. `timedOut` tells a deadline apart from a
+ * refusal (non-zero exit, missing binary) for the one reader that says which
+ * to a human — `doctor`'s landing-fetch line, where "did not finish within
+ * 120 s" and "failed" send the developer to different fixes.
+ */
+export interface CommandFailure {
+  readonly ok: false;
+  readonly timedOut: boolean;
+}
+
+/**
  * The same call, WITHOUT the null-collapse — for the one caller that must
  * tell "the command answered, and said nothing" apart from "the command did
  * not answer".
@@ -82,7 +93,7 @@ export const runBoundedCommandOutcome = async (
    */
   extraEnv?: Readonly<Record<string, string>>,
 ): Promise<
-  { readonly ok: true; readonly stdout: string } | { readonly ok: false }
+  { readonly ok: true; readonly stdout: string } | CommandFailure
 > => {
   try {
     const proc = Bun.spawn({
@@ -113,17 +124,17 @@ export const runBoundedCommandOutcome = async (
       const outcome = await Promise.race([readAll, deadline]);
       if (outcome === TIMED_OUT) {
         abandonProcess(proc);
-        return { ok: false };
+        return { ok: false, timedOut: true };
       }
       if (outcome.exitCode !== 0) {
-        return { ok: false };
+        return { ok: false, timedOut: false };
       }
       return { ok: true, stdout: outcome.stdout.trim() };
     } finally {
       clearTimeout(timer);
     }
   } catch {
-    return { ok: false };
+    return { ok: false, timedOut: false };
   }
 };
 
@@ -147,5 +158,5 @@ export const runGitOutcome = (
   timeoutMs: number = GIT_TIMEOUT_MS,
   extraEnv?: Readonly<Record<string, string>>,
 ): Promise<
-  { readonly ok: true; readonly stdout: string } | { readonly ok: false }
+  { readonly ok: true; readonly stdout: string } | CommandFailure
 > => runBoundedCommandOutcome(["git", ...args], cwd, timeoutMs, extraEnv);

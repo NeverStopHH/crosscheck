@@ -14,6 +14,8 @@ import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { runBoundedCommandOutcome } from "../src/git/git.ts";
+
 /** The probe's own timeout is 250 ms; anything near it is bounded, the
  * descendant's 5 s lifetime is not. Generous headroom for process startup. */
 const BOUNDED_CEILING_MS = 1500;
@@ -88,5 +90,23 @@ describe("runGit deadline", () => {
     expect(report.output).toBeNull();
     expect(report.elapsedMs).toBeLessThan(BOUNDED_CEILING_MS);
     expect(report.elapsedMs).toBeGreaterThan(DEADLINE_FLOOR_MS);
+  });
+});
+
+describe("the outcome tells a deadline from a refusal", () => {
+  test("a command still running at the deadline reads as timed out; one that refused does not", async () => {
+    // Arrange — doctor's landing-fetch line sends the developer to different
+    // fixes for the two ("did not finish within 120 s" vs "failed").
+    const cwd = tmpdir();
+
+    // Act
+    const slow = await runBoundedCommandOutcome(["/bin/sleep", "5"], cwd, 100);
+    const refused = await runBoundedCommandOutcome(["/bin/sh", "-c", "exit 3"], cwd, 5000);
+    const missing = await runBoundedCommandOutcome(["/nonexistent/crosscheck-binary"], cwd, 5000);
+
+    // Assert
+    expect(slow).toEqual({ ok: false, timedOut: true });
+    expect(refused).toEqual({ ok: false, timedOut: false });
+    expect(missing).toEqual({ ok: false, timedOut: false });
   });
 });
