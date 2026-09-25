@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 897
+    # PRINTS: 905
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -155,7 +155,7 @@ jobs:
     # PRINTS: capture/tool-events.ts 2
     # PRINTS: cli/settings-merge.ts 2
     # PRINTS: doctor.ts 1
-    # PRINTS: hooks/landed-why.ts 1
+    # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 8
     # PRINTS: hooks/pre-tool-use.ts 11
@@ -210,7 +210,7 @@ jobs:
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 14
+    # PRINTS: hints/render.ts 15
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 1
@@ -274,7 +274,7 @@ jobs:
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
     # PRINTS: packages/schema/src/file-ref.ts 5
-    # PRINTS: packages/schema/src/landed-context.ts 1
+    # PRINTS: packages/schema/src/landed-context.ts 2
     # PRINTS: packages/schema/src/pilot-mark.ts 1
     # PRINTS: packages/schema/src/pin.ts 2
     # PRINTS: packages/schema/src/repo-path.ts 1
@@ -308,7 +308,7 @@ jobs:
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 9
-    # PRINTS: packages/server/src/services/landed-context.ts 8
+    # PRINTS: packages/server/src/services/landed-context.ts 13
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pilot-candidates.ts 7
     # PRINTS: packages/server/src/services/pilot-report.ts 19
@@ -419,8 +419,8 @@ jobs:
     # PRINTS: intent.ts 1
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
-    # PRINTS: landed-context.ts 9
-    # PRINTS: landed-why.ts 1
+    # PRINTS: landed-context.ts 15
+    # PRINTS: landed-why.ts 2
     # PRINTS: landed.ts 1
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
@@ -462,7 +462,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 59
+    # PRINTS: render.ts 60
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 2
     # PRINTS: retention-registry.ts 8
