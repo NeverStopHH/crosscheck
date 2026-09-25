@@ -14,6 +14,7 @@ import { eventsRoutes } from "./routes/events.ts";
 import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
 import { intentLedgerRoutes } from "./routes/intent-ledger.ts";
+import { landedRoutes } from "./routes/landed.ts";
 import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
@@ -42,6 +43,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/work-contexts", workContextsRoutes(deps));
   app.route("/api/search", searchRoutes(deps));
   app.route("/api/hints", hintsRoutes(deps));
+  app.route("/api/landed", landedRoutes(deps));
   app.route("/api/contradictions", contradictionsRoutes(deps));
   app.route("/api/absences", absencesRoutes(deps));
   app.route("/api/pilot-marks", pilotMarkRoutes(deps));
