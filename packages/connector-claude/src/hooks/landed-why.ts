@@ -3,14 +3,15 @@
  * whose work on the file the named commits were, asked of the hub.
  *
  * ASKED ONLY WHEN THERE IS A STOP, AND ONLY WITH WHAT IS LEFT. PreToolUse
- * starts this the moment git has found a change worth stopping for — beside
- * booking the stop, not after it, so a slow machine or clone that spent the
- * front of the budget still leaves the why its turn — and drops the answer
- * if the booking is lost. The request gets the smaller of one hub timeout
- * and the spare the budget still holds after its reserve, and below
- * LANDED_WHY_MIN_MS it is not sent at all. So a slow or old hub, or a slow
- * machine, costs the why — the stop still goes out, in time — and the vast
- * majority of edits, which stop for nothing, ask nothing.
+ * starts this the moment GIT has found a change worth stopping for — beside
+ * the live tripwire's hub call and the booking, not after them — and uses
+ * the answer only if it wins the booking. The request gets the smaller of
+ * one hub timeout and the spare the budget still holds after its reserve,
+ * and below LANDED_WHY_MIN_MS it is not sent at all. So a slow or old hub
+ * costs the why, never the stop; and on a machine whose git spends most of
+ * the budget before the probe answers, there is no spare left and the stop
+ * goes out without its why. The vast majority of edits, which stop for
+ * nothing, ask nothing.
  *
  * A commit the hub's own schema would refuse (an author address git could
  * not give, or one outside its bounds) is left out of the question rather
@@ -34,6 +35,9 @@ export const landedWhyFor = async (
   landed: LandedChanges,
 ): Promise<readonly LandedContextMatch[]> => {
   const commits = namedLandedCommits(landed).flatMap((commit) => {
+    if (Number.isNaN(commit.committedAt.getTime())) {
+      return [];
+    }
     const parsed = LandedContextCommitSchema.safeParse({
       sha: commit.sha,
       authorEmail: commit.authorEmail,

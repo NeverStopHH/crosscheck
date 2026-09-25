@@ -753,9 +753,9 @@ export const MAX_LANDED_WHY_SHOWN = 2;
 export const LANDED_WHY_MIN_MS = 50;
 /**
  * `doctor`'s look at who landed what (decision 7): the landing branches'
- * latest commits, this many — a COUNT, never a date window: a merged feature
- * branch keeps its old commit dates, so `--since` would miss exactly the
- * commits that just landed (staleness-axis.test.ts, CCB-2) — and the unknown
+ * latest commits, this many — a COUNT, never a date window: `--since` drops
+ * a merged feature branch's commits for their old dates (staleness-axis
+ * .test.ts, CCB-2), where a count only orders by them — and the unknown
  * addresses it names before counting the rest.
  */
 export const DOCTOR_LANDED_AUTHORS_MAX_COMMITS = 500;

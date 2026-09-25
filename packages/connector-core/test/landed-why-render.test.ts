@@ -78,6 +78,12 @@ describe("the teammate work behind a landed change", () => {
     expect(text).toContain("before it landed (started at an unknown time): work context");
   });
 
+  test("a work start in the future — a hub clock ahead of this one — is unknown too", () => {
+    const text = render([match({ workStartedAt: "2027-01-01T00:00:00.000Z" })]);
+
+    expect(text).toContain("before it landed (started at an unknown time): work context");
+  });
+
   test("work the live half already names is not named twice", () => {
     const live = {
       sessionId: "cc_mike",

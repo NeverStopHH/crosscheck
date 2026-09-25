@@ -383,6 +383,51 @@ describe("the hub is asked only when there is a stop, and never costs it", () =>
   );
 
   test(
+    "the why is asked when GIT answers, not after a slow live tripwire too",
+    async () => {
+      // The live half takes 340 ms of a 400 ms timeout. A why asked only
+      // after it would find almost nothing to spare; asked when the probe
+      // answered, it has room — and this hub answers at once.
+      const hub = startFakeHub({ liveAfterMs: 340 });
+      const fix = await fixture("why-early", hub.url);
+      await mikeLands(fix.repos);
+      await readerFetches(fix.repos);
+
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, "k")));
+
+      expect(reason).toContain("«Fix line offset» by Mike, on staging");
+      expect(reason).toContain("before it landed (");
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a commit with a time no date can hold costs neither the stop nor the other commit's why",
+    async () => {
+      const hub = startFakeHub({});
+      const fix = await fixture("why-hostile-time", hub.url);
+      await mikeLands(fix.repos);
+      await landWithMergeCommit(fix.repos, {
+        file: FILE,
+        content: "export const offset = 4;\n",
+        subject: "From the far future",
+        landing: "staging",
+        writtenAt: "@99999999999999 +0000",
+        landedAt: iso(-10 * MINUTE_MS),
+      });
+      await readerFetches(fix.repos);
+
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, "k")));
+
+      expect(reason).toContain("«From the far future» by Mike");
+      expect(reason).toContain("«Fix line offset» by Mike");
+      expect(hub.askedCounts()).toEqual([1]);
+      expect(reason).toContain("before it landed (");
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
     "a commit the hub would refuse is left out of the question, so the others keep their why",
     async () => {
       const hub = startFakeHub({});
@@ -504,13 +549,14 @@ describe("the why's own clamp", () => {
     const hub = startFakeHub({ delayMs: 3000 });
 
     const started = performance.now();
-    const why = await landedWhyFor(contextFor(hub.url), { spareMs: () => 120 }, FILE, landedOne());
+    const why = await landedWhyFor(contextFor(hub.url), { spareMs: () => 200 }, FILE, landedOne());
     const elapsed = performance.now() - started;
 
     expect(why).toEqual([]);
     expect(hub.contextCalls()).toBe(1);
-    // One whole hub timeout would be 400 ms; the spare was 120.
-    expect(elapsed).toBeLessThan(250);
+    // One whole hub timeout would be 400 ms; the spare was 200, and a clamp
+    // even a third too loose would show.
+    expect(elapsed).toBeLessThan(260);
   });
 
   test("below the floor it is not asked at all", async () => {

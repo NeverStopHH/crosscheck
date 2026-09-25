@@ -15,6 +15,9 @@
  * nobody (decision 7).
  */
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
+
+import { agentSessions } from "../src/db/schema.ts";
 
 import {
   TEST_ADMIN_TOKEN,
@@ -286,6 +289,69 @@ describe("POST /api/landed/context", () => {
     const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(20 * 60))]);
 
     expect(answer.matches.map((match) => match.workContextId)).toEqual(["wc_the_work"]);
+  });
+
+  test("a follow-up that touched the file within the hour after the commit does not take the credit", async () => {
+    // S1 edited the file at T0; S2 started at T0+10m and touched the file
+    // at T0+49m — 29 minutes after the commit at T0+20m, inside the hour a
+    // late spool flush is allowed, but still after the commit.
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike_work", context: "wc_the_work", title: "The work" });
+    t.harness.clock.advanceSeconds(10 * 60);
+    expect((await registerTestSession(t.harness, t.mike.apiKey, { id: "ses_mike_next" })).status).toBe(200);
+    t.harness.clock.advanceSeconds(39 * 60);
+    const later = await postRecords(t.harness, t.mike, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_followup_29", sessionId: "ses_mike_next", title: "Follow-up" }), {
+          sessionId: "ses_mike_next",
+        }),
+        recordEnvelope("target", { workContextId: "wc_followup_29", kind: "file", value: FILE }, { sessionId: "ses_mike_next" }),
+      ],
+    });
+    expect(later.data?.accepted).toBe(2);
+
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(20 * 60))]);
+
+    expect(answer.matches.map((match) => match.workContextId)).toEqual(["wc_the_work"]);
+  });
+
+  test("a session the reaper ended late counts from its last heartbeat, not the reap", async () => {
+    // Mike's session went quiet at T0; the hub was down, so the reaper only
+    // ended it 50 days later. The commit came 55 days after T0.
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike_before_break", context: "wc_before_break", title: "Before the break" });
+    const reapedAt = new Date(T0_MS + 50 * 24 * HOUR_S * 1000);
+    await t.harness.db
+      .update(agentSessions)
+      .set({ endedAt: reapedAt, reapedAt })
+      .where(eq(agentSessions.id, "ses_mike_before_break"));
+
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(55 * 24 * HOUR_S))]);
+
+    expect(answer.matches).toEqual([]);
+  });
+
+  test("an opted-out teammate's session that has just ENDED is published work, not presence", async () => {
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });
+    await t.harness.app.request("/api/settings/presence", jsonRequest("PUT", t.mike.apiKey, { optOut: true }));
+    const ended = await t.harness.app.request("/api/sessions/ses_mike/end", jsonRequest("POST", t.mike.apiKey, {}));
+    expect(ended.status).toBe(200);
+
+    // Well inside the presence TTL: only the END makes it not live.
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(HOUR_S))]);
+
+    expect(answer.matches.map((match) => match.workContextId)).toEqual(["wc_mike"]);
+  });
+
+  test("a commit time the hub's arithmetic cannot hold is refused, not a 500", async () => {
+    const t = await team();
+
+    const ancient = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, "0001-01-01T00:00:00.000Z")]);
+    const far = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, "9999-12-31T23:59:00.000Z")]);
+
+    expect(ancient.status).toBe(400);
+    expect(far.status).toBe(400);
   });
 
   test("a session started a minute after the commit on the hub's clock still counts: laptops drift", async () => {

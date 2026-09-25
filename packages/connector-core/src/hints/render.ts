@@ -521,6 +521,14 @@ const commitBlock = (
  * (pointers proactive, substance pulled). A match for a commit the stop did
  * not name is not printed, whatever the hub sent.
  */
+/** "started 3h ago", or "started at an unknown time" — never a guess. */
+const sessionStartLabel = (iso: string | undefined, now: Date): string => {
+  const ms = iso === undefined ? Number.NaN : Date.parse(iso);
+  return Number.isNaN(ms) || ms > now.getTime()
+    ? "started at an unknown time"
+    : `started ${formatAge(now.getTime() - ms)} ago`;
+};
+
 const whyLines = (
   why: readonly LandedContextMatch[],
   input: { readonly landed: LandedChanges; readonly file: string; readonly now: Date; readonly liveContextId: string | null },
@@ -537,7 +545,7 @@ const whyLines = (
   const path = bare(input.file, MAX_WORK_CONTEXT_TITLE_CHARS);
   return [...byContext.values()].slice(0, MAX_LANDED_WHY_SHOWN).flatMap((match) => [
     `${authorLabel(match.developerName)}'s work on ${path} before it landed ` +
-      `(started ${match.workStartedAt === undefined ? "at an unknown time" : ageLabel(match.workStartedAt, input.now)}): ` +
+      `(${sessionStartLabel(match.workStartedAt, input.now)}): ` +
       `work context ${quoted(match.title, MAX_WORK_CONTEXT_TITLE_CHARS)}, readable with get_diagnosis ${safeId(match.workContextId)}.`,
     ...intentLines(match.intent),
   ]);

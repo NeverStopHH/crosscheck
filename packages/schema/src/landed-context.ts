@@ -22,6 +22,18 @@ export const LANDED_AUTHORS_MAX_EMAILS = 200;
 const MAX_EMAIL_CHARS = 320;
 const MAX_PATH_CHARS = 4096;
 const MAX_REPO_CHARS = 512;
+/**
+ * Years a commit time may name. git takes any; past these the hub's own
+ * arithmetic (thirty days back, five minutes on) leaves what the database
+ * can hold, and the whole question failed with it.
+ */
+const MIN_COMMIT_YEAR = 1971;
+const MAX_COMMIT_YEAR = 9998;
+
+const isCommitYear = (iso: string): boolean => {
+  const year = new Date(iso).getUTCFullYear();
+  return year >= MIN_COMMIT_YEAR && year <= MAX_COMMIT_YEAR;
+};
 
 const AuthorEmailSchema = z
   .string()
@@ -34,7 +46,7 @@ export const LandedContextCommitSchema = z.object({
   /** After the repo's .mailmap: the probe's own matching key. */
   authorEmail: AuthorEmailSchema,
   /** The commit's committer time — for a squash, when it landed. */
-  committedAt: z.iso.datetime({ offset: true }),
+  committedAt: z.iso.datetime({ offset: true }).refine(isCommitYear, "a commit time in a year the hub can hold"),
 });
 
 export const LandedContextRequestSchema = z.object({

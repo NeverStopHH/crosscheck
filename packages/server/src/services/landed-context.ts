@@ -14,8 +14,13 @@
  *   session's start, not when an edit reached the hub — an edit is recorded
  *   when the spool flushes, which on a laptop that was offline can be after
  *   the commit;
- * - preferring a session that had already recorded an edit of the file by
- *   the commit over one that only touched it afterwards, then the latest.
+ * - preferring a session that had recorded an edit of the file by the commit
+ *   (within the clock slack), then one that recorded it within the flush
+ *   slack after (a spool that flushed late), then any, and within each the
+ *   latest start.
+ * A session's last sign of life is its explicit end, or its last heartbeat —
+ * also for a session the reaper ended: `ended_at` is then the REAP, which
+ * after hub downtime can be weeks after the session went quiet.
  * The connector says "work on this file before it landed", with the work's
  * age, never "the reason for this commit".
  *
@@ -91,6 +96,7 @@ const matchFor = async (
   const committedMs = Date.parse(commit.committedAt);
   const activeSince = new Date(committedMs - LANDED_WHY_WINDOW_DAYS * MS_PER_DAY);
   const startedBy = new Date(committedMs + LANDED_WHY_CLOCK_SLACK_MS);
+  const editedBy = startedBy;
   const recordedBy = new Date(committedMs + LANDED_WHY_FLUSH_SLACK_MS);
   const live = presenceCutoff(deps.now());
   const rows = await deps.db
@@ -114,7 +120,7 @@ const matchFor = async (
         eq(developerEmails.email, lowered(commit.authorEmail)),
         ne(agentSessions.developerId, callerDeveloperId),
         lte(agentSessions.startedAt, startedBy),
-        sql`coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) >= ${activeSince.toISOString()}::timestamptz`,
+        sql`(CASE WHEN ${agentSessions.reapedAt} IS NOT NULL THEN ${agentSessions.lastHeartbeatAt} ELSE coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) END) >= ${activeSince.toISOString()}::timestamptz`,
         notMutedCondition(callerDeveloperId, agentSessions.developerId),
         // Presence opt-out hides a LIVE session's work only.
         or(
@@ -127,6 +133,7 @@ const matchFor = async (
     .orderBy(
       // A target with no recorded time (older rows) is not "recorded in time":
       // unguarded, NULL would sort FIRST under DESC and win.
+      sql`coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false) DESC`,
       sql`coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false) DESC`,
       desc(agentSessions.startedAt),
       desc(workContexts.createdAt),

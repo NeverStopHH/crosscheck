@@ -2106,7 +2106,7 @@ export const LandedContextMatchSchema = z.looseObject({
   developerName: z.string().min(1),
   intent: tolerantIntent,
   /** When the session behind the work started; the stop prints its age. */
-  workStartedAt: z.string().optional().catch(undefined),
+  workStartedAt: z.iso.datetime({ offset: true }).optional().catch(undefined),
 });
 
 export type LandedContextMatch = z.infer<typeof LandedContextMatchSchema>;

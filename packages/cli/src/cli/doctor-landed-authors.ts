@@ -11,11 +11,12 @@
  * line that maps each to its person once, for the whole team.
  *
  * READ FROM THIS CLONE: the landing branches' latest
- * DOCTOR_LANDED_AUTHORS_MAX_COMMITS commits — a count, never a date window,
- * because a merged feature branch keeps its old dates and `--since` would
- * miss what just landed — author addresses after .mailmap (`%aE`, exactly
- * what the stop sends), the reader's own (the stop's own rule) and bots'
- * left out. PASS throughout: an outside contributor is no fault, and a
+ * DOCTOR_LANDED_AUTHORS_MAX_COMMITS commits — a count, never a date window:
+ * `--since` DROPS a merged feature branch's commits for their old dates,
+ * where a count only orders them by those dates, so in a busy repo a
+ * long-lived branch merged just now can still sit past the count — author
+ * addresses after .mailmap (`%aE`, exactly what the stop sends), the
+ * reader's own (the stop's own rule) and bots' left out. PASS throughout: an outside contributor is no fault, and a
  * hub that does not answer is already another line's WARN.
  */
 import {

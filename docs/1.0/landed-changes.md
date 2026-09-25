@@ -258,26 +258,30 @@ A squash merge would defeat such a table anyway. What the hub does know:
 That is the match (decision 6).
 
 - **Asked only when there is a stop to explain.** The hub is asked the
-  moment git has found a change worth stopping for. It is asked beside
-  booking the stop, not after it, and the answer is dropped if the booking is
-  lost. It gets the smaller of one hub timeout and what the hook's budget
-  still spares after its reserve, and is not asked at all below 50 ms. A
-  slow or old hub, or a slow machine that spent the front of the budget,
-  costs the why and never the stop. The vast majority of edits stop for
-  nothing and ask nothing.
+  moment git has found a change worth stopping for. It is asked beside the
+  live tripwire's own hub call and beside booking the stop, not after them,
+  and the answer is used only if this hook wins the booking. It gets the
+  smaller of one hub timeout and what the hook's budget still spares after
+  its reserve, and is not asked at all below 50 ms. A slow or old hub costs
+  the why and never the stop. On a machine whose git spends most of the
+  budget before it answers, nothing is left to spare, and the stop goes out
+  without its why. The vast majority of edits stop for nothing and ask
+  nothing.
 - **`POST /api/landed/context`.** The request carries the repo, the file, and
   for each commit the stop names: its sha, its author's address (after
   `.mailmap`, the probe's own matching key) and its commit time. It is a POST
   because addresses do not belong in URLs, which end up in logs. A commit
   the hub's schema would refuse is left out of the question, so it cannot
-  cost the others their why. For each commit, one question (one row at
+  cost the others their why; so is a commit time in a year the hub cannot
+  hold. For each commit, one question (one row at
   most, so one busy author cannot crowd out another commit's match): the
   commit author's work context in this repo that targeted this file, in its
   one canonical spelling. The work context counts only if its session
-  - was still active within the 30 days before the commit. That is long
-    enough for a pull request that waited in review before its squash,
-    whose commit time is when it landed, and short enough that a
-    months-old session is not offered for a commit made outside any;
+  - showed a last sign of life within the 30 days before the commit (its
+    explicit end, else its last heartbeat, also when the reaper ended it
+    late). That is long enough for a pull request that waited in review
+    before its squash, whose commit time is when it landed, and short enough
+    that a months-old session is not offered for a commit made outside any;
   - started no later than five minutes after the commit. The session's
     start is the hub's clock and the commit time the author's laptop, so
     the five minutes absorb clock drift. The session's start is used, not
@@ -285,9 +289,14 @@ That is the match (decision 6).
     spool flushes, which can be after the commit on a laptop that was
     offline.
 
-  Of those, a session that had already recorded an edit of the file by the
-  commit (plus an hour for a late flush) wins over one that only touched it
-  afterwards, and then the latest start wins. On top of that:
+  Of those, the order is:
+  1. a session that had recorded an edit of the file by the commit (within
+     the five minutes);
+  2. then one that recorded it within the hour after, which allows for a
+     spool that flushed late;
+  3. then any.
+
+  Within each group the latest start wins. On top of that:
   - It is never the caller's own work context.
   - A developer the caller muted is left out, because this is an unasked
     surface.
@@ -298,7 +307,8 @@ That is the match (decision 6).
     It never carries an address.
 - **Rendered as a pointer plus the intent.** Under the commits the stop
   names, each matched work context gets a line with its title and how long
-  ago its work started, readable with `get_diagnosis <id>`, and, when it has
+  ago the session behind it started, readable with `get_diagnosis <id>`, and,
+  when it has
   one, its intent: `Their intent: «…»`, or `Their intent (derived): «…»` for
   one Crosscheck inferred. That is exactly the shape of the live half.
   - At most two work contexts are named.
@@ -311,8 +321,10 @@ That is the match (decision 6).
     §5.1), because a missing work context is not a missing reason.
 - **`doctor`: whom the hub does not know.** It collects the distinct author
   addresses (after `.mailmap`) of the landing branches' latest 500 commits.
-  That is a count, not a date window: a merged feature branch keeps its old
-  commit dates, so a window would miss exactly what just landed. Your own
+  That is a count, not a date window. A window drops a merged feature
+  branch's commits because of their old dates; a count only orders by them.
+  In a very busy repo, a long-lived branch merged just now can still sit past
+  the 500. Your own
   and bots' (`[bot]`) are left out. It asks the hub which ones belong to
   nobody, and names them: the first three, then how many more. It also
   gives an example `.mailmap` line. It answers PASS, because an outside
@@ -321,7 +333,9 @@ That is the match (decision 6).
 Known limits of step 3:
 
 - One person with several work contexts on the file around the commit: the
-  one that had edited the file by the commit is named, else the latest.
+  one that had edited the file by the commit is named, else the latest. The
+  age printed is the session's start, so a long-running session reads older
+  than the work it did last.
   That is why the line says "work on this file" and prints its age, and
   never "the reason".
 - Work done outside a Crosscheck session gets no why of its own. If the
