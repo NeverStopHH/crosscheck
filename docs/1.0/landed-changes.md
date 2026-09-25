@@ -45,16 +45,19 @@ phone call.
 Grilled with Nick, 2026-09-25, for step 3:
 
 6. **A probable match is enough for the why.** The stop names a teammate's
-   work context when it is the same person, the same file, and work started
-   before the commit. It says exactly that: "Mike's work on this file before
+   work context when it is the same person, the same file, and work that
+   started before the commit in a session still active in the 30 days before
+   it. The 30 days were refined in review, so that a months-old session is
+   not offered. It says exactly that: "Mike's work on this file before
    it landed". It never says "the reason for this commit". A commit's identity
    cannot carry the link. A squash merge lands under a new sha, and spec 02
    refused a table of commits. The person, the file and the time survive
    every way of merging.
 7. **A commit whose author address the hub does not know gets no why.** The
    stop comes without it. `doctor` names those addresses, read from the
-   reader's own clone, and gives the `.mailmap` line that maps each one to
-   its person. Mapped once in the repo, it works for everyone.
+   reader's own clone: the first three, then how many more. It also gives an
+   example `.mailmap` line that maps an address to its person. Mapped once in
+   the repo, it works for everyone.
 
 ## Mechanism
 
@@ -254,30 +257,53 @@ A squash merge would defeat such a table anyway. What the hub does know:
 
 That is the match (decision 6).
 
-- **Asked only when there is a stop to explain.** The hub is asked after
-  git has found a change worth stopping for and the stop is booked, within
-  what is left of the hook's budget. A slow or old hub costs the why, never
-  the stop. The vast majority of edits stop for nothing and ask nothing.
+- **Asked only when there is a stop to explain.** The hub is asked the
+  moment git has found a change worth stopping for. It is asked beside
+  booking the stop, not after it, and the answer is dropped if the booking is
+  lost. It gets the smaller of one hub timeout and what the hook's budget
+  still spares after its reserve, and is not asked at all below 50 ms. A
+  slow or old hub, or a slow machine that spent the front of the budget,
+  costs the why and never the stop. The vast majority of edits stop for
+  nothing and ask nothing.
 - **`POST /api/landed/context`.** The request carries the repo, the file, and
   for each commit the stop names: its sha, its author's address (after
   `.mailmap`, the probe's own matching key) and its commit time. It is a POST
-  because addresses do not belong in URLs, which end up in logs. The hub
-  maps each address to a developer. It answers each commit with that
-  developer's latest work context in this repo that targeted this file, from
-  a session started no later than the commit.
-  - The session's start is used, not when the file edit reached the hub. An
-    edit reaches the hub when the spool flushes, which can be after the
-    commit on a laptop that was offline.
+  because addresses do not belong in URLs, which end up in logs. A commit
+  the hub's schema would refuse is left out of the question, so it cannot
+  cost the others their why. For each commit, one question (one row at
+  most, so one busy author cannot crowd out another commit's match): the
+  commit author's work context in this repo that targeted this file, in its
+  one canonical spelling. The work context counts only if its session
+  - was still active within the 30 days before the commit. That is long
+    enough for a pull request that waited in review before its squash,
+    whose commit time is when it landed, and short enough that a
+    months-old session is not offered for a commit made outside any;
+  - started no later than five minutes after the commit. The session's
+    start is the hub's clock and the commit time the author's laptop, so
+    the five minutes absorb clock drift. The session's start is used, not
+    when the file edit reached the hub: an edit reaches the hub when the
+    spool flushes, which can be after the commit on a laptop that was
+    offline.
+
+  Of those, a session that had already recorded an edit of the file by the
+  commit (plus an hour for a late flush) wins over one that only touched it
+  afterwards, and then the latest start wins. On top of that:
   - It is never the caller's own work context.
   - A developer the caller muted is left out, because this is an unasked
     surface.
-  - A presence opt-out does not apply: this is published work, not presence.
+  - A presence opt-out hides the work only while its session is live. A
+    live session is presence; an ended session's work is published.
   - The answer carries the work context's title, its current intent, the
-    developer's name and the work context's id, and never an address.
+    developer's name, when the session started, and the work context's id.
+    It never carries an address.
 - **Rendered as a pointer plus the intent.** Under the commits the stop
-  names, each matched work context gets two lines: its title, readable with
-  `get_diagnosis <id>`, and `Their intent (…): «…»`. That is exactly the
-  shape of the live half.
+  names, each matched work context gets a line with its title and how long
+  ago its work started, readable with `get_diagnosis <id>`, and, when it has
+  one, its intent: `Their intent: «…»`, or `Their intent (derived): «…»` for
+  one Crosscheck inferred. That is exactly the shape of the live half.
+  - At most two work contexts are named.
+  - A work context the live half already names is not named again.
+  - A match for a commit the stop did not name is not printed.
   - Decisions and rejected approaches are one `get_diagnosis` away, and never
     injected. Pointers go out unasked, substance on request (DESIGN.md §4).
   - The text is the teammate's, quoted under the existing notice.
@@ -286,18 +312,23 @@ That is the match (decision 6).
 - **`doctor`: whom the hub does not know.** It collects the distinct author
   addresses (after `.mailmap`) of the landing branches' latest 500 commits.
   That is a count, not a date window: a merged feature branch keeps its old
-  commit dates, so a window would miss exactly what just landed. Your own and bots' (`[bot]`) are left out. It asks the hub which
-  ones belong to nobody, and names each with the `.mailmap` line to add. It
-  answers PASS, because an outside contributor is no fault; the list is the
-  help decision 7 asked for.
+  commit dates, so a window would miss exactly what just landed. Your own
+  and bots' (`[bot]`) are left out. It asks the hub which ones belong to
+  nobody, and names them: the first three, then how many more. It also
+  gives an example `.mailmap` line. It answers PASS, because an outside
+  contributor is no fault.
 
 Known limits of step 3:
 
-- One person with several work contexts on the file before the commit: the
-  latest one is named. That is why the line says "work on this file", not
-  "the reason".
-- Work done outside a Crosscheck session has no work context, so it gets no
-  why.
+- One person with several work contexts on the file around the commit: the
+  one that had edited the file by the commit is named, else the latest.
+  That is why the line says "work on this file" and prints its age, and
+  never "the reason".
+- Work done outside a Crosscheck session gets no why of its own. If the
+  same person worked on the file in a session within the 30 days before the
+  commit, that session's work is named, with its age.
+- A pull request that waited in review for more than 30 days before its
+  squash gets no why.
 - `Co-authored-by` trailers are not read. A commit gets its author's work
   only.
 - Cursor and ACP have no pre-edit stop, as in step 1.

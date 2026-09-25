@@ -141,9 +141,12 @@ describe("doctor's landed-change reasons line", () => {
     async () => {
       const s = await setup("lad-bots-own");
       await lands(s, DEPENDABOT, "export const offset = 4;\n");
-      // Nick's own commit, landed on staging too.
+      // Nick commits from a laptop address the hub has never heard of, so
+      // only the own-address rule — not the hub — can keep it off the list.
+      const laptop: Person = { name: NICK.name, email: "nick-laptop@example.com" };
+      await gitIn(s.repos.reader, ["config", "user.email", laptop.email]);
       await gitIn(s.repos.reader, ["checkout", "-q", "-b", "nick/landed", "origin/staging"]);
-      await commitFile(s.repos.reader, "src/mine.ts", "export {};\n", "mine", { as: NICK });
+      await commitFile(s.repos.reader, "src/mine.ts", "export {};\n", "mine", { as: laptop });
       await gitIn(s.repos.reader, ["push", "-q", "origin", "HEAD:staging"]);
       await readerFetches(s.repos);
 
@@ -151,7 +154,7 @@ describe("doctor's landed-change reasons line", () => {
 
       expect(line.level).toBe("PASS");
       expect(line.detail).not.toContain("dependabot");
-      expect(line.detail).not.toContain(NICK.email);
+      expect(line.detail).not.toContain(laptop.email);
     },
     HEAVY_SETUP_MS,
   );

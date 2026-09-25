@@ -209,7 +209,13 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   if (found.teammate === null && found.landed === null) {
     return "";
   }
+  // The why is asked the moment there is a landed change to stop for,
+  // BESIDE booking the stop rather than after it: a slow machine that spent
+  // the front of the budget still leaves it its turn (hooks/landed-why.ts).
+  // Its answer is dropped if the booking is lost.
+  const asking = found.landed === null ? Promise.resolve([]) : landedWhyFor(ctx, budget, file, found.landed);
   const won = await claimReasons(ctx, file, found);
+  const answered = await asking;
   if (won.teammate === null && won.landed === null) {
     return "";
   }
@@ -217,9 +223,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   // record states how far the archive the live claim came from reaches
   // (03 §5.1). It annotates only on a positively observed gap, so an
   // un-upgraded hub leaves the live lines byte-identical to what they were.
-  // The why is asked only now: there IS a stop, and it is booked, so a slow
-  // hub can cost the why and never the stop (hooks/landed-why.ts).
-  const why = won.landed === null ? [] : await landedWhyFor(ctx, budget, file, won.landed);
+  const why = won.landed === null ? [] : answered;
   const reason = renderEditWarning({
     live: won.teammate,
     landed: won.landed,

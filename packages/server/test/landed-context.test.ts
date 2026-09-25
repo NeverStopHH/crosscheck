@@ -96,6 +96,7 @@ interface Match {
   readonly title: string;
   readonly developerName: string;
   readonly intent: { readonly summary: string; readonly provenance: string } | null;
+  readonly workStartedAt: string;
 }
 
 const askContext = async (
@@ -138,6 +139,7 @@ describe("POST /api/landed/context", () => {
         title: "Line offsets are off by one",
         developerName: "Mike",
         intent: expect.objectContaining({ summary: INTENT.summary, provenance: "declared" }),
+        workStartedAt: TEST_START_ISO,
       },
     ]);
   });
@@ -232,7 +234,8 @@ describe("POST /api/landed/context", () => {
     expect(answer.matches).toEqual([]);
   });
 
-  test("a presence opt-out does not hide published work", async () => {
+  test("a presence opt-out hides the work while its session is live, and not after", async () => {
+    // Arrange — Mike opted out of presence; his session is live at first
     const t = await team();
     await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });
     const optedOut = await t.harness.app.request(
@@ -241,8 +244,107 @@ describe("POST /api/landed/context", () => {
     );
     expect(optedOut.status).toBe(200);
 
-    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(HOUR_S))]);
+    // Act — while live, then once the session has gone quiet
+    const whileLive = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(HOUR_S))]);
+    t.harness.clock.advanceSeconds(HOUR_S);
+    const afterwards = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(HOUR_S))]);
 
+    // Assert — a live session is presence; a finished one is published work
+    expect(whileLive.matches).toEqual([]);
+    expect(afterwards.matches.map((match) => match.workContextId)).toEqual(["wc_mike"]);
+  });
+
+  test("work from a session long gone is not offered for a commit made outside any", async () => {
+    // Mike's last session on the file was at T0; the commit came 180 days later.
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike_march", context: "wc_march", title: "Back in March" });
+
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(180 * 24 * HOUR_S))]);
+
+    expect(answer.matches).toEqual([]);
+  });
+
+  test("a session that had already edited the file wins over one that only touched it after the commit", async () => {
+    // S1 edited the file at T0; S2 started at T0+10m but touched the file
+    // only at T0+2h — after the commit at T0+20m.
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike_work", context: "wc_the_work", title: "The work" });
+    t.harness.clock.advanceSeconds(10 * 60);
+    const registered = await registerTestSession(t.harness, t.mike.apiKey, { id: "ses_mike_next" });
+    expect(registered.status).toBe(200);
+    t.harness.clock.advanceSeconds(110 * 60);
+    const later = await postRecords(t.harness, t.mike, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_followup", sessionId: "ses_mike_next", title: "Follow-up" }), {
+          sessionId: "ses_mike_next",
+        }),
+        recordEnvelope("target", { workContextId: "wc_followup", kind: "file", value: FILE }, { sessionId: "ses_mike_next" }),
+      ],
+    });
+    expect(later.data?.accepted).toBe(2);
+
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(20 * 60))]);
+
+    expect(answer.matches.map((match) => match.workContextId)).toEqual(["wc_the_work"]);
+  });
+
+  test("a session started a minute after the commit on the hub's clock still counts: laptops drift", async () => {
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike_old", context: "wc_last_week", title: "Last week" });
+    t.harness.clock.advanceSeconds(HOUR_S);
+    await mikeWorks(t, { session: "ses_mike_now", context: "wc_now", title: "Now" });
+
+    // The commit's time, from Mike's laptop, reads a minute BEFORE the hub
+    // saw his current session start.
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(HOUR_S - 60))]);
+
+    expect(answer.matches.map((match) => match.workContextId)).toEqual(["wc_now"]);
+  });
+
+  test("a busy author on the file never crowds out another commit's match", async () => {
+    const t = await team();
+    const ken = await createTestDeveloper(t.harness, "Ken", "ken@example.com");
+    await registerTestSession(t.harness, ken.apiKey, { id: "ses_ken" });
+    const kenSeeded = await postRecords(t.harness, ken, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_ken", sessionId: "ses_ken", title: "Ken's" }), {
+          sessionId: "ses_ken",
+        }),
+        recordEnvelope("target", { workContextId: "wc_ken", kind: "file", value: FILE }, { sessionId: "ses_ken" }),
+      ],
+    });
+    expect(kenSeeded.data?.accepted).toBe(2);
+    for (const n of [1, 2, 3]) {
+      t.harness.clock.advanceSeconds(60);
+      await mikeWorks(t, { session: `ses_mike_${String(n)}`, context: `wc_mike_${String(n)}`, title: `Pass ${String(n)}` });
+    }
+
+    const answer = await askContext(t, t.nick, [
+      commitBy(MIKE_EMAIL, at(HOUR_S)),
+      commitBy("ken@example.com", at(HOUR_S), "d".repeat(40)),
+    ]);
+
+    expect(answer.matches.map((match) => match.workContextId)).toEqual(["wc_mike_3", "wc_ken"]);
+  });
+
+  test("the file is matched in its one spelling, however it was asked", async () => {
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });
+
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(HOUR_S))], { path: "./src//lines.ts" });
+
+    expect(answer.matches.map((match) => match.workContextId)).toEqual(["wc_mike"]);
+  });
+
+  test("a commit time with an offset is read, not refused", async () => {
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });
+    // T0 + 1h, written in +02:00.
+    const withOffset = new Date(T0_MS + HOUR_S * 1000 + 2 * HOUR_S * 1000).toISOString().replace("Z", "+02:00");
+
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, withOffset)]);
+
+    expect(answer.status).toBe(200);
     expect(answer.matches.map((match) => match.workContextId)).toEqual(["wc_mike"]);
   });
 

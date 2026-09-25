@@ -19,6 +19,7 @@ import { rm } from "node:fs/promises";
 import { createDb, createServer } from "@crosscheck/server";
 
 import { runHook } from "../src/index.ts";
+import { landedWhyFor } from "../src/hooks/landed-why.ts";
 import type { Env } from "../src/index.ts";
 import {
   SessionStateSchema,
@@ -172,6 +173,16 @@ const envFor = (fix: Fixture, hubUrl: string, apiKey: string): Env => ({
   CROSSCHECK_LANDING_FETCH: "off",
 });
 
+/**
+ * For tests about WHAT the why says, not WHEN: a wider hub timeout (and so
+ * budget), so a slow CI machine's git cannot spend the room the why needs.
+ * The budget tests below keep the default.
+ */
+const roomyEnvFor = (fix: Fixture, hubUrl: string, apiKey: string): Env => ({
+  ...envFor(fix, hubUrl, apiKey),
+  CROSSCHECK_TIMEOUT_MS: "1500",
+});
+
 /** Mike's change to FILE, committed an hour ago and merged into staging since. */
 const mikeLands = (repos: LandingRepos, author?: Person) =>
   landWithMergeCommit(repos, {
@@ -220,12 +231,12 @@ describe("the why behind a landed change, from a real hub", () => {
       await readerFetches(fix.repos);
 
       // Act
-      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, nick.apiKey)));
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, nick.apiKey)));
 
       // Assert
       expect(reason).toContain("«Fix line offset» by Mike, on staging");
       expect(reason).toContain(
-        `Mike's work on ${FILE} before it landed: work context «${TITLE}», readable with get_diagnosis wc_mike.`,
+        `Mike's work on ${FILE} before it landed (started 2h ago): work context «${TITLE}», readable with get_diagnosis wc_mike.`,
       );
       expect(reason).toContain(`Their intent: «${INTENT}»`);
       expect(reason).not.toContain("mike@example.com");
@@ -242,10 +253,10 @@ describe("the why behind a landed change, from a real hub", () => {
       await mikeLands(fix.repos, KEN);
       await readerFetches(fix.repos);
 
-      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, nick.apiKey)));
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, nick.apiKey)));
 
       expect(reason).toContain("«Fix line offset» by Ken, on staging");
-      expect(reason).not.toContain("before it landed:");
+      expect(reason).not.toContain("before it landed (");
     },
     HEAVY_SETUP_MS,
   );
@@ -254,6 +265,8 @@ describe("the why behind a landed change, from a real hub", () => {
 interface FakeHub {
   readonly url: string;
   readonly contextCalls: () => number;
+  /** How many commits each /api/landed/context question carried. */
+  readonly askedCounts: () => readonly number[];
 }
 
 interface FakeLanded {
@@ -261,6 +274,8 @@ interface FakeLanded {
   readonly status?: number;
   /** Answer for a commit the stop never named, instead of the first asked. */
   readonly foreignSha?: boolean;
+  /** The live tripwire's answer: Mike active on the file, after this long. */
+  readonly liveAfterMs?: number;
 }
 
 /**
@@ -269,31 +284,58 @@ interface FakeLanded {
  */
 const startFakeHub = (landed: FakeLanded): FakeHub => {
   let calls = 0;
+  const asked: number[] = [];
   const server = Bun.serve({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);
       if (pathname === "/api/landed/context") {
         calls += 1;
-        const asked = (await request.json()) as { commits: readonly { sha: string }[] };
+        const body = (await request.json()) as { commits: readonly { sha: string }[] };
+        asked.push(body.commits.length);
         await Bun.sleep(landed.delayMs ?? 0);
         if ((landed.status ?? 200) !== 200) {
           return Response.json({ ok: false, error: { code: "not_found", message: "no route" } }, { status: landed.status ?? 404 });
         }
-        const sha = landed.foreignSha === true ? "f".repeat(40) : (asked.commits[0]?.sha ?? "");
+        const sha = landed.foreignSha === true ? "f".repeat(40) : (body.commits[0]?.sha ?? "");
         return Response.json({
           ok: true,
           data: { matches: [{ sha, workContextId: "wc_mike", title: TITLE, developerName: "Mike", intent: null }] },
         });
       }
       if (pathname === "/api/hints/tripwire") {
-        return Response.json({ ok: true, data: { sessions: [] } });
+        if (landed.liveAfterMs === undefined) {
+          return Response.json({ ok: true, data: { sessions: [] } });
+        }
+        await Bun.sleep(landed.liveAfterMs);
+        return Response.json({
+          ok: true,
+          data: {
+            sessions: [
+              {
+                sessionId: "cc_mike-live",
+                developerId: "dev_mike",
+                developerName: "Mike",
+                branch: "mike/offsets",
+                status: "implementing",
+                lastHeartbeatAt: new Date().toISOString(),
+                workContextId: "wc_mike_live",
+                workContextTitle: "Still on it",
+                workContextIntent: null,
+              },
+            ],
+          },
+        });
       }
       return Response.json({ ok: true, data: {} });
     },
   });
   servers.push(server);
-  return { url: `http://127.0.0.1:${String(server.port)}`, contextCalls: () => calls };
+  return {
+    url: `http://127.0.0.1:${String(server.port)}`,
+    contextCalls: () => calls,
+    askedCounts: () => asked,
+  };
 };
 
 describe("the hub is asked only when there is a stop, and never costs it", () => {
@@ -311,8 +353,57 @@ describe("the hub is asked only when there is a stop, and never costs it", () =>
 
       expect(hub.contextCalls()).toBe(1);
       expect(reason).toContain("«Fix line offset» by Mike, on staging");
-      expect(reason).not.toContain("before it landed:");
+      expect(reason).not.toContain("before it landed (");
       expect(elapsed).toBeLessThan(HOOK_CEILING_MS);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "with the front of the budget spent on a slow live tripwire, the why gives way and both stops arrive",
+    async () => {
+      // The live half takes most of one hub timeout; what the budget still
+      // spares after its reserve is little or nothing, and the why gets only
+      // that (the clamp itself is pinned exactly below).
+      const hub = startFakeHub({ delayMs: 3000, liveAfterMs: 300 });
+      const fix = await fixture("why-live-slow", hub.url);
+      await mikeLands(fix.repos);
+      await readerFetches(fix.repos);
+
+      const started = performance.now();
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, "k")));
+      const elapsed = performance.now() - started;
+
+      expect(reason).toContain("Mike has an active session");
+      expect(reason).toContain("«Fix line offset» by Mike, on staging");
+      expect(reason).not.toContain("before it landed (");
+      expect(elapsed).toBeLessThan(800 + 150);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a commit the hub would refuse is left out of the question, so the others keep their why",
+    async () => {
+      const hub = startFakeHub({});
+      const fix = await fixture("why-bad-address", hub.url);
+      await mikeLands(fix.repos);
+      // A second landed commit whose author address is past the hub's bounds.
+      await landWithMergeCommit(fix.repos, {
+        file: FILE,
+        content: "export const offset = 3;\n",
+        subject: "Another change",
+        landing: "staging",
+        writtenAt: iso(-HOUR_MS),
+        landedAt: iso(-20 * MINUTE_MS),
+        author: { name: "Long", email: `${"x".repeat(330)}@example.com` },
+      });
+      await readerFetches(fix.repos);
+
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, "k")));
+
+      expect(hub.askedCounts()).toEqual([1]);
+      expect(reason).toContain("before it landed (");
     },
     HEAVY_SETUP_MS,
   );
@@ -325,10 +416,10 @@ describe("the hub is asked only when there is a stop, and never costs it", () =>
       await mikeLands(fix.repos);
       await readerFetches(fix.repos);
 
-      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, "k")));
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, "k")));
 
       expect(reason).toContain("«Fix line offset» by Mike, on staging");
-      expect(reason).not.toContain("before it landed:");
+      expect(reason).not.toContain("before it landed (");
     },
     HEAVY_SETUP_MS,
   );
@@ -341,10 +432,10 @@ describe("the hub is asked only when there is a stop, and never costs it", () =>
       await mikeLands(fix.repos);
       await readerFetches(fix.repos);
 
-      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, "k")));
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, "k")));
 
       expect(reason).toContain("«Fix line offset» by Mike, on staging");
-      expect(reason).not.toContain("before it landed:");
+      expect(reason).not.toContain("before it landed (");
     },
     HEAVY_SETUP_MS,
   );
@@ -371,13 +462,63 @@ describe("the hub is asked only when there is a stop, and never costs it", () =>
       await mikeLands(fix.repos);
       await readerFetches(fix.repos);
 
-      const first = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, "k")));
-      const second = await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, "k"));
+      const first = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, "k")));
+      const second = await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, "k"));
 
-      expect(first).toContain("before it landed:");
+      expect(first).toContain("before it landed (");
       expect(second).toBe("");
       expect(hub.contextCalls()).toBe(1);
     },
     HEAVY_SETUP_MS,
   );
+});
+
+describe("the why's own clamp", () => {
+  const landedOne = () => ({
+    missing: [
+      {
+        sha: "0dcfc4e41e1f309f8a6d3056726744bb8ddd6133",
+        shortSha: "0dcfc4e",
+        authorName: "Mike",
+        authorEmail: "mike@example.com",
+        subject: "Fix line offset",
+        committedAt: new Date(),
+        branches: ["staging"],
+        landedAt: null,
+      },
+    ],
+    recent: [],
+    moreMissing: false,
+    unchecked: [],
+    cleanKey: null,
+  });
+
+  /** Only what landedWhyFor reads of a hook's context. */
+  const contextFor = (hubUrl: string) =>
+    ({
+      hub: { hubUrl, apiKey: "k", timeoutMs: 400, home: "/nonexistent", repoKey: "", now: () => new Date() },
+      identity: { repoId: "local/acme/api" },
+    }) as unknown as Parameters<typeof landedWhyFor>[0];
+
+  test("the why gets no more than the budget still spares, however slow the hub", async () => {
+    const hub = startFakeHub({ delayMs: 3000 });
+
+    const started = performance.now();
+    const why = await landedWhyFor(contextFor(hub.url), { spareMs: () => 120 }, FILE, landedOne());
+    const elapsed = performance.now() - started;
+
+    expect(why).toEqual([]);
+    expect(hub.contextCalls()).toBe(1);
+    // One whole hub timeout would be 400 ms; the spare was 120.
+    expect(elapsed).toBeLessThan(250);
+  });
+
+  test("below the floor it is not asked at all", async () => {
+    const hub = startFakeHub({});
+
+    const why = await landedWhyFor(contextFor(hub.url), { spareMs: () => 30 }, FILE, landedOne());
+
+    expect(why).toEqual([]);
+    expect(hub.contextCalls()).toBe(0);
+  });
 });

@@ -4,10 +4,11 @@
  * a pre-edit stop names, whose work on the file they were; `doctor` asks which
  * commit author addresses belong to nobody on the hub.
  *
- * ADDRESSES GO IN, NEVER OUT. The request carries each commit's author
- * address — the reader's own clone already has it — so the hub can map it to
- * a developer; nothing the hub answers carries one. A POST, because an
- * address in a URL ends up in access logs.
+ * ADDRESSES GO IN. The request carries each commit's author address — the
+ * reader's own clone already has it — so the hub can map it to a developer.
+ * The why's answer carries none; the authors' answer echoes back only the
+ * addresses the caller sent. A POST, because an address in a URL ends up in
+ * access logs.
  */
 import { z } from "zod";
 
@@ -20,6 +21,7 @@ export const LANDED_AUTHORS_MAX_EMAILS = 200;
 
 const MAX_EMAIL_CHARS = 320;
 const MAX_PATH_CHARS = 4096;
+const MAX_REPO_CHARS = 512;
 
 const AuthorEmailSchema = z
   .string()
@@ -32,11 +34,11 @@ export const LandedContextCommitSchema = z.object({
   /** After the repo's .mailmap: the probe's own matching key. */
   authorEmail: AuthorEmailSchema,
   /** The commit's committer time — for a squash, when it landed. */
-  committedAt: z.iso.datetime(),
+  committedAt: z.iso.datetime({ offset: true }),
 });
 
 export const LandedContextRequestSchema = z.object({
-  repo: z.string().min(1),
+  repo: z.string().min(1).max(MAX_REPO_CHARS),
   /** Repo-relative, as git names it. */
   path: z.string().min(1).max(MAX_PATH_CHARS),
   commits: z.array(LandedContextCommitSchema).min(1).max(LANDED_CONTEXT_MAX_COMMITS),

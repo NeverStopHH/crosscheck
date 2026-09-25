@@ -523,20 +523,22 @@ const commitBlock = (
  */
 const whyLines = (
   why: readonly LandedContextMatch[],
-  landed: LandedChanges,
-  repoRelativeFile: string,
+  input: { readonly landed: LandedChanges; readonly file: string; readonly now: Date; readonly liveContextId: string | null },
 ): readonly string[] => {
-  const named = new Set(namedLandedCommits(landed).map((commit) => commit.sha));
+  const named = new Set(namedLandedCommits(input.landed).map((commit) => commit.sha));
   const byContext = new Map<string, LandedContextMatch>();
   for (const match of why) {
-    if (named.has(match.sha) && !byContext.has(match.workContextId)) {
+    // The live half already named this work context, with its intent.
+    const isLive = match.workContextId === input.liveContextId;
+    if (named.has(match.sha) && !isLive && !byContext.has(match.workContextId)) {
       byContext.set(match.workContextId, match);
     }
   }
-  const path = bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS);
+  const path = bare(input.file, MAX_WORK_CONTEXT_TITLE_CHARS);
   return [...byContext.values()].slice(0, MAX_LANDED_WHY_SHOWN).flatMap((match) => [
-    `${authorLabel(match.developerName)}'s work on ${path} before it landed: work context ` +
-      `${quoted(match.title, MAX_WORK_CONTEXT_TITLE_CHARS)}, readable with get_diagnosis ${safeId(match.workContextId)}.`,
+    `${authorLabel(match.developerName)}'s work on ${path} before it landed ` +
+      `(started ${match.workStartedAt === undefined ? "at an unknown time" : ageLabel(match.workStartedAt, input.now)}): ` +
+      `work context ${quoted(match.title, MAX_WORK_CONTEXT_TITLE_CHARS)}, readable with get_diagnosis ${safeId(match.workContextId)}.`,
     ...intentLines(match.intent),
   ]);
 };
@@ -624,7 +626,12 @@ export const renderEditWarning = (input: EditWarningInput): string => {
       ? []
       : [
           ...landedLines(input.landed, input.file, input.now),
-          ...whyLines(input.why ?? [], input.landed, input.file),
+          ...whyLines(input.why ?? [], {
+            landed: input.landed,
+            file: input.file,
+            now: input.now,
+            liveContextId: input.live?.workContextId ?? null,
+          }),
         ];
   return live.length === 0 && landed.length === 0
     ? ""

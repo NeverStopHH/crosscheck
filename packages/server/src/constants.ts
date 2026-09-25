@@ -690,6 +690,24 @@ export const MAX_WAIVER_DAYS = 14;
  * PRINTS: true
  */
 export const COVERAGE_SESSION_WINDOW_DAYS = 14;
+
+/**
+ * The why behind a landed commit (services/landed-context.ts): what makes a
+ * teammate's work on the file a PROBABLE source of the commit (decision 6).
+ *
+ * - The session was still active within LANDED_WHY_WINDOW_DAYS before the
+ *   commit. Long enough for a pull request that waited in review before its
+ *   squash (the squash's commit time is when it landed); short enough that a
+ *   months-old session is not offered for a commit made outside any.
+ * - It started no later than LANDED_WHY_CLOCK_SLACK_MS after the commit: the
+ *   session's start is the hub's clock, the commit time the author's laptop.
+ * - A session that had already RECORDED an edit of the file by the commit
+ *   (plus LANDED_WHY_FLUSH_SLACK_MS, for a spool that flushed late) is
+ *   preferred over one that only touched the file afterwards.
+ */
+export const LANDED_WHY_WINDOW_DAYS = 30;
+export const LANDED_WHY_CLOCK_SLACK_MS = 5 * 60_000;
+export const LANDED_WHY_FLUSH_SLACK_MS = 60 * 60_000;
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

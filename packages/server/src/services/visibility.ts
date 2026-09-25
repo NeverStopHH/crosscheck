@@ -74,6 +74,11 @@
  *                                   which values reach them, so a muted or
  *                                   opted-out developer cannot decide what
  *                                   the reader is shown either
+ *  10. POST /api/landed/context  — the teammate work a landed-change stop
+ *                                   names (step 3). Presence opt-out applies
+ *                                   there only while that work's session is
+ *                                   live: an ended session's work is
+ *                                   published, a live one is presence
  *
  * Mute is a reader preference, not a boundary: the deliberate pull paths —
  * GET /api/search (search_related_work), GET /api/work-contexts/:id/diagnosis

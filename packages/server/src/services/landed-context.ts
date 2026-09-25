@@ -4,26 +4,41 @@
  * THE MATCH IS PROBABLE, BY DESIGN (decision 6). The hub keeps no table of
  * commits (spec 02 refused one), and a squash merge lands under a new sha, so
  * no commit identity can carry the link. What survives every way of merging
- * is the person, the file and the time:
- * - the commit's author address, mapped to a developer through
- *   `developer_emails` (aliases an admin linked included);
- * - a work context of that developer that targeted this file, in this repo;
- * - from a session STARTED no later than the commit. The session's start,
- *   not when the edit reached the hub: an edit is recorded when the spool
- *   flushes, which on a laptop that was offline can be after the commit.
- * Of several, the latest such work is named, and the connector says "work on
- * this file before it landed", never "the reason for this commit".
+ * is the person, the file and the time. For each commit, one question:
+ * - a work context of the commit's author (the address mapped through
+ *   `developer_emails`, aliases an admin linked included) that targeted this
+ *   file (in its one canonical spelling, as ingest stores it) in this repo;
+ * - from a session that was still ACTIVE within LANDED_WHY_WINDOW_DAYS
+ *   before the commit and STARTED no later than it (plus a clock slack: the
+ *   start is the hub's clock, the commit time the author's laptop). The
+ *   session's start, not when an edit reached the hub — an edit is recorded
+ *   when the spool flushes, which on a laptop that was offline can be after
+ *   the commit;
+ * - preferring a session that had already recorded an edit of the file by
+ *   the commit over one that only touched it afterwards, then the latest.
+ * The connector says "work on this file before it landed", with the work's
+ * age, never "the reason for this commit".
+ *
+ * ONE QUERY PER COMMIT (at most LANDED_CONTEXT_MAX_COMMITS), each LIMIT 1, so
+ * one busy author on a hot file can never crowd another commit's match out
+ * of a shared row cap.
  *
  * AN UNASKED SURFACE: the answer is printed in a stop nobody asked for, so a
- * developer the caller muted is left out. A presence opt-out is not: this is
- * published work, not presence (services/visibility.ts). Never the caller's
- * own work. Never an address in the answer.
+ * developer the caller muted is left out. A presence opt-out hides the work
+ * only while its session is LIVE — that is presence; an ended session's work
+ * is published (services/visibility.ts). Never the caller's own work. Never
+ * an address in the answer.
  */
-import { and, desc, eq, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lte, ne, or, sql } from "drizzle-orm";
 
-import type { Intent, LandedContextRequest } from "@crosscheck/schema";
-import { IntentSchema } from "@crosscheck/schema";
+import type { Intent, LandedContextCommit, LandedContextRequest } from "@crosscheck/schema";
+import { IntentSchema, canonicalRepoPath } from "@crosscheck/schema";
 
+import {
+  LANDED_WHY_CLOCK_SLACK_MS,
+  LANDED_WHY_FLUSH_SLACK_MS,
+  LANDED_WHY_WINDOW_DAYS,
+} from "../constants.ts";
 import {
   agentSessions,
   developerEmails,
@@ -33,19 +48,15 @@ import {
 } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
-import { notMutedCondition } from "./visibility.ts";
+import { presenceCutoff } from "./presence.ts";
+import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 
 interface Deps {
   readonly db: Db;
   readonly now: Clock;
 }
 
-/**
- * Candidate rows one question reads. A handful of commits by at most a few
- * authors on ONE file: this bounds a pathological history (thousands of
- * sessions on one hot file), never an ordinary one.
- */
-const MAX_CANDIDATE_ROWS = 200;
+const MS_PER_DAY = 86_400_000;
 
 export interface LandedContextMatch {
   readonly sha: string;
@@ -53,15 +64,8 @@ export interface LandedContextMatch {
   readonly title: string;
   readonly developerName: string;
   readonly intent: Intent | null;
-}
-
-interface Candidate {
-  readonly email: string;
-  readonly startedAt: Date;
-  readonly workContextId: string;
-  readonly title: string;
-  readonly developerName: string;
-  readonly intent: unknown;
+  /** When the session behind the work started — the stop prints its age. */
+  readonly workStartedAt: string;
 }
 
 const lowered = (email: string): string => email.trim().toLowerCase();
@@ -72,18 +76,25 @@ const intentOf = (stored: unknown): Intent | null => {
   return parsed.success ? parsed.data : null;
 };
 
-const readCandidates = async (
+/** The file in its one spelling, exactly as target ingest stores it. */
+const storedSpelling = (path: string): string => {
+  const canonical = canonicalRepoPath(path);
+  return canonical.ok ? canonical.path : path;
+};
+
+const matchFor = async (
   deps: Deps,
   callerDeveloperId: string,
   request: LandedContextRequest,
-): Promise<readonly Candidate[]> => {
-  const emails = [...new Set(request.commits.map((commit) => lowered(commit.authorEmail)))];
-  const latestCommit = new Date(
-    Math.max(...request.commits.map((commit) => Date.parse(commit.committedAt))),
-  );
+  commit: LandedContextCommit,
+): Promise<LandedContextMatch | null> => {
+  const committedMs = Date.parse(commit.committedAt);
+  const activeSince = new Date(committedMs - LANDED_WHY_WINDOW_DAYS * MS_PER_DAY);
+  const startedBy = new Date(committedMs + LANDED_WHY_CLOCK_SLACK_MS);
+  const recordedBy = new Date(committedMs + LANDED_WHY_FLUSH_SLACK_MS);
+  const live = presenceCutoff(deps.now());
   const rows = await deps.db
     .select({
-      email: developerEmails.email,
       startedAt: agentSessions.startedAt,
       workContextId: workContexts.id,
       title: workContexts.title,
@@ -98,48 +109,57 @@ const readCandidates = async (
     .where(
       and(
         eq(workContextTargets.kind, "file"),
-        eq(workContextTargets.value, request.path),
+        eq(workContextTargets.value, storedSpelling(request.path)),
         eq(agentSessions.repo, request.repo),
-        inArray(developerEmails.email, emails),
+        eq(developerEmails.email, lowered(commit.authorEmail)),
         ne(agentSessions.developerId, callerDeveloperId),
-        lte(agentSessions.startedAt, latestCommit),
+        lte(agentSessions.startedAt, startedBy),
+        sql`coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) >= ${activeSince.toISOString()}::timestamptz`,
         notMutedCondition(callerDeveloperId, agentSessions.developerId),
+        // Presence opt-out hides a LIVE session's work only.
+        or(
+          isNotNull(agentSessions.endedAt),
+          lte(agentSessions.lastHeartbeatAt, live),
+          visiblePresenceCondition(callerDeveloperId, agentSessions.developerId),
+        ),
       ),
     )
-    .orderBy(desc(agentSessions.startedAt), desc(workContexts.createdAt), sql`${workContexts.id} DESC`)
-    .limit(MAX_CANDIDATE_ROWS);
-  return rows;
+    .orderBy(
+      // A target with no recorded time (older rows) is not "recorded in time":
+      // unguarded, NULL would sort FIRST under DESC and win.
+      sql`coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false) DESC`,
+      desc(agentSessions.startedAt),
+      desc(workContexts.createdAt),
+      sql`${workContexts.id} DESC`,
+    )
+    .limit(1);
+  const found = rows[0];
+  return found === undefined
+    ? null
+    : {
+        sha: commit.sha,
+        workContextId: found.workContextId,
+        title: found.title,
+        developerName: found.developerName,
+        intent: intentOf(found.intent),
+        workStartedAt: found.startedAt.toISOString(),
+      };
 };
 
-/**
- * One match per commit that has one, in the order the commits were asked.
- * Rows arrive latest-start first, so the first row of the commit's author
- * that started no later than the commit IS the latest work before it.
- */
+/** One match per commit that has one, in the order the commits were asked. */
 export const findLandedContexts = async (
   deps: Deps,
   callerDeveloperId: string,
   request: LandedContextRequest,
 ): Promise<readonly LandedContextMatch[]> => {
-  const candidates = await readCandidates(deps, callerDeveloperId, request);
-  return request.commits.flatMap((commit): LandedContextMatch[] => {
-    const email = lowered(commit.authorEmail);
-    const committedAt = Date.parse(commit.committedAt);
-    const found = candidates.find(
-      (candidate) => candidate.email === email && candidate.startedAt.getTime() <= committedAt,
-    );
-    return found === undefined
-      ? []
-      : [
-          {
-            sha: commit.sha,
-            workContextId: found.workContextId,
-            title: found.title,
-            developerName: found.developerName,
-            intent: intentOf(found.intent),
-          },
-        ];
-  });
+  const matches: LandedContextMatch[] = [];
+  for (const commit of request.commits) {
+    const match = await matchFor(deps, callerDeveloperId, request, commit);
+    if (match !== null) {
+      matches.push(match);
+    }
+  }
+  return matches;
 };
 
 /**

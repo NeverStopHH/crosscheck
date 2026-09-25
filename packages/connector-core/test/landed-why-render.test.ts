@@ -50,6 +50,7 @@ const match = (overrides: Partial<LandedContextMatch> = {}): LandedContextMatch 
     confidence: 1,
     capturedAt: "2026-09-25T09:00:00.000Z",
   },
+  workStartedAt: "2026-09-25T09:00:00.000Z",
   ...overrides,
 });
 
@@ -63,12 +64,37 @@ describe("the teammate work behind a landed change", () => {
     const pointer = lines.findIndex((line) => line.startsWith("Mike's work on src/lines.ts before it landed"));
     expect(pointer).toBeGreaterThan(lines.findIndex((line) => line.includes("git show 0dcfc4e")));
     expect(lines[pointer]).toBe(
-      "Mike's work on src/lines.ts before it landed: work context «Line offsets are off by one», " +
+      "Mike's work on src/lines.ts before it landed (started 3h ago): work context «Line offsets are off by one», " +
         "readable with get_diagnosis wc_mike.",
     );
     // A declared intent carries no qualifier; only a derived one says so.
     expect(lines[pointer + 1]).toBe("Their intent: «Make line offsets one-based everywhere»");
     expect(lines.at(-1)).toBe(QUOTED_DATA_NOTICE);
+  });
+
+  test("a work start the hub did not give is said as unknown, not guessed", () => {
+    const text = render([match({ workStartedAt: undefined })]);
+
+    expect(text).toContain("before it landed (started at an unknown time): work context");
+  });
+
+  test("work the live half already names is not named twice", () => {
+    const live = {
+      sessionId: "cc_mike",
+      developerId: "dev_mike",
+      developerName: "Mike",
+      branch: "mike/offsets",
+      status: "implementing",
+      lastHeartbeatAt: "2026-09-25T11:59:00Z",
+      workContextId: "wc_mike",
+      workContextTitle: "Line offsets are off by one",
+      workContextIntent: null,
+    };
+
+    const text = renderEditWarning({ live, landed: missing([commit()]), file: FILE, now: NOW, why: [match()] });
+
+    expect(text.split("get_diagnosis wc_mike")).toHaveLength(2);
+    expect(text).not.toContain("before it landed");
   });
 
   test("never claims to be the reason for the commit", () => {

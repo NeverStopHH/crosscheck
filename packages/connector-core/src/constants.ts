@@ -746,7 +746,9 @@ export const MAX_LANDED_COMMITS_SHOWN = 3;
 export const MAX_LANDED_WHY_SHOWN = 2;
 /**
  * Below this much of the hook's budget the why is not asked for at all: a
- * hub round trip cannot come back in less, and the stop must still go out.
+ * hub across a network rarely answers in less. A hub on the same machine
+ * would (measured 1–4 ms), and loses nothing but the why when it is not
+ * asked — the stop goes out either way.
  */
 export const LANDED_WHY_MIN_MS = 50;
 /**
