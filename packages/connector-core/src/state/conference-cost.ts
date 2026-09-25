@@ -33,6 +33,7 @@ import {
   writePrivateFile,
 } from "../config/paths.ts";
 import { withLock } from "../spool/lock.ts";
+import { ageOf } from "./age.ts";
 
 export interface ConferenceCost {
   /** Runs that reached the hub at all. */
@@ -160,30 +161,6 @@ const bookRun = async (
     };
     await writePrivateFile(conferenceCostPath(home, key), JSON.stringify(next));
   });
-};
-
-const MS_PER_SECOND = 1000;
-const SECONDS_PER_MINUTE = 60;
-const MINUTES_PER_HOUR = 60;
-const HOURS_PER_DAY = 24;
-
-/** Coarse and honest — the exact minute of a nightly run helps nobody. */
-const ageOf = (iso: string, now: Date): string => {
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) {
-    return "at an unreadable time";
-  }
-  const minutes = Math.max(
-    0,
-    Math.floor((now.getTime() - ms) / (MS_PER_SECOND * SECONDS_PER_MINUTE)),
-  );
-  if (minutes < MINUTES_PER_HOUR) {
-    return `${String(minutes)}m ago`;
-  }
-  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
-  return hours < HOURS_PER_DAY
-    ? `${String(hours)}h ago`
-    : `${String(Math.floor(hours / HOURS_PER_DAY))}d ago`;
 };
 
 /**
