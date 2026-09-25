@@ -64,6 +64,8 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   deliveredHintRefs: [],
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
+  landedAskedFiles: [],
+  landedCleanKeys: [],
   briefingSolvedRefs: [],
   probedFingerprints: [],
   foreignRepoDrops: 0,

@@ -15,6 +15,8 @@ const FailEnvelopeSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
 
+const HTTP_UNAUTHORIZED = 401;
+
 export interface HubContext {
   readonly hubUrl: string;
   readonly apiKey: string;
@@ -22,6 +24,16 @@ export interface HubContext {
   readonly home: string;
   readonly repoKey: string;
   readonly now: () => Date;
+  /**
+   * LONG-LIVED PROCESSES ONLY — the ACP proxy, which holds one context for a
+   * whole agent session. A key rotation (`crosscheck key rotate`) kills the
+   * old key at once; hooks and the MCP server read the config fresh on every
+   * call and never notice, but a context built at session start would send
+   * the dead key until the agent restarts. Given this, a 401 re-reads the
+   * key once and retries with it — only when the stored key actually
+   * changed, so a genuinely unknown key is still a single 401.
+   */
+  readonly freshApiKey?: () => Promise<string | null>;
 }
 
 export type HubFailureKind = "network" | "http" | "malformed";
@@ -152,11 +164,37 @@ const recordSync = async <T>(
  * Fail-open hub call: never throws, always writes the last-sync record, and
  * validates the response envelope plus payload before returning it.
  */
+/** One retry, with the rotated key, when the one this context holds was refused. */
+const retriedWithFreshKey = async <T>(
+  ctx: HubContext,
+  request: HubRequest<T>,
+  result: HubResult<T>,
+  refusedKey: string,
+): Promise<HubResult<T>> => {
+  if (result.ok || result.kind !== "http" || result.status !== HTTP_UNAUTHORIZED) {
+    return result;
+  }
+  const fresh = ctx.freshApiKey === undefined ? null : await ctx.freshApiKey();
+  if (fresh === null || fresh === refusedKey) {
+    return result;
+  }
+  return performRequest({ ...ctx, apiKey: fresh }, request);
+};
+
 export const hubRequest = async <T>(
   ctx: HubContext,
   request: HubRequest<T>,
 ): Promise<HubResult<T>> => {
-  const result = await performRequest(ctx, request);
+  // The key this request CARRIES, read once. A long-lived context's `apiKey`
+  // can be a getter that its own `freshApiKey` moves — compared against the
+  // context afterwards, a rotated key would look unchanged and never retry.
+  const carried: HubContext = { ...ctx, apiKey: ctx.apiKey };
+  const result = await retriedWithFreshKey(
+    ctx,
+    request,
+    await performRequest(carried, request),
+    carried.apiKey,
+  );
   try {
     await recordSync(ctx, request, result);
   } catch {

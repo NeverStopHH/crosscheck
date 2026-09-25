@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 
 import { hashApiKey, isTokenEqual } from "../auth/keys.ts";
@@ -95,4 +95,28 @@ export const developerAuth = (deps: AppDeps): MiddlewareHandler<AppEnv> => {
     c.set("developer", developer);
     await next();
   };
+};
+
+/**
+ * Does `presented` still open this developer's account? `developerAuth`
+ * answers once, when a request arrives. A request that LIVES — the event
+ * stream — has to ask again, or a key rotated away after a leak would keep
+ * reading the team's feed for as long as its connection stayed open.
+ */
+export const isKeyStillCurrent = async (
+  deps: AppDeps,
+  developerId: string,
+  presented: string,
+): Promise<boolean> => {
+  const rows = await deps.db
+    .select({ id: developers.id })
+    .from(developers)
+    .where(
+      and(
+        eq(developers.id, developerId),
+        eq(developers.apiKeyHash, hashApiKey(presented)),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 };

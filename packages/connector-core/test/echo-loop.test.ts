@@ -51,6 +51,8 @@ const fixture = async (label: string): Promise<McpContext> => {
     deliveredHintRefs: ["clm_rejected"],
     deliveredHintHashes: [hintBodyHash(CANDIDATE_BODY)],
     tripwireAskedFiles: [],
+    landedAskedFiles: [],
+    landedCleanKeys: [],
   });
   const setup = await prepareMcp(
     {

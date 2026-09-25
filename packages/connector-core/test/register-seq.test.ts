@@ -230,6 +230,8 @@ describe("a re-fire over a foreign binding carries nothing", () => {
       deliveredHintRefs: [],
       deliveredHintHashes: [],
       tripwireAskedFiles: [],
+      landedAskedFiles: [],
+      landedCleanKeys: [],
       workContextTitle: "foreign",
       workContextStatus: "implementing",
       seqEpoch: foreignEpoch,

@@ -4545,7 +4545,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // Guard shells out to git (makeRepo) — assertGuardIsGreen caveat.
     label: "notice mode still emits the ask",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    mode === TRIPWIRE_MODE_NOTICE",
+    from: "    resolveTripwireMode(ctx.env) === TRIPWIRE_MODE_NOTICE",
     to: "    false",
     test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
     because:
@@ -10304,6 +10304,856 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "after the upgrade the hub canonicalises every touch, so a pin stored as ./src/x.ts meets none of them and suspect answers that nobody touched the surface",
   },
+  {
+    // Key rotation. The old key is dead when a rotation returns.
+    label: "a rotation leaves the old key valid",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "      .set({ apiKeyHash: hashApiKey(apiKey) })",
+    to: "      .set({ apiKeyHash: developers.apiKeyHash })",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "a leaked key keeps working after its owner rotated it, and the new key the hub handed out opens nothing",
+  },
+  {
+    // Key rotation. Two rotations racing on one old key produce one new key.
+    label: "two racing rotations both hand out a key",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "            : [eq(developers.apiKeyHash, hashApiKey(input.presentedKey))]),",
+    to: "            : []),",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "the loser walks away holding a key the winner's write overwrote a moment later, and locks that machine out",
+  },
+  {
+    // Key rotation. A web session dies with the key it was minted with.
+    label: "a web session survives the rotation of its key",
+    file: `${SERVER}/src/ui/session.ts`,
+    from: "  `${payload}\\n${apiKeyHash}`;",
+    to: "  `${payload}${apiKeyHash.slice(0, 0)}`;",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "somebody who logged in to the web UI with a leaked key stays logged in until the cookie expires, after the key was rotated",
+  },
+  {
+    // Key rotation. The ledger records a rotation, never a key.
+    label: "the event ledger stores the new key",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "      by: input.by,\n    });",
+    to: "      by: input.by,\n      apiKey,\n    });",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "every teammate's feed and every reader of /api/events receives a live key",
+  },
+  {
+    // Key rotation. A long-lived context retries only with a key that changed.
+    label: "a refused key retries even when nothing was rotated",
+    file: `${CORE}/src/http/client.ts`,
+    from: "  if (fresh === null || fresh === refusedKey) {",
+    to: "  if (fresh === null) {",
+    test: `${CORE}/test/hub-key-refresh.test.ts`,
+    because:
+      "every genuinely unknown key costs two requests, doubling a refused hub's load for nothing",
+  },
+  {
+    // Key rotation. A long-lived context retries with the rotated key.
+    label: "a long-lived context never picks up a rotated key",
+    file: `${CORE}/src/http/client.ts`,
+    from: "  return performRequest({ ...ctx, apiKey: fresh }, request);",
+    to: "  return result;",
+    test: `${CORE}/test/hub-key-refresh.test.ts`,
+    because:
+      "an ACP session keeps sending a dead key after a rotation, and none of its work reaches the team until the agent restarts",
+  },
+  {
+    // Key rotation. The ACP proxy reads the stored key on a refusal.
+    label: "the ACP proxy never looks for a rotated key",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        return fresh.apiKey;",
+    to: "        return null;",
+    test: `${ACP}/test/key-rotation-acp.test.ts`,
+    because:
+      "every capture after a rotation is refused for the rest of the agent session",
+  },
+  {
+    // Key rotation. A key in CROSSCHECK_API_KEY is never rotated silently.
+    label: "the CLI rotates a key it cannot store",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "  if (fromEnv !== undefined && !printKey) {",
+    to: "  if (fromEnv !== undefined && !printKey && false) {",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "the variable goes on holding a dead key and every agent on that machine is refused, with nobody told why",
+  },
+  {
+    // Key rotation. A person at a terminal, never an agent.
+    label: "an agent can rotate the key and read the new one",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "  if (!isInteractive()) {",
+    to: "  if (!isInteractive() && rest.length < 0) {",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "an agent's Bash call rotates the developer's key and prints a live key into its own transcript",
+  },
+  {
+    // Key rotation. The CLI saves the new key before it says done.
+    label: "the CLI rotates without saving the new key",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "      await saveConfig(home, { ...stored, apiKey: newKey });",
+    to: "      await saveConfig(home, { ...stored });",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "the old key is dead and the stored config still holds it: this machine is locked out by the command meant to protect it",
+  },
+  {
+    // Key rotation. A live event stream re-checks its key on every poll.
+    label: "an event stream outlives the rotation of its key",
+    file: `${SERVER}/src/routes/events.ts`,
+    from: "          if (!(await isKeyStillCurrent(deps, developerId, presented))) {",
+    to: "          if (!(await Promise.resolve(true))) {",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "a leaked key keeps reading the team's live feed after its owner rotated it, for as long as the connection stays open",
+  },
+  {
+    // Key rotation. The feed tells an admin's rotation from the owner's.
+    label: "the feed credits an admin's rotation to the owner",
+    file: `${SERVER}/src/ui/pages/feed.tsx`,
+    from: '  entry.kind === EVENT_KINDS.DEVELOPER_KEY_ROTATED && entry.by === "admin"',
+    to: '  entry.kind === EVENT_KINDS.DEVELOPER_KEY_ROTATED && entry.by === "nobody"',
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "the audit trail a teammate reads after a leak says the owner rotated a key that an admin rotated",
+  },
+  {
+    // Key rotation. The retry compares with the key the request carried.
+    label: "a rotated key read through a live getter never retries",
+    file: `${CORE}/src/http/client.ts`,
+    from: "  if (fresh === null || fresh === refusedKey) {",
+    to: "  if (fresh === null || fresh === ctx.apiKey) {",
+    test: `${CORE}/test/hub-key-refresh.test.ts`,
+    because:
+      "the ACP proxy's register, heartbeat and briefing calls each lose a request after every rotation",
+  },
+  {
+    // Key rotation. The ACP proxy takes only a key stored for its own hub.
+    label: "the ACP proxy sends a key stored for another hub",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          hubOrigin(fresh.stored.hubUrl) !== hubOrigin(config.hubUrl)",
+    to: "          false",
+    test: `${ACP}/test/key-rotation-acp.test.ts`,
+    because:
+      "a hub that answers 401 receives the key the developer stored for a different hub",
+  },
+  {
+    // Key rotation. The CLI sends a stored key only to its own hub.
+    label: "the CLI sends the stored key to whichever hub the environment names",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "  if (isStoredKeyForOtherHub) {",
+    to: "  if (isStoredKeyForOtherHub && false) {",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "another hub receives the key, and whatever key it answers with is saved as this developer's",
+  },
+  {
+    // Key rotation. A lost answer is not a refusal.
+    label: "the CLI says nothing was rotated when the answer was lost",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "    return result(`the hub did not answer (${rotated.message}).\\n${MAYBE_ROTATED}`, EXIT_UNREACHABLE);",
+    to: "    return result(`the hub did not answer (${rotated.message}); nothing was rotated.`, EXIT_UNREACHABLE);",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "a developer whose old key is already dead is told it still works, and learns otherwise from silent hooks",
+  },
+  {
+    // Key rotation. An environment key's holders are told to restart.
+    label: "an environment key's users are never told to restart",
+    file: `${CLI}/src/cli/key.ts`,
+    from: '    lines.push("", ENV_KEY_RESTART);',
+    to: '    lines.push("");',
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "every agent started with the old CROSSCHECK_API_KEY keeps sending a dead key, and its hooks fail silent",
+  },
+  {
+    // Key rotation. Learned identity merges onto the config as it is now.
+    label: "a hook's identity write puts back a rotated-away key",
+    file: `${CORE}/src/config/config.ts`,
+    from: "  const base = await readStoredConfig(config.home);",
+    to: "  const base = config.stored;",
+    test: `${CORE}/test/remember-developer.test.ts`,
+    because:
+      "a SessionStart hook running during `crosscheck key rotate` writes the dead key back, locking the machine out without a word",
+  },
+  {
+    // Landed changes. A cherry-picked change is not missing.
+    label: "a change that reached the reader by cherry-pick still counts as missing",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: '    ...(query.cherryPick ? ["--cherry-pick"] : []),',
+    to: '    ...(query.cherryPick ? [] : []),',
+    test: `${CORE}/test/landed-changes.test.ts`,
+    because:
+      "work the reader already has, picked over by hand, stops every edit to the file as if it were missing",
+  },
+  {
+    // Landed changes. Only the landing branch's side of the range counts.
+    label: "commits only the reader has are reported as landed",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: '    "--left-only",',
+    to: '    "--no-color",',
+    test: `${CORE}/test/landed-changes.test.ts`,
+    because:
+      "a teammate's unfinished branch the reader merged by hand is announced as a change that landed and is missing",
+  },
+  {
+    // Landed changes. Arrival time is read from the landing branch's own line.
+    label: "a landed change is dated when it was written, not when it landed",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "    \"--first-parent\",\n    `--since=${since.toISOString()}`,",
+    to: "    `--since=${since.toISOString()}`,",
+    test: `${CORE}/test/landed-changes.test.ts`,
+    because:
+      "the working-day window is measured from the wrong moment, so a change merged yesterday can read as a week old",
+  },
+  {
+    // Landed changes. Recent means already in the checkout.
+    label: "a change the checkout lacks is also reported as one it has",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "        isReachableFromAny(context, commit.sha, [probe.state.headSha]),",
+    to: "        isReachableFromAny(context, commit.sha, [probe.state.headSha]).then(() => true),",
+    test: `${CORE}/test/landed-changes.test.ts`,
+    because:
+      "the stop tells the reader their checkout has a change it is missing — the one reassurance it must never give falsely",
+  },
+  {
+    // Landed changes. A merge is credited to the commits it brought in.
+    label: "a merged change is credited to whoever clicked merge",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  if (landing.parents.length < 2 || firstParent === undefined) {",
+    to: "  if (landing.parents.length < 99 || firstParent === undefined) {",
+    test: `${CORE}/test/landed-changes.test.ts`,
+    because:
+      "the reviewer who merged gets named as the author, and the reader asks the wrong person why the file changed",
+  },
+  {
+    // Landed changes. The reader's own commits never warn the reader.
+    label: "the reader is stopped for their own landed commits",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const theirs = sightings.filter(({ change }) => change.authorEmail.toLowerCase() !== self);",
+    to: "  const theirs = sightings.filter(({ change }) => change.authorEmail.toLowerCase() !== self || self !== null);",
+    test: `${CORE}/test/landed-changes.test.ts`,
+    because:
+      "every developer who lands work from one branch is stopped on another by their own change",
+  },
+  {
+    // Landed changes. The whole probe has a deadline.
+    label: "a slow landed probe outlives its deadline",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    }, input.budgetMs ?? LANDED_PROBE_BUDGET_MS);",
+    to: "    }, 60_000);",
+    test: `${CORE}/test/landed-changes.test.ts`,
+    because:
+      "a large repo's git walk eats the PreToolUse budget, and the live tripwire's ask is lost with it",
+  },
+  {
+    // Landed changes. A weekend does not age a change.
+    label: "a weekend ages a landed change",
+    file: `${CORE}/src/landed-changes/working-days.ts`,
+    from: "  return weekday !== SATURDAY && weekday !== SUNDAY;",
+    to: "  return weekday !== SATURDAY || weekday !== SUNDAY;",
+    test: `${CORE}/test/working-days.test.ts`,
+    because:
+      "a change merged on Thursday is ordinary history by Monday, and Monday's reader is never told about it",
+  },
+  {
+    // Landed changes. The window is counted on the reader's calendar.
+    label: "recent is counted on UTC's calendar, not the reader's",
+    file: `${CORE}/src/landed-changes/working-days.ts`,
+    from: '  const fields = { year: "numeric", month: "2-digit", day: "2-digit" } as const;\n  try {\n    return new Intl.DateTimeFormat("en-CA", { ...fields, timeZone });',
+    to: '  const fields = { year: "numeric", month: "2-digit", day: "2-digit" } as const;\n  try {\n    return new Intl.DateTimeFormat("en-CA", { ...fields, timeZone: timeZone.length > 0 ? "UTC" : timeZone });',
+    test: `${CORE}/test/working-days.test.ts`,
+    because:
+      "a change merged just after midnight in Berlin lands on the wrong day, and the two-day window shifts by one",
+  },
+  {
+    // Landed changes. Two working days, and not three.
+    label: "a change three working days old still counts as recent",
+    file: `${CORE}/src/landed-changes/working-days.ts`,
+    from: "  workingDaysSince(landedAt, now, timeZone) <= LANDED_RECENT_WORKING_DAYS;",
+    to: "  workingDaysSince(landedAt, now, timeZone) <= LANDED_RECENT_WORKING_DAYS + 1;",
+    test: `${CORE}/test/working-days.test.ts`,
+    because:
+      "the window the team chose is silently a day longer, and edits stop for history the reader already has",
+  },
+  {
+    // Landed changes. An unusable landing list is reported, not ignored.
+    label: "a landing list git cannot use passes as if none was given",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: '    : { kind: "invalid", reason: INVALID_REASON };',
+    to: '    : { kind: "auto" as const };',
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because:
+      "a typo in .crosscheck.json quietly replaces the team's branches with guesses, and doctor says nothing",
+  },
+  {
+    // Landed changes. Auto-detection finds staging.
+    label: "auto-detection never finds staging",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: "  const found = WELL_KNOWN_LANDING_BRANCHES.filter((name) => origin.existing.has(name));",
+    to: "  const found = WELL_KNOWN_LANDING_BRANCHES.filter((name) => origin.existing.has(name) && name.length < 0);",
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because:
+      "a team that merges into staging and never configured anything is never stopped for a change that landed there",
+  },
+  {
+    // Landed changes. Only branches origin has are probed.
+    label: "a landing branch origin does not have is probed anyway",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: "      ? setting.branches.filter((name) => origin.existing.has(name))",
+    to: "      ? setting.branches.filter((name) => name.length > 0)",
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because:
+      "a listed branch this clone never fetched turns every probe for it into a git error, and doctor calls it healthy",
+  },
+  {
+    // Landed changes. The clone, not the hub, is the authority.
+    label: "a dead hub silences the landed-change stop",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    landed: worthStopping(probed),",
+    to: "    landed: result?.ok === true ? worthStopping(probed) : null,",
+    test: `${CONNECTOR}/test/landed-change-hook.test.ts`,
+    because:
+      "a hub outage switches off a warning that needs nothing from the hub",
+  },
+  {
+    // Landed changes. The pre-edit stop asks the clone.
+    label: "the pre-edit stop never looks at landed changes",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    landed: worthStopping(probed),",
+    to: "    landed: worthStopping(null),",
+    test: `${CONNECTOR}/test/landed-change-hook.test.ts`,
+    because:
+      "a teammate merges into staging and leaves, and the reader's agent edits the same file on an old branch without a word",
+  },
+  {
+    // Landed changes. The stop names what the checkout is missing.
+    label: "the stop hides the commits the checkout is missing",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    landed.missing.length === 0",
+    to: "    landed.missing.length >= 0",
+    test: `${CORE}/test/landed-render.test.ts`,
+    because:
+      "the edit stops with no reason given, which teaches the reader to click through every stop",
+  },
+  {
+    // Landed changes. doctor warns about an unusable landing list.
+    label: "doctor passes a landing list it cannot use",
+    file: `${CLI}/src/cli/doctor-landed.ts`,
+    from: '    ? warn(`${setting.reason}; auto-detection is used instead (${listed(found)})`)',
+    to: '    ? pass(`${setting.reason}; auto-detection is used instead (${listed(found)})`)',
+    test: `${CLI}/test/landed-doctor.test.ts`,
+    because:
+      "a broken .crosscheck.json list reads as healthy in the one place anyone would look",
+  },
+  {
+    // Landed changes. doctor names the branches in effect.
+    label: "doctor never names the landing branches",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    await checkLandedChanges(identity.root),\n",
+    to: "",
+    test: `${CLI}/test/landed-doctor.test.ts`,
+    because:
+      "a clone where the landed-change stop cannot fire looks exactly like one where nothing landed",
+  },
+  {
+    // Landed changes. A shallow clone is unreadable, not "everything changed".
+    label: "a shallow clone is probed as if it were whole",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  if (refs === null || state === null || state.isShallow) {",
+    to: "  if (refs === null || state === null) {",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "every CI checkout and every --depth clone stops each edited file for a change nobody made to it",
+  },
+  {
+    // Landed changes. A change landed when it FIRST arrived on any landing branch.
+    label: "work re-landed by a release merge reads as recent",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "      const isNew = !wasAlreadyLanded && isPresent;",
+    to: "      const isNew = isPresent;",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "after every release or back-merge, every file in it stops everybody for two working days over months-old work",
+  },
+  {
+    // Landed changes. Work a merge in progress brings in is arriving, not missing.
+    label: "the work a merge in progress brings in reads as missing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    (commit) => commit.sha !== state.pickedSha && (stillMissing === null || stillMissing.has(commit.sha)),",
+    to: "    (commit) => commit.sha !== state.pickedSha,",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "resolving a merge conflict stops every file with a warning about the very commits being merged",
+  },
+  {
+    // Landed changes. The probe reads far past the reader's own commits.
+    label: "the reader's own commits use up the probe's reach",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const MAX_LANDED_COMMITS_SCANNED = 50;",
+    to: "export const MAX_LANDED_COMMITS_SCANNED = 5;",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "a developer who landed a few commits of their own hides a teammate's missing change behind them, in the dangerous direction",
+  },
+  {
+    // Landed changes. A partial clone is never asked for patch ids.
+    label: "a partial clone is asked for patch ids it would have to fetch",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const probe: Probe = { context, state, refs, selfEmail, cherryPick: !isPartial, now: input.now, timeZone: input.timeZone };",
+    to: "  const probe: Probe = { context, state, refs, selfEmail, cherryPick: true, now: input.now, timeZone: input.timeZone };",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "a blobless clone goes to the network inside a PreToolUse hook, or times out and falls silent in exactly the big repos that need it",
+  },
+  {
+    // Landed changes. The same content is nothing to undo.
+    label: "a stacked branch is stopped for content it already has",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  if (isSameContent(onRef, onHead)) {",
+    to: "  if (isSameContent(onRef, onHead) && onRef.kind === \"absent\") {",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "a branch built on a teammate's PR is stopped, at any age, for the squash of work it already contains",
+  },
+  {
+    // Landed changes. No net change is nothing to undo.
+    label: "a change and its revert still stop the edit",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  return isSameContent(onBase, onRef) && others === false;",
+    to: "  return isSameContent(onBase, onHead) && others === false;",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "a reverted experiment on staging stops every edit to the file forever, though staging changed nothing",
+  },
+  {
+    // Landed changes. A separator in a subject cannot hide its commit.
+    label: "a subject carrying the separator hides its commit",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "const FIELD = \"\\x00\";\n/** full sha, short sha, author, email, committer time, subject */\nconst COMMIT_FORMAT = \"%H%x00%h%x00%aN%x00%aE%x00%ct%x00%s\";",
+    to: "const FIELD = \"\\x1f\";\n/** full sha, short sha, author, email, committer time, subject */\nconst COMMIT_FORMAT = \"%H%x1f%h%x1f%aN%x1f%aE%x1f%ct%x1f%s\";",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "one control character in a commit subject makes that commit invisible to the stop",
+  },
+  {
+    // Landed changes. The probe says when it stopped reading.
+    label: "the probe never says it stopped reading",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  return { commits, isCapped: commits.length >= limit };",
+    to: "  return { commits, isCapped: false };",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "a checkout thousands of commits behind is told of a handful, as if that were all",
+  },
+  {
+    // Landed changes. The stop says "or more" when the probe stopped reading.
+    label: "the stop hides that there may be more",
+    file: `${CORE}/src/hints/render.ts`,
+    from: '  const more = options.isPartial ? "or more" : "more";',
+    to: '  const more = "more";',
+    test: `${CORE}/test/landed-render.test.ts`,
+    because:
+      "the count in the stop reads as exact when it is a floor",
+  },
+  {
+    // Landed changes. One stop per file per reason.
+    label: "a landed-change stop uses up the live one",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    return landed === null ? withLive : withLandedAsked(withLive, file);",
+    to: "    return landed === null ? withLive : withTripwireAsked(withLive, file);",
+    test: `${CONNECTOR}/test/landed-change-hook.test.ts`,
+    because:
+      "a teammate who starts on the file later in the session is never named, because an old landed change already spent the stop",
+  },
+  {
+    // Landed changes. doctor warns in a shallow clone.
+    label: "doctor calls a shallow clone healthy",
+    file: `${CLI}/src/cli/doctor-landed.ts`,
+    from: "  if (state.isShallow) {",
+    to: "  if (state.isShallow && false) {",
+    test: `${CLI}/test/landed-doctor.test.ts`,
+    because:
+      "a clone where the stop stays silent by design reads as one where nothing landed",
+  },
+  {
+    // Landed changes. The reader's identity goes through .mailmap.
+    label: "the reader's mailmapped address is not recognised as theirs",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  const mapped = await gitStdout(context, [\"check-mailmap\", contact]);",
+    to: "  const mapped: string | null = null;",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "a developer whose clone still carries an old address is stopped by their own landed work",
+  },
+  {
+    // Landed changes. The no-net-change rule never hides a revert the reader would undo.
+    label: "a revert the reader's branch would undo is dropped as nothing to undo",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  return isSameContent(onBase, onRef) && others === false;",
+    to: "  return isSameContent(onBase, onRef);",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "a reader stacked on a PR that staging has since reverted merges the reverted work straight back, and the stop says nothing",
+  },
+  {
+    // Landed changes. A cherry-pick in progress brings exactly one commit.
+    label: "the commit a cherry-pick in progress brings reads as missing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    (commit) => commit.sha !== state.pickedSha && (stillMissing === null || stillMissing.has(commit.sha)),",
+    to: "    (commit) => stillMissing === null || stillMissing.has(commit.sha),",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "resolving a cherry-pick conflict stops the file with a warning about the very commit being picked",
+  },
+  {
+    // Landed changes. Re-landed content is not new.
+    label: "a squash release of old work reads as recent",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "      const relands = isNew && (await isRelanding(context, commit.sha, atCommit, oldTipFiles));",
+    to: "      const relands = false;",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "a team that squash-releases staging into main is stopped on every file in the release for two working days",
+  },
+  {
+    // Landed changes. Old tips are taken where the window opens, not a week back.
+    label: "a change released days after it landed reads as recent",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "      const [landings, old] = await Promise.all([landingsOn(context, ref, windowStart), tipAt(context, ref, windowStart)]);",
+    to: "      const [landings, old] = await Promise.all([landingsOn(context, ref, windowStart), tipAt(context, ref, new Date(probe.now.getTime() - 7 * 86_400_000))]);",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "work that landed on staging last week reads as new the day it is released into main",
+  },
+  {
+    // Landed changes. The stop says "possibly more" whenever the probe stopped reading.
+    label: "the stop drops 'possibly more' when few commits remain",
+    file: `${CORE}/src/hints/render.ts`,
+    from: '    rest > 0 ? [`(+${String(rest)} ${more})`] : options.isPartial ? ["(and possibly more)"] : [];',
+    to: "    rest > 0 ? [`(+${String(rest)} ${more})`] : [];",
+    test: `${CORE}/test/landed-render.test.ts`,
+    because:
+      "a stop that read fifty commits and kept one reads as if one were all",
+  },
+  {
+    // Landed changes. A clean answer is remembered.
+    label: "a clean probe answer is never remembered",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {",
+    to: "  if (found.cleanKey !== null && false) {",
+    test: `${CONNECTOR}/test/landed-change-hook.test.ts`,
+    because:
+      "every edit of a file with nothing landed walks the history again, on every edit of the session",
+  },
+  {
+    // Landed changes. The cache key names WHICH merge is in progress.
+    label: "the cache key says a merge is on, not which",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: '        `merging:${depends.state.mergeHeads.join(",")}`,',
+    to: '        `merging:${depends.state.mergeHeads.length > 0 ? "yes" : ""}`,',
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a clean answer during one merge is reused during another that does not bring the teammate's commit, and the missing change is never shown",
+  },
+  {
+    // Landed changes. A branch git cannot answer for is named; the others still speak.
+    label: "a branch git could not answer for goes unnamed",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  unchecked: refs\n    .map((ref) => ref.branch)\n    .filter((branch) => !results.some((result) => result.branch === branch && result.answer !== null)),",
+    to: "  unchecked: [],",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a slow landing branch reads as one with nothing missing, and its answer is cached as clean",
+  },
+  {
+    // Landed changes. A recent half that failed makes the answer uncacheable.
+    label: "an answer whose recent half failed is cached as clean",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    recent.isComplete &&",
+    to: "    true &&",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "one failed git call hides every recent change to the file for the rest of the day",
+  },
+  {
+    // Landed changes. An answer cut short by the deadline carries no key.
+    label: "an answer cut short by the deadline is cacheable",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  progress.snapshot = () => missingHalfOf(refs, answered, selfEmail);",
+    to: "  progress.snapshot = () => ({ ...missingHalfOf(refs, answered, selfEmail), cleanKey: key });",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a slow hook caches half an answer as the whole one, and the recent half never comes back that day",
+  },
+  {
+    // Landed changes. A limit spent on arriving work leaves the branch unchecked.
+    label: "a limit spent on arriving commits hides what is still missing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    answer.isCapped && notArriving.length < answer.commits.length",
+    to: "    false",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "during a big merge or pick, commits that stay missing are thrown away with the arriving ones, and the stop says nothing",
+  },
+  {
+    // Landed changes. The file path is literal for ls-tree too.
+    label: "a file whose name starts with a colon hides its missing change",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: '  const stdout = await gitStdout(context, ["ls-tree", rev, "--", literalPath(context.file)]);',
+    to: '  const stdout = await gitStdout(context, ["ls-tree", rev, "--", context.file]);',
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "git reads the leading colon as pathspec magic, both sides look absent, and the missing change is dropped as nothing to undo",
+  },
+  {
+    // Landed changes. Matching an ancestor's content is a revert, not a re-landing.
+    label: "a recent revert reads as a re-landing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  return ancestry.some((isAncestor) => isAncestor === false);",
+    to: "  return ancestry.length > 0;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "the most common revert — staging undoing work main never got — is never mentioned to anyone building on staging",
+  },
+  {
+    // Landed changes. The stop names the branches it could not check.
+    label: "the stop hides the branches it could not check",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "            : [`Not checked in time: ${branchList(landed.unchecked)}; changes there may be missing too.`]),",
+    to: "            : []),",
+    test: `${CORE}/test/landed-render.test.ts`,
+    because:
+      "a stop built from some branches reads as the whole story",
+  },
+  {
+    // Landed changes. A known clean key skips the walk.
+    label: "a known clean key walks the history anyway",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  if (input.knownCleanKeys?.includes(key) === true) {",
+    to: "  if (input.knownCleanKeys?.includes(key) === true && false) {",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "every edit of a file with nothing landed pays the whole probe again, beside the live tripwire's hub call",
+  },
+  {
+    // Landed changes. The cache key knows who the reader is.
+    label: "the cache key ignores who the reader is",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: '        `self:${depends.selfEmail ?? ""}`,',
+    to: '        "self:",',
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "after the reader changes identity, their own commits' old verdict is reused and a teammate's change can be filtered as theirs",
+  },
+  {
+    // Landed changes. Nothing to undo is certain whatever the limit.
+    label: "nothing to undo past the limit reads as possibly more",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  return { branch: ref.branch, answer: isMoot ? { commits: [], isCapped: false } : settled };",
+    to: "  return { branch: ref.branch, answer: isMoot ? { commits: [], isCapped: settled.isCapped } : settled };",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a file whose content is already the landing branch's is never cached as clean, and its recent note never shows",
+  },
+  {
+    // Landed changes. A queued git call checks the deadline when it gets its slot.
+    label: "git calls queued past the deadline still start",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    run: (args) => limit(() => (isCancelled() ? Promise.resolve(null) : runGit(args))),",
+    to: "    run: (args) => limit(() => runGit(args)),",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a slow probe keeps spawning git after its answer was given up, and the hook's exit orphans them",
+  },
+  {
+    // Landed changes. Only a complete "nothing" carries a key.
+    label: "an answer with something to say carries a cache key",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  return { ...missingHalf, recent: recent.commits, cleanKey: isComplete && isNothing ? key : null };",
+    to: "  return { ...missingHalf, recent: recent.commits, cleanKey: isComplete ? key : null };",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because:
+      "any caller that caches what it is handed caches a real warning as 'nothing'",
+  },
+  {
+    // Landed changes. A recent walk at its limit is not complete.
+    label: "a recent walk at its limit counts as complete",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    items !== null && items.length < MAX_LANDED_COMMITS_SCANNED;",
+    to: "    items !== null;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a teammate's recent change past the limit is cached away as 'nothing' for the rest of the day",
+  },
+  {
+    // Landed changes. Recent work alone waits while the missing half is incomplete.
+    label: "a recent-only stop spends the marker while missing is unknown",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const isMissingIncomplete = landed.unchecked.length > 0 || landed.moreMissing;",
+    to: "  const isMissingIncomplete = false;",
+    test: `${CORE}/test/landed-worth-stopping.test.ts`,
+    because:
+      "a slow landing branch lets a note about recent work use up the stop that a missing change needed",
+  },
+  {
+    // Landed changes. The cache key names a cherry-pick in progress.
+    label: "the cache key ignores a cherry-pick in progress",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "        `picking:${depends.state.pickedSha ?? \"\"}`,",
+    to: "        \"picking:\",",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a clean answer from before a pick is reused while the pick changes what counts as arriving",
+  },
+  {
+    // Landed changes. The cache key names .mailmap.
+    label: "the cache key ignores .mailmap",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "        `mailmap:${createHash(\"sha256\").update(depends.mailmap).digest(\"hex\")}`,",
+    to: "        \"mailmap:\",",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "after a .mailmap change decides who is the reader, an answer computed under the old one is reused",
+  },
+  {
+    // Landed changes. At most eight git processes at once.
+    label: "a hot file forks a git storm",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "const MAX_PARALLEL_GIT = 8;",
+    to: "const MAX_PARALLEL_GIT = 100_000;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a file with many landings starts dozens of git processes inside one PreToolUse hook",
+  },
+  {
+    // Landed changes. An unanswered old tip is not complete.
+    label: "an unreadable old tip counts as complete",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    perRef.every(({ landings, old }) => isUnderLimit(landings) && old.isAnswered) &&",
+    to: "    perRef.every(({ landings }) => isUnderLimit(landings)) &&",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "one failed git call about a branch's past is cached as a clean answer for the day",
+  },
+  {
+    // Landed changes. An unreadable merge side is not complete.
+    label: "an unreadable merge side counts as complete",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    landed.every(({ changes }) => isUnderLimit(changes)) &&",
+    to: "    true &&",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a merge whose commits could not be read hides its recent changes, and the hiding is cached",
+  },
+  {
+    // Landed changes. An unknown presence is not complete.
+    label: "an unknown presence counts as complete",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    judged.every(({ isKnown }) => isKnown);",
+    to: "    true;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a recent change dropped because git did not answer is cached as never having happened",
+  },
+  {
+    // Landed changes. A limit reached with nothing shown is not clean.
+    label: "a limit reached with nothing shown counts as clean",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    !(missingHalf.moreMissing && missing.length === 0) &&",
+    to: "    true &&",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a teammate's change past a wall of the reader's own commits is cached away as 'nothing'",
+  },
+  {
+    // Landed changes. An unknown ancestry is not a re-landing.
+    label: "an unknown ancestry reads as a re-landing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  return ancestry.some((isAncestor) => isAncestor === false);",
+    to: "  return ancestry.some((isAncestor) => isAncestor !== true);",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "one failed git call turns a recent revert into a silent 're-landing'",
+  },
+  {
+    // Landed changes. A slow landing branch never silences what the others know.
+    label: "a slow landing branch silences what the others know",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  progress.snapshot = () => missingHalfOf(refs, answered, selfEmail);",
+    to: "  progress.snapshot = null;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "one branch still answering at the deadline throws away the missing changes every other branch already found",
+  },
+  {
+    // Landed changes. A failed second question with nothing certain names its branch.
+    label: "a failed second question hides its branch",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    return certain.length > 0 ? { commits: certain, isCapped: true } : null;",
+    to: "    return { commits: certain, isCapped: true };",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a branch that could not be checked reads as 'possibly more' under nobody's name, or as nothing at all",
+  },
+  {
+    // Landed changes. A failed second question keeps what is certainly missing.
+    label: "a failed second question throws away what is certainly missing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    return certain.length > 0 ? { commits: certain, isCapped: true } : null;",
+    to: "    return certain.length > 0 ? { commits: [], isCapped: true } : null;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "commits git already named as missing vanish because a second, narrower question failed",
+  },
+  {
+    // Landed changes. A first-parent walk at its limit is not complete.
+    label: "a first-parent walk at its limit counts as complete",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    perRef.every(({ landings, old }) => isUnderLimit(landings) && old.isAnswered) &&",
+    to: "    perRef.every(({ landings, old }) => landings !== null && old.isAnswered) &&",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a teammate's landing past fifty busy ones is cached away as 'nothing' for the day",
+  },
+  {
+    // Landed changes. Branches are listed in the team's order.
+    label: "landing branches are listed in the order git answered",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const results = refs\n    .map((ref) => answeredInAnyOrder.find((result) => result.branch === ref.branch))\n    .filter((result): result is RefResult => result !== undefined);",
+    to: "  const results = answeredInAnyOrder;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "the same change reads 'on staging and main' on one edit and 'on main and staging' on the next, and a test that pins the team's order flakes",
+  },
+  {
+    // Landed changes. The missing question and the merge filter are asked side by side.
+    label: "the merge filter waits for the missing question",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const [answer, stillMissing] = await Promise.all([\n    missingOn(context, ref, { cherryPick: probe.cherryPick, headSha: state.headSha }),\n    isMerging ? stillMissingAfterMerge(context, ref, state) : Promise.resolve(null),\n  ]);",
+    to: "  const answer = await missingOn(context, ref, { cherryPick: probe.cherryPick, headSha: state.headSha });\n  const stillMissing = isMerging ? await stillMissingAfterMerge(context, ref, state) : null;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "during a merge, one branch pays two walks in a row and runs out of time with a missing change it could have named",
+  },
+  {
+    // Landed changes. A merge filter that cannot answer leaves the branch unchecked.
+    label: "a failed merge filter reads arriving work as missing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  if (answer === null || (isMerging && stillMissing === null)) {",
+    to: "  if (answer === null) {",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "while the reader resolves a merge, the very commits being merged are announced as missing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -10369,6 +11219,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/key-rotate.test.ts 6
+ * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
@@ -10388,6 +11240,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
  * PRINTS: packages/connector-acp/test/injector.test.ts 4
+ * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
@@ -10413,6 +11266,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
+ * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
@@ -10459,10 +11313,17 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
+ * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
+ * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
+ * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
+ * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
+ * PRINTS: packages/connector-core/test/landed-render.test.ts 4
+ * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
+ * PRINTS: packages/connector-core/test/landing-branches.test.ts 3
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
@@ -10481,6 +11342,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
+ * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 5
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
@@ -10497,6 +11359,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 1
+ * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
@@ -10530,6 +11393,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
+ * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6

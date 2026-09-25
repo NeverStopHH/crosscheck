@@ -110,6 +110,66 @@ export const createDeveloper = async (
   };
 };
 
+/** Who asked for a rotation: the key's owner, or the hub's admin. */
+export type KeyRotationActor = "self" | "admin";
+
+export interface RotateDeveloperKeyInput {
+  readonly developerId: string;
+  readonly by: KeyRotationActor;
+  /**
+   * The key the request was authorised WITH, for a self-rotation. The write
+   * only lands while that key is still the current one, so two rotations
+   * racing on one old key produce one new key — the loser is told, and never
+   * walks away holding a key that was overwritten a millisecond later.
+   */
+  readonly presentedKey?: string;
+}
+
+export type RotateDeveloperKeyResult =
+  | { readonly outcome: "rotated"; readonly apiKey: string }
+  | { readonly outcome: "not_found" }
+  | { readonly outcome: "already_rotated" };
+
+/**
+ * REPLACES A DEVELOPER'S API KEY; THE OLD ONE IS DEAD WHEN THIS RETURNS.
+ *
+ * Only the hash is stored, so the new key exists in exactly one place: the
+ * response to the caller, once. Replacing the hash is also what ends every
+ * web session minted with the old key (ui/session.ts binds a session to the
+ * key it was minted with). The ledger gets ids and the actor, never the key.
+ */
+export const rotateDeveloperKey = async (
+  deps: { readonly db: Db; readonly now: Clock },
+  input: RotateDeveloperKeyInput,
+): Promise<RotateDeveloperKeyResult> => {
+  const apiKey = generateApiKey();
+  return deps.db.transaction(async (tx) => {
+    const updated = await tx
+      .update(developers)
+      .set({ apiKeyHash: hashApiKey(apiKey) })
+      .where(
+        and(
+          eq(developers.id, input.developerId),
+          ...(input.presentedKey === undefined
+            ? []
+            : [eq(developers.apiKeyHash, hashApiKey(input.presentedKey))]),
+        ),
+      )
+      .returning({ id: developers.id });
+    if (updated[0] === undefined) {
+      if (input.presentedKey === undefined) {
+        return { outcome: "not_found" } as const;
+      }
+      return { outcome: "already_rotated" } as const;
+    }
+    await appendEvent({ db: tx, now: deps.now }, EVENT_KINDS.DEVELOPER_KEY_ROTATED, {
+      developerId: input.developerId,
+      by: input.by,
+    });
+    return { outcome: "rotated", apiKey } as const;
+  });
+};
+
 /** Primary first, then aliases oldest-first — the order every surface shows. */
 export const listDeveloperEmails = async (
   db: DbExecutor,

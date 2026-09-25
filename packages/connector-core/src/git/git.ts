@@ -76,6 +76,11 @@ export const runBoundedCommandOutcome = async (
   cmd: readonly string[],
   cwd: string,
   timeoutMs: number,
+  /**
+   * Added to the inherited environment for this one command. Omitted, the
+   * child inherits the environment untouched, exactly as before.
+   */
+  extraEnv?: Readonly<Record<string, string>>,
 ): Promise<
   { readonly ok: true; readonly stdout: string } | { readonly ok: false }
 > => {
@@ -86,6 +91,7 @@ export const runBoundedCommandOutcome = async (
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
+      ...(extraEnv === undefined ? {} : { env: { ...process.env, ...extraEnv } }),
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<typeof TIMED_OUT>((resolveDeadline) => {
@@ -139,6 +145,7 @@ export const runGitOutcome = (
   args: readonly string[],
   cwd: string,
   timeoutMs: number = GIT_TIMEOUT_MS,
+  extraEnv?: Readonly<Record<string, string>>,
 ): Promise<
   { readonly ok: true; readonly stdout: string } | { readonly ok: false }
-> => runBoundedCommandOutcome(["git", ...args], cwd, timeoutMs);
+> => runBoundedCommandOutcome(["git", ...args], cwd, timeoutMs, extraEnv);

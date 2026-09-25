@@ -8,6 +8,7 @@ import { fenceWaiverRoutes } from "./routes/fence-waivers.ts";
 import { conferenceRoutes } from "./routes/conference.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
+import { keysRoutes } from "./routes/keys.ts";
 import { draftsRoutes } from "./routes/drafts.ts";
 import { eventsRoutes } from "./routes/events.ts";
 import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
@@ -33,6 +34,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   const app = new Hono<AppEnv>();
 
   app.route("/api/developers", developersRoutes(deps));
+  app.route("/api/keys", keysRoutes(deps));
   app.route("/api/sessions", sessionsRoutes(deps));
   app.route("/api/presence", presenceRoutes(deps));
   app.route("/api/events", eventsRoutes(deps));

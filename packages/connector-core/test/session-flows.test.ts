@@ -556,6 +556,8 @@ describe("registerSessionFlow in RECOVERY mode (state-less mid-session)", () => 
       deliveredHintRefs: [],
       deliveredHintHashes: [],
       tripwireAskedFiles: [],
+      landedAskedFiles: [],
+      landedCleanKeys: [],
     });
 
     // Act

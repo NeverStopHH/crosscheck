@@ -155,6 +155,7 @@ import {
   shadowedPinPaths,
 } from "./pin-observability.ts";
 import { checkSkeletonRetention } from "./doctor-retention.ts";
+import { checkLandedChanges } from "./doctor-landed.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -339,7 +340,7 @@ const checkBunfig = async (
       return check(
         "WARN",
         "bun request logging",
-        `${path} enables debug logging — this connector's own hub calls are shielded (fetch verbose:false), but bun prints request headers for every other process here, and a connector older than the shield leaked the api key: rotate the key if one ran in this repo`,
+        `${path} enables debug logging — this connector's own hub calls are shielded (fetch verbose:false), but bun prints request headers for every other process here, and a connector older than the shield leaked the api key: if one ran in this repo, rotate it with \`crosscheck key rotate\`, which also saves the new key`,
       );
     }
   }
@@ -3795,6 +3796,7 @@ export const runDoctor = async (
     ...captureChecks(captureHealth, now),
     await checkHints(hubCtx, identity.repoId, captureHealth),
     tripwireModeCheck(env),
+    await checkLandedChanges(identity.root),
     // ONE scan of the session-state directory for all three model-cost
     // checks (state/session-state.ts readLiveSessionStates says why).
     checkSummarizerCost(liveStates),

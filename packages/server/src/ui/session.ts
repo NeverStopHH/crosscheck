@@ -16,6 +16,13 @@
  * restart in exchange for no persisted secret — fits a hub that restarts
  * rarely and holds other people's claims.
  *
+ * BOUND TO THE KEY IT WAS MINTED WITH. The signature covers the payload AND
+ * the developer's current api-key hash, which the token never carries. So a
+ * key rotation (routes/keys.ts, the admin route) ends every web session the
+ * old key opened, without a revocation list: the hash changed, and a cookie
+ * signed over the old one no longer verifies. A leaked key that somebody used
+ * to log in stops working in the browser the moment it is rotated.
+ *
  * CSRF: the token is HMAC(secret, "csrf." + sessionToken) — deterministic
  * per session, storable nowhere, verifiable anywhere the secret is. Forms
  * carry it as a hidden `_csrf` input; every state-changing POST checks it
@@ -32,13 +39,31 @@ const CSRF_CONTEXT_PREFIX = "csrf.";
 const hmacHex = (secret: string, payload: string): string =>
   createHmac("sha256", secret).update(payload).digest("hex");
 
+/** What the signature covers: the visible payload, and the key it was minted with. */
+const signedPayload = (payload: string, apiKeyHash: string): string =>
+  `${payload}\n${apiKeyHash}`;
+
 export const signSessionToken = (
   secret: string,
   developerId: string,
   expiresAtMs: number,
+  apiKeyHash: string,
 ): string => {
   const payload = `${developerId}${TOKEN_SEPARATOR}${String(expiresAtMs)}`;
-  return `${payload}${TOKEN_SEPARATOR}${hmacHex(secret, payload)}`;
+  return `${payload}${TOKEN_SEPARATOR}${hmacHex(secret, signedPayload(payload, apiKeyHash))}`;
+};
+
+/**
+ * The developer id a token CLAIMS, unverified — only so the caller can load
+ * that developer's current key hash and then verify. Never an identity on
+ * its own.
+ */
+export const claimedSessionDeveloper = (token: string): string | null => {
+  const lastDot = token.lastIndexOf(TOKEN_SEPARATOR);
+  const payload = lastDot <= 0 ? "" : token.slice(0, lastDot);
+  const expiresDot = payload.lastIndexOf(TOKEN_SEPARATOR);
+  const developerId = expiresDot <= 0 ? "" : payload.slice(0, expiresDot);
+  return developerId.length === 0 ? null : developerId;
 };
 
 /**
@@ -49,6 +74,7 @@ export const verifySessionToken = (
   secret: string,
   token: string,
   now: Date,
+  apiKeyHash: string,
 ): string | null => {
   const lastDot = token.lastIndexOf(TOKEN_SEPARATOR);
   if (lastDot <= 0) {
@@ -56,7 +82,7 @@ export const verifySessionToken = (
   }
   const payload = token.slice(0, lastDot);
   const presentedSignature = token.slice(lastDot + 1);
-  if (!isTokenEqual(presentedSignature, hmacHex(secret, payload))) {
+  if (!isTokenEqual(presentedSignature, hmacHex(secret, signedPayload(payload, apiKeyHash)))) {
     return null;
   }
   const expiresDot = payload.lastIndexOf(TOKEN_SEPARATOR);

@@ -33,6 +33,7 @@ import {
 } from "./privacy.ts";
 import { PIN_FLAG_BROKE, PIN_FLAG_CHECK, PIN_FLAG_FILES, PIN_FLAG_OK, PIN_FLAG_SWEEP, PIN_USAGE, runPin } from "./pin.ts";
 import { NOISE_USAGE, runNoise } from "./noise.ts";
+import { KEY_FLAG_PRINT, KEY_USAGE, runKey } from "./key.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { SUSPECT_USAGE, runSuspect } from "./suspect.ts";
 import {
@@ -78,6 +79,7 @@ const USAGE = [
   "  presence [off|on]         hide/show your live presence to teammates",
   "  mute <developer>          stop seeing hints/pointers about them (mute list to review)",
   "  unmute <developer>        see their hints/pointers again",
+  "  key rotate [--print]      replace your api key now; the old one stops working",
   "  statusline                one presence line (reads session json on stdin)",
   "  hook <name>               session-start | post-tool-use | session-end",
   "  cursor-hook <event>       Cursor IDE hook entry (init --cursor registers these)",
@@ -147,6 +149,7 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   presence: { usage: PRESENCE_USAGE },
   mute: { usage: MUTE_USAGE },
   unmute: { usage: MUTE_USAGE },
+  key: { usage: KEY_USAGE, booleanFlags: [KEY_FLAG_PRINT] },
 };
 
 export interface CliOptions {
@@ -255,6 +258,12 @@ export const runCli = async (
       return runMute(rest, env, cwd);
     case "unmute":
       return runUnmute(rest, env, cwd);
+    // A person at a terminal, like `pin`: the new key must never land in an
+    // agent's transcript (cli/key.ts says why).
+    case "key":
+      return options.isInteractive === undefined
+        ? runKey(rest, env, cwd)
+        : runKey(rest, env, cwd, options.isInteractive);
     // DYNAMIC import like the bin's `acp` branch: hooks and the statusline
     // must not pay connector-acp's load on every invocation.
     case "acp-report": {
