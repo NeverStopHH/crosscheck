@@ -157,6 +157,7 @@ import {
 import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
+import { checkLandedAuthors } from "./doctor-landed-authors.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -3799,6 +3800,7 @@ export const runDoctor = async (
     tripwireModeCheck(env),
     await checkLandedChanges(identity.root),
     await checkLandingFetch(identity.root, config.home, env, now),
+    await checkLandedAuthors(identity.root, hubCtx),
     // ONE scan of the session-state directory for all three model-cost
     // checks (state/session-state.ts readLiveSessionStates says why).
     checkSummarizerCost(liveStates),

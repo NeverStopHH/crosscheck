@@ -749,6 +749,16 @@ export const MAX_LANDED_WHY_SHOWN = 2;
  * hub round trip cannot come back in less, and the stop must still go out.
  */
 export const LANDED_WHY_MIN_MS = 50;
+/**
+ * `doctor`'s look at who landed what (decision 7): the landing branches'
+ * commits of this many days, at most this many, and the unknown addresses
+ * it names before counting the rest.
+ */
+export const DOCTOR_LANDED_AUTHORS_WINDOW_DAYS = 90;
+export const DOCTOR_LANDED_AUTHORS_MAX_COMMITS = 500;
+export const DOCTOR_LANDED_AUTHORS_SHOWN = 3;
+/** One local `git log`; doctor waits for it, a hook never does. */
+export const DOCTOR_LANDED_AUTHORS_GIT_TIMEOUT_MS = 5000;
 /** Branches a `.crosscheck.json` may name as landing branches. */
 export const MAX_LANDING_BRANCHES = 8;
 /**
