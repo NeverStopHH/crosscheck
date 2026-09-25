@@ -168,6 +168,26 @@ describe("POST /api/landed/context", () => {
     expect(between.matches.map((match) => match.workContextId)).toEqual(["wc_first"]);
   });
 
+  test("two commits in one question are each matched to the work before THEM", async () => {
+    // The SQL bound is the LATEST commit; the earlier commit must still not
+    // be given work that started after it.
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike_1", context: "wc_first", title: "First pass" });
+    t.harness.clock.advanceSeconds(HOUR_S / 2);
+    await mikeWorks(t, { session: "ses_mike_2", context: "wc_second", title: "Second pass" });
+    const early = "c".repeat(40);
+
+    const answer = await askContext(t, t.nick, [
+      commitBy(MIKE_EMAIL, at(HOUR_S)),
+      commitBy(MIKE_EMAIL, at(HOUR_S / 4), early),
+    ]);
+
+    expect(answer.matches.map((match) => [match.sha, match.workContextId])).toEqual([
+      [SHA, "wc_second"],
+      [early, "wc_first"],
+    ]);
+  });
+
   test("answers each commit on its own, and a commit with no match is simply absent", async () => {
     const t = await team();
     await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });

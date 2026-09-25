@@ -11599,8 +11599,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // Landing fetch. The three triggers.
     label: "an edit no longer asks for the fetch",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  const [output] = await Promise.all([askBeforeEdit(ctx), requestLandingFetchFor(ctx)]);",
-    to: "  const [output] = await Promise.all([askBeforeEdit(ctx)]);",
+    from: "  const [output] = await Promise.all([askBeforeEdit(ctx, budget), requestLandingFetchFor(ctx)]);",
+    to: "  const [output] = await Promise.all([askBeforeEdit(ctx, budget)]);",
     test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
     because: "an agent working an hour on one prompt never sees what landed in that hour",
   },
@@ -11637,6 +11637,161 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "        return { ok: false, timedOut: false };",
     test: `${CORE}/test/git-timeout.test.ts`,
     because: "doctor sends a developer whose fetch is slow to fix credentials that work",
+  },
+  {
+    // Landed changes, step 3: the why. Never the caller's own work.
+    label: "the why names the reader's own work",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        ne(agentSessions.developerId, callerDeveloperId),",
+    to: '        ne(agentSessions.developerId, ""),',
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a reader's own old session on the file is offered as a teammate's reason",
+  },
+  {
+    label: "the why ignores the reader's mutes",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        notMutedCondition(callerDeveloperId, agentSessions.developerId),",
+    to: "        sql`true`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a teammate the reader muted still speaks in every stop, unasked",
+  },
+  {
+    label: "the why names work on any file",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        eq(workContextTargets.value, request.path),",
+    to: '        ne(workContextTargets.value, ""),',
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "the stop names work on another file as the work behind this one",
+  },
+  {
+    label: "the why names work in any repo",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        eq(agentSessions.repo, request.repo),",
+    to: '        ne(agentSessions.repo, ""),',
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a same-named file in another repo passes for this repo's history",
+  },
+  {
+    label: "the why names the oldest work, not the latest",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "    .orderBy(desc(agentSessions.startedAt), desc(workContexts.createdAt), sql`${workContexts.id} DESC`)",
+    to: "    .orderBy(agentSessions.startedAt)",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a teammate's first attempt at the file is named, not the work that landed",
+  },
+  {
+    label: "the why gives a commit work that started after it",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "      (candidate) => candidate.email === email && candidate.startedAt.getTime() <= committedAt,",
+    to: "      (candidate) => candidate.email === email,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "an earlier commit is explained by work begun after it — the probable match turns improbable",
+  },
+  {
+    label: "an author address in another case is someone else",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "const lowered = (email: string): string => email.trim().toLowerCase();",
+    to: "const lowered = (email: string): string => email.trim();",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "Mike@Example.com in a commit is nobody on the hub, and the stop names no work",
+  },
+  {
+    label: "doctor is told every address is unknown",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "  return [...firstSpelling].filter(([key]) => !knownSet.has(key)).map(([, spelling]) => spelling);",
+    to: "  return [...firstSpelling].map(([, spelling]) => spelling);",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "doctor tells a team to map addresses the hub already knows",
+  },
+  {
+    label: "anyone can ask whose work a commit was",
+    file: `${SERVER}/src/routes/landed.ts`,
+    from: "  router.use(\"*\", developerAuth(deps));",
+    to: "  router.use(\"*\", async (_c, next) => next());",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "the hub maps addresses to developers and work for an unauthenticated caller",
+  },
+  {
+    label: "a question can name any number of commits",
+    file: "packages/schema/src/landed-context.ts",
+    from: "  commits: z.array(LandedContextCommitSchema).min(1).max(LANDED_CONTEXT_MAX_COMMITS),",
+    to: "  commits: z.array(LandedContextCommitSchema).min(1),",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "one request can make the hub join thousands of addresses against every target",
+  },
+  {
+    // The connector side: asked only with a stop, and only with what is left.
+    label: "the stop never asks for its why",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const why = won.landed === null ? [] : await landedWhyFor(ctx, budget, file, won.landed);",
+    to: "  const why: readonly never[] = [];",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "the stop names commits and never the teammate work behind them",
+  },
+  {
+    label: "the why is given more time than the hook has",
+    file: `${CONNECTOR}/src/hooks/landed-why.ts`,
+    from: "  const timeoutMs = Math.min(ctx.hub.timeoutMs, budget.spareMs());",
+    to: "  const timeoutMs = ctx.hub.timeoutMs * 10;",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "a slow hub runs the hook past its budget, and the stop itself is lost",
+  },
+  {
+    label: "a why for a commit the stop did not name is printed",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    if (named.has(match.sha) && !byContext.has(match.workContextId)) {",
+    to: "    if (!byContext.has(match.workContextId)) {",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "a hub's stray match puts somebody's work under commits it has nothing to do with",
+  },
+  {
+    label: "the stop names every matched work context",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return [...byContext.values()].slice(0, MAX_LANDED_WHY_SHOWN).flatMap((match) => [",
+    to: "  return [...byContext.values()].flatMap((match) => [",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "a file many hands touched turns the stop into a page nobody reads",
+  },
+  {
+    label: "the why drops the intent",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...intentLines(match.intent),",
+    to: "    ...[],",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "the stop says whose work it was but not what it was for",
+  },
+  {
+    label: "a stop with no matched work says there is no reason",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "          ...whyLines(input.why ?? [], input.landed, input.file),",
+    to: "          ...whyLines(input.why ?? [], input.landed, input.file),\n          ...(input.why?.length === 0 ? [\"no reason recorded\"] : []),",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "a missing work context is announced as a missing reason, which it is not (03 §5.1)",
+  },
+  {
+    // doctor's half: whom the hub does not know.
+    label: "doctor names bots and the reader's own address",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "      !key.includes(\"@\") || key === own || BOT.test(email) || BOT.test(name) || seen.has(key);",
+    to: "      !key.includes(\"@\") || seen.has(key);",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the team is told to map dependabot and themselves in .mailmap",
+  },
+  {
+    label: "doctor never names an unknown address",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "  const unknown = asked.filter((author) => unknownSet.has(author.email.toLowerCase()));",
+    to: "  const unknown: readonly Author[] = [];",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "a squash address the hub cannot place costs every stop its why, and doctor calls it fine",
+  },
+  {
+    label: "doctor reads an older hub as unreachable",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "      answer.status === HTTP_NOT_FOUND",
+    to: "      answer.status === 0",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "a hub that only needs updating is reported as not answering",
   },
 ];
 
@@ -11704,6 +11859,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
+ * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
@@ -11752,6 +11908,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
@@ -11809,6 +11966,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
+ * PRINTS: packages/connector-core/test/landed-why-render.test.ts 3
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
  * PRINTS: packages/connector-core/test/landing-branches.test.ts 6
  * PRINTS: packages/connector-core/test/landing-fetch-prompts.test.ts 6
@@ -11884,6 +12042,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
+ * PRINTS: packages/server/test/landed-context.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
