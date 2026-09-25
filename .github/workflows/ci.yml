@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 821
+    # PRINTS: 854
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -127,6 +127,7 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
+    # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 1
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor.ts 41
     # PRINTS: packages/cli/src/cli/key.ts 6
@@ -155,10 +156,11 @@ jobs:
     # PRINTS: doctor.ts 1
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 8
-    # PRINTS: hooks/pre-tool-use.ts 9
+    # PRINTS: hooks/pre-tool-use.ts 10
     # PRINTS: hooks/runner.ts 2
-    # PRINTS: hooks/session-start.ts 1
+    # PRINTS: hooks/session-start.ts 2
     # PRINTS: hooks/stop.ts 1
+    # PRINTS: hooks/user-prompt-submit.ts 1
     # PRINTS: summarizer/probe.ts 1
     # PRINTS: summarizer/transcript.ts 3
     # PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
@@ -200,6 +202,7 @@ jobs:
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/claim-drift.ts 5
     # PRINTS: git/fix-diff.ts 7
+    # PRINTS: git/git.ts 1
     # PRINTS: git/pin-paths.ts 8
     # PRINTS: git/pin-sweep.ts 2
     # PRINTS: git/ssh-hostname.ts 2
@@ -214,6 +217,10 @@ jobs:
     # PRINTS: http/pilot.ts 2
     # PRINTS: http/verdict.ts 1
     # PRINTS: kit.ts 1
+    # PRINTS: landed-changes/fetch-state.ts 8
+    # PRINTS: landed-changes/fetch-switch.ts 4
+    # PRINTS: landed-changes/fetch-trigger.ts 3
+    # PRINTS: landed-changes/fetch-worker.ts 13
     # PRINTS: landed-changes/git-queries.ts 11
     # PRINTS: landed-changes/landing-branches.ts 3
     # PRINTS: landed-changes/probe.ts 38
@@ -367,6 +374,7 @@ jobs:
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
     # PRINTS: doctor-landed.ts 2
+    # PRINTS: doctor-landing-fetch.ts 1
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor.ts 49
     # PRINTS: end-session.ts 2
@@ -378,6 +386,10 @@ jobs:
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
     # PRINTS: feed.tsx 1
+    # PRINTS: fetch-state.ts 8
+    # PRINTS: fetch-switch.ts 4
+    # PRINTS: fetch-trigger.ts 3
+    # PRINTS: fetch-worker.ts 13
     # PRINTS: file-edit.ts 3
     # PRINTS: file-ref.ts 5
     # PRINTS: fix-diff.ts 7
@@ -388,6 +400,7 @@ jobs:
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 11
+    # PRINTS: git.ts 1
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 3
@@ -421,7 +434,7 @@ jobs:
     # PRINTS: pins.ts 11
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 8
-    # PRINTS: pre-tool-use.ts 9
+    # PRINTS: pre-tool-use.ts 10
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 39
@@ -458,7 +471,7 @@ jobs:
     # PRINTS: session-events.ts 5
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
-    # PRINTS: session-start.ts 3
+    # PRINTS: session-start.ts 4
     # PRINTS: session-state.ts 19
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 10
@@ -486,6 +499,7 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 2
+    # PRINTS: user-prompt-submit.ts 1
     # PRINTS: v1.ts 2
     # PRINTS: verdict-latency.test.ts 1
     # PRINTS: verdict-render.ts 2
