@@ -284,6 +284,23 @@ describe("the record", () => {
   );
 
   test(
+    "each booking counts until the worker reports, and the report clears the count",
+    async () => {
+      // What lets doctor tell "not run yet" from "never reports".
+      const s = await setup("lft-booking-count");
+      const key = (await cloneKeyOf(s.repos.reader)) ?? "";
+
+      await claimLandingFetch(s.home, key, T0);
+      await claimLandingFetch(s.home, key, at(LANDING_FETCH_INTERVAL_MS));
+      expect((await readLandingFetchRecord(s.home, key)).bookedSinceReport).toBe(2);
+
+      await recordLandingFetch(s.home, key, { kind: "fetched", branches: ["main"] }, at(LANDING_FETCH_INTERVAL_MS + 1));
+      expect((await readLandingFetchRecord(s.home, key)).bookedSinceReport).toBe(0);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
     "a worker finishing late never moves the booked attempt",
     async () => {
       const s = await setup("lft-late-worker");

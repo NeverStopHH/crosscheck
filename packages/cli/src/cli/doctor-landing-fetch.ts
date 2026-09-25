@@ -11,7 +11,7 @@
  * broken setup.
  */
 import { access, constants } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
@@ -96,6 +96,13 @@ const EVERY = `in the background, at most every ${String(LANDING_FETCH_INTERVAL_
 
 const fromRecord = (record: LandingFetchRecord, now: Date): Check => {
   const last = record.last;
+  if (record.bookedSinceReport >= DOCTOR_LANDING_FETCH_FAILURES_WARN) {
+    return warn(
+      `the last ${String(record.bookedSinceReport)} background fetches were started but never reported, ` +
+        "so the worker is not starting or not finishing — the landed-change stop only sees what your own " +
+        `git fetch brings; switch it off with ${LANDING_FETCH_ENV}=${LANDING_FETCH_OFF} if this persists`,
+    );
+  }
   if (last === null) {
     return pass(`not run yet — it runs ${EVERY}, from the next session start, prompt or edit`);
   }
@@ -109,8 +116,8 @@ const fromRecord = (record: LandingFetchRecord, now: Date): Check => {
     return missed.length === 0
       ? pass(`${fetched ?? "fetched"} — ${EVERY}`)
       : warn(
-          `${fetched ?? "fetched"}; could not bring ${missed.join(", ")}, which origin has — ` +
-            `run git fetch origin ${missed.join(" ")} to see why`,
+          `${fetched ?? "fetched"}; its last run, ${ageOf(last.at, now)}, could not bring ` +
+            `${missed.join(", ")}, which origin has — run git fetch origin ${missed.join(" ")} to see why`,
         );
   }
   const reason = failureReason(last.outcome);
@@ -129,20 +136,23 @@ const fromRecord = (record: LandingFetchRecord, now: Date): Check => {
 /**
  * A home where the record cannot be written books nothing, so the fetch
  * NEVER starts — and "not run yet" would pass for it forever. Checked on the
- * nearest directory that exists: `state/` is created on the first write.
+ * nearest directory that exists: the first write creates `state/`, and the
+ * home itself, recursively.
  */
 const canWriteRecord = async (home: string): Promise<boolean> => {
-  for (const dir of [join(home, "state"), home]) {
+  let dir = join(home, "state");
+  for (;;) {
     try {
       await access(dir, constants.W_OK);
       return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      const parent = dirname(dir);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === dir) {
         return false;
       }
+      dir = parent;
     }
   }
-  return false;
 };
 
 export const checkLandingFetch = async (

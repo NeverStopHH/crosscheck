@@ -239,7 +239,6 @@ const TTY_CHECK = (out: string): string =>
   `if (exec 3</dev/tty) 2>/dev/null; then echo TTY; else echo NOTTY; fi > '${out}'`;
 
 const SPAWN_MODULE = resolve(import.meta.dir, "..", "src", "landed-changes", "fetch-trigger.ts");
-const WORKER_MODULE = resolve(import.meta.dir, "..", "src", "landed-changes", "fetch-worker.ts");
 
 /** Runs `program` (a bun script) inside a pty; resolves when it and its child are done. */
 const runInPty = async (dir: string, program: string, out: string): Promise<string | null> => {
@@ -325,57 +324,6 @@ describe("no terminal to ask on", () => {
       // The control above proved an ordinary child of this pty CAN open
       // /dev/tty — which is exactly what ssh does to ask for a passphrase.
       expect(await runInPty(PTY_DIR, workerSpawn(out, PTY_DIR), out)).toBe("NOTTY");
-    },
-    HEAVY_SETUP_MS,
-  );
-});
-
-const isAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-describe("nothing an abandoned call started outlives the worker", () => {
-  test(
-    "a descendant that ignores SIGTERM is ended with the worker's own process group",
-    async () => {
-      // The worker's shape: started detached (its own group), a descendant
-      // that shrugs off SIGTERM — an ssh ProxyCommand, a helper waiting on a
-      // dialog — and then the end the entry runs after an abandoned call.
-      const dir = await mkdtemp(join(tmpdir(), "cx-lf-orphan-"));
-      paths.push(dir);
-      const pidFile = join(dir, "stubborn.pid");
-      const program = join(dir, "worker.ts");
-      await writeFile(
-        program,
-        `const { endAbandonedDescendants } = await import(${JSON.stringify(WORKER_MODULE)});\n` +
-          `Bun.spawn({ cmd: ["sh", "-c", ${JSON.stringify(`trap "" TERM; echo $$ > '${pidFile}.tmp' && mv '${pidFile}.tmp' '${pidFile}'; exec sleep 30`)}], stdin: "ignore", stdout: "ignore", stderr: "ignore" });\n` +
-          `while (!(await Bun.file(${JSON.stringify(pidFile)}).exists())) { await Bun.sleep(20); }\n` +
-          `await endAbandonedDescendants();\n`,
-        "utf8",
-      );
-      const { startDetachedWorker } = await import(SPAWN_MODULE);
-      startDetachedWorker({ cmd: [process.execPath, program], env: process.env, home: dir });
-
-      let stubborn = 0;
-      for (let waited = 0; waited < 10_000 && stubborn === 0; waited += 50) {
-        if (await exists(pidFile)) {
-          stubborn = Number((await readFile(pidFile, "utf8")).trim());
-        } else {
-          await Bun.sleep(50);
-        }
-      }
-      expect(stubborn).toBeGreaterThan(0);
-      let alive = true;
-      for (let waited = 0; waited < 10_000 && alive; waited += 50) {
-        await Bun.sleep(50);
-        alive = isAlive(stubborn);
-      }
-      expect(alive).toBe(false);
     },
     HEAVY_SETUP_MS,
   );

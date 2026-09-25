@@ -246,6 +246,89 @@ describe("what the developer's own setup cannot widen or break", () => {
   );
 
   test(
+    "a default branch with a name of its own stays fresh after origin's HEAD moved away from it",
+    async () => {
+      // The clone was made while origin's default was trunk — a name the rule
+      // does not ask about by itself — and origin's HEAD has since moved.
+      const made = await repos("lf-trunk-moved");
+      await gitIn(made.teammate, ["push", "-q", "origin", "main:trunk"]);
+      await gitIn(made.origin, ["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+      const fresh = join(made.base, "fresh");
+      await gitIn(made.base, ["clone", "-q", made.origin, fresh]);
+      await gitIn(made.origin, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+      const onTrunk = await mikeSquashesOnto(made, "trunk", "export const offset = 12;\n");
+
+      const outcome = await fetchLandingBranches({ root: fresh, env: ENV });
+
+      expect(outcome.kind === "fetched" ? outcome.branches : outcome).toContain("trunk");
+      expect(await tipOf(fresh, "refs/remotes/origin/trunk")).toBe(onTrunk);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a connection that drops after origin answered is a failure, not a success of what was already current",
+    async () => {
+      // origin answers ls-remote, then refuses the fetch itself: main was
+      // already current, staging is behind — and NOTHING was brought.
+      const made = await repos("lf-dropped");
+      await mikeSquashesOnto(made, "staging", "export const offset = 13;\n");
+      const count = join(made.base, "upload-pack.count");
+      const wrapper = join(made.base, "flaky-upload-pack");
+      await writeFile(
+        wrapper,
+        `#!/bin/sh\necho x >> '${count}'\nif [ "$(wc -l < '${count}')" -gt 1 ]; then exit 1; fi\nexec git upload-pack "$@"\n`,
+        "utf8",
+      );
+      await chmod(wrapper, 0o755);
+      await gitIn(made.reader, ["config", "remote.origin.uploadpack", wrapper]);
+
+      const outcome = await fetchLandingBranches({ root: made.reader, env: ENV });
+
+      expect(outcome).toEqual({ kind: "failed", step: "fetch", timedOut: false });
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "at the deadline nothing the call started outlives it",
+    async () => {
+      // A fake ssh whose own child ignores SIGTERM: the shape of a
+      // ProxyCommand, or a helper stuck on a dialog.
+      const made = await repos("lf-deadline-tree");
+      await gitIn(made.reader, ["remote", "set-url", "origin", "ssh://git@example.invalid/acme/api.git"]);
+      const pidFile = join(made.base, "stubborn.pid");
+      const stubbornSsh = join(made.base, "stubborn-ssh");
+      await writeFile(
+        stubbornSsh,
+        `#!/bin/sh\ntrap "" TERM\n/bin/sh -c 'trap "" TERM; echo $$ > "${pidFile}.tmp" && mv "${pidFile}.tmp" "${pidFile}"; exec /bin/sleep 30' &\nwait\n`,
+        "utf8",
+      );
+      await chmod(stubbornSsh, 0o755);
+
+      const outcome = await fetchLandingBranches({
+        root: made.reader,
+        env: { ...ENV, GIT_SSH_COMMAND: stubbornSsh },
+        timeouts: { lsRemoteMs: 1500 },
+      });
+
+      expect(outcome).toEqual({ kind: "failed", step: "ls-remote", timedOut: true });
+      const stubborn = Number((await Bun.file(pidFile).text()).trim());
+      let alive = true;
+      for (let waited = 0; waited < 2000 && alive; waited += 50) {
+        try {
+          process.kill(stubborn, 0);
+          await Bun.sleep(50);
+        } catch {
+          alive = false;
+        }
+      }
+      expect(alive).toBe(false);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
     "origin's HEAD naming a branch called HEAD cannot write through the symref",
     async () => {
       const made = await repos("lf-head-branch");
@@ -297,6 +380,30 @@ describe("what the developer's own setup cannot widen or break", () => {
       });
 
       expect(outcome).toEqual({ kind: "failed", step: "ls-remote", timedOut: true });
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "git runs with the environment the worker was handed, not this process's",
+    async () => {
+      // The worker process's own env IS the handed one in production; in
+      // this test runner it is not, and a variable only the runner has must
+      // not reach git. GIT_TRACE is one git acts on visibly: it writes a file.
+      const made = await repos("lf-handed-env");
+      await mikeSquashesOnto(made, "staging", "export const offset = 14;\n");
+      const trace = join(made.base, "git-trace.log");
+      process.env["GIT_TRACE"] = trace;
+      try {
+        const { GIT_TRACE: _dropped, ...handed } = ENV;
+
+        const outcome = await fetchLandingBranches({ root: made.reader, env: handed });
+
+        expect(outcome.kind).toBe("fetched");
+        expect(await exists(trace)).toBe(false);
+      } finally {
+        delete process.env["GIT_TRACE"];
+      }
     },
     HEAVY_SETUP_MS,
   );

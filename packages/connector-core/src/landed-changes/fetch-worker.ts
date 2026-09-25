@@ -10,14 +10,14 @@
  *
  * WHAT IT WRITES: `refs/remotes/origin/<landing branch>` (and the objects
  * they need), nothing else.
- * - Origin is asked first which landing branches it has (`ls-remote`, one
- *   round trip): an explicit refspec for a branch origin lacks fails the
- *   whole fetch, and one mistyped name in `.crosscheck.json` would then cost
- *   every branch.
  * - What is fetched is every branch the STOP reads now (its rule applied to
- *   the clone's own refs) plus what the same rule picks on origin — so a
- *   branch the stop watches is always refreshed while origin has it, even
- *   when origin's default branch has moved since this clone was made.
+ *   the clone's own refs) plus what the same rule picks on origin, each only
+ *   while origin has it — so a branch the stop watches stays fresh even when
+ *   origin's default branch has moved since this clone was made.
+ * - Origin is asked first (`ls-remote`, one round trip) about all of those
+ *   names: an explicit refspec for a branch origin lacks fails the whole
+ *   fetch, and one mistyped name in `.crosscheck.json` would then cost every
+ *   branch.
  * - `--refmap=`: without it git ALSO applies every configured
  *   `remote.origin.fetch` refspec to what it fetches ("opportunistic
  *   updates"), and one such refspec can name a LOCAL branch.
@@ -38,13 +38,19 @@
  * false` (and Git Credential Manager `GCM_INTERACTIVE=never`), but a helper or
  * an ssh agent that ignores both can still show a dialog of its own.
  *
+ * BOUNDED, AND NOTHING LEFT BEHIND. Each network call leads its own process
+ * group, and at its deadline that group is ended — SIGTERM so git removes its
+ * ref locks, then SIGKILL — before the worker goes on (git/git.ts
+ * `ownGroup`). Only the abandoned call's tree: a credential-cache daemon an
+ * earlier, finished call started stays the developer's. Git runs with exactly
+ * the environment the hook was given, not this process's plus it.
+ *
  * The outcome is named, never git's own words: those can carry a URL with a
  * token in it, and they go into a file `doctor` prints.
  */
 import { crosscheckHome } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
 import {
-  GIT_KILL_GRACE_MS,
   LANDING_FETCH_LOCAL_GIT_TIMEOUT_MS,
   LANDING_FETCH_TIMEOUT_MS,
   LANDING_LS_REMOTE_TIMEOUT_MS,
@@ -200,13 +206,30 @@ export interface LandingFetchInput {
   readonly timeouts?: { readonly lsRemoteMs?: number; readonly fetchMs?: number };
 }
 
-type Git = (
-  args: readonly string[],
-  timeoutMs: number,
-  extra?: Readonly<Record<string, string>>,
-) => Promise<GitOutcome>;
+interface GitCalls {
+  /** A question about this clone: bounded, no network. */
+  readonly local: (args: readonly string[]) => Promise<GitOutcome>;
+  /** A call that reaches origin: its own process group, ended at the deadline. */
+  readonly network: (
+    args: readonly string[],
+    timeoutMs: number,
+    extra: Readonly<Record<string, string>>,
+  ) => Promise<GitOutcome>;
+}
 
 const LOCAL_MS = LANDING_FETCH_LOCAL_GIT_TIMEOUT_MS;
+
+const gitCallsFor = (input: LandingFetchInput): GitCalls => {
+  const base = { ...definedEnv(input.env), ...NO_PROMPT_GIT_ENV };
+  return {
+    local: (args) => runGitOutcome(args, input.root, LOCAL_MS, base, { inheritEnv: false }),
+    network: (args, timeoutMs, extra) =>
+      runGitOutcome([...NETWORK_CONFIG, ...args], input.root, timeoutMs, { ...base, ...extra }, {
+        inheritEnv: false,
+        ownGroup: true,
+      }),
+  };
+};
 
 /**
  * Every branch the stop reads NOW (its rule on the clone's own refs), then
@@ -214,44 +237,60 @@ const LOCAL_MS = LANDING_FETCH_LOCAL_GIT_TIMEOUT_MS;
  * union is what keeps the two from disagreeing when origin's default branch
  * moved after this clone was made: the clone's origin/HEAD still names the
  * old one (git does not update it either), the stop still reads it, so it is
- * the one that must stay fresh.
+ * the one that must stay fresh. `stopReads` is asked about in `ls-remote`
+ * too, so a default branch with a name of its own (`trunk`) is not lost.
  */
-const branchesToFetch = async (
-  root: string,
+const branchesToFetch = (
   setting: LandingFetchPlan["branches"],
+  stopReads: readonly string[],
   origin: OriginRefs,
-): Promise<readonly string[]> => {
-  const stopReads = (await resolveLandingRefs(root, setting, LOCAL_MS)) ?? [];
-  const picked = [...selectLandingBranches(setting, origin), ...stopReads.map(({ branch }) => branch)];
+): readonly string[] => {
+  const picked = [...selectLandingBranches(setting, origin), ...stopReads];
   return [...new Set(picked)].filter((branch) => origin.existing.has(branch));
+};
+
+const tipsOf = async (git: GitCalls, branches: readonly string[]): Promise<ReadonlyMap<string, string>> => {
+  const listed = await git.local([
+    "for-each-ref",
+    "--format=%(refname)\t%(objectname)",
+    ...branches.map(landingRefOf),
+  ]);
+  return new Map(
+    listed.ok
+      ? listed.stdout.split("\n").map((line): [string, string] => {
+          const [ref = "", tip = ""] = line.split("\t");
+          return [ref, tip];
+        })
+      : [],
+  );
 };
 
 /**
  * One ref git refuses (a stale `origin/release` blocking `release/2026`)
- * fails git's whole answer, while the other refs DID move. Which did is read
- * back from the refs themselves: a landing ref now at origin's tip was
- * brought. None of them = a real failure.
+ * fails git's whole answer, while the other refs DID move. What happened is
+ * read off the refs, before against after: a ref that moved was brought; one
+ * that did not move and is behind origin was missed; one that was already
+ * current is neither. Nothing moved = the fetch failed, whatever was current
+ * — a dropped connection must not read as a success.
  */
 const afterRefusedFetch = async (
-  git: Git,
+  git: GitCalls,
   branches: readonly string[],
+  before: ReadonlyMap<string, string>,
   origin: OriginRefs,
   refusal: CommandFailure,
 ): Promise<LandingFetchOutcome> => {
-  const now = await git(
-    ["for-each-ref", "--format=%(refname)\t%(objectname)", ...branches.map(landingRefOf)],
-    LOCAL_MS,
+  const after = await tipsOf(git, branches);
+  const moved = (branch: string): boolean =>
+    after.get(landingRefOf(branch)) !== before.get(landingRefOf(branch));
+  const brought = branches.filter(moved);
+  const missed = branches.filter(
+    (branch) => !moved(branch) && after.get(landingRefOf(branch)) !== origin.existing.get(branch),
   );
-  const tips = new Map(
-    now.ok ? now.stdout.split("\n").map((line): [string, string] => {
-      const [ref = "", tip = ""] = line.split("\t");
-      return [ref, tip];
-    }) : [],
-  );
-  const brought = branches.filter((branch) => tips.get(landingRefOf(branch)) === origin.existing.get(branch));
-  return brought.length === 0
-    ? failed("fetch", refusal)
-    : { kind: "fetched", branches: brought, missed: branches.filter((branch) => !brought.includes(branch)) };
+  if (brought.length === 0) {
+    return failed("fetch", refusal);
+  }
+  return missed.length === 0 ? { kind: "fetched", branches: brought } : { kind: "fetched", branches: brought, missed };
 };
 
 export const fetchLandingBranches = async (input: LandingFetchInput): Promise<LandingFetchOutcome> => {
@@ -259,14 +298,13 @@ export const fetchLandingBranches = async (input: LandingFetchInput): Promise<La
   if (plan.switch.kind === "off") {
     return skipped("off");
   }
-  const base = { ...definedEnv(input.env), ...NO_PROMPT_GIT_ENV };
-  const git: Git = (args, timeoutMs, extra = {}) =>
-    runGitOutcome(args, input.root, timeoutMs, { ...base, ...extra });
-  const [origin, shallow, coreSshCommand, version] = await Promise.all([
-    git(["config", "--get", "remote.origin.url"], LOCAL_MS),
-    git(["rev-parse", "--is-shallow-repository"], LOCAL_MS),
-    git(["config", "--get", "core.sshCommand"], LOCAL_MS),
-    git(["version"], LOCAL_MS),
+  const git = gitCallsFor(input);
+  const [origin, shallow, coreSshCommand, version, stopRefs] = await Promise.all([
+    git.local(["config", "--get", "remote.origin.url"]),
+    git.local(["rev-parse", "--is-shallow-repository"]),
+    git.local(["config", "--get", "core.sshCommand"]),
+    git.local(["version"]),
+    resolveLandingRefs(input.root, plan.branches, LOCAL_MS),
   ]);
   if (!origin.ok || origin.stdout.length === 0) {
     return skipped("no-origin");
@@ -280,15 +318,10 @@ export const fetchLandingBranches = async (input: LandingFetchInput): Promise<La
     return skipped("old-git");
   }
   const ssh = hasOwnSsh(input.env, coreSshCommand) ? {} : { GIT_SSH_COMMAND: BATCH_SSH_COMMAND };
-  const listed = await git(
-    [
-      ...NETWORK_CONFIG,
-      "ls-remote",
-      "--symref",
-      "origin",
-      "HEAD",
-      ...landingBranchCandidates(plan.branches).map((name) => `${HEADS}${name}`),
-    ],
+  const stopReads = (stopRefs ?? []).map(({ branch }) => branch);
+  const asked = [...new Set([...landingBranchCandidates(plan.branches), ...stopReads])];
+  const listed = await git.network(
+    ["ls-remote", "--symref", "origin", "HEAD", ...asked.map((name) => `${HEADS}${name}`)],
     input.timeouts?.lsRemoteMs ?? LANDING_LS_REMOTE_TIMEOUT_MS,
     ssh,
   );
@@ -296,25 +329,26 @@ export const fetchLandingBranches = async (input: LandingFetchInput): Promise<La
     return failed("ls-remote", listed);
   }
   const onOrigin = parseLsRemote(listed.stdout);
-  const branches = await branchesToFetch(input.root, plan.branches, onOrigin);
+  const branches = branchesToFetch(plan.branches, stopReads, onOrigin);
   if (branches.length === 0) {
     return skipped("none-on-origin");
   }
-  const fetched = await git(
-    [...NETWORK_CONFIG, "fetch", ...FETCH_FLAGS, "origin", ...branches.map(refspecOf)],
+  const before = await tipsOf(git, branches);
+  const fetched = await git.network(
+    ["fetch", ...FETCH_FLAGS, "origin", ...branches.map(refspecOf)],
     input.timeouts?.fetchMs ?? LANDING_FETCH_TIMEOUT_MS,
     ssh,
   );
   if (fetched.ok) {
     return { kind: "fetched", branches };
   }
-  return fetched.timedOut ? failed("fetch", fetched) : afterRefusedFetch(git, branches, onOrigin, fetched);
+  return fetched.timedOut
+    ? failed("fetch", fetched)
+    : afterRefusedFetch(git, branches, before, onOrigin, fetched);
 };
 
 const EXIT_OK = 0;
 const EXIT_USAGE = 2;
-/** A git call was abandoned at its deadline: the entry ends what it left. */
-export const EXIT_ABANDONED = 3;
 
 const rootFrom = (argv: readonly string[]): string | null => {
   const at = argv.indexOf("--root");
@@ -324,9 +358,8 @@ const rootFrom = (argv: readonly string[]): string | null => {
 
 /**
  * The worker process: `--root <worktree>`. Records what it did under the
- * clone's key in Crosscheck's home — never inside the repo. The exit code
- * says only whether a call was abandoned (EXIT_ABANDONED), which is what the
- * entry needs to know.
+ * clone's key in Crosscheck's home — never inside the repo. The exit code is
+ * its own; nothing downstream reads it.
  */
 export const runLandingFetchWorker = async (argv: readonly string[], env: Env): Promise<number> => {
   const root = rootFrom(argv);
@@ -338,35 +371,5 @@ export const runLandingFetchWorker = async (argv: readonly string[], env: Env): 
   if (key !== null) {
     await recordLandingFetch(crosscheckHome(env), key, outcome, new Date());
   }
-  return outcome.kind === "failed" && outcome.timedOut ? EXIT_ABANDONED : EXIT_OK;
-};
-
-/**
- * THE DEADLINE BOUNDS A CALL, NOT ITS PROCESS TREE (git/git.ts). A git that
- * timed out is signalled, but an ssh, a ProxyCommand or a credential helper
- * under it that ignores the signal — one waiting on a dialog, say — would
- * outlive the worker, and one more could be left every interval.
- *
- * The worker leads its own process group (fetch-trigger.ts starts it in its
- * own session), so after an abandoned call it ends that group: SIGTERM
- * first, so a git still running removes its ref locks, then SIGKILL after
- * the grace. The worker itself is in the group; everything it had to do is
- * done by then. ONLY after an abandoned call: a daemon a finished fetch
- * started (an ssh ControlPersist master, a credential cache) is the
- * developer's, and stays. Not a group leader (run by hand) — nothing to end.
- */
-export const endAbandonedDescendants = async (): Promise<void> => {
-  const group = -process.pid;
-  process.on("SIGTERM", () => undefined);
-  try {
-    process.kill(group, "SIGTERM");
-  } catch {
-    return;
-  }
-  await Bun.sleep(GIT_KILL_GRACE_MS);
-  try {
-    process.kill(group, "SIGKILL");
-  } catch {
-    // Already gone.
-  }
+  return EXIT_OK;
 };

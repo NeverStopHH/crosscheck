@@ -43,17 +43,19 @@ const HEAD_NAME = "HEAD";
  * A branch name git cannot read as a flag, a range or a pattern: segments of
  * ref-alphabet characters joined by single slashes, starting with a letter
  * or digit, no segment starting with `.`, never `..`, never ending in `.` or
- * `.lock` — and never `HEAD`. Git itself never fetches a branch literally
- * called HEAD: `refs/remotes/origin/HEAD` is the symref to the default
- * branch, so a refspec for it would write a foreign commit THROUGH the
- * symref into `origin/main`. Every name here can come from origin.
+ * `.lock` — and never `HEAD`, in any case. Git itself never fetches a branch
+ * literally called HEAD: `refs/remotes/origin/HEAD` is the symref to the
+ * default branch, so a refspec for it would write a foreign commit THROUGH
+ * the symref into `origin/main` — and on a case-insensitive filesystem (a
+ * default Mac) `origin/head` is that same file. Every name here can come
+ * from origin.
  */
 const BRANCH_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9._-]+)*$/;
 
 export const isBranchName = (name: string): boolean =>
   name.length <= MAX_BRANCH_NAME_CHARS &&
   BRANCH_NAME_PATTERN.test(name) &&
-  name !== HEAD_NAME &&
+  name.toUpperCase() !== HEAD_NAME &&
   !name.includes("/.") &&
   !name.includes("..") &&
   !name.endsWith(".") &&

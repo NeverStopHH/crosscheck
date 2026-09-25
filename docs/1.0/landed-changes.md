@@ -135,8 +135,9 @@ switched off, and never makes anything wait.
   where the stop is silent anyway, is not fetched.
 - **Which branches.** Every branch the stop reads now (step 1's rule on the
   clone's own refs), plus what the same rule picks on origin, each only while
-  origin has it. Origin is asked with `git ls-remote`, one round trip,
-  because a named branch that origin lacks would fail the whole fetch. The
+  origin has it. Origin is asked about all of those names with
+  `git ls-remote`, one round trip, because a named branch that origin lacks
+  would fail the whole fetch. The
   union is what keeps the fetch and the stop from disagreeing when origin's
   default branch moved after the clone was made: your `origin/HEAD` still
   names the old one, as with git itself, so the stop still reads it, and it
@@ -179,12 +180,14 @@ switched off, and never makes anything wait.
   that ignores both can still show a dialog of its own: a keychain unlock, a
   hardware-key touch, an agent's confirmation.
 - **Bounded, with nothing left behind.** `ls-remote` is bounded at 30 s and
-  the fetch at 120 s. The deadline bounds a call, not the processes under it,
-  so after a call abandoned at its deadline the worker ends its own process
-  group: first SIGTERM, so git removes its ref locks, then SIGKILL. A
-  ProxyCommand or a helper that ignores the signal does not outlive it. A
-  daemon that a *finished* fetch started (an ssh ControlPersist master, a
-  credential cache) is yours and stays.
+  the fetch at 120 s. Each of the two leads its own process group. At its
+  deadline that whole group is ended before the worker goes on: first
+  SIGTERM, so git removes its ref locks, then SIGKILL. A ProxyCommand or a
+  helper that ignores the signal does not outlive it. Only the abandoned
+  call's own processes go. A credential-cache daemon that the earlier,
+  finished call started stays yours. An ssh ControlPersist master leaves the
+  group by OpenSSH's own design (not probed here: no local sshd). Git runs
+  with exactly the environment the hook was given.
 - **Off switches.** `"landingFetch": false` in `.crosscheck.json` switches it
   off for the team, `CROSSCHECK_LANDING_FETCH=off` for one person, and
   `"landingBranches": []` switches off both the stop and the fetch.
@@ -197,8 +200,12 @@ switched off, and never makes anything wait.
   It warns when:
   - the fetch has failed three times in a row, with "run `git fetch origin`
     to see why, or switch it off";
-  - a branch origin has keeps not arriving (one ref git refuses fails git's
-    whole answer, while the others do move, and those still count);
+  - at its last run a branch origin has did not arrive while others did (git
+    refused its ref, and that fails git's whole answer). What arrived still
+    counts: the refs are read before and after, and a dropped connection,
+    where nothing moved, is a failure however current the refs already were;
+  - bookings keep going unreported, meaning the worker is not starting or not
+    finishing;
   - git is older than 2.29;
   - the state directory cannot be written, because then the fetch can never
     book a run.

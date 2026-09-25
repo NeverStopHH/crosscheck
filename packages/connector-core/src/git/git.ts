@@ -32,6 +32,43 @@ const abandonProcess = (proc: ReturnType<typeof Bun.spawn>): void => {
 };
 
 /**
+ * End a command's WHOLE process group — the command leads it (`ownGroup`) —
+ * and wait out the grace before returning, so a caller that exits right after
+ * (a detached worker) cannot leave the SIGKILL unsent the way an unref'd
+ * escalation timer would. SIGTERM first, so a git still running removes its
+ * lock files; then SIGKILL for whatever ignored it (a ProxyCommand, a
+ * credential helper stuck on a dialog).
+ */
+const endGroup = async (leader: number): Promise<void> => {
+  try {
+    process.kill(-leader, "SIGTERM");
+  } catch {
+    return;
+  }
+  await Bun.sleep(GIT_KILL_GRACE_MS);
+  try {
+    process.kill(-leader, "SIGKILL");
+  } catch {
+    // The group is already gone.
+  }
+};
+
+export interface CommandOptions {
+  /**
+   * Start the command as the leader of its own process group, and at the
+   * deadline end that whole group (see `endGroup`). Only that call's tree:
+   * a daemon an earlier, finished call started stays the developer's.
+   */
+  readonly ownGroup?: boolean;
+  /**
+   * False: run with exactly `extraEnv`, NOT the inherited environment plus
+   * it — for a caller that was handed the environment to use (the landing
+   * fetch worker runs git with the developer's, as the hook was given it).
+   */
+  readonly inheritEnv?: boolean;
+}
+
+/**
  * Runs a command and returns trimmed stdout, or null for any failure at all
  * (missing binary, non-zero exit, deadline). Callers treat null as "this
  * information does not exist" and keep going.
@@ -92,17 +129,25 @@ export const runBoundedCommandOutcome = async (
    * child inherits the environment untouched, exactly as before.
    */
   extraEnv?: Readonly<Record<string, string>>,
+  options: CommandOptions = {},
 ): Promise<
   { readonly ok: true; readonly stdout: string } | CommandFailure
 > => {
   try {
+    const env =
+      extraEnv === undefined
+        ? undefined
+        : options.inheritEnv === false
+          ? { ...extraEnv }
+          : { ...process.env, ...extraEnv };
     const proc = Bun.spawn({
       cmd: [...cmd],
       cwd,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
-      ...(extraEnv === undefined ? {} : { env: { ...process.env, ...extraEnv } }),
+      ...(env === undefined ? {} : { env }),
+      ...(options.ownGroup === true ? { detached: true } : {}),
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<typeof TIMED_OUT>((resolveDeadline) => {
@@ -123,7 +168,11 @@ export const runBoundedCommandOutcome = async (
     try {
       const outcome = await Promise.race([readAll, deadline]);
       if (outcome === TIMED_OUT) {
-        abandonProcess(proc);
+        if (options.ownGroup === true) {
+          await endGroup(proc.pid);
+        } else {
+          abandonProcess(proc);
+        }
         return { ok: false, timedOut: true };
       }
       if (outcome.exitCode !== 0) {
@@ -157,6 +206,7 @@ export const runGitOutcome = (
   cwd: string,
   timeoutMs: number = GIT_TIMEOUT_MS,
   extraEnv?: Readonly<Record<string, string>>,
+  options: CommandOptions = {},
 ): Promise<
   { readonly ok: true; readonly stdout: string } | CommandFailure
-> => runBoundedCommandOutcome(["git", ...args], cwd, timeoutMs, extraEnv);
+> => runBoundedCommandOutcome(["git", ...args], cwd, timeoutMs, extraEnv, options);

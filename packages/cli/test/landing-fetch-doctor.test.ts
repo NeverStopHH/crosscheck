@@ -144,7 +144,9 @@ describe("doctor's landing-fetch line", () => {
 
       expect(line.level).toBe("WARN");
       expect(line.detail).toContain("last fetched 2m ago (main)");
-      expect(line.detail).toContain("could not bring release/2026");
+      // Said as what the last run saw, and when: the developer may have fixed
+      // it since, and the next run clears it.
+      expect(line.detail).toContain("its last run, 2m ago, could not bring release/2026");
       expect(line.detail).toContain("git fetch origin release/2026");
     },
     HEAVY_SETUP_MS,
@@ -179,6 +181,36 @@ describe("doctor's landing-fetch line", () => {
       } finally {
         await chmod(state, 0o755);
       }
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a home that does not exist yet is not unwritable: the first booking creates it",
+    async () => {
+      const c = await clone("lfd-fresh-home");
+      const fresh = join(c.home, "not-yet", ".crosscheck");
+
+      const line = await checkLandingFetch(c.repos.reader, fresh, {}, NOW);
+
+      expect(line.level).toBe("PASS");
+      expect(line.detail).not.toContain("cannot be written");
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "bookings that never report are a warning, not a 'not run yet' forever",
+    async () => {
+      const c = await clone("lfd-never-reports");
+      for (let run = 0; run < DOCTOR_LANDING_FETCH_FAILURES_WARN; run += 1) {
+        await claimLandingFetch(c.home, c.key, ago((30 - run * 10) * MINUTE_MS));
+      }
+
+      const line = await check(c);
+
+      expect(line.level).toBe("WARN");
+      expect(line.detail).toContain("started but never reported");
     },
     HEAVY_SETUP_MS,
   );

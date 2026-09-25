@@ -62,6 +62,12 @@ export type LandingFetchOutcome =
 export interface LandingFetchRecord {
   /** When a hook last BOOKED an attempt — what the interval is measured from. */
   readonly lastAttemptAt: string | null;
+  /**
+   * Bookings since the worker last reported. A worker that never starts (or
+   * dies before recording) leaves `last` as it was, and "not run yet" would
+   * read as health forever; this is what lets `doctor` tell the two apart.
+   */
+  readonly bookedSinceReport: number;
   readonly lastSuccessAt: string | null;
   /** What that success fetched — kept when later runs fail, for `doctor`. */
   readonly lastFetchedBranches: readonly string[];
@@ -71,6 +77,7 @@ export interface LandingFetchRecord {
 
 const NEVER_FETCHED: LandingFetchRecord = {
   lastAttemptAt: null,
+  bookedSinceReport: 0,
   lastSuccessAt: null,
   lastFetchedBranches: [],
   failuresInARow: 0,
@@ -97,6 +104,7 @@ const OutcomeSchema = z.discriminatedUnion("kind", [
 /** Tolerant per field: a garbled field costs that field, never the record. */
 const RecordSchema = z.object({
   lastAttemptAt: z.string().nullable().catch(null),
+  bookedSinceReport: z.number().int().min(0).catch(0),
   lastSuccessAt: z.string().nullable().catch(null),
   lastFetchedBranches: z.array(z.string()).max(MAX_LANDING_BRANCHES).catch([]),
   failuresInARow: z.number().int().min(0).catch(0),
@@ -171,7 +179,11 @@ export const claimLandingFetch = async (
         if (!isLandingFetchDue(current, now)) {
           return false;
         }
-        const booked: LandingFetchRecord = { ...current, lastAttemptAt: now.toISOString() };
+        const booked: LandingFetchRecord = {
+          ...current,
+          lastAttemptAt: now.toISOString(),
+          bookedSinceReport: current.bookedSinceReport + 1,
+        };
         await writePrivateFile(landingFetchRecordPath(home, cloneKey), JSON.stringify(booked));
         return true;
       },
@@ -203,6 +215,7 @@ export const recordLandingFetch = async (
       const current = await readLandingFetchRecord(home, cloneKey);
       const next: LandingFetchRecord = {
         lastAttemptAt: current.lastAttemptAt,
+        bookedSinceReport: 0,
         lastSuccessAt: outcome.kind === "fetched" ? now.toISOString() : current.lastSuccessAt,
         lastFetchedBranches: outcome.kind === "fetched" ? outcome.branches : current.lastFetchedBranches,
         failuresInARow: failuresAfter(current, outcome),

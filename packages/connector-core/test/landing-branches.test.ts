@@ -49,6 +49,8 @@ describe("parseLandingBranches", () => {
     // refs/remotes/origin/HEAD is the symref to the default branch: a refspec
     // for a branch called HEAD writes a foreign commit through it.
     expect(parseLandingBranches({ landingBranches: ["HEAD"] }).kind).toBe("invalid");
+    // On a case-insensitive filesystem (a default Mac) origin/head IS that symref.
+    expect(parseLandingBranches({ landingBranches: ["head"] }).kind).toBe("invalid");
     expect(parseLandingBranches({ landingBranches: ["release/.hidden"] }).kind).toBe("invalid");
     expect(parseLandingBranches({ landingBranches: ["release/2026.1"] }).kind).toBe("configured");
   });
