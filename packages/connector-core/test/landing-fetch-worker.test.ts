@@ -14,12 +14,13 @@
  * branch that is not a landing branch.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   fetchLandingBranches,
+  isGitRecentEnough,
   parseLsRemote,
   runLandingFetchWorker,
 } from "../src/landed-changes/fetch-worker.ts";
@@ -29,6 +30,7 @@ import {
   MIKE,
   commitFile,
   gitIn,
+  isolatedGitEnv,
   landWithSquash,
   makeLandingRepos,
 } from "./fixtures/landing-repos.ts";
@@ -45,11 +47,8 @@ afterEach(async () => {
 });
 
 /** The developer's own git settings can neither break nor rescue a test. */
-const ENV = {
-  ...process.env,
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+/** The developer's own ssh, askpass and Crosscheck settings are shut out. */
+const ENV = isolatedGitEnv();
 
 const repos = async (
   label: string,
@@ -210,6 +209,123 @@ describe("fetching the landing branches", () => {
   );
 });
 
+describe("what the developer's own setup cannot widen or break", () => {
+  test(
+    "a configured fetch refspec that names a local branch is not applied",
+    async () => {
+      // Without --refmap= git applies every remote.origin.fetch refspec to
+      // what is fetched ("opportunistic updates") — including into refs/heads.
+      const made = await repos("lf-refmap");
+      await gitIn(made.reader, ["config", "--add", "remote.origin.fetch", "+refs/heads/staging:refs/heads/staging-mirror"]);
+      const landed = await mikeSquashesOnto(made, "staging", "export const offset = 8;\n");
+
+      const outcome = await fetchLandingBranches({ root: made.reader, env: ENV });
+
+      expect(outcome.kind).toBe("fetched");
+      expect(await tipOf(made.reader, "refs/remotes/origin/staging")).toBe(landed);
+      expect(await tipOf(made.reader, "refs/heads/staging-mirror")).toBeNull();
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "the branch the stop reads stays fresh after origin's default branch moved",
+    async () => {
+      // The clone's origin/HEAD still names main (git never updates an
+      // existing one); origin's HEAD now names staging. The stop reads main.
+      const made = await repos("lf-head-moved");
+      await gitIn(made.origin, ["symbolic-ref", "HEAD", "refs/heads/staging"]);
+      const onMain = await mikeSquashesOnto(made, "main", "export const offset = 9;\n");
+
+      const outcome = await fetchLandingBranches({ root: made.reader, env: ENV });
+
+      expect(outcome.kind === "fetched" ? [...outcome.branches].sort() : outcome).toEqual(["main", "staging"]);
+      expect(await tipOf(made.reader, "refs/remotes/origin/main")).toBe(onMain);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "origin's HEAD naming a branch called HEAD cannot write through the symref",
+    async () => {
+      const made = await repos("lf-head-branch");
+      const mainBefore = await tipOf(made.reader, "refs/remotes/origin/main");
+      const foreign = await gitIn(made.teammate, ["commit-tree", "-m", "foreign", "4b825dc642cb6eb9a060e54bf8d69288fbee4904"]);
+      await gitIn(made.teammate, ["push", "-q", "origin", `${foreign}:refs/heads/HEAD`]);
+      await gitIn(made.origin, ["symbolic-ref", "HEAD", "refs/heads/HEAD"]);
+
+      await fetchLandingBranches({ root: made.reader, env: ENV });
+
+      expect(await tipOf(made.reader, "refs/remotes/origin/main")).toBe(mainBefore);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "one branch git refuses costs that branch, and the others' fetch still counts",
+    async () => {
+      // A stale origin/release (a file) is in the way of origin/release/2026
+      // (a directory): git refuses that ref and fails its whole answer, while
+      // main is updated all the same.
+      const made = await repos("lf-partial");
+      await gitIn(made.reader, ["update-ref", "refs/remotes/origin/release", "HEAD"]);
+      await gitIn(made.teammate, ["push", "-q", "origin", "main:release/2026"]);
+      await writeRepoConfig(made.reader, { landingBranches: ["main", "release/2026"] });
+      const onMain = await mikeSquashesOnto(made, "main", "export const offset = 10;\n");
+
+      const outcome = await fetchLandingBranches({ root: made.reader, env: ENV });
+
+      expect(outcome).toEqual({ kind: "fetched", branches: ["main"], missed: ["release/2026"] });
+      expect(await tipOf(made.reader, "refs/remotes/origin/main")).toBe(onMain);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "an origin that does not answer in time is a failure named as a deadline",
+    async () => {
+      const made = await repos("lf-deadline");
+      await gitIn(made.reader, ["remote", "set-url", "origin", "ssh://git@example.invalid/acme/api.git"]);
+      const slowSsh = join(made.base, "slow-ssh");
+      await writeFile(slowSsh, "#!/bin/sh\nsleep 10\n", "utf8");
+      await chmod(slowSsh, 0o755);
+
+      const outcome = await fetchLandingBranches({
+        root: made.reader,
+        env: { ...ENV, GIT_SSH_COMMAND: slowSsh },
+        timeouts: { lsRemoteMs: 300 },
+      });
+
+      expect(outcome).toEqual({ kind: "failed", step: "ls-remote", timedOut: true });
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "no commit-graph file is written on the developer's behalf",
+    async () => {
+      const made = await repos("lf-commit-graph");
+      await gitIn(made.reader, ["config", "fetch.writeCommitGraph", "true"]);
+      await mikeSquashesOnto(made, "staging", "export const offset = 11;\n");
+
+      await fetchLandingBranches({ root: made.reader, env: ENV });
+
+      expect(await exists(join(made.reader, ".git", "objects", "info", "commit-graphs"))).toBe(false);
+      expect(await exists(join(made.reader, ".git", "objects", "info", "commit-graph"))).toBe(false);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test("a git older than 2.29 is recognised; newer and unknown wordings are not refused", () => {
+    expect(isGitRecentEnough("git version 2.28.1")).toBe(false);
+    expect(isGitRecentEnough("git version 1.9.5")).toBe(false);
+    expect(isGitRecentEnough("git version 2.29.0")).toBe(true);
+    expect(isGitRecentEnough("git version 2.50.1 (Apple Git-155)")).toBe(true);
+    expect(isGitRecentEnough("git version 3.0.0")).toBe(true);
+    expect(isGitRecentEnough("something else entirely")).toBe(true);
+  });
+});
+
 describe("when there is nothing to fetch, or it cannot be fetched", () => {
   test("a clone without origin is skipped, not failed", async () => {
     const lone = await mkdtemp(join(tmpdir(), "cx-lf-no-origin-"));
@@ -292,7 +408,13 @@ describe("reading origin's answer", () => {
     );
 
     expect(origin.headBranch).toBe("trunk");
-    expect([...origin.existing.keys()]).toEqual(["staging"]);
+    expect(new Map(origin.existing)).toEqual(new Map([["staging", SHA], ["trunk", SHA]]));
+  });
+
+  test("the default branch's tip comes from the HEAD line when its name was not asked about", () => {
+    const origin = parseLsRemote(`ref: refs/heads/trunk\tHEAD\n${SHA}\tHEAD\n`);
+
+    expect(origin.existing.get("trunk")).toBe(SHA);
   });
 
   test("an unborn HEAD — an empty origin — names nothing to fetch", () => {

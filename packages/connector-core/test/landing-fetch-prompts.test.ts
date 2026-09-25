@@ -14,13 +14,13 @@
  * the real binary doing the asking: an HTTP origin that answers 401, a fake
  * `ssh` on PATH, the developer's own ssh command, and a pseudo-terminal.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { fetchLandingBranches } from "../src/landed-changes/fetch-worker.ts";
-import { gitIn, makeLandingRepos } from "./fixtures/landing-repos.ts";
+import { gitIn, isolatedGitEnv, makeLandingRepos } from "./fixtures/landing-repos.ts";
 import type { LandingRepos } from "./fixtures/landing-repos.ts";
 
 const HEAVY_SETUP_MS = 60_000;
@@ -37,11 +37,8 @@ afterEach(async () => {
   paths.length = 0;
 });
 
-const ENV = {
-  ...process.env,
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+/** The developer's own ssh, askpass and Crosscheck settings are shut out. */
+const ENV = isolatedGitEnv();
 
 const repos = async (label: string): Promise<LandingRepos> => {
   const made = await makeLandingRepos(label);
@@ -104,6 +101,42 @@ describe("credentials that would need a prompt", () => {
       // stayed silent because it was never run, not because nothing asked.
       expect(hits).toBeGreaterThan(0);
       expect(await readLines(askpassLog)).toEqual([]);
+    },
+    HEAVY_SETUP_MS,
+  );
+});
+
+describe("credential helpers", () => {
+  test(
+    "a helper still runs — a stored token is how a silent fetch signs in — and is told not to prompt",
+    async () => {
+      const made = await repos("lf-helper");
+      const server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response("authentication required", {
+            status: 401,
+            headers: { "WWW-Authenticate": 'Basic realm="acme"' },
+          }),
+      });
+      servers.push(server);
+      await gitIn(made.reader, ["remote", "set-url", "origin", `http://127.0.0.1:${String(server.port)}/acme/api.git`]);
+      const helperLog = join(made.base, "helper.log");
+      const helper = join(made.base, "credential-helper");
+      await writeFile(
+        helper,
+        `#!/bin/sh\necho "$1 interactive=$(git config --get credential.interactive)" >> '${helperLog}'\ncat > /dev/null\n`,
+        "utf8",
+      );
+      await chmod(helper, 0o755);
+      await gitIn(made.reader, ["config", "credential.helper", helper]);
+
+      const outcome = await fetchLandingBranches({ root: made.reader, env: ENV });
+
+      expect(outcome.kind).toBe("failed");
+      // Helpers that honour credential.interactive (Git Credential Manager
+      // among them) show no dialog; the value reaches the helper through git.
+      expect(await readLines(helperLog)).toContain("get interactive=false");
     },
     HEAVY_SETUP_MS,
   );
@@ -206,6 +239,7 @@ const TTY_CHECK = (out: string): string =>
   `if (exec 3</dev/tty) 2>/dev/null; then echo TTY; else echo NOTTY; fi > '${out}'`;
 
 const SPAWN_MODULE = resolve(import.meta.dir, "..", "src", "landed-changes", "fetch-trigger.ts");
+const WORKER_MODULE = resolve(import.meta.dir, "..", "src", "landed-changes", "fetch-worker.ts");
 
 /** Runs `program` (a bun script) inside a pty; resolves when it and its child are done. */
 const runInPty = async (dir: string, program: string, out: string): Promise<string | null> => {
@@ -238,6 +272,9 @@ const workerSpawn = (out: string, home: string): string =>
   `startDetachedWorker({ cmd: ["sh", "-c", ${JSON.stringify(TTY_CHECK(out))}], env: process.env, home: ${JSON.stringify(home)} });\n`;
 
 const PTY_DIR = await mkdtemp(join(tmpdir(), "cx-lf-pty-"));
+afterAll(async () => {
+  await rm(PTY_DIR, { recursive: true, force: true });
+});
 /** Whether this machine can host a pty at all — the control, run once. */
 const PTY_WORKS = (await runInPty(PTY_DIR, plainSpawn(join(PTY_DIR, "control.out")), join(PTY_DIR, "control.out"))) === "TTY";
 
@@ -283,12 +320,62 @@ describe("no terminal to ask on", () => {
   test.skipIf(!PTY_WORKS)(
     "the background worker starts without a controlling terminal, where an ordinary child has one",
     async () => {
-      paths.push(PTY_DIR);
       const out = join(PTY_DIR, "worker.out");
 
       // The control above proved an ordinary child of this pty CAN open
       // /dev/tty — which is exactly what ssh does to ask for a passphrase.
       expect(await runInPty(PTY_DIR, workerSpawn(out, PTY_DIR), out)).toBe("NOTTY");
+    },
+    HEAVY_SETUP_MS,
+  );
+});
+
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe("nothing an abandoned call started outlives the worker", () => {
+  test(
+    "a descendant that ignores SIGTERM is ended with the worker's own process group",
+    async () => {
+      // The worker's shape: started detached (its own group), a descendant
+      // that shrugs off SIGTERM — an ssh ProxyCommand, a helper waiting on a
+      // dialog — and then the end the entry runs after an abandoned call.
+      const dir = await mkdtemp(join(tmpdir(), "cx-lf-orphan-"));
+      paths.push(dir);
+      const pidFile = join(dir, "stubborn.pid");
+      const program = join(dir, "worker.ts");
+      await writeFile(
+        program,
+        `const { endAbandonedDescendants } = await import(${JSON.stringify(WORKER_MODULE)});\n` +
+          `Bun.spawn({ cmd: ["sh", "-c", ${JSON.stringify(`trap "" TERM; echo $$ > '${pidFile}.tmp' && mv '${pidFile}.tmp' '${pidFile}'; exec sleep 30`)}], stdin: "ignore", stdout: "ignore", stderr: "ignore" });\n` +
+          `while (!(await Bun.file(${JSON.stringify(pidFile)}).exists())) { await Bun.sleep(20); }\n` +
+          `await endAbandonedDescendants();\n`,
+        "utf8",
+      );
+      const { startDetachedWorker } = await import(SPAWN_MODULE);
+      startDetachedWorker({ cmd: [process.execPath, program], env: process.env, home: dir });
+
+      let stubborn = 0;
+      for (let waited = 0; waited < 10_000 && stubborn === 0; waited += 50) {
+        if (await exists(pidFile)) {
+          stubborn = Number((await readFile(pidFile, "utf8")).trim());
+        } else {
+          await Bun.sleep(50);
+        }
+      }
+      expect(stubborn).toBeGreaterThan(0);
+      let alive = true;
+      for (let waited = 0; waited < 10_000 && alive; waited += 50) {
+        await Bun.sleep(50);
+        alive = isAlive(stubborn);
+      }
+      expect(alive).toBe(false);
     },
     HEAVY_SETUP_MS,
   );

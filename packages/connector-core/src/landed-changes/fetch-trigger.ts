@@ -2,14 +2,18 @@
  * The hook side of the background landing fetch (docs/1.0/landed-changes.md,
  * step 2): is one due, and if so book it and start the worker — never wait.
  *
- * Session start, every prompt and every edit ask; almost always the answer is
- * "not due", which costs one bounded git call (the clone's key) and one small
- * file read. Only a due attempt pays for more.
+ * Session start, every prompt and every edit ask. In a clone that tracks
+ * origin the answer is almost always "not due": one bounded git call (the
+ * clone's key) and one small file read. A clone that does not track origin
+ * pays a second git call on every hook and never books anything; both run
+ * beside the hook's own work, never before it.
  *
  * ONLY A CLONE THAT ALREADY TRACKS ORIGIN IS FETCHED — one with at least one
  * `refs/remotes/origin/*`. A remote someone added but never fetched from may
  * carry a wrong URL, or not be the team's at all, and the first contact with
- * it should be the developer's own `git fetch`, not a hook's.
+ * it should be the developer's own `git fetch`, not a hook's. (Pointing an
+ * already-fetched origin at a new URL keeps its refs, so the next background
+ * fetch does go to the new URL.)
  *
  * The connector supplies how the worker starts (its own entry file); this
  * module decides whether it does. `startDetachedWorker` below is the start

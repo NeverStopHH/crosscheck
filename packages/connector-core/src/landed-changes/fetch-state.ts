@@ -14,8 +14,9 @@
  * fetch on every hook. The worker's own record never moves the booking.
  *
  * FAIL-OPEN everywhere, like every other counter here: a record that cannot
- * be read reads as "never fetched", and one that cannot be written costs a
- * line in `doctor`, never a hook.
+ * be read reads as "never fetched", and a home where it cannot be written
+ * books nothing, so nothing starts — never a hook failure, and `doctor`
+ * names the unwritable directory.
  */
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -38,12 +39,22 @@ import { runGitOutcome } from "../git/git.ts";
 import { withLock } from "../spool/lock.ts";
 import { QUIET_GIT_ENV } from "./git-queries.ts";
 
-export type LandingFetchSkip = "off" | "no-origin" | "shallow" | "none-on-origin";
+export type LandingFetchSkip = "off" | "no-origin" | "shallow" | "none-on-origin" | "old-git";
 export type LandingFetchStep = "ls-remote" | "fetch";
 
 /** What one worker run did. Named apart so `doctor` can say which. */
 export type LandingFetchOutcome =
-  | { readonly kind: "fetched"; readonly branches: readonly string[] }
+  | {
+      readonly kind: "fetched";
+      readonly branches: readonly string[];
+      /**
+       * Branches origin has that this run could NOT bring — present only when
+       * some did. One ref git refuses (a stale `origin/release` in the way of
+       * `release/2026`) fails git's whole answer while the others moved; this
+       * keeps the others' success true and names the one that is stuck.
+       */
+      readonly missed?: readonly string[] | undefined;
+    }
   /** Nothing was tried against origin, so this is neither success nor failure. */
   | { readonly kind: "skipped"; readonly why: LandingFetchSkip }
   | { readonly kind: "failed"; readonly step: LandingFetchStep; readonly timedOut: boolean };
@@ -70,10 +81,11 @@ const OutcomeSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("fetched"),
     branches: z.array(z.string()).max(MAX_LANDING_BRANCHES),
+    missed: z.array(z.string()).max(MAX_LANDING_BRANCHES).optional(),
   }),
   z.object({
     kind: z.literal("skipped"),
-    why: z.enum(["off", "no-origin", "shallow", "none-on-origin"]),
+    why: z.enum(["off", "no-origin", "shallow", "none-on-origin", "old-git"]),
   }),
   z.object({
     kind: z.literal("failed"),

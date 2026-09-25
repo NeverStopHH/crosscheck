@@ -199,6 +199,22 @@ export const landWithSquash = async (
   return sha;
 };
 
+/**
+ * The environment a background-fetch test hands the worker: the runner's own,
+ * WITHOUT anything a developer's shell may carry that would change what the
+ * worker does — their own ssh command (which would then really be run against
+ * the test's fake host), askpass programs, and every CROSSCHECK_* setting (the
+ * personal off switch would turn half the tests into no-ops). Global and
+ * system git config are shut out as everywhere in these fixtures.
+ */
+const DEVELOPER_SPECIFIC = /^(?:GIT_SSH|GIT_SSH_COMMAND|GIT_SSH_VARIANT|GIT_ASKPASS|SSH_ASKPASS|SSH_ASKPASS_REQUIRE|GCM_INTERACTIVE|GIT_TERMINAL_PROMPT|CROSSCHECK_.*)$/;
+
+export const isolatedGitEnv = (): Record<string, string | undefined> => ({
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !DEVELOPER_SPECIFIC.test(name))),
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+});
+
 /** The reader fetches, so its remote-tracking refs show what landed. */
 export const readerFetches = async (repos: LandingRepos): Promise<void> => {
   await gitIn(repos.reader, ["fetch", "-q", "origin"]);

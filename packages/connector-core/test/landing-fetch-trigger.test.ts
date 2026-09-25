@@ -28,7 +28,7 @@ import {
 } from "../src/landed-changes/fetch-state.ts";
 import { requestLandingFetch } from "../src/landed-changes/fetch-trigger.ts";
 import { makeHome } from "./helpers.ts";
-import { gitIn, makeLandingRepos } from "./fixtures/landing-repos.ts";
+import { gitIn, isolatedGitEnv, makeLandingRepos } from "./fixtures/landing-repos.ts";
 import type { LandingRepos } from "./fixtures/landing-repos.ts";
 
 const HEAVY_SETUP_MS = 60_000;
@@ -43,11 +43,8 @@ afterEach(async () => {
   paths.length = 0;
 });
 
-const ENV = {
-  ...process.env,
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+/** The developer's own ssh, askpass and Crosscheck settings are shut out. */
+const ENV = isolatedGitEnv();
 
 interface Setup {
   readonly repos: LandingRepos;

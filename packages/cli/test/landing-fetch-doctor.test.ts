@@ -10,7 +10,7 @@
  * offline for a train ride) stay a PASS.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createDb, createServer } from "@crosscheck/server";
@@ -126,6 +126,59 @@ describe("doctor's landing-fetch line", () => {
       expect(line.detail).toContain("did not finish within 120 s");
       expect(line.detail).toContain("git fetch origin");
       expect(line.detail).toContain("CROSSCHECK_LANDING_FETCH=off");
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a branch origin has that the fetch keeps failing to bring is a warning naming it",
+    async () => {
+      const c = await clone("lfd-missed");
+      await ranAt(c, ago(2 * MINUTE_MS), {
+        kind: "fetched",
+        branches: ["main"],
+        missed: ["release/2026"],
+      });
+
+      const line = await check(c);
+
+      expect(line.level).toBe("WARN");
+      expect(line.detail).toContain("last fetched 2m ago (main)");
+      expect(line.detail).toContain("could not bring release/2026");
+      expect(line.detail).toContain("git fetch origin release/2026");
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a git too old for the fetch is a warning, not a quiet skip",
+    async () => {
+      const c = await clone("lfd-old-git");
+      await ranAt(c, ago(MINUTE_MS), { kind: "skipped", why: "old-git" });
+
+      const line = await check(c);
+
+      expect(line.level).toBe("WARN");
+      expect(line.detail).toContain("older than 2.29");
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a home where the record cannot be written is a warning — the fetch could never book a run",
+    async () => {
+      const c = await clone("lfd-unwritable");
+      const state = join(c.home, "state");
+      await mkdir(state, { recursive: true });
+      await chmod(state, 0o555);
+      try {
+        const line = await check(c);
+
+        expect(line.level).toBe("WARN");
+        expect(line.detail).toContain("cannot be written");
+      } finally {
+        await chmod(state, 0o755);
+      }
     },
     HEAVY_SETUP_MS,
   );

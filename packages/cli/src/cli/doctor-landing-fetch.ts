@@ -10,6 +10,9 @@
  * out. Fewer failures stay a PASS that says so: a laptop on a train is not a
  * broken setup.
  */
+import { access, constants } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   DOCTOR_LANDING_FETCH_FAILURES_WARN,
@@ -71,7 +74,13 @@ const SKIP_DETAIL: Readonly<Record<Extract<LandingFetchOutcome, { kind: "skipped
   "no-origin": "nothing to fetch: this clone has no origin",
   shallow: "not fetched: this is a shallow clone, where the landed-change stop is silent anyway",
   "none-on-origin": "nothing to fetch: origin has none of the landing branches",
+  "old-git":
+    "not fetched: this git is older than 2.29, which a fetch that leaves FETCH_HEAD alone needs " +
+    "(--no-write-fetch-head) — update git, or switch it off",
 };
+
+/** The one skip that means "this will never work here" rather than "nothing to do". */
+const SKIP_IS_A_FAULT: ReadonlySet<string> = new Set(["old-git"]);
 
 /** "last fetched 3m ago (main, staging)": the last SUCCESS, whatever failed since. */
 const lastFetched = (record: LandingFetchRecord, now: Date): string | null => {
@@ -92,10 +101,17 @@ const fromRecord = (record: LandingFetchRecord, now: Date): Check => {
   }
   const fetched = lastFetched(record, now);
   if (last.outcome.kind === "skipped") {
-    return pass(SKIP_DETAIL[last.outcome.why]);
+    const detail = SKIP_DETAIL[last.outcome.why];
+    return SKIP_IS_A_FAULT.has(last.outcome.why) ? warn(detail) : pass(detail);
   }
   if (last.outcome.kind === "fetched") {
-    return pass(`${fetched ?? "fetched"} — ${EVERY}`);
+    const missed = last.outcome.missed ?? [];
+    return missed.length === 0
+      ? pass(`${fetched ?? "fetched"} — ${EVERY}`)
+      : warn(
+          `${fetched ?? "fetched"}; could not bring ${missed.join(", ")}, which origin has — ` +
+            `run git fetch origin ${missed.join(" ")} to see why`,
+        );
   }
   const reason = failureReason(last.outcome);
   if (record.failuresInARow < DOCTOR_LANDING_FETCH_FAILURES_WARN) {
@@ -108,6 +124,25 @@ const fromRecord = (record: LandingFetchRecord, now: Date): Check => {
       `stop only sees what was fetched before (${fetched ?? "nothing yet"}) — run git fetch origin to see why, ` +
       `or switch it off with ${LANDING_FETCH_ENV}=${LANDING_FETCH_OFF}`,
   );
+};
+
+/**
+ * A home where the record cannot be written books nothing, so the fetch
+ * NEVER starts — and "not run yet" would pass for it forever. Checked on the
+ * nearest directory that exists: `state/` is created on the first write.
+ */
+const canWriteRecord = async (home: string): Promise<boolean> => {
+  for (const dir of [join(home, "state"), home]) {
+    try {
+      await access(dir, constants.W_OK);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        return false;
+      }
+    }
+  }
+  return false;
 };
 
 export const checkLandingFetch = async (
@@ -123,6 +158,12 @@ export const checkLandingFetch = async (
   const key = await cloneKeyOf(repoRoot);
   if (key === null) {
     return warn("git did not answer, so the background fetch cannot run in this clone");
+  }
+  if (!(await canWriteRecord(home))) {
+    return warn(
+      `${join(home, "state")} cannot be written, so the background fetch can never book an attempt and ` +
+        "never runs — make it writable",
+    );
   }
   const line = (await tracksOrigin(repoRoot))
     ? fromRecord(await readLandingFetchRecord(home, key), now)
