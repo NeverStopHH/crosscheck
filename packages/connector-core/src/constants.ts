@@ -751,10 +751,11 @@ export const MAX_LANDED_WHY_SHOWN = 2;
 export const LANDED_WHY_MIN_MS = 50;
 /**
  * `doctor`'s look at who landed what (decision 7): the landing branches'
- * commits of this many days, at most this many, and the unknown addresses
- * it names before counting the rest.
+ * latest commits, this many — a COUNT, never a date window: a merged feature
+ * branch keeps its old commit dates, so `--since` would miss exactly the
+ * commits that just landed (staleness-axis.test.ts, CCB-2) — and the unknown
+ * addresses it names before counting the rest.
  */
-export const DOCTOR_LANDED_AUTHORS_WINDOW_DAYS = 90;
 export const DOCTOR_LANDED_AUTHORS_MAX_COMMITS = 500;
 export const DOCTOR_LANDED_AUTHORS_SHOWN = 3;
 /** One local `git log`; doctor waits for it, a hook never does. */

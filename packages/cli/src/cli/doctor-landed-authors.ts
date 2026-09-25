@@ -10,17 +10,18 @@
  * nothing else says so. This line names those addresses with the .mailmap
  * line that maps each to its person once, for the whole team.
  *
- * READ FROM THIS CLONE: the landing branches' commits of the last
- * DOCTOR_LANDED_AUTHORS_WINDOW_DAYS, author addresses after .mailmap (`%aE`,
- * exactly what the stop sends), the reader's own (the stop's own rule) and
- * bots' left out. PASS throughout: an outside contributor is no fault, and a
+ * READ FROM THIS CLONE: the landing branches' latest
+ * DOCTOR_LANDED_AUTHORS_MAX_COMMITS commits — a count, never a date window,
+ * because a merged feature branch keeps its old dates and `--since` would
+ * miss what just landed — author addresses after .mailmap (`%aE`, exactly
+ * what the stop sends), the reader's own (the stop's own rule) and bots'
+ * left out. PASS throughout: an outside contributor is no fault, and a
  * hub that does not answer is already another line's WARN.
  */
 import {
   DOCTOR_LANDED_AUTHORS_GIT_TIMEOUT_MS,
   DOCTOR_LANDED_AUTHORS_MAX_COMMITS,
   DOCTOR_LANDED_AUTHORS_SHOWN,
-  DOCTOR_LANDED_AUTHORS_WINDOW_DAYS,
 } from "@crosscheck/connector-core/constants.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { getUnknownAuthors } from "@crosscheck/connector-core/http/hub.ts";
@@ -63,13 +64,17 @@ const listed = (authors: readonly Author[]): string => {
   return rest > 0 ? `${shown.join(", ")} (+${String(rest)} more)` : shown.join(", ");
 };
 
+const WHERE = (branches: string): string =>
+  `in the last ${String(DOCTOR_LANDED_AUTHORS_MAX_COMMITS)} commits on ${branches}`;
+
 const unknownLine = (unknown: readonly Author[], branches: string): string => {
   const first = unknown[0];
   const example = first === undefined ? "" : `${first.name || "Name"} <their Crosscheck address> <${first.email}>`;
-  const count = unknown.length === 1 ? "1 commit address" : `${String(unknown.length)} commit addresses`;
+  const count =
+    unknown.length === 1 ? "1 commit address belongs" : `${String(unknown.length)} commit addresses belong`;
   return (
-    `${count} on ${branches} in the last ${String(DOCTOR_LANDED_AUTHORS_WINDOW_DAYS)} days ` +
-    `belong to nobody on the hub, so a stop for their landed changes names no work behind them: ` +
+    `${count} to nobody on the hub (${WHERE(branches)}), so a stop for their landed changes names ` +
+    `no work behind them: ` +
     `${listed(unknown)} — if they are teammates, map each in .mailmap to the address they use with ` +
     `Crosscheck, e.g. ${example}`
   );
@@ -86,7 +91,6 @@ export const checkLandedAuthors = async (repoRoot: string, hub: HubContext): Pro
     run([
       "log",
       "--no-merges",
-      `--since=${String(DOCTOR_LANDED_AUTHORS_WINDOW_DAYS)}.days`,
       `--max-count=${String(DOCTOR_LANDED_AUTHORS_MAX_COMMITS)}`,
       "--format=%aE%x00%aN",
       ...refs.map((ref) => ref.ref),
@@ -98,7 +102,7 @@ export const checkLandedAuthors = async (repoRoot: string, hub: HubContext): Pro
   }
   const authors = authorsOf(log, own?.toLowerCase() ?? null);
   if (authors.length === 0) {
-    return pass(`no commits by others on ${branches} in the last ${String(DOCTOR_LANDED_AUTHORS_WINDOW_DAYS)} days`);
+    return pass(`no commits by others ${WHERE(branches)}`);
   }
   const asked = authors.slice(0, LANDED_AUTHORS_MAX_EMAILS);
   // repoKey "" keeps this probe out of the sync record, like doctor's others.
@@ -114,8 +118,8 @@ export const checkLandedAuthors = async (repoRoot: string, hub: HubContext): Pro
   const unknown = asked.filter((author) => unknownSet.has(author.email.toLowerCase()));
   return unknown.length === 0
     ? pass(
-        `all ${String(asked.length)} commit authors on ${branches} in the last ` +
-          `${String(DOCTOR_LANDED_AUTHORS_WINDOW_DAYS)} days are known to the hub, so a stop can name their work`,
+        `all ${String(asked.length)} commit authors ${WHERE(branches)} are known to the hub, ` +
+          "so a stop can name their work",
       )
     : pass(unknownLine(unknown, branches));
 };

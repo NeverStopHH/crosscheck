@@ -284,8 +284,9 @@ That is the match (decision 6).
   - No match means no line. The stop never says "no reason recorded" (03
     §5.1), because a missing work context is not a missing reason.
 - **`doctor`: whom the hub does not know.** It collects the distinct author
-  addresses (after `.mailmap`) of commits on the landing branches in the last
-  90 days. Your own and bots' (`[bot]`) are left out. It asks the hub which
+  addresses (after `.mailmap`) of the landing branches' latest 500 commits.
+  That is a count, not a date window: a merged feature branch keeps its old
+  commit dates, so a window would miss exactly what just landed. Your own and bots' (`[bot]`) are left out. It asks the hub which
   ones belong to nobody, and names each with the `.mailmap` line to add. It
   answers PASS, because an outside contributor is no fault; the list is the
   help decision 7 asked for.

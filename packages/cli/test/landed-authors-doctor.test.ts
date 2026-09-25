@@ -120,7 +120,11 @@ describe("doctor's landed-change reasons line", () => {
     "says so when every author is known, so their stops can name their work",
     async () => {
       const s = await setup("lad-known");
-      await post(s.hubUrl, "/api/developers", ADMIN_TOKEN, { name: "Mike", email: MIKE_NOREPLY.email });
+      // Mike under both addresses he commits with: his own (the fixture's
+      // first commit) and GitHub's squash address, linked by an admin.
+      const created = await post(s.hubUrl, "/api/developers", ADMIN_TOKEN, { name: "Mike", email: "mike@example.com" });
+      const mikeId = ((await created.json()) as { data: { developer: { id: string } } }).data.developer.id;
+      await post(s.hubUrl, `/api/developers/${mikeId}/emails`, ADMIN_TOKEN, { email: MIKE_NOREPLY.email });
       await lands(s, MIKE_NOREPLY, "export const offset = 3;\n");
 
       const line = await checkLandedAuthors(s.repos.reader, hubFor(s));
