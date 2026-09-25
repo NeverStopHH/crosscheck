@@ -10,7 +10,11 @@ import {
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { EventsQuerySchema } from "../http/schemas.ts";
-import { developerAuth } from "../middleware/auth.ts";
+import {
+  bearerToken,
+  developerAuth,
+  isKeyStillCurrent,
+} from "../middleware/auth.ts";
 import { listEventsAfter } from "../services/events.ts";
 import type { EventView } from "../services/events.ts";
 import type { AppDeps, AppEnv, Clock } from "../types.ts";
@@ -74,13 +78,23 @@ export const eventsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     streamSSE(
       c,
       async (stream) => {
+        const developerId = c.get("developer").id;
+        const presented = bearerToken(c.req.header("Authorization")) ?? "";
         let cursor = parseEventCursor(c.req.header("Last-Event-ID"));
         let lastKeepAliveMs = deps.now().getTime();
         while (!stream.aborted) {
-          const batch = await listEventsAfter(deps.db, c.get("developer").id, {
+          const batch = await listEventsAfter(deps.db, developerId, {
             after: cursor,
             limit: EVENTS_MAX_LIMIT,
           });
+          // AFTER the read, BEFORE the write. A rotation commits its ledger
+          // event in the same transaction as the new key hash, so a batch
+          // that could hold anything from after the rotation was read after
+          // the hash changed — and this check sees that. The stream ends
+          // there; the old key reads nothing more.
+          if (!(await isKeyStillCurrent(deps, developerId, presented))) {
+            break;
+          }
           for (const event of batch) {
             await writeEventFrame(stream, event);
             cursor = event.id;

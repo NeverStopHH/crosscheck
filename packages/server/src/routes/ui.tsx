@@ -37,6 +37,7 @@ import {
 import {
   clearedSessionCookieHeader,
   sessionCookieHeader,
+  claimedSessionDeveloper,
   signSessionToken,
   verifySessionToken,
 } from "../ui/session.ts";
@@ -126,12 +127,10 @@ const uiSessionAuth = (deps: AppDeps): MiddlewareHandler<AppEnv> => {
     if (token === undefined) {
       return redirectToLogin(c);
     }
-    const developerId = verifySessionToken(
-      deps.uiSessionSecret,
-      token,
-      deps.now(),
-    );
-    if (developerId === null) {
+    // Claimed, loaded, THEN verified: the signature covers the developer's
+    // current key hash (ui/session.ts), so a rotated key's cookies fail here.
+    const claimed = claimedSessionDeveloper(token);
+    if (claimed === null) {
       return redirectToLogin(c);
     }
     const rows = await deps.db
@@ -139,14 +138,19 @@ const uiSessionAuth = (deps: AppDeps): MiddlewareHandler<AppEnv> => {
         id: developers.id,
         name: developers.name,
         email: developers.email,
+        apiKeyHash: developers.apiKeyHash,
       })
       .from(developers)
-      .where(eq(developers.id, developerId))
+      .where(eq(developers.id, claimed))
       .limit(1);
-    const developer = rows[0];
-    if (developer === undefined) {
+    const row = rows[0];
+    if (
+      row === undefined ||
+      verifySessionToken(deps.uiSessionSecret, token, deps.now(), row.apiKeyHash) !== row.id
+    ) {
       return redirectToLogin(c);
     }
+    const developer = { id: row.id, name: row.name, email: row.email };
     c.set("developer", developer);
     c.set("uiSessionToken", token);
     await next();
@@ -179,7 +183,7 @@ export const uiRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return c.html(<LoginPage error={LOGIN_INVALID_MESSAGE} />, 400);
     }
     const rows = await deps.db
-      .select({ id: developers.id })
+      .select({ id: developers.id, apiKeyHash: developers.apiKeyHash })
       .from(developers)
       .where(eq(developers.apiKeyHash, hashApiKey(apiKey)))
       .limit(1);
@@ -193,6 +197,7 @@ export const uiRoutes = (deps: AppDeps): Hono<AppEnv> => {
       deps.uiSessionSecret,
       developer.id,
       expiresAtMs,
+      developer.apiKeyHash,
     );
     c.header("Set-Cookie", sessionCookieHeader(token, isSecureTransport(c)));
     return c.redirect(FEED_PATH, 303);

@@ -529,6 +529,9 @@ export const GHOST_MAX_SHARED_SHOWN = 3;
 
 export const EVENT_KINDS = {
   DEVELOPER_CREATED: "developer_created",
+  // Ids and who did it only — never key material. A rotation is a team-level
+  // security fact (a leaked key was retired), so it belongs in the feed.
+  DEVELOPER_KEY_ROTATED: "developer_key_rotated",
   SESSION_STARTED: "session_started",
   SESSION_ENDED: "session_ended",
   WORK_CONTEXT_CREATED: "work_context_created",

@@ -107,7 +107,8 @@ describe("crosscheck doctor bun logging check", () => {
     // Assert
     expect(result.stdout).toContain("WARN  bun request logging");
     expect(result.stdout).toContain(join(repo, "bunfig.toml"));
-    expect(result.stdout).toContain("rotate the key");
+    // The remedy names the command that exists, not advice with no way to follow it
+    expect(result.stdout).toContain("rotate it with `crosscheck key rotate`");
   });
 
   test("warns when the debug logLevel sits in the user's home instead", async () => {

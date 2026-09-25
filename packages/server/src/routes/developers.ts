@@ -11,6 +11,7 @@ import {
   listDeveloperEmails,
   listDevelopers,
   removeDeveloperEmail,
+  rotateDeveloperKey,
 } from "../services/developers.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
@@ -46,6 +47,20 @@ export const developersRoutes = (deps: AppDeps): Hono<AppEnv> => {
       );
     }
     return ok(c, { developer: result.developer, apiKey: result.apiKey });
+  });
+
+  // A LOST OR LEAKED KEY whose owner cannot rotate it themselves
+  // (routes/keys.ts is the owner's path). The new key is returned once, to
+  // the admin, who hands it over out of band; the old one is dead now.
+  router.post("/:id/key", async (c) => {
+    const result = await rotateDeveloperKey(deps, {
+      developerId: c.req.param("id"),
+      by: "admin",
+    });
+    if (result.outcome !== "rotated") {
+      return fail(c, 404, "not_found", "no developer with this id");
+    }
+    return ok(c, { apiKey: result.apiKey });
   });
 
   router.get("/:id/emails", async (c) => {

@@ -10304,6 +10304,186 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "after the upgrade the hub canonicalises every touch, so a pin stored as ./src/x.ts meets none of them and suspect answers that nobody touched the surface",
   },
+  {
+    // Key rotation. The old key is dead when a rotation returns.
+    label: "a rotation leaves the old key valid",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "      .set({ apiKeyHash: hashApiKey(apiKey) })",
+    to: "      .set({ apiKeyHash: developers.apiKeyHash })",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "a leaked key keeps working after its owner rotated it, and the new key the hub handed out opens nothing",
+  },
+  {
+    // Key rotation. Two rotations racing on one old key produce one new key.
+    label: "two racing rotations both hand out a key",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "            : [eq(developers.apiKeyHash, hashApiKey(input.presentedKey))]),",
+    to: "            : []),",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "the loser walks away holding a key the winner's write overwrote a moment later, and locks that machine out",
+  },
+  {
+    // Key rotation. A web session dies with the key it was minted with.
+    label: "a web session survives the rotation of its key",
+    file: `${SERVER}/src/ui/session.ts`,
+    from: "  `${payload}\\n${apiKeyHash}`;",
+    to: "  `${payload}${apiKeyHash.slice(0, 0)}`;",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "somebody who logged in to the web UI with a leaked key stays logged in until the cookie expires, after the key was rotated",
+  },
+  {
+    // Key rotation. The ledger records a rotation, never a key.
+    label: "the event ledger stores the new key",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "      by: input.by,\n    });",
+    to: "      by: input.by,\n      apiKey,\n    });",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "every teammate's feed and every reader of /api/events receives a live key",
+  },
+  {
+    // Key rotation. A long-lived context retries only with a key that changed.
+    label: "a refused key retries even when nothing was rotated",
+    file: `${CORE}/src/http/client.ts`,
+    from: "  if (fresh === null || fresh === refusedKey) {",
+    to: "  if (fresh === null) {",
+    test: `${CORE}/test/hub-key-refresh.test.ts`,
+    because:
+      "every genuinely unknown key costs two requests, doubling a refused hub's load for nothing",
+  },
+  {
+    // Key rotation. A long-lived context retries with the rotated key.
+    label: "a long-lived context never picks up a rotated key",
+    file: `${CORE}/src/http/client.ts`,
+    from: "  return performRequest({ ...ctx, apiKey: fresh }, request);",
+    to: "  return result;",
+    test: `${CORE}/test/hub-key-refresh.test.ts`,
+    because:
+      "an ACP session keeps sending a dead key after a rotation, and none of its work reaches the team until the agent restarts",
+  },
+  {
+    // Key rotation. The ACP proxy reads the stored key on a refusal.
+    label: "the ACP proxy never looks for a rotated key",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        return fresh.apiKey;",
+    to: "        return null;",
+    test: `${ACP}/test/key-rotation-acp.test.ts`,
+    because:
+      "every capture after a rotation is refused for the rest of the agent session",
+  },
+  {
+    // Key rotation. A key in CROSSCHECK_API_KEY is never rotated silently.
+    label: "the CLI rotates a key it cannot store",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "  if (fromEnv !== undefined && !printKey) {",
+    to: "  if (fromEnv !== undefined && !printKey && false) {",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "the variable goes on holding a dead key and every agent on that machine is refused, with nobody told why",
+  },
+  {
+    // Key rotation. A person at a terminal, never an agent.
+    label: "an agent can rotate the key and read the new one",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "  if (!isInteractive()) {",
+    to: "  if (!isInteractive() && rest.length < 0) {",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "an agent's Bash call rotates the developer's key and prints a live key into its own transcript",
+  },
+  {
+    // Key rotation. The CLI saves the new key before it says done.
+    label: "the CLI rotates without saving the new key",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "      await saveConfig(home, { ...stored, apiKey: newKey });",
+    to: "      await saveConfig(home, { ...stored });",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "the old key is dead and the stored config still holds it: this machine is locked out by the command meant to protect it",
+  },
+  {
+    // Key rotation. A live event stream re-checks its key on every poll.
+    label: "an event stream outlives the rotation of its key",
+    file: `${SERVER}/src/routes/events.ts`,
+    from: "          if (!(await isKeyStillCurrent(deps, developerId, presented))) {",
+    to: "          if (!(await Promise.resolve(true))) {",
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "a leaked key keeps reading the team's live feed after its owner rotated it, for as long as the connection stays open",
+  },
+  {
+    // Key rotation. The feed tells an admin's rotation from the owner's.
+    label: "the feed credits an admin's rotation to the owner",
+    file: `${SERVER}/src/ui/pages/feed.tsx`,
+    from: '  entry.kind === EVENT_KINDS.DEVELOPER_KEY_ROTATED && entry.by === "admin"',
+    to: '  entry.kind === EVENT_KINDS.DEVELOPER_KEY_ROTATED && entry.by === "nobody"',
+    test: `${SERVER}/test/key-rotation.test.ts`,
+    because:
+      "the audit trail a teammate reads after a leak says the owner rotated a key that an admin rotated",
+  },
+  {
+    // Key rotation. The retry compares with the key the request carried.
+    label: "a rotated key read through a live getter never retries",
+    file: `${CORE}/src/http/client.ts`,
+    from: "  if (fresh === null || fresh === refusedKey) {",
+    to: "  if (fresh === null || fresh === ctx.apiKey) {",
+    test: `${CORE}/test/hub-key-refresh.test.ts`,
+    because:
+      "the ACP proxy's register, heartbeat and briefing calls each lose a request after every rotation",
+  },
+  {
+    // Key rotation. The ACP proxy takes only a key stored for its own hub.
+    label: "the ACP proxy sends a key stored for another hub",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          hubOrigin(fresh.stored.hubUrl) !== hubOrigin(config.hubUrl)",
+    to: "          false",
+    test: `${ACP}/test/key-rotation-acp.test.ts`,
+    because:
+      "a hub that answers 401 receives the key the developer stored for a different hub",
+  },
+  {
+    // Key rotation. The CLI sends a stored key only to its own hub.
+    label: "the CLI sends the stored key to whichever hub the environment names",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "  if (isStoredKeyForOtherHub) {",
+    to: "  if (isStoredKeyForOtherHub && false) {",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "another hub receives the key, and whatever key it answers with is saved as this developer's",
+  },
+  {
+    // Key rotation. A lost answer is not a refusal.
+    label: "the CLI says nothing was rotated when the answer was lost",
+    file: `${CLI}/src/cli/key.ts`,
+    from: "    return result(`the hub did not answer (${rotated.message}).\\n${MAYBE_ROTATED}`, EXIT_UNREACHABLE);",
+    to: "    return result(`the hub did not answer (${rotated.message}); nothing was rotated.`, EXIT_UNREACHABLE);",
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "a developer whose old key is already dead is told it still works, and learns otherwise from silent hooks",
+  },
+  {
+    // Key rotation. An environment key's holders are told to restart.
+    label: "an environment key's users are never told to restart",
+    file: `${CLI}/src/cli/key.ts`,
+    from: '    lines.push("", ENV_KEY_RESTART);',
+    to: '    lines.push("");',
+    test: `${CLI}/test/key-rotate.test.ts`,
+    because:
+      "every agent started with the old CROSSCHECK_API_KEY keeps sending a dead key, and its hooks fail silent",
+  },
+  {
+    // Key rotation. Learned identity merges onto the config as it is now.
+    label: "a hook's identity write puts back a rotated-away key",
+    file: `${CORE}/src/config/config.ts`,
+    from: "  const base = await readStoredConfig(config.home);",
+    to: "  const base = config.stored;",
+    test: `${CORE}/test/remember-developer.test.ts`,
+    because:
+      "a SessionStart hook running during `crosscheck key rotate` writes the dead key back, locking the machine out without a word",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -10369,6 +10549,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
@@ -10388,6 +10569,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
  * PRINTS: packages/connector-acp/test/injector.test.ts 4
+ * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
@@ -10459,6 +10641,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
+ * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
@@ -10481,6 +10664,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
+ * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 5
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
@@ -10530,6 +10714,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
+ * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6

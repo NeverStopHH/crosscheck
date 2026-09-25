@@ -107,6 +107,7 @@ const toFeedEntry = (
     branch: payloadString(event.payload, "branch"),
     kindLabel: payloadString(event.payload, "kind") ?? changedLabel(event.payload),
     statusLabel: payloadString(event.payload, "status"),
+    by: payloadString(event.payload, "by"),
     ageMs: Math.max(0, nowMs - Date.parse(event.createdAt)),
   };
 };

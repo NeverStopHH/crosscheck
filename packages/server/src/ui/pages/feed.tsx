@@ -40,6 +40,8 @@ export interface FeedEntry {
   readonly branch: string | null;
   readonly kindLabel: string | null;
   readonly statusLabel: string | null;
+  /** Who acted, when the event says (`developer_key_rotated`: self | admin). */
+  readonly by: string | null;
   readonly ageMs: number;
 }
 
@@ -50,6 +52,7 @@ export interface FeedEntry {
  */
 const EVENT_PHRASES: Readonly<Record<string, string>> = {
   [EVENT_KINDS.DEVELOPER_CREATED]: "joined the hub",
+  [EVENT_KINDS.DEVELOPER_KEY_ROTATED]: "rotated their API key",
   [EVENT_KINDS.SESSION_STARTED]: "started a session",
   [EVENT_KINDS.SESSION_ENDED]: "ended a session",
   [EVENT_KINDS.WORK_CONTEXT_CREATED]: "opened work context",
@@ -62,10 +65,21 @@ const UNKNOWN_KIND_PHRASE = "recorded activity";
 
 const UNNAMED_ACTOR = "A teammate";
 
+/**
+ * An admin rotating someone's key is not the owner rotating it, and the feed
+ * is the audit trail a teammate reads after a leak — so it says which.
+ */
+const ADMIN_KEY_ROTATION_PHRASE = "had their API key rotated by an admin";
+
+const phraseFor = (entry: FeedEntry): string =>
+  entry.kind === EVENT_KINDS.DEVELOPER_KEY_ROTATED && entry.by === "admin"
+    ? ADMIN_KEY_ROTATION_PHRASE
+    : (EVENT_PHRASES[entry.kind] ?? UNKNOWN_KIND_PHRASE);
+
 const FeedLine: FC<{ readonly entry: FeedEntry }> = ({ entry }) => (
   <li class="entry">
     <strong>{entry.actorName ?? UNNAMED_ACTOR}</strong>{" "}
-    {EVENT_PHRASES[entry.kind] ?? UNKNOWN_KIND_PHRASE}
+    {phraseFor(entry)}
     {entry.workContextId === null ? null : (
       <>
         {" "}
