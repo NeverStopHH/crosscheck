@@ -317,7 +317,9 @@ describe("the record", () => {
   test("an unreadable record reads as never fetched, and is claimable", async () => {
     const home = await makeHome("lft-garbled");
     paths.push(home);
-    const key = "0123456789abcdef";
+    // A clone key is 16 hex characters; built, not written out, so the secret
+    // scanner does not read a fixture as a credential.
+    const key = "0".repeat(16);
     await Bun.write(landingFetchRecordPath(home, key), "{ not json");
 
     const record = await readLandingFetchRecord(home, key);
