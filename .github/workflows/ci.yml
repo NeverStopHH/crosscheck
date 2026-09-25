@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 854
+    # PRINTS: 867
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -127,7 +127,7 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
-    # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 1
+    # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor.ts 41
     # PRINTS: packages/cli/src/cli/key.ts 6
@@ -220,9 +220,9 @@ jobs:
     # PRINTS: landed-changes/fetch-state.ts 8
     # PRINTS: landed-changes/fetch-switch.ts 4
     # PRINTS: landed-changes/fetch-trigger.ts 3
-    # PRINTS: landed-changes/fetch-worker.ts 13
+    # PRINTS: landed-changes/fetch-worker.ts 20
     # PRINTS: landed-changes/git-queries.ts 11
-    # PRINTS: landed-changes/landing-branches.ts 3
+    # PRINTS: landed-changes/landing-branches.ts 6
     # PRINTS: landed-changes/probe.ts 38
     # PRINTS: landed-changes/working-days.ts 3
     # PRINTS: mcp/render-intent-chain.ts 1
@@ -374,7 +374,7 @@ jobs:
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
     # PRINTS: doctor-landed.ts 2
-    # PRINTS: doctor-landing-fetch.ts 1
+    # PRINTS: doctor-landing-fetch.ts 4
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor.ts 49
     # PRINTS: end-session.ts 2
@@ -389,7 +389,7 @@ jobs:
     # PRINTS: fetch-state.ts 8
     # PRINTS: fetch-switch.ts 4
     # PRINTS: fetch-trigger.ts 3
-    # PRINTS: fetch-worker.ts 13
+    # PRINTS: fetch-worker.ts 20
     # PRINTS: file-edit.ts 3
     # PRINTS: file-ref.ts 5
     # PRINTS: fix-diff.ts 7
@@ -413,7 +413,7 @@ jobs:
     # PRINTS: intent.ts 1
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
-    # PRINTS: landing-branches.ts 3
+    # PRINTS: landing-branches.ts 6
     # PRINTS: latency.ts 1
     # PRINTS: lock.ts 2
     # PRINTS: noise.ts 5
