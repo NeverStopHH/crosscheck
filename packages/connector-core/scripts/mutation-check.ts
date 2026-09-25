@@ -11723,8 +11723,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // The connector side: asked only with a stop, and only with what is left.
     label: "the stop never asks for its why",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  const asking = found.landed === null ? Promise.resolve([]) : landedWhyFor(ctx, budget, file, found.landed);",
-    to: "  const asking = Promise.resolve([]);",
+    from: "      return landed === null ? [] : landedWhyFor(ctx, budget, edited.file, landed);",
+    to: "      return [];",
     test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
     because: "the stop names commits and never the teammate work behind them",
   },
@@ -11797,7 +11797,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // Step 3, review round 1: what makes a match probable.
     label: "the why offers a session months old",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "        sql`coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) >= ${activeSince.toISOString()}::timestamptz`,",
+    from: "        sql`(CASE WHEN ${agentSessions.reapedAt} IS NOT NULL THEN ${agentSessions.lastHeartbeatAt} ELSE coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) END) >= ${activeSince.toISOString()}::timestamptz`,",
     to: "        sql`true`,",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a commit made outside any session is explained by work from half a year ago",
@@ -11837,8 +11837,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a commit time with an offset is refused",
     file: "packages/schema/src/landed-context.ts",
-    from: "  committedAt: z.iso.datetime({ offset: true }),",
-    to: "  committedAt: z.iso.datetime(),",
+    from: "  committedAt: z.iso.datetime({ offset: true }).refine(isCommitYear, \"a commit time in a year the hub can hold\"),",
+    to: "  committedAt: z.iso.datetime().refine(isCommitYear, \"a commit time in a year the hub can hold\"),",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a connector that writes local time loses every why",
   },
@@ -11857,6 +11857,63 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "    return [{ sha: commit.sha, authorEmail: commit.authorEmail, committedAt: commit.committedAt.toISOString() }];",
     test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
     because: "one odd author address costs every other commit in the stop its why",
+  },
+  {
+    // Step 3, review round 2.
+    label: "the why waits for the live tripwire before it is asked",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const why = probing\n    .then((probed) => {",
+    to: "  const why = Promise.all([live, probing])\n    .then(([, probed]) => probed)\n    .then((probed) => {",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "on a hub across a network the live call eats the spare, and the why is never asked",
+  },
+  {
+    label: "a follow-up within the flush hour takes the credit",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "      sql`coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false) DESC`,",
+    to: "      sql`1`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "work touched half an hour after the commit is named as the work behind it",
+  },
+  {
+    label: "a session reaped late counts from the reap",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        sql`(CASE WHEN ${agentSessions.reapedAt} IS NOT NULL THEN ${agentSessions.lastHeartbeatAt} ELSE coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) END) >= ${activeSince.toISOString()}::timestamptz`,",
+    to: "        sql`coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) >= ${activeSince.toISOString()}::timestamptz`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "after hub downtime a session quiet for weeks is offered as fresh work",
+  },
+  {
+    label: "a just-ended opted-out session is hidden as if live",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "          isNotNull(agentSessions.endedAt),",
+    to: "          sql`false`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "an opted-out teammate's finished work goes unnamed for the presence window after every session",
+  },
+  {
+    label: "any commit year reaches the hub's arithmetic",
+    file: "packages/schema/src/landed-context.ts",
+    from: "  return year >= MIN_COMMIT_YEAR && year <= MAX_COMMIT_YEAR;",
+    to: "  return year >= 0;",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a commit dated year 1 or 9999 answers 500 and costs its neighbours their why",
+  },
+  {
+    label: "a commit time past what a Date holds is kept as Invalid",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "    ? new Date(Math.min(Number(epochSeconds) * 1000, MAX_DATE_MS))",
+    to: "    ? new Date(Number(epochSeconds) * 1000)",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "one commit with a far-future time throws while the stop is rendered, and the stop is lost",
+  },
+  {
+    label: "a work start in the future is printed as an age",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return Number.isNaN(ms) || ms > now.getTime()\n    ? \"started at an unknown time\"",
+    to: "  return Number.isNaN(ms)\n    ? \"started at an unknown time\"",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "a hub clock ahead of the reader's prints a negative age",
   },
 ];
 
@@ -11973,7 +12030,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
- * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
@@ -12031,7 +12088,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
- * PRINTS: packages/connector-core/test/landed-why-render.test.ts 4
+ * PRINTS: packages/connector-core/test/landed-why-render.test.ts 5
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
  * PRINTS: packages/connector-core/test/landing-branches.test.ts 6
  * PRINTS: packages/connector-core/test/landing-fetch-prompts.test.ts 6
@@ -12107,7 +12164,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
- * PRINTS: packages/server/test/landed-context.test.ts 16
+ * PRINTS: packages/server/test/landed-context.test.ts 20
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
