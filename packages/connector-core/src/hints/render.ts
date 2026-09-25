@@ -142,7 +142,7 @@ const solvedLabel = (context: HintContext, now: Date): string => {
 };
 
 /**
- * An age, or "an unknown time" — and a FUTURE instant counts as unknown.
+ * An age, or "at an unknown time" — and a FUTURE instant counts as unknown.
  *
  * The clamp at zero printed a confident "0s ago" for any timestamp ahead of
  * the reader's clock, which is a guess dressed as a measurement. These
@@ -154,7 +154,7 @@ const solvedLabel = (context: HintContext, now: Date): string => {
 const ageLabel = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
   return Number.isNaN(ms) || ms > now.getTime()
-    ? "an unknown time"
+    ? "at an unknown time"
     : `${formatAge(now.getTime() - ms)} ago`;
 };
 
@@ -512,6 +512,14 @@ const commitBlock = (
   ];
 };
 
+/** "started 3h ago", or "started at an unknown time" — never a guess. */
+const sessionStartLabel = (iso: string | undefined, now: Date): string => {
+  const ms = iso === undefined ? Number.NaN : Date.parse(iso);
+  return Number.isNaN(ms) || ms > now.getTime()
+    ? "started at an unknown time"
+    : `started ${formatAge(now.getTime() - ms)} ago`;
+};
+
 /**
  * The teammate work behind the named commits (docs/1.0/landed-changes.md,
  * step 3): the live half's shape — a pointer, then the intent — once per
@@ -521,14 +529,6 @@ const commitBlock = (
  * (pointers proactive, substance pulled). A match for a commit the stop did
  * not name is not printed, whatever the hub sent.
  */
-/** "started 3h ago", or "started at an unknown time" — never a guess. */
-const sessionStartLabel = (iso: string | undefined, now: Date): string => {
-  const ms = iso === undefined ? Number.NaN : Date.parse(iso);
-  return Number.isNaN(ms) || ms > now.getTime()
-    ? "started at an unknown time"
-    : `started ${formatAge(now.getTime() - ms)} ago`;
-};
-
 const whyLines = (
   why: readonly LandedContextMatch[],
   input: { readonly landed: LandedChanges; readonly file: string; readonly now: Date; readonly liveContextId: string | null },

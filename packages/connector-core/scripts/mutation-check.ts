@@ -11797,7 +11797,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // Step 3, review round 1: what makes a match probable.
     label: "the why offers a session months old",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "        sql`(CASE WHEN ${agentSessions.reapedAt} IS NOT NULL THEN ${agentSessions.lastHeartbeatAt} ELSE coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) END) >= ${activeSince.toISOString()}::timestamptz`,",
+    from: "        sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,",
     to: "        sql`true`,",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a commit made outside any session is explained by work from half a year ago",
@@ -11876,12 +11876,12 @@ export const MUTATIONS: readonly Mutation[] = [
     because: "work touched half an hour after the commit is named as the work behind it",
   },
   {
-    label: "a session reaped late counts from the reap",
+    label: "a session counts from when the hub received its end",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "        sql`(CASE WHEN ${agentSessions.reapedAt} IS NOT NULL THEN ${agentSessions.lastHeartbeatAt} ELSE coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) END) >= ${activeSince.toISOString()}::timestamptz`,",
+    from: "        sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,",
     to: "        sql`coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) >= ${activeSince.toISOString()}::timestamptz`,",
     test: `${SERVER}/test/landed-context.test.ts`,
-    because: "after hub downtime a session quiet for weeks is offered as fresh work",
+    because: "after hub downtime, or an end deferred through the spool, a session quiet for weeks is offered as fresh work",
   },
   {
     label: "a just-ended opted-out session is hidden as if live",

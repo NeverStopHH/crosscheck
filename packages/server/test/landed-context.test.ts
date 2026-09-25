@@ -331,6 +331,20 @@ describe("POST /api/landed/context", () => {
     expect(answer.matches).toEqual([]);
   });
 
+  test("an end the hub received days late is not a sign of life", async () => {
+    // Mike's last heartbeat was at T0; his SessionEnd was deferred through
+    // the spool and reached the hub six days later. The commit came at T0+35d.
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike_quiet", context: "wc_quiet", title: "Went quiet" });
+    t.harness.clock.advanceSeconds(6 * 24 * HOUR_S);
+    const ended = await t.harness.app.request("/api/sessions/ses_mike_quiet/end", jsonRequest("POST", t.mike.apiKey, {}));
+    expect(ended.status).toBe(200);
+
+    const answer = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(35 * 24 * HOUR_S))]);
+
+    expect(answer.matches).toEqual([]);
+  });
+
   test("an opted-out teammate's session that has just ENDED is published work, not presence", async () => {
     const t = await team();
     await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });

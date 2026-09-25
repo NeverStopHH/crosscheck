@@ -23,11 +23,12 @@ const MAX_EMAIL_CHARS = 320;
 const MAX_PATH_CHARS = 4096;
 const MAX_REPO_CHARS = 512;
 /**
- * Years a commit time may name. git takes any; past these the hub's own
- * arithmetic (thirty days back, five minutes on) leaves what the database
- * can hold, and the whole question failed with it.
+ * Years a commit time may name, in UTC. git takes any time from its epoch
+ * on; far past these the hub's own arithmetic (thirty days back, five
+ * minutes on) leaves what the database or an ISO string can hold, and the
+ * whole question failed with it.
  */
-const MIN_COMMIT_YEAR = 1971;
+const MIN_COMMIT_YEAR = 1970;
 const MAX_COMMIT_YEAR = 9998;
 
 const isCommitYear = (iso: string): boolean => {

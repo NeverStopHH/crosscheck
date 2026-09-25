@@ -277,11 +277,13 @@ That is the match (decision 6).
   most, so one busy author cannot crowd out another commit's match): the
   commit author's work context in this repo that targeted this file, in its
   one canonical spelling. The work context counts only if its session
-  - showed a last sign of life within the 30 days before the commit (its
-    explicit end, else its last heartbeat, also when the reaper ended it
-    late). That is long enough for a pull request that waited in review
+  - was still active, meaning it sent a heartbeat, within the 30 days before
+    the commit. That is long enough for a pull request that waited in review
     before its squash, whose commit time is when it landed, and short enough
-    that a months-old session is not offered for a commit made outside any;
+    that a months-old session is not offered for a commit made outside any.
+    The heartbeat is used, never the time the hub received the session's
+    end: after a hub outage, or for an end deferred through the spool, that
+    can be weeks later;
   - started no later than five minutes after the commit. The session's
     start is the hub's clock and the commit time the author's laptop, so
     the five minutes absorb clock drift. The session's start is used, not
@@ -343,6 +345,15 @@ Known limits of step 3:
   commit, that session's work is named, with its age.
 - A pull request that waited in review for more than 30 days before its
   squash gets no why.
+- "Recorded an edit by the commit" is measured by when the edit reached the
+  hub, because the hub keeps no author-side time for an edit. A session
+  whose edits arrived more than five minutes after the commit (a laptop
+  offline, a hub down) can lose to an older session of the same person on
+  the file. That older one prints its age, so the mistake shows. The other
+  order would hide a worse mistake: a follow-up begun just before the
+  commit taking the credit while looking current. The fix is an edit time
+  on the author's own clock (the record's `ts`) stored with each target,
+  which needs a migration of its own.
 - `Co-authored-by` trailers are not read. A commit gets its author's work
   only.
 - Cursor and ACP have no pre-edit stop, as in step 1.

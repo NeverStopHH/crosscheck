@@ -8,7 +8,7 @@
  * - a work context of the commit's author (the address mapped through
  *   `developer_emails`, aliases an admin linked included) that targeted this
  *   file (in its one canonical spelling, as ingest stores it) in this repo;
- * - from a session that was still ACTIVE within LANDED_WHY_WINDOW_DAYS
+ * - from a session still ACTIVE (a heartbeat) within LANDED_WHY_WINDOW_DAYS
  *   before the commit and STARTED no later than it (plus a clock slack: the
  *   start is the hub's clock, the commit time the author's laptop). The
  *   session's start, not when an edit reached the hub — an edit is recorded
@@ -18,9 +18,10 @@
  *   (within the clock slack), then one that recorded it within the flush
  *   slack after (a spool that flushed late), then any, and within each the
  *   latest start.
- * A session's last sign of life is its explicit end, or its last heartbeat —
- * also for a session the reaper ended: `ended_at` is then the REAP, which
- * after hub downtime can be weeks after the session went quiet.
+ * A session's last sign of life is its last HEARTBEAT, never `ended_at`:
+ * that is when the hub RECEIVED the end — a reap after hub downtime, or a
+ * SessionEnd deferred through the spool for up to a week — which can be
+ * weeks after the session went quiet.
  * The connector says "work on this file before it landed", with the work's
  * age, never "the reason for this commit".
  *
@@ -120,7 +121,7 @@ const matchFor = async (
         eq(developerEmails.email, lowered(commit.authorEmail)),
         ne(agentSessions.developerId, callerDeveloperId),
         lte(agentSessions.startedAt, startedBy),
-        sql`(CASE WHEN ${agentSessions.reapedAt} IS NOT NULL THEN ${agentSessions.lastHeartbeatAt} ELSE coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) END) >= ${activeSince.toISOString()}::timestamptz`,
+        sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,
         notMutedCondition(callerDeveloperId, agentSessions.developerId),
         // Presence opt-out hides a LIVE session's work only.
         or(

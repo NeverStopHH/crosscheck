@@ -35,9 +35,6 @@ export const landedWhyFor = async (
   landed: LandedChanges,
 ): Promise<readonly LandedContextMatch[]> => {
   const commits = namedLandedCommits(landed).flatMap((commit) => {
-    if (Number.isNaN(commit.committedAt.getTime())) {
-      return [];
-    }
     const parsed = LandedContextCommitSchema.safeParse({
       sha: commit.sha,
       authorEmail: commit.authorEmail,
@@ -50,8 +47,11 @@ export const landedWhyFor = async (
     return [];
   }
   try {
+    // repoKey "": the why is an extra read, and it keeps out of the sync
+    // record — which a request still in flight after its hook returned would
+    // otherwise write into a home nobody expects it in.
     const result = await getLandedContexts(
-      { ...ctx.hub, timeoutMs },
+      { ...ctx.hub, timeoutMs, repoKey: "" },
       { repo: ctx.identity.repoId, path: file, commits },
     );
     return result.ok ? result.data : [];

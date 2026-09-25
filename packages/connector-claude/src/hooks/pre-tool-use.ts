@@ -269,10 +269,12 @@ const NO_REASONS: Reasons = { teammate: null, landed: null };
 
 /**
  * Asks only the questions this session has not been stopped for yet, in
- * parallel, and neither waits on the other: the hub call is bounded by its
- * own timeout, the landed probe by its own deadline — never longer than one
- * hub call, so the live ask keeps the budget it always had — and a failure
- * of either is silence for that half only.
+ * parallel, and neither waits on the other: the live tripwire's hub call is
+ * bounded by its own timeout, the landed probe by its own deadline — never
+ * longer than one hub call, so the live ask keeps the budget it always had —
+ * and a failure of either is silence for that half only. The moment the
+ * probe finds a landed change, the second hub call, its why, starts beside
+ * them (`why`, bounded by what the budget spares; hooks/landed-why.ts).
  */
 const findReasons = async (
   ctx: HookContext,

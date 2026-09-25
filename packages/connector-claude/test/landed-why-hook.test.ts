@@ -8,7 +8,7 @@
  * before it landed, with its intent, one get_diagnosis away from the rest.
  *
  * Pinned here: the real hub's match reaches the stop; the hub is asked only
- * when there IS a stop, after it is booked; a slow hub costs the why and
+ * when there IS a stop, the moment git answers; a slow hub costs the why and
  * never the stop or the hook's budget; an old hub (no such route) and an
  * author the hub does not know cost the why only; a match for a commit the
  * stop did not name is not printed.
@@ -351,7 +351,8 @@ describe("the hub is asked only when there is a stop, and never costs it", () =>
       const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, "k")));
       const elapsed = performance.now() - started;
 
-      expect(hub.contextCalls()).toBe(1);
+      // Asked once — or not at all, on a machine whose git spent the spare.
+      expect(hub.contextCalls()).toBeLessThanOrEqual(1);
       expect(reason).toContain("«Fix line offset» by Mike, on staging");
       expect(reason).not.toContain("before it landed (");
       expect(elapsed).toBeLessThan(HOOK_CEILING_MS);
@@ -385,15 +386,16 @@ describe("the hub is asked only when there is a stop, and never costs it", () =>
   test(
     "the why is asked when GIT answers, not after a slow live tripwire too",
     async () => {
-      // The live half takes 340 ms of a 400 ms timeout. A why asked only
-      // after it would find almost nothing to spare; asked when the probe
-      // answered, it has room — and this hub answers at once.
-      const hub = startFakeHub({ liveAfterMs: 340 });
+      // With a 1500 ms hub timeout the spare is 1500 ms minus what came
+      // before. The live half takes 1400 ms: a why asked only after it would
+      // have under 100 ms, and this hub needs 100. Asked when git answered,
+      // it has over a second — on a slow machine's git too.
+      const hub = startFakeHub({ liveAfterMs: 1400, delayMs: 100 });
       const fix = await fixture("why-early", hub.url);
       await mikeLands(fix.repos);
       await readerFetches(fix.repos);
 
-      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), envFor(fix, hub.url, "k")));
+      const reason = reasonOf(await runHook("pre-tool-use", editPayload(fix.repos.reader), roomyEnvFor(fix, hub.url, "k")));
 
       expect(reason).toContain("«Fix line offset» by Mike, on staging");
       expect(reason).toContain("before it landed (");
