@@ -758,6 +758,28 @@ export const WELL_KNOWN_LANDING_BRANCHES: readonly string[] = ["staging", "devel
  * PRINTS: true
  */
 export const LANDED_PROBE_BUDGET_MS = 300;
+/**
+ * The background fetch of the landing branches (step 2): at most one per
+ * clone per interval, however many hooks ask. A fetch is one or two network
+ * round trips, so five minutes keeps a merged change invisible for at most
+ * that long, at a cost a team of ten does not notice on its git host.
+ */
+export const LANDING_FETCH_INTERVAL_MS = 5 * 60_000;
+/** Asking origin which landing branches it has: one round trip. */
+export const LANDING_LS_REMOTE_TIMEOUT_MS = 30_000;
+/** The fetch itself; generous, because nobody waits for it. */
+export const LANDING_FETCH_TIMEOUT_MS = 120_000;
+/** The worker's local git questions (origin, shallow, ssh command, key). */
+export const LANDING_FETCH_LOCAL_GIT_TIMEOUT_MS = 5000;
+/** One person's off switch; the team's is `"landingFetch": false`. */
+export const LANDING_FETCH_ENV = "CROSSCHECK_LANDING_FETCH";
+export const LANDING_FETCH_OFF = "off";
+/**
+ * Failures in a row before `doctor` warns. One or two are a laptop on a
+ * train; three in a row, at least ten minutes apart, is a fetch that needs a
+ * credential it cannot ask for.
+ */
+export const DOCTOR_LANDING_FETCH_FAILURES_WARN = 3;
 /** The solved staleness probe is one git call at MCP pull time, bounded. */
 export const STALENESS_GIT_TIMEOUT_MS = 250;
 /** Most referenced files one staleness probe hands git as pathspecs. */

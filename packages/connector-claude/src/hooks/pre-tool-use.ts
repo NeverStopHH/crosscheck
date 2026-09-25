@@ -86,6 +86,7 @@ import { findLandedChanges, worthStopping } from "@crosscheck/connector-core/lan
 import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
 import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
+import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
@@ -143,10 +144,7 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
-export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
-  if (!isEditTool(ctx.payload.tool_name)) {
-    return "";
-  }
+const askBeforeEdit = async (ctx: HookContext): Promise<string> => {
   const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
   if (state === null) {
     return "";
@@ -229,6 +227,18 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
     await recordTripwireAsk(ctx, state, won.teammate);
   }
   return askOutput(ctx, reason);
+};
+
+export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
+  if (!isEditTool(ctx.payload.tool_name)) {
+    return "";
+  }
+  // An edit also asks for the background fetch of the landing branches
+  // (hooks/landing-fetch.ts): an agent can work for an hour on one prompt,
+  // and the stop only sees what the clone has fetched. Beside the stop, not
+  // before it — the fetch serves the NEXT edit and must cost this one nothing.
+  const [output] = await Promise.all([askBeforeEdit(ctx), requestLandingFetchFor(ctx)]);
+  return output;
 };
 
 interface Reasons {

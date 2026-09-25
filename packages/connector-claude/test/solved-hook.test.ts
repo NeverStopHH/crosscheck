@@ -250,6 +250,10 @@ const fixture = async (
       CROSSCHECK_HUB_URL: hub.url,
       CROSSCHECK_API_KEY: "test-key",
       CROSSCHECK_TIMEOUT_MS: "2000",
+      // origin is a real host here and origin/main is set by hand, so the
+      // background landing fetch would reach out to it; its own tests are
+      // landing-fetch-hook.test.ts.
+      CROSSCHECK_LANDING_FETCH: "off",
     },
   };
 };

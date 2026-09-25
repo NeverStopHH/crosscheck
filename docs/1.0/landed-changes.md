@@ -92,7 +92,8 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
 - A shallow clone answers "unknown" (its boundary commit reads as touching
   every file) and `doctor` warns. A blobless partial clone is probed without
   patch identity, since that would need the network.
-- Every git call is bounded, non-interactive and never fetches, at most
+- Every git call the probe makes is bounded, non-interactive and never
+  fetches (fetching is a separate background process, below), at most
   eight at once; the whole probe has a deadline no longer than one hub call.
   A slow or broken probe means no warning, never a blocked edit.
 - Only an answer that is COMPLETE and found NOTHING is cached — keyed on the file, HEAD,
@@ -109,9 +110,78 @@ author, so the warning can say "Mike changed this, and here is why" instead of
 only "a commit touched this file".
 
 **Your clone only knows what it has fetched.** A change merged after your last
-fetch is invisible to git. A later step fetches the landing branches in the
-background (remote-tracking refs only; never your working tree or your local
-branches), rate-limited and non-interactive, with an off switch.
+fetch is invisible to git, so step 2 fetches the landing branches in the
+background.
+
+## Fetching the landing branches (step 2)
+
+The most common sequential conflict is the one step 1 cannot see: Mike merged
+an hour ago, and you have not run `git fetch` since this morning. So the
+landing branches are fetched in the background. This is on by default, can be
+switched off, and never makes anything wait.
+
+- **When.** On session start, on each prompt and before each edit, at most
+  once every five minutes per clone. Worktrees of one clone share the
+  five minutes, because they share the refs. The hook books the attempt under
+  a lock and then starts a detached process (book, then start, like every
+  other worker here), so two hooks never fetch twice. The hook never waits
+  for the network, so the fetch serves the *next* edit, not the one that
+  triggered it.
+- **What it touches: `refs/remotes/origin/<landing branch>`, nothing else.**
+  Origin is asked which landing branches it has (`git ls-remote`, one round
+  trip, because a named branch that origin lacks would fail the whole fetch).
+  Then:
+  `git fetch --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance origin +refs/heads/<b>:refs/remotes/origin/<b> …`.
+  The fetch never touches local branches, the working tree, the index, tags,
+  submodules, gc, or `FETCH_HEAD`. `FETCH_HEAD` matters most: your own
+  `git pull` reads it between its fetch and its merge. It never prunes
+  either. The refspecs name only branches origin has, so there is nothing to
+  prune (measured: with `fetch.prune` and `fetch.pruneTags` on, a local tag
+  survives), and `--no-prune` stays as a second guard for a future refspec
+  that is not so narrow. The landing branches are chosen by step 1's rule,
+  applied to origin's branches instead of the clone's, so the fetch and the
+  stop cannot disagree about which branches matter. A single-branch clone
+  gains the remote-tracking refs it did not have, which is the point.
+- **It can never ask for anything.** It runs in its own session with no
+  controlling terminal. This was measured: a child that a hook starts
+  normally can open `/dev/tty`, and ssh would ask for a key passphrase right
+  on the agent's screen. On top of that it sets:
+  - `GIT_TERMINAL_PROMPT=0`;
+  - `GIT_ASKPASS=false`, which overrides an editor's askpass that would open a
+    dialog;
+  - `SSH_ASKPASS_REQUIRE=never`;
+  - `GCM_INTERACTIVE=never`;
+  - `ssh -o BatchMode=yes`, unless you set your own ssh command
+    (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`). Yours is kept, and
+    without a terminal it cannot ask either.
+
+  So only credentials that work silently are used: an ssh agent, a key with
+  no passphrase, or a credential helper holding a token. `ls-remote` is
+  bounded at 30 s and the fetch at 120 s.
+- **Off switches.** `"landingFetch": false` in `.crosscheck.json` switches it
+  off for the team, `CROSSCHECK_LANDING_FETCH=off` for one person, and
+  `"landingBranches": []` switches off both the stop and the fetch. A shallow
+  clone, where the stop is silent anyway, is not fetched, and neither is a
+  clone without `origin`.
+- **Recorded, and `doctor` says so.** One small file per clone lives in
+  Crosscheck's state directory, never inside the repo. It holds the last
+  attempt, the last success, the branches fetched and the failures in a row.
+  `doctor` shows how old the last fetch is. After three failures in a row it
+  warns: run `git fetch origin` to see why, or switch the fetch off. The
+  stored reason is Crosscheck's own words ("did not finish within 120 s"),
+  never git's output, which can carry a URL with a token in it.
+
+Known limits of step 2:
+
+- The first edit after a teammate lands can come before the fetch has
+  finished, because nothing waits for it. The next edit sees the change.
+- If your own `git fetch` or `git pull` runs at the same moment, it can fail
+  on a ref lock ("cannot lock ref"); run it again. An editor's auto-fetch has
+  the same race.
+- git older than 2.29 has no `--no-write-fetch-head`, so the fetch fails
+  there, and `doctor` says so after three tries.
+- Only `origin`, as in step 1. Cursor and ACP have no pre-edit stop, so they
+  do not fetch either.
 
 ## Build order
 

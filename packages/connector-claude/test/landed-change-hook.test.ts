@@ -100,6 +100,10 @@ const fixture = async (label: string, hubUrl?: string): Promise<Fixture> => {
       CROSSCHECK_HUB_URL: url,
       CROSSCHECK_API_KEY: "test-key",
       TZ: "Europe/Berlin",
+      // These tests pin the STOP against a clone the test fetches itself;
+      // the background fetch moving refs mid-test would make them race it.
+      // It is pinned in landing-fetch-hook.test.ts.
+      CROSSCHECK_LANDING_FETCH: "off",
     },
   };
 };

@@ -46,6 +46,7 @@ import {
   writePresenceCache,
 } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
+import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const INITIAL_STATUS = "analyzing";
@@ -215,6 +216,11 @@ export const handleSessionStart = async (
   budget: HookBudget,
 ): Promise<string> => {
   const now = ctx.now();
+  // The background fetch of the landing branches (hooks/landing-fetch.ts)
+  // starts FIRST and is awaited last: its "is one due?" check overlaps the
+  // register round trip instead of adding to it, and it does not depend on
+  // the hub answering.
+  const landingFetch = requestLandingFetchFor(ctx);
   // Detached-aware (trial finding #15): on a worktree session this is up to
   // two bounded git calls BEFORE the register round trip — see
   // HEAD_LABEL_GIT_TIMEOUT_MS for why they fit the SessionStart budget.
@@ -439,6 +445,7 @@ export const handleSessionStart = async (
   await reapStaleSessionStates(ctx.config.home, now, {
     keepHostSessionKey: ctx.payload.session_id,
   });
+  await landingFetch;
 
   if (briefing.length === 0) {
     return "";
