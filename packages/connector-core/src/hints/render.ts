@@ -31,9 +31,12 @@ import {
 } from "@crosscheck/schema";
 
 import {
+  LANDED_RECENT_WORKING_DAYS,
+  MAX_LANDED_COMMITS_SHOWN,
   MAX_WORK_CONTEXT_TITLE_CHARS,
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
+import type { LandedChanges, LandedCommit } from "../landed-changes/probe.ts";
 import { renderIntent } from "../briefing/intent.ts";
 
 import type { EvidenceAxes } from "@crosscheck/schema";
@@ -453,22 +456,13 @@ export const renderSolvedHint = (
   return line === null ? "" : fitHint([SOLVED_HINT_HEADER, line]);
 };
 
-/**
- * The PreToolUse ask-reason: three factual lines, no imperative, and the
- * escalation ladder stops at "ask" — nothing in this module or its caller can
- * emit a different permission decision (hooks/pre-tool-use.ts pins that).
- */
-export const renderTripwireReason = (
+/** A live teammate session on the file: three factual lines, no imperative. */
+const liveTripwireLines = (
   session: TripwireSession,
   repoRelativeFile: string,
   now: Date,
-  /**
-   * How far the archive behind this ask reaches (03 §3.5). No cap applies to
-   * this surface — it is three or four short lines on a PreToolUse ask — so
-   * the note is appended outright rather than fitted.
-   */
-  coverage: CoverageRecord = UNKNOWN_COVERAGE,
-): string => {
+  coverage: CoverageRecord,
+): readonly string[] => {
   const who = authorLabel(session.developerName);
   const overlapLine =
     `crosscheck: ${who} has an active session on branch ${bare(session.branch)} ` +
@@ -481,6 +475,126 @@ export const renderTripwireReason = (
     contextLine,
     ...intentLines(session.workContextIntent),
     ...(note === null ? [] : [note]),
-    QUOTED_DATA_NOTICE,
-  ].join("\n");
+  ];
 };
+
+const branchList = (branches: readonly string[]): string =>
+  branches.map((branch) => bare(branch)).join(" and ");
+
+/** `- 0dcfc4e «subject» by Mike, <trailer>` — subject and author are theirs. */
+const landedCommitLine = (commit: LandedCommit, trailer: string): string =>
+  `- ${safeId(commit.shortSha)} ${quoted(commit.subject, MAX_WORK_CONTEXT_TITLE_CHARS)} ` +
+  `by ${authorLabel(commit.authorName)}, ${trailer}`;
+
+/**
+ * The first MAX_LANDED_COMMITS_SHOWN commits, then a count of the rest — "or
+ * more" when the probe stopped reading before it ran out — then the one
+ * command that shows exactly the commits named, so the stop is one command
+ * away from its evidence (written bare: no renderer here emits a backtick).
+ */
+const commitBlock = (
+  commits: readonly LandedCommit[],
+  line: (commit: LandedCommit) => string,
+  options: { readonly isPartial: boolean; readonly seeLabel: string },
+): readonly string[] => {
+  const shown = commits.slice(0, MAX_LANDED_COMMITS_SHOWN);
+  const rest = commits.length - shown.length;
+  const more = options.isPartial ? "or more" : "more";
+  const restLine =
+    rest > 0 ? [`(+${String(rest)} ${more})`] : options.isPartial ? ["(and possibly more)"] : [];
+  return [
+    ...shown.map(line),
+    ...restLine,
+    `${options.seeLabel}: git show ${shown.map((commit) => safeId(commit.shortSha)).join(" ")}`,
+  ];
+};
+
+/**
+ * Landed changes to the file (docs/1.0/landed-changes.md): the ones this
+ * checkout is MISSING first — they are what an edit can undo — then the
+ * recent ones it already has. The author's email is the probe's matching key
+ * and is never printed.
+ */
+const landedLines = (landed: LandedChanges, repoRelativeFile: string, now: Date): readonly string[] => {
+  const path = bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS);
+  const missing =
+    landed.missing.length === 0
+      ? []
+      : [
+          `crosscheck: ${path} has landed changes your checkout does not contain yet; ` +
+            "editing it now can undo or duplicate them:",
+          ...commitBlock(
+            landed.missing,
+            (commit) =>
+              landedCommitLine(
+                commit,
+                `on ${branchList(commit.branches)}, committed ${ageLabel(commit.committedAt.toISOString(), now)}`,
+              ),
+            { isPartial: landed.moreMissing, seeLabel: "To see them" },
+          ),
+          ...(landed.unchecked.length === 0
+            ? []
+            : [`Not checked in time: ${branchList(landed.unchecked)}; changes there may be missing too.`]),
+        ];
+  const recent =
+    landed.recent.length === 0
+      ? []
+      : [
+          `crosscheck: ${path} changed on a landing branch in the last ` +
+            `${String(LANDED_RECENT_WORKING_DAYS)} working days; your checkout has it:`,
+          ...commitBlock(
+            landed.recent,
+            (commit) =>
+              landedCommitLine(
+                commit,
+                `landed on ${branchList(commit.branches)} ` +
+                  (commit.landedAt === null
+                    ? "at an unknown time"
+                    : ageLabel(commit.landedAt.toISOString(), now)),
+              ),
+            { isPartial: false, seeLabel: "To see what changed" },
+          ),
+        ];
+  return [...missing, ...recent];
+};
+
+export interface EditWarningInput {
+  /** An active teammate session that targeted the file, if any. */
+  readonly live: TripwireSession | null;
+  /** Landed changes to the file, or null when unknown. */
+  readonly landed: LandedChanges | null;
+  readonly file: string;
+  readonly now: Date;
+  /**
+   * How far the archive behind the LIVE part reaches (03 §3.5). No cap
+   * applies to this surface — a handful of short lines on a PreToolUse ask —
+   * so the note is appended outright rather than fitted.
+   */
+  readonly coverage?: CoverageRecord;
+}
+
+/**
+ * The PreToolUse ask-reason: facts, no imperative, and the escalation ladder
+ * stops at "ask" — nothing in this module or its caller can emit a different
+ * permission decision (hooks/pre-tool-use.ts pins that). The live part comes
+ * first, the landed part second, ONE quoted-data notice for both. Empty when
+ * there is nothing to say.
+ */
+export const renderEditWarning = (input: EditWarningInput): string => {
+  const live =
+    input.live === null
+      ? []
+      : liveTripwireLines(input.live, input.file, input.now, input.coverage ?? UNKNOWN_COVERAGE);
+  const landed = input.landed === null ? [] : landedLines(input.landed, input.file, input.now);
+  return live.length === 0 && landed.length === 0
+    ? ""
+    : [...live, ...landed, QUOTED_DATA_NOTICE].join("\n");
+};
+
+/** The live-only ask-reason — byte-identical to what it always was. */
+export const renderTripwireReason = (
+  session: TripwireSession,
+  repoRelativeFile: string,
+  now: Date,
+  coverage: CoverageRecord = UNKNOWN_COVERAGE,
+): string => renderEditWarning({ live: session, landed: null, file: repoRelativeFile, now, coverage });

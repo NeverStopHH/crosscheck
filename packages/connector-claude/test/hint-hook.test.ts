@@ -68,6 +68,8 @@ const sessionState = (
   deliveredHintRefs: [],
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
+  landedAskedFiles: [],
+  landedCleanKeys: [],
   briefingSolvedRefs: [],
   probedFingerprints: [],
   foreignRepoDrops: 0,

@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 754
+    # PRINTS: 821
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,8 +126,9 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
+    # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 40
+    # PRINTS: packages/cli/src/cli/doctor.ts 41
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 5
     # PRINTS: packages/cli/src/cli/pilot-render.ts 12
@@ -154,7 +155,7 @@ jobs:
     # PRINTS: doctor.ts 1
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 8
-    # PRINTS: hooks/pre-tool-use.ts 5
+    # PRINTS: hooks/pre-tool-use.ts 9
     # PRINTS: hooks/runner.ts 2
     # PRINTS: hooks/session-start.ts 1
     # PRINTS: hooks/stop.ts 1
@@ -175,7 +176,7 @@ jobs:
     # PRINTS: config/config.ts 4
     # PRINTS: config/connected-repo.ts 2
     # PRINTS: config/hook-budget.ts 1
-    # PRINTS: constants.ts 7
+    # PRINTS: constants.ts 8
     # PRINTS: coverage/exempt-surfaces.ts 2
     # PRINTS: coverage/render.ts 9
     # PRINTS: derive/conference/prompt.ts 1
@@ -204,7 +205,7 @@ jobs:
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 6
+    # PRINTS: hints/render.ts 10
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 1
@@ -213,6 +214,10 @@ jobs:
     # PRINTS: http/pilot.ts 2
     # PRINTS: http/verdict.ts 1
     # PRINTS: kit.ts 1
+    # PRINTS: landed-changes/git-queries.ts 11
+    # PRINTS: landed-changes/landing-branches.ts 3
+    # PRINTS: landed-changes/probe.ts 38
+    # PRINTS: landed-changes/working-days.ts 3
     # PRINTS: mcp/render-intent-chain.ts 1
     # PRINTS: mcp/render-referee.ts 3
     # PRINTS: mcp/render.ts 24
@@ -350,7 +355,7 @@ jobs:
     # PRINTS: conference.ts 12
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 2
-    # PRINTS: constants.ts 8
+    # PRINTS: constants.ts 9
     # PRINTS: context-group.ts 1
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
@@ -361,8 +366,9 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
+    # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-retention.ts 3
-    # PRINTS: doctor.ts 48
+    # PRINTS: doctor.ts 49
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 13
     # PRINTS: enums.ts 2
@@ -381,6 +387,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
+    # PRINTS: git-queries.ts 11
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 3
@@ -393,6 +400,7 @@ jobs:
     # PRINTS: intent.ts 1
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
+    # PRINTS: landing-branches.ts 3
     # PRINTS: latency.ts 1
     # PRINTS: lock.ts 2
     # PRINTS: noise.ts 5
@@ -413,10 +421,10 @@ jobs:
     # PRINTS: pins.ts 11
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 8
-    # PRINTS: pre-tool-use.ts 5
+    # PRINTS: pre-tool-use.ts 9
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
-    # PRINTS: probe.ts 1
+    # PRINTS: probe.ts 39
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
@@ -432,7 +440,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 51
+    # PRINTS: render.ts 55
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 2
     # PRINTS: retention-registry.ts 8
@@ -486,6 +494,7 @@ jobs:
     # PRINTS: work-contexts.ts 1
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7
+    # PRINTS: working-days.ts 3
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:

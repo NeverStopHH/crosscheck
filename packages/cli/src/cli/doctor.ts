@@ -155,6 +155,7 @@ import {
   shadowedPinPaths,
 } from "./pin-observability.ts";
 import { checkSkeletonRetention } from "./doctor-retention.ts";
+import { checkLandedChanges } from "./doctor-landed.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -3795,6 +3796,7 @@ export const runDoctor = async (
     ...captureChecks(captureHealth, now),
     await checkHints(hubCtx, identity.repoId, captureHealth),
     tripwireModeCheck(env),
+    await checkLandedChanges(identity.root),
     // ONE scan of the session-state directory for all three model-cost
     // checks (state/session-state.ts readLiveSessionStates says why).
     checkSummarizerCost(liveStates),
