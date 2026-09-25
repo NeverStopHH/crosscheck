@@ -42,6 +42,20 @@ phone call.
    that someone ran into their landed change, in the next briefing and live
    on the next prompt.
 
+Grilled with Nick, 2026-09-25, for step 3:
+
+6. **A probable match is enough for the why.** The stop names a teammate's
+   work context when it is the same person, the same file, and work started
+   before the commit. It says exactly that: "Mike's work on this file before
+   it landed". It never says "the reason for this commit". A commit's identity
+   cannot carry the link. A squash merge lands under a new sha, and spec 02
+   refused a table of commits. The person, the file and the time survive
+   every way of merging.
+7. **A commit whose author address the hub does not know gets no why.** The
+   stop comes without it. `doctor` names those addresses, read from the
+   reader's own clone, and gives the `.mailmap` line that maps each one to
+   its person. Mapped once in the repo, it works for everyone.
+
 ## Mechanism
 
 **Git is the authority on WHAT; the hub adds WHY.** Whether a change landed
@@ -104,10 +118,9 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
   unchecked branch, a failed, capped or timed-out half, or a limit reached
   with nothing shown carries no key and is asked again next time.
 
-The hub's part (a later step) is the reason: the teammate's work context for
-that file — intent, decisions, rejected approaches — matched to the commit
-author, so the warning can say "Mike changed this, and here is why" instead of
-only "a commit touched this file".
+The hub's part (step 3, below) is the reason: the teammate's work context for
+that file, matched to the commit author, so the warning can say "Mike worked
+on this, and here is what for" instead of only "a commit touched this file".
 
 **Your clone only knows what it has fetched.** A change merged after your last
 fetch is invisible to git, so step 2 fetches the landing branches in the
@@ -226,6 +239,68 @@ Known limits of step 2:
 - Only `origin`, as in step 1. Cursor and ACP have no pre-edit stop, so they
   do not fetch either.
 
+## The why from the hub (step 3)
+
+What the hub knows, and what it does not. No record links a commit to the
+session that wrote it:
+- a session registers the commit it STARTED at;
+- commit evidence is a count per author with no shas;
+- spec 02 refused a table of commits.
+
+A squash merge would defeat such a table anyway. What the hub does know:
+- which developer an address belongs to (`developer_emails`);
+- which files each work context edited (`work_context_targets`);
+- when each session started.
+
+That is the match (decision 6).
+
+- **Asked only when there is a stop to explain.** The hub is asked after
+  git has found a change worth stopping for and the stop is booked, within
+  what is left of the hook's budget. A slow or old hub costs the why, never
+  the stop. The vast majority of edits stop for nothing and ask nothing.
+- **`POST /api/landed/context`.** The request carries the repo, the file, and
+  for each commit the stop names: its sha, its author's address (after
+  `.mailmap`, the probe's own matching key) and its commit time. It is a POST
+  because addresses do not belong in URLs, which end up in logs. The hub
+  maps each address to a developer. It answers each commit with that
+  developer's latest work context in this repo that targeted this file, from
+  a session started no later than the commit.
+  - The session's start is used, not when the file edit reached the hub. An
+    edit reaches the hub when the spool flushes, which can be after the
+    commit on a laptop that was offline.
+  - It is never the caller's own work context.
+  - A developer the caller muted is left out, because this is an unasked
+    surface.
+  - A presence opt-out does not apply: this is published work, not presence.
+  - The answer carries the work context's title, its current intent, the
+    developer's name and the work context's id, and never an address.
+- **Rendered as a pointer plus the intent.** Under the commits the stop
+  names, each matched work context gets two lines: its title, readable with
+  `get_diagnosis <id>`, and `Their intent (…): «…»`. That is exactly the
+  shape of the live half.
+  - Decisions and rejected approaches are one `get_diagnosis` away, and never
+    injected. Pointers go out unasked, substance on request (DESIGN.md §4).
+  - The text is the teammate's, quoted under the existing notice.
+  - No match means no line. The stop never says "no reason recorded" (03
+    §5.1), because a missing work context is not a missing reason.
+- **`doctor`: whom the hub does not know.** It collects the distinct author
+  addresses (after `.mailmap`) of commits on the landing branches in the last
+  90 days. Your own and bots' (`[bot]`) are left out. It asks the hub which
+  ones belong to nobody, and names each with the `.mailmap` line to add. It
+  answers PASS, because an outside contributor is no fault; the list is the
+  help decision 7 asked for.
+
+Known limits of step 3:
+
+- One person with several work contexts on the file before the commit: the
+  latest one is named. That is why the line says "work on this file", not
+  "the reason".
+- Work done outside a Crosscheck session has no work context, so it gets no
+  why.
+- `Co-authored-by` trailers are not read. A commit gets its author's work
+  only.
+- Cursor and ACP have no pre-edit stop, as in step 1.
+
 ## Build order
 
 Each step is one PR into `feat/landed-changes-flow`, then one PR to `main`.
@@ -236,7 +311,8 @@ Step 1 reached `main` through the batch PR #66.
    exclusion, the PreToolUse ask with its own once-per-file marker, and the
    `doctor` line.
 2. **Background fetch** of the landing branches.
-3. **The why from the hub**: the teammate context behind the commit.
+3. **The why from the hub**: the teammate's work on the file, matched by
+   person, file and time.
 4. **The author's notice**: briefing and live prompt, exactly once.
 
 ## Not in this version
