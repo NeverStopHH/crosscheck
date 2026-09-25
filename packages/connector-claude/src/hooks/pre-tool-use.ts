@@ -86,8 +86,9 @@ import { findLandedChanges, worthStopping } from "@crosscheck/connector-core/lan
 import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
 import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
+import { landedWhyFor } from "./landed-why.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
-import type { HookContext } from "./runner.ts";
+import type { HookBudget, HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
 const ASK_DECISION = "ask";
@@ -144,7 +145,7 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
-const askBeforeEdit = async (ctx: HookContext): Promise<string> => {
+const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
   if (state === null) {
     return "";
@@ -216,12 +217,16 @@ const askBeforeEdit = async (ctx: HookContext): Promise<string> => {
   // record states how far the archive the live claim came from reaches
   // (03 §5.1). It annotates only on a positively observed gap, so an
   // un-upgraded hub leaves the live lines byte-identical to what they were.
+  // The why is asked only now: there IS a stop, and it is booked, so a slow
+  // hub can cost the why and never the stop (hooks/landed-why.ts).
+  const why = won.landed === null ? [] : await landedWhyFor(ctx, budget, file, won.landed);
   const reason = renderEditWarning({
     live: won.teammate,
     landed: won.landed,
     file,
     now: ctx.now(),
     ...(found.coverage === undefined ? {} : { coverage: found.coverage }),
+    why,
   });
   if (won.teammate !== null) {
     await recordTripwireAsk(ctx, state, won.teammate);
@@ -229,7 +234,7 @@ const askBeforeEdit = async (ctx: HookContext): Promise<string> => {
   return askOutput(ctx, reason);
 };
 
-export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
+export const handlePreToolUse = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   if (!isEditTool(ctx.payload.tool_name)) {
     return "";
   }
@@ -237,7 +242,7 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   // (hooks/landing-fetch.ts): an agent can work for an hour on one prompt,
   // and the stop only sees what the clone has fetched. Beside the stop, not
   // before it — the fetch serves the NEXT edit and must cost this one nothing.
-  const [output] = await Promise.all([askBeforeEdit(ctx), requestLandingFetchFor(ctx)]);
+  const [output] = await Promise.all([askBeforeEdit(ctx, budget), requestLandingFetchFor(ctx)]);
   return output;
 };
 
