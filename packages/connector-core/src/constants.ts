@@ -1125,7 +1125,9 @@ export const MAX_BRIEFING_QUESTION_CHARS = 700;
  * The most CHARACTERS the author's-notice block (landed changes, step 4) may
  * take. Addressed like the questions block, so it comes right after it; and
  * bounded, so the three bounded blocks together still leave the sections
- * below room:
+ * below room — for every notice past the first. The first is always kept
+ * (briefing/fit.ts, as for questions), and a worst-case one (a long name and
+ * path, three long subjects, the overflow line) runs to about 870 characters:
  *
  * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_BRIEFING_GHOST_CHARS + c.MAX_BRIEFING_QUESTION_CHARS + c.MAX_BRIEFING_LANDED_NOTICE_CHARS < c.MAX_BRIEFING_CHARS)'
  * PRINTS: true

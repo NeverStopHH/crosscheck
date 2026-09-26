@@ -92,7 +92,7 @@ const ANSWER_HEADER = `crosscheck answer: a teammate answered a question you ask
  * the reader's own landed change. "Told once" is said out loud, so the reader
  * knows not to wait for it again.
  */
-const LANDED_NOTICE_HEADER = `crosscheck notice: a teammate ran into your landed change; this notice is shown once. ${QUOTED_DATA_NOTICE}`;
+export const LANDED_NOTICE_HEADER = `crosscheck notice: a teammate ran into your landed changes; this notice is shown once. ${QUOTED_DATA_NOTICE}`;
 
 type HintContext = HintContextCandidate["workContext"];
 
@@ -629,18 +629,27 @@ const landedLines = (landed: LandedChanges, repoRelativeFile: string, now: Date)
  * "Mike is told about this stop." (step 4, decision 11): the reader is told
  * who hears of it, so nothing is reported behind their back. One name per
  * person — the caller passes each told developer once, so two people who
- * share a display name are two names — bare like every author label, and a
- * sentence that begins with an unknown name begins with a capital.
+ * share a display name are two names — bare like every author label, and
+ * people without a usable name counted rather than listed.
  */
 const toldLines = (told: readonly string[]): readonly string[] => {
-  const names = told.map((name) => authorLabel(name));
-  const last = names.at(-1);
+  const labels = told.map((name) => authorLabel(name));
+  const named = labels.filter((label) => label !== UNKNOWN_AUTHOR);
+  const unnamed = labels.length - named.length;
+  // People without a usable name are counted, never listed one by one.
+  const names = [
+    ...named,
+    ...(unnamed === 0 ? [] : [unnamed === 1 ? UNKNOWN_AUTHOR : `${String(unnamed)} teammates`]),
+  ];
+  // Only the fallback opens a sentence with a capital: a real name is
+  // printed as its owner spells it.
+  const opening = names.map((name, index) => (index === 0 && name === UNKNOWN_AUTHOR ? "A teammate" : name));
+  const last = opening.at(-1);
   if (last === undefined) {
     return [];
   }
-  const list = names.length === 1 ? last : `${names.slice(0, -1).join(", ")} and ${last}`;
-  const sentence = `${list} ${names.length === 1 ? "is" : "are"} told about this stop.`;
-  return [`${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`];
+  const list = opening.length === 1 ? last : `${opening.slice(0, -1).join(", ")} and ${last}`;
+  return [`${list} ${labels.length === 1 ? "is" : "are"} told about this stop.`];
 };
 
 export interface EditWarningInput {

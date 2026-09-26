@@ -47,8 +47,8 @@ interface ReaderWords {
 
 const readerWords = (name: string): ReaderWords =>
   name.length === 0
-    ? { checkout: "their checkout", has: "they already have it" }
-    : { checkout: `${name}'s checkout`, has: `${name} already has it` };
+    ? { checkout: "their checkout", has: "they already had it" }
+    : { checkout: `${name}'s checkout`, has: `${name} already had it` };
 
 const commitLine = (commit: NoticeCommit, reader: ReaderWords): string | null => {
   const sha = safeId(commit.sha).slice(0, SHORT_SHA_CHARS);
@@ -57,10 +57,15 @@ const commitLine = (commit: NoticeCommit, reader: ReaderWords): string | null =>
   }
   const subject = sanitizeUntrusted(commit.subject, LANDED_NOTICE_SUBJECT_CHARS);
   const label = subject.length === 0 ? sha : `${sha} «${subject}»`;
+  // Past tense: a notice can be read days after its stop, and says what
+  // was true then, never what is true now.
   return commit.missing
-    ? `  ${label}: missing from ${reader.checkout}`
-    : `  ${label}: ${reader.has}; it landed recently`;
+    ? `  ${label}: was missing from ${reader.checkout}`
+    : `  ${label}: ${reader.has}; it had landed recently`;
 };
+
+/** "(+2 more, shown next time)": what the briefing leaves out still waits. */
+export const landedNoticeMoreLine = (count: number): string => `(+${String(count)} more, shown next time)`;
 
 /**
  * "2h ago", or "at an unknown time" — a future instant counts as unknown, the
@@ -97,7 +102,7 @@ export const formatLandedNoticeEntry = (notice: LandedNotice, now: Date): Render
     text: [
       `- ${lead} ran into your landed ${changes} before editing ${path}, ${stoppedLabel(notice.stoppedAt, now)}:`,
       ...named.map((entry) => entry.line),
-      ...(rest > 0 ? [`  (+${String(rest)} more, shown next time)`] : []),
+      ...(rest > 0 ? [`  ${landedNoticeMoreLine(rest)}`] : []),
     ].join("\n"),
     commitIds: named.map((entry) => entry.id),
   };

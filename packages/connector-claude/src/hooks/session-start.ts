@@ -3,6 +3,7 @@ import {
   HTTP_NOT_FOUND,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "@crosscheck/connector-core/constants.ts";
+import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
 import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
 import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
@@ -274,6 +275,8 @@ export const handleSessionStart = async (
     repoRoot: ctx.identity.root,
     selfDeveloperId: developerId,
     now,
+    // A headless run is told no author's notice: nobody would read it.
+    tellsNotices: aPersonReads(ctx.env),
     collectLanded: async (workContexts) => {
       const defaultBranchRef = await defaultBranchRefPromise;
       // The A5-9 guard, and it lives HERE rather than inside

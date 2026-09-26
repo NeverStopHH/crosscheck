@@ -189,7 +189,7 @@ const ROOMY = (): number => 10_000;
 
 const promptIn = (
   where: { readonly home: string; readonly repo: string; readonly hostSessionKey: string; readonly hub: HubContext },
-  options: { readonly tellsNotices?: boolean; readonly spareMs?: () => number } = {},
+  options: { readonly tellsNotices?: boolean; readonly spareMs?: () => number; readonly prompt?: string } = {},
 ): Promise<string> =>
   selectAndRenderHint({
     home: where.home,
@@ -199,7 +199,7 @@ const promptIn = (
     repoId: REPO_ID,
     repoRoot: where.repo,
     agentKind: "claude-code",
-    prompt: PROMPT,
+    prompt: options.prompt ?? PROMPT,
     now: new Date(),
     tellsNotices: options.tellsNotices ?? true,
     spareMs: options.spareMs ?? ROOMY,
@@ -255,8 +255,8 @@ describe("the notice's words", () => {
     expect(entry?.text).toBe(
       [
         "- Nick ran into your landed changes before editing src/lines.ts, 2h ago:",
-        "  0dcfc4e «Fix line offset»: missing from Nick's checkout",
-        "  1a2b3c4 «Count from one»: Nick already has it; it landed recently",
+        "  0dcfc4e «Fix line offset»: was missing from Nick's checkout",
+        "  1a2b3c4 «Count from one»: Nick already had it; it had landed recently",
       ].join("\n"),
     );
     expect(entry?.commitIds).toEqual(["lnt_1", "lnt_2"]);
@@ -307,8 +307,8 @@ describe("the notice's words", () => {
     expect(entry?.text).toBe(
       [
         "- A teammate ran into your landed changes before editing src/lines.ts, 2h ago:",
-        "  0dcfc4e «Fix line offset»: missing from their checkout",
-        "  1a2b3c4 «Count from one»: they already have it; it landed recently",
+        "  0dcfc4e «Fix line offset»: was missing from their checkout",
+        "  1a2b3c4 «Count from one»: they already had it; it had landed recently",
       ].join("\n"),
     );
   });
@@ -334,7 +334,7 @@ describe("the notice's words", () => {
     });
 
     expect(briefing).toContain(LANDED_NOTICE_SECTION_HEADER);
-    expect(briefing).toContain("  0dcfc4e «Fix line offset»: missing from Nick's checkout");
+    expect(briefing).toContain("  0dcfc4e «Fix line offset»: was missing from Nick's checkout");
     expect(briefing.indexOf(LANDED_NOTICE_SECTION_HEADER)).toBeLessThan(briefing.indexOf("0dcfc4e"));
   });
 });
@@ -362,6 +362,21 @@ describe("the stop names who is told (decision 11)", () => {
     const text = renderEditWarning({ live: null, landed, file: FILE, now: NOW, told: ["Mike", "Ken"] });
 
     expect(text).toContain("Mike and Ken are told about this stop.");
+  });
+
+  test("people without a usable name are counted, never listed one by one", () => {
+    expect(renderEditWarning({ live: null, landed, file: FILE, now: NOW, told: ["", " "] })).toContain(
+      "2 teammates are told about this stop.",
+    );
+    expect(renderEditWarning({ live: null, landed, file: FILE, now: NOW, told: ["Mike", ""] })).toContain(
+      "Mike and a teammate are told about this stop.",
+    );
+  });
+
+  test("a real name is printed as its owner spells it", () => {
+    const text = renderEditWarning({ live: null, landed, file: FILE, now: NOW, told: ["mike", "ken"] });
+
+    expect(text).toContain("mike and ken are told about this stop.");
   });
 
   test("an unknown name begins its sentence with a capital", () => {
@@ -419,7 +434,8 @@ describe("on Mike's next prompt", () => {
       const text = await promptIn(w);
 
       expect(text).toContain("Nick ran into your landed change before editing src/lines.ts");
-      expect(text).toContain("0dcfc4e «Fix line offset»: missing from Nick's checkout");
+      expect(text).toContain("0dcfc4e «Fix line offset»: was missing from Nick's checkout");
+      expect(text.startsWith("crosscheck notice: a teammate ran into your landed changes; this notice is shown once.")).toBe(true);
       expect(text).toContain(QUOTED_DATA_NOTICE);
       // Shipped now, not at the next flush: the hub has it as told already.
       expect(await waiting(w)).toEqual([]);
@@ -666,6 +682,22 @@ describe("told only while the budget spares room to show it", () => {
   );
 
   test(
+    "a prompt the hint path stays silent on tells no notice either: too short, or carrying a secret",
+    async () => {
+      const w = await world("notice-silent-prompts");
+      await nickStops(w, [MISSING]);
+
+      const short = await promptIn(w, { prompt: "ok" });
+      const secret = await promptIn(w, { prompt: "why does AKIAIOSFODNN7EXAMPLE fail on the line offsets" });
+
+      expect(short).toBe("");
+      expect(secret).toBe("");
+      expect(await waiting(w)).toHaveLength(1);
+    },
+    HEAVY_MS,
+  );
+
+  test(
     "a host that does not tell notices tells none (Cursor's failure hint)",
     async () => {
       const w = await world("notice-not-here");
@@ -711,11 +743,33 @@ describe("in Mike's next briefing", () => {
       const assembled = await briefMike(w);
       await flushSpool(w.hub, { sessionId: w.mike.sessionId, developerId: w.mike.developerId }, TEST_TIMEOUT_MS);
 
-      expect(assembled.briefing).toContain("(+1 more not shown)");
+      expect(assembled.briefing).toContain("(+1 more, shown next time)");
       expect(assembled.shownLandedNoticeIds).toHaveLength(3);
       const still = await waiting(w);
       expect(still).toHaveLength(1);
       expect(still[0]?.commits).toHaveLength(3);
+    },
+    HEAVY_MS,
+  );
+
+  test(
+    "a briefing for a run no person reads fetches no notice, so none is spent on it",
+    async () => {
+      const w = await world("notice-briefing-headless");
+      await nickStops(w, [MISSING]);
+
+      const assembled = await assembleBriefing({
+        hub: w.hub,
+        repoId: REPO_ID,
+        repoRoot: w.repo,
+        selfDeveloperId: w.mike.developerId,
+        now: new Date(),
+        tellsNotices: false,
+      });
+
+      expect(assembled.briefing).not.toContain(LANDED_NOTICE_SECTION_HEADER);
+      expect(assembled.shownLandedNoticeIds).toEqual([]);
+      expect(await waiting(w)).toHaveLength(1);
     },
     HEAVY_MS,
   );

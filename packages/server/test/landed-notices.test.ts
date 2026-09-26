@@ -508,7 +508,7 @@ describe("the author's notice", () => {
     const rows = await t.harness.db.select().from(landedNotices);
     const notices = await noticesFor(t, t.mike);
 
-    expect(rows.filter((row) => row.readerDeveloperId === t.nick.developerId).length).toBeLessThanOrEqual(30);
+    expect(rows.filter((row) => row.readerDeveloperId === t.nick.developerId)).toHaveLength(20);
     expect(notices.map((notice) => notice.readerName)).toContain("Ken");
   });
 
@@ -543,6 +543,96 @@ describe("the author's notice", () => {
     expect(nicks.map((notice) => notice.commits.map((commit) => commit.sha).sort())).toEqual([[early, late]]);
     // …and it is dated by its newest stop.
     expect(nicks[0]?.stoppedAt).toBe(t.harness.clock.now().toISOString());
+  });
+
+  test("the bound is a rate: notices already told count until they expire", async () => {
+    const t = await team();
+    const fileTwenty = async (offset: number): Promise<void> => {
+      for (let index = 0; index < 20; index += 1) {
+        await nickStops(t, [{ author: t.mike, sha: (offset + index).toString(16).padStart(40, "0") }], {
+          path: `src/r${String(offset + index)}.ts`,
+        });
+      }
+    };
+    await fileTwenty(0);
+    // Mike is told all twenty.
+    await delivered(
+      t,
+      t.mike,
+      (await t.harness.db.select().from(landedNotices)).map((row) => row.id),
+      "ses_mike",
+    );
+
+    await fileTwenty(100);
+
+    expect(await noticesFor(t, t.mike)).toEqual([]);
+    t.harness.clock.advanceSeconds(8 * DAY_S);
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_next_week" });
+    await nickStops(t, [{ author: t.mike }], { sessionId: "ses_nick_next_week" });
+    expect(await noticesFor(t, t.mike)).toHaveLength(1);
+  });
+
+  test("at the bound, a stop on a row still waiting refreshes it all the same", async () => {
+    const t = await team();
+    for (let index = 0; index < 20; index += 1) {
+      await nickStops(t, [{ author: t.mike, sha: index.toString(16).padStart(40, "0") }], { path: `src/r${String(index)}.ts` });
+    }
+    t.harness.clock.advanceSeconds(3 * DAY_S);
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_day3" });
+
+    await nickStops(t, [{ author: t.mike, sha: "0".repeat(40), missing: false }], { sessionId: "ses_nick_day3", path: "src/r0.ts" });
+    const refreshed = (await t.harness.db.select().from(landedNotices)).find((row) => row.path === "src/r0.ts");
+
+    expect(refreshed?.missing).toBe(false);
+    expect(refreshed?.stoppedAt.toISOString()).toBe(t.harness.clock.now().toISOString());
+  });
+
+  test("concurrent flushes cannot race past the bound, nor crowd another reader out", async () => {
+    const t = await team();
+    await nickStops(t, [{ author: t.mike, sha: "e".repeat(40) }], { sessionId: "ses_ken" }, t.ken);
+    t.harness.clock.advanceSeconds(1);
+
+    await Promise.all(
+      Array.from({ length: 60 }, (_, index) =>
+        nickStops(t, [{ author: t.mike, sha: index.toString(16).padStart(40, "0") }], { path: `src/c${String(index)}.ts` }),
+      ),
+    );
+    const rows = await t.harness.db.select().from(landedNotices);
+
+    expect(rows.filter((row) => row.readerDeveloperId === t.nick.developerId)).toHaveLength(20);
+    expect((await noticesFor(t, t.mike)).map((notice) => notice.readerName)).toContain("Ken");
+  });
+
+  test("the bound is per repo: notices waiting in a repo the author never opens silence nothing elsewhere", async () => {
+    const t = await team();
+    const elsewhere = "github.com/acme/dormant";
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_dormant", repo: elsewhere });
+    for (let index = 0; index < 20; index += 1) {
+      await nickStops(t, [{ author: t.mike, sha: index.toString(16).padStart(40, "0") }], {
+        sessionId: "ses_nick_dormant",
+        repo: elsewhere,
+        path: `src/d${String(index)}.ts`,
+      });
+    }
+
+    await nickStops(t, [{ author: t.mike }]);
+
+    expect(await noticesFor(t, t.mike)).toHaveLength(1);
+  });
+
+  test("the bound is exact: a stop that meets it writes only what fits", async () => {
+    const t = await team();
+    for (let index = 0; index < 19; index += 1) {
+      await nickStops(t, [{ author: t.mike, sha: index.toString(16).padStart(40, "0") }], { path: `src/e${String(index)}.ts` });
+    }
+
+    await nickStops(
+      t,
+      Array.from({ length: 10 }, (_, index) => ({ author: t.mike, sha: (100 + index).toString(16).padStart(40, "0") })),
+      { path: "src/wide.ts" },
+    );
+
+    expect(await t.harness.db.select().from(landedNotices)).toHaveLength(20);
   });
 
   test("a repo with a NUL in it is a bad request, not a crash", async () => {

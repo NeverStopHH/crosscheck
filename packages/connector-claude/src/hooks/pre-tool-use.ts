@@ -83,7 +83,7 @@ import type { SessionState } from "@crosscheck/connector-core/state/session-stat
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
-import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
+import { aPersonReads, resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
 import { findLandedChanges, worthStopping } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
@@ -419,7 +419,7 @@ const recordTripwireAsk = async (
  * printed for one would name a notice that never exists.
  */
 const mayTellAuthors = (ctx: HookContext, state: SessionState): boolean =>
-  resolveTripwireMode(ctx.env) !== TRIPWIRE_MODE_NOTICE && ctx.identity.repoId === state.repoId;
+  aPersonReads(ctx.env) && ctx.identity.repoId === state.repoId;
 
 /**
  * THE STOP IS RECORDED FOR THE PEOPLE IT NAMES (docs/1.0/landed-changes.md,

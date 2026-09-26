@@ -45,6 +45,7 @@
  */
 import { resolve } from "node:path";
 
+import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
 import { INTENT_PROMPT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import {
@@ -215,6 +216,7 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     repoId: ctx.identity.repoId,
     agentKind: ctx.config.agentKind,
     now: ctx.now(),
+    tellsNotices: aPersonReads(ctx.env),
   });
   if (briefing.length > 0) {
     return envelope(briefing);
@@ -229,9 +231,9 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     agentKind: ctx.config.agentKind,
     prompt: ctx.payload.prompt ?? "",
     now: ctx.now(),
-    // A person reads this prompt's context, so an author's notice may be
-    // told here — within what the budget spares (landed changes, step 4).
-    tellsNotices: true,
+    // An author's notice is told on a prompt a person reads — never in a
+    // headless run — within what the budget spares (landed changes, step 4).
+    tellsNotices: aPersonReads(ctx.env),
     spareMs: () => budget.spareMs(),
   });
   if (text.length === 0) {

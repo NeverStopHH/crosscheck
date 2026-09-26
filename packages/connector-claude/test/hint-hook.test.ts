@@ -202,6 +202,24 @@ describe("user-prompt-submit tells an author's notice only when it can show it",
     expect(noticeDeliveries(hub)).toHaveLength(1);
   });
 
+  test("a headless run is told no notice: nobody would read it", async () => {
+    const { repo, home, hub, env } = await fixture("notice-headless-author");
+    hub.setCandidates([]);
+    hub.setNotices([waitingNotice()]);
+
+    const context = contextOf(
+      await runHook("user-prompt-submit", promptPayload(repo, PROMPT), {
+        ...env,
+        CROSSCHECK_TIMEOUT_MS: "1500",
+        CROSSCHECK_TRIPWIRE: "notice",
+      }),
+    );
+
+    expect(context).not.toContain("ran into your landed change");
+    expect(noticeDeliveries(hub)).toEqual([]);
+    expect((await readSessionState(home, SESSION_ID))?.shownLandedNoticeIds).toEqual([]);
+  });
+
   test("a hub slow enough to spend the spare budget: the notice is neither shown nor marked told", async () => {
     // Default 400 ms timeout, 800 ms budget with 400 held in reserve: a
     // candidates answer at 380 ms leaves nothing spare to post and print.

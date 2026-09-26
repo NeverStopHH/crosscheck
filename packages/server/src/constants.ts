@@ -718,19 +718,16 @@ export const LANDED_NOTICE_TTL_DAYS = 7;
 /** Reader-and-file groups one listing answers: a briefing section, a prompt. */
 export const LANDED_NOTICE_GROUPS_LISTED = 3;
 /**
- * Reader-and-file groups one listing weighs before choosing the listed ones:
- * room for several readers' groups, so the fair order the listing applies
- * (one group per reader before anyone's second) sees them.
+ * Rows one reader may file for one author in one repo within the seven days,
+ * told or not. Past it, that reader's further stops at that author's commits
+ * there tell nothing new until older rows expire — a bound on how much, and
+ * how fast, one teammate can pile up, or forge, for another: this many a
+ * week, not this many at a time. Per repo, because notices are told per
+ * repo: rows in a repo the author never opens must not silence the one they
+ * work in. Exact — a stop that meets it writes only what fits — and a stop on
+ * a row still waiting only refreshes it and is never held back.
  */
-export const LANDED_NOTICE_GROUPS_READ = 100;
-/**
- * Waiting rows one reader may hold for one author. Past it, that reader's
- * further stops at that author's commits tell nothing until some are told
- * or expire — a bound on what one teammate can pile up, or forge, for
- * another. A stop names at most LANDED_CONTEXT_MAX_COMMITS, so a pair holds
- * at most that many more than this.
- */
-export const LANDED_NOTICE_MAX_WAITING_PER_PAIR = 20;
+export const LANDED_NOTICE_MAX_PER_PAIR = 20;
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

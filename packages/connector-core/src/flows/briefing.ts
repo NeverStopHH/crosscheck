@@ -54,9 +54,11 @@ import {
   getSolvedMatches,
   getWorkContexts,
 } from "../http/hub.ts";
+import type { HubResult } from "../http/client.ts";
 import type {
   GhostCheckEntry,
   HubContext,
+  LandedNotice,
   PresenceEntry,
   SolvedMatchEntry,
   WorkContextEntry,
@@ -85,6 +87,12 @@ export interface AssembleBriefingInput {
   readonly collectLanded?:
     | ((workContexts: readonly WorkContextEntry[]) => Promise<readonly string[]>)
     | undefined;
+  /**
+   * False when no person reads this session (landed changes, step 4): the
+   * author's notices are then not even fetched, so none is shown to a run
+   * nobody reads and marked told. Default true.
+   */
+  readonly tellsNotices?: boolean | undefined;
 }
 
 export interface AssembledBriefing {
@@ -124,6 +132,8 @@ export interface AssembledBriefing {
    */
   readonly shownLandedNoticeIds: readonly string[];
 }
+
+const NO_NOTICES: HubResult<readonly LandedNotice[]> = { ok: true, data: [], dateHeader: null };
 
 export const assembleBriefing = async (
   input: AssembleBriefingInput,
@@ -166,7 +176,7 @@ export const assembleBriefing = async (
     getGhostChecks(hub, repoId),
     // Landed changes, step 4: the author's notices, addressed to this reader.
     // Same block, same one timeout; an older hub renders no section.
-    getLandedNotices(hub, repoId),
+    input.tellsNotices === false ? Promise.resolve(NO_NOTICES) : getLandedNotices(hub, repoId),
   ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
@@ -359,6 +369,8 @@ export interface DeliverDeferredBriefingInput {
   readonly repoId: string;
   readonly agentKind: string;
   readonly now: Date;
+  /** As on `assembleBriefing`: false when no person reads this session. */
+  readonly tellsNotices?: boolean | undefined;
 }
 
 /**
@@ -414,6 +426,7 @@ export const deliverDeferredBriefing = async (
     repoRoot: state.repoRoot,
     selfDeveloperId: state.developerId,
     now: input.now,
+    tellsNotices: input.tellsNotices,
   });
   if (assembled.briefing.length === 0) {
     return "";

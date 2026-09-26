@@ -49,7 +49,12 @@ import { fitEntries } from "./fit.ts";
 import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
 import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
-import { LANDED_NOTICE_SECTION_HEADER, fitLandedNoticeEntries, formatLandedNoticeEntry } from "./landed-notices.ts";
+import {
+  LANDED_NOTICE_SECTION_HEADER,
+  fitLandedNoticeEntries,
+  formatLandedNoticeEntry,
+  landedNoticeMoreLine,
+} from "./landed-notices.ts";
 import type { IntentLabel } from "./intent.ts";
 import {
   bareUntrusted,
@@ -136,6 +141,8 @@ interface Section {
   readonly header: string;
   readonly lines: readonly string[];
   readonly total: number;
+  /** The section's own "+N more" line, where the generic one would mislead. */
+  readonly more?: (count: number) => string;
 }
 
 /** One teammate as the briefing and the statusline show them: not one session. */
@@ -268,6 +275,8 @@ const renderLandedNoticeSection = (input: BriefingInput): Section => {
     header: LANDED_NOTICE_SECTION_HEADER,
     lines: fitLandedNoticeEntries(rendered.slice(0, MAX_LANDED_NOTICE_POINTERS)),
     total: rendered.length,
+    // A notice left out is not lost: it was not marked told, and waits.
+    more: landedNoticeMoreLine,
   };
 };
 
@@ -1005,7 +1014,7 @@ const appendSection = (
   if (hidden <= 0) {
     return fitted;
   }
-  const withMore = [...fitted, moreLine(hidden)];
+  const withMore = [...fitted, (section.more ?? moreLine)(hidden)];
   return joinedLength(withMore) > MAX_BRIEFING_CHARS ? fitted : withMore;
 };
 
