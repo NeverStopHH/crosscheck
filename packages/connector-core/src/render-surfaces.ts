@@ -30,6 +30,7 @@ import {
   renderPointerHint,
   renderSolvedHint,
   renderEditWarning,
+  renderLandedNoticeHint,
   renderTripwireReason,
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
@@ -54,10 +55,12 @@ import type {
   HintClaimCandidate,
   InboxQuestion,
   IntentEntry,
+  LandedNotice,
   PresenceEntry,
   RefereeBrief,
   RefereeClaim,
   SolvedMatchEntry,
+  LandedContextMatch,
   TripwireSession,
   WorkContextEntry,
 } from "./http/hub.ts";
@@ -145,6 +148,7 @@ export const RENDER_LAYER_MODULES: readonly string[] = [
   "src/briefing/sanitize.ts",
   "src/briefing/ghost.ts",
   "src/briefing/intent.ts",
+  "src/briefing/landed-notices.ts",
   "src/briefing/questions.ts",
   "src/briefing/render.ts",
   "src/hints/render.ts",
@@ -498,6 +502,36 @@ const landedChangesWith = (payload: string): LandedChanges => {
   };
   return { missing: [commit], recent: [commit], moreMissing: true, unchecked: ["develop"], cleanKey: null };
 };
+
+/**
+ * The hub's why for that same commit (step 3): the teammate's title, name
+ * and intent are theirs, so the payload goes into every one of them.
+ */
+const landedWhyWith = (payload: string): readonly LandedContextMatch[] => [
+  {
+    sha: "0dcfc4e41e1f309f8a6d3056726744bb8ddd6133",
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    title: payload,
+    developerName: payload,
+    intent: intentWith(payload),
+  },
+];
+
+/**
+ * An author's notice (step 4) with the payload in every string a teammate
+ * or their connector wrote: the reader's name, the file and both commits'
+ * subjects — one missing from their checkout, one already in it.
+ */
+const landedNoticeWith = (payload: string): LandedNotice => ({
+  id: "lnt_11111111-2222-4333-8444-555555555555",
+  readerName: payload,
+  path: payload,
+  stoppedAt: ISO,
+  commits: [
+    { id: "lnt_11111111-2222-4333-8444-555555555555", sha: "0dcfc4e41e1f309f8a6d3056726744bb8ddd6133", subject: payload, missing: true },
+    { id: "lnt_22222222-2222-4333-8444-555555555555", sha: "1a2b3c4d41e1f309f8a6d3056726744bb8ddd613", subject: payload, missing: false },
+  ],
+});
 
 const diagnosisWith = (payload: string): Diagnosis => ({
   workContext: {
@@ -881,14 +915,50 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     // The landed-change half of the same ask (docs/1.0/landed-changes.md):
-    // commit subjects and author names are written by other developers.
+    // commit subjects and author names are written by other developers, and
+    // so are the why's title, name and intent (step 3).
     kind: "corpus",
     name: "landed-change-reason",
     delivery: "unsolicited",
     module: "src/hints/render.ts",
     framing: "framed",
     render: (payload) =>
-      renderEditWarning({ live: null, landed: landedChangesWith(payload), file: "src/app.ts", now: NOW }),
+      renderEditWarning({
+        live: null,
+        landed: landedChangesWith(payload),
+        file: "src/app.ts",
+        now: NOW,
+        why: landedWhyWith(payload),
+        told: [payload, payload],
+      }),
+  },
+  {
+    // The author's notice, in the briefing (step 4): the reader's name and
+    // file are bare fields, the subjects are quoted data that reached the
+    // author through the READER's connector.
+    kind: "corpus",
+    name: "briefing-landed-notices",
+    delivery: "unsolicited",
+    module: "src/briefing/landed-notices.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        landedNotices: [landedNoticeWith(payload)],
+        now: NOW,
+      }),
+  },
+  {
+    // …and the same notice told on a prompt.
+    kind: "corpus",
+    name: "landed-notice-hint",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) => renderLandedNoticeHint(landedNoticeWith(payload), NOW)?.text ?? "",
   },
   {
     kind: "corpus",

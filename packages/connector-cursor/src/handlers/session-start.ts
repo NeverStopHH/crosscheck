@@ -203,6 +203,7 @@ const deliverBriefing = async (
     producer,
     shownSolvedIds: assembled.shownSolvedIds,
     shownGhostCount: assembled.shownGhostCount,
+    shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now,
   });
   await recordInjectionOutcome(ctx.config.home, {

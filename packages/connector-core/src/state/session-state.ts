@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   MAX_BRIEFING_SOLVED_REFS,
+  MAX_SHOWN_LANDED_NOTICE_IDS,
   MAX_KNOWN_WORKTREE_ROOTS,
   MAX_PROBED_FINGERPRINTS,
   MAX_SEEN_TARGETS,
@@ -163,6 +164,15 @@ const SessionStateObjectSchema = z.looseObject({
    * a briefing pointer is the briefing's budget, not the prompt path's.
    */
   briefingSolvedRefs: z.array(z.string().min(1)).default([]),
+  /**
+   * The author's notices this session already SHOWED, by the hub's row id
+   * (docs/1.0/landed-changes.md, step 4) — from the briefing or a prompt.
+   * The prompt path skips these before the hub has heard the delivery, so a
+   * notice the briefing told is not told again one prompt later. Its own
+   * list: a briefing notice spends no prompt hint slot, and a prompt notice
+   * spends one through deliveredHintRefs beside this.
+   */
+  shownLandedNoticeIds: z.array(z.string().min(1)).default([]),
   /**
    * Error fingerprints the failure-time solved probe has already ASKED the
    * hub about in this session (VISION.md §1). Separate from every list
@@ -1160,6 +1170,24 @@ export const withBriefingSolvedRefs = (
 };
 
 /**
+ * The author's notices a surface of this session showed (step 4). Dedup on
+ * merge — a racing hook may re-enter with the same ids — and a FIFO cap.
+ */
+export const withShownLandedNotices = (
+  state: SessionState,
+  noticeIds: readonly string[],
+): SessionState => {
+  const merged = [...new Set([...state.shownLandedNoticeIds, ...noticeIds])];
+  return {
+    ...state,
+    shownLandedNoticeIds:
+      merged.length <= MAX_SHOWN_LANDED_NOTICE_IDS
+        ? merged
+        : merged.slice(merged.length - MAX_SHOWN_LANDED_NOTICE_IDS),
+  };
+};
+
+/**
  * FIFO cap, same shape as withTripwireAsked: the hub is asked about one
  * fingerprint once per session. Dedup on merge, because the caller's
  * check-and-set may re-enter with the same value from a racing hook.
@@ -1415,6 +1443,7 @@ export const deriveSessionState = (
     landedAskedFiles: [],
     landedCleanKeys: [],
     briefingSolvedRefs: [],
+    shownLandedNoticeIds: [],
     probedFingerprints: [],
     foreignRepoDrops: 0,
     outsideRootDrops: 0,

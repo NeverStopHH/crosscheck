@@ -3,6 +3,7 @@ import {
   HTTP_NOT_FOUND,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "@crosscheck/connector-core/constants.ts";
+import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
 import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
 import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
@@ -46,6 +47,7 @@ import {
   writePresenceCache,
 } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
+import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const INITIAL_STATUS = "analyzing";
@@ -215,6 +217,11 @@ export const handleSessionStart = async (
   budget: HookBudget,
 ): Promise<string> => {
   const now = ctx.now();
+  // The background fetch of the landing branches (hooks/landing-fetch.ts)
+  // starts FIRST and is awaited last: its "is one due?" check overlaps the
+  // register round trip instead of adding to it, and it does not depend on
+  // the hub answering.
+  const landingFetch = requestLandingFetchFor(ctx);
   // Detached-aware (trial finding #15): on a worktree session this is up to
   // two bounded git calls BEFORE the register round trip — see
   // HEAD_LABEL_GIT_TIMEOUT_MS for why they fit the SessionStart budget.
@@ -268,6 +275,8 @@ export const handleSessionStart = async (
     repoRoot: ctx.identity.root,
     selfDeveloperId: developerId,
     now,
+    // A headless run is told no author's notice: nobody would read it.
+    tellsNotices: aPersonReads(ctx.env),
     collectLanded: async (workContexts) => {
       const defaultBranchRef = await defaultBranchRefPromise;
       // The A5-9 guard, and it lives HERE rather than inside
@@ -394,6 +403,7 @@ export const handleSessionStart = async (
     producer,
     shownSolvedIds: assembled.shownSolvedIds,
     shownGhostCount: assembled.shownGhostCount,
+    shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now,
   });
 
@@ -439,6 +449,7 @@ export const handleSessionStart = async (
   await reapStaleSessionStates(ctx.config.home, now, {
     keepHostSessionKey: ctx.payload.session_id,
   });
+  await landingFetch;
 
   if (briefing.length === 0) {
     return "";

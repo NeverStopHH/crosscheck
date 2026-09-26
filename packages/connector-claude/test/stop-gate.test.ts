@@ -51,6 +51,7 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   landedAskedFiles: [],
   landedCleanKeys: [],
   briefingSolvedRefs: [],
+  shownLandedNoticeIds: [],
   probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,

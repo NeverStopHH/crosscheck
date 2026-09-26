@@ -65,7 +65,9 @@ import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts
 import {
   UNKNOWN_DEVELOPER_ID,
   hintDeliveryRecord,
+  landedStopRecord,
 } from "@crosscheck/connector-core/capture/records.ts";
+import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { renderEditWarning } from "@crosscheck/connector-core/hints/render.ts";
 import {
@@ -81,12 +83,18 @@ import type { SessionState } from "@crosscheck/connector-core/state/session-stat
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
-import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
+import { aPersonReads, resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
 import { findLandedChanges, worthStopping } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
 import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
-import type { HookContext } from "./runner.ts";
+import type { LandedContextAnswer, LandedToldAuthor } from "@crosscheck/connector-core/http/hub.ts";
+import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
+import { namedLandedCommits } from "@crosscheck/connector-core/landed-changes/named-commits.ts";
+import { LANDED_STOP_MAX_SUBJECT_CHARS, LandedStopSchema, containsSecret } from "@crosscheck/schema";
+import { NO_LANDED_ANSWER, landedWhyFor } from "./landed-why.ts";
+import { requestLandingFetchFor } from "./landing-fetch.ts";
+import type { HookBudget, HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
 const ASK_DECISION = "ask";
@@ -143,10 +151,7 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
-export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
-  if (!isEditTool(ctx.payload.tool_name)) {
-    return "";
-  }
+const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
   if (state === null) {
     return "";
@@ -203,7 +208,7 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (asked.live && asked.landed) {
     return "";
   }
-  const found = await findReasons(ctx, edited, asked, state.landedCleanKeys);
+  const found = await findReasons(ctx, budget, edited, asked, state.landedCleanKeys);
   if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {
     await rememberClean(ctx, found.cleanKey);
   }
@@ -212,23 +217,47 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   }
   const won = await claimReasons(ctx, file, found);
   if (won.teammate === null && won.landed === null) {
+    // A sibling hook booked both: nothing to say, and no why to wait for.
     return "";
   }
   // The ask reason states what a teammate is doing and what landed; the
   // record states how far the archive the live claim came from reaches
   // (03 §5.1). It annotates only on a positively observed gap, so an
   // un-upgraded hub leaves the live lines byte-identical to what they were.
+  // Only a WON landed stop waits for its why (already under way since git
+  // answered); the hook's process ends a why nobody waits for.
+  const answer = won.landed === null ? NO_LANDED_ANSWER : await found.why;
+  // Recorded BEFORE it is rendered: a name the stop prints is a name the hub
+  // will tell (step 4, decision 11), so only what reached the spool is said.
+  const told =
+    won.landed === null || !mayTellAuthors(ctx, state)
+      ? []
+      : await recordLandedStop(ctx, state, file, won.landed, answer.told);
   const reason = renderEditWarning({
     live: won.teammate,
     landed: won.landed,
     file,
     now: ctx.now(),
     ...(found.coverage === undefined ? {} : { coverage: found.coverage }),
+    why: answer.matches,
+    told,
   });
   if (won.teammate !== null) {
     await recordTripwireAsk(ctx, state, won.teammate);
   }
   return askOutput(ctx, reason);
+};
+
+export const handlePreToolUse = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
+  if (!isEditTool(ctx.payload.tool_name)) {
+    return "";
+  }
+  // An edit also asks for the background fetch of the landing branches
+  // (hooks/landing-fetch.ts): an agent can work for an hour on one prompt,
+  // and the stop only sees what the clone has fetched. Beside the stop, not
+  // before it — the fetch serves the NEXT edit and must cost this one nothing.
+  const [output] = await Promise.all([askBeforeEdit(ctx, budget), requestLandingFetchFor(ctx)]);
+  return output;
 };
 
 interface Reasons {
@@ -240,42 +269,58 @@ interface FoundReasons extends Reasons {
   readonly coverage?: CoverageRecord;
   /** The probe answered "nothing" under this key (landed-changes/probe.ts). */
   readonly cleanKey: string | null;
+  /**
+   * The hub's why for the landed half, asked the moment GIT answered — not
+   * after the live tripwire's hub call too, which is what leaves it room on
+   * a hub across a network (hooks/landed-why.ts) — and who the stop tells.
+   * Empty when nothing landed.
+   */
+  readonly why: Promise<LandedContextAnswer>;
 }
 
 const NO_REASONS: Reasons = { teammate: null, landed: null };
 
 /**
  * Asks only the questions this session has not been stopped for yet, in
- * parallel, and neither waits on the other: the hub call is bounded by its
- * own timeout, the landed probe by its own deadline — never longer than one
- * hub call, so the live ask keeps the budget it always had — and a failure
- * of either is silence for that half only.
+ * parallel, and neither waits on the other: the live tripwire's hub call is
+ * bounded by its own timeout, the landed probe by its own deadline — never
+ * longer than one hub call, so the live ask keeps the budget it always had —
+ * and a failure of either is silence for that half only. The moment the
+ * probe finds a landed change, the second hub call, its why, starts beside
+ * them (`why`, bounded by what the budget spares; hooks/landed-why.ts).
  */
 const findReasons = async (
   ctx: HookContext,
+  budget: HookBudget,
   edited: EditedFile,
   asked: { readonly live: boolean; readonly landed: boolean },
   knownCleanKeys: readonly string[],
 ): Promise<FoundReasons> => {
-  const [result, probed] = await Promise.all([
-    asked.live ? null : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file),
-    asked.landed
-      ? null
-      : findLandedChanges({
-          root: edited.root,
-          file: edited.file,
-          now: ctx.now(),
-          timeZone: resolveTimeZone(ctx.env),
-          budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
-          knownCleanKeys,
-        }),
-  ]);
+  const probing = asked.landed
+    ? Promise.resolve(null)
+    : findLandedChanges({
+        root: edited.root,
+        file: edited.file,
+        now: ctx.now(),
+        timeZone: resolveTimeZone(ctx.env),
+        budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
+        knownCleanKeys,
+      });
+  const live = asked.live ? null : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file);
+  const why = probing
+    .then((probed) => {
+      const landed = worthStopping(probed);
+      return landed === null ? NO_LANDED_ANSWER : landedWhyFor(ctx, budget, edited.file, landed);
+    })
+    .catch((): LandedContextAnswer => NO_LANDED_ANSWER);
+  const [result, probed] = await Promise.all([live, probing]);
   const hub = result?.ok === true ? result.data : null;
   return {
     teammate: hub?.sessions[0] ?? null,
     landed: worthStopping(probed),
     cleanKey: probed?.cleanKey ?? null,
     ...(hub === null ? {} : { coverage: hub.coverage }),
+    why,
   };
 };
 
@@ -331,8 +376,8 @@ const claimReasons = async (ctx: HookContext, file: string, found: Reasons): Pro
  * silently. Appended AFTER the claim, so a racing sibling that lost the
  * claim records nothing — and the id is deterministic per (session,
  * context), so a replay is the hub's `duplicate`, not a second collision.
- * Only the LIVE half has a teammate context to record against; a stop for
- * a landed change alone records nothing here yet.
+ * Only the LIVE half has a teammate context to record against; the landed
+ * half is recorded for its authors instead (recordLandedStop).
  */
 const recordTripwireAsk = async (
   ctx: HookContext,
@@ -359,6 +404,97 @@ const recordTripwireAsk = async (
     ],
     ctx.now(),
   );
+};
+
+/**
+ * WHETHER THIS STOP MAY TELL ITS AUTHORS AT ALL.
+ *
+ * Not in `notice` mode: there the reason reaches only the model, no person
+ * sees "Mike is told about this stop", and decision 9 — the notice names
+ * the reader even behind a presence opt-out — rests on the reader having
+ * been told first (decision 11). A stop no person saw tells nobody.
+ *
+ * Not when the file's repo is not the session's: the hub files a stop under
+ * the repo its reader's session reports and refuses any other, so a line
+ * printed for one would name a notice that never exists.
+ */
+const mayTellAuthors = (ctx: HookContext, state: SessionState): boolean =>
+  aPersonReads(ctx.env) && ctx.identity.repoId === state.repoId;
+
+/**
+ * THE STOP IS RECORDED FOR THE PEOPLE IT NAMES (docs/1.0/landed-changes.md,
+ * step 4). After the booking, like the live half's ask: a sibling that lost
+ * the booking records nothing. Only the commits the stop names
+ * (namedLandedCommits, what the reader sees) and only those whose author the
+ * hub's why answer named as told — so the hub can tell nobody the stop did
+ * not name, and it checks that once more on ingest.
+ *
+ * Returns the names the stop may PRINT: those of a record that reached the
+ * spool. A refused append (a full spool; counted in `.drops`) records nothing
+ * and names nobody, so "Mike is told" is never said of a notice that does
+ * not exist. Microseconds, like every spool append; the hub hears it at the
+ * reader's next flush.
+ */
+const recordLandedStop = async (
+  ctx: HookContext,
+  state: SessionState,
+  file: string,
+  landed: LandedChanges,
+  told: readonly LandedToldAuthor[],
+): Promise<readonly string[]> => {
+  const authorOf = new Map(told.map((author) => [author.sha, author]));
+  const missing = new Set(landed.missing.map((commit) => commit.sha));
+  const named = namedLandedCommits(landed).flatMap((commit) => {
+    const author = authorOf.get(commit.sha);
+    return author === undefined
+      ? []
+      : [
+          {
+            name: author.name,
+            commit: {
+              sha: commit.sha,
+              // The local secret scan runs before every upload (DESIGN.md
+              // §2.1): a subject it flags goes blank, and the notice then
+              // names the commit by its sha alone.
+              subject: containsSecret(commit.subject)
+                ? ""
+                : cutWellFormed(commit.subject, LANDED_STOP_MAX_SUBJECT_CHARS),
+              authorEmail: commit.authorEmail,
+              authorDeveloperId: author.developerId,
+              missing: missing.has(commit.sha),
+            },
+          },
+        ];
+  });
+  const body = LandedStopSchema.safeParse({
+    sessionId: state.crosscheckSessionId,
+    repo: ctx.identity.repoId,
+    path: file,
+    stoppedAt: ctx.now().toISOString(),
+    commits: named.map((entry) => entry.commit),
+  });
+  if (!body.success) {
+    return [];
+  }
+  const producer: Producer = {
+    developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+    agentKind: ctx.config.agentKind,
+    sessionId: state.crosscheckSessionId,
+  };
+  const appended = await appendRecords(
+    ctx.config.home,
+    ctx.repoKey,
+    ctx.payload.session_id,
+    [landedStopRecord(body.data, producer, ctx.now())],
+    ctx.now(),
+  );
+  if (!appended.persisted) {
+    return [];
+  }
+  // Each person once: two commits by Mike are one "Mike is told", and two
+  // people who share a display name are still two.
+  const byPerson = new Map(named.map((entry) => [entry.commit.authorDeveloperId, entry.name]));
+  return [...byPerson.values()];
 };
 
 /**

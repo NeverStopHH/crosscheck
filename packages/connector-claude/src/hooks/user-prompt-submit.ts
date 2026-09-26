@@ -45,6 +45,7 @@
  */
 import { resolve } from "node:path";
 
+import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
 import { INTENT_PROMPT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import {
@@ -61,7 +62,8 @@ import {
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
-import type { HookContext } from "./runner.ts";
+import { requestLandingFetchFor } from "./landing-fetch.ts";
+import type { HookBudget, HookContext } from "./runner.ts";
 
 /** The intent worker's own entry, INSIDE this package (intent/worker-entry.ts). */
 const INTENT_WORKER_ENTRY_PATH = resolve(
@@ -195,9 +197,7 @@ const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
   }
 };
 
-export const handleUserPromptSubmit = async (
-  ctx: HookContext,
-): Promise<string> => {
+const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
   await maybeSpawnIntentWorker(ctx);
@@ -216,6 +216,7 @@ export const handleUserPromptSubmit = async (
     repoId: ctx.identity.repoId,
     agentKind: ctx.config.agentKind,
     now: ctx.now(),
+    tellsNotices: aPersonReads(ctx.env),
   });
   if (briefing.length > 0) {
     return envelope(briefing);
@@ -230,9 +231,24 @@ export const handleUserPromptSubmit = async (
     agentKind: ctx.config.agentKind,
     prompt: ctx.payload.prompt ?? "",
     now: ctx.now(),
+    // An author's notice is told on a prompt a person reads — never in a
+    // headless run — within what the budget spares (landed changes, step 4).
+    tellsNotices: aPersonReads(ctx.env),
+    spareMs: () => budget.spareMs(),
   });
   if (text.length === 0) {
     return "";
   }
   return envelope(text);
+};
+
+export const handleUserPromptSubmit = async (
+  ctx: HookContext,
+  budget: HookBudget,
+): Promise<string> => {
+  // Delivers nothing, like the two fires above: the background fetch of the
+  // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
+  // it adds no wall clock of its own.
+  const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);
+  return output;
 };

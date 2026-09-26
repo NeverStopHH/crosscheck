@@ -42,6 +42,40 @@ phone call.
    that someone ran into their landed change, in the next briefing and live
    on the next prompt.
 
+Grilled with Nick, 2026-09-25, for step 3:
+
+6. **A probable match is enough for the why.** The stop names a teammate's
+   work context when it is the same person, the same file, and work that
+   started before the commit in a session still active in the 30 days before
+   it. The 30 days were refined in review, so that a months-old session is
+   not offered. It says exactly that: "Mike's work on this file before
+   it landed". It never says "the reason for this commit". A commit's identity
+   cannot carry the link. A squash merge lands under a new sha, and spec 02
+   refused a table of commits. The person, the file and the time survive
+   every way of merging.
+7. **A commit whose author address the hub does not know gets no why.** The
+   stop comes without it. `doctor` names those addresses, read from the
+   reader's own clone: the first three, then how many more. It also gives an
+   example `.mailmap` line that maps an address to its person. Mapped once in
+   the repo, it works for everyone.
+
+Grilled with Nick, 2026-09-26, for step 4:
+
+8. **The author hears about both kinds of stop.** Mike is told when his
+   change is missing from Nick's checkout, and also when Nick already has it
+   and it landed recently. Each says which: missing work can be undone, work
+   Nick has can still be edited over.
+9. **The notice names the reader, even one who turned presence off.** "Nick
+   ran into your landed change before editing src/lines.ts, 2h ago" says where Nick
+   was and when, which is presence-class. It is said anyway because of
+   decision 11: Nick's own stop tells him it will be, so nothing is reported
+   behind his back.
+10. **A notice waits at most seven days** after the stop. Someone back from
+    a week away still hears it. After that it is gone unsaid, because it is
+    most likely settled or already surfaced in review.
+11. **The stop says who is told.** Nick's stop ends with "Mike is told about
+    this stop." Only a person the stop named is ever told.
+
 ## Mechanism
 
 **Git is the authority on WHAT; the hub adds WHY.** Whether a change landed
@@ -92,7 +126,8 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
 - A shallow clone answers "unknown" (its boundary commit reads as touching
   every file) and `doctor` warns. A blobless partial clone is probed without
   patch identity, since that would need the network.
-- Every git call is bounded, non-interactive and never fetches, at most
+- Every git call the probe makes is bounded, non-interactive and never
+  fetches (fetching is a separate background process, below), at most
   eight at once; the whole probe has a deadline no longer than one hub call.
   A slow or broken probe means no warning, never a blocked edit.
 - Only an answer that is COMPLETE and found NOTHING is cached — keyed on the file, HEAD,
@@ -103,26 +138,390 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
   unchecked branch, a failed, capped or timed-out half, or a limit reached
   with nothing shown carries no key and is asked again next time.
 
-The hub's part (a later step) is the reason: the teammate's work context for
-that file — intent, decisions, rejected approaches — matched to the commit
-author, so the warning can say "Mike changed this, and here is why" instead of
-only "a commit touched this file".
+The hub's part (step 3, below) is the reason: the teammate's work context for
+that file, matched to the commit author, so the warning can say "Mike worked
+on this, and here is what for" instead of only "a commit touched this file".
 
 **Your clone only knows what it has fetched.** A change merged after your last
-fetch is invisible to git. A later step fetches the landing branches in the
-background (remote-tracking refs only; never your working tree or your local
-branches), rate-limited and non-interactive, with an off switch.
+fetch is invisible to git, so step 2 fetches the landing branches in the
+background.
+
+## Fetching the landing branches (step 2)
+
+The most common sequential conflict is the one step 1 cannot see: Mike merged
+an hour ago, and you have not run `git fetch` since this morning. So the
+landing branches are fetched in the background. This is on by default, can be
+switched off, and never makes anything wait.
+
+- **When.** On session start, on each prompt and before each edit, at most
+  once every five minutes per clone. Worktrees of one clone share the
+  five minutes, because they share the refs. The hook books the attempt under
+  a lock and then starts a detached process (book, then start, like every
+  other worker here), so two hooks never fetch twice. The hook never waits
+  for the network, so the fetch serves the *next* edit, not the one that
+  triggered it.
+- **Which clones.** Only one that already tracks origin: at least one
+  `refs/remotes/origin/*`. A remote someone added but never fetched from may
+  carry a wrong URL, and its first contact should be your own `git fetch`,
+  not a hook's. (Pointing an already-fetched origin at a new URL keeps its
+  refs, so the next background fetch goes to the new URL.) A shallow clone,
+  where the stop is silent anyway, is not fetched.
+- **Which branches.** Every branch the stop reads now (step 1's rule on the
+  clone's own refs), plus what the same rule picks on origin, each only while
+  origin has it. Origin is asked about all of those names with
+  `git ls-remote`, one round trip, because a named branch that origin lacks
+  would fail the whole fetch. The
+  union is what keeps the fetch and the stop from disagreeing when origin's
+  default branch moved after the clone was made: your `origin/HEAD` still
+  names the old one, as with git itself, so the stop still reads it, and it
+  is the one that must stay fresh.
+- **What it writes: `refs/remotes/origin/<landing branch>`, nothing else.**
+  `git fetch --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance --refmap= origin +refs/heads/<b>:refs/remotes/origin/<b> …`,
+  with `fetch.writeCommitGraph=false`.
+  - No local branch, working tree, index, tag, submodule, commit-graph or gc,
+    and no `FETCH_HEAD`, which matters most: your own `git pull` reads it
+    between its fetch and its merge.
+  - `--refmap=` matters too. Without it, git also applies every
+    `remote.origin.fetch` refspec you configured to what it fetches, and such
+    a refspec can name a local branch.
+  - It never prunes. The refspecs name only branches origin has, so there is
+    nothing to prune (measured: with `fetch.prune` and `fetch.pruneTags` on,
+    a local tag survives). `--no-prune` stays as a second guard for a future
+    refspec that is not so narrow.
+  - A branch named `HEAD` is never a landing branch. It would write through
+    `refs/remotes/origin/HEAD` into `origin/main`, and git itself never
+    fetches one.
+  - A single-branch clone gains the remote-tracking refs it did not have,
+    which is the point.
+  - Your own `reference-transaction` hook runs, as it does for any fetch of
+    yours.
+- **Git and ssh cannot ask.** The worker runs in its own session with no
+  controlling terminal. This was measured: a child that a hook starts
+  normally can open `/dev/tty`, and ssh would ask for a key passphrase right
+  on the agent's screen. On top of that it sets:
+  - `GIT_TERMINAL_PROMPT=0`;
+  - `GIT_ASKPASS=false`, which overrides an editor's askpass that would open a
+    dialog;
+  - `SSH_ASKPASS_REQUIRE=never`;
+  - `ssh -o BatchMode=yes`, unless you set your own ssh command
+    (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`). Yours is kept, and
+    without a terminal it cannot ask either.
+
+  Credential helpers still run, because a stored token is how a silent fetch
+  signs in. They are told `credential.interactive=false` (Git Credential
+  Manager also gets `GCM_INTERACTIVE=never`), but a helper or an ssh agent
+  that ignores both can still show a dialog of its own: a keychain unlock, a
+  hardware-key touch, an agent's confirmation.
+- **Bounded, with nothing left behind.** `ls-remote` is bounded at 30 s and
+  the fetch at 120 s. Each of the two leads its own process group. At its
+  deadline that whole group is ended before the worker goes on: first
+  SIGTERM, so git removes its ref locks, then SIGKILL. A ProxyCommand or a
+  helper that ignores the signal does not outlive it. Only the abandoned
+  call's own processes go. A credential-cache daemon that the earlier,
+  finished call started stays yours. An ssh ControlPersist master leaves the
+  group by OpenSSH's own design (not probed here: no local sshd). Git runs
+  with exactly the environment the hook was given.
+- **Off switches.** `"landingFetch": false` in `.crosscheck.json` switches it
+  off for the team, `CROSSCHECK_LANDING_FETCH=off` for one person, and
+  `"landingBranches": []` switches off both the stop and the fetch.
+- **Recorded, and `doctor` says so.** One small file per clone lives in
+  Crosscheck's state directory, never inside the repo. It holds the last
+  attempt, the last success, the branches it brought and the failures in a
+  row. The stored reason is Crosscheck's own words ("did not finish within
+  120 s"), never git's output, which can carry a URL with a token in it.
+  `doctor` shows how old the last fetch is and which branches it brought.
+  It warns when:
+  - the fetch has failed three times in a row, with "run `git fetch origin`
+    to see why, or switch it off";
+  - at its last run a branch origin has did not arrive while others did (git
+    refused its ref, and that fails git's whole answer). What arrived still
+    counts: the refs are read before and after, and a dropped connection,
+    where nothing moved, is a failure however current the refs already were;
+  - bookings keep going unreported, meaning the worker is not starting or not
+    finishing;
+  - git is older than 2.29;
+  - the state directory cannot be written, because then the fetch can never
+    book a run.
+
+Known limits of step 2:
+
+- The first edit after a teammate lands can come before the fetch has
+  finished, because nothing waits for it. The next edit sees the change.
+- If your own `git fetch` or `git pull` runs at the same moment, it can fail
+  on a ref lock ("cannot lock ref"); run it again. An editor's auto-fetch has
+  the same race.
+- When origin's default branch is renamed, your `origin/HEAD` still names the
+  old one, as with git itself, and the stop keeps reading the old branch
+  until you run `git remote set-head origin -a`. The fetch brings the new
+  one, and it is used from then on.
+- git older than 2.29 has no `--no-write-fetch-head`, so there is no
+  background fetch, and `doctor` says why.
+- Only `origin`, as in step 1. Cursor and ACP have no pre-edit stop, so they
+  do not fetch either.
+
+## The why from the hub (step 3)
+
+What the hub knows, and what it does not. No record links a commit to the
+session that wrote it:
+- a session registers the commit it STARTED at;
+- commit evidence is a count per author with no shas;
+- spec 02 refused a table of commits.
+
+A squash merge would defeat such a table anyway. What the hub does know:
+- which developer an address belongs to (`developer_emails`);
+- which files each work context edited (`work_context_targets`);
+- when each session started.
+
+That is the match (decision 6).
+
+- **Asked only when there is a stop to explain.** The hub is asked the
+  moment git has found a change worth stopping for. It is asked beside the
+  live tripwire's own hub call and beside booking the stop, not after them,
+  and the answer is used only if this hook wins the booking. It gets the
+  smaller of one hub timeout and what the hook's budget still spares after
+  its reserve, and is not asked at all below 50 ms. A slow or old hub costs
+  the why and never the stop. On a machine whose git spends most of the
+  budget before it answers, nothing is left to spare, and the stop goes out
+  without its why. The vast majority of edits stop for nothing and ask
+  nothing.
+- **`POST /api/landed/context`.** The request carries the repo, the file, and
+  for each commit the stop names: its sha, its author's address (after
+  `.mailmap`, the probe's own matching key) and its commit time. It is a POST
+  because addresses do not belong in URLs, which end up in logs. A commit
+  the hub's schema would refuse is left out of the question, so it cannot
+  cost the others their why; so is a commit time in a year the hub cannot
+  hold. For each commit, one question (one row at
+  most, so one busy author cannot crowd out another commit's match): the
+  commit author's work context in this repo that targeted this file, in its
+  one canonical spelling. The work context counts only if its session
+  - was still active, meaning it sent a heartbeat, within the 30 days before
+    the commit. That is long enough for a pull request that waited in review
+    before its squash, whose commit time is when it landed, and short enough
+    that a months-old session is not offered for a commit made outside any.
+    The heartbeat is used, never the time the hub received the session's
+    end: after a hub outage, or for an end deferred through the spool, that
+    can be weeks later;
+  - started no later than five minutes after the commit. The session's
+    start is the hub's clock and the commit time the author's laptop, so
+    the five minutes absorb clock drift. The session's start is used, not
+    when the file edit reached the hub: an edit reaches the hub when the
+    spool flushes, which can be after the commit on a laptop that was
+    offline.
+
+  Of those, the order is:
+  1. a session that had recorded an edit of the file by the commit (within
+     the five minutes);
+  2. then one that recorded it within the hour after, which allows for a
+     spool that flushed late;
+  3. then any.
+
+  Within each group the latest start wins. On top of that:
+  - It is never the caller's own work context.
+  - A developer the caller muted is left out, because this is an unasked
+    surface.
+  - A presence opt-out hides the work only while its session is live. A
+    live session is presence; an ended session's work is published.
+  - The answer carries the work context's title, its current intent, the
+    developer's name, when the session started, and the work context's id.
+    It never carries an address.
+- **Rendered as a pointer plus the intent.** Under the commits the stop
+  names, each matched work context gets a line with its title and how long
+  ago the session behind it started, readable with `get_diagnosis <id>`, and,
+  when it has
+  one, its intent: `Their intent: «…»`, or `Their intent (derived): «…»` for
+  one Crosscheck inferred. That is exactly the shape of the live half.
+  - At most two work contexts are named.
+  - A work context the live half already names is not named again.
+  - A match for a commit the stop did not name is not printed.
+  - Decisions and rejected approaches are one `get_diagnosis` away, and never
+    injected. Pointers go out unasked, substance on request (DESIGN.md §4).
+  - The text is the teammate's, quoted under the existing notice.
+  - No match means no line. The stop never says "no reason recorded" (03
+    §5.1), because a missing work context is not a missing reason.
+- **`doctor`: whom the hub does not know.** It collects the distinct author
+  addresses (after `.mailmap`) of the landing branches' latest 500 commits.
+  That is a count, not a date window. A window drops a merged feature
+  branch's commits because of their old dates; a count only orders by them.
+  In a very busy repo, a long-lived branch merged just now can still sit past
+  the 500. Your own
+  and bots' (`[bot]`) are left out. It asks the hub which ones belong to
+  nobody, and names them: the first three, then how many more. It also
+  gives an example `.mailmap` line. It answers PASS, because an outside
+  contributor is no fault.
+
+Known limits of step 3:
+
+- One person with several work contexts on the file around the commit: the
+  one that had edited the file by the commit is named, else the latest. The
+  age printed is the session's start, so a long-running session reads older
+  than the work it did last.
+  That is why the line says "work on this file" and prints its age, and
+  never "the reason".
+- Work done outside a Crosscheck session gets no why of its own. If the
+  same person worked on the file in a session within the 30 days before the
+  commit, that session's work is named, with its age.
+- A pull request that waited in review for more than 30 days before its
+  squash gets no why.
+- "Recorded an edit by the commit" is measured by when the edit reached the
+  hub, because the hub keeps no author-side time for an edit. A session
+  whose edits arrived more than five minutes after the commit (a laptop
+  offline, a hub down) can lose to an older session of the same person on
+  the file. That older one prints its age, so the mistake shows. The other
+  order would hide a worse mistake: a follow-up begun just before the
+  commit taking the credit while looking current. The fix is an edit time
+  on the author's own clock (the record's `ts`) stored with each target,
+  which needs a migration of its own.
+- `Co-authored-by` trailers are not read. A commit gets its author's work
+  only.
+- Cursor and ACP have no pre-edit stop, as in step 1.
+
+## The author's notice (step 4)
+
+Mike, whose change stopped Nick's edit, is told once: in his next briefing
+in that repo, or on his next prompt in a session there, whichever comes
+first (decisions 5, 8–11).
+
+- **Who is told is decided with the why, in the same answer.** The answer of
+  `POST /api/landed/context` also names, for each commit the stop named, the
+  developer its author address belongs to (never the caller). Those are the
+  people the stop names: "Mike is told about this stop." — each person once,
+  however many of their commits the stop names. The hub is not asked a
+  second time. If the why was not asked (no spare budget, an older hub) or
+  did not answer, the stop names nobody and nobody is told. So decision 11
+  holds by construction, never by hoping a later write matches an earlier
+  line.
+- **Only a person tells, and only a person is told.** In
+  `CROSSCHECK_TRIPWIRE=notice` mode (the mark of a headless run) the stop
+  reaches only the model, so it records nothing and names nobody: decision 9
+  rests on the reader having read "Mike is told" first. On the author's side
+  the same mode is told nothing — the briefing does not even fetch the
+  notices, the prompt does not tell them — so a notice is never spent on a
+  run nobody reads. *Refined during review, pending Nick's confirmation.* Nor
+  does a stop on a file whose repo is not the session's tell anybody; the hub
+  files a stop only under the repo its reader's session reports.
+- **The stop leaves a record, after it is booked.** A `landed_stop` record
+  is spooled once this hook has won the booking, like the live half's
+  delivery record. It carries the repo, the file, and for each named commit
+  of a told author: its full sha, its subject, its author address and
+  developer, and whether it was missing or recent. A subject the local
+  secret scan flags is sent blank, and the notice then names the commit by
+  its sha alone; the hub blanks it again. A spool append costs microseconds,
+  and a failed one is counted in `.drops`. The line is printed only when the
+  append succeeded: nobody is named as told whom the stop did not record. The hub hears
+  of the stop at the reader's next flush. That is seconds after an approved
+  edit, the end of the turn after a declined one, and the next session for
+  a laptop that went offline.
+- **The hub keeps one row per reader, file and commit** (`landed_notices`).
+  - It checks each commit's address against its named developer, drops the
+    caller's own, and does not store a stop that arrives more than seven
+    days old.
+  - A second stop on the same reader, file and commit refreshes a row not
+    yet told and adds nothing to one already told. So Mike hears about each
+    commit once per reader and file, however many sessions Nick stops in.
+    The seven days run from a row's latest stop before it was told, so a
+    reader still stopped at the same missing commit a week after that tells
+    the author again.
+  - Rows past seven days are never listed, and are deleted by the reaper
+    pass and before every stop's ingest.
+  - One reader files at most twenty rows for one author in one repo within
+    the seven days, told or not — a bound on the rate, and exact: a stop
+    that meets it writes only what fits, however many flushes race (one
+    transaction per stop). A stop on a row still waiting only refreshes it
+    and always passes. Per repo, because notices are told per repo.
+  - The reader learns nothing from how a stop is received: every admissible
+    stop is answered `accepted`, whatever the rows did. An answer that
+    followed the rows would be a read receipt — telling the reader when the
+    author opened a session, and whether the author muted them.
+- **Mike's side: listed unasked, marked told once shown.**
+  - `GET /api/landed/notices?repo=` feeds a briefing section right after
+    the questions, and the same list rides the prompt hint's existing call,
+    so live delivery costs no extra round trip.
+  - Rows are grouped by reader and file, at most three groups: every
+    reader's newest group before anyone's second, newest first within a
+    round — ranked in SQL before any limit — so one reader's many stops
+    cannot crowd out another's. A listed group comes whole.
+  - Mike's mute of Nick hides Nick's notices. This is an unasked surface for
+    Mike, and a mute is never disclosed, so Nick's stop still says "Mike is
+    told" (the rule for questions).
+  - Nick's presence opt-out does not hide them (decision 9).
+  - A shown group is marked told by a `landed_notice_delivery` record, which
+    the hub applies only to rows addressed to its sender. Only what the
+    emitted text really names is marked: at most three commits per group,
+    the rest shown next time, and a group the briefing's character budget
+    cut is still waiting.
+  - On a prompt, a notice takes the prompt's one hint slot after an answer
+    and before a pointer, and counts toward the session's five. It is
+    claimed in session state first, then spooled, then posted at once, so
+    Mike's other live sessions stay quiet. All of that happens only while
+    the prompt hook's budget still spares room to post it and print it; with
+    less, the notice is neither claimed nor marked and waits. A prompt the
+    hint path stays silent on (too short, carrying a secret, the five spent)
+    delivers no notice either. The next briefing does.
+- **What Mike reads**:
+  ```
+  Teammates ran into your landed changes (each notice is shown once):
+  - Nick ran into your landed changes before editing src/lines.ts, 2h ago:
+    0dcfc4e «Fix line offset»: was missing from Nick's checkout
+    1a2b3c4 «Count from one»: Nick already had it; it had landed recently
+  ```
+  Past tense, because a notice can be read days after its stop and says
+  what was true then. On a prompt the same entry follows "crosscheck notice:
+  a teammate ran into your landed changes; this notice is shown once."
+  Groups the briefing leaves out, and commits past three, end in "(+N more,
+  shown next time)". The subject is quoted data: it reaches Mike through
+  Nick's connector.
+- **Every host's author hears it.** The briefing is shared by all three
+  connectors. The prompt path serves Claude Code and ACP. Cursor has no
+  prompt channel, and its failure hint's output field is undocumented and
+  may be dropped, so there the briefing is the only delivery. Only Claude
+  Code readers produce stops.
+
+Known limits of step 4:
+
+- Two of Mike's sessions in the same repo that read the same notice before
+  either's delivery reached the hub both show it. A briefing delivered on
+  the first prompt of a session (the deferred briefing) is only spooled
+  until that session's next flush, which widens the window, and a session
+  that is resumed or cleared forgets what it showed.
+- A stop whose why was not asked in time names nobody, so nobody is told.
+  This is the price of decision 11.
+- "Mike is told" says the stop was recorded for Mike, not that he reads it:
+  if he opens no session in that repo within seven days, or runs a connector
+  older than step 4, it expires unsaid. The same holds for a stop the hub
+  never receives within seven days (a laptop offline that long), for one on
+  a commit Mike was already told of for that file within the week, and for
+  one past the twenty. Saying otherwise would tell Nick when Mike looked.
+- A briefing is marked told before the hook's last local steps run; a hook
+  that then runs out of time has marked a notice told that it did not show,
+  as it can a solved pointer. ACP prepares its briefing when the session
+  opens and shows it on the first prompt, so a notice another session told
+  in between is shown again, with the age it had when prepared.
+- On a hub across a slow network, a prompt rarely has room to tell a notice
+  (the budget holds one request timeout in reserve), and the briefing tells
+  it instead.
+- In a permission mode that does not show a hook's ask to the person, Nick
+  never sees "Mike is told", and Mike is told all the same.
+- A headless run without `CROSSCHECK_TRIPWIRE=notice` cannot be told apart
+  from an interactive one (the stop's own header says why), so its stop
+  still tells the author, though the reason reached only the model.
+- A commit author the hub does not know cannot be told (decision 7; `doctor`
+  names the address).
+- The `told` answer lets any hub member learn which developer an author
+  address belongs to. Within one hub that is the team's own directory; the
+  why already names people by their commits.
 
 ## Build order
 
 Each step is one PR into `feat/landed-changes-flow`, then one PR to `main`.
+Step 1 reached `main` through the batch PR #66.
 
 1. **The reader's warning, from git alone**: landing branches (config and
    auto-detection), the two probes, the working-day window, own-commit
    exclusion, the PreToolUse ask with its own once-per-file marker, and the
    `doctor` line.
 2. **Background fetch** of the landing branches.
-3. **The why from the hub**: the teammate context behind the commit.
+3. **The why from the hub**: the teammate's work on the file, matched by
+   person, file and time.
 4. **The author's notice**: briefing and live prompt, exactly once.
 
 ## Not in this version

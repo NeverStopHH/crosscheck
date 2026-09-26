@@ -24,6 +24,7 @@ import { COVERAGE_SESSION_WINDOW_DAYS } from "../constants.ts";
 import { readCoverage } from "../services/coverage.ts";
 import { countCoverageAnswer } from "../services/pilot.ts";
 import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
+import { listLandedNotices } from "../services/landed-notices.ts";
 import { listUndeliveredAnswers } from "../services/questions.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -74,13 +75,17 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // THREE reads, ONE round trip, for the reason above plus one more: the
     // coverage record (03 §3.5) is bytes on a response the hook already
     // waits for, never a second request inside the 800 ms budget.
-    const [candidates, answers, coverage] = await Promise.all([
+    // FOUR, with the author's notices (docs/1.0/landed-changes.md, step 4):
+    // told on the author's next prompt, so they ride the one call the prompt
+    // already makes — the same list the briefing reads, the same repo scope.
+    const [candidates, answers, coverage, notices] = await Promise.all([
       listHintCandidates(deps, c.get("developer").id, parsed.data),
       // `repo` on BOTH: the answers are scoped exactly like the candidates
       // beside them, so solicited substance from another codebase cannot land
       // in a session that never asked it (services/questions.ts says why).
       listUndeliveredAnswers(deps, c.get("developer").id, parsed.data.repo),
       readCoverage(deps, c.get("developer").id, parsed.data.repo),
+      listLandedNotices(deps, c.get("developer").id, parsed.data.repo),
     ]);
     // 07 §3.5, proof 5: this answer carried a coverage record, and
     // whether it did is what 03 made mandatory and nobody counted.
@@ -89,7 +94,7 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       surface: "api-hints-candidates",
       coverage,
     });
-    return ok(c, { candidates, answers, coverage });
+    return ok(c, { candidates, answers, coverage, notices });
   });
 
   router.get("/tripwire", async (c) => {

@@ -71,6 +71,7 @@ const sessionState = (
   landedAskedFiles: [],
   landedCleanKeys: [],
   briefingSolvedRefs: [],
+  shownLandedNoticeIds: [],
   probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,
@@ -174,6 +175,68 @@ const contextOf = (stdout: string): string => {
   const parsed = JSON.parse(stdout) as HookOutput;
   return parsed.hookSpecificOutput?.additionalContext ?? "";
 };
+
+/** An author's notice waiting for this developer (landed changes, step 4). */
+const waitingNotice = (): Record<string, unknown> => ({
+  id: "lnt_1",
+  readerName: "Nick",
+  path: "src/lines.ts",
+  stoppedAt: new Date().toISOString(),
+  commits: [{ id: "lnt_1", sha: "0dcfc4e9a1b2c3d4e5f60718293a4b5c6d7e8f90", subject: "Fix line offset", missing: true }],
+});
+
+const noticeDeliveries = (hub: { readonly postedRecords: readonly Record<string, unknown>[] }) =>
+  hub.postedRecords.filter((record) => record["kind"] === "landed_notice_delivery");
+
+describe("user-prompt-submit tells an author's notice only when it can show it", () => {
+  test("with room in the budget it is told, and the hub hears so at once", async () => {
+    const { repo, hub, env } = await fixture("notice-told");
+    hub.setCandidates([]);
+    hub.setNotices([waitingNotice()]);
+
+    const context = contextOf(
+      await runHook("user-prompt-submit", promptPayload(repo, PROMPT), { ...env, CROSSCHECK_TIMEOUT_MS: "1500" }),
+    );
+
+    expect(context).toContain("Nick ran into your landed change before editing src/lines.ts");
+    expect(noticeDeliveries(hub)).toHaveLength(1);
+  });
+
+  test("a headless run is told no notice: nobody would read it", async () => {
+    const { repo, home, hub, env } = await fixture("notice-headless-author");
+    hub.setCandidates([]);
+    hub.setNotices([waitingNotice()]);
+
+    const context = contextOf(
+      await runHook("user-prompt-submit", promptPayload(repo, PROMPT), {
+        ...env,
+        CROSSCHECK_TIMEOUT_MS: "1500",
+        CROSSCHECK_TRIPWIRE: "notice",
+      }),
+    );
+
+    expect(context).not.toContain("ran into your landed change");
+    expect(noticeDeliveries(hub)).toEqual([]);
+    expect((await readSessionState(home, SESSION_ID))?.shownLandedNoticeIds).toEqual([]);
+  });
+
+  test("a hub slow enough to spend the spare budget: the notice is neither shown nor marked told", async () => {
+    // Default 400 ms timeout, 800 ms budget with 400 held in reserve: a
+    // candidates answer at 380 ms leaves nothing spare to post and print.
+    const { repo, home, hub, env } = await fixture("notice-slow");
+    hub.latency.candidates = 380;
+    hub.latency.records = 450;
+    hub.setCandidates([]);
+    hub.setNotices([waitingNotice()]);
+
+    const context = contextOf(await runHook("user-prompt-submit", promptPayload(repo, PROMPT), env));
+    const state = await readSessionState(home, SESSION_ID);
+
+    expect(context).not.toContain("ran into your landed change");
+    expect(noticeDeliveries(hub)).toEqual([]);
+    expect(state?.shownLandedNoticeIds).toEqual([]);
+  });
+});
 
 describe("user-prompt-submit delivers one labelled hint", () => {
   test("an evidence-backed teammate claim arrives framed, labelled, recorded", async () => {

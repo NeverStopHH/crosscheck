@@ -125,6 +125,7 @@ whole pass in one `try/catch`, so a sweep that throws also skips that developer'
 | `intent_scope` (06) | `value` (a path), **inside the primary key** | never | content | §3.4 rule 4: cannot expire in 1.0 |
 | `artifacts` | `content` | never | content | §3.4, D-A |
 | `questions`, `question_answers` | question and answer text | never | content | §3.4 |
+| `landed_notices` (landed changes, step 4) | `subject`: the author's own commit subject, carried by the reader's connector | age, 7 d (the reaper pass, and before every stop's ingest) | content | removed at 7 d (its decision 10); nothing causal hangs off it |
 | `commit_evidence` | none that leaves the hub | age, 30 d | unchanged | 01 §3.5 |
 | `events` | none — the outbox carries ids and metadata only (`services/events.ts:30`) | never | unchanged | — |
 

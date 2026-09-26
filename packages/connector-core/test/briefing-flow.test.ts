@@ -311,6 +311,7 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
       producer,
       shownSolvedIds: ["wc_solved_1", "wc_solved_2"],
       shownGhostCount: 0,
+      shownLandedNoticeIds: [],
       now: NOW,
     };
 
@@ -403,6 +404,7 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
       producer: { developerId: SELF, agentKind: "acp:x", sessionId: `cc_${HOST_KEY}` },
       shownSolvedIds: assembled.shownSolvedIds,
       shownGhostCount: assembled.shownGhostCount,
+      shownLandedNoticeIds: assembled.shownLandedNoticeIds,
       now: NOW,
     });
 
@@ -431,6 +433,7 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
       producer: { developerId: SELF, agentKind: "acp:x", sessionId: `cc_${HOST_KEY}` },
       shownSolvedIds: [],
       shownGhostCount: 0,
+      shownLandedNoticeIds: [],
       now: NOW,
     });
 

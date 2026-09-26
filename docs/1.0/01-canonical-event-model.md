@@ -320,8 +320,9 @@ unchanged.
 
 ## 6. Budget
 
-**The two hooks the 800 ms rule governs allocate nothing.** `UserPromptSubmit` emits only `hint_delivery`, which is not one of
-the nine canonical kinds; `PreToolUse` emits no record at all (00 §4.3). Marginal cost on both: **0 ms**. The pair pinned at
+**The two hooks the 800 ms rule governs allocate nothing.** `UserPromptSubmit` emits only `hint_delivery` and, since landed changes
+step 4, `landed_notice_delivery`, neither of which is one of the nine canonical kinds; `PreToolUse` emits no canonical record (00 §4.3) — its asks later came to spool a `hint_delivery`
+(07 §3.1) and a `landed_stop` (landed changes, step 4), neither of which allocates a position. Marginal cost on both: **0 ms**. The pair pinned at
 `connector-core/src/constants.ts:56-57` —
 
 ```

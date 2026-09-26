@@ -39,6 +39,7 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { loadReportableConfig, resolveTimeoutMs } from "@crosscheck/connector-core/config/config.ts";
+import { hookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
@@ -368,6 +369,12 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
         agentKind: view.agentKind,
         prompt: promptQueryOf(prompt),
         now: new Date(now()),
+        // The editor shows this prompt's context to a person, so an author's
+        // notice may be told here — only while the same reserve arithmetic
+        // as the Claude hook spares room: a notice claimed by a flow that
+        // then loses this race would be marked told and never shown.
+        tellsNotices: true,
+        spareMs: hookBudget(deadline, resolveTimeoutMs(env, null), now).spareMs,
       }),
       remaining,
     );

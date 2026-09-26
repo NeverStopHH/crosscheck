@@ -1378,6 +1378,7 @@ export const MUTATIONS: readonly Mutation[] = [
       "            producer: producerFor(session),\n" +
       "            shownSolvedIds: assembled.shownSolvedIds,\n" +
       "            shownGhostCount: assembled.shownGhostCount,\n" +
+      "            shownLandedNoticeIds: assembled.shownLandedNoticeIds,\n" +
       "            now: now(),\n" +
       "          });\n",
     to: "",
@@ -11154,6 +11155,1337 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "while the reader resolves a merge, the very commits being merged are announced as missing",
   },
+  {
+    // Landing fetch (step 2). A pull must never read our FETCH_HEAD.
+    label: "the background fetch writes FETCH_HEAD",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "--no-write-fetch-head",',
+    to: '  "--write-fetch-head",',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because:
+      "a developer's own git pull reads FETCH_HEAD between its fetch and its merge, and a background fetch in that gap makes it merge the wrong thing",
+  },
+  {
+    // Landing fetch. Tags are not ours to bring.
+    label: "the background fetch brings every tag",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "--no-tags",',
+    to: '  "--tags",',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a hook fills the developer's clone with every tag origin has, unasked",
+  },
+  {
+    // Landing fetch. Only what origin has goes into a refspec.
+    label: "a branch the stop reads but origin deleted is fetched anyway",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  return [...new Set(picked)].filter((branch) => origin.existing.has(branch));",
+    to: "  return [...new Set(picked)];",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because:
+      "one branch deleted on origin fails the whole fetch, and every landing branch goes stale with it",
+  },
+  {
+    // Landing fetch. Every branch the stop reads is refreshed.
+    label: "the fetch refreshes only what origin's default names",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const picked = [...selectLandingBranches(setting, origin), ...stopReads];",
+    to: "  const picked = [...selectLandingBranches(setting, origin)];",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because:
+      "once origin's default moves, the branch the stop still reads is never fetched again, and the stop goes blind",
+  },
+  {
+    // Landing fetch. The default branch is origin's word.
+    label: "origin's default branch is ignored",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "      symref = name === \"HEAD\" ? left.slice(SYMREF_PREFIX.length) : symref;",
+    to: "      symref = null;",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a team whose default branch is not main or master never has it fetched",
+  },
+  {
+    // Landing fetch. A HEAD that does not resolve names nothing to fetch.
+    label: "an unborn default branch is fetched",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const headBranch = headTip !== null && named !== null && isBranchName(named) ? named : null;",
+    to: "  const headBranch = named !== null && isBranchName(named) ? named : null;",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "an empty origin's default branch goes into the refspec, and the fetch fails for every branch",
+  },
+  {
+    label: "origin's default branch has no tip unless it was asked about",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "    existing.set(headBranch, headTip);",
+    to: '    existing.set(headBranch, "");',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a partial fetch of a default branch called trunk can never be recognised as brought",
+  },
+  {
+    // Landing fetch. Configured refspecs are not applied.
+    label: "configured fetch refspecs ride along with the background fetch",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "--refmap=",',
+    to: '  "--no-show-forced-updates",',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a remote.origin.fetch refspec that names a local branch creates or moves it from a hook",
+  },
+  {
+    label: "credential helpers are not told to stay quiet",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "credential.interactive=false",',
+    to: '  "credential.interactiveUnused=false",',
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "a helper that would honour it opens a sign-in dialog while the agent works",
+  },
+  {
+    label: "the fetch writes commit-graph files",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "fetch.writeCommitGraph=false",',
+    to: '  "fetch.writeCommitGraphUnused=false",',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "every five minutes a hook adds files to the developer's .git they never asked for",
+  },
+  {
+    label: "a partly refused fetch counts as nothing",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const brought = branches.filter(moved);",
+    to: "  const brought: readonly string[] = [];",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because:
+      "one stuck ref makes every run a failure, and doctor says nothing was fetched while main moves every time",
+  },
+  {
+    label: "any git is taken as recent enough",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  return major > MIN_GIT[0] || (major === MIN_GIT[0] && minor >= MIN_GIT[1]);",
+    to: "  return major >= 0;",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "on a git without --no-write-fetch-head every run fails, and doctor sends the developer to the wrong fix",
+  },
+  {
+    // Landing fetch. Nothing an abandoned call started outlives it.
+    label: "a descendant that ignores SIGTERM outlives its abandoned call",
+    file: `${CORE}/src/git/git.ts`,
+    from: '    process.kill(-leader, "SIGKILL");',
+    to: "    process.kill(-leader, 0);",
+    test: `${CORE}/test/git-timeout.test.ts`,
+    because: "a helper stuck on a dialog, or a ProxyCommand, is left behind every five minutes",
+  },
+  {
+    label: "a call meant to lead its own group does not",
+    file: `${CORE}/src/git/git.ts`,
+    from: "      ...(options.ownGroup === true ? { detached: true } : {}),",
+    to: "      ...{},",
+    test: `${CORE}/test/git-timeout.test.ts`,
+    because: "the group kill finds no group, and the whole tree of an abandoned call survives it",
+  },
+  {
+    label: "a command handed its environment inherits this process's too",
+    file: `${CORE}/src/git/git.ts`,
+    from: "        : options.inheritEnv === false",
+    to: "        : false",
+    test: `${CORE}/test/git-timeout.test.ts`,
+    because: "the worker's git sees variables the hook never handed it",
+  },
+  {
+    label: "the fetch's network calls share the worker's group",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "        ownGroup: true,",
+    to: "        ownGroup: false,",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "at a deadline only git is signalled, and a stubborn ssh child lives on after the worker",
+  },
+  {
+    label: "the fetch's network calls inherit the worker process's environment",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "        inheritEnv: false,",
+    to: "        inheritEnv: true,",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "git in the worker acts on variables the hook never handed it",
+  },
+  {
+    label: "origin is not asked about a branch the stop reads",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const asked = [...new Set([...landingBranchCandidates(plan.branches), ...stopReads])];",
+    to: "  const asked = [...landingBranchCandidates(plan.branches)];",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a default branch called trunk is dropped the moment origin's HEAD moves away from it",
+  },
+  {
+    label: "a dropped connection reads as a success",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  if (brought.length === 0) {",
+    to: "  if (brought.length < 0) {",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a fetch that brought nothing resets the failure count and doctor calls it healthy",
+  },
+  {
+    label: "bookings are not counted",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "          bookedSinceReport: current.bookedSinceReport + 1,",
+    to: "          bookedSinceReport: 0,",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "a worker that never starts reads as 'not run yet' forever",
+  },
+  {
+    label: "a report does not clear the booking count",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "        bookedSinceReport: 0,",
+    to: "        bookedSinceReport: current.bookedSinceReport,",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a healthy worker is reported as never finishing after three runs",
+  },
+  {
+    label: "doctor passes a worker that never reports",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "  if (record.bookedSinceReport >= DOCTOR_LANDING_FETCH_FAILURES_WARN) {",
+    to: "  if (record.bookedSinceReport < 0) {",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "the fetch never runs and doctor keeps saying it has not run yet",
+  },
+  {
+    label: "doctor calls a home that does not exist yet unwritable",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "      dir = parent;",
+    to: "      return false;",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "every fresh machine is told its fetch can never run",
+  },
+  {
+    // The stop reads a default branch with a name of its own.
+    label: "a default branch called trunk is watched at an empty tip",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: "    existing.set(headBranch, headTip);",
+    to: '    existing.set(headBranch, "");',
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because: "git reads an empty tip as HEAD...HEAD, and every edit in such a repo is told nothing landed",
+  },
+  {
+    label: "a branch called HEAD is a landing branch",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: "  name.toUpperCase() !== HEAD_NAME &&",
+    to: "  name.length > 0 &&",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "origin can write a foreign commit through refs/remotes/origin/HEAD into origin/main",
+  },
+  {
+    label: "a branch called head is a landing branch on a case-insensitive filesystem",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: "  name.toUpperCase() !== HEAD_NAME &&",
+    to: "  name !== HEAD_NAME &&",
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because: "on a default Mac origin/head is the origin/HEAD symref, and a fetch of it overwrites origin/main",
+  },
+  {
+    label: "a segment starting with a dot is a branch name",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: '  !name.includes("/.") &&',
+    to: "  name.length > 0 &&",
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because: "a name git refuses goes into a refspec, and the whole fetch fails",
+  },
+  {
+    // doctor names each way the fetch can be stuck.
+    label: "doctor passes a branch that never arrives",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "    return missed.length === 0",
+    to: "    return missed.length >= 0",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "one landing branch stays stale forever while doctor reports a healthy fetch",
+  },
+  {
+    label: "doctor passes a git too old to fetch",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: 'const SKIP_IS_A_FAULT: ReadonlySet<string> = new Set(["old-git"]);',
+    to: "const SKIP_IS_A_FAULT: ReadonlySet<string> = new Set<string>();",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "the fetch never runs and the only sign is a PASS",
+  },
+  {
+    label: "doctor passes a home the fetch can never book in",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "  if (!(await canWriteRecord(home))) {",
+    to: "  if (home.length < 0) {",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "an unwritable state directory silently stops the fetch forever under a 'not run yet'",
+  },
+  {
+    // Landing fetch. Nothing to see in a shallow clone.
+    label: "a shallow clone is fetched anyway",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  if (shallow.ok && shallow.stdout === "true") {',
+    to: '  if (shallow.ok && shallow.stdout === "never") {',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "the network is spent every five minutes on a clone where the stop is silent by design",
+  },
+  {
+    // Landing fetch. No origin is a state, not a fault.
+    label: "a clone without origin is recorded as a failure",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  if (!origin.ok || origin.stdout.length === 0) {",
+    to: "  if (!origin.ok && origin.stdout.length < 0) {",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a brand-new repo reads as a broken fetch in doctor",
+  },
+  {
+    // Landing fetch. The worker honours the switch too.
+    label: "the worker fetches when switched off",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  if (plan.switch.kind === "off") {\n    return skipped("off");',
+    to: '  if (plan.switch.kind === "off" && input.root.length < 0) {\n    return skipped("off");',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a switch turned off between booking and running is ignored for that run",
+  },
+  {
+    // Landing fetch. ssh in batch mode by default.
+    label: "ssh may ask for a passphrase",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const ssh = hasOwnSsh(input.env, coreSshCommand) ? {} : { GIT_SSH_COMMAND: BATCH_SSH_COMMAND };",
+    to: "  const ssh = {};",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "an ssh key with a passphrase is asked for it, by a process nobody is watching",
+  },
+  {
+    // Landing fetch. The developer's own ssh command is kept.
+    label: "the developer's GIT_SSH_COMMAND is overridden",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  isSet(env["GIT_SSH_COMMAND"]) ||',
+    to: "  false ||",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "a key per client or a jump host stops working for the background fetch only",
+  },
+  {
+    label: "the developer's GIT_SSH is overridden",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  isSet(env["GIT_SSH"]) ||',
+    to: "  false ||",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "an ssh wrapper the developer relies on is bypassed by the background fetch",
+  },
+  {
+    label: "the repo's core.sshCommand is overridden",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  (coreSshCommand.ok && coreSshCommand.stdout.length > 0);",
+    to: "  false;",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "a repo configured for its own ssh key fails every background fetch",
+  },
+  {
+    // Landing fetch. No terminal to ask on.
+    label: "the worker keeps the hook's terminal",
+    file: `${CORE}/src/landed-changes/fetch-trigger.ts`,
+    from: "      detached: true,",
+    to: "      detached: false,",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because:
+      "ssh can open /dev/tty and ask for a passphrase on the agent's screen, reading the developer's keystrokes as the answer",
+  },
+  {
+    // Landing fetch. Only a clone that tracks origin.
+    label: "a remote never fetched from is fetched by a hook",
+    file: `${CORE}/src/landed-changes/fetch-trigger.ts`,
+    from: "  if (!(await tracksOrigin(input.root))) {",
+    to: "  if (input.root.length < 0) {",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "the first contact with a remote someone only added — maybe a wrong URL — is made by a hook",
+  },
+  {
+    label: "the trigger ignores the off switches",
+    file: `${CORE}/src/landed-changes/fetch-trigger.ts`,
+    from: '  if (plan.switch.kind === "off") {\n    return "off";',
+    to: '  if (plan.switch.kind === "off" && input.root.length < 0) {\n    return "off";',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a team or a person that switched the fetch off still gets one every five minutes",
+  },
+  {
+    // Landing fetch. The interval.
+    label: "a fetch is due on every hook",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "  return elapsed >= LANDING_FETCH_INTERVAL_MS || elapsed < -LANDING_FETCH_INTERVAL_MS;",
+    to: "  return elapsed >= 0 || elapsed < -LANDING_FETCH_INTERVAL_MS;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "every prompt and every edit starts a fetch against the team's git host",
+  },
+  {
+    label: "a racing hook's clock reads as a clock set back",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "  return elapsed >= LANDING_FETCH_INTERVAL_MS || elapsed < -LANDING_FETCH_INTERVAL_MS;",
+    to: "  return elapsed >= LANDING_FETCH_INTERVAL_MS || elapsed < 0;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "two hooks a second apart start two fetches that race for the same ref locks",
+  },
+  {
+    label: "a clock set back stops the fetch until it catches up",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "  return elapsed >= LANDING_FETCH_INTERVAL_MS || elapsed < -LANDING_FETCH_INTERVAL_MS;",
+    to: "  return elapsed >= LANDING_FETCH_INTERVAL_MS;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a clock corrected by an hour silences the fetch for that hour, a day for a day",
+  },
+  {
+    // Landing fetch. The booking is checked again under the lock.
+    label: "a booking inside the interval is accepted",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "        if (!isLandingFetchDue(current, now)) {\n          return false;",
+    to: "        if (current.failuresInARow < 0) {\n          return false;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "two hooks that both saw a fetch due both start one",
+  },
+  {
+    label: "a worker's record moves the booking",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "        lastAttemptAt: current.lastAttemptAt,",
+    to: "        lastAttemptAt: now.toISOString(),",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a slow fetch pushes the next one back by its own duration, and a hung one by its timeout",
+  },
+  {
+    label: "a success does not reset the failure count",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: '  return outcome.kind === "fetched" ? 0 : current.failuresInARow;',
+    to: "  return current.failuresInARow;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "one bad week makes doctor warn forever",
+  },
+  {
+    label: "worktrees of one clone fetch on their own",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: '  const outcome = await runGitOutcome(["rev-parse", "--git-common-dir"], root, timeoutMs, QUIET_GIT_ENV);',
+    to: '  const outcome = await runGitOutcome(["rev-parse", "--show-toplevel"], root, timeoutMs, QUIET_GIT_ENV);',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "two worktrees fetch into the same refs at once and one fails on a ref lock",
+  },
+  {
+    label: "failures forget which branches the last success fetched",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: '        lastFetchedBranches: outcome.kind === "fetched" ? outcome.branches : current.lastFetchedBranches,',
+    to: '        lastFetchedBranches: outcome.kind === "fetched" ? outcome.branches : [],',
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "doctor stops naming what the stop can still see the moment one fetch fails",
+  },
+  {
+    // Landing fetch. The switches.
+    label: "one person's off switch is ignored",
+    file: `${CORE}/src/landed-changes/fetch-switch.ts`,
+    from: "    if (env[LANDING_FETCH_ENV] === LANDING_FETCH_OFF) {",
+    to: '    if (env[LANDING_FETCH_ENV] === "never") {',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a developer on a metered line cannot stop a hook fetching on their behalf",
+  },
+  {
+    label: "the team's off switch is ignored",
+    file: `${CORE}/src/landed-changes/fetch-switch.ts`,
+    from: "    if (team === false) {",
+    to: '    if (team === "false") {',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a company whose policy forbids tools fetching for developers cannot say so",
+  },
+  {
+    label: "an empty landing list still fetches",
+    file: `${CORE}/src/landed-changes/fetch-switch.ts`,
+    from: '    if (branches.kind === "configured" && branches.branches.length === 0) {',
+    to: '    if (branches.kind === "configured" && branches.branches.length < 0) {',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a team that switched the stop off keeps paying for the fetch that served it",
+  },
+  {
+    label: "an unreadable landingFetch value switches the fetch off",
+    file: `${CORE}/src/landed-changes/fetch-switch.ts`,
+    from: '    return team === true ? { kind: "on" } : { kind: "invalid" };',
+    to: '    return team === true ? { kind: "on" } : { kind: "off", by: "team" };',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a typo in .crosscheck.json silently turns off what the team left on",
+  },
+  {
+    // Landing fetch. The three triggers.
+    label: "an edit no longer asks for the fetch",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const [output] = await Promise.all([askBeforeEdit(ctx, budget), requestLandingFetchFor(ctx)]);",
+    to: "  const [output] = await Promise.all([askBeforeEdit(ctx, budget)]);",
+    test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
+    because: "an agent working an hour on one prompt never sees what landed in that hour",
+  },
+  {
+    label: "a prompt no longer asks for the fetch",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);",
+    to: "  const [output] = await Promise.all([deliverPromptContext(ctx, budget)]);",
+    test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
+    because: "a change merged mid-session reaches the stop only when an edit happens to ask",
+  },
+  {
+    label: "session start no longer asks for the fetch",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  const landingFetch = requestLandingFetchFor(ctx);",
+    to: "  const landingFetch = Promise.resolve();",
+    test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
+    because: "a session opened after a night away starts with the clone the night left it",
+  },
+  {
+    // Landing fetch. doctor warns only on a pattern.
+    label: "doctor never warns about a failing fetch",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "  if (record.failuresInARow < DOCTOR_LANDING_FETCH_FAILURES_WARN) {",
+    to: "  if (record.failuresInARow < Number.MAX_SAFE_INTEGER) {",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "a fetch that needs a credential it cannot ask for fails silently forever",
+  },
+  {
+    // The runner tells a deadline from a refusal.
+    label: "a timed-out command reads as refused",
+    file: `${CORE}/src/git/git.ts`,
+    from: "        return { ok: false, timedOut: true };",
+    to: "        return { ok: false, timedOut: false };",
+    test: `${CORE}/test/git-timeout.test.ts`,
+    because: "doctor sends a developer whose fetch is slow to fix credentials that work",
+  },
+  {
+    // Landed changes, step 3: the why. Never the caller's own work.
+    label: "the why names the reader's own work",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        ne(agentSessions.developerId, callerDeveloperId),",
+    to: '        ne(agentSessions.developerId, ""),',
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a reader's own old session on the file is offered as a teammate's reason",
+  },
+  {
+    label: "the why ignores the reader's mutes",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        notMutedCondition(callerDeveloperId, agentSessions.developerId),",
+    to: "        sql`true`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a teammate the reader muted still speaks in every stop, unasked",
+  },
+  {
+    label: "the why names work on any file",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        eq(workContextTargets.value, storedSpelling(request.path)),",
+    to: '        ne(workContextTargets.value, ""),',
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "the stop names work on another file as the work behind this one",
+  },
+  {
+    label: "the why names work in any repo",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        eq(agentSessions.repo, request.repo),",
+    to: '        ne(agentSessions.repo, ""),',
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a same-named file in another repo passes for this repo's history",
+  },
+  {
+    label: "the why names the oldest work, not the latest",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "      desc(agentSessions.startedAt),\n      desc(workContexts.createdAt),",
+    to: "      agentSessions.startedAt,\n      desc(workContexts.createdAt),",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a teammate's first attempt at the file is named, not the work that landed",
+  },
+  {
+    label: "the why gives a commit work that started after it",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        lte(agentSessions.startedAt, startedBy),",
+    to: "        lte(agentSessions.startedAt, new Date(8.64e15)),",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "an earlier commit is explained by work begun after it — the probable match turns improbable",
+  },
+  {
+    label: "an author address in another case is someone else",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "const lowered = (email: string): string => email.trim().toLowerCase();",
+    to: "const lowered = (email: string): string => email.trim();",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "Mike@Example.com in a commit is nobody on the hub, and the stop names no work",
+  },
+  {
+    label: "doctor is told every address is unknown",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "  return [...firstSpelling].filter(([key]) => !knownSet.has(key)).map(([, spelling]) => spelling);",
+    to: "  return [...firstSpelling].map(([, spelling]) => spelling);",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "doctor tells a team to map addresses the hub already knows",
+  },
+  {
+    label: "anyone can ask whose work a commit was",
+    file: `${SERVER}/src/routes/landed.ts`,
+    from: "  router.use(\"*\", developerAuth(deps));",
+    to: "  router.use(\"*\", async (_c, next) => next());",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "the hub maps addresses to developers and work for an unauthenticated caller",
+  },
+  {
+    label: "a question can name any number of commits",
+    file: "packages/schema/src/landed-context.ts",
+    from: "  commits: z.array(LandedContextCommitSchema).min(1).max(LANDED_CONTEXT_MAX_COMMITS),",
+    to: "  commits: z.array(LandedContextCommitSchema).min(1),",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "one request can make the hub join thousands of addresses against every target",
+  },
+  {
+    // The connector side: asked only with a stop, and only with what is left.
+    label: "the stop never asks for its why",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "      return landed === null ? NO_LANDED_ANSWER : landedWhyFor(ctx, budget, edited.file, landed);",
+    to: "      return NO_LANDED_ANSWER;",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "the stop names commits and never the teammate work behind them",
+  },
+  {
+    label: "the why is given more time than the hook has",
+    file: `${CONNECTOR}/src/hooks/landed-why.ts`,
+    from: "  const timeoutMs = Math.min(ctx.hub.timeoutMs, budget.spareMs());",
+    to: "  const timeoutMs = ctx.hub.timeoutMs;",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "a slow hub runs the hook past its budget, and the stop itself is lost",
+  },
+  {
+    label: "a why for a commit the stop did not name is printed",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    if (named.has(match.sha) && !isLive && !byContext.has(match.workContextId)) {",
+    to: "    if (!isLive && !byContext.has(match.workContextId)) {",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "a hub's stray match puts somebody's work under commits it has nothing to do with",
+  },
+  {
+    label: "the stop names every matched work context",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return [...byContext.values()].slice(0, MAX_LANDED_WHY_SHOWN).flatMap((match) => [",
+    to: "  return [...byContext.values()].flatMap((match) => [",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "a file many hands touched turns the stop into a page nobody reads",
+  },
+  {
+    label: "the why drops the intent",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...intentLines(match.intent),",
+    to: "    ...[],",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "the stop says whose work it was but not what it was for",
+  },
+  {
+    label: "a stop with no matched work says there is no reason",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "          ...whyLines(input.why ?? [], {",
+    to: "          ...(input.why?.length === 0 ? [\"no reason recorded\"] : []),\n          ...whyLines(input.why ?? [], {",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "a missing work context is announced as a missing reason, which it is not (03 §5.1)",
+  },
+  {
+    // doctor's half: whom the hub does not know.
+    label: "doctor names bots and the reader's own address",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "      !key.includes(\"@\") || key === own || BOT.test(email) || BOT.test(name) || seen.has(key);",
+    to: "      !key.includes(\"@\") || seen.has(key);",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the team is told to map dependabot and themselves in .mailmap",
+  },
+  {
+    label: "doctor never names an unknown address",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "  const unknown = asked.filter((author) => unknownSet.has(author.email.toLowerCase()));",
+    to: "  const unknown: readonly Author[] = [];",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "a squash address the hub cannot place costs every stop its why, and doctor calls it fine",
+  },
+  {
+    label: "doctor reads an older hub as unreachable",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "      answer.status === HTTP_NOT_FOUND",
+    to: "      answer.status === 0",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "a hub that only needs updating is reported as not answering",
+  },
+  {
+    // Step 3, review round 1: what makes a match probable.
+    label: "the why offers a session months old",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,",
+    to: "        sql`true`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a commit made outside any session is explained by work from half a year ago",
+  },
+  {
+    label: "laptop clock drift picks last week's work",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "  const startedBy = new Date(committedMs + LANDED_WHY_CLOCK_SLACK_MS);",
+    to: "  const startedBy = new Date(committedMs);",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a commit a minute ahead of the hub's clock is explained by an older session instead of the current one",
+  },
+  {
+    label: "a session that only touched the file after the commit wins",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "      sql`coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false) DESC`,",
+    to: "      sql`1`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a follow-up begun just before the commit takes the credit for the work that made it",
+  },
+  {
+    label: "an opted-out teammate's live work is shown",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "          visiblePresenceCondition(callerDeveloperId, agentSessions.developerId),",
+    to: "          sql`true`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "an unasked stop reveals what a teammate who switched presence off is doing right now",
+  },
+  {
+    label: "the file is matched only as it was spelled",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "  return canonical.ok ? canonical.path : path;",
+    to: "  return path;",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "./src/lines.ts and src/lines.ts are two files to the why and one to ingest",
+  },
+  {
+    label: "a commit time with an offset is refused",
+    file: "packages/schema/src/landed-context.ts",
+    from: "  committedAt: z.iso.datetime({ offset: true }).refine(isCommitYear, \"a commit time in a year the hub can hold\"),",
+    to: "  committedAt: z.iso.datetime().refine(isCommitYear, \"a commit time in a year the hub can hold\"),",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a connector that writes local time loses every why",
+  },
+  {
+    label: "work the live half names is named twice",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    const isLive = match.workContextId === input.liveContextId;",
+    to: "    const isLive = false;",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "one stop names the same work context and intent twice",
+  },
+  {
+    label: "a commit the hub would refuse sinks the whole question",
+    file: `${CONNECTOR}/src/hooks/landed-why.ts`,
+    from: "    return parsed.success ? [parsed.data] : [];",
+    to: "    return [{ sha: commit.sha, authorEmail: commit.authorEmail, committedAt: commit.committedAt.toISOString() }];",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "one odd author address costs every other commit in the stop its why",
+  },
+  {
+    // Step 3, review round 2.
+    label: "the why waits for the live tripwire before it is asked",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const why = probing\n    .then((probed) => {",
+    to: "  const why = Promise.all([live, probing])\n    .then(([, probed]) => probed)\n    .then((probed) => {",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "on a hub across a network the live call eats the spare, and the why is never asked",
+  },
+  {
+    label: "a follow-up within the flush hour takes the credit",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "      sql`coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false) DESC`,",
+    to: "      sql`1`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "work touched half an hour after the commit is named as the work behind it",
+  },
+  {
+    label: "a session counts from when the hub received its end",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,",
+    to: "        sql`coalesce(${agentSessions.endedAt}, ${agentSessions.lastHeartbeatAt}) >= ${activeSince.toISOString()}::timestamptz`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "after hub downtime, or an end deferred through the spool, a session quiet for weeks is offered as fresh work",
+  },
+  {
+    label: "a just-ended opted-out session is hidden as if live",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "          isNotNull(agentSessions.endedAt),",
+    to: "          sql`false`,",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "an opted-out teammate's finished work goes unnamed for the presence window after every session",
+  },
+  {
+    label: "any commit year reaches the hub's arithmetic",
+    file: "packages/schema/src/landed-context.ts",
+    from: "  return year >= MIN_COMMIT_YEAR && year <= MAX_COMMIT_YEAR;",
+    to: "  return year >= 0;",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "a commit dated year 1 or 9999 answers 500 and costs its neighbours their why",
+  },
+  {
+    label: "a commit time past what a Date holds is kept as Invalid",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "    ? new Date(Math.min(Number(epochSeconds) * 1000, MAX_DATE_MS))",
+    to: "    ? new Date(Number(epochSeconds) * 1000)",
+    test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
+    because: "one commit with a far-future time throws while the stop is rendered, and the stop is lost",
+  },
+  {
+    label: "a work start in the future is printed as an age",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return Number.isNaN(ms) || ms > now.getTime()\n    ? \"started at an unknown time\"",
+    to: "  return Number.isNaN(ms)\n    ? \"started at an unknown time\"",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because: "a hub clock ahead of the reader's prints a negative age",
+  },
+  {
+    // Landed changes, step 4: the author's notice. Who is told.
+    label: "the why names the reader as the one told",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "    .where(and(inArray(developerEmails.email, emails), ne(developers.id, callerDeveloperId)));",
+    to: "    .where(and(inArray(developerEmails.email, emails), ne(developers.id, \"\")));",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the reader's own stop says the reader is told about it",
+  },
+  {
+    label: "the why answer drops who is told",
+    file: `${SERVER}/src/routes/landed.ts`,
+    from: "    return ok(c, { matches, told });",
+    to: "    return ok(c, { matches, told: [] });",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "no stop ever names anybody as told, so no author ever hears of one",
+  },
+  {
+    label: "a notice goes to whoever the record names",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "      developerId === commit.authorDeveloperId && developerId !== readerDeveloperId",
+    to: "      developerId !== undefined && developerId !== readerDeveloperId",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a record naming Ken for Mike's commit tells Ken about Mike's work",
+  },
+  {
+    label: "a reader is told about their own commit",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "developerId === commit.authorDeveloperId && developerId !== readerDeveloperId && ",
+    to: "developerId === commit.authorDeveloperId && ",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a stop at your own landed change is reported back to you",
+  },
+  {
+    label: "one commit named twice in a stop is written twice",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "developerId !== readerDeveloperId && !seen.has(commit.sha);",
+    to: "developerId !== readerDeveloperId;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "one INSERT updates a row twice, and the whole flush answers 500",
+  },
+  {
+    label: "a told notice is refreshed by a later stop",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "      setWhere: sql`${landedNotices.deliveredAt} IS NULL AND excluded.stopped_at >= ${landedNotices.stoppedAt}`,",
+    to: "      setWhere: sql`excluded.stopped_at >= ${landedNotices.stoppedAt}`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a reader stopped daily keeps a told row alive for good, and the author never hears again",
+  },
+  {
+    label: "a replayed older stop rolls the newer one back",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "      setWhere: sql`${landedNotices.deliveredAt} IS NULL AND excluded.stopped_at >= ${landedNotices.stoppedAt}`,",
+    to: "      setWhere: sql`${landedNotices.deliveredAt} IS NULL`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a spool replay says the reader lacks a change they have pulled since",
+  },
+  {
+    label: "expired notices are never pruned",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "  await deps.db.delete(landedNotices).where(lte(landedNotices.stoppedAt, cutoffOf(deps.now())));",
+    to: "  await deps.db.delete(landedNotices).where(lte(landedNotices.stoppedAt, new Date(0)));",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a commit told once is never told again, and a quiet repo keeps who was where for good",
+  },
+  {
+    label: "a notice waits for ever",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    gt(landedNotices.stoppedAt, cutoffOf(deps.now())),\n    notMutedCondition",
+    to: "    gt(landedNotices.stoppedAt, new Date(0)),\n    notMutedCondition",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a month-old stop is told as news (decision 10)",
+  },
+  {
+    label: "a stop from the future keeps its date",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "const notAfter = (iso: string, now: Date): Date => new Date(Math.min(Date.parse(iso), now.getTime()));",
+    to: "const notAfter = (iso: string, _now: Date): Date => new Date(Date.parse(iso));",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a reader clock in 2099 keeps a notice waiting and sorted first for decades",
+  },
+  {
+    label: "a delivery marks anybody's notices",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        eq(landedNotices.authorDeveloperId, developerId),",
+    to: "        sql`true`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "any developer can mark another author's notices told, and they are never said",
+  },
+  {
+    label: "a told notice is listed again",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    eq(landedNotices.repo, repo),\n    isNull(landedNotices.deliveredAt),",
+    to: "    eq(landedNotices.repo, repo),\n    sql`true`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the author hears the same stop in every briefing, not once",
+  },
+  {
+    label: "notices from every repo are listed",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    eq(landedNotices.repo, repo),\n    isNull(landedNotices.deliveredAt),",
+    to: "    ne(landedNotices.repo, \"\"),\n    isNull(landedNotices.deliveredAt),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a stop in another codebase is told in this one",
+  },
+  {
+    label: "the author's mute of the reader is ignored",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    notMutedCondition(authorDeveloperId, landedNotices.readerDeveloperId),",
+    to: "    sql`true`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a teammate the author muted still reaches them unasked",
+  },
+  {
+    label: "every group is listed",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    LIMIT ${LANDED_NOTICE_GROUPS_LISTED}",
+    to: "    LIMIT 1000",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a busy week's stops crowd the briefing past its bound",
+  },
+  {
+    label: "a group is dated by its oldest stop",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    .orderBy(desc(landedNotices.stoppedAt), asc(landedNotices.id));",
+    to: "    .orderBy(asc(landedNotices.stoppedAt), asc(landedNotices.id));",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the notice says \"5d ago\" about a stop made this morning",
+  },
+  {
+    label: "the prompt's call carries no notices",
+    file: `${SERVER}/src/routes/hints.ts`,
+    from: "    return ok(c, { candidates, answers, coverage, notices });",
+    to: "    return ok(c, { candidates, answers, coverage });",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "an author in a live session hears nothing until their next session",
+  },
+  {
+    label: "a stop's subject is unbounded",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "  subject: z.string().max(LANDED_STOP_MAX_SUBJECT_CHARS),",
+    to: "  subject: z.string(),",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "a reader's connector can store any amount of text on the hub as a subject",
+  },
+  {
+    label: "a stop may name no commit",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "  commits: z.array(LandedStopCommitSchema).min(1).max(LANDED_CONTEXT_MAX_COMMITS),",
+    to: "  commits: z.array(LandedStopCommitSchema).max(LANDED_CONTEXT_MAX_COMMITS),",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "an empty stop passes as a record and tells nobody anything",
+  },
+  {
+    label: "whether the reader lacked a commit is assumed",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "  missing: z.boolean(),",
+    to: "  missing: z.boolean().default(true),",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "a stop that said nothing about it tells the author their work is missing",
+  },
+  {
+    label: "a delivery may mark nothing",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "  noticeIds: z.array(nonEmptyId).min(1).max(LANDED_NOTICE_MAX_DELIVERED),",
+    to: "  noticeIds: z.array(nonEmptyId).max(LANDED_NOTICE_MAX_DELIVERED),",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "an empty delivery is accepted as a record that did nothing",
+  },
+  {
+    label: "a notice says missing where the reader has it",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "  return commit.missing\n",
+    to: "  return !commit.missing\n",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "the author is told their work is missing from a checkout that has it (decision 8)",
+  },
+  {
+    label: "commits past the bound are marked told unsaid",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "    commitIds: named.map((entry) => entry.id),",
+    to: "    commitIds: notice.commits.map((commit) => commit.id),",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a fourth commit is marked told while the text only counts it",
+  },
+  {
+    label: "the stop names a told person once per commit",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const byPerson = new Map(named.map((entry) => [entry.commit.authorDeveloperId, entry.name]));\n  return [...byPerson.values()];",
+    to: "  return named.map((entry) => entry.name);",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "\"Mike and Mike are told about this stop\"",
+  },
+  {
+    label: "a briefing notice cut by the budget is marked told",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "      return entry !== null && briefing.includes(entry.text) ? entry.commitIds : [];",
+    to: "      return entry !== null ? entry.commitIds : [];",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a notice nobody saw is marked told and never said",
+  },
+  {
+    label: "the briefing never marks its notices told",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "  if (input.shownLandedNoticeIds.length > 0) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "the author hears the same stop in every briefing for a week",
+  },
+  {
+    label: "a session forgets which notices it showed",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const merged = [...new Set([...state.shownLandedNoticeIds, ...noticeIds])];",
+    to: "  const merged = [...state.shownLandedNoticeIds];",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a notice the briefing told is told again on the next prompt",
+  },
+  {
+    label: "a partly shown notice is offered whole",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "commits: notice.commits.filter((commit) => !shown.has(commit.id)) }))",
+    to: "commits: notice.commits }))",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a new commit joining a notice the briefing showed is never told on a prompt",
+  },
+  {
+    label: "a notice is claimed past the session's hints",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "    fresh.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION ||\n    fresh.deliveredHintRefs.includes(delivery.slotRef) ||",
+    to: "    fresh.deliveredHintRefs.includes(delivery.slotRef) ||",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a racing sibling tells a sixth unasked thing in one session",
+  },
+  {
+    label: "a notice a sibling showed is claimed again",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "    delivery.commitIds.some((id) => fresh.shownLandedNoticeIds.includes(id))",
+    to: "    false",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "two racing hooks tell the same notice twice in one session",
+  },
+  {
+    label: "a declined notice is recorded as told",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "  if (!remembered) {\n    return false;\n  }\n  const record = landedNoticeDeliveryRecord(",
+    to: "  if (!remembered) {\n    await appendRecords(target.home, target.repoKey, target.hostSessionKey, [landedNoticeDeliveryRecord(state.crosscheckSessionId, delivery.commitIds, { developerId: \"x\", agentKind: \"x\", sessionId: state.crosscheckSessionId }, target.now)], target.now);\n    return false;\n  }\n  const record = landedNoticeDeliveryRecord(",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a notice nobody was shown is marked told on the hub and lost",
+  },
+  {
+    label: "a prompt's notice waits for the next flush",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "  if (room >= LANDED_NOTICE_MIN_SPARE_MS) {\n    await postRecords({ ...target.hub, timeoutMs: room }, [record]);\n  }\n",
+    to: "",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "every other live session of the author tells the same notice again",
+  },
+  {
+    label: "the stop names people it recorded nothing for",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (!appended.persisted) {\n    return [];\n  }",
+    to: "  if (false) {\n    return [];\n  }",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "\"Mike is told\" is printed for a notice that was never written (decision 11)",
+  },
+  {
+    label: "every recorded commit is recorded as missing",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "              missing: missing.has(commit.sha),",
+    to: "              missing: true,",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "the author hears their work is missing from a checkout that has it",
+  },
+  {
+    // Landed changes, step 4, the review rounds.
+    label: "a stop is answered by what its rows did",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "  // The same answer whatever the rows did — see the header.\n  return ACCEPTED;",
+    to: "  return (await toldCommits(deps, developerId, body.commits)).length === 0 ? { status: \"ignored\" } : ACCEPTED;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a replayed stop becomes a read receipt on the author, and discloses a mute",
+  },
+  {
+    label: "a stop may be filed into any repo",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    (await checkSessionRepo(deps, body.sessionId, body.repo));",
+    to: "    null;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a reader files notices, with any subject, into a repo they never worked in",
+  },
+  {
+    label: "a stop older than the seven days is stored",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "  if (stoppedAt.getTime() <= cutoff.getTime()) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a week-late stop is kept on the hub although it can never be told",
+  },
+  {
+    label: "the reaper keeps expired notices",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  await pruneLandedNotices(deps);\n",
+    to: "",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a repo with no further stop keeps who was where, and the subjects, for good",
+  },
+  {
+    label: "a secret in a subject is stored",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        subject: containsSecret(commit.subject) ? \"\" : commit.subject,",
+    to: "        subject: commit.subject,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a key in a commit subject lands on the hub and in the author's session",
+  },
+  {
+    label: "one reader piles up notices for one author",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    return left > 0;",
+    to: "    return true;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "one reader stores a thousand rows per request for another developer",
+  },
+  {
+    label: "one reader's stops crowd out another's",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    ORDER BY round, newest DESC, reader_developer_id, path",
+    to: "    ORDER BY newest DESC, reader_developer_id, path",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a busy or hostile reader's stops push a genuine one out until it expires untold",
+  },
+  {
+    label: "a reader's rounds start from their oldest group",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "          ORDER BY max(${landedNotices.stoppedAt}) DESC, ${landedNotices.path}",
+    to: "          ORDER BY max(${landedNotices.stoppedAt}) ASC, ${landedNotices.path}",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the briefing names last week's stops and holds back today's",
+  },
+  {
+    label: "a listed group is cut short",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    .orderBy(desc(landedNotices.stoppedAt), asc(landedNotices.id));",
+    to: "    .orderBy(desc(landedNotices.stoppedAt), asc(landedNotices.id))\n    .limit(2);",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "an older commit of a listed group comes back later as a second notice about the same reader and file",
+  },
+  {
+    label: "a NUL in the repo reaches the database",
+    file: `${SERVER}/src/routes/landed.ts`,
+    from: "  repo: LandedRepoSchema.refine((repo) => unstorableTextPath(repo) === null, \"a repo without a NUL\"),",
+    to: "  repo: LandedRepoSchema,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a NUL in the query answers 500 instead of 400",
+  },
+  {
+    label: "a stop's sha may be abbreviated or upper-case",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "const FULL_SHA_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;",
+    to: "const FULL_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "one commit in four spellings is four rows, and told four times",
+  },
+  {
+    label: "a notice is claimed with no room to spare",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "  if (spareMs() < LANDED_NOTICE_MIN_SPARE_MS) {\n    return false;\n  }\n  const remembered",
+    to: "  const remembered",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a hook that runs out of time marks a notice told that nobody saw",
+  },
+  {
+    label: "a notice is picked with no room to spare",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    spareMs === undefined || spareMs() < LANDED_NOTICE_MIN_SPARE_MS",
+    to: "    spareMs === undefined",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a prompt with no room for a notice loses the pointer it would have had",
+  },
+  {
+    label: "the notice's post waits a whole hub timeout",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "  const room = Math.min(target.hub.timeoutMs, spareMs());",
+    to: "  const room = target.hub.timeoutMs;",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a slow hub holds the prompt until the hook's budget kills its output",
+  },
+  {
+    label: "every host tells notices",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const spareMs = input.tellsNotices === true ? input.spareMs : undefined;",
+    to: "  const spareMs = input.spareMs;",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a notice is told where no person reads it, marked told, and lost",
+  },
+  {
+    label: "an unknown reader is a third person",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "    ? { checkout: \"their checkout\", has: \"they already had it\" }",
+    to: "    ? { checkout: \"a teammate's checkout\", has: \"a teammate already had it\" }",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"missing from a teammate's checkout\" reads as if about somebody else",
+  },
+  {
+    label: "a future stop reads as brand new",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "  return Number.isNaN(ms) || ms > now.getTime() ? \"at an unknown time\"",
+    to: "  return Number.isNaN(ms) ? \"at an unknown time\"",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a skewed clock prints a confident \"0s ago\"",
+  },
+  {
+    label: "the told line starts in lower case",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const opening = names.map((name, index) => (index === 0 && name === UNKNOWN_AUTHOR ? \"A teammate\" : name));",
+    to: "  const opening = names;",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"a teammate is told about this stop.\"",
+  },
+  {
+    label: "a stop in notice mode tells its authors",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  aPersonReads(ctx.env) && ctx.identity.repoId === state.repoId;",
+    to: "  ctx.identity.repoId === state.repoId;",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "a stop no person saw names a presence-opted-out reader to the author (decisions 9, 11)",
+  },
+  {
+    label: "a stop outside the session's repo tells its authors",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  aPersonReads(ctx.env) && ctx.identity.repoId === state.repoId;",
+    to: "  aPersonReads(ctx.env);",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "\"Mike is told\" is printed for a stop the hub will refuse",
+  },
+  {
+    label: "a secret subject is uploaded",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "              subject: containsSecret(commit.subject)",
+    to: "              subject: false",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "a key in a commit subject leaves the machine unscanned (DESIGN.md §2.1)",
+  },
+  {
+    label: "the prompt tells notices past its budget",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    spareMs: () => budget.spareMs(),",
+    to: "    spareMs: () => 10_000,",
+    test: `${CONNECTOR}/test/hint-hook.test.ts`,
+    because: "a slow hub: the notice is marked told and the prompt prints nothing",
+  },
+  {
+    label: "the prompt tells no notices",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    tellsNotices: aPersonReads(ctx.env),\n    spareMs: () => budget.spareMs(),",
+    to: "    tellsNotices: false,\n    spareMs: () => budget.spareMs(),",
+    test: `${CONNECTOR}/test/hint-hook.test.ts`,
+    because: "an author in a live session hears nothing until their next session",
+  },
+  {
+    label: "an ACP prompt tells notices past its budget",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "        spareMs: hookBudget(deadline, resolveTimeoutMs(env, null), now).spareMs,",
+    to: "        spareMs: () => 10_000,",
+    test: `${ACP}/test/injector.test.ts`,
+    because: "a lost race finishes in the background and marks a notice told that the prompt never carried",
+  },
+  {
+    label: "an ACP prompt tells no notices",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "        tellsNotices: true,\n        spareMs: hookBudget",
+    to: "        tellsNotices: false,\n        spareMs: hookBudget",
+    test: `${ACP}/test/injector.test.ts`,
+    because: "an ACP author in a live session hears nothing until the next briefing",
+  },
+  {
+    label: "a Cursor tool failure tells notices",
+    file: `${CURSOR}/src/inject/hint.ts`,
+    from: "    prompt: failureText,\n    now: ctx.now(),\n  });",
+    to: "    prompt: failureText,\n    now: ctx.now(),\n    tellsNotices: true,\n    spareMs: () => 10_000,\n  });",
+    test: `${CURSOR}/test/injection.test.ts`,
+    because: "a notice rides an output field Cursor may drop, is marked told, and is never seen",
+  },
+  {
+    label: "a headless author's prompt tells notices",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    tellsNotices: aPersonReads(ctx.env),\n    spareMs: () => budget.spareMs(),",
+    to: "    tellsNotices: true,\n    spareMs: () => budget.spareMs(),",
+    test: `${CONNECTOR}/test/hint-hook.test.ts`,
+    because: "a notice is spent on a headless run nobody reads, and Mike never hears it",
+  },
+  {
+    label: "a headless author's briefing tells notices",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "    tellsNotices: aPersonReads(ctx.env),",
+    to: "    tellsNotices: true,",
+    test: `${CONNECTOR}/test/landed-notice-author-hook.test.ts`,
+    because: "a notice is spent on a headless run's briefing, and Mike never hears it",
+  },
+  {
+    label: "a briefing no person reads fetches notices",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "    input.tellsNotices === false ? Promise.resolve(NO_NOTICES) : getLandedNotices(hub, repoId),",
+    to: "    getLandedNotices(hub, repoId),",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a headless run's briefing marks notices told that nobody reads",
+  },
+  {
+    label: "the bound lets a whole stop past it",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    const left = room.get(commit.authorDeveloperId) ?? 0;\n    room.set(commit.authorDeveloperId, left - 1);",
+    to: "    const left = room.get(commit.authorDeveloperId) ?? 0;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a stop that crosses the twenty stores all ten of its commits",
+  },
+  {
+    label: "the bound counts every repo",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        eq(landedNotices.repo, scope.repo),\n        inArray(landedNotices.authorDeveloperId, authors),",
+    to: "        inArray(landedNotices.authorDeveloperId, authors),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "notices waiting in a repo the author never opens silence the one they work in",
+  },
+  {
+    label: "the bound holds back a refresh",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    if (waiting.has(commit.sha)) {\n      return true;\n    }\n",
+    to: "",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "at the twenty a waiting row keeps an older stop's week and an out-of-date missing",
+  },
+  {
+    label: "told rows free their place at once",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        inArray(landedNotices.authorDeveloperId, authors),\n        gt(landedNotices.stoppedAt, cutoff),",
+    to: "        inArray(landedNotices.authorDeveloperId, authors),\n        isNull(landedNotices.deliveredAt),\n        gt(landedNotices.stoppedAt, cutoff),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the bound limits the pile, not the rate: one teammate keeps every prompt slot of the author busy",
+  },
+  {
+    label: "a reader's stops interleave",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "  await deps.db.transaction(async (tx) => {",
+    to: "  await ((run: (tx: DbExecutor) => Promise<void>) => run(deps.db))(async (tx) => {",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "concurrent flushes all see room and race past the bound",
+  },
+  {
+    label: "the briefing says a left-out notice is not shown",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    more: landedNoticeMoreLine,\n",
+    to: "",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"(+2 more not shown)\" under a header that says each is shown once: read as lost",
+  },
+  {
+    label: "a notice speaks of then as now",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "    ? `  ${label}: was missing from ${reader.checkout}`",
+    to: "    ? `  ${label}: missing from ${reader.checkout}`",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a six-day-old notice says the change is missing now",
+  },
+  {
+    label: "people without a name are listed one by one",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...(unnamed === 0 ? [] : [unnamed === 1 ? UNKNOWN_AUTHOR : `${String(unnamed)} teammates`]),",
+    to: "    ...labels.filter((label) => label === UNKNOWN_AUTHOR),",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"A teammate and a teammate are told about this stop.\"",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -11220,7 +12552,9 @@ interface Outcome {
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
+ * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
+ * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
@@ -11239,7 +12573,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
- * PRINTS: packages/connector-acp/test/injector.test.ts 4
+ * PRINTS: packages/connector-acp/test/injector.test.ts 6
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
@@ -11257,7 +12591,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
- * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
@@ -11267,6 +12601,10 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
+ * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
+ * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
@@ -11309,6 +12647,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
+ * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
@@ -11321,9 +12660,14 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
+ * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
+ * PRINTS: packages/connector-core/test/landed-why-render.test.ts 5
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
- * PRINTS: packages/connector-core/test/landing-branches.test.ts 3
+ * PRINTS: packages/connector-core/test/landing-branches.test.ts 6
+ * PRINTS: packages/connector-core/test/landing-fetch-prompts.test.ts 6
+ * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
+ * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
@@ -11366,11 +12710,12 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
- * PRINTS: packages/connector-cursor/test/injection.test.ts 3
+ * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
+ * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/calibration.test.ts 1
@@ -11394,6 +12739,8 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
+ * PRINTS: packages/server/test/landed-context.test.ts 20
+ * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6

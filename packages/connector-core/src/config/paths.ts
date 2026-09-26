@@ -247,6 +247,20 @@ export const conferenceCostPath = (home: string, key: string): string =>
 /** Its lock: two conferences at once must not lose a count between them. */
 export const conferenceCostLockPath = (home: string, key: string): string =>
   `${conferenceCostPath(home, key)}.lock`;
+
+/**
+ * The background landing fetch's record for ONE CLONE
+ * (landed-changes/fetch-state.ts). Keyed by the clone, not by repo+hub: what
+ * it rate-limits is a fetch into this clone's refs, which every worktree of
+ * the clone shares and no other clone does. The `landing-fetch-` prefix keeps
+ * it apart from every repo-keyed file here, whose names start with the key.
+ */
+export const landingFetchRecordPath = (home: string, cloneKey: string): string =>
+  join(home, "state", `landing-fetch-${cloneKey}.json`);
+
+/** Its lock: the hook that books an attempt, and the worker that records one. */
+export const landingFetchLockPath = (home: string, cloneKey: string): string =>
+  `${landingFetchRecordPath(home, cloneKey)}.lock`;
 /**
  * Per-repo record of which HOOK EVENTS have actually fired, and when
  * (state/fired-markers.ts). Trial finding M2: every hook check in `doctor`

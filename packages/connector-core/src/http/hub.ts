@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { ClaimValiditySchema } from "@crosscheck/schema";
-import type { ClaimRevalidationEntry } from "@crosscheck/schema";
+import { COMMIT_SHA_PATTERN, ClaimValiditySchema } from "@crosscheck/schema";
+import type { ClaimRevalidationEntry, LandedContextRequest } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import {
   EvidenceAxesSchema,
@@ -1476,6 +1476,44 @@ export interface HintCandidatesRequest {
  * author, provenance, age and status all travel, because a solicited answer
  * still gets the trust labels every injected claim gets.
  */
+/**
+ * One commit of an author's notice (docs/1.0/landed-changes.md, step 4).
+ * `id` is the hub's row: what a delivery marks told. The subject is the
+ * author's own, carried by the reader's connector: quoted data.
+ */
+export const LandedNoticeCommitSchema = z.looseObject({
+  id: z.string().min(1),
+  sha: z.string().regex(COMMIT_SHA_PATTERN),
+  subject: z.string(),
+  missing: z.boolean(),
+});
+
+/** One reader's stop(s) on one file, waiting to be told to the author. */
+export const LandedNoticeSchema = z.looseObject({
+  id: z.string().min(1),
+  readerName: z.string().min(1),
+  path: z.string().min(1),
+  stoppedAt: z.iso.datetime({ offset: true }),
+  commits: z.array(LandedNoticeCommitSchema),
+});
+
+export type LandedNotice = z.infer<typeof LandedNoticeSchema>;
+
+const LandedNoticesResponseSchema = z
+  .looseObject({ notices: z.array(z.unknown()).default([]) })
+  .transform((value): readonly LandedNotice[] => parseRows(value.notices, LandedNoticeSchema).rows);
+
+/** The author's notices waiting in this repo — the briefing's block. */
+export const getLandedNotices = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly LandedNotice[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/landed/notices${encodeRepo(repo)}`,
+    schema: LandedNoticesResponseSchema,
+  });
+
 export const AnsweredQuestionSchema = z.looseObject({
   questionId: z.string().min(1),
   questionBody: z.string().min(1),
@@ -1516,6 +1554,12 @@ export interface HintCandidatesResult {
   readonly answers: readonly AnsweredQuestion[];
   /** How far the archive behind a delivered hint reaches (03 §3.5). */
   readonly coverage: CoverageRecord;
+  /**
+   * The caller's waiting notices (landed changes, step 4), riding the same
+   * call so the prompt tells them at no extra round trip. Empty from a hub
+   * too old to send the field.
+   */
+  readonly notices: readonly LandedNotice[];
 }
 
 const HintCandidatesResponseSchema = z
@@ -1523,6 +1567,7 @@ const HintCandidatesResponseSchema = z
     candidates: z.array(z.unknown()).default([]),
     answers: z.array(z.unknown()).default([]),
     coverage: z.unknown().optional(),
+    notices: z.array(z.unknown()).default([]),
   })
   .transform(
     (value): HintCandidatesResult => ({
@@ -1530,6 +1575,7 @@ const HintCandidatesResponseSchema = z
       candidates: parseRows(value.candidates, HintContextCandidateSchema).rows,
       answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
       coverage: parseCoverage(value.coverage),
+      notices: parseRows(value.notices, LandedNoticeSchema).rows,
     }),
   );
 
@@ -2093,6 +2139,86 @@ export const getTripwireSessions = (
     schema: TripwireResponseSchema,
   });
 };
+
+/**
+ * Whose work on the file a landed commit was (docs/1.0/landed-changes.md,
+ * step 3): the hub's probable match — same person, same file, work started
+ * before the commit. Never an address.
+ */
+export const LandedContextMatchSchema = z.looseObject({
+  sha: z.string().min(1),
+  workContextId: z.string().min(1),
+  title: z.string().min(1),
+  developerName: z.string().min(1),
+  intent: tolerantIntent,
+  /** When the session behind the work started; the stop prints its age. */
+  workStartedAt: z.iso.datetime({ offset: true }).optional().catch(undefined),
+});
+
+export type LandedContextMatch = z.infer<typeof LandedContextMatchSchema>;
+
+/**
+ * Who the stop tells (step 4, decision 11): per named commit, the developer
+ * its author address belongs to. The stop prints exactly these names and its
+ * record carries exactly these ids.
+ */
+export const LandedToldAuthorSchema = z.looseObject({
+  sha: z.string().min(1),
+  developerId: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export type LandedToldAuthor = z.infer<typeof LandedToldAuthorSchema>;
+
+export interface LandedContextAnswer {
+  readonly matches: readonly LandedContextMatch[];
+  /** Empty from a hub that predates the author's notice: nobody is told. */
+  readonly told: readonly LandedToldAuthor[];
+}
+
+const LandedContextResponseSchema = z
+  .looseObject({
+    matches: z.array(z.unknown()).default([]),
+    told: z.array(z.unknown()).default([]),
+  })
+  .transform(
+    (value): LandedContextAnswer => ({
+      matches: parseRows(value.matches, LandedContextMatchSchema).rows,
+      told: parseRows(value.told, LandedToldAuthorSchema).rows,
+    }),
+  );
+
+/**
+ * POST, not GET: the body carries commit author addresses, which do not
+ * belong in a URL. The caller bounds it (`ctx.timeoutMs`) by what is left of
+ * its hook's budget.
+ */
+export const getLandedContexts = (
+  ctx: HubContext,
+  request: LandedContextRequest,
+): Promise<HubResult<LandedContextAnswer>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/landed/context",
+    body: request,
+    schema: LandedContextResponseSchema,
+  });
+
+const LandedAuthorsResponseSchema = z
+  .looseObject({ unknown: z.array(z.string()).default([]) })
+  .transform((value): readonly string[] => value.unknown);
+
+/** Which of these commit author addresses belong to nobody on the hub (decision 7). */
+export const getUnknownAuthors = (
+  ctx: HubContext,
+  emails: readonly string[],
+): Promise<HubResult<readonly string[]>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/landed/authors",
+    body: { emails },
+    schema: LandedAuthorsResponseSchema,
+  });
 
 /**
  * One declared claim as a conference reads it (VISION.md §2) — the trust

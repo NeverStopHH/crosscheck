@@ -690,6 +690,44 @@ export const MAX_WAIVER_DAYS = 14;
  * PRINTS: true
  */
 export const COVERAGE_SESSION_WINDOW_DAYS = 14;
+
+/**
+ * The why behind a landed commit (services/landed-context.ts): what makes a
+ * teammate's work on the file a PROBABLE source of the commit (decision 6).
+ *
+ * - The session was still active within LANDED_WHY_WINDOW_DAYS before the
+ *   commit. Long enough for a pull request that waited in review before its
+ *   squash (the squash's commit time is when it landed); short enough that a
+ *   months-old session is not offered for a commit made outside any.
+ * - It started no later than LANDED_WHY_CLOCK_SLACK_MS after the commit: the
+ *   session's start is the hub's clock, the commit time the author's laptop.
+ * - A session that had already RECORDED an edit of the file by the commit
+ *   (plus LANDED_WHY_FLUSH_SLACK_MS, for a spool that flushed late) is
+ *   preferred over one that only touched the file afterwards.
+ */
+export const LANDED_WHY_WINDOW_DAYS = 30;
+export const LANDED_WHY_CLOCK_SLACK_MS = 5 * 60_000;
+export const LANDED_WHY_FLUSH_SLACK_MS = 60 * 60_000;
+
+/**
+ * The author's notice (services/landed-notices.ts, decision 10): a notice
+ * waits this long after its stop and is gone unsaid after it. The same bound
+ * refuses a stop that reaches the hub later than that.
+ */
+export const LANDED_NOTICE_TTL_DAYS = 7;
+/** Reader-and-file groups one listing answers: a briefing section, a prompt. */
+export const LANDED_NOTICE_GROUPS_LISTED = 3;
+/**
+ * Rows one reader may file for one author in one repo within the seven days,
+ * told or not. Past it, that reader's further stops at that author's commits
+ * there tell nothing new until older rows expire — a bound on how much, and
+ * how fast, one teammate can pile up, or forge, for another: this many a
+ * week, not this many at a time. Per repo, because notices are told per
+ * repo: rows in a repo the author never opens must not silence the one they
+ * work in. Exact — a stop that meets it writes only what fits — and a stop on
+ * a row still waiting only refreshes it and is never held back.
+ */
+export const LANDED_NOTICE_MAX_PER_PAIR = 20;
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

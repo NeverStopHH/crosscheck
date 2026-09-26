@@ -340,7 +340,7 @@ export interface AppendIntentOutcome {
    * (This file is in its own answer because the comment names the column.)
    *
    * VERIFY: grep -rl "workContexts.intent" packages/server/src/services | xargs -n1 basename | sort | tr '\n' ' '
-   * PRINTS: conference.ts ghost-overlap.ts hints.ts intent-ledger.ts members.ts normalized-doc.ts presence.ts search.ts solved-matches.ts suspect.ts 
+   * PRINTS: conference.ts ghost-overlap.ts hints.ts intent-ledger.ts landed-context.ts members.ts normalized-doc.ts presence.ts search.ts solved-matches.ts suspect.ts 
    */
   readonly headWire: Record<string, unknown>;
   readonly version: number;
