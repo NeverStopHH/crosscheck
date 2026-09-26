@@ -16,7 +16,11 @@ import { repoKey, sessionSlug, spoolDataPath } from "@crosscheck/connector-core/
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { readSessionSpool } from "@crosscheck/connector-core/spool/files.ts";
-import { SessionStateSchema, writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  SessionStateSchema,
+  readSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome } from "../../connector-core/test/helpers.ts";
 import {
   KEN,
@@ -136,10 +140,15 @@ const world = async (label: string): Promise<World> => {
 };
 
 /** A change to FILE by `author`, committed an hour ago and merged into staging since. */
-const lands = async (w: World, author: Person, subject: string = "Fix line offset"): Promise<void> => {
+const lands = async (
+  w: World,
+  author: Person,
+  subject: string = "Fix line offset",
+  content: string = "export const offset = 2;\n",
+): Promise<void> => {
   await landWithMergeCommit(w.repos, {
     file: FILE,
-    content: "export const offset = 2;\n",
+    content,
     subject,
     landing: "staging",
     writtenAt: iso(-HOUR_MS),
@@ -213,6 +222,24 @@ describe("a stop at a teammate's landed change, for its author", () => {
   );
 
   test(
+    "two of Mike's commits tell Mike once, and say so once",
+    async () => {
+      const w = await world("notice-twice");
+      await lands(w, MIKE);
+      await lands(w, MIKE, "Count from three", "export const offset = 3;\n");
+
+      const reason = await nickEdits(w);
+
+      expect(reason).toContain(TOLD);
+      expect(reason).not.toContain("Mike and Mike");
+      expect(await spooledStops(w)).toEqual([
+        expect.objectContaining({ commits: [expect.anything(), expect.anything()] }),
+      ]);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
     "a change Nick already has is recorded as one he has (decision 8)",
     async () => {
       const w = await world("notice-has-it");
@@ -243,6 +270,26 @@ describe("a stop at a teammate's landed change, for its author", () => {
 
       expect(context).toContain("«Fix line offset» by Mike, on staging");
       expect(context).not.toContain("told about this stop");
+      expect(await spooledStops(w)).toEqual([]);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a file outside the session's repo names nobody: the hub would file its stop nowhere",
+    async () => {
+      const w = await world("notice-other-repo");
+      await lands(w, MIKE);
+      const state = await readSessionState(w.home, SESSION_ID);
+      if (state === null) {
+        throw new Error("no session state");
+      }
+      await writeSessionState(w.home, { ...state, repoId: "github.com/acme/elsewhere" });
+
+      const reason = await nickEdits(w);
+
+      expect(reason).toContain("«Fix line offset» by Mike, on staging");
+      expect(reason).not.toContain("told about this stop");
       expect(await spooledStops(w)).toEqual([]);
     },
     HEAVY_SETUP_MS,

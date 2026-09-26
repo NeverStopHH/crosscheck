@@ -77,6 +77,7 @@ import {
   SOLVED_ROOT_CAUSE,
   rejectedApproachCandidate,
   solvedFingerprintMatch,
+  startHintHub,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -595,6 +596,40 @@ describe("failure-matched hints (§3.3 + open-q4): every documented failure sign
       const summary = await readInjectionLedger(f.home);
       expect(summary.hints.delivered).toBe(1);
       expect(summary.hintEvents["postToolUseFailure"]).toBe(1);
+    } finally {
+      canned.stop();
+    }
+  });
+
+  test("a tool failure tells no author's notice: Cursor's authors hear it in the briefing (landed changes, step 4)", async () => {
+    // Arrange: a notice waiting for this developer, and nothing else to say.
+    const canned = startHintHub();
+    canned.setCandidates([]);
+    canned.setNotices([
+      {
+        id: "lnt_1",
+        readerName: "Nick",
+        path: "src/lines.ts",
+        stoppedAt: new Date().toISOString(),
+        commits: [{ id: "lnt_1", sha: "0dcfc4e9a1b2c3d4e5f60718293a4b5c6d7e8f90", subject: "Fix line offset", missing: true }],
+      },
+    ]);
+    try {
+      const f = await fixture("notice-ptuf", canned.url);
+      const conv = "conv-notice-ptuf";
+      await writeSessionState(f.home, seededState(f, canned.url, conv));
+
+      // Act
+      const out = await run(
+        "postToolUseFailure",
+        inRepo(POST_TOOL_USE_FAILURE_INPUT, f.repo, conv),
+        f.env,
+      );
+
+      // Assert: an undocumented output field may be dropped, and a notice
+      // told there would be marked told and never seen.
+      expect(out).not.toContain("ran into your landed change");
+      expect(canned.postedRecords.filter((record) => record["kind"] === "landed_notice_delivery")).toEqual([]);
     } finally {
       canned.stop();
     }

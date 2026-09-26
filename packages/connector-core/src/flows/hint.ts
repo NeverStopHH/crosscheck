@@ -30,6 +30,7 @@
  */
 import {
   HINT_MIN_TOKEN_CHARS,
+  LANDED_NOTICE_MIN_SPARE_MS,
   MAX_HINTS_PER_SESSION,
   MAX_SEARCH_QUERY_CHARS,
 } from "../constants.ts";
@@ -75,6 +76,20 @@ export interface SelectAndRenderHintInput {
   /** EPHEMERAL query — sliced for the hub call, never stored (see header). */
   readonly prompt: string;
   readonly now: Date;
+  /**
+   * Whether this host may tell an author's notice here (landed changes, step
+   * 4): only on a prompt a person reads. Cursor's failure hint is not one —
+   * its output field is undocumented and may be dropped silently, and a
+   * notice told there would be marked told and never seen — so Cursor leaves
+   * this off and its authors hear notices in the briefing. Off by default.
+   */
+  readonly tellsNotices?: boolean;
+  /**
+   * What the caller's budget still spares after its reserve. A notice is told
+   * only while at least LANDED_NOTICE_MIN_SPARE_MS is spare, and its
+   * immediate post gets no more (hints/delivery.ts). Absent, no notice is told.
+   */
+  readonly spareMs?: () => number;
 }
 
 interface Delivery {
@@ -254,11 +269,20 @@ export const selectAndRenderHint = async (
   // at this developer's own landed change. After an answer — they asked for
   // that one and are waiting — and before a pointer they never asked for,
   // and in the same one slot either would spend.
-  const notice = selectNotice(result.data.notices, state.shownLandedNoticeIds);
+  const spareMs = input.tellsNotices === true ? input.spareMs : undefined;
+  const notice =
+    spareMs === undefined || spareMs() < LANDED_NOTICE_MIN_SPARE_MS
+      ? undefined
+      : selectNotice(result.data.notices, state.shownLandedNoticeIds);
   const told = notice === undefined ? null : renderLandedNoticeHint(notice, input.now);
   const firstCommit = told?.commitIds[0];
-  if (told !== null && firstCommit !== undefined) {
-    return (await rememberLandedNoticeDelivery(input, state, { slotRef: firstCommit, commitIds: told.commitIds }))
+  if (spareMs !== undefined && told !== null && firstCommit !== undefined) {
+    return (await rememberLandedNoticeDelivery(
+      input,
+      state,
+      { slotRef: firstCommit, commitIds: told.commitIds },
+      spareMs,
+    ))
       ? told.text
       : "";
   }

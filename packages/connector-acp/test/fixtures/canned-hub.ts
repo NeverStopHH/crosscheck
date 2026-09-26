@@ -18,6 +18,10 @@ export interface CannedHub {
   readonly latency: CannedHubLatency;
   setCandidates(next: readonly unknown[]): void;
   setSolvedMatches(next: readonly unknown[]): void;
+  /** Author's notices on the candidates answer (landed changes, step 4). */
+  setNotices(next: readonly unknown[]): void;
+  /** The kind of every record POSTed to /api/records, in order. */
+  readonly postedKinds: readonly string[];
   stop(): void;
 }
 
@@ -32,6 +36,8 @@ export const startCannedHub = (): CannedHub => {
   const latency: CannedHubLatency = { presence: 0, candidates: 0 };
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   let solvedMatches: readonly unknown[] = [];
+  let notices: readonly unknown[] = [];
+  const postedKinds: string[] = [];
   const teammate = {
     sessionId: "cc_teammate",
     developerId: "dev_nick",
@@ -51,7 +57,7 @@ export const startCannedHub = (): CannedHub => {
       }
       if (pathname === "/api/hints/candidates") {
         await sleep(latency.candidates);
-        return Response.json({ ok: true, data: { candidates } });
+        return Response.json({ ok: true, data: { candidates, notices } });
       }
       if (pathname === "/api/work-contexts") {
         return Response.json({ ok: true, data: { workContexts: [] } });
@@ -69,7 +75,8 @@ export const startCannedHub = (): CannedHub => {
         return Response.json({ ok: true, data: { drafts: [] } });
       }
       if (pathname === "/api/records") {
-        const body = (await request.json()) as { records: readonly unknown[] };
+        const body = (await request.json()) as { records: readonly { kind?: string }[] };
+        postedKinds.push(...body.records.map((record) => record.kind ?? ""));
         return Response.json({
           ok: true,
           data: {
@@ -99,6 +106,10 @@ export const startCannedHub = (): CannedHub => {
     setSolvedMatches: (next) => {
       solvedMatches = next;
     },
+    setNotices: (next) => {
+      notices = next;
+    },
+    postedKinds,
     stop: () => {
       server.stop(true);
     },

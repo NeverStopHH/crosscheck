@@ -135,6 +135,15 @@ const fixture = async (
 
 const line = (value: unknown): string => JSON.stringify(value);
 
+/** An author's notice waiting for this developer (landed changes, step 4). */
+const waitingNotice = (): Record<string, unknown> => ({
+  id: "lnt_1",
+  readerName: "Nick",
+  path: "src/lines.ts",
+  stoppedAt: new Date().toISOString(),
+  commits: [{ id: "lnt_1", sha: "0dcfc4e9a1b2c3d4e5f60718293a4b5c6d7e8f90", subject: "Fix line offset", missing: true }],
+});
+
 const initRequest = (id: number): string =>
   line({ jsonrpc: "2.0", id, method: "initialize", params: { protocolVersion: 1 } });
 
@@ -538,6 +547,42 @@ describe("write point 2: the prompt block (§2.5)", () => {
     expect(f.logger.lines.some((entry) => entry.includes("why=budget"))).toBe(true);
     // Budget + margin, far below the hub latency that would otherwise gate.
     expect(elapsed).toBeLessThan(350);
+  });
+
+  test("an author's notice rides an ACP prompt within the budget, and the hub hears it at once", async () => {
+    const f = await fixture("inj-notice");
+    f.hub.setCandidates([]);
+    await openGate(f);
+    await registerSession(f);
+    await waitFor(() => f.injector.decideLine(promptLine("briefing spender")));
+    f.hub.setNotices([waitingNotice()]);
+
+    const decision = await waitFor(() => f.injector.decideLine(promptLine("why are line offsets off by one")));
+    const told = JSON.parse(decision) as { params: { prompt: readonly { type: string; text: string }[] } };
+
+    expect(told.params.prompt[1]?.text).toContain("Nick ran into your landed change before editing src/lines.ts");
+    expect(f.hub.postedKinds).toContain("landed_notice_delivery");
+  });
+
+  test("hint budget blown → a notice is neither shown nor marked told, even after the flow finishes", async () => {
+    // The same skew as the budget pin above: the race fires at 100 ms while
+    // the candidates GET takes 400 ms, and the flow finishes in the
+    // background — where it must not claim what the prompt never carried.
+    const f = await fixture("inj-notice-budget", { injectorTimeoutMs: "50" });
+    f.hub.setCandidates([]);
+    await openGate(f);
+    await registerSession(f);
+    await waitFor(() => f.injector.decideLine(promptLine("briefing spender")));
+    f.hub.latency.candidates = 400;
+    f.hub.setNotices([waitingNotice()]);
+
+    const decision = await f.injector.decideLine(promptLine("why are line offsets off by one"));
+    await sleep(700);
+    const state = await readSessionState(f.home, HOST_KEY);
+
+    expect(decision).toBeNull();
+    expect(f.hub.postedKinds).not.toContain("landed_notice_delivery");
+    expect(state?.shownLandedNoticeIds).toEqual([]);
   });
 
   test("session/cancel is never awaited on — the decision is synchronous null", async () => {

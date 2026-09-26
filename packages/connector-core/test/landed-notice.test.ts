@@ -28,7 +28,7 @@ import { renderEditWarning } from "../src/hints/render.ts";
 import type { LandedChanges, LandedCommit } from "../src/landed-changes/probe.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
-import { answeredQuestion, startHintHub } from "./fixtures/hint-hub.ts";
+import { answeredQuestion, rejectedApproachCandidate, startHintHub } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -184,9 +184,12 @@ const waiting = async (w: World): Promise<readonly LandedNotice[]> => {
   return ((await response.json()) as { data: { notices: LandedNotice[] } }).data.notices;
 };
 
+/** Room enough that no test here is about the budget unless it says so. */
+const ROOMY = (): number => 10_000;
+
 const promptIn = (
   where: { readonly home: string; readonly repo: string; readonly hostSessionKey: string; readonly hub: HubContext },
-  text: string = PROMPT,
+  options: { readonly tellsNotices?: boolean; readonly spareMs?: () => number } = {},
 ): Promise<string> =>
   selectAndRenderHint({
     home: where.home,
@@ -196,8 +199,10 @@ const promptIn = (
     repoId: REPO_ID,
     repoRoot: where.repo,
     agentKind: "claude-code",
-    prompt: text,
+    prompt: PROMPT,
     now: new Date(),
+    tellsNotices: options.tellsNotices ?? true,
+    spareMs: options.spareMs ?? ROOMY,
   });
 
 const briefMike = async (w: World) => {
@@ -267,7 +272,7 @@ describe("the notice's words", () => {
 
     const entry = formatLandedNoticeEntry(notice({ commits }), NOW);
 
-    expect(entry?.text).toContain("(+1 more, told next time)");
+    expect(entry?.text).toContain("(+1 more, shown next time)");
     expect(entry?.commitIds).toEqual(["lnt_1", "lnt_2", "lnt_3"]);
   });
 
@@ -287,6 +292,33 @@ describe("the notice's words", () => {
     expect(entry?.text).not.toContain("Nick · status done");
   });
 
+  test("a reader without a name is 'a teammate', and spoken of as they", () => {
+    const entry = formatLandedNoticeEntry(
+      notice({
+        readerName: "  ",
+        commits: [
+          { id: "lnt_1", sha: SHA, subject: "Fix line offset", missing: true },
+          { id: "lnt_2", sha: OTHER_SHA, subject: "Count from one", missing: false },
+        ],
+      }),
+      NOW,
+    );
+
+    expect(entry?.text).toBe(
+      [
+        "- A teammate ran into your landed changes before editing src/lines.ts, 2h ago:",
+        "  0dcfc4e «Fix line offset»: missing from their checkout",
+        "  1a2b3c4 «Count from one»: they already have it; it landed recently",
+      ].join("\n"),
+    );
+  });
+
+  test("a stop dated after the reader's clock is at an unknown time, never '0s ago'", () => {
+    const entry = formatLandedNoticeEntry(notice({ stoppedAt: "2026-09-26T10:05:00.000Z" }), NOW);
+
+    expect(entry?.text).toContain("before editing src/lines.ts, at an unknown time:");
+  });
+
   test("a notice with nothing it can name renders nothing", () => {
     expect(formatLandedNoticeEntry(notice({ commits: [] }), NOW)).toBeNull();
   });
@@ -302,8 +334,8 @@ describe("the notice's words", () => {
     });
 
     expect(briefing).toContain(LANDED_NOTICE_SECTION_HEADER);
-    expect(briefing).toContain("missing from Nick's checkout");
-    expect(briefing).toContain(QUOTED_DATA_NOTICE);
+    expect(briefing).toContain("  0dcfc4e «Fix line offset»: missing from Nick's checkout");
+    expect(briefing.indexOf(LANDED_NOTICE_SECTION_HEADER)).toBeLessThan(briefing.indexOf("0dcfc4e"));
   });
 });
 
@@ -326,10 +358,41 @@ describe("the stop names who is told (decision 11)", () => {
     expect(text).toContain("Mike is told about this stop.");
   });
 
-  test("two people, and a name said twice is said once", () => {
-    const text = renderEditWarning({ live: null, landed, file: FILE, now: NOW, told: ["Mike", "Ken", "Mike"] });
+  test("two people, each named", () => {
+    const text = renderEditWarning({ live: null, landed, file: FILE, now: NOW, told: ["Mike", "Ken"] });
 
     expect(text).toContain("Mike and Ken are told about this stop.");
+  });
+
+  test("an unknown name begins its sentence with a capital", () => {
+    const text = renderEditWarning({ live: null, landed, file: FILE, now: NOW, told: [""] });
+
+    expect(text).toContain("A teammate is told about this stop.");
+  });
+
+  test("with a live teammate too, it closes the landed part, just above the quoted-data notice", () => {
+    const text = renderEditWarning({
+      live: {
+        sessionId: "cc_ken-live",
+        developerId: "dev_ken",
+        developerName: "Ken",
+        branch: "ken/lines",
+        status: "implementing",
+        lastHeartbeatAt: "2026-09-26T09:59:00.000Z",
+        workContextId: "wc_ken",
+        workContextTitle: "Still on the parser",
+        workContextIntent: null,
+      },
+      landed,
+      file: FILE,
+      now: NOW,
+      told: ["Mike"],
+    });
+    const lines = text.split("\n");
+
+    expect(lines.at(-2)).toBe("Mike is told about this stop.");
+    expect(lines.findIndex((line) => line.includes("has landed changes"))).toBeLessThan(lines.length - 2);
+    expect(lines.at(-1)).toBe(QUOTED_DATA_NOTICE);
   });
 
   test("nobody told, nothing said", () => {
@@ -473,7 +536,10 @@ describe("a prompt tells what this session has not shown", () => {
 describe("claimed before it is recorded", () => {
   const pending = { slotRef: "lnt_1", commitIds: ["lnt_1"] } as const;
 
-  const claim = async (label: string, overrides: { readonly shown?: readonly string[]; readonly refs?: readonly string[] }) => {
+  const claim = async (
+    label: string,
+    overrides: { readonly shown?: readonly string[]; readonly refs?: readonly string[]; readonly spareMs?: () => number },
+  ) => {
     const fake = startHintHub();
     fakeHubs.push(fake);
     const where = await fakeSession(label, fake);
@@ -491,6 +557,7 @@ describe("claimed before it is recorded", () => {
       { home: where.home, repoKey: where.hub.repoKey, hostSessionKey: where.hostSessionKey, agentKind: "claude-code", hub: where.hub, now: new Date() },
       primed,
       pending,
+      overrides.spareMs ?? ROOMY,
     );
     return { remembered, where, fake };
   };
@@ -520,6 +587,18 @@ describe("claimed before it is recorded", () => {
   );
 
   test(
+    "a hook with no room left claims nothing: the notice waits, unmarked",
+    async () => {
+      const { remembered, where, fake } = await claim("notice-late", { spareMs: () => 0 });
+
+      expect(remembered).toBe(false);
+      expect(await spooledDeliveries(where)).toEqual([]);
+      expect(fake.postedRecords).toEqual([]);
+    },
+    HEAVY_MS,
+  );
+
+  test(
     "a session that spent its hints claims no notice, and nothing tells the hub it was shown",
     async () => {
       const refs = Array.from({ length: MAX_HINTS_PER_SESSION }, (_, i) => `ref_${String(i)}`);
@@ -528,6 +607,74 @@ describe("claimed before it is recorded", () => {
 
       expect(remembered).toBe(false);
       expect(await spooledDeliveries(where)).toEqual([]);
+    },
+    HEAVY_MS,
+  );
+});
+
+describe("told only while the budget spares room to show it", () => {
+  test(
+    "no room to spare: nothing is claimed, nothing is marked, and the notice waits",
+    async () => {
+      const w = await world("notice-no-room");
+      await nickStops(w, [MISSING]);
+
+      const text = await promptIn(w, { spareMs: () => 0 });
+
+      expect(text).not.toContain("ran into your landed change");
+      expect((await readSessionState(w.home, w.hostSessionKey))?.shownLandedNoticeIds).toEqual([]);
+      expect(await waiting(w)).toHaveLength(1);
+    },
+    HEAVY_MS,
+  );
+
+  test(
+    "the immediate post waits no longer than the budget spares, and the notice still shows",
+    async () => {
+      const fake = startHintHub({ candidates: 0, tripwire: 0, records: 3000 });
+      fakeHubs.push(fake);
+      fake.setCandidates([]);
+      fake.setNotices([notice({ stoppedAt: new Date().toISOString() })]);
+      const where = await fakeSession("notice-slow-post", fake);
+
+      const started = performance.now();
+      const text = await promptIn(where, { spareMs: () => 150 });
+      const elapsed = performance.now() - started;
+
+      expect(text).toContain("ran into your landed change");
+      expect(elapsed).toBeLessThan(1500);
+      expect(await spooledDeliveries(where)).toHaveLength(1);
+    },
+    HEAVY_MS,
+  );
+
+  test(
+    "with no room for a notice, the prompt still gets the pointer it would have had",
+    async () => {
+      const fake = startHintHub();
+      fakeHubs.push(fake);
+      fake.setCandidates([rejectedApproachCandidate()]);
+      fake.setNotices([notice({ stoppedAt: new Date().toISOString() })]);
+      const where = await fakeSession("notice-no-room-pointer", fake);
+
+      const text = await promptIn(where, { spareMs: () => 0 });
+
+      expect(text).not.toContain("ran into your landed change");
+      expect(text).toContain("crosscheck hint");
+    },
+    HEAVY_MS,
+  );
+
+  test(
+    "a host that does not tell notices tells none (Cursor's failure hint)",
+    async () => {
+      const w = await world("notice-not-here");
+      await nickStops(w, [MISSING]);
+
+      const text = await promptIn(w, { tellsNotices: false });
+
+      expect(text).not.toContain("ran into your landed change");
+      expect(await waiting(w)).toHaveLength(1);
     },
     HEAVY_MS,
   );

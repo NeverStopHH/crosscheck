@@ -774,6 +774,13 @@ export const LANDED_NOTICE_SUBJECT_CHARS = 80;
  */
 export const MAX_SHOWN_LANDED_NOTICE_IDS = 200;
 /**
+ * Below this much of the prompt hook's spare budget an author's notice is
+ * not told at all — neither claimed nor posted — and waits for the next
+ * prompt or briefing: a notice claimed by a hook that then runs out of time
+ * would be marked told and never shown.
+ */
+export const LANDED_NOTICE_MIN_SPARE_MS = 50;
+/**
  * `doctor`'s look at who landed what (decision 7): the landing branches'
  * latest commits, this many — a COUNT, never a date window: `--since` drops
  * a merged feature branch's commits for their old dates (staleness-axis

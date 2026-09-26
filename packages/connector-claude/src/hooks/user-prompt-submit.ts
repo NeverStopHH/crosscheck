@@ -62,7 +62,7 @@ import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
-import type { HookContext } from "./runner.ts";
+import type { HookBudget, HookContext } from "./runner.ts";
 
 /** The intent worker's own entry, INSIDE this package (intent/worker-entry.ts). */
 const INTENT_WORKER_ENTRY_PATH = resolve(
@@ -196,7 +196,7 @@ const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
   }
 };
 
-const deliverPromptContext = async (ctx: HookContext): Promise<string> => {
+const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
   await maybeSpawnIntentWorker(ctx);
@@ -229,6 +229,10 @@ const deliverPromptContext = async (ctx: HookContext): Promise<string> => {
     agentKind: ctx.config.agentKind,
     prompt: ctx.payload.prompt ?? "",
     now: ctx.now(),
+    // A person reads this prompt's context, so an author's notice may be
+    // told here — within what the budget spares (landed changes, step 4).
+    tellsNotices: true,
+    spareMs: () => budget.spareMs(),
   });
   if (text.length === 0) {
     return "";
@@ -238,10 +242,11 @@ const deliverPromptContext = async (ctx: HookContext): Promise<string> => {
 
 export const handleUserPromptSubmit = async (
   ctx: HookContext,
+  budget: HookBudget,
 ): Promise<string> => {
   // Delivers nothing, like the two fires above: the background fetch of the
   // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
   // it adds no wall clock of its own.
-  const [output] = await Promise.all([deliverPromptContext(ctx), requestLandingFetchFor(ctx)]);
+  const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);
   return output;
 };

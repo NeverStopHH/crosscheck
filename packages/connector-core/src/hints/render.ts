@@ -92,7 +92,7 @@ const ANSWER_HEADER = `crosscheck answer: a teammate answered a question you ask
  * the reader's own landed change. "Told once" is said out loud, so the reader
  * knows not to wait for it again.
  */
-const LANDED_NOTICE_HEADER = `crosscheck notice: a teammate ran into your landed change; this is told once. ${QUOTED_DATA_NOTICE}`;
+const LANDED_NOTICE_HEADER = `crosscheck notice: a teammate ran into your landed change; this notice is shown once. ${QUOTED_DATA_NOTICE}`;
 
 type HintContext = HintContextCandidate["workContext"];
 
@@ -627,17 +627,20 @@ const landedLines = (landed: LandedChanges, repoRelativeFile: string, now: Date)
 
 /**
  * "Mike is told about this stop." (step 4, decision 11): the reader is told
- * who hears of it, so nothing is reported behind their back. Each name once,
- * bare like every author label.
+ * who hears of it, so nothing is reported behind their back. One name per
+ * person — the caller passes each told developer once, so two people who
+ * share a display name are two names — bare like every author label, and a
+ * sentence that begins with an unknown name begins with a capital.
  */
 const toldLines = (told: readonly string[]): readonly string[] => {
-  const names = [...new Set(told.map((name) => authorLabel(name)))];
+  const names = told.map((name) => authorLabel(name));
   const last = names.at(-1);
   if (last === undefined) {
     return [];
   }
   const list = names.length === 1 ? last : `${names.slice(0, -1).join(", ")} and ${last}`;
-  return [`${list} ${names.length === 1 ? "is" : "are"} told about this stop.`];
+  const sentence = `${list} ${names.length === 1 ? "is" : "are"} told about this stop.`;
+  return [`${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`];
 };
 
 export interface EditWarningInput {

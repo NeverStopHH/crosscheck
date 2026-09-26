@@ -21,11 +21,11 @@ import {
   MAX_LANDED_NOTICE_COMMITS_SHOWN,
 } from "../constants.ts";
 import type { LandedNotice } from "../http/hub.ts";
-import { ageOf } from "../state/age.ts";
+import { formatAge } from "./age.ts";
 import { fitEntries } from "./fit.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
-export const LANDED_NOTICE_SECTION_HEADER = "Teammates ran into your landed changes (each is told once):";
+export const LANDED_NOTICE_SECTION_HEADER = "Teammates ran into your landed changes (each notice is shown once):";
 
 /** A path is a bare field on a line that already carries a name and an age. */
 const PATH_CHARS = 120;
@@ -39,7 +39,18 @@ export interface RenderedLandedNotice {
   readonly commitIds: readonly string[];
 }
 
-const commitLine = (commit: NoticeCommit, reader: string): string | null => {
+/** How a commit line speaks of the reader: by name, or as "they" when the name is unknown. */
+interface ReaderWords {
+  readonly checkout: string;
+  readonly has: string;
+}
+
+const readerWords = (name: string): ReaderWords =>
+  name.length === 0
+    ? { checkout: "their checkout", has: "they already have it" }
+    : { checkout: `${name}'s checkout`, has: `${name} already has it` };
+
+const commitLine = (commit: NoticeCommit, reader: ReaderWords): string | null => {
   const sha = safeId(commit.sha).slice(0, SHORT_SHA_CHARS);
   if (sha.length === 0) {
     return null;
@@ -47,8 +58,18 @@ const commitLine = (commit: NoticeCommit, reader: string): string | null => {
   const subject = sanitizeUntrusted(commit.subject, LANDED_NOTICE_SUBJECT_CHARS);
   const label = subject.length === 0 ? sha : `${sha} «${subject}»`;
   return commit.missing
-    ? `  ${label}: missing from ${reader}'s checkout`
-    : `  ${label}: ${reader} already has it; it landed recently`;
+    ? `  ${label}: missing from ${reader.checkout}`
+    : `  ${label}: ${reader.has}; it landed recently`;
+};
+
+/**
+ * "2h ago", or "at an unknown time" — a future instant counts as unknown, the
+ * rule every hint line follows (hints/render.ts `ageLabel`): a clamped "0s
+ * ago" would be a guess dressed as a measurement.
+ */
+const stoppedLabel = (iso: string, now: Date): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) || ms > now.getTime() ? "at an unknown time" : `${formatAge(now.getTime() - ms)} ago`;
 };
 
 /**
@@ -61,7 +82,7 @@ const commitLine = (commit: NoticeCommit, reader: string): string | null => {
 export const formatLandedNoticeEntry = (notice: LandedNotice, now: Date): RenderedLandedNotice | null => {
   const name = bareUntrusted(notice.readerName);
   const path = bareUntrusted(notice.path, PATH_CHARS);
-  const reader = name.length === 0 ? "a teammate" : name;
+  const reader = readerWords(name);
   const named = notice.commits.slice(0, MAX_LANDED_NOTICE_COMMITS_SHOWN).flatMap((commit) => {
     const line = commitLine(commit, reader);
     return line === null ? [] : [{ line, id: commit.id }];
@@ -74,9 +95,9 @@ export const formatLandedNoticeEntry = (notice: LandedNotice, now: Date): Render
   const changes = notice.commits.length === 1 ? "change" : "changes";
   return {
     text: [
-      `- ${lead} ran into your landed ${changes} before editing ${path}, ${ageOf(notice.stoppedAt, now)}:`,
+      `- ${lead} ran into your landed ${changes} before editing ${path}, ${stoppedLabel(notice.stoppedAt, now)}:`,
       ...named.map((entry) => entry.line),
-      ...(rest > 0 ? [`  (+${String(rest)} more, told next time)`] : []),
+      ...(rest > 0 ? [`  (+${String(rest)} more, shown next time)`] : []),
     ].join("\n"),
     commitIds: named.map((entry) => entry.id),
   };

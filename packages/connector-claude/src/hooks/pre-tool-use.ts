@@ -488,7 +488,13 @@ const recordLandedStop = async (
     [landedStopRecord(body.data, producer, ctx.now())],
     ctx.now(),
   );
-  return appended.persisted ? named.map((entry) => entry.name) : [];
+  if (!appended.persisted) {
+    return [];
+  }
+  // Each person once: two commits by Mike are one "Mike is told", and two
+  // people who share a display name are still two.
+  const byPerson = new Map(named.map((entry) => [entry.commit.authorDeveloperId, entry.name]));
+  return [...byPerson.values()];
 };
 
 /**

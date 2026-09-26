@@ -15,9 +15,10 @@
  * pulled it since: `missing` and the time follow the newer stop) and into
  * nothing for one already told. A new commit is a new row.
  *
- * SEVEN DAYS (LANDED_NOTICE_TTL_DAYS), counted from the FIRST stop of a row
- * that was told: a told row is never refreshed, so a reader still stopped at
- * the same missing commit a week later tells the author again. A stop that
+ * SEVEN DAYS (LANDED_NOTICE_TTL_DAYS), counted from a row's latest stop
+ * before it was told — a stop refreshes a row only until it is told, and a
+ * told row is never refreshed — so a reader still stopped at the same
+ * missing commit a week after that tells the author again. A stop that
  * arrives older than that is not stored. Rows past the seven days are never
  * listed, and are deleted before every stop's ingest (which frees their
  * commits for that stop) and by the reaper pass (so a quiet repo does not
@@ -45,7 +46,7 @@
  * opt-out does not hide it (decision 9): the reader's own stop said the
  * author would be told.
  */
-import { and, asc, count, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import { containsSecret } from "@crosscheck/schema";
 import type { LandedNoticeDelivery, LandedStop, LandedStopCommit } from "@crosscheck/schema";
@@ -53,7 +54,7 @@ import type { LandedNoticeDelivery, LandedStop, LandedStopCommit } from "@crossc
 import {
   LANDED_NOTICE_GROUPS_LISTED,
   LANDED_NOTICE_MAX_WAITING_PER_PAIR,
-  LANDED_NOTICE_ROWS_READ,
+  LANDED_NOTICE_GROUPS_READ,
   LANDED_NOTICE_TTL_DAYS,
 } from "../constants.ts";
 import { agentSessions, developerEmails, developers, landedNotices } from "../db/schema.ts";
@@ -249,12 +250,46 @@ export interface LandedNotice {
  * most LANDED_NOTICE_GROUPS_LISTED groups: every reader's newest group
  * before anyone's second, newest first within a round — so one reader's many
  * stops cannot crowd out another reader's one.
+ *
+ * GROUPS FIRST, THEN THEIR ROWS. Choosing the groups from an aggregate and
+ * then reading every row of exactly those groups means a listed group comes
+ * whole: a row cap applied before grouping would cut an older commit off a
+ * listed group, and it would come back later as a second notice about the
+ * same reader and file. A group holds at most one reader's waiting rows for
+ * this author, which LANDED_NOTICE_MAX_WAITING_PER_PAIR bounds.
  */
 export const listLandedNotices = async (
   deps: Deps,
   authorDeveloperId: string,
   repo: string,
 ): Promise<readonly LandedNotice[]> => {
+  const waiting = and(
+    eq(landedNotices.authorDeveloperId, authorDeveloperId),
+    eq(landedNotices.repo, repo),
+    isNull(landedNotices.deliveredAt),
+    gt(landedNotices.stoppedAt, cutoffOf(deps.now())),
+    notMutedCondition(authorDeveloperId, landedNotices.readerDeveloperId),
+  );
+  const newest = sql<Date>`max(${landedNotices.stoppedAt})`.mapWith(landedNotices.stoppedAt);
+  const groups = await deps.db
+    .select({ readerDeveloperId: landedNotices.readerDeveloperId, path: landedNotices.path, newest })
+    .from(landedNotices)
+    .where(waiting)
+    .groupBy(landedNotices.readerDeveloperId, landedNotices.path)
+    .orderBy(desc(newest), asc(landedNotices.readerDeveloperId), asc(landedNotices.path))
+    .limit(LANDED_NOTICE_GROUPS_READ);
+  const roundOf = new Map<string, number>();
+  const chosen = groups
+    .map((group) => {
+      const round = roundOf.get(group.readerDeveloperId) ?? 0;
+      roundOf.set(group.readerDeveloperId, round + 1);
+      return { ...group, round };
+    })
+    .sort((a, b) => a.round - b.round || b.newest.getTime() - a.newest.getTime())
+    .slice(0, LANDED_NOTICE_GROUPS_LISTED);
+  if (chosen.length === 0) {
+    return [];
+  }
   const rows = await deps.db
     .select({
       id: landedNotices.id,
@@ -270,42 +305,32 @@ export const listLandedNotices = async (
     .innerJoin(developers, eq(developers.id, landedNotices.readerDeveloperId))
     .where(
       and(
-        eq(landedNotices.authorDeveloperId, authorDeveloperId),
-        eq(landedNotices.repo, repo),
-        isNull(landedNotices.deliveredAt),
-        gt(landedNotices.stoppedAt, cutoffOf(deps.now())),
-        notMutedCondition(authorDeveloperId, landedNotices.readerDeveloperId),
+        waiting,
+        or(
+          ...chosen.map((group) =>
+            and(eq(landedNotices.readerDeveloperId, group.readerDeveloperId), eq(landedNotices.path, group.path)),
+          ),
+        ),
       ),
     )
-    .orderBy(desc(landedNotices.stoppedAt), desc(landedNotices.missing), asc(landedNotices.sha))
-    .limit(LANDED_NOTICE_ROWS_READ);
-  // Rows arrive newest first, so a group's first row is its latest stop, and
-  // a reader's groups arrive in the order of their newest stops.
-  const groups = new Map<string, readonly (typeof rows)[number][]>();
-  for (const row of rows) {
-    const key = `${row.readerDeveloperId}\n${row.path}`;
-    groups.set(key, [...(groups.get(key) ?? []), row]);
-  }
-  const roundOf = new Map<string, number>();
-  const ranked = [...groups.values()].flatMap((members) => {
-    const [newest] = members;
-    if (newest === undefined) {
-      return [];
-    }
-    const round = roundOf.get(newest.readerDeveloperId) ?? 0;
-    roundOf.set(newest.readerDeveloperId, round + 1);
-    return [{ round, members, newest }];
+    .orderBy(desc(landedNotices.stoppedAt), asc(landedNotices.id));
+  return chosen.flatMap((group) => {
+    const members = rows.filter(
+      (row) => row.readerDeveloperId === group.readerDeveloperId && row.path === group.path,
+    );
+    const [latest] = members;
+    return latest === undefined
+      ? []
+      : [
+          {
+            id: latest.id,
+            readerName: latest.readerName,
+            path: latest.path,
+            stoppedAt: latest.stoppedAt.toISOString(),
+            commits: members
+              .map((row) => ({ id: row.id, sha: row.sha, subject: row.subject, missing: row.missing }))
+              .sort((a, b) => Number(b.missing) - Number(a.missing) || a.sha.localeCompare(b.sha)),
+          },
+        ];
   });
-  return ranked
-    .sort((a, b) => a.round - b.round || b.newest.stoppedAt.getTime() - a.newest.stoppedAt.getTime())
-    .slice(0, LANDED_NOTICE_GROUPS_LISTED)
-    .map(({ members, newest }) => ({
-      id: newest.id,
-      readerName: newest.readerName,
-      path: newest.path,
-      stoppedAt: newest.stoppedAt.toISOString(),
-      commits: members
-        .map((row) => ({ id: row.id, sha: row.sha, subject: row.subject, missing: row.missing }))
-        .sort((a, b) => Number(b.missing) - Number(a.missing) || a.sha.localeCompare(b.sha)),
-    }));
 };

@@ -1,4 +1,4 @@
-import { MAX_HINTS_PER_SESSION } from "../constants.ts";
+import { LANDED_NOTICE_MIN_SPARE_MS, MAX_HINTS_PER_SESSION } from "../constants.ts";
 import { hintDeliveryRecord, landedNoticeDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
 import type { HintRefKind, Producer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
@@ -163,12 +163,24 @@ export interface PendingLandedNoticeDelivery {
  * session of the author reads the notice as waiting. Best effort; the spooled
  * copy follows at the next flush, and marking a told row again changes
  * nothing.
+ *
+ * WITHIN WHAT THE BUDGET SPARES, and never past it: a hook that claims and
+ * posts, then runs out of time before it prints, has marked a notice told
+ * that nobody saw — the one loss this function exists to prevent. So it
+ * claims only while LANDED_NOTICE_MIN_SPARE_MS is still spare, and the post
+ * gets no more than what is spare then (none below the minimum: the spooled
+ * copy follows). `spareMs` already holds the hook's reserve back, so the text
+ * still has its time to go out.
  */
 export const rememberLandedNoticeDelivery = async (
   target: HintDeliveryTarget,
   state: SessionState,
   delivery: PendingLandedNoticeDelivery,
+  spareMs: () => number,
 ): Promise<boolean> => {
+  if (spareMs() < LANDED_NOTICE_MIN_SPARE_MS) {
+    return false;
+  }
   const remembered = await updateSessionState(target.home, target.hostSessionKey, (fresh) =>
     fresh.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION ||
     fresh.deliveredHintRefs.includes(delivery.slotRef) ||
@@ -190,6 +202,9 @@ export const rememberLandedNoticeDelivery = async (
     target.now,
   );
   await appendRecords(target.home, target.repoKey, target.hostSessionKey, [record], target.now);
-  await postRecords(target.hub, [record]);
+  const room = Math.min(target.hub.timeoutMs, spareMs());
+  if (room >= LANDED_NOTICE_MIN_SPARE_MS) {
+    await postRecords({ ...target.hub, timeoutMs: room }, [record]);
+  }
   return true;
 };

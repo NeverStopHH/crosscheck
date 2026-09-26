@@ -326,7 +326,7 @@ describe("the author's notice", () => {
     expect(await noticesFor(t, t.mike)).toHaveLength(1);
   });
 
-  test("a reader still stopped a week after being told tells the author again, counted from the first stop", async () => {
+  test("a reader still stopped a week after being told tells the author again, counted from the last stop before the telling", async () => {
     const t = await team();
     await nickStops(t, [{ author: t.mike }]);
     await delivered(t, t.mike, commitIds(await noticesFor(t, t.mike)), "ses_mike");
@@ -339,6 +339,25 @@ describe("the author's notice", () => {
     await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_day8" });
     await nickStops(t, [{ author: t.mike }], { sessionId: "ses_nick_day8" });
 
+    expect(await noticesFor(t, t.mike)).toHaveLength(1);
+  });
+
+  test("a stop that refreshed a row before its telling moves the week: counted from that stop", async () => {
+    const t = await team();
+    await nickStops(t, [{ author: t.mike }]);
+    t.harness.clock.advanceSeconds(3 * DAY_S);
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_day3" });
+    await nickStops(t, [{ author: t.mike }], { sessionId: "ses_nick_day3" });
+    await delivered(t, t.mike, commitIds(await noticesFor(t, t.mike)), "ses_mike");
+
+    t.harness.clock.advanceSeconds(5 * DAY_S);
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_day8" });
+    await nickStops(t, [{ author: t.mike }], { sessionId: "ses_nick_day8" });
+    expect(await noticesFor(t, t.mike)).toEqual([]);
+
+    t.harness.clock.advanceSeconds(3 * DAY_S);
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_day11" });
+    await nickStops(t, [{ author: t.mike }], { sessionId: "ses_nick_day11" });
     expect(await noticesFor(t, t.mike)).toHaveLength(1);
   });
 
@@ -355,13 +374,20 @@ describe("the author's notice", () => {
     expect(notices[0]?.stoppedAt).toBe(t.harness.clock.now().toISOString());
   });
 
-  test("a stop naming one commit twice is one notice, and the batch beside it still lands", async () => {
+  test("a stop naming one commit twice is one notice, and the record beside it in the batch still lands", async () => {
     const t = await team();
+    const twice = stopBody(t, [{ author: t.mike }, { author: t.mike }]);
+    const beside = stopBody(t, [{ author: t.mike, sha: OTHER_SHA }], { path: "src/other.ts" });
 
-    const stop = await nickStops(t, [{ author: t.mike }, { author: t.mike }]);
+    const posted = await postRecords(t.harness, t.nick, {
+      records: [twice, beside].map((body) =>
+        recordEnvelope("landed_stop", body, { sessionId: body.sessionId, ts: t.harness.clock.now().toISOString() }),
+      ),
+    });
 
-    expect(stop).toEqual({ status: 200, accepted: 1, rejected: 0 });
-    expect((await noticesFor(t, t.mike)).flatMap((n) => n.commits.map((c) => c.sha))).toEqual([SHA]);
+    expect(posted.status).toBe(200);
+    expect(posted.data?.accepted).toBe(2);
+    expect((await noticesFor(t, t.mike)).flatMap((n) => n.commits.map((c) => c.sha)).sort()).toEqual([SHA, OTHER_SHA]);
   });
 
   test("a delivery marks only notices addressed to its sender", async () => {
@@ -484,6 +510,39 @@ describe("the author's notice", () => {
 
     expect(rows.filter((row) => row.readerDeveloperId === t.nick.developerId).length).toBeLessThanOrEqual(30);
     expect(notices.map((notice) => notice.readerName)).toContain("Ken");
+  });
+
+  test("a listed group comes whole: every commit of it, however many stops came between", async () => {
+    const t = await team();
+    const early = "a".repeat(40);
+    const late = "b".repeat(40);
+    await nickStops(t, [{ author: t.mike, sha: early }]);
+    // A hundred other stops at Mike's work, by five readers, in between.
+    const readers = [t.ken];
+    for (const name of ["Lea", "Ola", "Pia", "Una"]) {
+      const reader = await createTestDeveloper(t.harness, name, `${name.toLowerCase()}@example.com`);
+      await registerTestSession(t.harness, reader.apiKey, { id: `ses_${name.toLowerCase()}` });
+      readers.push(reader);
+    }
+    for (const [r, reader] of readers.entries()) {
+      for (let index = 0; index < 20; index += 1) {
+        t.harness.clock.advanceSeconds(1);
+        await nickStops(
+          t,
+          [{ author: t.mike, sha: `${String(r)}${index.toString(16).padStart(39, "0")}` }],
+          { sessionId: `ses_${reader === t.ken ? "ken" : ["lea", "ola", "pia", "una"][r - 1] ?? ""}`, path: `src/r${String(r)}/${String(index)}.ts` },
+          reader,
+        );
+      }
+    }
+    t.harness.clock.advanceSeconds(1);
+    await nickStops(t, [{ author: t.mike, sha: late }]);
+
+    const nicks = (await noticesFor(t, t.mike)).filter((notice) => notice.readerName === "Nick");
+
+    expect(nicks.map((notice) => notice.commits.map((commit) => commit.sha).sort())).toEqual([[early, late]]);
+    // …and it is dated by its newest stop.
+    expect(nicks[0]?.stoppedAt).toBe(t.harness.clock.now().toISOString());
   });
 
   test("a repo with a NUL in it is a bad request, not a crash", async () => {
