@@ -14,6 +14,11 @@
  * `close()` has the opposite fault: it writes 0 over a code the process had
  * set (3 before, 0 after; 0.3.16 kept the 3).
  *
+ * A process must also END: an open database keeps it alive for about 10 s,
+ * because PGlite 0.4 arms 10-second PostgreSQL timers (through setitimer)
+ * while booting; an in-memory database that re-armed one for good kept its
+ * process alive until killed (see IN_MEMORY_START_PARAMS in db/client.ts).
+ *
  * Each case runs in a child process, because the exit code is the process's.
  */
 import { describe, expect, test } from "bun:test";
@@ -21,21 +26,24 @@ import { describe, expect, test } from "bun:test";
 const CLIENT_PATH = new URL("../src/db/client.ts", import.meta.url).pathname;
 const SERVER_DIR = new URL("..", import.meta.url).pathname;
 
-/** A child boots PGlite with the vector extension and runs the bootstrap. */
+/** A process that ends by itself does so after about 10 s (10.6 measured). */
+const NATURAL_END_DEADLINE_MS = 30_000;
+
+/** A child ended early with `process.exit()` takes about a second. */
 const CHILD_TIMEOUT_MS = 30_000;
 
-/**
- * Opens the hub's database, queries it, and never closes it. The open
- * database keeps the process alive for PostgreSQL's idle statistics timer,
- * about 10 s; `process.exit()` without a code ends it at once with the exit
- * code it holds, the one a natural end uses.
- */
-const openAndLeaveOpen = (before: string): string =>
+/** Room for the test itself past a child's deadline, so the deadline reports first. */
+const TEST_MARGIN_MS = 10_000;
+
+const STILL_RUNNING = "still running";
+
+/** Opens the hub's database, queries it, and never closes it. */
+const openAndLeaveOpen = (before: string, after: string): string =>
   `${before}
    const { createDb } = await import(${JSON.stringify(CLIENT_PATH)});
    const db = await createDb();
    await db.$client.query("SELECT 1");
-   process.exit();`;
+   ${after}`;
 
 /** Asks the bundled build for its PostgreSQL major, which closes its database. */
 const probeVersion = (before: string): string =>
@@ -43,31 +51,44 @@ const probeVersion = (before: string): string =>
    const { bundledPgMajor } = await import(${JSON.stringify(CLIENT_PATH)});
    await bundledPgMajor();`;
 
-const exitCodeOf = async (script: string): Promise<number> => {
+/** The child's exit code, or STILL_RUNNING (and the child killed) past the deadline. */
+const exitCodeOf = async (
+  script: string,
+  deadlineMs = CHILD_TIMEOUT_MS,
+): Promise<number | typeof STILL_RUNNING> => {
   const child = Bun.spawn({
     cmd: [process.execPath, "-e", script],
     cwd: SERVER_DIR,
     stdout: "ignore",
     stderr: "ignore",
   });
-  return child.exited;
+  const outcome = await Promise.race([
+    child.exited,
+    Bun.sleep(deadlineMs).then((): typeof STILL_RUNNING => STILL_RUNNING),
+  ]);
+  if (outcome === STILL_RUNNING) {
+    child.kill();
+  }
+  return outcome;
 };
 
 describe("a process that opened the hub's database", () => {
   test(
-    "exits 0 when nothing failed, even with the database still open",
+    "ends by itself, 0, once its work is done and the database is still open",
     async () => {
-      expect(await exitCodeOf(openAndLeaveOpen(""))).toBe(0);
+      expect(await exitCodeOf(openAndLeaveOpen("", ""), NATURAL_END_DEADLINE_MS)).toBe(0);
     },
-    CHILD_TIMEOUT_MS,
+    NATURAL_END_DEADLINE_MS + TEST_MARGIN_MS,
   );
 
   test(
     "keeps an exit code it had set before opening it",
     async () => {
-      expect(await exitCodeOf(openAndLeaveOpen("process.exitCode = 3;"))).toBe(3);
+      // `process.exit()` without a code ends it at once with the exit code it
+      // holds, the one a natural end uses.
+      expect(await exitCodeOf(openAndLeaveOpen("process.exitCode = 3;", "process.exit();"))).toBe(3);
     },
-    CHILD_TIMEOUT_MS,
+    CHILD_TIMEOUT_MS + TEST_MARGIN_MS,
   );
 
   test(
@@ -75,6 +96,6 @@ describe("a process that opened the hub's database", () => {
     async () => {
       expect(await exitCodeOf(probeVersion("process.exitCode = 3;"))).toBe(3);
     },
-    CHILD_TIMEOUT_MS,
+    CHILD_TIMEOUT_MS + TEST_MARGIN_MS,
   );
 });

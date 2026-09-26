@@ -124,6 +124,47 @@ const runBootstrap = async (client: PGlite): Promise<void> => {
   await client.exec(bootstrapSql);
 };
 
+/**
+ * How an in-memory database (tests, dev) starts, beyond PGlite's defaults.
+ * A hub with a data dir starts with the defaults. Measured on 2026-09-26 with
+ * PGlite 0.4.6:
+ *
+ * - shared_buffers: with PostgreSQL's default of 160 MB an open in-memory
+ *   database costs 229 MB of memory, with 16 MB it costs 60 MB. The suite
+ *   opens one per test.
+ * - log_startup_progress_interval: a copy of a running cluster starts with
+ *   recovery, and PostgreSQL then re-arms its 10-second startup progress
+ *   timer for good, so a process that had opened one never ended (still
+ *   re-arming after 40 s; with the timer off it ended at 10.6 s). The timer
+ *   only paces progress log lines.
+ */
+const IN_MEMORY_START_PARAMS = [
+  ...PGlite.defaultStartParams,
+  "-c", "shared_buffers=16MB",
+  "-c", "log_startup_progress_interval=0",
+];
+
+/**
+ * A fresh cluster, initdb'd once per process, that every in-memory database
+ * starts as a copy of. PGlite 0.4 runs initdb in extra WASM instances whose
+ * memory it never gives back: about 280 MB per fresh cluster (510 MB per
+ * database against 229 MB for a copy, measured 2026-09-26), which ran the
+ * suite's single process out of memory. PGlite 0.3 ran initdb inside the
+ * database's own instance.
+ */
+let freshCluster: Promise<Blob> | undefined;
+
+const freshClusterCopy = (): Promise<Blob> => {
+  freshCluster ??= (async () => {
+    const seed = new PGlite();
+    await seed.waitReady;
+    const cluster = await seed.dumpDataDir("none");
+    await seed.close();
+    return cluster;
+  })();
+  return freshCluster;
+};
+
 export const createDb = async (options: CreateDbOptions = {}): Promise<Db> => {
   if (options.dataDir !== undefined) {
     await checkDataDirMajor(options.dataDir);
@@ -134,7 +175,12 @@ export const createDb = async (options: CreateDbOptions = {}): Promise<Db> => {
   const client = await keepingExitCode(async () => {
     const booting = options.dataDir
       ? new PGlite(options.dataDir, { database: HUB_DATABASE, extensions: { vector } })
-      : new PGlite({ database: HUB_DATABASE, extensions: { vector } });
+      : new PGlite({
+          database: HUB_DATABASE,
+          extensions: { vector },
+          loadDataDir: await freshClusterCopy(),
+          startParams: IN_MEMORY_START_PARAMS,
+        });
     await booting.waitReady;
     return booting;
   });

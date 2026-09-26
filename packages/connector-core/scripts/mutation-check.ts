@@ -12530,6 +12530,32 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/pglite-exit-code.test.ts`,
     because: "the version probe's close() turns a process's failing exit code into 0",
   },
+  {
+    // Dependencies, 2026-09-26: PGlite 0.4 keeps about 280 MB of every initdb,
+    // and the suite opens one in-memory database per test.
+    label: "every in-memory database runs its own initdb",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "          loadDataDir: await freshClusterCopy(),\n",
+    to: "",
+    test: `${SERVER}/test/in-memory-db.test.ts`,
+    because: "an open in-memory database costs over 300 MB, and the suite's process runs out of memory",
+  },
+  {
+    label: "an in-memory database keeps PostgreSQL's default buffers",
+    file: `${SERVER}/src/db/client.ts`,
+    from: '  "-c", "shared_buffers=16MB",\n',
+    to: "",
+    test: `${SERVER}/test/in-memory-db.test.ts`,
+    because: "an open in-memory database costs about 200 MB instead of about 50",
+  },
+  {
+    label: "an in-memory database keeps PostgreSQL's startup progress timer",
+    file: `${SERVER}/src/db/client.ts`,
+    from: '  "-c", "log_startup_progress_interval=0",\n',
+    to: "",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "a script that opened an in-memory database never ends: a VERIFY claim hangs the claims check",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12779,6 +12805,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
@@ -12786,7 +12813,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 20
  * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
- * PRINTS: packages/server/test/pglite-exit-code.test.ts 4
+ * PRINTS: packages/server/test/pglite-exit-code.test.ts 5
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
