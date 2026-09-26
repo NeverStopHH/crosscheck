@@ -15,10 +15,12 @@
  * pulled it since: `missing` and the time follow the newer stop) and into
  * nothing for one already told. A new commit is a new row.
  *
- * SEVEN DAYS (LANDED_NOTICE_TTL_DAYS). A stop older than that when it
- * arrives tells nobody; rows past it are never listed, and deleted when a
- * stop in the same repo is ingested, which frees their commits for a stop
- * after the seven days.
+ * SEVEN DAYS (LANDED_NOTICE_TTL_DAYS), counted from the FIRST stop of a row
+ * that was told: a told row is never refreshed, so a reader still stopped at
+ * the same missing commit a week later tells the author again. Rows past
+ * the seven days are never listed — which is also why a stop that arrives
+ * older than that tells nobody — and are deleted when a stop in the same
+ * repo is ingested, which frees their commits for a stop after them.
  *
  * AN UNASKED SURFACE for the author: a reader the author muted is hidden
  * while the mute lasts (services/visibility.ts). The READER's presence
@@ -73,11 +75,10 @@ const toldCommits = async (
   const owner = new Map(known.map((row) => [row.email, row.developerId]));
   const seen = new Set<string>();
   return commits.filter((commit) => {
-    const sha = commit.sha.toLowerCase();
     const developerId = owner.get(lowered(commit.authorEmail));
     const isTold =
-      developerId === commit.authorDeveloperId && developerId !== readerDeveloperId && !seen.has(sha);
-    seen.add(sha);
+      developerId === commit.authorDeveloperId && developerId !== readerDeveloperId && !seen.has(commit.sha);
+    seen.add(commit.sha);
     return isTold;
   });
 };
@@ -98,9 +99,6 @@ export const ingestLandedStop = async (
     .delete(landedNotices)
     .where(and(eq(landedNotices.repo, body.repo), lte(landedNotices.stoppedAt, cutoff)));
   const stoppedAt = notAfter(body.stoppedAt, now);
-  if (stoppedAt.getTime() <= cutoff.getTime()) {
-    return { status: "ignored", issues: [`stoppedAt: more than ${String(LANDED_NOTICE_TTL_DAYS)} days old; nobody is told`] };
-  }
   const commits = await toldCommits(deps, developerId, body.commits);
   if (commits.length === 0) {
     return { status: "ignored", issues: ["commits: no named author owns the commit's address"] };
@@ -113,7 +111,7 @@ export const ingestLandedStop = async (
         id: `lnt_${crypto.randomUUID()}`,
         repo: body.repo,
         path,
-        sha: commit.sha.toLowerCase(),
+        sha: commit.sha,
         subject: commit.subject,
         missing: commit.missing,
         authorDeveloperId: commit.authorDeveloperId,

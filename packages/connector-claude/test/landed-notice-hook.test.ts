@@ -22,6 +22,7 @@ import {
   KEN,
   MIKE,
   NICK,
+  gitIn,
   landWithMergeCommit,
   makeLandingRepos,
   readerFetches,
@@ -204,6 +205,24 @@ describe("a stop at a teammate's landed change, for its author", () => {
       expect(flushed.outcome).toBe("flushed");
       expect(notices).toEqual([expect.objectContaining({ readerName: "Nick", path: FILE })]);
       expect(notices[0]?.commits.map((commit) => commit.missing)).toEqual([true]);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a change Nick already has is recorded as one he has (decision 8)",
+    async () => {
+      const w = await world("notice-has-it");
+      await lands(w, MIKE);
+      await gitIn(w.repos.reader, ["merge", "-q", "--no-edit", "origin/staging"], { as: NICK });
+
+      const reason = await nickEdits(w);
+
+      expect(reason).toContain("your checkout has it");
+      expect(reason).toContain(TOLD);
+      expect(await spooledStops(w)).toEqual([
+        expect.objectContaining({ commits: [expect.objectContaining({ missing: false })] }),
+      ]);
     },
     HEAVY_SETUP_MS,
   );

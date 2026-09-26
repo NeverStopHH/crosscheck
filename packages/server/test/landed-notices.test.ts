@@ -323,6 +323,44 @@ describe("the author's notice", () => {
     expect(await noticesFor(t, t.mike)).toHaveLength(1);
   });
 
+  test("a reader still stopped a week after being told tells the author again, counted from the first stop", async () => {
+    const t = await team();
+    await nickStops(t, [{ author: t.mike }]);
+    await delivered(t, t.mike, commitIds(await noticesFor(t, t.mike)), "ses_mike");
+    t.harness.clock.advanceSeconds(4 * DAY_S);
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_day4" });
+    await nickStops(t, [{ author: t.mike }], { sessionId: "ses_nick_day4" });
+    expect(await noticesFor(t, t.mike)).toEqual([]);
+
+    t.harness.clock.advanceSeconds(4 * DAY_S);
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_day8" });
+    await nickStops(t, [{ author: t.mike }], { sessionId: "ses_nick_day8" });
+
+    expect(await noticesFor(t, t.mike)).toHaveLength(1);
+  });
+
+  test("a replayed older stop does not roll a newer one back", async () => {
+    const t = await team();
+    const first = t.harness.clock.now().toISOString();
+    t.harness.clock.advanceSeconds(HOUR_S);
+    await nickStops(t, [{ author: t.mike, missing: false }]);
+
+    await nickStops(t, [{ author: t.mike, missing: true }], { stoppedAt: first });
+    const notices = await noticesFor(t, t.mike);
+
+    expect(notices[0]?.commits.map((commit) => commit.missing)).toEqual([false]);
+    expect(notices[0]?.stoppedAt).toBe(t.harness.clock.now().toISOString());
+  });
+
+  test("a stop naming one commit twice is one notice, and the batch beside it still lands", async () => {
+    const t = await team();
+
+    const stop = await nickStops(t, [{ author: t.mike }, { author: t.mike }]);
+
+    expect(stop).toEqual({ status: 200, accepted: 1, rejected: 0 });
+    expect((await noticesFor(t, t.mike)).flatMap((n) => n.commits.map((c) => c.sha))).toEqual([SHA]);
+  });
+
   test("a delivery marks only notices addressed to its sender", async () => {
     const t = await team();
     await nickStops(t, [{ author: t.mike }]);

@@ -19,6 +19,9 @@ import { repoKey } from "../src/config/paths.ts";
 import { MAX_HINTS_PER_SESSION } from "../src/constants.ts";
 import { assembleBriefing, recordBriefingDeliveries } from "../src/flows/briefing.ts";
 import { selectAndRenderHint } from "../src/flows/hint.ts";
+import { rememberLandedNoticeDelivery } from "../src/hints/delivery.ts";
+import { readSessionSpool } from "../src/spool/files.ts";
+import { sessionSlug } from "../src/config/paths.ts";
 import type { HubContext } from "../src/http/client.ts";
 import type { LandedNotice } from "../src/http/hub.ts";
 import { renderEditWarning } from "../src/hints/render.ts";
@@ -415,6 +418,121 @@ describe("on Mike's next prompt", () => {
   );
 });
 
+/** A fake-hub session of Mike's: for what the real hub cannot stage on demand. */
+const fakeSession = async (label: string, fake: HintHub) => {
+  const home = await makeHome(label);
+  const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
+  cleanups.push(home, repo);
+  const hostSessionKey = `${label}-uuid`;
+  await writeMikeState(home, repo, hostSessionKey, { developerId: "dev_self", sessionId: `cc_${hostSessionKey}` }, fake.url);
+  return {
+    home,
+    repo,
+    hostSessionKey,
+    hub: { hubUrl: fake.url, apiKey: "test-key", timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
+  };
+};
+
+const spooledDeliveries = async (where: { readonly home: string; readonly hub: HubContext; readonly hostSessionKey: string }) =>
+  (await readSessionSpool(where.home, where.hub.repoKey, sessionSlug(where.hostSessionKey))).lines
+    .map((line) => JSON.parse(line) as { kind: string; body: { noticeIds: string[] } })
+    .filter((record) => record.kind === "landed_notice_delivery");
+
+describe("a prompt tells what this session has not shown", () => {
+  test(
+    "a notice partly shown tells only the rest",
+    async () => {
+      const fake = startHintHub();
+      fakeHubs.push(fake);
+      fake.setCandidates([]);
+      fake.setNotices([
+        notice({
+          stoppedAt: new Date().toISOString(),
+          commits: [
+            { id: "lnt_shown", sha: SHA, subject: "Fix line offset", missing: true },
+            { id: "lnt_new", sha: OTHER_SHA, subject: "Count from one", missing: true },
+          ],
+        }),
+      ]);
+      const where = await fakeSession("notice-partial", fake);
+      const state = await readSessionState(where.home, where.hostSessionKey);
+      if (state !== null) {
+        await writeSessionState(where.home, { ...state, shownLandedNoticeIds: ["lnt_shown"] });
+      }
+
+      const text = await promptIn(where);
+
+      expect(text).toContain("1a2b3c4 «Count from one»");
+      expect(text).not.toContain("0dcfc4e");
+      expect((await spooledDeliveries(where)).map((record) => record.body.noticeIds)).toEqual([["lnt_new"]]);
+    },
+    HEAVY_MS,
+  );
+});
+
+describe("claimed before it is recorded", () => {
+  const pending = { slotRef: "lnt_1", commitIds: ["lnt_1"] } as const;
+
+  const claim = async (label: string, overrides: { readonly shown?: readonly string[]; readonly refs?: readonly string[] }) => {
+    const fake = startHintHub();
+    fakeHubs.push(fake);
+    const where = await fakeSession(label, fake);
+    const state = await readSessionState(where.home, where.hostSessionKey);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+    const primed = {
+      ...state,
+      shownLandedNoticeIds: [...(overrides.shown ?? [])],
+      deliveredHintRefs: [...(overrides.refs ?? [])],
+    };
+    await writeSessionState(where.home, primed);
+    const remembered = await rememberLandedNoticeDelivery(
+      { home: where.home, repoKey: where.hub.repoKey, hostSessionKey: where.hostSessionKey, agentKind: "claude-code", hub: where.hub, now: new Date() },
+      primed,
+      pending,
+    );
+    return { remembered, where, fake };
+  };
+
+  test(
+    "a claimed notice is spooled and shipped at once",
+    async () => {
+      const { remembered, where, fake } = await claim("notice-claimed", {});
+
+      expect(remembered).toBe(true);
+      expect(await spooledDeliveries(where)).toHaveLength(1);
+      expect(fake.postedRecords.map((record) => record["kind"])).toEqual(["landed_notice_delivery"]);
+    },
+    HEAVY_MS,
+  );
+
+  test(
+    "a notice a sibling already showed is not claimed, and nothing tells the hub it was shown",
+    async () => {
+      const { remembered, where, fake } = await claim("notice-sibling", { shown: ["lnt_1"] });
+
+      expect(remembered).toBe(false);
+      expect(await spooledDeliveries(where)).toEqual([]);
+      expect(fake.postedRecords).toEqual([]);
+    },
+    HEAVY_MS,
+  );
+
+  test(
+    "a session that spent its hints claims no notice, and nothing tells the hub it was shown",
+    async () => {
+      const refs = Array.from({ length: MAX_HINTS_PER_SESSION }, (_, i) => `ref_${String(i)}`);
+
+      const { remembered, where } = await claim("notice-capped", { refs });
+
+      expect(remembered).toBe(false);
+      expect(await spooledDeliveries(where)).toEqual([]);
+    },
+    HEAVY_MS,
+  );
+});
+
 describe("in Mike's next briefing", () => {
   test(
     "it is shown, and marked told once the delivery reaches the hub",
@@ -431,6 +549,26 @@ describe("in Mike's next briefing", () => {
       expect(await waiting(w)).toEqual([]);
       const state = await readSessionState(w.home, w.hostSessionKey);
       expect(state?.shownLandedNoticeIds).toEqual([...assembled.shownLandedNoticeIds]);
+    },
+    HEAVY_MS,
+  );
+
+  test(
+    "a notice the briefing's budget left out is not marked told, and waits",
+    async () => {
+      const w = await world("notice-budget");
+      const long = (digit: string) => ({ sha: digit.repeat(40), subject: `${"Fix the offset arithmetic ".repeat(4)}${digit}`, missing: true });
+      await nickStops(w, [long("1"), long("2"), long("3")], `src/${"deeply/".repeat(15)}first.ts`);
+      await nickStops(w, [long("4"), long("5"), long("6")], `src/${"deeply/".repeat(15)}second.ts`);
+
+      const assembled = await briefMike(w);
+      await flushSpool(w.hub, { sessionId: w.mike.sessionId, developerId: w.mike.developerId }, TEST_TIMEOUT_MS);
+
+      expect(assembled.briefing).toContain("(+1 more not shown)");
+      expect(assembled.shownLandedNoticeIds).toHaveLength(3);
+      const still = await waiting(w);
+      expect(still).toHaveLength(1);
+      expect(still[0]?.commits).toHaveLength(3);
     },
     HEAVY_MS,
   );
