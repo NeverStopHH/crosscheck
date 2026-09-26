@@ -45,13 +45,15 @@
  * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole
  * deadline by the drain in each of the five hooks that host one (SessionStart,
  * SessionEnd, PostToolUse, PostToolUseFailure, Stop), read once more by
- * SessionStart's deferred end, and once more by Stop, which asks whether the
+ * SessionStart's deferred end, once more by Stop, which asks whether the
  * remaining time affords a `git diff --name-only` BEFORE spawning one — the
  * regression guard's second evidence lane pays for itself out of the same
- * envelope or does not run:
+ * envelope or does not run — and once more by PreToolUse, whose landed-change
+ * stop asks the hub for its why only once the stop is booked, with no more
+ * than the envelope still spares (hooks/landed-why.ts):
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 7
+ * PRINTS: 8
  */
 import { describe, expect, test } from "bun:test";
 

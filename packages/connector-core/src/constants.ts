@@ -739,6 +739,29 @@ export const LANDED_RECENT_WORKING_DAYS = 2;
 export const MAX_LANDED_COMMITS_SCANNED = 50;
 /** Landed commits one warning names; the rest are counted, not listed. */
 export const MAX_LANDED_COMMITS_SHOWN = 3;
+/**
+ * Teammate work contexts one stop names under its commits (step 3): the
+ * pointer and the intent for each, so two keep the stop a stop.
+ */
+export const MAX_LANDED_WHY_SHOWN = 2;
+/**
+ * Below this much of the hook's budget the why is not asked for at all: a
+ * hub across a network rarely answers in less. A hub on the same machine
+ * would (measured 1–4 ms), and loses nothing but the why when it is not
+ * asked — the stop goes out either way.
+ */
+export const LANDED_WHY_MIN_MS = 50;
+/**
+ * `doctor`'s look at who landed what (decision 7): the landing branches'
+ * latest commits, this many — a COUNT, never a date window: `--since` drops
+ * a merged feature branch's commits for their old dates (staleness-axis
+ * .test.ts, CCB-2), where a count only orders by them — and the unknown
+ * addresses it names before counting the rest.
+ */
+export const DOCTOR_LANDED_AUTHORS_MAX_COMMITS = 500;
+export const DOCTOR_LANDED_AUTHORS_SHOWN = 3;
+/** One local `git log`; doctor waits for it, a hook never does. */
+export const DOCTOR_LANDED_AUTHORS_GIT_TIMEOUT_MS = 5000;
 /** Branches a `.crosscheck.json` may name as landing branches. */
 export const MAX_LANDING_BRANCHES = 8;
 /**

@@ -58,6 +58,7 @@ import type {
   RefereeBrief,
   RefereeClaim,
   SolvedMatchEntry,
+  LandedContextMatch,
   TripwireSession,
   WorkContextEntry,
 } from "./http/hub.ts";
@@ -499,6 +500,20 @@ const landedChangesWith = (payload: string): LandedChanges => {
   return { missing: [commit], recent: [commit], moreMissing: true, unchecked: ["develop"], cleanKey: null };
 };
 
+/**
+ * The hub's why for that same commit (step 3): the teammate's title, name
+ * and intent are theirs, so the payload goes into every one of them.
+ */
+const landedWhyWith = (payload: string): readonly LandedContextMatch[] => [
+  {
+    sha: "0dcfc4e41e1f309f8a6d3056726744bb8ddd6133",
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    title: payload,
+    developerName: payload,
+    intent: intentWith(payload),
+  },
+];
+
 const diagnosisWith = (payload: string): Diagnosis => ({
   workContext: {
     id: "wc_cc_11111111-2222-4333-8444-555555555555",
@@ -881,14 +896,21 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     // The landed-change half of the same ask (docs/1.0/landed-changes.md):
-    // commit subjects and author names are written by other developers.
+    // commit subjects and author names are written by other developers, and
+    // so are the why's title, name and intent (step 3).
     kind: "corpus",
     name: "landed-change-reason",
     delivery: "unsolicited",
     module: "src/hints/render.ts",
     framing: "framed",
     render: (payload) =>
-      renderEditWarning({ live: null, landed: landedChangesWith(payload), file: "src/app.ts", now: NOW }),
+      renderEditWarning({
+        live: null,
+        landed: landedChangesWith(payload),
+        file: "src/app.ts",
+        now: NOW,
+        why: landedWhyWith(payload),
+      }),
   },
   {
     kind: "corpus",

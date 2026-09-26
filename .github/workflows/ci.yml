@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 878
+    # PRINTS: 912
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,6 +126,7 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
+    # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 3
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
@@ -154,9 +155,10 @@ jobs:
     # PRINTS: capture/tool-events.ts 2
     # PRINTS: cli/settings-merge.ts 2
     # PRINTS: doctor.ts 1
+    # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 8
-    # PRINTS: hooks/pre-tool-use.ts 10
+    # PRINTS: hooks/pre-tool-use.ts 12
     # PRINTS: hooks/runner.ts 2
     # PRINTS: hooks/session-start.ts 2
     # PRINTS: hooks/stop.ts 1
@@ -208,7 +210,7 @@ jobs:
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 10
+    # PRINTS: hints/render.ts 16
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 1
@@ -221,7 +223,7 @@ jobs:
     # PRINTS: landed-changes/fetch-switch.ts 4
     # PRINTS: landed-changes/fetch-trigger.ts 3
     # PRINTS: landed-changes/fetch-worker.ts 23
-    # PRINTS: landed-changes/git-queries.ts 11
+    # PRINTS: landed-changes/git-queries.ts 12
     # PRINTS: landed-changes/landing-branches.ts 7
     # PRINTS: landed-changes/probe.ts 38
     # PRINTS: landed-changes/working-days.ts 3
@@ -272,6 +274,7 @@ jobs:
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
     # PRINTS: packages/schema/src/file-ref.ts 5
+    # PRINTS: packages/schema/src/landed-context.ts 3
     # PRINTS: packages/schema/src/pilot-mark.ts 1
     # PRINTS: packages/schema/src/pin.ts 2
     # PRINTS: packages/schema/src/repo-path.ts 1
@@ -281,6 +284,7 @@ jobs:
     # PRINTS: packages/server/src/db/bootstrap.sql 6
     # PRINTS: packages/server/src/routes/absences.ts 1
     # PRINTS: packages/server/src/routes/events.ts 1
+    # PRINTS: packages/server/src/routes/landed.ts 1
     # PRINTS: packages/server/src/routes/pins.ts 3
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 1
@@ -304,6 +308,7 @@ jobs:
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 9
+    # PRINTS: packages/server/src/services/landed-context.ts 16
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pilot-candidates.ts 7
     # PRINTS: packages/server/src/services/pilot-report.ts 19
@@ -373,6 +378,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
+    # PRINTS: doctor-landed-authors.ts 3
     # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-retention.ts 3
@@ -399,7 +405,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-queries.ts 11
+    # PRINTS: git-queries.ts 12
     # PRINTS: git.ts 4
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 2
@@ -413,6 +419,9 @@ jobs:
     # PRINTS: intent.ts 1
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
+    # PRINTS: landed-context.ts 19
+    # PRINTS: landed-why.ts 2
+    # PRINTS: landed.ts 1
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: lock.ts 2
@@ -434,7 +443,7 @@ jobs:
     # PRINTS: pins.ts 11
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 8
-    # PRINTS: pre-tool-use.ts 10
+    # PRINTS: pre-tool-use.ts 12
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 39
@@ -453,7 +462,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 55
+    # PRINTS: render.ts 61
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 2
     # PRINTS: retention-registry.ts 8

@@ -93,8 +93,19 @@ export interface ParsedCommit {
   readonly committedAt: Date;
 }
 
+/**
+ * The latest instant a Date can hold. git takes any committer time
+ * (`@99999999999999` is a valid one), and past this a Date is Invalid — its
+ * toISOString throws, and one such commit took the whole stop with it. Held
+ * at the edge instead: the commit still counts, and every renderer already
+ * reads a time in the future as "an unknown time".
+ */
+const MAX_DATE_MS = 8_640_000_000_000_000;
+
 const toDate = (epochSeconds: string): Date | null =>
-  EPOCH_SECONDS_PATTERN.test(epochSeconds) ? new Date(Number(epochSeconds) * 1000) : null;
+  EPOCH_SECONDS_PATTERN.test(epochSeconds)
+    ? new Date(Math.min(Number(epochSeconds) * 1000, MAX_DATE_MS))
+    : null;
 
 const parseCommitFields = (fields: readonly string[]): ParsedCommit | null => {
   const [sha = "", shortSha = "", authorName = "", authorEmail = "", time = "", subject = ""] = fields;

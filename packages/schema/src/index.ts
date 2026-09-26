@@ -192,6 +192,18 @@ export {
   MAX_LANDED_COMMITS,
 } from "./landed-evidence.ts";
 export type { LandedEvidence } from "./landed-evidence.ts";
+export {
+  LANDED_AUTHORS_MAX_EMAILS,
+  LANDED_CONTEXT_MAX_COMMITS,
+  LandedAuthorsRequestSchema,
+  LandedContextCommitSchema,
+  LandedContextRequestSchema,
+} from "./landed-context.ts";
+export type {
+  LandedAuthorsRequest,
+  LandedContextCommit,
+  LandedContextRequest,
+} from "./landed-context.ts";
 
 export {
   EnvelopeSchema,

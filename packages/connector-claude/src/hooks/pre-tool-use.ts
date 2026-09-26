@@ -86,8 +86,10 @@ import { findLandedChanges, worthStopping } from "@crosscheck/connector-core/lan
 import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
 import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
+import type { LandedContextMatch } from "@crosscheck/connector-core/http/hub.ts";
+import { landedWhyFor } from "./landed-why.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
-import type { HookContext } from "./runner.ts";
+import type { HookBudget, HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
 const ASK_DECISION = "ask";
@@ -144,7 +146,7 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
-const askBeforeEdit = async (ctx: HookContext): Promise<string> => {
+const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
   if (state === null) {
     return "";
@@ -201,7 +203,7 @@ const askBeforeEdit = async (ctx: HookContext): Promise<string> => {
   if (asked.live && asked.landed) {
     return "";
   }
-  const found = await findReasons(ctx, edited, asked, state.landedCleanKeys);
+  const found = await findReasons(ctx, budget, edited, asked, state.landedCleanKeys);
   if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {
     await rememberClean(ctx, found.cleanKey);
   }
@@ -210,18 +212,23 @@ const askBeforeEdit = async (ctx: HookContext): Promise<string> => {
   }
   const won = await claimReasons(ctx, file, found);
   if (won.teammate === null && won.landed === null) {
+    // A sibling hook booked both: nothing to say, and no why to wait for.
     return "";
   }
   // The ask reason states what a teammate is doing and what landed; the
   // record states how far the archive the live claim came from reaches
   // (03 §5.1). It annotates only on a positively observed gap, so an
   // un-upgraded hub leaves the live lines byte-identical to what they were.
+  // Only a WON landed stop waits for its why (already under way since git
+  // answered); the hook's process ends a why nobody waits for.
+  const why = won.landed === null ? [] : await found.why;
   const reason = renderEditWarning({
     live: won.teammate,
     landed: won.landed,
     file,
     now: ctx.now(),
     ...(found.coverage === undefined ? {} : { coverage: found.coverage }),
+    why,
   });
   if (won.teammate !== null) {
     await recordTripwireAsk(ctx, state, won.teammate);
@@ -229,7 +236,7 @@ const askBeforeEdit = async (ctx: HookContext): Promise<string> => {
   return askOutput(ctx, reason);
 };
 
-export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
+export const handlePreToolUse = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   if (!isEditTool(ctx.payload.tool_name)) {
     return "";
   }
@@ -237,7 +244,7 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   // (hooks/landing-fetch.ts): an agent can work for an hour on one prompt,
   // and the stop only sees what the clone has fetched. Beside the stop, not
   // before it — the fetch serves the NEXT edit and must cost this one nothing.
-  const [output] = await Promise.all([askBeforeEdit(ctx), requestLandingFetchFor(ctx)]);
+  const [output] = await Promise.all([askBeforeEdit(ctx, budget), requestLandingFetchFor(ctx)]);
   return output;
 };
 
@@ -250,42 +257,57 @@ interface FoundReasons extends Reasons {
   readonly coverage?: CoverageRecord;
   /** The probe answered "nothing" under this key (landed-changes/probe.ts). */
   readonly cleanKey: string | null;
+  /**
+   * The hub's why for the landed half, asked the moment GIT answered — not
+   * after the live tripwire's hub call too, which is what leaves it room on
+   * a hub across a network (hooks/landed-why.ts). Empty when nothing landed.
+   */
+  readonly why: Promise<readonly LandedContextMatch[]>;
 }
 
 const NO_REASONS: Reasons = { teammate: null, landed: null };
 
 /**
  * Asks only the questions this session has not been stopped for yet, in
- * parallel, and neither waits on the other: the hub call is bounded by its
- * own timeout, the landed probe by its own deadline — never longer than one
- * hub call, so the live ask keeps the budget it always had — and a failure
- * of either is silence for that half only.
+ * parallel, and neither waits on the other: the live tripwire's hub call is
+ * bounded by its own timeout, the landed probe by its own deadline — never
+ * longer than one hub call, so the live ask keeps the budget it always had —
+ * and a failure of either is silence for that half only. The moment the
+ * probe finds a landed change, the second hub call, its why, starts beside
+ * them (`why`, bounded by what the budget spares; hooks/landed-why.ts).
  */
 const findReasons = async (
   ctx: HookContext,
+  budget: HookBudget,
   edited: EditedFile,
   asked: { readonly live: boolean; readonly landed: boolean },
   knownCleanKeys: readonly string[],
 ): Promise<FoundReasons> => {
-  const [result, probed] = await Promise.all([
-    asked.live ? null : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file),
-    asked.landed
-      ? null
-      : findLandedChanges({
-          root: edited.root,
-          file: edited.file,
-          now: ctx.now(),
-          timeZone: resolveTimeZone(ctx.env),
-          budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
-          knownCleanKeys,
-        }),
-  ]);
+  const probing = asked.landed
+    ? Promise.resolve(null)
+    : findLandedChanges({
+        root: edited.root,
+        file: edited.file,
+        now: ctx.now(),
+        timeZone: resolveTimeZone(ctx.env),
+        budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
+        knownCleanKeys,
+      });
+  const live = asked.live ? null : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file);
+  const why = probing
+    .then((probed) => {
+      const landed = worthStopping(probed);
+      return landed === null ? [] : landedWhyFor(ctx, budget, edited.file, landed);
+    })
+    .catch((): readonly LandedContextMatch[] => []);
+  const [result, probed] = await Promise.all([live, probing]);
   const hub = result?.ok === true ? result.data : null;
   return {
     teammate: hub?.sessions[0] ?? null,
     landed: worthStopping(probed),
     cleanKey: probed?.cleanKey ?? null,
     ...(hub === null ? {} : { coverage: hub.coverage }),
+    why,
   };
 };
 

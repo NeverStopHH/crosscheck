@@ -33,10 +33,12 @@ import {
 import {
   LANDED_RECENT_WORKING_DAYS,
   MAX_LANDED_COMMITS_SHOWN,
+  MAX_LANDED_WHY_SHOWN,
   MAX_WORK_CONTEXT_TITLE_CHARS,
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
 import type { LandedChanges, LandedCommit } from "../landed-changes/probe.ts";
+import { namedLandedCommits } from "../landed-changes/named-commits.ts";
 import { renderIntent } from "../briefing/intent.ts";
 
 import type { EvidenceAxes } from "@crosscheck/schema";
@@ -65,6 +67,7 @@ import type {
   AnsweredQuestion,
   HintClaimCandidate,
   HintContextCandidate,
+  LandedContextMatch,
   SolvedMatchEntry,
   TripwireSession,
 } from "../http/hub.ts";
@@ -139,7 +142,7 @@ const solvedLabel = (context: HintContext, now: Date): string => {
 };
 
 /**
- * An age, or "an unknown time" — and a FUTURE instant counts as unknown.
+ * An age, or "at an unknown time" — and a FUTURE instant counts as unknown.
  *
  * The clamp at zero printed a confident "0s ago" for any timestamp ahead of
  * the reader's clock, which is a guess dressed as a measurement. These
@@ -151,7 +154,7 @@ const solvedLabel = (context: HintContext, now: Date): string => {
 const ageLabel = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
   return Number.isNaN(ms) || ms > now.getTime()
-    ? "an unknown time"
+    ? "at an unknown time"
     : `${formatAge(now.getTime() - ms)} ago`;
 };
 
@@ -509,6 +512,45 @@ const commitBlock = (
   ];
 };
 
+/** "started 3h ago", or "started at an unknown time" — never a guess. */
+const sessionStartLabel = (iso: string | undefined, now: Date): string => {
+  const ms = iso === undefined ? Number.NaN : Date.parse(iso);
+  return Number.isNaN(ms) || ms > now.getTime()
+    ? "started at an unknown time"
+    : `started ${formatAge(now.getTime() - ms)} ago`;
+};
+
+/**
+ * The teammate work behind the named commits (docs/1.0/landed-changes.md,
+ * step 3): the live half's shape — a pointer, then the intent — once per
+ * work context, at most MAX_LANDED_WHY_SHOWN. A probable match said as one:
+ * "work on this file before it landed", never "the reason for this commit"
+ * (decision 6). Decisions and rejected approaches stay one get_diagnosis away
+ * (pointers proactive, substance pulled). A match for a commit the stop did
+ * not name is not printed, whatever the hub sent.
+ */
+const whyLines = (
+  why: readonly LandedContextMatch[],
+  input: { readonly landed: LandedChanges; readonly file: string; readonly now: Date; readonly liveContextId: string | null },
+): readonly string[] => {
+  const named = new Set(namedLandedCommits(input.landed).map((commit) => commit.sha));
+  const byContext = new Map<string, LandedContextMatch>();
+  for (const match of why) {
+    // The live half already named this work context, with its intent.
+    const isLive = match.workContextId === input.liveContextId;
+    if (named.has(match.sha) && !isLive && !byContext.has(match.workContextId)) {
+      byContext.set(match.workContextId, match);
+    }
+  }
+  const path = bare(input.file, MAX_WORK_CONTEXT_TITLE_CHARS);
+  return [...byContext.values()].slice(0, MAX_LANDED_WHY_SHOWN).flatMap((match) => [
+    `${authorLabel(match.developerName)}'s work on ${path} before it landed ` +
+      `(${sessionStartLabel(match.workStartedAt, input.now)}): ` +
+      `work context ${quoted(match.title, MAX_WORK_CONTEXT_TITLE_CHARS)}, readable with get_diagnosis ${safeId(match.workContextId)}.`,
+    ...intentLines(match.intent),
+  ]);
+};
+
 /**
  * Landed changes to the file (docs/1.0/landed-changes.md): the ones this
  * checkout is MISSING first — they are what an edit can undo — then the
@@ -571,6 +613,8 @@ export interface EditWarningInput {
    * so the note is appended outright rather than fitted.
    */
   readonly coverage?: CoverageRecord;
+  /** The hub's match of the named commits to teammate work (step 3). */
+  readonly why?: readonly LandedContextMatch[];
 }
 
 /**
@@ -585,7 +629,18 @@ export const renderEditWarning = (input: EditWarningInput): string => {
     input.live === null
       ? []
       : liveTripwireLines(input.live, input.file, input.now, input.coverage ?? UNKNOWN_COVERAGE);
-  const landed = input.landed === null ? [] : landedLines(input.landed, input.file, input.now);
+  const landed =
+    input.landed === null
+      ? []
+      : [
+          ...landedLines(input.landed, input.file, input.now),
+          ...whyLines(input.why ?? [], {
+            landed: input.landed,
+            file: input.file,
+            now: input.now,
+            liveContextId: input.live?.workContextId ?? null,
+          }),
+        ];
   return live.length === 0 && landed.length === 0
     ? ""
     : [...live, ...landed, QUOTED_DATA_NOTICE].join("\n");

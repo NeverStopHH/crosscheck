@@ -42,6 +42,23 @@ phone call.
    that someone ran into their landed change, in the next briefing and live
    on the next prompt.
 
+Grilled with Nick, 2026-09-25, for step 3:
+
+6. **A probable match is enough for the why.** The stop names a teammate's
+   work context when it is the same person, the same file, and work that
+   started before the commit in a session still active in the 30 days before
+   it. The 30 days were refined in review, so that a months-old session is
+   not offered. It says exactly that: "Mike's work on this file before
+   it landed". It never says "the reason for this commit". A commit's identity
+   cannot carry the link. A squash merge lands under a new sha, and spec 02
+   refused a table of commits. The person, the file and the time survive
+   every way of merging.
+7. **A commit whose author address the hub does not know gets no why.** The
+   stop comes without it. `doctor` names those addresses, read from the
+   reader's own clone: the first three, then how many more. It also gives an
+   example `.mailmap` line that maps an address to its person. Mapped once in
+   the repo, it works for everyone.
+
 ## Mechanism
 
 **Git is the authority on WHAT; the hub adds WHY.** Whether a change landed
@@ -104,10 +121,9 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
   unchecked branch, a failed, capped or timed-out half, or a limit reached
   with nothing shown carries no key and is asked again next time.
 
-The hub's part (a later step) is the reason: the teammate's work context for
-that file — intent, decisions, rejected approaches — matched to the commit
-author, so the warning can say "Mike changed this, and here is why" instead of
-only "a commit touched this file".
+The hub's part (step 3, below) is the reason: the teammate's work context for
+that file, matched to the commit author, so the warning can say "Mike worked
+on this, and here is what for" instead of only "a commit touched this file".
 
 **Your clone only knows what it has fetched.** A change merged after your last
 fetch is invisible to git, so step 2 fetches the landing branches in the
@@ -226,6 +242,122 @@ Known limits of step 2:
 - Only `origin`, as in step 1. Cursor and ACP have no pre-edit stop, so they
   do not fetch either.
 
+## The why from the hub (step 3)
+
+What the hub knows, and what it does not. No record links a commit to the
+session that wrote it:
+- a session registers the commit it STARTED at;
+- commit evidence is a count per author with no shas;
+- spec 02 refused a table of commits.
+
+A squash merge would defeat such a table anyway. What the hub does know:
+- which developer an address belongs to (`developer_emails`);
+- which files each work context edited (`work_context_targets`);
+- when each session started.
+
+That is the match (decision 6).
+
+- **Asked only when there is a stop to explain.** The hub is asked the
+  moment git has found a change worth stopping for. It is asked beside the
+  live tripwire's own hub call and beside booking the stop, not after them,
+  and the answer is used only if this hook wins the booking. It gets the
+  smaller of one hub timeout and what the hook's budget still spares after
+  its reserve, and is not asked at all below 50 ms. A slow or old hub costs
+  the why and never the stop. On a machine whose git spends most of the
+  budget before it answers, nothing is left to spare, and the stop goes out
+  without its why. The vast majority of edits stop for nothing and ask
+  nothing.
+- **`POST /api/landed/context`.** The request carries the repo, the file, and
+  for each commit the stop names: its sha, its author's address (after
+  `.mailmap`, the probe's own matching key) and its commit time. It is a POST
+  because addresses do not belong in URLs, which end up in logs. A commit
+  the hub's schema would refuse is left out of the question, so it cannot
+  cost the others their why; so is a commit time in a year the hub cannot
+  hold. For each commit, one question (one row at
+  most, so one busy author cannot crowd out another commit's match): the
+  commit author's work context in this repo that targeted this file, in its
+  one canonical spelling. The work context counts only if its session
+  - was still active, meaning it sent a heartbeat, within the 30 days before
+    the commit. That is long enough for a pull request that waited in review
+    before its squash, whose commit time is when it landed, and short enough
+    that a months-old session is not offered for a commit made outside any.
+    The heartbeat is used, never the time the hub received the session's
+    end: after a hub outage, or for an end deferred through the spool, that
+    can be weeks later;
+  - started no later than five minutes after the commit. The session's
+    start is the hub's clock and the commit time the author's laptop, so
+    the five minutes absorb clock drift. The session's start is used, not
+    when the file edit reached the hub: an edit reaches the hub when the
+    spool flushes, which can be after the commit on a laptop that was
+    offline.
+
+  Of those, the order is:
+  1. a session that had recorded an edit of the file by the commit (within
+     the five minutes);
+  2. then one that recorded it within the hour after, which allows for a
+     spool that flushed late;
+  3. then any.
+
+  Within each group the latest start wins. On top of that:
+  - It is never the caller's own work context.
+  - A developer the caller muted is left out, because this is an unasked
+    surface.
+  - A presence opt-out hides the work only while its session is live. A
+    live session is presence; an ended session's work is published.
+  - The answer carries the work context's title, its current intent, the
+    developer's name, when the session started, and the work context's id.
+    It never carries an address.
+- **Rendered as a pointer plus the intent.** Under the commits the stop
+  names, each matched work context gets a line with its title and how long
+  ago the session behind it started, readable with `get_diagnosis <id>`, and,
+  when it has
+  one, its intent: `Their intent: «…»`, or `Their intent (derived): «…»` for
+  one Crosscheck inferred. That is exactly the shape of the live half.
+  - At most two work contexts are named.
+  - A work context the live half already names is not named again.
+  - A match for a commit the stop did not name is not printed.
+  - Decisions and rejected approaches are one `get_diagnosis` away, and never
+    injected. Pointers go out unasked, substance on request (DESIGN.md §4).
+  - The text is the teammate's, quoted under the existing notice.
+  - No match means no line. The stop never says "no reason recorded" (03
+    §5.1), because a missing work context is not a missing reason.
+- **`doctor`: whom the hub does not know.** It collects the distinct author
+  addresses (after `.mailmap`) of the landing branches' latest 500 commits.
+  That is a count, not a date window. A window drops a merged feature
+  branch's commits because of their old dates; a count only orders by them.
+  In a very busy repo, a long-lived branch merged just now can still sit past
+  the 500. Your own
+  and bots' (`[bot]`) are left out. It asks the hub which ones belong to
+  nobody, and names them: the first three, then how many more. It also
+  gives an example `.mailmap` line. It answers PASS, because an outside
+  contributor is no fault.
+
+Known limits of step 3:
+
+- One person with several work contexts on the file around the commit: the
+  one that had edited the file by the commit is named, else the latest. The
+  age printed is the session's start, so a long-running session reads older
+  than the work it did last.
+  That is why the line says "work on this file" and prints its age, and
+  never "the reason".
+- Work done outside a Crosscheck session gets no why of its own. If the
+  same person worked on the file in a session within the 30 days before the
+  commit, that session's work is named, with its age.
+- A pull request that waited in review for more than 30 days before its
+  squash gets no why.
+- "Recorded an edit by the commit" is measured by when the edit reached the
+  hub, because the hub keeps no author-side time for an edit. A session
+  whose edits arrived more than five minutes after the commit (a laptop
+  offline, a hub down) can lose to an older session of the same person on
+  the file. That older one prints its age, so the mistake shows. The other
+  order would hide a worse mistake: a follow-up begun just before the
+  commit taking the credit while looking current. The fix is an edit time
+  on the author's own clock (the record's `ts`) stored with each target,
+  which needs a migration of its own.
+- `Co-authored-by` trailers are not read. A commit gets its author's work
+  only.
+- Cursor and ACP have no pre-edit stop, as in step 1.
+
 ## Build order
 
 Each step is one PR into `feat/landed-changes-flow`, then one PR to `main`.
@@ -236,7 +368,8 @@ Step 1 reached `main` through the batch PR #66.
    exclusion, the PreToolUse ask with its own once-per-file marker, and the
    `doctor` line.
 2. **Background fetch** of the landing branches.
-3. **The why from the hub**: the teammate context behind the commit.
+3. **The why from the hub**: the teammate's work on the file, matched by
+   person, file and time.
 4. **The author's notice**: briefing and live prompt, exactly once.
 
 ## Not in this version

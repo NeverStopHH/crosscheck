@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ClaimValiditySchema } from "@crosscheck/schema";
-import type { ClaimRevalidationEntry } from "@crosscheck/schema";
+import type { ClaimRevalidationEntry, LandedContextRequest } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import {
   EvidenceAxesSchema,
@@ -2093,6 +2093,59 @@ export const getTripwireSessions = (
     schema: TripwireResponseSchema,
   });
 };
+
+/**
+ * Whose work on the file a landed commit was (docs/1.0/landed-changes.md,
+ * step 3): the hub's probable match — same person, same file, work started
+ * before the commit. Never an address.
+ */
+export const LandedContextMatchSchema = z.looseObject({
+  sha: z.string().min(1),
+  workContextId: z.string().min(1),
+  title: z.string().min(1),
+  developerName: z.string().min(1),
+  intent: tolerantIntent,
+  /** When the session behind the work started; the stop prints its age. */
+  workStartedAt: z.iso.datetime({ offset: true }).optional().catch(undefined),
+});
+
+export type LandedContextMatch = z.infer<typeof LandedContextMatchSchema>;
+
+const LandedContextResponseSchema = z
+  .looseObject({ matches: z.array(z.unknown()).default([]) })
+  .transform((value): readonly LandedContextMatch[] => parseRows(value.matches, LandedContextMatchSchema).rows);
+
+/**
+ * POST, not GET: the body carries commit author addresses, which do not
+ * belong in a URL. The caller bounds it (`ctx.timeoutMs`) by what is left of
+ * its hook's budget.
+ */
+export const getLandedContexts = (
+  ctx: HubContext,
+  request: LandedContextRequest,
+): Promise<HubResult<readonly LandedContextMatch[]>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/landed/context",
+    body: request,
+    schema: LandedContextResponseSchema,
+  });
+
+const LandedAuthorsResponseSchema = z
+  .looseObject({ unknown: z.array(z.string()).default([]) })
+  .transform((value): readonly string[] => value.unknown);
+
+/** Which of these commit author addresses belong to nobody on the hub (decision 7). */
+export const getUnknownAuthors = (
+  ctx: HubContext,
+  emails: readonly string[],
+): Promise<HubResult<readonly string[]>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/landed/authors",
+    body: { emails },
+    schema: LandedAuthorsResponseSchema,
+  });
 
 /**
  * One declared claim as a conference reads it (VISION.md §2) — the trust
