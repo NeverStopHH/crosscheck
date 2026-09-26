@@ -12032,8 +12032,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "every group is listed",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "    .slice(0, LANDED_NOTICE_GROUPS_LISTED);",
-    to: "    .slice(0);",
+    from: "    LIMIT ${LANDED_NOTICE_GROUPS_LISTED}",
+    to: "    LIMIT 1000",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "a busy week's stops crowd the briefing past its bound",
   },
@@ -12190,11 +12190,11 @@ export const MUTATIONS: readonly Mutation[] = [
     because: "the author hears their work is missing from a checkout that has it",
   },
   {
-    // Landed changes, step 4, the first review round.
+    // Landed changes, step 4, the review rounds.
     label: "a stop is answered by what its rows did",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "  if (commits.length === 0) {\n    return ACCEPTED;\n  }",
-    to: "  if (commits.length === 0) {\n    return { status: \"ignored\" };\n  }",
+    from: "  // The same answer whatever the rows did — see the header.\n  return ACCEPTED;",
+    to: "  return (await toldCommits(deps, developerId, body.commits)).length === 0 ? { status: \"ignored\" } : ACCEPTED;",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "a replayed stop becomes a read receipt on the author, and discloses a mute",
   },
@@ -12233,24 +12233,24 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "one reader piles up notices for one author",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "  return commits.filter((commit) => (held.get(commit.authorDeveloperId) ?? 0) < LANDED_NOTICE_MAX_WAITING_PER_PAIR);",
-    to: "  return commits;",
+    from: "    return left > 0;",
+    to: "    return true;",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "one reader stores a thousand rows per request for another developer",
   },
   {
     label: "one reader's stops crowd out another's",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "    .sort((a, b) => a.round - b.round || b.newest.getTime() - a.newest.getTime())",
-    to: "    .sort((a, b) => b.newest.getTime() - a.newest.getTime())",
+    from: "    ORDER BY round, newest DESC, reader_developer_id, path",
+    to: "    ORDER BY newest DESC, reader_developer_id, path",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "a busy or hostile reader's stops push a genuine one out until it expires untold",
   },
   {
     label: "a reader's rounds start from their oldest group",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "    .orderBy(desc(newest), asc(landedNotices.readerDeveloperId), asc(landedNotices.path))",
-    to: "    .orderBy(asc(newest), asc(landedNotices.readerDeveloperId), asc(landedNotices.path))",
+    from: "          ORDER BY max(${landedNotices.stoppedAt}) DESC, ${landedNotices.path}",
+    to: "          ORDER BY max(${landedNotices.stoppedAt}) ASC, ${landedNotices.path}",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "the briefing names last week's stops and holds back today's",
   },
@@ -12313,8 +12313,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "an unknown reader is a third person",
     file: `${CORE}/src/briefing/landed-notices.ts`,
-    from: "    ? { checkout: \"their checkout\", has: \"they already have it\" }",
-    to: "    ? { checkout: \"a teammate's checkout\", has: \"a teammate already has it\" }",
+    from: "    ? { checkout: \"their checkout\", has: \"they already had it\" }",
+    to: "    ? { checkout: \"a teammate's checkout\", has: \"a teammate already had it\" }",
     test: `${CORE}/test/landed-notice.test.ts`,
     because: "\"missing from a teammate's checkout\" reads as if about somebody else",
   },
@@ -12329,15 +12329,15 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the told line starts in lower case",
     file: `${CORE}/src/hints/render.ts`,
-    from: "  return [`${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`];",
-    to: "  return [sentence];",
+    from: "  const opening = names.map((name, index) => (index === 0 && name === UNKNOWN_AUTHOR ? \"A teammate\" : name));",
+    to: "  const opening = names;",
     test: `${CORE}/test/landed-notice.test.ts`,
     because: "\"a teammate is told about this stop.\"",
   },
   {
     label: "a stop in notice mode tells its authors",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  resolveTripwireMode(ctx.env) !== TRIPWIRE_MODE_NOTICE && ctx.identity.repoId === state.repoId;",
+    from: "  aPersonReads(ctx.env) && ctx.identity.repoId === state.repoId;",
     to: "  ctx.identity.repoId === state.repoId;",
     test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
     because: "a stop no person saw names a presence-opted-out reader to the author (decisions 9, 11)",
@@ -12345,8 +12345,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a stop outside the session's repo tells its authors",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  resolveTripwireMode(ctx.env) !== TRIPWIRE_MODE_NOTICE && ctx.identity.repoId === state.repoId;",
-    to: "  resolveTripwireMode(ctx.env) !== TRIPWIRE_MODE_NOTICE;",
+    from: "  aPersonReads(ctx.env) && ctx.identity.repoId === state.repoId;",
+    to: "  aPersonReads(ctx.env);",
     test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
     because: "\"Mike is told\" is printed for a stop the hub will refuse",
   },
@@ -12369,7 +12369,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the prompt tells no notices",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "    tellsNotices: true,\n    spareMs: () => budget.spareMs(),",
+    from: "    tellsNotices: aPersonReads(ctx.env),\n    spareMs: () => budget.spareMs(),",
     to: "    tellsNotices: false,\n    spareMs: () => budget.spareMs(),",
     test: `${CONNECTOR}/test/hint-hook.test.ts`,
     because: "an author in a live session hears nothing until their next session",
@@ -12397,6 +12397,94 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "    prompt: failureText,\n    now: ctx.now(),\n    tellsNotices: true,\n    spareMs: () => 10_000,\n  });",
     test: `${CURSOR}/test/injection.test.ts`,
     because: "a notice rides an output field Cursor may drop, is marked told, and is never seen",
+  },
+  {
+    label: "a headless author's prompt tells notices",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    tellsNotices: aPersonReads(ctx.env),\n    spareMs: () => budget.spareMs(),",
+    to: "    tellsNotices: true,\n    spareMs: () => budget.spareMs(),",
+    test: `${CONNECTOR}/test/hint-hook.test.ts`,
+    because: "a notice is spent on a headless run nobody reads, and Mike never hears it",
+  },
+  {
+    label: "a headless author's briefing tells notices",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "    tellsNotices: aPersonReads(ctx.env),",
+    to: "    tellsNotices: true,",
+    test: `${CONNECTOR}/test/landed-notice-author-hook.test.ts`,
+    because: "a notice is spent on a headless run's briefing, and Mike never hears it",
+  },
+  {
+    label: "a briefing no person reads fetches notices",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "    input.tellsNotices === false ? Promise.resolve(NO_NOTICES) : getLandedNotices(hub, repoId),",
+    to: "    getLandedNotices(hub, repoId),",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a headless run's briefing marks notices told that nobody reads",
+  },
+  {
+    label: "the bound lets a whole stop past it",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    const left = room.get(commit.authorDeveloperId) ?? 0;\n    room.set(commit.authorDeveloperId, left - 1);",
+    to: "    const left = room.get(commit.authorDeveloperId) ?? 0;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a stop that crosses the twenty stores all ten of its commits",
+  },
+  {
+    label: "the bound counts every repo",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        eq(landedNotices.repo, scope.repo),\n        inArray(landedNotices.authorDeveloperId, authors),",
+    to: "        inArray(landedNotices.authorDeveloperId, authors),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "notices waiting in a repo the author never opens silence the one they work in",
+  },
+  {
+    label: "the bound holds back a refresh",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    if (waiting.has(commit.sha)) {\n      return true;\n    }\n",
+    to: "",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "at the twenty a waiting row keeps an older stop's week and an out-of-date missing",
+  },
+  {
+    label: "told rows free their place at once",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        inArray(landedNotices.authorDeveloperId, authors),\n        gt(landedNotices.stoppedAt, cutoff),",
+    to: "        inArray(landedNotices.authorDeveloperId, authors),\n        isNull(landedNotices.deliveredAt),\n        gt(landedNotices.stoppedAt, cutoff),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the bound limits the pile, not the rate: one teammate keeps every prompt slot of the author busy",
+  },
+  {
+    label: "a reader's stops interleave",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "  await deps.db.transaction(async (tx) => {",
+    to: "  await ((run: (tx: DbExecutor) => Promise<void>) => run(deps.db))(async (tx) => {",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "concurrent flushes all see room and race past the bound",
+  },
+  {
+    label: "the briefing says a left-out notice is not shown",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    more: landedNoticeMoreLine,\n",
+    to: "",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"(+2 more not shown)\" under a header that says each is shown once: read as lost",
+  },
+  {
+    label: "a notice speaks of then as now",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "    ? `  ${label}: was missing from ${reader.checkout}`",
+    to: "    ? `  ${label}: missing from ${reader.checkout}`",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a six-day-old notice says the change is missing now",
+  },
+  {
+    label: "people without a name are listed one by one",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...(unnamed === 0 ? [] : [unnamed === 1 ? UNKNOWN_AUTHOR : `${String(unnamed)} teammates`]),",
+    to: "    ...labels.filter((label) => label === UNKNOWN_AUTHOR),",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"A teammate and a teammate are told about this stop.\"",
   },
 ];
 
@@ -12503,7 +12591,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
- * PRINTS: packages/connector-claude/test/hint-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
@@ -12513,6 +12601,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
@@ -12571,7 +12660,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
- * PRINTS: packages/connector-core/test/landed-notice.test.ts 17
+ * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 5
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
@@ -12651,7 +12740,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 20
- * PRINTS: packages/server/test/landed-notices.test.ts 27
+ * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6

@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 972
+    # PRINTS: 983
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -160,18 +160,18 @@ jobs:
     # PRINTS: hooks/post-tool-use.ts 8
     # PRINTS: hooks/pre-tool-use.ts 18
     # PRINTS: hooks/runner.ts 2
-    # PRINTS: hooks/session-start.ts 2
+    # PRINTS: hooks/session-start.ts 3
     # PRINTS: hooks/stop.ts 1
-    # PRINTS: hooks/user-prompt-submit.ts 3
+    # PRINTS: hooks/user-prompt-submit.ts 4
     # PRINTS: summarizer/probe.ts 1
     # PRINTS: summarizer/transcript.ts 3
     # PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
     # PRINTS: briefing/context-group.ts 1
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
-    # PRINTS: briefing/landed-notices.ts 4
+    # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 11
+    # PRINTS: briefing/render.ts 12
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: capture/records.ts 1
     # PRINTS: capture/target-paths.ts 1
@@ -194,7 +194,7 @@ jobs:
     # PRINTS: derive/summarizer/derive.ts 2
     # PRINTS: derive/summarizer/gate.ts 7
     # PRINTS: evidence/render.ts 1
-    # PRINTS: flows/briefing.ts 4
+    # PRINTS: flows/briefing.ts 5
     # PRINTS: flows/capture-targets.ts 2
     # PRINTS: flows/capture-touched-files.ts 1
     # PRINTS: flows/claim-revalidation.ts 2
@@ -211,7 +211,7 @@ jobs:
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 7
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 17
+    # PRINTS: hints/render.ts 18
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 1
@@ -313,7 +313,7 @@ jobs:
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 9
     # PRINTS: packages/server/src/services/landed-context.ts 17
-    # PRINTS: packages/server/src/services/landed-notices.ts 22
+    # PRINTS: packages/server/src/services/landed-notices.ts 27
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pilot-candidates.ts 7
     # PRINTS: packages/server/src/services/pilot-report.ts 19
@@ -351,7 +351,7 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: before-submit-prompt.ts 1
     # PRINTS: bootstrap.sql 6
-    # PRINTS: briefing.ts 4
+    # PRINTS: briefing.ts 5
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 5
     # PRINTS: capture-bookkeeping.ts 6
@@ -426,7 +426,7 @@ jobs:
     # PRINTS: kit.ts 1
     # PRINTS: landed-context.ts 20
     # PRINTS: landed-notice.ts 5
-    # PRINTS: landed-notices.ts 26
+    # PRINTS: landed-notices.ts 32
     # PRINTS: landed-why.ts 2
     # PRINTS: landed.ts 3
     # PRINTS: landing-branches.ts 7
@@ -469,7 +469,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 62
+    # PRINTS: render.ts 64
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 2
     # PRINTS: retention-registry.ts 8
@@ -487,7 +487,7 @@ jobs:
     # PRINTS: session-events.ts 5
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
-    # PRINTS: session-start.ts 4
+    # PRINTS: session-start.ts 5
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 11
@@ -515,7 +515,7 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 2
-    # PRINTS: user-prompt-submit.ts 3
+    # PRINTS: user-prompt-submit.ts 4
     # PRINTS: v1.ts 2
     # PRINTS: verdict-latency.test.ts 1
     # PRINTS: verdict-render.ts 2
