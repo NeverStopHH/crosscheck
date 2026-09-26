@@ -12486,6 +12486,76 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/landed-notice.test.ts`,
     because: "\"A teammate and a teammate are told about this stop.\"",
   },
+  {
+    // Dependencies, 2026-09-26: PGlite 0.4 opens `postgres` by default, and every
+    // released hub keeps its tables in `template1`.
+    label: "an upgraded hub opens PGlite’s default database",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "      ? new PGlite(options.dataDir, { database: HUB_DATABASE, extensions: { vector } })",
+    to: "      ? new PGlite(options.dataDir, { extensions: { vector } })",
+    test: `${SERVER}/test/upgrade.test.ts`,
+    because: "every released hub starts empty after the update: each stored key is unknown, the old data out of sight",
+  },
+  {
+    // Dependencies, 2026-09-26: PGlite 0.4 leaves exit code 99 behind after
+    // booting on Bun, and its close() writes 0 over the process's own code.
+    label: "a PGlite boot leaves its exit code behind",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "    process.exitCode = exitCodeBefore ?? 0;",
+    to: "",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "every process that opened the hub's database ends 99: CI's bun test fails with every test green",
+  },
+  {
+    label: "the exit code after a PGlite step is always 0",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "    process.exitCode = exitCodeBefore ?? 0;",
+    to: "    process.exitCode = 0;",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "a process that had already failed ends 0 once it opens the database",
+  },
+  {
+    label: "the hub boots PGlite unshielded",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "  const client = await keepingExitCode(async () => {",
+    to: "  const client = await ((step: () => Promise<PGlite>) => step())(async () => {",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "a process that opened the hub's database ends 99",
+  },
+  {
+    label: "the version probe runs PGlite unshielded",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "  keepingExitCode(async () => {\n    const probe = new PGlite();",
+    to: "  ((step: () => Promise<string>) => step())(async () => {\n    const probe = new PGlite();",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "the version probe's close() turns a process's failing exit code into 0",
+  },
+  {
+    // Dependencies, 2026-09-26: PGlite 0.4 keeps about 280 MB of every initdb,
+    // and the suite opens one in-memory database per test.
+    label: "every in-memory database runs its own initdb",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "          loadDataDir: await freshClusterCopy(),\n",
+    to: "",
+    test: `${SERVER}/test/in-memory-db.test.ts`,
+    because: "an open in-memory database costs over 300 MB, and the suite's process runs out of memory",
+  },
+  {
+    label: "an in-memory database keeps PostgreSQL's default buffers",
+    file: `${SERVER}/src/db/client.ts`,
+    from: '  "-c", "shared_buffers=16MB",\n',
+    to: "",
+    test: `${SERVER}/test/in-memory-db.test.ts`,
+    because: "an open in-memory database costs about 200 MB instead of about 50",
+  },
+  {
+    label: "an in-memory database keeps PostgreSQL's startup progress timer",
+    file: `${SERVER}/src/db/client.ts`,
+    from: '  "-c", "log_startup_progress_interval=0",\n',
+    to: "",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "a script that opened an in-memory database never ends: a VERIFY claim hangs the claims check",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12735,6 +12805,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
@@ -12742,6 +12813,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 20
  * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
+ * PRINTS: packages/server/test/pglite-exit-code.test.ts 5
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
@@ -12778,6 +12850,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 1
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
  * PRINTS: packages/server/test/waivers.test.ts 3

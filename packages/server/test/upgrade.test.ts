@@ -15,6 +15,12 @@
  * workspace's pinned node_modules). The pinned WASM build aborts on such a
  * dir with an unintelligible RuntimeError; createDb must refuse it with a
  * named error instead.
+ *
+ * EVERY OLD DIR HERE IS WRITTEN INTO `template1`, because that is where every
+ * released hub keeps its tables: PGlite 0.3, which every release through 0.9
+ * pinned, connected to `template1` by default. PGlite 0.4 connects to
+ * `postgres`, which is empty in such a dir — so a fixture written with the
+ * library's CURRENT default would pass while every real hub opened empty.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -34,6 +40,9 @@ const FIXTURE_DDL_URL = new URL(
 const UPGRADE_TEST_TIMEOUT_MS = 30_000;
 
 const OLD_CONTEXT_TITLE = "Login 500s on staging";
+
+/** Where released hubs keep their tables: PGlite 0.3's default database. */
+const RELEASED_HUB_DATABASE = "template1";
 
 const tempDirs: string[] = [];
 
@@ -56,7 +65,7 @@ const makeTempDir = async (label: string): Promise<string> => {
  */
 const makeOldFormatDir = async (): Promise<string> => {
   const dir = await makeTempDir("upgrade");
-  const client = new PGlite(dir);
+  const client = new PGlite(dir, { database: RELEASED_HUB_DATABASE });
   await client.waitReady;
   await client.exec(await Bun.file(FIXTURE_DDL_URL).text());
   await client.exec(`
@@ -72,6 +81,28 @@ const makeOldFormatDir = async (): Promise<string> => {
   await client.close();
   return dir;
 };
+
+describe("a released hub's dir opens with its data", () => {
+  test(
+    "whatever database the bundled PGlite now opens by default",
+    async () => {
+      // Arrange: a dir the way every released hub left it
+      const dataDir = await makeOldFormatDir();
+
+      // Act
+      const db = await createDb({ dataDir });
+
+      // Assert: the hub is on the database its data is in, and sees it —
+      // PGlite 0.4 would otherwise open an empty `postgres` without a word.
+      const seen = await db.execute(
+        sql`SELECT current_database() AS db, (SELECT count(*) FROM developers WHERE id = 'dev_old')::int AS developers`,
+      );
+      expect(seen.rows[0]).toEqual({ db: RELEASED_HUB_DATABASE, developers: 1 });
+      await (db as unknown as { $client: PGlite }).$client.close();
+    },
+    UPGRADE_TEST_TIMEOUT_MS,
+  );
+});
 
 describe("persistent-dir upgrade from the pre-search-block release", () => {
   test(
@@ -222,7 +253,7 @@ describe("persistent-dir upgrade from the pre-search-block release", () => {
       // the second pass the loser ended with ZERO email rows — invisible to
       // GET /:id/emails and regressed in absence matching (review finding).
       const dataDir = await makeTempDir("upgrade-case");
-      const client = new PGlite(dataDir);
+      const client = new PGlite(dataDir, { database: RELEASED_HUB_DATABASE });
       await client.waitReady;
       await client.exec(await Bun.file(FIXTURE_DDL_URL).text());
       await client.exec(`
