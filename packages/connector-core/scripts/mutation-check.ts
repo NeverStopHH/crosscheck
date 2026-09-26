@@ -11608,8 +11608,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a prompt no longer asks for the fetch",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const [output] = await Promise.all([deliverPromptContext(ctx), requestLandingFetchFor(ctx)]);",
-    to: "  const [output] = await Promise.all([deliverPromptContext(ctx)]);",
+    from: "  const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);",
+    to: "  const [output] = await Promise.all([deliverPromptContext(ctx, budget)]);",
     test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
     because: "a change merged mid-session reaches the stop only when an edit happens to ask",
   },
@@ -11976,16 +11976,16 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "expired notices are never pruned",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "lte(landedNotices.stoppedAt, cutoff)",
-    to: "lte(landedNotices.stoppedAt, new Date(0))",
+    from: "  await deps.db.delete(landedNotices).where(lte(landedNotices.stoppedAt, cutoffOf(deps.now())));",
+    to: "  await deps.db.delete(landedNotices).where(lte(landedNotices.stoppedAt, new Date(0)));",
     test: `${SERVER}/test/landed-notices.test.ts`,
-    because: "a commit told once is never told again, however long the reader keeps stopping",
+    because: "a commit told once is never told again, and a quiet repo keeps who was where for good",
   },
   {
     label: "a notice waits for ever",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "        gt(landedNotices.stoppedAt, cutoffOf(deps.now())),",
-    to: "        gt(landedNotices.stoppedAt, new Date(0)),",
+    from: "    gt(landedNotices.stoppedAt, cutoffOf(deps.now())),\n    notMutedCondition",
+    to: "    gt(landedNotices.stoppedAt, new Date(0)),\n    notMutedCondition",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "a month-old stop is told as news (decision 10)",
   },
@@ -12008,42 +12008,42 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a told notice is listed again",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "        eq(landedNotices.repo, repo),\n        isNull(landedNotices.deliveredAt),",
-    to: "        eq(landedNotices.repo, repo),\n        sql`true`,",
+    from: "    eq(landedNotices.repo, repo),\n    isNull(landedNotices.deliveredAt),",
+    to: "    eq(landedNotices.repo, repo),\n    sql`true`,",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "the author hears the same stop in every briefing, not once",
   },
   {
     label: "notices from every repo are listed",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "        eq(landedNotices.repo, repo),\n        isNull(landedNotices.deliveredAt),",
-    to: "        ne(landedNotices.repo, \"\"),\n        isNull(landedNotices.deliveredAt),",
+    from: "    eq(landedNotices.repo, repo),\n    isNull(landedNotices.deliveredAt),",
+    to: "    ne(landedNotices.repo, \"\"),\n    isNull(landedNotices.deliveredAt),",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "a stop in another codebase is told in this one",
   },
   {
     label: "the author's mute of the reader is ignored",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "        notMutedCondition(authorDeveloperId, landedNotices.readerDeveloperId),",
-    to: "        sql`true`,",
+    from: "    notMutedCondition(authorDeveloperId, landedNotices.readerDeveloperId),",
+    to: "    sql`true`,",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "a teammate the author muted still reaches them unasked",
   },
   {
     label: "every group is listed",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: "    } else if (groups.size < LANDED_NOTICE_GROUPS_LISTED) {",
-    to: "    } else if (true) {",
+    from: "    .slice(0, LANDED_NOTICE_GROUPS_LISTED);",
+    to: "    .slice(0);",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "a busy week's stops crowd the briefing past its bound",
   },
   {
-    label: "the oldest stops are listed first",
+    label: "a group is dated by its oldest stop",
     file: `${SERVER}/src/services/landed-notices.ts`,
-    from: ".orderBy(desc(landedNotices.stoppedAt),",
-    to: ".orderBy(asc(landedNotices.stoppedAt),",
+    from: "    .orderBy(desc(landedNotices.stoppedAt), asc(landedNotices.id));",
+    to: "    .orderBy(asc(landedNotices.stoppedAt), asc(landedNotices.id));",
     test: `${SERVER}/test/landed-notices.test.ts`,
-    because: "the bound keeps last week's stops and drops today's",
+    because: "the notice says \"5d ago\" about a stop made this morning",
   },
   {
     label: "the prompt's call carries no notices",
@@ -12102,11 +12102,11 @@ export const MUTATIONS: readonly Mutation[] = [
     because: "a fourth commit is marked told while the text only counts it",
   },
   {
-    label: "the stop names a told person twice",
-    file: `${CORE}/src/hints/render.ts`,
-    from: "  const names = [...new Set(told.map((name) => authorLabel(name)))];",
-    to: "  const names = told.map((name) => authorLabel(name));",
-    test: `${CORE}/test/landed-notice.test.ts`,
+    label: "the stop names a told person once per commit",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const byPerson = new Map(named.map((entry) => [entry.commit.authorDeveloperId, entry.name]));\n  return [...byPerson.values()];",
+    to: "  return named.map((entry) => entry.name);",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
     because: "\"Mike and Mike are told about this stop\"",
   },
   {
@@ -12168,16 +12168,16 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a prompt's notice waits for the next flush",
     file: `${CORE}/src/hints/delivery.ts`,
-    from: "  await postRecords(target.hub, [record]);\n  return true;",
-    to: "  return true;",
+    from: "  if (room >= LANDED_NOTICE_MIN_SPARE_MS) {\n    await postRecords({ ...target.hub, timeoutMs: room }, [record]);\n  }\n",
+    to: "",
     test: `${CORE}/test/landed-notice.test.ts`,
     because: "every other live session of the author tells the same notice again",
   },
   {
     label: "the stop names people it recorded nothing for",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  return appended.persisted ? named.map((entry) => entry.name) : [];",
-    to: "  return named.map((entry) => entry.name);",
+    from: "  if (!appended.persisted) {\n    return [];\n  }",
+    to: "  if (false) {\n    return [];\n  }",
     test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
     because: "\"Mike is told\" is printed for a notice that was never written (decision 11)",
   },
@@ -12188,6 +12188,215 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "              missing: true,",
     test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
     because: "the author hears their work is missing from a checkout that has it",
+  },
+  {
+    // Landed changes, step 4, the first review round.
+    label: "a stop is answered by what its rows did",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "  if (commits.length === 0) {\n    return ACCEPTED;\n  }",
+    to: "  if (commits.length === 0) {\n    return { status: \"ignored\" };\n  }",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a replayed stop becomes a read receipt on the author, and discloses a mute",
+  },
+  {
+    label: "a stop may be filed into any repo",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    (await checkSessionRepo(deps, body.sessionId, body.repo));",
+    to: "    null;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a reader files notices, with any subject, into a repo they never worked in",
+  },
+  {
+    label: "a stop older than the seven days is stored",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "  if (stoppedAt.getTime() <= cutoff.getTime()) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a week-late stop is kept on the hub although it can never be told",
+  },
+  {
+    label: "the reaper keeps expired notices",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  await pruneLandedNotices(deps);\n",
+    to: "",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a repo with no further stop keeps who was where, and the subjects, for good",
+  },
+  {
+    label: "a secret in a subject is stored",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        subject: containsSecret(commit.subject) ? \"\" : commit.subject,",
+    to: "        subject: commit.subject,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a key in a commit subject lands on the hub and in the author's session",
+  },
+  {
+    label: "one reader piles up notices for one author",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "  return commits.filter((commit) => (held.get(commit.authorDeveloperId) ?? 0) < LANDED_NOTICE_MAX_WAITING_PER_PAIR);",
+    to: "  return commits;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "one reader stores a thousand rows per request for another developer",
+  },
+  {
+    label: "one reader's stops crowd out another's",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    .sort((a, b) => a.round - b.round || b.newest.getTime() - a.newest.getTime())",
+    to: "    .sort((a, b) => b.newest.getTime() - a.newest.getTime())",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a busy or hostile reader's stops push a genuine one out until it expires untold",
+  },
+  {
+    label: "a reader's rounds start from their oldest group",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    .orderBy(desc(newest), asc(landedNotices.readerDeveloperId), asc(landedNotices.path))",
+    to: "    .orderBy(asc(newest), asc(landedNotices.readerDeveloperId), asc(landedNotices.path))",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the briefing names last week's stops and holds back today's",
+  },
+  {
+    label: "a listed group is cut short",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    .orderBy(desc(landedNotices.stoppedAt), asc(landedNotices.id));",
+    to: "    .orderBy(desc(landedNotices.stoppedAt), asc(landedNotices.id))\n    .limit(2);",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "an older commit of a listed group comes back later as a second notice about the same reader and file",
+  },
+  {
+    label: "a NUL in the repo reaches the database",
+    file: `${SERVER}/src/routes/landed.ts`,
+    from: "  repo: LandedRepoSchema.refine((repo) => unstorableTextPath(repo) === null, \"a repo without a NUL\"),",
+    to: "  repo: LandedRepoSchema,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a NUL in the query answers 500 instead of 400",
+  },
+  {
+    label: "a stop's sha may be abbreviated or upper-case",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "const FULL_SHA_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;",
+    to: "const FULL_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "one commit in four spellings is four rows, and told four times",
+  },
+  {
+    label: "a notice is claimed with no room to spare",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "  if (spareMs() < LANDED_NOTICE_MIN_SPARE_MS) {\n    return false;\n  }\n  const remembered",
+    to: "  const remembered",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a hook that runs out of time marks a notice told that nobody saw",
+  },
+  {
+    label: "a notice is picked with no room to spare",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    spareMs === undefined || spareMs() < LANDED_NOTICE_MIN_SPARE_MS",
+    to: "    spareMs === undefined",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a prompt with no room for a notice loses the pointer it would have had",
+  },
+  {
+    label: "the notice's post waits a whole hub timeout",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "  const room = Math.min(target.hub.timeoutMs, spareMs());",
+    to: "  const room = target.hub.timeoutMs;",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a slow hub holds the prompt until the hook's budget kills its output",
+  },
+  {
+    label: "every host tells notices",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const spareMs = input.tellsNotices === true ? input.spareMs : undefined;",
+    to: "  const spareMs = input.spareMs;",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a notice is told where no person reads it, marked told, and lost",
+  },
+  {
+    label: "an unknown reader is a third person",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "    ? { checkout: \"their checkout\", has: \"they already have it\" }",
+    to: "    ? { checkout: \"a teammate's checkout\", has: \"a teammate already has it\" }",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"missing from a teammate's checkout\" reads as if about somebody else",
+  },
+  {
+    label: "a future stop reads as brand new",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "  return Number.isNaN(ms) || ms > now.getTime() ? \"at an unknown time\"",
+    to: "  return Number.isNaN(ms) ? \"at an unknown time\"",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a skewed clock prints a confident \"0s ago\"",
+  },
+  {
+    label: "the told line starts in lower case",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return [`${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`];",
+    to: "  return [sentence];",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"a teammate is told about this stop.\"",
+  },
+  {
+    label: "a stop in notice mode tells its authors",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  resolveTripwireMode(ctx.env) !== TRIPWIRE_MODE_NOTICE && ctx.identity.repoId === state.repoId;",
+    to: "  ctx.identity.repoId === state.repoId;",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "a stop no person saw names a presence-opted-out reader to the author (decisions 9, 11)",
+  },
+  {
+    label: "a stop outside the session's repo tells its authors",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  resolveTripwireMode(ctx.env) !== TRIPWIRE_MODE_NOTICE && ctx.identity.repoId === state.repoId;",
+    to: "  resolveTripwireMode(ctx.env) !== TRIPWIRE_MODE_NOTICE;",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "\"Mike is told\" is printed for a stop the hub will refuse",
+  },
+  {
+    label: "a secret subject is uploaded",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "              subject: containsSecret(commit.subject)",
+    to: "              subject: false",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "a key in a commit subject leaves the machine unscanned (DESIGN.md §2.1)",
+  },
+  {
+    label: "the prompt tells notices past its budget",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    spareMs: () => budget.spareMs(),",
+    to: "    spareMs: () => 10_000,",
+    test: `${CONNECTOR}/test/hint-hook.test.ts`,
+    because: "a slow hub: the notice is marked told and the prompt prints nothing",
+  },
+  {
+    label: "the prompt tells no notices",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    tellsNotices: true,\n    spareMs: () => budget.spareMs(),",
+    to: "    tellsNotices: false,\n    spareMs: () => budget.spareMs(),",
+    test: `${CONNECTOR}/test/hint-hook.test.ts`,
+    because: "an author in a live session hears nothing until their next session",
+  },
+  {
+    label: "an ACP prompt tells notices past its budget",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "        spareMs: hookBudget(deadline, resolveTimeoutMs(env, null), now).spareMs,",
+    to: "        spareMs: () => 10_000,",
+    test: `${ACP}/test/injector.test.ts`,
+    because: "a lost race finishes in the background and marks a notice told that the prompt never carried",
+  },
+  {
+    label: "an ACP prompt tells no notices",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "        tellsNotices: true,\n        spareMs: hookBudget",
+    to: "        tellsNotices: false,\n        spareMs: hookBudget",
+    test: `${ACP}/test/injector.test.ts`,
+    because: "an ACP author in a live session hears nothing until the next briefing",
+  },
+  {
+    label: "a Cursor tool failure tells notices",
+    file: `${CURSOR}/src/inject/hint.ts`,
+    from: "    prompt: failureText,\n    now: ctx.now(),\n  });",
+    to: "    prompt: failureText,\n    now: ctx.now(),\n    tellsNotices: true,\n    spareMs: () => 10_000,\n  });",
+    test: `${CURSOR}/test/injection.test.ts`,
+    because: "a notice rides an output field Cursor may drop, is marked told, and is never seen",
   },
 ];
 
@@ -12276,7 +12485,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
- * PRINTS: packages/connector-acp/test/injector.test.ts 4
+ * PRINTS: packages/connector-acp/test/injector.test.ts 6
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
@@ -12294,7 +12503,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
- * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/hint-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
@@ -12304,7 +12513,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
- * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
@@ -12362,7 +12571,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
- * PRINTS: packages/connector-core/test/landed-notice.test.ts 11
+ * PRINTS: packages/connector-core/test/landed-notice.test.ts 17
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 5
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
@@ -12412,12 +12621,12 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
- * PRINTS: packages/connector-cursor/test/injection.test.ts 3
+ * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
- * PRINTS: packages/schema/test/landed-notice.test.ts 4
+ * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/calibration.test.ts 1
@@ -12442,7 +12651,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 20
- * PRINTS: packages/server/test/landed-notices.test.ts 17
+ * PRINTS: packages/server/test/landed-notices.test.ts 27
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
