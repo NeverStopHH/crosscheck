@@ -82,8 +82,11 @@ const intentOf = (stored: unknown): Intent | null => {
   return parsed.success ? parsed.data : null;
 };
 
-/** The file in its one spelling, exactly as target ingest stores it. */
-const storedSpelling = (path: string): string => {
+/**
+ * The file in its one spelling, exactly as target ingest stores it — and as
+ * the author's notice stores it (services/landed-notices.ts).
+ */
+export const storedSpelling = (path: string): string => {
   const canonical = canonicalRepoPath(path);
   return canonical.ok ? canonical.path : path;
 };
@@ -168,6 +171,40 @@ export const findLandedContexts = async (
     }
   }
   return matches;
+};
+
+export interface LandedToldAuthor {
+  readonly sha: string;
+  readonly developerId: string;
+  readonly name: string;
+}
+
+/**
+ * WHO THE STOP TELLS (step 4, decision 11): for each commit asked about, in
+ * the order asked, the developer its author address belongs to — never the
+ * caller. The stop prints exactly these names ("Mike is told about this
+ * stop") and its record carries exactly these ids, so the hub can never
+ * notify someone the stop did not name. A mute of the caller is NOT applied
+ * here: a mute is never disclosed, so the author is named and the notice is
+ * then hidden on the author's side (services/landed-notices.ts), the rule
+ * questions follow. Never an address in the answer.
+ */
+export const toldAuthors = async (
+  deps: Deps,
+  callerDeveloperId: string,
+  request: LandedContextRequest,
+): Promise<readonly LandedToldAuthor[]> => {
+  const emails = [...new Set(request.commits.map((commit) => lowered(commit.authorEmail)))];
+  const rows = await deps.db
+    .select({ email: developerEmails.email, developerId: developers.id, name: developers.name })
+    .from(developerEmails)
+    .innerJoin(developers, eq(developers.id, developerEmails.developerId))
+    .where(and(inArray(developerEmails.email, emails), ne(developers.id, callerDeveloperId)));
+  const byEmail = new Map(rows.map((row) => [row.email, row]));
+  return request.commits.flatMap((commit) => {
+    const author = byEmail.get(lowered(commit.authorEmail));
+    return author === undefined ? [] : [{ sha: commit.sha, developerId: author.developerId, name: author.name }];
+  });
 };
 
 /**

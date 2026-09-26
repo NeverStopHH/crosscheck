@@ -708,6 +708,21 @@ export const COVERAGE_SESSION_WINDOW_DAYS = 14;
 export const LANDED_WHY_WINDOW_DAYS = 30;
 export const LANDED_WHY_CLOCK_SLACK_MS = 5 * 60_000;
 export const LANDED_WHY_FLUSH_SLACK_MS = 60 * 60_000;
+
+/**
+ * The author's notice (services/landed-notices.ts, decision 10): a notice
+ * waits this long after its stop and is gone unsaid after it. The same bound
+ * refuses a stop that reaches the hub later than that.
+ */
+export const LANDED_NOTICE_TTL_DAYS = 7;
+/** Reader-and-file groups one listing answers: a briefing section, a prompt. */
+export const LANDED_NOTICE_GROUPS_LISTED = 3;
+/**
+ * Rows one listing reads before grouping. A stop names at most six commits
+ * (three missing, three recent), so this holds several stops per group even
+ * when every group is full.
+ */
+export const LANDED_NOTICE_ROWS_READ = 50;
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

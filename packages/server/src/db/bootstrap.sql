@@ -404,6 +404,29 @@ CREATE TABLE IF NOT EXISTS question_answers (
 CREATE INDEX IF NOT EXISTS question_answers_claim_idx
   ON question_answers (claim_id);
 
+-- The author's notice (docs/1.0/landed-changes.md, step 4): one row per
+-- reader, file and commit, told to the author once, within seven days.
+-- Mirrored in db/schema.ts, which says why there is no session key.
+CREATE TABLE IF NOT EXISTS landed_notices (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  path text NOT NULL,
+  sha text NOT NULL,
+  subject text NOT NULL,
+  missing boolean NOT NULL,
+  author_developer_id text NOT NULL REFERENCES developers(id),
+  reader_developer_id text NOT NULL REFERENCES developers(id),
+  stopped_at timestamptz NOT NULL,
+  delivered_at timestamptz
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS landed_notices_reader_file_commit_idx
+  ON landed_notices (reader_developer_id, repo, path, sha);
+CREATE INDEX IF NOT EXISTS landed_notices_author_repo_stopped_idx
+  ON landed_notices (author_developer_id, repo, stopped_at DESC);
+CREATE INDEX IF NOT EXISTS landed_notices_repo_stopped_idx
+  ON landed_notices (repo, stopped_at);
+
 -- "Delivered exactly once" for an answer is a cross-SESSION promise: the
 -- asker's per-session seen-set dies with the session, so the durable store is
 -- hint_deliveries, probed as "has any session of this developer already been

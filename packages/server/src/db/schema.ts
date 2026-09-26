@@ -675,6 +675,57 @@ export const questionAnswers = pgTable(
   ],
 );
 /**
+ * THE AUTHOR'S NOTICE (docs/1.0/landed-changes.md, step 4): a reader's edit
+ * stopped at an author's landed commit, waiting to be told to the author
+ * once. One row per reader, file and commit — the unique index is what makes
+ * a second stop on the same commit add nothing (services/landed-notices.ts).
+ *
+ * No foreign key into agent_sessions: a notice is about two PEOPLE, and it
+ * outlives neither the seven days it may wait (LANDED_NOTICE_TTL_DAYS) nor
+ * the reap of the reader's session. Rows past the seven days are deleted
+ * when a stop in the same repo is ingested and never listed before that.
+ * `subject` is the author's own commit subject, carried by the reader's
+ * connector: quoted data wherever it is rendered.
+ */
+export const landedNotices = pgTable(
+  "landed_notices",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    path: text("path").notNull(),
+    sha: text("sha").notNull(),
+    subject: text("subject").notNull(),
+    /** Missing from the reader's checkout, or already in it and recent. */
+    missing: boolean("missing").notNull(),
+    authorDeveloperId: text("author_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    readerDeveloperId: text("reader_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    /** The latest stop on this row, on the hub's clock at most. */
+    stoppedAt: timestamptz("stopped_at").notNull(),
+    /** Set once, by the author's own delivery record. */
+    deliveredAt: timestamptz("delivered_at"),
+  },
+  (table) => [
+    uniqueIndex("landed_notices_reader_file_commit_idx").on(
+      table.readerDeveloperId,
+      table.repo,
+      table.path,
+      table.sha,
+    ),
+    // The author's listing: "my waiting notices in this repo, newest first".
+    index("landed_notices_author_repo_stopped_idx").on(
+      table.authorDeveloperId,
+      table.repo,
+      table.stoppedAt.desc(),
+    ),
+    // The prune on ingest: "this repo's rows past the seven days".
+    index("landed_notices_repo_stopped_idx").on(table.repo, table.stoppedAt),
+  ],
+);
+/**
  * A PIN: a human's provenance-stamped statement that a named surface WORKS
  * (regression-guard Stage 1). ITS OWN TABLE PAIR, and the reason is
  * structural rather than tidiness: a pin carried as a `claim` would need an
