@@ -17,23 +17,30 @@
  * not give, or one outside its bounds) is left out of the question rather
  * than sent: one unreadable commit would make the hub refuse the whole
  * request, and with it every other commit's why.
+ *
+ * The same answer names WHO THE STOP TELLS (step 4, decision 11): the
+ * developer behind each named commit's address. No answer — not asked, too
+ * slow, an older hub — tells nobody, and the stop then says so by saying
+ * nothing about it.
  */
 import { LandedContextCommitSchema } from "@crosscheck/schema";
 import { LANDED_WHY_MIN_MS } from "@crosscheck/connector-core/constants.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import { getLandedContexts } from "@crosscheck/connector-core/http/hub.ts";
-import type { LandedContextMatch } from "@crosscheck/connector-core/http/hub.ts";
+import type { LandedContextAnswer } from "@crosscheck/connector-core/http/hub.ts";
 import { namedLandedCommits } from "@crosscheck/connector-core/landed-changes/named-commits.ts";
 import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import type { HookContext } from "./runner.ts";
 
+/** No why, and nobody told. */
+export const NO_LANDED_ANSWER: LandedContextAnswer = { matches: [], told: [] };
 
 export const landedWhyFor = async (
   ctx: HookContext,
   budget: HookBudget,
   file: string,
   landed: LandedChanges,
-): Promise<readonly LandedContextMatch[]> => {
+): Promise<LandedContextAnswer> => {
   const commits = namedLandedCommits(landed).flatMap((commit) => {
     const parsed = LandedContextCommitSchema.safeParse({
       sha: commit.sha,
@@ -44,7 +51,7 @@ export const landedWhyFor = async (
   });
   const timeoutMs = Math.min(ctx.hub.timeoutMs, budget.spareMs());
   if (commits.length === 0 || timeoutMs < LANDED_WHY_MIN_MS) {
-    return [];
+    return NO_LANDED_ANSWER;
   }
   try {
     // repoKey "": the why is an extra read, and it keeps out of the sync
@@ -54,9 +61,9 @@ export const landedWhyFor = async (
       { ...ctx.hub, timeoutMs, repoKey: "" },
       { repo: ctx.identity.repoId, path: file, commits },
     );
-    return result.ok ? result.data : [];
+    return result.ok ? result.data : NO_LANDED_ANSWER;
   } catch {
-    // Fail open: the stop goes out without its why.
-    return [];
+    // Fail open: the stop goes out without its why, and tells nobody.
+    return NO_LANDED_ANSWER;
   }
 };

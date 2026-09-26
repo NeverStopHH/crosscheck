@@ -65,7 +65,9 @@ import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts
 import {
   UNKNOWN_DEVELOPER_ID,
   hintDeliveryRecord,
+  landedStopRecord,
 } from "@crosscheck/connector-core/capture/records.ts";
+import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { renderEditWarning } from "@crosscheck/connector-core/hints/render.ts";
 import {
@@ -86,8 +88,11 @@ import { findLandedChanges, worthStopping } from "@crosscheck/connector-core/lan
 import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
 import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
-import type { LandedContextMatch } from "@crosscheck/connector-core/http/hub.ts";
-import { landedWhyFor } from "./landed-why.ts";
+import type { LandedContextAnswer, LandedToldAuthor } from "@crosscheck/connector-core/http/hub.ts";
+import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
+import { namedLandedCommits } from "@crosscheck/connector-core/landed-changes/named-commits.ts";
+import { LANDED_STOP_MAX_SUBJECT_CHARS, LandedStopSchema } from "@crosscheck/schema";
+import { NO_LANDED_ANSWER, landedWhyFor } from "./landed-why.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -221,14 +226,18 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   // un-upgraded hub leaves the live lines byte-identical to what they were.
   // Only a WON landed stop waits for its why (already under way since git
   // answered); the hook's process ends a why nobody waits for.
-  const why = won.landed === null ? [] : await found.why;
+  const answer = won.landed === null ? NO_LANDED_ANSWER : await found.why;
+  // Recorded BEFORE it is rendered: a name the stop prints is a name the hub
+  // will tell (step 4, decision 11), so only what reached the spool is said.
+  const told = won.landed === null ? [] : await recordLandedStop(ctx, state, file, won.landed, answer.told);
   const reason = renderEditWarning({
     live: won.teammate,
     landed: won.landed,
     file,
     now: ctx.now(),
     ...(found.coverage === undefined ? {} : { coverage: found.coverage }),
-    why,
+    why: answer.matches,
+    told,
   });
   if (won.teammate !== null) {
     await recordTripwireAsk(ctx, state, won.teammate);
@@ -260,9 +269,10 @@ interface FoundReasons extends Reasons {
   /**
    * The hub's why for the landed half, asked the moment GIT answered — not
    * after the live tripwire's hub call too, which is what leaves it room on
-   * a hub across a network (hooks/landed-why.ts). Empty when nothing landed.
+   * a hub across a network (hooks/landed-why.ts) — and who the stop tells.
+   * Empty when nothing landed.
    */
-  readonly why: Promise<readonly LandedContextMatch[]>;
+  readonly why: Promise<LandedContextAnswer>;
 }
 
 const NO_REASONS: Reasons = { teammate: null, landed: null };
@@ -297,9 +307,9 @@ const findReasons = async (
   const why = probing
     .then((probed) => {
       const landed = worthStopping(probed);
-      return landed === null ? [] : landedWhyFor(ctx, budget, edited.file, landed);
+      return landed === null ? NO_LANDED_ANSWER : landedWhyFor(ctx, budget, edited.file, landed);
     })
-    .catch((): readonly LandedContextMatch[] => []);
+    .catch((): LandedContextAnswer => NO_LANDED_ANSWER);
   const [result, probed] = await Promise.all([live, probing]);
   const hub = result?.ok === true ? result.data : null;
   return {
@@ -363,8 +373,8 @@ const claimReasons = async (ctx: HookContext, file: string, found: Reasons): Pro
  * silently. Appended AFTER the claim, so a racing sibling that lost the
  * claim records nothing — and the id is deterministic per (session,
  * context), so a replay is the hub's `duplicate`, not a second collision.
- * Only the LIVE half has a teammate context to record against; a stop for
- * a landed change alone records nothing here yet.
+ * Only the LIVE half has a teammate context to record against; the landed
+ * half is recorded for its authors instead (recordLandedStop).
  */
 const recordTripwireAsk = async (
   ctx: HookContext,
@@ -391,6 +401,71 @@ const recordTripwireAsk = async (
     ],
     ctx.now(),
   );
+};
+
+/**
+ * THE STOP IS RECORDED FOR THE PEOPLE IT NAMES (docs/1.0/landed-changes.md,
+ * step 4). After the booking, like the live half's ask: a sibling that lost
+ * the booking records nothing. Only the commits the stop names
+ * (namedLandedCommits, what the reader sees) and only those whose author the
+ * hub's why answer named as told — so the hub can tell nobody the stop did
+ * not name, and it checks that once more on ingest.
+ *
+ * Returns the names the stop may PRINT: those of a record that reached the
+ * spool. A refused append (a full spool; counted in `.drops`) records nothing
+ * and names nobody, so "Mike is told" is never said of a notice that does
+ * not exist. Microseconds, like every spool append; the hub hears it at the
+ * reader's next flush.
+ */
+const recordLandedStop = async (
+  ctx: HookContext,
+  state: SessionState,
+  file: string,
+  landed: LandedChanges,
+  told: readonly LandedToldAuthor[],
+): Promise<readonly string[]> => {
+  const authorOf = new Map(told.map((author) => [author.sha, author]));
+  const missing = new Set(landed.missing.map((commit) => commit.sha));
+  const named = namedLandedCommits(landed).flatMap((commit) => {
+    const author = authorOf.get(commit.sha);
+    return author === undefined
+      ? []
+      : [
+          {
+            name: author.name,
+            commit: {
+              sha: commit.sha,
+              subject: cutWellFormed(commit.subject, LANDED_STOP_MAX_SUBJECT_CHARS),
+              authorEmail: commit.authorEmail,
+              authorDeveloperId: author.developerId,
+              missing: missing.has(commit.sha),
+            },
+          },
+        ];
+  });
+  const body = LandedStopSchema.safeParse({
+    sessionId: state.crosscheckSessionId,
+    repo: ctx.identity.repoId,
+    path: file,
+    stoppedAt: ctx.now().toISOString(),
+    commits: named.map((entry) => entry.commit),
+  });
+  if (!body.success) {
+    return [];
+  }
+  const producer: Producer = {
+    developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+    agentKind: ctx.config.agentKind,
+    sessionId: state.crosscheckSessionId,
+  };
+  const appended = await appendRecords(
+    ctx.config.home,
+    ctx.repoKey,
+    ctx.payload.session_id,
+    [landedStopRecord(body.data, producer, ctx.now())],
+    ctx.now(),
+  );
+  return appended.persisted ? named.map((entry) => entry.name) : [];
 };
 
 /**

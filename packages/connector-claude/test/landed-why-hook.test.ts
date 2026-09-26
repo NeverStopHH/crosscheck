@@ -554,7 +554,7 @@ describe("the why's own clamp", () => {
     const why = await landedWhyFor(contextFor(hub.url), { spareMs: () => 200 }, FILE, landedOne());
     const elapsed = performance.now() - started;
 
-    expect(why).toEqual([]);
+    expect(why).toEqual({ matches: [], told: [] });
     expect(hub.contextCalls()).toBe(1);
     // One whole hub timeout would be 400 ms; the spare was 200, and a clamp
     // even a third too loose would show.
@@ -566,7 +566,7 @@ describe("the why's own clamp", () => {
 
     const why = await landedWhyFor(contextFor(hub.url), { spareMs: () => 30 }, FILE, landedOne());
 
-    expect(why).toEqual([]);
+    expect(why).toEqual({ matches: [], told: [] });
     expect(hub.contextCalls()).toBe(0);
   });
 });
