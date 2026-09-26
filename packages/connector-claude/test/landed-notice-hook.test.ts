@@ -136,11 +136,11 @@ const world = async (label: string): Promise<World> => {
 };
 
 /** A change to FILE by `author`, committed an hour ago and merged into staging since. */
-const lands = async (w: World, author: Person): Promise<void> => {
+const lands = async (w: World, author: Person, subject: string = "Fix line offset"): Promise<void> => {
   await landWithMergeCommit(w.repos, {
     file: FILE,
     content: "export const offset = 2;\n",
-    subject: "Fix line offset",
+    subject,
     landing: "staging",
     writtenAt: iso(-HOUR_MS),
     landedAt: iso(-30 * MINUTE_MS),
@@ -149,8 +149,8 @@ const lands = async (w: World, author: Person): Promise<void> => {
   await readerFetches(w.repos);
 };
 
-const nickEdits = async (w: World): Promise<string> => {
-  const stdout = await runHook(
+const nickEditsRaw = (w: World, env: Env = w.env): Promise<string> =>
+  runHook(
     "pre-tool-use",
     JSON.stringify({
       session_id: SESSION_ID,
@@ -160,8 +160,11 @@ const nickEdits = async (w: World): Promise<string> => {
       tool_use_id: "toolu_notice_1",
       tool_input: { file_path: `${w.repos.reader}/${FILE}` },
     }),
-    w.env,
+    env,
   );
+
+const nickEdits = async (w: World): Promise<string> => {
+  const stdout = await nickEditsRaw(w);
   return stdout.length === 0
     ? ""
     : ((JSON.parse(stdout) as { hookSpecificOutput?: { permissionDecisionReason?: string } }).hookSpecificOutput
@@ -222,6 +225,40 @@ describe("a stop at a teammate's landed change, for its author", () => {
       expect(reason).toContain(TOLD);
       expect(await spooledStops(w)).toEqual([
         expect.objectContaining({ commits: [expect.objectContaining({ missing: false })] }),
+      ]);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "in notice mode no person sees the stop, so it tells nobody and says nobody is told",
+    async () => {
+      const w = await world("notice-headless");
+      await lands(w, MIKE);
+
+      const stdout = await nickEditsRaw(w, { ...w.env, CROSSCHECK_TRIPWIRE: "notice" });
+      const context =
+        (JSON.parse(stdout) as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput
+          ?.additionalContext ?? "";
+
+      expect(context).toContain("«Fix line offset» by Mike, on staging");
+      expect(context).not.toContain("told about this stop");
+      expect(await spooledStops(w)).toEqual([]);
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "a subject the secret scan flags is sent blank",
+    async () => {
+      const w = await world("notice-secret");
+      await lands(w, MIKE, "rotate deploy key AKIAIOSFODNN7EXAMPLE");
+
+      const reason = await nickEdits(w);
+
+      expect(reason).toContain(TOLD);
+      expect(await spooledStops(w)).toEqual([
+        expect.objectContaining({ commits: [expect.objectContaining({ subject: "" })] }),
       ]);
     },
     HEAVY_SETUP_MS,

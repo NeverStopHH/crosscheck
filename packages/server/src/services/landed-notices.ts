@@ -17,26 +17,46 @@
  *
  * SEVEN DAYS (LANDED_NOTICE_TTL_DAYS), counted from the FIRST stop of a row
  * that was told: a told row is never refreshed, so a reader still stopped at
- * the same missing commit a week later tells the author again. Rows past
- * the seven days are never listed — which is also why a stop that arrives
- * older than that tells nobody — and are deleted when a stop in the same
- * repo is ingested, which frees their commits for a stop after them.
+ * the same missing commit a week later tells the author again. A stop that
+ * arrives older than that is not stored. Rows past the seven days are never
+ * listed, and are deleted before every stop's ingest (which frees their
+ * commits for that stop) and by the reaper pass (so a quiet repo does not
+ * keep them, subjects and all, for good).
+ *
+ * THE READER LEARNS NOTHING FROM HOW A STOP IS RECEIVED. Every admissible
+ * stop answers `accepted`, whether it wrote a row, refreshed one, met a row
+ * already told, named an address that is not the named developer's, or met
+ * the pair's cap. An answer that followed the rows would be a read receipt:
+ * a replayed stop flipping from `accepted` to `duplicate` the moment the
+ * author opened a session — presence the author may have turned off — and
+ * never flipping for a reader the author muted, which would disclose the
+ * mute.
+ *
+ * BOUNDED PER PAIR: one reader holds at most
+ * LANDED_NOTICE_MAX_WAITING_PER_PAIR waiting rows for one author, and the
+ * listing takes one group per reader before anyone's second, so one reader's
+ * stops — or forged records — cannot crowd another reader's out.
+ *
+ * A subject the local secret scan flags is stored blank: the connector
+ * already sends it blank, and the hub does not trust that it did.
  *
  * AN UNASKED SURFACE for the author: a reader the author muted is hidden
  * while the mute lasts (services/visibility.ts). The READER's presence
  * opt-out does not hide it (decision 9): the reader's own stop said the
  * author would be told.
  */
-import { and, asc, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 
+import { containsSecret } from "@crosscheck/schema";
 import type { LandedNoticeDelivery, LandedStop, LandedStopCommit } from "@crosscheck/schema";
 
 import {
   LANDED_NOTICE_GROUPS_LISTED,
+  LANDED_NOTICE_MAX_WAITING_PER_PAIR,
   LANDED_NOTICE_ROWS_READ,
   LANDED_NOTICE_TTL_DAYS,
 } from "../constants.ts";
-import { developerEmails, developers, landedNotices } from "../db/schema.ts";
+import { agentSessions, developerEmails, developers, landedNotices } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import { storedSpelling } from "./landed-context.ts";
@@ -83,28 +103,75 @@ const toldCommits = async (
   });
 };
 
+/** Rows past the seven days, in every repo: before each stop, and from the reaper. */
+export const pruneLandedNotices = async (deps: Deps): Promise<void> => {
+  await deps.db.delete(landedNotices).where(lte(landedNotices.stoppedAt, cutoffOf(deps.now())));
+};
+
+/** A stop belongs to the repo its reader's session reports, as a question does. */
+const checkSessionRepo = async (deps: Deps, sessionId: string, repo: string): Promise<string | null> => {
+  const rows = await deps.db
+    .select({ repo: agentSessions.repo })
+    .from(agentSessions)
+    .where(eq(agentSessions.id, sessionId))
+    .limit(1);
+  return rows[0]?.repo === repo ? null : "repo: must be the repo this session reports";
+};
+
+/** The commits whose author still has room in this reader's waiting rows. */
+const withinPairBudget = async (
+  deps: Deps,
+  readerDeveloperId: string,
+  commits: readonly LandedStopCommit[],
+  cutoff: Date,
+): Promise<readonly LandedStopCommit[]> => {
+  const authors = [...new Set(commits.map((commit) => commit.authorDeveloperId))];
+  if (authors.length === 0) {
+    return [];
+  }
+  const waiting = await deps.db
+    .select({ authorDeveloperId: landedNotices.authorDeveloperId, rows: count() })
+    .from(landedNotices)
+    .where(
+      and(
+        eq(landedNotices.readerDeveloperId, readerDeveloperId),
+        inArray(landedNotices.authorDeveloperId, authors),
+        isNull(landedNotices.deliveredAt),
+        gt(landedNotices.stoppedAt, cutoff),
+      ),
+    )
+    .groupBy(landedNotices.authorDeveloperId);
+  const held = new Map(waiting.map((row) => [row.authorDeveloperId, row.rows]));
+  return commits.filter((commit) => (held.get(commit.authorDeveloperId) ?? 0) < LANDED_NOTICE_MAX_WAITING_PER_PAIR);
+};
+
+const ACCEPTED: HandlerOutcome = { status: "accepted" };
+
 export const ingestLandedStop = async (
   deps: Deps,
   developerId: string,
   body: LandedStop,
 ): Promise<HandlerOutcome> => {
-  const sessionIssue = await checkOwnedSession(deps.db, developerId, body.sessionId, "sessionId");
+  const sessionIssue =
+    (await checkOwnedSession(deps.db, developerId, body.sessionId, "sessionId")) ??
+    (await checkSessionRepo(deps, body.sessionId, body.repo));
   if (sessionIssue !== null) {
     return rejectedOutcome(sessionIssue);
   }
   const now = deps.now();
   const cutoff = cutoffOf(now);
   // FIRST, so an expired row frees its commit for this very stop.
-  await deps.db
-    .delete(landedNotices)
-    .where(and(eq(landedNotices.repo, body.repo), lte(landedNotices.stoppedAt, cutoff)));
+  await pruneLandedNotices(deps);
   const stoppedAt = notAfter(body.stoppedAt, now);
-  const commits = await toldCommits(deps, developerId, body.commits);
+  if (stoppedAt.getTime() <= cutoff.getTime()) {
+    return { status: "ignored", issues: [`stoppedAt: more than ${String(LANDED_NOTICE_TTL_DAYS)} days ago; nobody is told`] };
+  }
+  const commits = await withinPairBudget(deps, developerId, await toldCommits(deps, developerId, body.commits), cutoff);
   if (commits.length === 0) {
-    return { status: "ignored", issues: ["commits: no named author owns the commit's address"] };
+    return ACCEPTED;
   }
   const path = storedSpelling(body.path);
-  const written = await deps.db
+  await deps.db
     .insert(landedNotices)
     .values(
       commits.map((commit) => ({
@@ -112,7 +179,7 @@ export const ingestLandedStop = async (
         repo: body.repo,
         path,
         sha: commit.sha,
-        subject: commit.subject,
+        subject: containsSecret(commit.subject) ? "" : commit.subject,
         missing: commit.missing,
         authorDeveloperId: commit.authorDeveloperId,
         readerDeveloperId: developerId,
@@ -128,9 +195,9 @@ export const ingestLandedStop = async (
       },
       // A told row stays told; a replayed OLDER stop never rolls a newer one back.
       setWhere: sql`${landedNotices.deliveredAt} IS NULL AND excluded.stopped_at >= ${landedNotices.stoppedAt}`,
-    })
-    .returning({ id: landedNotices.id });
-  return written.length === 0 ? { status: "duplicate" } : { status: "accepted" };
+    });
+  // The same answer whatever the rows did — see the header.
+  return ACCEPTED;
 };
 
 /** Marks told only notices addressed to the sender, and only once. */
@@ -178,8 +245,10 @@ export interface LandedNotice {
 }
 
 /**
- * The author's waiting notices in this repo, grouped by reader and file,
- * the newest stop first, at most LANDED_NOTICE_GROUPS_LISTED groups.
+ * The author's waiting notices in this repo, grouped by reader and file, at
+ * most LANDED_NOTICE_GROUPS_LISTED groups: every reader's newest group
+ * before anyone's second, newest first within a round — so one reader's many
+ * stops cannot crowd out another reader's one.
  */
 export const listLandedNotices = async (
   deps: Deps,
@@ -210,31 +279,33 @@ export const listLandedNotices = async (
     )
     .orderBy(desc(landedNotices.stoppedAt), desc(landedNotices.missing), asc(landedNotices.sha))
     .limit(LANDED_NOTICE_ROWS_READ);
-  // Rows arrive newest first, so a group's first row is its latest stop.
+  // Rows arrive newest first, so a group's first row is its latest stop, and
+  // a reader's groups arrive in the order of their newest stops.
   const groups = new Map<string, readonly (typeof rows)[number][]>();
   for (const row of rows) {
     const key = `${row.readerDeveloperId}\n${row.path}`;
-    const members = groups.get(key);
-    if (members !== undefined) {
-      groups.set(key, [...members, row]);
-    } else if (groups.size < LANDED_NOTICE_GROUPS_LISTED) {
-      groups.set(key, [row]);
-    }
+    groups.set(key, [...(groups.get(key) ?? []), row]);
   }
-  return [...groups.values()].flatMap((members) => {
+  const roundOf = new Map<string, number>();
+  const ranked = [...groups.values()].flatMap((members) => {
     const [newest] = members;
-    return newest === undefined
-      ? []
-      : [
-          {
-            id: newest.id,
-            readerName: newest.readerName,
-            path: newest.path,
-            stoppedAt: newest.stoppedAt.toISOString(),
-            commits: members
-              .map((row) => ({ id: row.id, sha: row.sha, subject: row.subject, missing: row.missing }))
-              .sort((a, b) => Number(b.missing) - Number(a.missing) || a.sha.localeCompare(b.sha)),
-          },
-        ];
+    if (newest === undefined) {
+      return [];
+    }
+    const round = roundOf.get(newest.readerDeveloperId) ?? 0;
+    roundOf.set(newest.readerDeveloperId, round + 1);
+    return [{ round, members, newest }];
   });
+  return ranked
+    .sort((a, b) => a.round - b.round || b.newest.stoppedAt.getTime() - a.newest.stoppedAt.getTime())
+    .slice(0, LANDED_NOTICE_GROUPS_LISTED)
+    .map(({ members, newest }) => ({
+      id: newest.id,
+      readerName: newest.readerName,
+      path: newest.path,
+      stoppedAt: newest.stoppedAt.toISOString(),
+      commits: members
+        .map((row) => ({ id: row.id, sha: row.sha, subject: row.subject, missing: row.missing }))
+        .sort((a, b) => Number(b.missing) - Number(a.missing) || a.sha.localeCompare(b.sha)),
+    }));
 };

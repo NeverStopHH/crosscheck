@@ -16,7 +16,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { LandedAuthorsRequestSchema, LandedContextRequestSchema, LandedRepoSchema } from "@crosscheck/schema";
+import {
+  LandedAuthorsRequestSchema,
+  LandedContextRequestSchema,
+  LandedRepoSchema,
+  unstorableTextPath,
+} from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
@@ -25,7 +30,10 @@ import { findLandedContexts, toldAuthors, unknownAuthorEmails } from "../service
 import { listLandedNotices } from "../services/landed-notices.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
-const NoticesQuerySchema = z.object({ repo: LandedRepoSchema });
+// A NUL cannot reach a text column: refused here, never a database error.
+const NoticesQuerySchema = z.object({
+  repo: LandedRepoSchema.refine((repo) => unstorableTextPath(repo) === null, "a repo without a NUL"),
+});
 
 export const landedRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();

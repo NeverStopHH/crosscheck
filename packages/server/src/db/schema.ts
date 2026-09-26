@@ -682,8 +682,8 @@ export const questionAnswers = pgTable(
  *
  * No foreign key into agent_sessions: a notice is about two PEOPLE, and it
  * outlives neither the seven days it may wait (LANDED_NOTICE_TTL_DAYS) nor
- * the reap of the reader's session. Rows past the seven days are deleted
- * when a stop in the same repo is ingested and never listed before that.
+ * the reap of the reader's session. Rows past the seven days are never
+ * listed, and are deleted by the reaper pass and before every stop's ingest.
  * `subject` is the author's own commit subject, carried by the reader's
  * connector: quoted data wherever it is rendered.
  */
@@ -721,8 +721,8 @@ export const landedNotices = pgTable(
       table.repo,
       table.stoppedAt.desc(),
     ),
-    // The prune on ingest: "this repo's rows past the seven days".
-    index("landed_notices_repo_stopped_idx").on(table.repo, table.stoppedAt),
+    // The prune, on ingest and in the reaper pass: "rows past the seven days".
+    index("landed_notices_stopped_idx").on(table.stoppedAt),
   ],
 );
 /**

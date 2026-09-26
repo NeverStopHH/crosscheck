@@ -17,7 +17,6 @@
  */
 import { z } from "zod";
 
-import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 import {
   LANDED_CONTEXT_MAX_COMMITS,
   LandedAuthorEmailSchema,
@@ -32,8 +31,16 @@ export const LANDED_NOTICE_MAX_DELIVERED = 100;
 
 const nonEmptyId = z.string().min(1);
 
+/**
+ * One commit, ONE spelling: a full object name in lower case (SHA-1 or
+ * SHA-256), exactly what `git log %H` prints. The hub keeps one row per
+ * reader, file and commit; an abbreviation or an upper-case copy would be a
+ * second row, and the author would be told the same commit twice.
+ */
+const FULL_SHA_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
 export const LandedStopCommitSchema = z.object({
-  sha: z.string().regex(COMMIT_SHA_PATTERN),
+  sha: z.string().regex(FULL_SHA_PATTERN),
   /** Written by the author; reaches them through the reader's connector: quoted data. */
   subject: z.string().max(LANDED_STOP_MAX_SUBJECT_CHARS),
   /** After the reader's .mailmap: what the why answer was asked with. */

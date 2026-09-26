@@ -14,6 +14,9 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { landedNotices } from "../src/db/schema.ts";
+import { reapStaleSessions } from "../src/services/sessions.ts";
+
 import {
   TEST_START_ISO,
   VALID_SESSION_BODY,
@@ -417,6 +420,78 @@ describe("the author's notice", () => {
     const notices = await noticesFor(t, t.mike);
 
     expect(notices.map((notice) => notice.path)).toEqual(["src/d.ts", "src/c.ts", "src/b.ts"]);
+  });
+
+  test("the reader learns nothing from how a stop is received: told or not, muted or not, named right or not", async () => {
+    const t = await team();
+    const answers = [await nickStops(t, [{ author: t.mike }]), await nickStops(t, [{ author: t.mike }])];
+    await delivered(t, t.mike, commitIds(await noticesFor(t, t.mike)), "ses_mike");
+    answers.push(await nickStops(t, [{ author: t.mike }]));
+    await t.harness.app.request("/api/settings/mutes", jsonRequest("POST", t.mike.apiKey, { developer: t.nick.developerId }));
+    answers.push(await nickStops(t, [{ author: t.mike, sha: OTHER_SHA }]));
+    answers.push(await nickStops(t, [{ author: t.ken, authorEmail: MIKE_EMAIL, sha: "c".repeat(40) }]));
+
+    expect(answers).toEqual(Array.from({ length: 5 }, () => ({ status: 200, accepted: 1, rejected: 0 })));
+  });
+
+  test("a stop filed into a repo the reader's session does not report is refused", async () => {
+    const t = await team();
+
+    const stop = await nickStops(t, [{ author: t.mike }], { repo: "github.com/acme/payroll" });
+
+    expect(stop.rejected).toBe(1);
+    expect(await noticesFor(t, t.mike, "github.com/acme/payroll")).toEqual([]);
+  });
+
+  test("a stop more than seven days old when it arrives is not even stored", async () => {
+    const t = await team();
+    t.harness.clock.advanceSeconds(8 * DAY_S);
+    await registerTestSession(t.harness, t.nick.apiKey, { id: "ses_nick_offline" });
+
+    await nickStops(t, [{ author: t.mike }], { sessionId: "ses_nick_offline", stoppedAt: TEST_START_ISO });
+
+    expect(await t.harness.db.select().from(landedNotices)).toEqual([]);
+  });
+
+  test("rows past seven days are deleted in every repo, by the next stop anywhere or by the reaper", async () => {
+    const t = await team();
+    await nickStops(t, [{ author: t.mike }]);
+    t.harness.clock.advanceSeconds(8 * DAY_S);
+
+    await reapStaleSessions({ db: t.harness.db, now: t.harness.clock.now });
+
+    expect(await t.harness.db.select().from(landedNotices)).toEqual([]);
+  });
+
+  test("a subject that carries a secret is stored blank", async () => {
+    const t = await team();
+
+    await nickStops(t, [{ author: t.mike, subject: "rotate deploy key AKIAIOSFODNN7EXAMPLE" }]);
+
+    expect((await noticesFor(t, t.mike))[0]?.commits.map((commit) => commit.subject)).toEqual([""]);
+  });
+
+  test("one reader cannot pile notices up for one author, nor crowd another reader's out", async () => {
+    const t = await team();
+    await nickStops(t, [{ author: t.mike, sha: "e".repeat(40) }], { sessionId: "ses_ken" }, t.ken);
+    for (let index = 0; index < 40; index += 1) {
+      t.harness.clock.advanceSeconds(1);
+      await nickStops(t, [{ author: t.mike, sha: index.toString(16).padStart(40, "0") }], { path: `src/f${String(index)}.ts` });
+    }
+
+    const rows = await t.harness.db.select().from(landedNotices);
+    const notices = await noticesFor(t, t.mike);
+
+    expect(rows.filter((row) => row.readerDeveloperId === t.nick.developerId).length).toBeLessThanOrEqual(30);
+    expect(notices.map((notice) => notice.readerName)).toContain("Ken");
+  });
+
+  test("a repo with a NUL in it is a bad request, not a crash", async () => {
+    const t = await team();
+
+    const response = await t.harness.app.request("/api/landed/notices?repo=a%00b", jsonRequest("GET", t.mike.apiKey));
+
+    expect(response.status).toBe(400);
   });
 
   test("the prompt hint's call carries the same notices, so live delivery costs no round trip", async () => {

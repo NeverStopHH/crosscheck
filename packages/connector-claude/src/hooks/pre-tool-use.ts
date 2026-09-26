@@ -91,7 +91,7 @@ import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connec
 import type { LandedContextAnswer, LandedToldAuthor } from "@crosscheck/connector-core/http/hub.ts";
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import { namedLandedCommits } from "@crosscheck/connector-core/landed-changes/named-commits.ts";
-import { LANDED_STOP_MAX_SUBJECT_CHARS, LandedStopSchema } from "@crosscheck/schema";
+import { LANDED_STOP_MAX_SUBJECT_CHARS, LandedStopSchema, containsSecret } from "@crosscheck/schema";
 import { NO_LANDED_ANSWER, landedWhyFor } from "./landed-why.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
@@ -229,7 +229,10 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   const answer = won.landed === null ? NO_LANDED_ANSWER : await found.why;
   // Recorded BEFORE it is rendered: a name the stop prints is a name the hub
   // will tell (step 4, decision 11), so only what reached the spool is said.
-  const told = won.landed === null ? [] : await recordLandedStop(ctx, state, file, won.landed, answer.told);
+  const told =
+    won.landed === null || !mayTellAuthors(ctx, state)
+      ? []
+      : await recordLandedStop(ctx, state, file, won.landed, answer.told);
   const reason = renderEditWarning({
     live: won.teammate,
     landed: won.landed,
@@ -404,6 +407,21 @@ const recordTripwireAsk = async (
 };
 
 /**
+ * WHETHER THIS STOP MAY TELL ITS AUTHORS AT ALL.
+ *
+ * Not in `notice` mode: there the reason reaches only the model, no person
+ * sees "Mike is told about this stop", and decision 9 — the notice names
+ * the reader even behind a presence opt-out — rests on the reader having
+ * been told first (decision 11). A stop no person saw tells nobody.
+ *
+ * Not when the file's repo is not the session's: the hub files a stop under
+ * the repo its reader's session reports and refuses any other, so a line
+ * printed for one would name a notice that never exists.
+ */
+const mayTellAuthors = (ctx: HookContext, state: SessionState): boolean =>
+  resolveTripwireMode(ctx.env) !== TRIPWIRE_MODE_NOTICE && ctx.identity.repoId === state.repoId;
+
+/**
  * THE STOP IS RECORDED FOR THE PEOPLE IT NAMES (docs/1.0/landed-changes.md,
  * step 4). After the booking, like the live half's ask: a sibling that lost
  * the booking records nothing. Only the commits the stop names
@@ -435,7 +453,12 @@ const recordLandedStop = async (
             name: author.name,
             commit: {
               sha: commit.sha,
-              subject: cutWellFormed(commit.subject, LANDED_STOP_MAX_SUBJECT_CHARS),
+              // The local secret scan runs before every upload (DESIGN.md
+              // §2.1): a subject it flags goes blank, and the notice then
+              // names the commit by its sha alone.
+              subject: containsSecret(commit.subject)
+                ? ""
+                : cutWellFormed(commit.subject, LANDED_STOP_MAX_SUBJECT_CHARS),
               authorEmail: commit.authorEmail,
               authorDeveloperId: author.developerId,
               missing: missing.has(commit.sha),

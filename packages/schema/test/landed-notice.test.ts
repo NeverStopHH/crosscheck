@@ -60,6 +60,14 @@ describe("LandedStopSchema", () => {
     expect(LandedStopSchema.safeParse(body).success).toBe(false);
   });
 
+  test("a commit is its full, lower-case sha: one commit, one spelling", () => {
+    const upper = { ...STOP, commits: [{ ...COMMIT, sha: COMMIT.sha.toUpperCase() }] };
+    const short = { ...STOP, commits: [{ ...COMMIT, sha: COMMIT.sha.slice(0, 7) }] };
+
+    expect(LandedStopSchema.safeParse(upper).success).toBe(false);
+    expect(LandedStopSchema.safeParse(short).success).toBe(false);
+  });
+
   test("a stop names at least one commit and no more than the why may ask about", () => {
     const tooMany = Array.from({ length: LANDED_CONTEXT_MAX_COMMITS + 1 }, () => COMMIT);
 

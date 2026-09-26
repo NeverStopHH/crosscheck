@@ -718,11 +718,19 @@ export const LANDED_NOTICE_TTL_DAYS = 7;
 /** Reader-and-file groups one listing answers: a briefing section, a prompt. */
 export const LANDED_NOTICE_GROUPS_LISTED = 3;
 /**
- * Rows one listing reads before grouping. A stop names at most six commits
- * (three missing, three recent), so this holds several stops per group even
- * when every group is full.
+ * Rows one listing reads before grouping: room for every reader's waiting
+ * rows up to their cap below, several readers over, so the fair order the
+ * listing applies (one group per reader before anyone's second) sees them.
  */
-export const LANDED_NOTICE_ROWS_READ = 50;
+export const LANDED_NOTICE_ROWS_READ = 100;
+/**
+ * Waiting rows one reader may hold for one author. Past it, that reader's
+ * further stops at that author's commits tell nothing until some are told
+ * or expire — a bound on what one teammate can pile up, or forge, for
+ * another. A stop names at most LANDED_CONTEXT_MAX_COMMITS, so a pair holds
+ * at most that many more than this.
+ */
+export const LANDED_NOTICE_MAX_WAITING_PER_PAIR = 20;
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

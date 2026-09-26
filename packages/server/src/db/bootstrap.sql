@@ -424,8 +424,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS landed_notices_reader_file_commit_idx
   ON landed_notices (reader_developer_id, repo, path, sha);
 CREATE INDEX IF NOT EXISTS landed_notices_author_repo_stopped_idx
   ON landed_notices (author_developer_id, repo, stopped_at DESC);
-CREATE INDEX IF NOT EXISTS landed_notices_repo_stopped_idx
-  ON landed_notices (repo, stopped_at);
+CREATE INDEX IF NOT EXISTS landed_notices_stopped_idx
+  ON landed_notices (stopped_at);
 
 -- "Delivered exactly once" for an answer is a cross-SESSION promise: the
 -- asker's per-session seen-set dies with the session, so the durable store is
