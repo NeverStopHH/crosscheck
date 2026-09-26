@@ -79,6 +79,10 @@
  *                                   there only while that work's session is
  *                                   live: an ended session's work is
  *                                   published, a live one is presence
+ *  11. GET /api/landed/notices   — the author's notice (landed changes,
+ *                                   step 4): X's stop at my landed change,
+ *                                   in my briefing and, on the same list, in
+ *                                   GET /api/hints/candidates for my prompt
  *
  * Mute is a reader preference, not a boundary: the deliberate pull paths —
  * GET /api/search (search_related_work), GET /api/work-contexts/:id/diagnosis
@@ -93,6 +97,12 @@
  * developer is and when they last ran an agent; a question addressed to them
  * by name is neither, they receive it exactly as anybody else does, and the
  * asker learns nothing about their presence through it.
+ *
+ * Nor does it cover the AUTHOR'S NOTICE (landed changes, decision 9), and
+ * that one IS presence-class: "Nick ran into your landed change before editing
+ * src/lines.ts, 2h ago" says where the reader was and when. It is said
+ * anyway because the reader's own stop said so first ("Mike is told about
+ * this stop", decision 11): nothing is reported behind anybody's back.
  */
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";

@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
-import type { Envelope, Intent } from "@crosscheck/schema";
+import type { Envelope, Intent, LandedStop } from "@crosscheck/schema";
 
 import { FOREIGN_SESSION_DELIVERY } from "./seq.ts";
 import type { DeliveryChannel } from "@crosscheck/schema";
@@ -103,6 +103,31 @@ export const hintDeliveryRecord = (
       channel,
       deliveredAt: now.toISOString(),
     },
+    producer,
+    now,
+  );
+
+/**
+ * A reader's stop at a teammate's landed change (docs/1.0/landed-changes.md,
+ * step 4), for the hub to tell the authors the stop NAMED as told. The body
+ * is built by the stop itself, which alone knows whom it named.
+ */
+export const landedStopRecord = (body: LandedStop, producer: Producer, now: Date): Envelope =>
+  buildEnvelope("landed_stop", body, producer, now);
+
+/**
+ * The author's notices this session showed, by the hub's row ids: the hub
+ * marks them told, and only if they are addressed to this developer.
+ */
+export const landedNoticeDeliveryRecord = (
+  sessionId: string,
+  noticeIds: readonly string[],
+  producer: Producer,
+  now: Date,
+): Envelope =>
+  buildEnvelope(
+    "landed_notice_delivery",
+    { sessionId, noticeIds, deliveredAt: now.toISOString() },
     producer,
     now,
   );

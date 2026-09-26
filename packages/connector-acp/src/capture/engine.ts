@@ -1356,6 +1356,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
             producer: producerFor(session),
             shownSolvedIds: assembled.shownSolvedIds,
             shownGhostCount: assembled.shownGhostCount,
+            shownLandedNoticeIds: assembled.shownLandedNoticeIds,
             now: now(),
           });
           return { kind: "text", text: assembled.briefing };

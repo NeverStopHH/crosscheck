@@ -36,24 +36,29 @@ const isCommitYear = (iso: string): boolean => {
   return year >= MIN_COMMIT_YEAR && year <= MAX_COMMIT_YEAR;
 };
 
-const AuthorEmailSchema = z
+/** Shared with the stop's record (landed-notice.ts): one rule for an address. */
+export const LandedAuthorEmailSchema = z
   .string()
   .min(3)
   .max(MAX_EMAIL_CHARS)
   .refine((value) => value.includes("@"), "an author address");
 
+export const LandedRepoSchema = z.string().min(1).max(MAX_REPO_CHARS);
+
+/** Repo-relative, as git names it. */
+export const LandedPathSchema = z.string().min(1).max(MAX_PATH_CHARS);
+
 export const LandedContextCommitSchema = z.object({
   sha: z.string().regex(COMMIT_SHA_PATTERN),
   /** After the repo's .mailmap: the probe's own matching key. */
-  authorEmail: AuthorEmailSchema,
+  authorEmail: LandedAuthorEmailSchema,
   /** The commit's committer time — for a squash, when it landed. */
   committedAt: z.iso.datetime({ offset: true }).refine(isCommitYear, "a commit time in a year the hub can hold"),
 });
 
 export const LandedContextRequestSchema = z.object({
-  repo: z.string().min(1).max(MAX_REPO_CHARS),
-  /** Repo-relative, as git names it. */
-  path: z.string().min(1).max(MAX_PATH_CHARS),
+  repo: LandedRepoSchema,
+  path: LandedPathSchema,
   commits: z.array(LandedContextCommitSchema).min(1).max(LANDED_CONTEXT_MAX_COMMITS),
 });
 
@@ -61,7 +66,7 @@ export type LandedContextRequest = z.infer<typeof LandedContextRequestSchema>;
 export type LandedContextCommit = z.infer<typeof LandedContextCommitSchema>;
 
 export const LandedAuthorsRequestSchema = z.object({
-  emails: z.array(AuthorEmailSchema).max(LANDED_AUTHORS_MAX_EMAILS),
+  emails: z.array(LandedAuthorEmailSchema).max(LANDED_AUTHORS_MAX_EMAILS),
 });
 
 export type LandedAuthorsRequest = z.infer<typeof LandedAuthorsRequestSchema>;

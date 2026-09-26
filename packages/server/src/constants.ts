@@ -708,6 +708,26 @@ export const COVERAGE_SESSION_WINDOW_DAYS = 14;
 export const LANDED_WHY_WINDOW_DAYS = 30;
 export const LANDED_WHY_CLOCK_SLACK_MS = 5 * 60_000;
 export const LANDED_WHY_FLUSH_SLACK_MS = 60 * 60_000;
+
+/**
+ * The author's notice (services/landed-notices.ts, decision 10): a notice
+ * waits this long after its stop and is gone unsaid after it. The same bound
+ * refuses a stop that reaches the hub later than that.
+ */
+export const LANDED_NOTICE_TTL_DAYS = 7;
+/** Reader-and-file groups one listing answers: a briefing section, a prompt. */
+export const LANDED_NOTICE_GROUPS_LISTED = 3;
+/**
+ * Rows one reader may file for one author in one repo within the seven days,
+ * told or not. Past it, that reader's further stops at that author's commits
+ * there tell nothing new until older rows expire — a bound on how much, and
+ * how fast, one teammate can pile up, or forge, for another: this many a
+ * week, not this many at a time. Per repo, because notices are told per
+ * repo: rows in a repo the author never opens must not silence the one they
+ * work in. Exact — a stop that meets it writes only what fits — and a stop on
+ * a row still waiting only refreshes it and is never held back.
+ */
+export const LANDED_NOTICE_MAX_PER_PAIR = 20;
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

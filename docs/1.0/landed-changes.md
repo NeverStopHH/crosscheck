@@ -59,6 +59,23 @@ Grilled with Nick, 2026-09-25, for step 3:
    example `.mailmap` line that maps an address to its person. Mapped once in
    the repo, it works for everyone.
 
+Grilled with Nick, 2026-09-26, for step 4:
+
+8. **The author hears about both kinds of stop.** Mike is told when his
+   change is missing from Nick's checkout, and also when Nick already has it
+   and it landed recently. Each says which: missing work can be undone, work
+   Nick has can still be edited over.
+9. **The notice names the reader, even one who turned presence off.** "Nick
+   ran into your landed change before editing src/lines.ts, 2h ago" says where Nick
+   was and when, which is presence-class. It is said anyway because of
+   decision 11: Nick's own stop tells him it will be, so nothing is reported
+   behind his back.
+10. **A notice waits at most seven days** after the stop. Someone back from
+    a week away still hears it. After that it is gone unsaid, because it is
+    most likely settled or already surfaced in review.
+11. **The stop says who is told.** Nick's stop ends with "Mike is told about
+    this stop." Only a person the stop named is ever told.
+
 ## Mechanism
 
 **Git is the authority on WHAT; the hub adds WHY.** Whether a change landed
@@ -357,6 +374,141 @@ Known limits of step 3:
 - `Co-authored-by` trailers are not read. A commit gets its author's work
   only.
 - Cursor and ACP have no pre-edit stop, as in step 1.
+
+## The author's notice (step 4)
+
+Mike, whose change stopped Nick's edit, is told once: in his next briefing
+in that repo, or on his next prompt in a session there, whichever comes
+first (decisions 5, 8–11).
+
+- **Who is told is decided with the why, in the same answer.** The answer of
+  `POST /api/landed/context` also names, for each commit the stop named, the
+  developer its author address belongs to (never the caller). Those are the
+  people the stop names: "Mike is told about this stop." — each person once,
+  however many of their commits the stop names. The hub is not asked a
+  second time. If the why was not asked (no spare budget, an older hub) or
+  did not answer, the stop names nobody and nobody is told. So decision 11
+  holds by construction, never by hoping a later write matches an earlier
+  line.
+- **Only a person tells, and only a person is told.** In
+  `CROSSCHECK_TRIPWIRE=notice` mode (the mark of a headless run) the stop
+  reaches only the model, so it records nothing and names nobody: decision 9
+  rests on the reader having read "Mike is told" first. On the author's side
+  the same mode is told nothing — the briefing does not even fetch the
+  notices, the prompt does not tell them — so a notice is never spent on a
+  run nobody reads. *Refined during review, pending Nick's confirmation.* Nor
+  does a stop on a file whose repo is not the session's tell anybody; the hub
+  files a stop only under the repo its reader's session reports.
+- **The stop leaves a record, after it is booked.** A `landed_stop` record
+  is spooled once this hook has won the booking, like the live half's
+  delivery record. It carries the repo, the file, and for each named commit
+  of a told author: its full sha, its subject, its author address and
+  developer, and whether it was missing or recent. A subject the local
+  secret scan flags is sent blank, and the notice then names the commit by
+  its sha alone; the hub blanks it again. A spool append costs microseconds,
+  and a failed one is counted in `.drops`. The line is printed only when the
+  append succeeded: nobody is named as told whom the stop did not record. The hub hears
+  of the stop at the reader's next flush. That is seconds after an approved
+  edit, the end of the turn after a declined one, and the next session for
+  a laptop that went offline.
+- **The hub keeps one row per reader, file and commit** (`landed_notices`).
+  - It checks each commit's address against its named developer, drops the
+    caller's own, and does not store a stop that arrives more than seven
+    days old.
+  - A second stop on the same reader, file and commit refreshes a row not
+    yet told and adds nothing to one already told. So Mike hears about each
+    commit once per reader and file, however many sessions Nick stops in.
+    The seven days run from a row's latest stop before it was told, so a
+    reader still stopped at the same missing commit a week after that tells
+    the author again.
+  - Rows past seven days are never listed, and are deleted by the reaper
+    pass and before every stop's ingest.
+  - One reader files at most twenty rows for one author in one repo within
+    the seven days, told or not — a bound on the rate, and exact: a stop
+    that meets it writes only what fits, however many flushes race (one
+    transaction per stop). A stop on a row still waiting only refreshes it
+    and always passes. Per repo, because notices are told per repo.
+  - The reader learns nothing from how a stop is received: every admissible
+    stop is answered `accepted`, whatever the rows did. An answer that
+    followed the rows would be a read receipt — telling the reader when the
+    author opened a session, and whether the author muted them.
+- **Mike's side: listed unasked, marked told once shown.**
+  - `GET /api/landed/notices?repo=` feeds a briefing section right after
+    the questions, and the same list rides the prompt hint's existing call,
+    so live delivery costs no extra round trip.
+  - Rows are grouped by reader and file, at most three groups: every
+    reader's newest group before anyone's second, newest first within a
+    round — ranked in SQL before any limit — so one reader's many stops
+    cannot crowd out another's. A listed group comes whole.
+  - Mike's mute of Nick hides Nick's notices. This is an unasked surface for
+    Mike, and a mute is never disclosed, so Nick's stop still says "Mike is
+    told" (the rule for questions).
+  - Nick's presence opt-out does not hide them (decision 9).
+  - A shown group is marked told by a `landed_notice_delivery` record, which
+    the hub applies only to rows addressed to its sender. Only what the
+    emitted text really names is marked: at most three commits per group,
+    the rest shown next time, and a group the briefing's character budget
+    cut is still waiting.
+  - On a prompt, a notice takes the prompt's one hint slot after an answer
+    and before a pointer, and counts toward the session's five. It is
+    claimed in session state first, then spooled, then posted at once, so
+    Mike's other live sessions stay quiet. All of that happens only while
+    the prompt hook's budget still spares room to post it and print it; with
+    less, the notice is neither claimed nor marked and waits. A prompt the
+    hint path stays silent on (too short, carrying a secret, the five spent)
+    delivers no notice either. The next briefing does.
+- **What Mike reads**:
+  ```
+  Teammates ran into your landed changes (each notice is shown once):
+  - Nick ran into your landed changes before editing src/lines.ts, 2h ago:
+    0dcfc4e «Fix line offset»: was missing from Nick's checkout
+    1a2b3c4 «Count from one»: Nick already had it; it had landed recently
+  ```
+  Past tense, because a notice can be read days after its stop and says
+  what was true then. On a prompt the same entry follows "crosscheck notice:
+  a teammate ran into your landed changes; this notice is shown once."
+  Groups the briefing leaves out, and commits past three, end in "(+N more,
+  shown next time)". The subject is quoted data: it reaches Mike through
+  Nick's connector.
+- **Every host's author hears it.** The briefing is shared by all three
+  connectors. The prompt path serves Claude Code and ACP. Cursor has no
+  prompt channel, and its failure hint's output field is undocumented and
+  may be dropped, so there the briefing is the only delivery. Only Claude
+  Code readers produce stops.
+
+Known limits of step 4:
+
+- Two of Mike's sessions in the same repo that read the same notice before
+  either's delivery reached the hub both show it. A briefing delivered on
+  the first prompt of a session (the deferred briefing) is only spooled
+  until that session's next flush, which widens the window, and a session
+  that is resumed or cleared forgets what it showed.
+- A stop whose why was not asked in time names nobody, so nobody is told.
+  This is the price of decision 11.
+- "Mike is told" says the stop was recorded for Mike, not that he reads it:
+  if he opens no session in that repo within seven days, or runs a connector
+  older than step 4, it expires unsaid. The same holds for a stop the hub
+  never receives within seven days (a laptop offline that long), for one on
+  a commit Mike was already told of for that file within the week, and for
+  one past the twenty. Saying otherwise would tell Nick when Mike looked.
+- A briefing is marked told before the hook's last local steps run; a hook
+  that then runs out of time has marked a notice told that it did not show,
+  as it can a solved pointer. ACP prepares its briefing when the session
+  opens and shows it on the first prompt, so a notice another session told
+  in between is shown again, with the age it had when prepared.
+- On a hub across a slow network, a prompt rarely has room to tell a notice
+  (the budget holds one request timeout in reserve), and the briefing tells
+  it instead.
+- In a permission mode that does not show a hook's ask to the person, Nick
+  never sees "Mike is told", and Mike is told all the same.
+- A headless run without `CROSSCHECK_TRIPWIRE=notice` cannot be told apart
+  from an interactive one (the stop's own header says why), so its stop
+  still tells the author, though the reason reached only the model.
+- A commit author the hub does not know cannot be told (decision 7; `doctor`
+  names the address).
+- The `told` answer lets any hub member learn which developer an author
+  address belongs to. Within one hub that is the team's own directory; the
+  why already names people by their commits.
 
 ## Build order
 

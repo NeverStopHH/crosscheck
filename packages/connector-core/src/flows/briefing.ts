@@ -25,12 +25,14 @@
 import {
   CONTEXT_MAX_AGE_DAYS,
   MAX_GHOST_POINTERS,
+  MAX_LANDED_NOTICE_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
   MS_PER_DAY,
   WORK_CONTEXT_LIST_LIMIT,
 } from "../constants.ts";
 import { formatGhostLine } from "../briefing/ghost.ts";
+import { formatLandedNoticeEntry } from "../briefing/landed-notices.ts";
 import { coverageNote } from "../coverage/render.ts";
 import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
 import {
@@ -39,21 +41,24 @@ import {
   renderBriefing,
 } from "../briefing/render.ts";
 import { resolveDriftByBaseCommit } from "../git/commit-drift.ts";
-import { UNKNOWN_DEVELOPER_ID, hintDeliveryRecord } from "../capture/records.ts";
+import { UNKNOWN_DEVELOPER_ID, hintDeliveryRecord, landedNoticeDeliveryRecord } from "../capture/records.ts";
 import type { Producer } from "../capture/records.ts";
 import {
   getAbsences,
   getContradictions,
   getDrafts,
   getGhostChecks,
+  getLandedNotices,
   getPresence,
   getQuestions,
   getSolvedMatches,
   getWorkContexts,
 } from "../http/hub.ts";
+import type { HubResult } from "../http/client.ts";
 import type {
   GhostCheckEntry,
   HubContext,
+  LandedNotice,
   PresenceEntry,
   SolvedMatchEntry,
   WorkContextEntry,
@@ -64,6 +69,7 @@ import {
   updateSessionState,
   withBriefingSolvedRefs,
   withGhostNotices,
+  withShownLandedNotices,
 } from "../state/session-state.ts";
 
 export interface AssembleBriefingInput {
@@ -81,6 +87,12 @@ export interface AssembleBriefingInput {
   readonly collectLanded?:
     | ((workContexts: readonly WorkContextEntry[]) => Promise<readonly string[]>)
     | undefined;
+  /**
+   * False when no person reads this session (landed changes, step 4): the
+   * author's notices are then not even fetched, so none is shown to a run
+   * nobody reads and marked told. Default true.
+   */
+  readonly tellsNotices?: boolean | undefined;
 }
 
 export interface AssembledBriefing {
@@ -113,7 +125,15 @@ export interface AssembledBriefing {
   readonly shownGhostCount: number;
   /** The `collectLanded` rider's result; empty when no rider was passed. */
   readonly landedCommits: readonly string[];
+  /**
+   * The hub rows of the author's notices the emitted text really names
+   * (landed changes, step 4): told once, so only what the reader saw is
+   * marked — a notice the character budget cut still waits.
+   */
+  readonly shownLandedNoticeIds: readonly string[];
 }
+
+const NO_NOTICES: HubResult<readonly LandedNotice[]> = { ok: true, data: [], dateHeader: null };
 
 export const assembleBriefing = async (
   input: AssembleBriefingInput,
@@ -129,6 +149,7 @@ export const assembleBriefing = async (
     draftsResult,
     questionsResult,
     ghostChecksResult,
+    landedNoticesResult,
   ] = await Promise.all([
     getPresence(hub, repoId),
     // The window, passed EXPLICITLY (trial finding M8): the hub's default is
@@ -153,6 +174,9 @@ export const assembleBriefing = async (
     // more: the SessionStart budget is 1000 ms and this GET must cost the
     // hook nothing but its share of the one timeout the block already spends.
     getGhostChecks(hub, repoId),
+    // Landed changes, step 4: the author's notices, addressed to this reader.
+    // Same block, same one timeout; an older hub renders no section.
+    input.tellsNotices === false ? Promise.resolve(NO_NOTICES) : getLandedNotices(hub, repoId),
   ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
@@ -173,6 +197,7 @@ export const assembleBriefing = async (
   const drafts = draftsResult.ok ? draftsResult.data : [];
   const questions = questionsResult.ok ? questionsResult.data.inbox : [];
   const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
+  const landedNotices = landedNoticesResult.ok ? landedNoticesResult.data : [];
 
   // Only the teammates that will actually be shown cost a git process; the
   // optional rider shares the fan-out window, so both together still cost one
@@ -198,6 +223,7 @@ export const assembleBriefing = async (
     drafts,
     questions,
     ghostChecks,
+    landedNotices,
     ...(coverageLine === null ? {} : { coverageLine }),
   });
 
@@ -222,10 +248,20 @@ export const assembleBriefing = async (
     .slice(0, MAX_GHOST_POINTERS)
     .filter((line) => briefing.includes(line)).length;
 
+  // The same rule once more: an entry's one spelling is in the text, or it
+  // was not shown — and only the commits it names are marked told.
+  const shownLandedNoticeIds = landedNotices
+    .slice(0, MAX_LANDED_NOTICE_POINTERS)
+    .flatMap((notice) => {
+      const entry = formatLandedNoticeEntry(notice, now);
+      return entry !== null && briefing.includes(entry.text) ? entry.commitIds : [];
+    });
+
   return {
     briefing,
     shownSolvedIds,
     shownGhostCount,
+    shownLandedNoticeIds,
     presence,
     presenceFetched: presenceResult.ok,
     workContexts,
@@ -242,6 +278,8 @@ export interface RecordBriefingDeliveriesInput {
   readonly shownSolvedIds: readonly string[];
   /** Ghost lines the emitted briefing really showed (`assembleBriefing`). */
   readonly shownGhostCount: number;
+  /** Author's-notice rows the emitted briefing really named (`assembleBriefing`). */
+  readonly shownLandedNoticeIds: readonly string[];
   readonly now: Date;
 }
 
@@ -257,8 +295,32 @@ export interface RecordBriefingDeliveriesInput {
 export const recordBriefingDeliveries = async (
   input: RecordBriefingDeliveriesInput,
 ): Promise<void> => {
-  if (input.shownSolvedIds.length === 0 && input.shownGhostCount === 0) {
+  if (
+    input.shownSolvedIds.length === 0 &&
+    input.shownGhostCount === 0 &&
+    input.shownLandedNoticeIds.length === 0
+  ) {
     return;
+  }
+  // The author's notices (landed changes, step 4) are marked told by their
+  // own record, never a hint_delivery: they are no hint, and the pilot's
+  // precision counts must not count them. The hub applies it only to rows
+  // addressed to this developer.
+  if (input.shownLandedNoticeIds.length > 0) {
+    await appendRecords(
+      input.home,
+      input.repoKey,
+      input.hostSessionKey,
+      [
+        landedNoticeDeliveryRecord(
+          input.crosscheckSessionId,
+          input.shownLandedNoticeIds,
+          input.producer,
+          input.now,
+        ),
+      ],
+      input.now,
+    );
   }
   // Only the SOLVED pointers become delivery rows. A ghost line is not a hint
   // — it repeats for as long as the overlap lasts, by design — so recording
@@ -284,12 +346,15 @@ export const recordBriefingDeliveries = async (
       input.now,
     );
   }
-  // ONE state write for both counters: two would be two lock rounds on the
+  // ONE state write for all three: three would be three lock rounds on the
   // SessionStart path for one fact — what this briefing actually showed.
   await updateSessionState(input.home, input.hostSessionKey, (fresh) =>
-    withGhostNotices(
-      withBriefingSolvedRefs(fresh, input.shownSolvedIds),
-      input.shownGhostCount,
+    withShownLandedNotices(
+      withGhostNotices(
+        withBriefingSolvedRefs(fresh, input.shownSolvedIds),
+        input.shownGhostCount,
+      ),
+      input.shownLandedNoticeIds,
     ),
   );
 };
@@ -304,6 +369,8 @@ export interface DeliverDeferredBriefingInput {
   readonly repoId: string;
   readonly agentKind: string;
   readonly now: Date;
+  /** As on `assembleBriefing`: false when no person reads this session. */
+  readonly tellsNotices?: boolean | undefined;
 }
 
 /**
@@ -359,6 +426,7 @@ export const deliverDeferredBriefing = async (
     repoRoot: state.repoRoot,
     selfDeveloperId: state.developerId,
     now: input.now,
+    tellsNotices: input.tellsNotices,
   });
   if (assembled.briefing.length === 0) {
     return "";
@@ -375,6 +443,7 @@ export const deliverDeferredBriefing = async (
     },
     shownSolvedIds: assembled.shownSolvedIds,
     shownGhostCount: assembled.shownGhostCount,
+    shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now: input.now,
   });
   return assembled.briefing;

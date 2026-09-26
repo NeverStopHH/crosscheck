@@ -30,6 +30,7 @@
  */
 import {
   HINT_MIN_TOKEN_CHARS,
+  LANDED_NOTICE_MIN_SPARE_MS,
   MAX_HINTS_PER_SESSION,
   MAX_SEARCH_QUERY_CHARS,
 } from "../constants.ts";
@@ -38,12 +39,13 @@ import type { HintRefKind } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { getHintCandidates } from "../http/hub.ts";
-import type { AnsweredQuestion, HubContext } from "../http/hub.ts";
-import { rememberHintDelivery } from "../hints/delivery.ts";
+import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
+import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
 import {
   renderAnswerHint,
   renderClaimHint,
+  renderLandedNoticeHint,
   renderPointerHint,
   withCoverageNote,
 } from "../hints/render.ts";
@@ -74,6 +76,20 @@ export interface SelectAndRenderHintInput {
   /** EPHEMERAL query — sliced for the hub call, never stored (see header). */
   readonly prompt: string;
   readonly now: Date;
+  /**
+   * Whether this host may tell an author's notice here (landed changes, step
+   * 4): only on a prompt a person reads. Cursor's failure hint is not one —
+   * its output field is undocumented and may be dropped silently, and a
+   * notice told there would be marked told and never seen — so Cursor leaves
+   * this off and its authors hear notices in the briefing. Off by default.
+   */
+  readonly tellsNotices?: boolean;
+  /**
+   * What the caller's budget still spares after its reserve. A notice is told
+   * only while at least LANDED_NOTICE_MIN_SPARE_MS is spare, and its
+   * immediate post gets no more (hints/delivery.ts). Absent, no notice is told.
+   */
+  readonly spareMs?: () => number;
 }
 
 interface Delivery {
@@ -163,6 +179,22 @@ const selectAnswer = (
 };
 
 /**
+ * The first author's notice (landed changes, step 4) with a commit this
+ * session has not shown, cut to those commits: a notice the briefing already
+ * told is not told again before the hub has heard it was. A pre-check, like
+ * selectAnswer's; the claim in rememberLandedNoticeDelivery is the guarantee.
+ */
+const selectNotice = (
+  notices: readonly LandedNotice[],
+  shownIds: readonly string[],
+): LandedNotice | undefined => {
+  const shown = new Set(shownIds);
+  return notices
+    .map((notice) => ({ ...notice, commits: notice.commits.filter((commit) => !shown.has(commit.id)) }))
+    .find((notice) => notice.commits.length > 0);
+};
+
+/**
  * The whole prompt-time pipeline; returns the rendered hint or "" (silence).
  * Every branch that cannot prove a hint is worth injecting returns "".
  */
@@ -232,6 +264,27 @@ export const selectAndRenderHint = async (
         ? withCoverageNote(text, result.data.coverage, input.now)
         : "";
     }
+  }
+  // ADDRESSED NEWS NEXT (landed changes, step 4): a teammate's edit stopped
+  // at this developer's own landed change. After an answer — they asked for
+  // that one and are waiting — and before a pointer they never asked for,
+  // and in the same one slot either would spend.
+  const spareMs = input.tellsNotices === true ? input.spareMs : undefined;
+  const notice =
+    spareMs === undefined || spareMs() < LANDED_NOTICE_MIN_SPARE_MS
+      ? undefined
+      : selectNotice(result.data.notices, state.shownLandedNoticeIds);
+  const told = notice === undefined ? null : renderLandedNoticeHint(notice, input.now);
+  const firstCommit = told?.commitIds[0];
+  if (spareMs !== undefined && told !== null && firstCommit !== undefined) {
+    return (await rememberLandedNoticeDelivery(
+      input,
+      state,
+      { slotRef: firstCommit, commitIds: told.commitIds },
+      spareMs,
+    ))
+      ? told.text
+      : "";
   }
   const selection = selectHint({
     // Briefing solved pointers join the seen-set — the same tree must not be

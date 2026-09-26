@@ -8,16 +8,32 @@
  *   how, and why it is a probable match).
  * - POST /api/landed/authors: which of these addresses belong to nobody on
  *   this hub — `doctor`'s half of decision 7.
+ *
+ * And the author's notice (step 4): the context answer also names who the
+ * stop tells (`told`), and GET /api/landed/notices lists the notices waiting
+ * for the caller in a repo (services/landed-notices.ts).
  */
 import { Hono } from "hono";
+import { z } from "zod";
 
-import { LandedAuthorsRequestSchema, LandedContextRequestSchema } from "@crosscheck/schema";
+import {
+  LandedAuthorsRequestSchema,
+  LandedContextRequestSchema,
+  LandedRepoSchema,
+  unstorableTextPath,
+} from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { findLandedContexts, unknownAuthorEmails } from "../services/landed-context.ts";
+import { findLandedContexts, toldAuthors, unknownAuthorEmails } from "../services/landed-context.ts";
+import { listLandedNotices } from "../services/landed-notices.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+
+// A NUL cannot reach a text column: refused here, never a database error.
+const NoticesQuerySchema = z.object({
+  repo: LandedRepoSchema.refine((repo) => unstorableTextPath(repo) === null, "a repo without a NUL"),
+});
 
 export const landedRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
@@ -28,8 +44,11 @@ export const landedRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const matches = await findLandedContexts(deps, c.get("developer").id, parsed.data);
-    return ok(c, { matches });
+    const [matches, told] = await Promise.all([
+      findLandedContexts(deps, c.get("developer").id, parsed.data),
+      toldAuthors(deps, c.get("developer").id, parsed.data),
+    ]);
+    return ok(c, { matches, told });
   });
 
   router.post("/authors", async (c) => {
@@ -38,6 +57,14 @@ export const landedRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
     return ok(c, { unknown: await unknownAuthorEmails(deps, parsed.data.emails) });
+  });
+
+  router.get("/notices", async (c) => {
+    const parsed = NoticesQuerySchema.safeParse({ repo: c.req.query("repo") });
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    return ok(c, { notices: await listLandedNotices(deps, c.get("developer").id, parsed.data.repo) });
   });
 
   return router;

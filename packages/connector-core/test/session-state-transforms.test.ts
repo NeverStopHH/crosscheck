@@ -38,6 +38,7 @@ const baseState = (): SessionState => ({
   landedAskedFiles: [],
   landedCleanKeys: [],
   briefingSolvedRefs: [],
+  shownLandedNoticeIds: [],
   probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,

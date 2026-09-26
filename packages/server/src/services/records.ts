@@ -7,6 +7,8 @@ import type {
   HintDelivery,
   KnownRecordKind,
   LandedEvidence,
+  LandedNoticeDelivery,
+  LandedStop,
   Question,
   QuestionAnswer,
   SeqField,
@@ -19,6 +21,7 @@ import { reviveReapedSession } from "./sessions.ts";
 import { ingestCommitEvidence } from "./commit-evidence.ts";
 import { ingestHintDelivery } from "./hint-deliveries.ts";
 import { ingestLandedEvidence } from "./landed.ts";
+import { ingestLandedNoticeDelivery, ingestLandedStop } from "./landed-notices.ts";
 import { embedContextDoc } from "./normalized-doc.ts";
 import { answerQuestion, askQuestionFromRecord } from "./questions.ts";
 import {
@@ -243,6 +246,10 @@ const dispatchRecord = (
       return ingestQuestion(deps, developerId, body as Question);
     case "question_answer":
       return ingestQuestionAnswer(deps, developerId, body as QuestionAnswer);
+    case "landed_stop":
+      return ingestLandedStop(deps, developerId, body as LandedStop);
+    case "landed_notice_delivery":
+      return ingestLandedNoticeDelivery(deps, developerId, body as LandedNoticeDelivery);
   }
 };
 
@@ -277,6 +284,11 @@ const touchedContextId = (
     // shared claim gate (ingestClaimWithin); re-embedding here would pay for
     // the same doc twice per flush.
     case "question_answer":
+      return undefined;
+    // The author's notice is about two people and a commit; no context's
+    // searchable doc changes.
+    case "landed_stop":
+    case "landed_notice_delivery":
       return undefined;
   }
 };

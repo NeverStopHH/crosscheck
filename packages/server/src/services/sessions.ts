@@ -7,6 +7,7 @@ import {
   SESSION_REAP_MAX_PER_PASS,
   SESSION_REAP_STALE_HOURS,
 } from "../constants.ts";
+import { pruneLandedNotices } from "./landed-notices.ts";
 import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
 import { agentSessions, sessionEvents } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
@@ -390,6 +391,10 @@ export const reapStaleSessions = async (
   // return below, because a retirement that only happens when there is also
   // a session to close is the defect D2's first sweep had.
   await prunePilotMeasurements(deps);
+  // The author's notices wait seven days and no longer (landed changes,
+  // decision 10) — pruned here too, so a repo that sees no further stop
+  // does not keep them, and their subjects, for good.
+  await pruneLandedNotices(deps);
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db
