@@ -12491,10 +12491,44 @@ export const MUTATIONS: readonly Mutation[] = [
     // released hub keeps its tables in `template1`.
     label: "an upgraded hub opens PGlite’s default database",
     file: `${SERVER}/src/db/client.ts`,
-    from: "    ? new PGlite(options.dataDir, { database: HUB_DATABASE, extensions: { vector } })",
-    to: "    ? new PGlite(options.dataDir, { extensions: { vector } })",
+    from: "      ? new PGlite(options.dataDir, { database: HUB_DATABASE, extensions: { vector } })",
+    to: "      ? new PGlite(options.dataDir, { extensions: { vector } })",
     test: `${SERVER}/test/upgrade.test.ts`,
     because: "every released hub starts empty after the update: each stored key is unknown, the old data out of sight",
+  },
+  {
+    // Dependencies, 2026-09-26: PGlite 0.4 leaves exit code 99 behind after
+    // booting on Bun, and its close() writes 0 over the process's own code.
+    label: "a PGlite boot leaves its exit code behind",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "    process.exitCode = exitCodeBefore ?? 0;",
+    to: "",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "every process that opened the hub's database ends 99: CI's bun test fails with every test green",
+  },
+  {
+    label: "the exit code after a PGlite step is always 0",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "    process.exitCode = exitCodeBefore ?? 0;",
+    to: "    process.exitCode = 0;",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "a process that had already failed ends 0 once it opens the database",
+  },
+  {
+    label: "the hub boots PGlite unshielded",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "  const client = await keepingExitCode(async () => {",
+    to: "  const client = await ((step: () => Promise<PGlite>) => step())(async () => {",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "a process that opened the hub's database ends 99",
+  },
+  {
+    label: "the version probe runs PGlite unshielded",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "  keepingExitCode(async () => {\n    const probe = new PGlite();",
+    to: "  ((step: () => Promise<string>) => step())(async () => {\n    const probe = new PGlite();",
+    test: `${SERVER}/test/pglite-exit-code.test.ts`,
+    because: "the version probe's close() turns a process's failing exit code into 0",
   },
 ];
 
@@ -12752,6 +12786,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 20
  * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
+ * PRINTS: packages/server/test/pglite-exit-code.test.ts 4
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7

@@ -56,16 +56,44 @@ export const PGLITE_PG_MAJOR = "17";
  */
 export const HUB_DATABASE = "template1";
 
-/** Live-measured major of the bundled build — the directive above compares it. */
-export const bundledPgMajor = async (): Promise<string> => {
-  const probe = new PGlite();
-  await probe.waitReady;
-  const result = await probe.query<{ readonly major: string }>(
-    "SELECT split_part(current_setting('server_version'), '.', 1) AS major",
-  );
-  await probe.close();
-  return result.rows[0]?.major ?? "unknown";
+/**
+ * Runs a PGlite boot or close without letting it change the process's exit
+ * code.
+ *
+ * PGlite 0.4 boots through Emscripten's Node branch, whose quit handler
+ * writes `process.exitCode = 99`. PGlite then restores the value it saved
+ * before booting, and on a clean process that is `undefined`, which Bun
+ * ignores (Node resets). So a process that had opened a database ended 99,
+ * failures or not, until it closed it: CI's `bun test` failed with every test
+ * green. `close()` in turn writes 0, over whatever the process had set.
+ * Measured on 2026-09-26 with PGlite 0.4.6 on Bun 1.3.13 (macOS) and 1.4.2
+ * (Linux amd64); 0.3.16 did neither. Upstream: electric-sql/pglite#975 and
+ * #1083, fixed for Bun in 0.5.6, a PostgreSQL 18 line.
+ *
+ * An unset code is put back as 0, the one Bun can store: the process then
+ * ends as it would unset, and an uncaught error or a failed test still ends
+ * it 1.
+ */
+const keepingExitCode = async <T>(step: () => Promise<T>): Promise<T> => {
+  const exitCodeBefore = process.exitCode;
+  try {
+    return await step();
+  } finally {
+    process.exitCode = exitCodeBefore ?? 0;
+  }
 };
+
+/** Live-measured major of the bundled build — the directive above compares it. */
+export const bundledPgMajor = async (): Promise<string> =>
+  keepingExitCode(async () => {
+    const probe = new PGlite();
+    await probe.waitReady;
+    const result = await probe.query<{ readonly major: string }>(
+      "SELECT split_part(current_setting('server_version'), '.', 1) AS major",
+    );
+    await probe.close();
+    return result.rows[0]?.major ?? "unknown";
+  });
 
 /**
  * Fail fast, by name, on a data dir another PostgreSQL major wrote. A missing
@@ -103,10 +131,13 @@ export const createDb = async (options: CreateDbOptions = {}): Promise<Db> => {
   // The vector extension is bundled with the pinned PGlite — loading it here
   // is what lets bootstrap.sql's CREATE EXTENSION succeed. A real-Postgres
   // deployment needs pgvector installed instead (DESIGN.md §2).
-  const client = options.dataDir
-    ? new PGlite(options.dataDir, { database: HUB_DATABASE, extensions: { vector } })
-    : new PGlite({ database: HUB_DATABASE, extensions: { vector } });
-  await client.waitReady;
+  const client = await keepingExitCode(async () => {
+    const booting = options.dataDir
+      ? new PGlite(options.dataDir, { database: HUB_DATABASE, extensions: { vector } })
+      : new PGlite({ database: HUB_DATABASE, extensions: { vector } });
+    await booting.waitReady;
+    return booting;
+  });
   await runBootstrap(client);
   return drizzle(client, { schema });
 };
