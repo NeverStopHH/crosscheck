@@ -11154,6 +11154,490 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "while the reader resolves a merge, the very commits being merged are announced as missing",
   },
+  {
+    // Landing fetch (step 2). A pull must never read our FETCH_HEAD.
+    label: "the background fetch writes FETCH_HEAD",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "--no-write-fetch-head",',
+    to: '  "--write-fetch-head",',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because:
+      "a developer's own git pull reads FETCH_HEAD between its fetch and its merge, and a background fetch in that gap makes it merge the wrong thing",
+  },
+  {
+    // Landing fetch. Tags are not ours to bring.
+    label: "the background fetch brings every tag",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "--no-tags",',
+    to: '  "--tags",',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a hook fills the developer's clone with every tag origin has, unasked",
+  },
+  {
+    // Landing fetch. Only what origin has goes into a refspec.
+    label: "a branch the stop reads but origin deleted is fetched anyway",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  return [...new Set(picked)].filter((branch) => origin.existing.has(branch));",
+    to: "  return [...new Set(picked)];",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because:
+      "one branch deleted on origin fails the whole fetch, and every landing branch goes stale with it",
+  },
+  {
+    // Landing fetch. Every branch the stop reads is refreshed.
+    label: "the fetch refreshes only what origin's default names",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const picked = [...selectLandingBranches(setting, origin), ...stopReads];",
+    to: "  const picked = [...selectLandingBranches(setting, origin)];",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because:
+      "once origin's default moves, the branch the stop still reads is never fetched again, and the stop goes blind",
+  },
+  {
+    // Landing fetch. The default branch is origin's word.
+    label: "origin's default branch is ignored",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "      symref = name === \"HEAD\" ? left.slice(SYMREF_PREFIX.length) : symref;",
+    to: "      symref = null;",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a team whose default branch is not main or master never has it fetched",
+  },
+  {
+    // Landing fetch. A HEAD that does not resolve names nothing to fetch.
+    label: "an unborn default branch is fetched",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const headBranch = headTip !== null && named !== null && isBranchName(named) ? named : null;",
+    to: "  const headBranch = named !== null && isBranchName(named) ? named : null;",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "an empty origin's default branch goes into the refspec, and the fetch fails for every branch",
+  },
+  {
+    label: "origin's default branch has no tip unless it was asked about",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "    existing.set(headBranch, headTip);",
+    to: '    existing.set(headBranch, "");',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a partial fetch of a default branch called trunk can never be recognised as brought",
+  },
+  {
+    // Landing fetch. Configured refspecs are not applied.
+    label: "configured fetch refspecs ride along with the background fetch",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "--refmap=",',
+    to: '  "--no-show-forced-updates",',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a remote.origin.fetch refspec that names a local branch creates or moves it from a hook",
+  },
+  {
+    label: "credential helpers are not told to stay quiet",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "credential.interactive=false",',
+    to: '  "credential.interactiveUnused=false",',
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "a helper that would honour it opens a sign-in dialog while the agent works",
+  },
+  {
+    label: "the fetch writes commit-graph files",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  "fetch.writeCommitGraph=false",',
+    to: '  "fetch.writeCommitGraphUnused=false",',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "every five minutes a hook adds files to the developer's .git they never asked for",
+  },
+  {
+    label: "a partly refused fetch counts as nothing",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const brought = branches.filter(moved);",
+    to: "  const brought: readonly string[] = [];",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because:
+      "one stuck ref makes every run a failure, and doctor says nothing was fetched while main moves every time",
+  },
+  {
+    label: "any git is taken as recent enough",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  return major > MIN_GIT[0] || (major === MIN_GIT[0] && minor >= MIN_GIT[1]);",
+    to: "  return major >= 0;",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "on a git without --no-write-fetch-head every run fails, and doctor sends the developer to the wrong fix",
+  },
+  {
+    // Landing fetch. Nothing an abandoned call started outlives it.
+    label: "a descendant that ignores SIGTERM outlives its abandoned call",
+    file: `${CORE}/src/git/git.ts`,
+    from: '    process.kill(-leader, "SIGKILL");',
+    to: "    process.kill(-leader, 0);",
+    test: `${CORE}/test/git-timeout.test.ts`,
+    because: "a helper stuck on a dialog, or a ProxyCommand, is left behind every five minutes",
+  },
+  {
+    label: "a call meant to lead its own group does not",
+    file: `${CORE}/src/git/git.ts`,
+    from: "      ...(options.ownGroup === true ? { detached: true } : {}),",
+    to: "      ...{},",
+    test: `${CORE}/test/git-timeout.test.ts`,
+    because: "the group kill finds no group, and the whole tree of an abandoned call survives it",
+  },
+  {
+    label: "a command handed its environment inherits this process's too",
+    file: `${CORE}/src/git/git.ts`,
+    from: "        : options.inheritEnv === false",
+    to: "        : false",
+    test: `${CORE}/test/git-timeout.test.ts`,
+    because: "the worker's git sees variables the hook never handed it",
+  },
+  {
+    label: "the fetch's network calls share the worker's group",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "        ownGroup: true,",
+    to: "        ownGroup: false,",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "at a deadline only git is signalled, and a stubborn ssh child lives on after the worker",
+  },
+  {
+    label: "the fetch's network calls inherit the worker process's environment",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "        inheritEnv: false,",
+    to: "        inheritEnv: true,",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "git in the worker acts on variables the hook never handed it",
+  },
+  {
+    label: "origin is not asked about a branch the stop reads",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const asked = [...new Set([...landingBranchCandidates(plan.branches), ...stopReads])];",
+    to: "  const asked = [...landingBranchCandidates(plan.branches)];",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a default branch called trunk is dropped the moment origin's HEAD moves away from it",
+  },
+  {
+    label: "a dropped connection reads as a success",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  if (brought.length === 0) {",
+    to: "  if (brought.length < 0) {",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a fetch that brought nothing resets the failure count and doctor calls it healthy",
+  },
+  {
+    label: "bookings are not counted",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "          bookedSinceReport: current.bookedSinceReport + 1,",
+    to: "          bookedSinceReport: 0,",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "a worker that never starts reads as 'not run yet' forever",
+  },
+  {
+    label: "a report does not clear the booking count",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "        bookedSinceReport: 0,",
+    to: "        bookedSinceReport: current.bookedSinceReport,",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a healthy worker is reported as never finishing after three runs",
+  },
+  {
+    label: "doctor passes a worker that never reports",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "  if (record.bookedSinceReport >= DOCTOR_LANDING_FETCH_FAILURES_WARN) {",
+    to: "  if (record.bookedSinceReport < 0) {",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "the fetch never runs and doctor keeps saying it has not run yet",
+  },
+  {
+    label: "doctor calls a home that does not exist yet unwritable",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "      dir = parent;",
+    to: "      return false;",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "every fresh machine is told its fetch can never run",
+  },
+  {
+    // The stop reads a default branch with a name of its own.
+    label: "a default branch called trunk is watched at an empty tip",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: "    existing.set(headBranch, headTip);",
+    to: '    existing.set(headBranch, "");',
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because: "git reads an empty tip as HEAD...HEAD, and every edit in such a repo is told nothing landed",
+  },
+  {
+    label: "a branch called HEAD is a landing branch",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: "  name.toUpperCase() !== HEAD_NAME &&",
+    to: "  name.length > 0 &&",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "origin can write a foreign commit through refs/remotes/origin/HEAD into origin/main",
+  },
+  {
+    label: "a branch called head is a landing branch on a case-insensitive filesystem",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: "  name.toUpperCase() !== HEAD_NAME &&",
+    to: "  name !== HEAD_NAME &&",
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because: "on a default Mac origin/head is the origin/HEAD symref, and a fetch of it overwrites origin/main",
+  },
+  {
+    label: "a segment starting with a dot is a branch name",
+    file: `${CORE}/src/landed-changes/landing-branches.ts`,
+    from: '  !name.includes("/.") &&',
+    to: "  name.length > 0 &&",
+    test: `${CORE}/test/landing-branches.test.ts`,
+    because: "a name git refuses goes into a refspec, and the whole fetch fails",
+  },
+  {
+    // doctor names each way the fetch can be stuck.
+    label: "doctor passes a branch that never arrives",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "    return missed.length === 0",
+    to: "    return missed.length >= 0",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "one landing branch stays stale forever while doctor reports a healthy fetch",
+  },
+  {
+    label: "doctor passes a git too old to fetch",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: 'const SKIP_IS_A_FAULT: ReadonlySet<string> = new Set(["old-git"]);',
+    to: "const SKIP_IS_A_FAULT: ReadonlySet<string> = new Set<string>();",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "the fetch never runs and the only sign is a PASS",
+  },
+  {
+    label: "doctor passes a home the fetch can never book in",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "  if (!(await canWriteRecord(home))) {",
+    to: "  if (home.length < 0) {",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "an unwritable state directory silently stops the fetch forever under a 'not run yet'",
+  },
+  {
+    // Landing fetch. Nothing to see in a shallow clone.
+    label: "a shallow clone is fetched anyway",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  if (shallow.ok && shallow.stdout === "true") {',
+    to: '  if (shallow.ok && shallow.stdout === "never") {',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "the network is spent every five minutes on a clone where the stop is silent by design",
+  },
+  {
+    // Landing fetch. No origin is a state, not a fault.
+    label: "a clone without origin is recorded as a failure",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  if (!origin.ok || origin.stdout.length === 0) {",
+    to: "  if (!origin.ok && origin.stdout.length < 0) {",
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a brand-new repo reads as a broken fetch in doctor",
+  },
+  {
+    // Landing fetch. The worker honours the switch too.
+    label: "the worker fetches when switched off",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  if (plan.switch.kind === "off") {\n    return skipped("off");',
+    to: '  if (plan.switch.kind === "off" && input.root.length < 0) {\n    return skipped("off");',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a switch turned off between booking and running is ignored for that run",
+  },
+  {
+    // Landing fetch. ssh in batch mode by default.
+    label: "ssh may ask for a passphrase",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  const ssh = hasOwnSsh(input.env, coreSshCommand) ? {} : { GIT_SSH_COMMAND: BATCH_SSH_COMMAND };",
+    to: "  const ssh = {};",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "an ssh key with a passphrase is asked for it, by a process nobody is watching",
+  },
+  {
+    // Landing fetch. The developer's own ssh command is kept.
+    label: "the developer's GIT_SSH_COMMAND is overridden",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  isSet(env["GIT_SSH_COMMAND"]) ||',
+    to: "  false ||",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "a key per client or a jump host stops working for the background fetch only",
+  },
+  {
+    label: "the developer's GIT_SSH is overridden",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: '  isSet(env["GIT_SSH"]) ||',
+    to: "  false ||",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "an ssh wrapper the developer relies on is bypassed by the background fetch",
+  },
+  {
+    label: "the repo's core.sshCommand is overridden",
+    file: `${CORE}/src/landed-changes/fetch-worker.ts`,
+    from: "  (coreSshCommand.ok && coreSshCommand.stdout.length > 0);",
+    to: "  false;",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because: "a repo configured for its own ssh key fails every background fetch",
+  },
+  {
+    // Landing fetch. No terminal to ask on.
+    label: "the worker keeps the hook's terminal",
+    file: `${CORE}/src/landed-changes/fetch-trigger.ts`,
+    from: "      detached: true,",
+    to: "      detached: false,",
+    test: `${CORE}/test/landing-fetch-prompts.test.ts`,
+    because:
+      "ssh can open /dev/tty and ask for a passphrase on the agent's screen, reading the developer's keystrokes as the answer",
+  },
+  {
+    // Landing fetch. Only a clone that tracks origin.
+    label: "a remote never fetched from is fetched by a hook",
+    file: `${CORE}/src/landed-changes/fetch-trigger.ts`,
+    from: "  if (!(await tracksOrigin(input.root))) {",
+    to: "  if (input.root.length < 0) {",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "the first contact with a remote someone only added — maybe a wrong URL — is made by a hook",
+  },
+  {
+    label: "the trigger ignores the off switches",
+    file: `${CORE}/src/landed-changes/fetch-trigger.ts`,
+    from: '  if (plan.switch.kind === "off") {\n    return "off";',
+    to: '  if (plan.switch.kind === "off" && input.root.length < 0) {\n    return "off";',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a team or a person that switched the fetch off still gets one every five minutes",
+  },
+  {
+    // Landing fetch. The interval.
+    label: "a fetch is due on every hook",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "  return elapsed >= LANDING_FETCH_INTERVAL_MS || elapsed < -LANDING_FETCH_INTERVAL_MS;",
+    to: "  return elapsed >= 0 || elapsed < -LANDING_FETCH_INTERVAL_MS;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "every prompt and every edit starts a fetch against the team's git host",
+  },
+  {
+    label: "a racing hook's clock reads as a clock set back",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "  return elapsed >= LANDING_FETCH_INTERVAL_MS || elapsed < -LANDING_FETCH_INTERVAL_MS;",
+    to: "  return elapsed >= LANDING_FETCH_INTERVAL_MS || elapsed < 0;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "two hooks a second apart start two fetches that race for the same ref locks",
+  },
+  {
+    label: "a clock set back stops the fetch until it catches up",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "  return elapsed >= LANDING_FETCH_INTERVAL_MS || elapsed < -LANDING_FETCH_INTERVAL_MS;",
+    to: "  return elapsed >= LANDING_FETCH_INTERVAL_MS;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a clock corrected by an hour silences the fetch for that hour, a day for a day",
+  },
+  {
+    // Landing fetch. The booking is checked again under the lock.
+    label: "a booking inside the interval is accepted",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "        if (!isLandingFetchDue(current, now)) {\n          return false;",
+    to: "        if (current.failuresInARow < 0) {\n          return false;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "two hooks that both saw a fetch due both start one",
+  },
+  {
+    label: "a worker's record moves the booking",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: "        lastAttemptAt: current.lastAttemptAt,",
+    to: "        lastAttemptAt: now.toISOString(),",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a slow fetch pushes the next one back by its own duration, and a hung one by its timeout",
+  },
+  {
+    label: "a success does not reset the failure count",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: '  return outcome.kind === "fetched" ? 0 : current.failuresInARow;',
+    to: "  return current.failuresInARow;",
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "one bad week makes doctor warn forever",
+  },
+  {
+    label: "worktrees of one clone fetch on their own",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: '  const outcome = await runGitOutcome(["rev-parse", "--git-common-dir"], root, timeoutMs, QUIET_GIT_ENV);',
+    to: '  const outcome = await runGitOutcome(["rev-parse", "--show-toplevel"], root, timeoutMs, QUIET_GIT_ENV);',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "two worktrees fetch into the same refs at once and one fails on a ref lock",
+  },
+  {
+    label: "failures forget which branches the last success fetched",
+    file: `${CORE}/src/landed-changes/fetch-state.ts`,
+    from: '        lastFetchedBranches: outcome.kind === "fetched" ? outcome.branches : current.lastFetchedBranches,',
+    to: '        lastFetchedBranches: outcome.kind === "fetched" ? outcome.branches : [],',
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "doctor stops naming what the stop can still see the moment one fetch fails",
+  },
+  {
+    // Landing fetch. The switches.
+    label: "one person's off switch is ignored",
+    file: `${CORE}/src/landed-changes/fetch-switch.ts`,
+    from: "    if (env[LANDING_FETCH_ENV] === LANDING_FETCH_OFF) {",
+    to: '    if (env[LANDING_FETCH_ENV] === "never") {',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a developer on a metered line cannot stop a hook fetching on their behalf",
+  },
+  {
+    label: "the team's off switch is ignored",
+    file: `${CORE}/src/landed-changes/fetch-switch.ts`,
+    from: "    if (team === false) {",
+    to: '    if (team === "false") {',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a company whose policy forbids tools fetching for developers cannot say so",
+  },
+  {
+    label: "an empty landing list still fetches",
+    file: `${CORE}/src/landed-changes/fetch-switch.ts`,
+    from: '    if (branches.kind === "configured" && branches.branches.length === 0) {',
+    to: '    if (branches.kind === "configured" && branches.branches.length < 0) {',
+    test: `${CORE}/test/landing-fetch-worker.test.ts`,
+    because: "a team that switched the stop off keeps paying for the fetch that served it",
+  },
+  {
+    label: "an unreadable landingFetch value switches the fetch off",
+    file: `${CORE}/src/landed-changes/fetch-switch.ts`,
+    from: '    return team === true ? { kind: "on" } : { kind: "invalid" };',
+    to: '    return team === true ? { kind: "on" } : { kind: "off", by: "team" };',
+    test: `${CORE}/test/landing-fetch-trigger.test.ts`,
+    because: "a typo in .crosscheck.json silently turns off what the team left on",
+  },
+  {
+    // Landing fetch. The three triggers.
+    label: "an edit no longer asks for the fetch",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const [output] = await Promise.all([askBeforeEdit(ctx), requestLandingFetchFor(ctx)]);",
+    to: "  const [output] = await Promise.all([askBeforeEdit(ctx)]);",
+    test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
+    because: "an agent working an hour on one prompt never sees what landed in that hour",
+  },
+  {
+    label: "a prompt no longer asks for the fetch",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const [output] = await Promise.all([deliverPromptContext(ctx), requestLandingFetchFor(ctx)]);",
+    to: "  const [output] = await Promise.all([deliverPromptContext(ctx)]);",
+    test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
+    because: "a change merged mid-session reaches the stop only when an edit happens to ask",
+  },
+  {
+    label: "session start no longer asks for the fetch",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  const landingFetch = requestLandingFetchFor(ctx);",
+    to: "  const landingFetch = Promise.resolve();",
+    test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
+    because: "a session opened after a night away starts with the clone the night left it",
+  },
+  {
+    // Landing fetch. doctor warns only on a pattern.
+    label: "doctor never warns about a failing fetch",
+    file: `${CLI}/src/cli/doctor-landing-fetch.ts`,
+    from: "  if (record.failuresInARow < DOCTOR_LANDING_FETCH_FAILURES_WARN) {",
+    to: "  if (record.failuresInARow < Number.MAX_SAFE_INTEGER) {",
+    test: `${CLI}/test/landing-fetch-doctor.test.ts`,
+    because: "a fetch that needs a credential it cannot ask for fails silently forever",
+  },
+  {
+    // The runner tells a deadline from a refusal.
+    label: "a timed-out command reads as refused",
+    file: `${CORE}/src/git/git.ts`,
+    from: "        return { ok: false, timedOut: true };",
+    to: "        return { ok: false, timedOut: false };",
+    test: `${CORE}/test/git-timeout.test.ts`,
+    because: "doctor sends a developer whose fetch is slow to fix credentials that work",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -11221,6 +11705,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
+ * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
@@ -11267,6 +11752,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
@@ -11309,6 +11795,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
+ * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
@@ -11323,7 +11810,10 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
- * PRINTS: packages/connector-core/test/landing-branches.test.ts 3
+ * PRINTS: packages/connector-core/test/landing-branches.test.ts 6
+ * PRINTS: packages/connector-core/test/landing-fetch-prompts.test.ts 6
+ * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
+ * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5

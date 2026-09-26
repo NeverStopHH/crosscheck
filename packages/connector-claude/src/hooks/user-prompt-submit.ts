@@ -61,6 +61,7 @@ import {
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
+import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The intent worker's own entry, INSIDE this package (intent/worker-entry.ts). */
@@ -195,9 +196,7 @@ const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
   }
 };
 
-export const handleUserPromptSubmit = async (
-  ctx: HookContext,
-): Promise<string> => {
+const deliverPromptContext = async (ctx: HookContext): Promise<string> => {
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
   await maybeSpawnIntentWorker(ctx);
@@ -235,4 +234,14 @@ export const handleUserPromptSubmit = async (
     return "";
   }
   return envelope(text);
+};
+
+export const handleUserPromptSubmit = async (
+  ctx: HookContext,
+): Promise<string> => {
+  // Delivers nothing, like the two fires above: the background fetch of the
+  // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
+  // it adds no wall clock of its own.
+  const [output] = await Promise.all([deliverPromptContext(ctx), requestLandingFetchFor(ctx)]);
+  return output;
 };

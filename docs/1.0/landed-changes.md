@@ -92,7 +92,8 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
 - A shallow clone answers "unknown" (its boundary commit reads as touching
   every file) and `doctor` warns. A blobless partial clone is probed without
   patch identity, since that would need the network.
-- Every git call is bounded, non-interactive and never fetches, at most
+- Every git call the probe makes is bounded, non-interactive and never
+  fetches (fetching is a separate background process, below), at most
   eight at once; the whole probe has a deadline no longer than one hub call.
   A slow or broken probe means no warning, never a blocked edit.
 - Only an answer that is COMPLETE and found NOTHING is cached — keyed on the file, HEAD,
@@ -109,13 +110,126 @@ author, so the warning can say "Mike changed this, and here is why" instead of
 only "a commit touched this file".
 
 **Your clone only knows what it has fetched.** A change merged after your last
-fetch is invisible to git. A later step fetches the landing branches in the
-background (remote-tracking refs only; never your working tree or your local
-branches), rate-limited and non-interactive, with an off switch.
+fetch is invisible to git, so step 2 fetches the landing branches in the
+background.
+
+## Fetching the landing branches (step 2)
+
+The most common sequential conflict is the one step 1 cannot see: Mike merged
+an hour ago, and you have not run `git fetch` since this morning. So the
+landing branches are fetched in the background. This is on by default, can be
+switched off, and never makes anything wait.
+
+- **When.** On session start, on each prompt and before each edit, at most
+  once every five minutes per clone. Worktrees of one clone share the
+  five minutes, because they share the refs. The hook books the attempt under
+  a lock and then starts a detached process (book, then start, like every
+  other worker here), so two hooks never fetch twice. The hook never waits
+  for the network, so the fetch serves the *next* edit, not the one that
+  triggered it.
+- **Which clones.** Only one that already tracks origin: at least one
+  `refs/remotes/origin/*`. A remote someone added but never fetched from may
+  carry a wrong URL, and its first contact should be your own `git fetch`,
+  not a hook's. (Pointing an already-fetched origin at a new URL keeps its
+  refs, so the next background fetch goes to the new URL.) A shallow clone,
+  where the stop is silent anyway, is not fetched.
+- **Which branches.** Every branch the stop reads now (step 1's rule on the
+  clone's own refs), plus what the same rule picks on origin, each only while
+  origin has it. Origin is asked about all of those names with
+  `git ls-remote`, one round trip, because a named branch that origin lacks
+  would fail the whole fetch. The
+  union is what keeps the fetch and the stop from disagreeing when origin's
+  default branch moved after the clone was made: your `origin/HEAD` still
+  names the old one, as with git itself, so the stop still reads it, and it
+  is the one that must stay fresh.
+- **What it writes: `refs/remotes/origin/<landing branch>`, nothing else.**
+  `git fetch --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance --refmap= origin +refs/heads/<b>:refs/remotes/origin/<b> …`,
+  with `fetch.writeCommitGraph=false`.
+  - No local branch, working tree, index, tag, submodule, commit-graph or gc,
+    and no `FETCH_HEAD`, which matters most: your own `git pull` reads it
+    between its fetch and its merge.
+  - `--refmap=` matters too. Without it, git also applies every
+    `remote.origin.fetch` refspec you configured to what it fetches, and such
+    a refspec can name a local branch.
+  - It never prunes. The refspecs name only branches origin has, so there is
+    nothing to prune (measured: with `fetch.prune` and `fetch.pruneTags` on,
+    a local tag survives). `--no-prune` stays as a second guard for a future
+    refspec that is not so narrow.
+  - A branch named `HEAD` is never a landing branch. It would write through
+    `refs/remotes/origin/HEAD` into `origin/main`, and git itself never
+    fetches one.
+  - A single-branch clone gains the remote-tracking refs it did not have,
+    which is the point.
+  - Your own `reference-transaction` hook runs, as it does for any fetch of
+    yours.
+- **Git and ssh cannot ask.** The worker runs in its own session with no
+  controlling terminal. This was measured: a child that a hook starts
+  normally can open `/dev/tty`, and ssh would ask for a key passphrase right
+  on the agent's screen. On top of that it sets:
+  - `GIT_TERMINAL_PROMPT=0`;
+  - `GIT_ASKPASS=false`, which overrides an editor's askpass that would open a
+    dialog;
+  - `SSH_ASKPASS_REQUIRE=never`;
+  - `ssh -o BatchMode=yes`, unless you set your own ssh command
+    (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`). Yours is kept, and
+    without a terminal it cannot ask either.
+
+  Credential helpers still run, because a stored token is how a silent fetch
+  signs in. They are told `credential.interactive=false` (Git Credential
+  Manager also gets `GCM_INTERACTIVE=never`), but a helper or an ssh agent
+  that ignores both can still show a dialog of its own: a keychain unlock, a
+  hardware-key touch, an agent's confirmation.
+- **Bounded, with nothing left behind.** `ls-remote` is bounded at 30 s and
+  the fetch at 120 s. Each of the two leads its own process group. At its
+  deadline that whole group is ended before the worker goes on: first
+  SIGTERM, so git removes its ref locks, then SIGKILL. A ProxyCommand or a
+  helper that ignores the signal does not outlive it. Only the abandoned
+  call's own processes go. A credential-cache daemon that the earlier,
+  finished call started stays yours. An ssh ControlPersist master leaves the
+  group by OpenSSH's own design (not probed here: no local sshd). Git runs
+  with exactly the environment the hook was given.
+- **Off switches.** `"landingFetch": false` in `.crosscheck.json` switches it
+  off for the team, `CROSSCHECK_LANDING_FETCH=off` for one person, and
+  `"landingBranches": []` switches off both the stop and the fetch.
+- **Recorded, and `doctor` says so.** One small file per clone lives in
+  Crosscheck's state directory, never inside the repo. It holds the last
+  attempt, the last success, the branches it brought and the failures in a
+  row. The stored reason is Crosscheck's own words ("did not finish within
+  120 s"), never git's output, which can carry a URL with a token in it.
+  `doctor` shows how old the last fetch is and which branches it brought.
+  It warns when:
+  - the fetch has failed three times in a row, with "run `git fetch origin`
+    to see why, or switch it off";
+  - at its last run a branch origin has did not arrive while others did (git
+    refused its ref, and that fails git's whole answer). What arrived still
+    counts: the refs are read before and after, and a dropped connection,
+    where nothing moved, is a failure however current the refs already were;
+  - bookings keep going unreported, meaning the worker is not starting or not
+    finishing;
+  - git is older than 2.29;
+  - the state directory cannot be written, because then the fetch can never
+    book a run.
+
+Known limits of step 2:
+
+- The first edit after a teammate lands can come before the fetch has
+  finished, because nothing waits for it. The next edit sees the change.
+- If your own `git fetch` or `git pull` runs at the same moment, it can fail
+  on a ref lock ("cannot lock ref"); run it again. An editor's auto-fetch has
+  the same race.
+- When origin's default branch is renamed, your `origin/HEAD` still names the
+  old one, as with git itself, and the stop keeps reading the old branch
+  until you run `git remote set-head origin -a`. The fetch brings the new
+  one, and it is used from then on.
+- git older than 2.29 has no `--no-write-fetch-head`, so there is no
+  background fetch, and `doctor` says why.
+- Only `origin`, as in step 1. Cursor and ACP have no pre-edit stop, so they
+  do not fetch either.
 
 ## Build order
 
 Each step is one PR into `feat/landed-changes-flow`, then one PR to `main`.
+Step 1 reached `main` through the batch PR #66.
 
 1. **The reader's warning, from git alone**: landing branches (config and
    auto-detection), the two probes, the working-day window, own-commit

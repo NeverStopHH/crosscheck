@@ -45,6 +45,16 @@ describe("parseLandingBranches", () => {
     });
   });
 
+  test("HEAD, and a segment starting with a dot, are not branch names", () => {
+    // refs/remotes/origin/HEAD is the symref to the default branch: a refspec
+    // for a branch called HEAD writes a foreign commit through it.
+    expect(parseLandingBranches({ landingBranches: ["HEAD"] }).kind).toBe("invalid");
+    // On a case-insensitive filesystem (a default Mac) origin/head IS that symref.
+    expect(parseLandingBranches({ landingBranches: ["head"] }).kind).toBe("invalid");
+    expect(parseLandingBranches({ landingBranches: ["release/.hidden"] }).kind).toBe("invalid");
+    expect(parseLandingBranches({ landingBranches: ["release/2026.1"] }).kind).toBe("configured");
+  });
+
   test("no list means auto-detection", () => {
     expect(parseLandingBranches({ hubUrl: "x" })).toEqual({ kind: "auto" });
     expect(parseLandingBranches(null)).toEqual({ kind: "auto" });
@@ -121,6 +131,26 @@ describe("resolveLandingRefs", () => {
 
     // Assert
     expect(refs?.map((ref) => ref.branch)).toEqual(["main", "staging"]);
+  });
+
+  test("a default branch with a name of its own is watched at its real tip", async () => {
+    // Arrange — origin's default is `trunk`, which is none of the names the
+    // stop asks about by default; a fresh clone points origin/HEAD at it.
+    const repos = await makeLandingRepos("trunk-default");
+    cleanups.push(repos.base);
+    const { gitIn } = await import("./fixtures/landing-repos.ts");
+    await gitIn(repos.teammate, ["push", "-q", "origin", "main:trunk"]);
+    await gitIn(repos.origin, ["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+    const fresh = join(repos.base, "fresh");
+    await gitIn(repos.base, ["clone", "-q", repos.origin, fresh]);
+
+    // Act
+    const refs = await resolveLandingRefs(fresh, { kind: "auto" });
+
+    // Assert — a real tip, never "": git reads `<empty>...HEAD` as
+    // `HEAD...HEAD`, which answers "nothing" for every edit.
+    const trunk = refs?.find(({ branch }) => branch === "trunk");
+    expect(trunk?.tip).toBe(await gitIn(fresh, ["rev-parse", "refs/remotes/origin/trunk"]));
   });
 
   test("a clone with no origin has no landing branches", async () => {

@@ -37,17 +37,26 @@ const ORIGIN_PREFIX = "refs/remotes/origin/";
 const ORIGIN_HEAD = `${ORIGIN_PREFIX}HEAD`;
 const DEFAULT_BRANCH_FALLBACKS: readonly string[] = ["main", "master"];
 const MAX_BRANCH_NAME_CHARS = 100;
+const HEAD_NAME = "HEAD";
 
 /**
  * A branch name git cannot read as a flag, a range or a pattern: segments of
  * ref-alphabet characters joined by single slashes, starting with a letter
- * or digit, never `..`, never ending in `.` or `.lock`.
+ * or digit, no segment starting with `.`, never `..`, never ending in `.` or
+ * `.lock` — and never `HEAD`, in any case. Git itself never fetches a branch
+ * literally called HEAD: `refs/remotes/origin/HEAD` is the symref to the
+ * default branch, so a refspec for it would write a foreign commit THROUGH
+ * the symref into `origin/main` — and on a case-insensitive filesystem (a
+ * default Mac) `origin/head` is that same file. Every name here can come
+ * from origin.
  */
 const BRANCH_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9._-]+)*$/;
 
-const isBranchName = (name: string): boolean =>
+export const isBranchName = (name: string): boolean =>
   name.length <= MAX_BRANCH_NAME_CHARS &&
   BRANCH_NAME_PATTERN.test(name) &&
+  name.toUpperCase() !== HEAD_NAME &&
+  !name.includes("/.") &&
   !name.includes("..") &&
   !name.endsWith(".") &&
   !name.endsWith(".lock");
@@ -94,7 +103,14 @@ export const parseLandingBranches = (repoConfig: unknown): LandingBranchesSettin
 export const readLandingBranches = async (repoRoot: string): Promise<LandingBranchesSetting> =>
   parseLandingBranches(await readJsonOrNull(repoConfigPath(repoRoot)));
 
-interface OriginRefs {
+/**
+ * What one origin has, as far as the landing branches go — read from this
+ * clone's remote-tracking refs for the stop, and from origin itself
+ * (`git ls-remote`) for the background fetch (fetch-worker.ts). ONE shape and
+ * one selection rule for both, so the fetch and the stop cannot disagree about
+ * which branches matter.
+ */
+export interface OriginRefs {
   /** Branch name → the commit it points at. */
   readonly existing: ReadonlyMap<string, string>;
   /** The branch origin/HEAD points at, when it is a symref. */
@@ -131,22 +147,56 @@ const readOriginRefs = async (
   const branchOf = (ref: string | undefined): string | null =>
     ref?.startsWith(ORIGIN_PREFIX) === true ? ref.slice(ORIGIN_PREFIX.length) : null;
   const head = rows.find(([ref]) => ref === ORIGIN_HEAD);
-  const headBranch = branchOf(head?.[1]);
-  return {
-    existing: new Map(
-      rows
-        .map(([ref, , tip]): [string | null, string] => [branchOf(ref), tip ?? ""])
-        .filter((row): row is [string, string] => row[0] !== null && row[0] !== "HEAD"),
-    ),
-    headBranch: headBranch !== null && isBranchName(headBranch) ? headBranch : null,
-  };
+  const named = branchOf(head?.[1]);
+  const headBranch = named !== null && isBranchName(named) ? named : null;
+  const existing = new Map(
+    rows
+      .map(([ref, , tip]): [string | null, string] => [branchOf(ref), tip ?? ""])
+      .filter((row): row is [string, string] => row[0] !== null && row[0] !== HEAD_NAME),
+  );
+  // A default branch that is not one of the names asked about (`trunk`) is
+  // only on the origin/HEAD row — whose tip IS that branch's tip, resolved.
+  // Without it the stop handed git an empty tip, and `<tip>...HEAD` with an
+  // empty tip reads as `HEAD...HEAD`: a default branch that never warns.
+  const headTip = head?.[2] ?? "";
+  if (headBranch !== null && !existing.has(headBranch) && headTip.length > 0) {
+    existing.set(headBranch, headTip);
+  }
+  return { existing, headBranch };
 };
+
+/** Where `refs/remotes/origin/<branch>` lives: the one place it is spelled. */
+export const landingRefOf = (branch: string): string => `${ORIGIN_PREFIX}${branch}`;
+
+/** Every branch name the selection below could pick, to ask origin about. */
+export const landingBranchCandidates = (setting: LandingBranchesSetting): readonly string[] =>
+  setting.kind === "configured"
+    ? setting.branches
+    : [...DEFAULT_BRANCH_FALLBACKS, ...WELL_KNOWN_LANDING_BRANCHES];
 
 const autoDetected = (origin: OriginRefs): readonly string[] => {
   const defaultBranch =
     origin.headBranch ?? DEFAULT_BRANCH_FALLBACKS.find((name) => origin.existing.has(name));
   const found = WELL_KNOWN_LANDING_BRANCHES.filter((name) => origin.existing.has(name));
   return [...new Set([...(defaultBranch === undefined ? [] : [defaultBranch]), ...found])];
+};
+
+/**
+ * The landing branches `origin` has, in the team's order: the named ones it
+ * has, or the auto-detected ones. An empty list switches everything off.
+ */
+export const selectLandingBranches = (
+  setting: LandingBranchesSetting,
+  origin: OriginRefs,
+): readonly string[] => {
+  if (setting.kind === "configured" && setting.branches.length === 0) {
+    return [];
+  }
+  const branches =
+    setting.kind === "configured"
+      ? setting.branches.filter((name) => origin.existing.has(name))
+      : autoDetected(origin);
+  return branches;
 };
 
 /**
@@ -162,21 +212,17 @@ export const resolveLandingRefs = async (
   if (setting.kind === "configured" && setting.branches.length === 0) {
     return [];
   }
-  const names =
-    setting.kind === "configured"
-      ? setting.branches
-      : [...DEFAULT_BRANCH_FALLBACKS, ...WELL_KNOWN_LANDING_BRANCHES];
-  const origin = await readOriginRefs(root, names, timeoutMs);
+  const origin = await readOriginRefs(root, landingBranchCandidates(setting), timeoutMs);
   if (origin === null) {
     return null;
   }
-  const branches =
-    setting.kind === "configured"
-      ? setting.branches.filter((name) => origin.existing.has(name))
-      : autoDetected(origin);
-  return branches.map((branch) => ({
+  // Every branch selected here has a tip: the selection keeps only branches
+  // this clone has, and the default branch's tip is read off its origin/HEAD
+  // row above. An empty tip would read to git as `HEAD...HEAD` — "nothing"
+  // that is not an answer.
+  return selectLandingBranches(setting, origin).map((branch) => ({
     branch,
-    ref: `${ORIGIN_PREFIX}${branch}`,
+    ref: landingRefOf(branch),
     tip: origin.existing.get(branch) ?? "",
   }));
 };
