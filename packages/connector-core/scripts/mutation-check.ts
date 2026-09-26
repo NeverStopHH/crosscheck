@@ -1378,6 +1378,7 @@ export const MUTATIONS: readonly Mutation[] = [
       "            producer: producerFor(session),\n" +
       "            shownSolvedIds: assembled.shownSolvedIds,\n" +
       "            shownGhostCount: assembled.shownGhostCount,\n" +
+      "            shownLandedNoticeIds: assembled.shownLandedNoticeIds,\n" +
       "            now: now(),\n" +
       "          });\n",
     to: "",
@@ -11723,8 +11724,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // The connector side: asked only with a stop, and only with what is left.
     label: "the stop never asks for its why",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "      return landed === null ? [] : landedWhyFor(ctx, budget, edited.file, landed);",
-    to: "      return [];",
+    from: "      return landed === null ? NO_LANDED_ANSWER : landedWhyFor(ctx, budget, edited.file, landed);",
+    to: "      return NO_LANDED_ANSWER;",
     test: `${CONNECTOR}/test/landed-why-hook.test.ts`,
     because: "the stop names commits and never the teammate work behind them",
   },
@@ -11915,6 +11916,279 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/landed-why-render.test.ts`,
     because: "a hub clock ahead of the reader's prints a negative age",
   },
+  {
+    // Landed changes, step 4: the author's notice. Who is told.
+    label: "the why names the reader as the one told",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "    .where(and(inArray(developerEmails.email, emails), ne(developers.id, callerDeveloperId)));",
+    to: "    .where(and(inArray(developerEmails.email, emails), ne(developers.id, \"\")));",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the reader's own stop says the reader is told about it",
+  },
+  {
+    label: "the why answer drops who is told",
+    file: `${SERVER}/src/routes/landed.ts`,
+    from: "    return ok(c, { matches, told });",
+    to: "    return ok(c, { matches, told: [] });",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "no stop ever names anybody as told, so no author ever hears of one",
+  },
+  {
+    label: "a notice goes to whoever the record names",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "      developerId === commit.authorDeveloperId && developerId !== readerDeveloperId",
+    to: "      developerId !== undefined && developerId !== readerDeveloperId",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a record naming Ken for Mike's commit tells Ken about Mike's work",
+  },
+  {
+    label: "a reader is told about their own commit",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "developerId === commit.authorDeveloperId && developerId !== readerDeveloperId && ",
+    to: "developerId === commit.authorDeveloperId && ",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a stop at your own landed change is reported back to you",
+  },
+  {
+    label: "one commit named twice in a stop is written twice",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "developerId !== readerDeveloperId && !seen.has(commit.sha);",
+    to: "developerId !== readerDeveloperId;",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "one INSERT updates a row twice, and the whole flush answers 500",
+  },
+  {
+    label: "a told notice is refreshed by a later stop",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "      setWhere: sql`${landedNotices.deliveredAt} IS NULL AND excluded.stopped_at >= ${landedNotices.stoppedAt}`,",
+    to: "      setWhere: sql`excluded.stopped_at >= ${landedNotices.stoppedAt}`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a reader stopped daily keeps a told row alive for good, and the author never hears again",
+  },
+  {
+    label: "a replayed older stop rolls the newer one back",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "      setWhere: sql`${landedNotices.deliveredAt} IS NULL AND excluded.stopped_at >= ${landedNotices.stoppedAt}`,",
+    to: "      setWhere: sql`${landedNotices.deliveredAt} IS NULL`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a spool replay says the reader lacks a change they have pulled since",
+  },
+  {
+    label: "expired notices are never pruned",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "lte(landedNotices.stoppedAt, cutoff)",
+    to: "lte(landedNotices.stoppedAt, new Date(0))",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a commit told once is never told again, however long the reader keeps stopping",
+  },
+  {
+    label: "a notice waits for ever",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        gt(landedNotices.stoppedAt, cutoffOf(deps.now())),",
+    to: "        gt(landedNotices.stoppedAt, new Date(0)),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a month-old stop is told as news (decision 10)",
+  },
+  {
+    label: "a stop from the future keeps its date",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "const notAfter = (iso: string, now: Date): Date => new Date(Math.min(Date.parse(iso), now.getTime()));",
+    to: "const notAfter = (iso: string, _now: Date): Date => new Date(Date.parse(iso));",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a reader clock in 2099 keeps a notice waiting and sorted first for decades",
+  },
+  {
+    label: "a delivery marks anybody's notices",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        eq(landedNotices.authorDeveloperId, developerId),",
+    to: "        sql`true`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "any developer can mark another author's notices told, and they are never said",
+  },
+  {
+    label: "a told notice is listed again",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        eq(landedNotices.repo, repo),\n        isNull(landedNotices.deliveredAt),",
+    to: "        eq(landedNotices.repo, repo),\n        sql`true`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the author hears the same stop in every briefing, not once",
+  },
+  {
+    label: "notices from every repo are listed",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        eq(landedNotices.repo, repo),\n        isNull(landedNotices.deliveredAt),",
+    to: "        ne(landedNotices.repo, \"\"),\n        isNull(landedNotices.deliveredAt),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a stop in another codebase is told in this one",
+  },
+  {
+    label: "the author's mute of the reader is ignored",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "        notMutedCondition(authorDeveloperId, landedNotices.readerDeveloperId),",
+    to: "        sql`true`,",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a teammate the author muted still reaches them unasked",
+  },
+  {
+    label: "every group is listed",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: "    } else if (groups.size < LANDED_NOTICE_GROUPS_LISTED) {",
+    to: "    } else if (true) {",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "a busy week's stops crowd the briefing past its bound",
+  },
+  {
+    label: "the oldest stops are listed first",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: ".orderBy(desc(landedNotices.stoppedAt),",
+    to: ".orderBy(asc(landedNotices.stoppedAt),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the bound keeps last week's stops and drops today's",
+  },
+  {
+    label: "the prompt's call carries no notices",
+    file: `${SERVER}/src/routes/hints.ts`,
+    from: "    return ok(c, { candidates, answers, coverage, notices });",
+    to: "    return ok(c, { candidates, answers, coverage });",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "an author in a live session hears nothing until their next session",
+  },
+  {
+    label: "a stop's subject is unbounded",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "  subject: z.string().max(LANDED_STOP_MAX_SUBJECT_CHARS),",
+    to: "  subject: z.string(),",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "a reader's connector can store any amount of text on the hub as a subject",
+  },
+  {
+    label: "a stop may name no commit",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "  commits: z.array(LandedStopCommitSchema).min(1).max(LANDED_CONTEXT_MAX_COMMITS),",
+    to: "  commits: z.array(LandedStopCommitSchema).max(LANDED_CONTEXT_MAX_COMMITS),",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "an empty stop passes as a record and tells nobody anything",
+  },
+  {
+    label: "whether the reader lacked a commit is assumed",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "  missing: z.boolean(),",
+    to: "  missing: z.boolean().default(true),",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "a stop that said nothing about it tells the author their work is missing",
+  },
+  {
+    label: "a delivery may mark nothing",
+    file: "packages/schema/src/landed-notice.ts",
+    from: "  noticeIds: z.array(nonEmptyId).min(1).max(LANDED_NOTICE_MAX_DELIVERED),",
+    to: "  noticeIds: z.array(nonEmptyId).max(LANDED_NOTICE_MAX_DELIVERED),",
+    test: "packages/schema/test/landed-notice.test.ts",
+    because: "an empty delivery is accepted as a record that did nothing",
+  },
+  {
+    label: "a notice says missing where the reader has it",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "  return commit.missing\n",
+    to: "  return !commit.missing\n",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "the author is told their work is missing from a checkout that has it (decision 8)",
+  },
+  {
+    label: "commits past the bound are marked told unsaid",
+    file: `${CORE}/src/briefing/landed-notices.ts`,
+    from: "    commitIds: named.map((entry) => entry.id),",
+    to: "    commitIds: notice.commits.map((commit) => commit.id),",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a fourth commit is marked told while the text only counts it",
+  },
+  {
+    label: "the stop names a told person twice",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const names = [...new Set(told.map((name) => authorLabel(name)))];",
+    to: "  const names = told.map((name) => authorLabel(name));",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "\"Mike and Mike are told about this stop\"",
+  },
+  {
+    label: "a briefing notice cut by the budget is marked told",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "      return entry !== null && briefing.includes(entry.text) ? entry.commitIds : [];",
+    to: "      return entry !== null ? entry.commitIds : [];",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a notice nobody saw is marked told and never said",
+  },
+  {
+    label: "the briefing never marks its notices told",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "  if (input.shownLandedNoticeIds.length > 0) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "the author hears the same stop in every briefing for a week",
+  },
+  {
+    label: "a session forgets which notices it showed",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const merged = [...new Set([...state.shownLandedNoticeIds, ...noticeIds])];",
+    to: "  const merged = [...state.shownLandedNoticeIds];",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a notice the briefing told is told again on the next prompt",
+  },
+  {
+    label: "a partly shown notice is offered whole",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "commits: notice.commits.filter((commit) => !shown.has(commit.id)) }))",
+    to: "commits: notice.commits }))",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a new commit joining a notice the briefing showed is never told on a prompt",
+  },
+  {
+    label: "a notice is claimed past the session's hints",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "    fresh.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION ||\n    fresh.deliveredHintRefs.includes(delivery.slotRef) ||",
+    to: "    fresh.deliveredHintRefs.includes(delivery.slotRef) ||",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a racing sibling tells a sixth unasked thing in one session",
+  },
+  {
+    label: "a notice a sibling showed is claimed again",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "    delivery.commitIds.some((id) => fresh.shownLandedNoticeIds.includes(id))",
+    to: "    false",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "two racing hooks tell the same notice twice in one session",
+  },
+  {
+    label: "a declined notice is recorded as told",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "  if (!remembered) {\n    return false;\n  }\n  const record = landedNoticeDeliveryRecord(",
+    to: "  if (!remembered) {\n    await appendRecords(target.home, target.repoKey, target.hostSessionKey, [landedNoticeDeliveryRecord(state.crosscheckSessionId, delivery.commitIds, { developerId: \"x\", agentKind: \"x\", sessionId: state.crosscheckSessionId }, target.now)], target.now);\n    return false;\n  }\n  const record = landedNoticeDeliveryRecord(",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "a notice nobody was shown is marked told on the hub and lost",
+  },
+  {
+    label: "a prompt's notice waits for the next flush",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "  await postRecords(target.hub, [record]);\n  return true;",
+    to: "  return true;",
+    test: `${CORE}/test/landed-notice.test.ts`,
+    because: "every other live session of the author tells the same notice again",
+  },
+  {
+    label: "the stop names people it recorded nothing for",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  return appended.persisted ? named.map((entry) => entry.name) : [];",
+    to: "  return named.map((entry) => entry.name);",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "\"Mike is told\" is printed for a notice that was never written (decision 11)",
+  },
+  {
+    label: "every recorded commit is recorded as missing",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "              missing: missing.has(commit.sha),",
+    to: "              missing: true,",
+    test: `${CONNECTOR}/test/landed-notice-hook.test.ts`,
+    because: "the author hears their work is missing from a checkout that has it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12030,6 +12304,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
@@ -12087,6 +12362,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
+ * PRINTS: packages/connector-core/test/landed-notice.test.ts 11
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 5
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
@@ -12141,6 +12417,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
+ * PRINTS: packages/schema/test/landed-notice.test.ts 4
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/calibration.test.ts 1
@@ -12165,6 +12442,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 20
+ * PRINTS: packages/server/test/landed-notices.test.ts 17
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
