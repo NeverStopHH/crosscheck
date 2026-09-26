@@ -12486,6 +12486,16 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/landed-notice.test.ts`,
     because: "\"A teammate and a teammate are told about this stop.\"",
   },
+  {
+    // Dependencies, 2026-09-26: PGlite 0.4 opens `postgres` by default, and every
+    // released hub keeps its tables in `template1`.
+    label: "an upgraded hub opens PGlite’s default database",
+    file: `${SERVER}/src/db/client.ts`,
+    from: "    ? new PGlite(options.dataDir, { database: HUB_DATABASE, extensions: { vector } })",
+    to: "    ? new PGlite(options.dataDir, { extensions: { vector } })",
+    test: `${SERVER}/test/upgrade.test.ts`,
+    because: "every released hub starts empty after the update: each stored key is unknown, the old data out of sight",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12778,6 +12788,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 1
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
  * PRINTS: packages/server/test/waivers.test.ts 3
