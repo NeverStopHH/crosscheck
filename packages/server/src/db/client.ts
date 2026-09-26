@@ -22,7 +22,7 @@ export interface CreateDbOptions {
 const BOOTSTRAP_SQL_URL = new URL("./bootstrap.sql", import.meta.url);
 
 /**
- * PostgreSQL major of the build bundled with the pinned PGlite 0.3.x. A data
+ * PostgreSQL major of the build bundled with the pinned PGlite. A data
  * dir written by any OTHER major must be refused BEFORE PGlite touches it:
  * the WASM build aborts on a foreign-format dir with an unintelligible
  * `RuntimeError: Unreachable code should not be executed` at waitReady
@@ -37,6 +37,24 @@ const BOOTSTRAP_SQL_URL = new URL("./bootstrap.sql", import.meta.url);
  * PRINTS: 17 17
  */
 export const PGLITE_PG_MAJOR = "17";
+
+/**
+ * THE DATABASE A HUB'S TABLES LIVE IN, named, never left to PGlite's default.
+ *
+ * PGlite 0.3 — pinned by every release through 0.9 — connected to
+ * `template1` by default, so that is where every hub ever created keeps its
+ * data. PGlite 0.4 changed its default to `postgres`, which in such a dir
+ * exists and is EMPTY: an upgraded hub started on it without an error,
+ * bootstrapped fresh tables there, answered every stored key "unknown api
+ * key", and wrote from then on into the wrong database, the old data intact
+ * but out of sight. Measured on 2026-09-26 with a dir 0.3.16 wrote and 0.4.6
+ * opened: same cluster (`system_identifier` unchanged), different database.
+ *
+ * `template1` is an unusual home for application tables in a server
+ * deployment. It is the right one here: it is where the data IS, and one
+ * embedded hub owns the whole cluster.
+ */
+export const HUB_DATABASE = "template1";
 
 /** Live-measured major of the bundled build — the directive above compares it. */
 export const bundledPgMajor = async (): Promise<string> => {
@@ -82,12 +100,12 @@ export const createDb = async (options: CreateDbOptions = {}): Promise<Db> => {
   if (options.dataDir !== undefined) {
     await checkDataDirMajor(options.dataDir);
   }
-  // The vector extension is bundled with the pinned PGlite 0.3.x — loading it
-  // here is what lets bootstrap.sql's CREATE EXTENSION succeed. A real-Postgres
+  // The vector extension is bundled with the pinned PGlite — loading it here
+  // is what lets bootstrap.sql's CREATE EXTENSION succeed. A real-Postgres
   // deployment needs pgvector installed instead (DESIGN.md §2).
   const client = options.dataDir
-    ? new PGlite(options.dataDir, { extensions: { vector } })
-    : new PGlite({ extensions: { vector } });
+    ? new PGlite(options.dataDir, { database: HUB_DATABASE, extensions: { vector } })
+    : new PGlite({ database: HUB_DATABASE, extensions: { vector } });
   await client.waitReady;
   await runBootstrap(client);
   return drizzle(client, { schema });
