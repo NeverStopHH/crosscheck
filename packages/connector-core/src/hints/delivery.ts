@@ -1,5 +1,5 @@
 import { MAX_HINTS_PER_SESSION } from "../constants.ts";
-import { hintDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
+import { hintDeliveryRecord, landedNoticeDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
 import type { HintRefKind, Producer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { HubContext } from "../http/hub.ts";
@@ -8,6 +8,7 @@ import { appendRecords } from "../spool/append.ts";
 import {
   updateSessionState,
   withDeliveredHint,
+  withShownLandedNotices,
 } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
 import type { DeliveryChannel } from "@crosscheck/schema";
@@ -131,3 +132,64 @@ export const rememberHintDelivery = async (
   return remembered;
 };
 
+/** An author's notice about to be told on a prompt (landed changes, step 4). */
+export interface PendingLandedNoticeDelivery {
+  /** The name it spends a hint slot under: its first row's id. */
+  readonly slotRef: string;
+  /** The hub rows the emitted text names — exactly these are marked told. */
+  readonly commitIds: readonly string[];
+}
+
+/**
+ * Telling an author's notice on a prompt (docs/1.0/landed-changes.md, step
+ * 4): rememberHintDelivery's twin, with the order turned round ON PURPOSE.
+ *
+ * CLAIM FIRST, THEN RECORD. A hint's delivery is spooled before its claim,
+ * because a losing sibling's copy carries the winner's deterministic id and
+ * the hub drops it as a duplicate. A notice's delivery has no such id: it
+ * MARKS ROWS TOLD. Spooled for a notice this session then declined to show —
+ * a racing sibling won the claim, or the five hint slots were spent — it
+ * would tell the hub the author saw what nobody showed, and the notice would
+ * be gone for good. So: claim, then spool, then ship. A crash between claim
+ * and spool costs this session the notice (claimed, never shown) and never
+ * the author: the hub did not hear it was told, so a briefing still tells it.
+ *
+ * A notice spends one of the session's MAX_HINTS_PER_SESSION slots, like an
+ * answer, and its rows join the session's shown list, which the briefing's
+ * notices join too — so neither surface repeats the other.
+ *
+ * SHIPPED NOW, like an answer (see rememberHintDelivery on `shipNow`):
+ * UserPromptSubmit never flushes, and until the hub hears it every other live
+ * session of the author reads the notice as waiting. Best effort; the spooled
+ * copy follows at the next flush, and marking a told row again changes
+ * nothing.
+ */
+export const rememberLandedNoticeDelivery = async (
+  target: HintDeliveryTarget,
+  state: SessionState,
+  delivery: PendingLandedNoticeDelivery,
+): Promise<boolean> => {
+  const remembered = await updateSessionState(target.home, target.hostSessionKey, (fresh) =>
+    fresh.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION ||
+    fresh.deliveredHintRefs.includes(delivery.slotRef) ||
+    delivery.commitIds.some((id) => fresh.shownLandedNoticeIds.includes(id))
+      ? null
+      : withShownLandedNotices(withDeliveredHint(fresh, delivery.slotRef, null), delivery.commitIds),
+  );
+  if (!remembered) {
+    return false;
+  }
+  const record = landedNoticeDeliveryRecord(
+    state.crosscheckSessionId,
+    delivery.commitIds,
+    {
+      developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+      agentKind: target.agentKind,
+      sessionId: state.crosscheckSessionId,
+    },
+    target.now,
+  );
+  await appendRecords(target.home, target.repoKey, target.hostSessionKey, [record], target.now);
+  await postRecords(target.hub, [record]);
+  return true;
+};

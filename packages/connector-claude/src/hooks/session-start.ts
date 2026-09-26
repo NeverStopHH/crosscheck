@@ -400,6 +400,7 @@ export const handleSessionStart = async (
     producer,
     shownSolvedIds: assembled.shownSolvedIds,
     shownGhostCount: assembled.shownGhostCount,
+    shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now,
   });
 

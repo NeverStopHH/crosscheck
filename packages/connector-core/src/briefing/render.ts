@@ -10,6 +10,7 @@ import {
   MAX_DRAFT_POINTERS,
   MAX_BRIEFING_GHOST_CHARS,
   MAX_GHOST_POINTERS,
+  MAX_LANDED_NOTICE_POINTERS,
   MAX_QUESTION_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
@@ -38,6 +39,7 @@ import type {
   DraftEntry,
   GhostCheckEntry,
   InboxQuestion,
+  LandedNotice,
   PresenceEntry,
   SolvedMatchEntry,
   WorkContextEntry,
@@ -47,6 +49,7 @@ import { fitEntries } from "./fit.ts";
 import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
 import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
+import { LANDED_NOTICE_SECTION_HEADER, fitLandedNoticeEntries, formatLandedNoticeEntry } from "./landed-notices.ts";
 import type { IntentLabel } from "./intent.ts";
 import {
   bareUntrusted,
@@ -120,6 +123,11 @@ export interface BriefingInput {
   readonly drafts?: readonly DraftEntry[] | undefined;
   /** Open questions addressed to the reader; omitted or empty renders none. */
   readonly questions?: readonly InboxQuestion[] | undefined;
+  /**
+   * Teammates' stops at the reader's own landed changes (landed changes,
+   * step 4); omitted or empty renders none.
+   */
+  readonly landedNotices?: readonly LandedNotice[] | undefined;
   /** Teammates whose live plan overlaps the reader's; empty renders none. */
   readonly ghostChecks?: readonly GhostCheckEntry[] | undefined;
   /**
@@ -253,6 +261,24 @@ const renderQuestionSection = (input: BriefingInput): Section => {
     header:
       "Questions for you (answer_question replies; unanswered ones expire):",
     lines: fitQuestionEntries(rendered.slice(0, MAX_QUESTION_POINTERS)),
+    total: rendered.length,
+  };
+};
+
+/**
+ * "Teammates ran into your landed changes" — right AFTER the questions and
+ * before everything ambient, for the questions' reason: it is ADDRESSED to
+ * this reader, about their own work. Told once (briefing/landed-notices.ts),
+ * so a notice this block's character budget leaves out simply waits.
+ */
+const renderLandedNoticeSection = (input: BriefingInput): Section => {
+  const rendered = (input.landedNotices ?? []).flatMap((notice) => {
+    const entry = formatLandedNoticeEntry(notice, input.now);
+    return entry === null ? [] : [entry.text];
+  });
+  return {
+    header: LANDED_NOTICE_SECTION_HEADER,
+    lines: fitLandedNoticeEntries(rendered.slice(0, MAX_LANDED_NOTICE_POINTERS)),
     total: rendered.length,
   };
 };
@@ -1002,6 +1028,7 @@ const appendSection = (
 export const renderBriefing = (input: BriefingInput): string => {
   const sections = [
     renderQuestionSection(input),
+    renderLandedNoticeSection(input),
     renderPresenceSection(input),
     renderGhostSection(input),
     renderContextSection(input),

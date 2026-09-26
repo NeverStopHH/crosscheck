@@ -752,6 +752,28 @@ export const MAX_LANDED_WHY_SHOWN = 2;
  */
 export const LANDED_WHY_MIN_MS = 50;
 /**
+ * The author's notice (step 4): reader-and-file groups the briefing shows at
+ * once — the hub's own listing bound, so the block never asks for more than
+ * the hub sends.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.MAX_LANDED_NOTICE_POINTERS === s.LANDED_NOTICE_GROUPS_LISTED)'
+ * PRINTS: true
+ */
+export const MAX_LANDED_NOTICE_POINTERS = 3;
+/**
+ * Commits one notice names; the rest wait for the next briefing or prompt.
+ * Only the named ones count as told, so none is lost to the bound.
+ */
+export const MAX_LANDED_NOTICE_COMMITS_SHOWN = 3;
+/** A commit subject on a notice line: a title-class quote, bounded like one. */
+export const LANDED_NOTICE_SUBJECT_CHARS = 80;
+/**
+ * The notice ids one session remembers as shown (the prompt path's pre-check,
+ * so a notice the briefing showed is not told again before the hub knows).
+ * FIFO: a session that sees more than this is long past repeating the first.
+ */
+export const MAX_SHOWN_LANDED_NOTICE_IDS = 200;
+/**
  * `doctor`'s look at who landed what (decision 7): the landing branches'
  * latest commits, this many — a COUNT, never a date window: `--since` drops
  * a merged feature branch's commits for their old dates (staleness-axis
@@ -1091,6 +1113,17 @@ export const MAX_QUESTION_POINTERS = 3;
  * PRINTS: true
  */
 export const MAX_BRIEFING_QUESTION_CHARS = 700;
+
+/**
+ * The most CHARACTERS the author's-notice block (landed changes, step 4) may
+ * take. Addressed like the questions block, so it comes right after it; and
+ * bounded, so the three bounded blocks together still leave the sections
+ * below room:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_BRIEFING_GHOST_CHARS + c.MAX_BRIEFING_QUESTION_CHARS + c.MAX_BRIEFING_LANDED_NOTICE_CHARS < c.MAX_BRIEFING_CHARS)'
+ * PRINTS: true
+ */
+export const MAX_BRIEFING_LANDED_NOTICE_CHARS = 600;
 
 /**
  * When `doctor` starts calling an unanswered question a problem. A question

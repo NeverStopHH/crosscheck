@@ -63,11 +63,14 @@ import { bareUntrusted as bare } from "../briefing/sanitize.ts";
 import { claimValidityWord } from "../briefing/render.ts";
 import { quoted, quotedBody, safeId } from "../mcp/render.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
+import { formatLandedNoticeEntry } from "../briefing/landed-notices.ts";
+import type { RenderedLandedNotice } from "../briefing/landed-notices.ts";
 import type {
   AnsweredQuestion,
   HintClaimCandidate,
   HintContextCandidate,
   LandedContextMatch,
+  LandedNotice,
   SolvedMatchEntry,
   TripwireSession,
 } from "../http/hub.ts";
@@ -84,6 +87,12 @@ const POINTER_HEADER = `crosscheck pointer: a teammate has notes that may relate
  * exception rests on.
  */
 const ANSWER_HEADER = `crosscheck answer: a teammate answered a question you asked. ${QUOTED_DATA_NOTICE}`;
+/**
+ * The author's notice (landed changes, step 4): a teammate's edit stopped at
+ * the reader's own landed change. "Told once" is said out loud, so the reader
+ * knows not to wait for it again.
+ */
+const LANDED_NOTICE_HEADER = `crosscheck notice: a teammate ran into your landed change; this is told once. ${QUOTED_DATA_NOTICE}`;
 
 type HintContext = HintContextCandidate["workContext"];
 
@@ -416,6 +425,22 @@ export const renderAnswerHint = (
 };
 
 /**
+ * The author's notice on a prompt (landed changes, step 4): the briefing's
+ * entry under its own header. All or nothing — a text cut to the hint budget
+ * would name fewer commits than the delivery marks told, so a notice that
+ * does not fit whole is not given (it waits for the briefing).
+ */
+export const renderLandedNoticeHint = (notice: LandedNotice, now: Date): RenderedLandedNotice | null => {
+  const entry = formatLandedNoticeEntry(notice, now);
+  if (entry === null) {
+    return null;
+  }
+  const whole = [LANDED_NOTICE_HEADER, entry.text].join("\n");
+  const text = fitHint([LANDED_NOTICE_HEADER, ...entry.text.split("\n")]);
+  return text === whole ? { text, commitIds: entry.commitIds } : null;
+};
+
+/**
  * The failure-time solved hint (VISION.md §1): the tool this session just
  * ran failed, the failure's fingerprint is one a diagnosis on this hub
  * already settled, and this is the sentence that says so — at the moment
@@ -600,6 +625,21 @@ const landedLines = (landed: LandedChanges, repoRelativeFile: string, now: Date)
   return [...missing, ...recent];
 };
 
+/**
+ * "Mike is told about this stop." (step 4, decision 11): the reader is told
+ * who hears of it, so nothing is reported behind their back. Each name once,
+ * bare like every author label.
+ */
+const toldLines = (told: readonly string[]): readonly string[] => {
+  const names = [...new Set(told.map((name) => authorLabel(name)))];
+  const last = names.at(-1);
+  if (last === undefined) {
+    return [];
+  }
+  const list = names.length === 1 ? last : `${names.slice(0, -1).join(", ")} and ${last}`;
+  return [`${list} ${names.length === 1 ? "is" : "are"} told about this stop.`];
+};
+
 export interface EditWarningInput {
   /** An active teammate session that targeted the file, if any. */
   readonly live: TripwireSession | null;
@@ -615,6 +655,12 @@ export interface EditWarningInput {
   readonly coverage?: CoverageRecord;
   /** The hub's match of the named commits to teammate work (step 3). */
   readonly why?: readonly LandedContextMatch[];
+  /**
+   * The people this stop tells (step 4, decision 11): exactly the names the
+   * hub's why answer gave for the named commits' authors, and only when the
+   * stop's record was written. Empty or absent says nothing.
+   */
+  readonly told?: readonly string[];
 }
 
 /**
@@ -640,6 +686,7 @@ export const renderEditWarning = (input: EditWarningInput): string => {
             now: input.now,
             liveContextId: input.live?.workContextId ?? null,
           }),
+          ...toldLines(input.told ?? []),
         ];
   return live.length === 0 && landed.length === 0
     ? ""

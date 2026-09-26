@@ -30,6 +30,7 @@ import {
   renderPointerHint,
   renderSolvedHint,
   renderEditWarning,
+  renderLandedNoticeHint,
   renderTripwireReason,
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
@@ -54,6 +55,7 @@ import type {
   HintClaimCandidate,
   InboxQuestion,
   IntentEntry,
+  LandedNotice,
   PresenceEntry,
   RefereeBrief,
   RefereeClaim,
@@ -146,6 +148,7 @@ export const RENDER_LAYER_MODULES: readonly string[] = [
   "src/briefing/sanitize.ts",
   "src/briefing/ghost.ts",
   "src/briefing/intent.ts",
+  "src/briefing/landed-notices.ts",
   "src/briefing/questions.ts",
   "src/briefing/render.ts",
   "src/hints/render.ts",
@@ -513,6 +516,22 @@ const landedWhyWith = (payload: string): readonly LandedContextMatch[] => [
     intent: intentWith(payload),
   },
 ];
+
+/**
+ * An author's notice (step 4) with the payload in every string a teammate
+ * or their connector wrote: the reader's name, the file and both commits'
+ * subjects — one missing from their checkout, one already in it.
+ */
+const landedNoticeWith = (payload: string): LandedNotice => ({
+  id: "lnt_11111111-2222-4333-8444-555555555555",
+  readerName: payload,
+  path: payload,
+  stoppedAt: ISO,
+  commits: [
+    { id: "lnt_11111111-2222-4333-8444-555555555555", sha: "0dcfc4e41e1f309f8a6d3056726744bb8ddd6133", subject: payload, missing: true },
+    { id: "lnt_22222222-2222-4333-8444-555555555555", sha: "1a2b3c4d41e1f309f8a6d3056726744bb8ddd613", subject: payload, missing: false },
+  ],
+});
 
 const diagnosisWith = (payload: string): Diagnosis => ({
   workContext: {
@@ -910,7 +929,36 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         file: "src/app.ts",
         now: NOW,
         why: landedWhyWith(payload),
+        told: [payload, payload],
       }),
+  },
+  {
+    // The author's notice, in the briefing (step 4): the reader's name and
+    // file are bare fields, the subjects are quoted data that reached the
+    // author through the READER's connector.
+    kind: "corpus",
+    name: "briefing-landed-notices",
+    delivery: "unsolicited",
+    module: "src/briefing/landed-notices.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        landedNotices: [landedNoticeWith(payload)],
+        now: NOW,
+      }),
+  },
+  {
+    // …and the same notice told on a prompt.
+    kind: "corpus",
+    name: "landed-notice-hint",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) => renderLandedNoticeHint(landedNoticeWith(payload), NOW)?.text ?? "",
   },
   {
     kind: "corpus",

@@ -32,6 +32,8 @@ export interface HintHub {
   readonly setCandidates: (candidates: readonly unknown[]) => void;
   /** Answers to the CALLER's own questions, on the same bounded response. */
   readonly setAnswers: (answers: readonly unknown[]) => void;
+  /** The author's notices (landed changes, step 4), on the same response. */
+  readonly setNotices: (notices: readonly unknown[]) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
   /** Rows GET /api/solved-matches answers with. */
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
@@ -226,6 +228,7 @@ export const startHintHub = (
   };
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   let answers: readonly unknown[] = [];
+  let notices: readonly unknown[] = [];
   let tripwireSessions: readonly unknown[] = [];
   let solvedMatches: readonly unknown[] = [];
   let lastSolvedFingerprint: string | null = null;
@@ -237,7 +240,7 @@ export const startHintHub = (
       if (pathname === "/api/hints/candidates") {
         calls.candidates += 1;
         await sleep(latency.candidates);
-        return Response.json({ ok: true, data: { candidates, answers } });
+        return Response.json({ ok: true, data: { candidates, answers, notices } });
       }
       if (pathname === "/api/solved-matches") {
         calls.solvedMatches += 1;
@@ -284,6 +287,9 @@ export const startHintHub = (
     },
     setAnswers: (next) => {
       answers = next;
+    },
+    setNotices: (next) => {
+      notices = next;
     },
     setTripwireSessions: (next) => {
       tripwireSessions = next;

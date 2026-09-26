@@ -38,12 +38,13 @@ import type { HintRefKind } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { getHintCandidates } from "../http/hub.ts";
-import type { AnsweredQuestion, HubContext } from "../http/hub.ts";
-import { rememberHintDelivery } from "../hints/delivery.ts";
+import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
+import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
 import {
   renderAnswerHint,
   renderClaimHint,
+  renderLandedNoticeHint,
   renderPointerHint,
   withCoverageNote,
 } from "../hints/render.ts";
@@ -163,6 +164,22 @@ const selectAnswer = (
 };
 
 /**
+ * The first author's notice (landed changes, step 4) with a commit this
+ * session has not shown, cut to those commits: a notice the briefing already
+ * told is not told again before the hub has heard it was. A pre-check, like
+ * selectAnswer's; the claim in rememberLandedNoticeDelivery is the guarantee.
+ */
+const selectNotice = (
+  notices: readonly LandedNotice[],
+  shownIds: readonly string[],
+): LandedNotice | undefined => {
+  const shown = new Set(shownIds);
+  return notices
+    .map((notice) => ({ ...notice, commits: notice.commits.filter((commit) => !shown.has(commit.id)) }))
+    .find((notice) => notice.commits.length > 0);
+};
+
+/**
  * The whole prompt-time pipeline; returns the rendered hint or "" (silence).
  * Every branch that cannot prove a hint is worth injecting returns "".
  */
@@ -232,6 +249,18 @@ export const selectAndRenderHint = async (
         ? withCoverageNote(text, result.data.coverage, input.now)
         : "";
     }
+  }
+  // ADDRESSED NEWS NEXT (landed changes, step 4): a teammate's edit stopped
+  // at this developer's own landed change. After an answer — they asked for
+  // that one and are waiting — and before a pointer they never asked for,
+  // and in the same one slot either would spend.
+  const notice = selectNotice(result.data.notices, state.shownLandedNoticeIds);
+  const told = notice === undefined ? null : renderLandedNoticeHint(notice, input.now);
+  const firstCommit = told?.commitIds[0];
+  if (told !== null && firstCommit !== undefined) {
+    return (await rememberLandedNoticeDelivery(input, state, { slotRef: firstCommit, commitIds: told.commitIds }))
+      ? told.text
+      : "";
   }
   const selection = selectHint({
     // Briefing solved pointers join the seen-set — the same tree must not be

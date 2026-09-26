@@ -70,6 +70,7 @@ const sessionState = (repoRoot: string): SessionState => ({
   landedAskedFiles: [],
   landedCleanKeys: [],
   briefingSolvedRefs: [],
+  shownLandedNoticeIds: [],
   foreignRepoDrops: 0,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
