@@ -30,7 +30,7 @@ absent.
   PATH and — on a cold npm cache — the registry; where those are missing it
   skips with a loud warning instead of failing, so a green offline run proves
   nothing about the tarball. CI has all three.
-- All three workspace `package.json` versions identical — the pack script
+- All seven workspace `package.json` versions identical — the pack script
   refuses to pack otherwise, and `--version` reports this number.
 - Name still free (it was on 2026-08-18):
   `curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/crosscheck-hub`
@@ -62,7 +62,7 @@ times.)
 ## Verify afterwards (machine without the repo)
 
 ```bash
-npx crosscheck-hub@latest --version    # -> crosscheck 0.9.0 (the CLI keeps its name)
+npx crosscheck-hub@latest --version    # -> crosscheck 0.10.0 (the CLI keeps its name)
 bunx crosscheck-hub@latest --help      # usage screen, exit 0
 ADMIN_TOKEN=t CROSSCHECK_DATA_DIR=/tmp/cx-smoke npx crosscheck-hub@latest serve
 # expect: "crosscheck server listening on :7100 · search: exact+fts (keyless)"
@@ -74,9 +74,9 @@ npm install -g crosscheck-hub@latest && crosscheck --version   # the connector f
 # wire hooks from an npx/bunx cache (the launcher would die with the cache).
 ```
 
-Then tag: `git tag v0.9.0 && git push origin v0.9.0`.
+Then tag: `git tag v0.10.0 && git push origin v0.10.0`.
 
 ## Version bumps
 
-Bump the SAME version in all three `packages/*/package.json` files (the pack
+Bump the SAME version in all seven `packages/*/package.json` files (the pack
 script enforces equality), re-run the suite, publish the fresh tarball.
