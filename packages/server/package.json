@@ -15,7 +15,7 @@
     "@crosscheck/schema": "workspace:*",
     "@electric-sql/pglite": "^0.4.6",
     "drizzle-orm": "^0.45.3",
-    "hono": "^4.13.8",
+    "hono": "^4.13.9",
     "zod": "^4.6.5"
   },
   "devDependencies": {
