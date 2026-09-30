@@ -2171,6 +2171,17 @@ export const PILOT_FIX_DIFF_MAX_REPAIRS = 25;
 export const NOISE_MARK_WINDOW_MINUTES = 60;
 
 /**
+ * How far back `crosscheck pilot label` walks (07 §12): one day, in minutes.
+ *
+ * The walk is typed AFTER a session, not beside it, so the hour that bounds
+ * `crosscheck noise` is too short — and a person can only judge what they
+ * still remember, so a week is too long: a label on a pointer nobody can
+ * picture any more is a guess, and the walk exists to replace guesses. A day
+ * covers "at the end of the day" and "first thing the next morning".
+ */
+export const PILOT_LABEL_WINDOW_MINUTES = 1440;
+
+/**
  * The git evidence lane's deadline (regression-guard Stage 1). One `git diff
  * --name-only HEAD` inside the Stop hook's spare budget, at the same 250 ms
  * every other Stop-adjacent git call uses — well under one HTTP_TIMEOUT_MS,

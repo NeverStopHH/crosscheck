@@ -68,6 +68,46 @@ const RepairSchema = z.looseObject({
 
 export type PilotRepair = z.infer<typeof RepairSchema>;
 
+/**
+ * THE FOUR LABELLED FIGURES over one population (07 §12) — the window, or
+ * one cohort. Every tally is a count with no default, for the header's
+ * reason: "helpful 0" beside a real "noise 10" is the lie this parse exists
+ * to refuse. The four ratios are figures, each measured or saying why not.
+ */
+const LabelFiguresSchema = z.looseObject({
+  sessions: CountSchema,
+  interventions: CountSchema,
+  helpful: CountSchema,
+  noise: CountSchema,
+  unclear: CountSchema,
+  labelled: CountSchema,
+  benefitPer100: PilotFigureSchema,
+  burdenPer100: PilotFigureSchema,
+  precision: PilotFigureSchema,
+  labelCoverage: PilotFigureSchema,
+});
+
+export type PilotLabelFigures = z.infer<typeof LabelFiguresSchema>;
+
+/**
+ * One sentence somebody typed beside a label. The LABEL is an open string:
+ * the vocabulary is `PILOT_INTERVENTION_LABELS`, and a word this client has
+ * no sentence for is printed as the word, cleaned, like a reason word.
+ */
+const LabelReasonSchema = z.looseObject({
+  label: z.string().min(1),
+  reason: z.string(),
+});
+
+export type PilotLabelReason = z.infer<typeof LabelReasonSchema>;
+
+const CohortFiguresSchema = LabelFiguresSchema.extend({
+  cohort: z.string().min(1),
+  cap: CountSchema,
+});
+
+export type PilotCohortFigures = z.infer<typeof CohortFiguresSchema>;
+
 export const PilotReportSchema = z.looseObject({
   repo: z.string().min(1),
   enrolled: z.boolean(),
@@ -78,6 +118,10 @@ export const PilotReportSchema = z.looseObject({
     used: CountSchema,
     cap: CountSchema,
     refused: CountSchema,
+    discovery: CountSchema,
+    discoveryCap: CountSchema,
+    replication: CountSchema,
+    replicationCap: CountSchema,
     spanned: CountSchema,
     restarted: CountSchema,
     notRecorded: CountSchema,
@@ -108,15 +152,19 @@ export const PilotReportSchema = z.looseObject({
     supersededAnswers: CountSchema,
     answersAfterRepair: CountSchema,
   }),
-  precision: z.looseObject({
-    sessions: CountSchema,
+  precision: LabelFiguresSchema.extend({
+    precisionTarget: z.number().finite().min(0).max(1),
     openedPer100: PilotFigureSchema,
     openedTargetPer100: z.number().finite().min(0),
-    offTargetMarks: CountSchema,
-    offTargetPer100: PilotFigureSchema,
-    offTargetCeilingPer100: z.number().finite().min(0),
+    noisySessionsPer100: PilotFigureSchema,
+    noisySessionsCeilingPer100: z.number().finite().min(0),
     surfaceOkMarks: CountSchema,
+    reasons: z.array(LabelReasonSchema),
+    reasonsBeyondList: CountSchema,
   }),
+  // BOTH COHORTS, ALWAYS: a list that did not arrive is a report this client
+  // cannot read, for the same reason as a missing count.
+  cohorts: z.array(CohortFiguresSchema),
   integrity: z.array(
     z.looseObject({
       surface: z.string().min(1),
@@ -247,6 +295,42 @@ export interface MarkCandidatesRequest {
   /** Omitted: the hub's widest window, which is retention. */
   readonly withinMinutes?: number;
 }
+
+const UnlabeledInterventionSchema = MarkCandidateSchema.extend({
+  /** What was shown — a teammate's title, framed by the renderer — or null. */
+  title: z.string().nullable(),
+});
+
+export type UnlabeledIntervention = z.infer<typeof UnlabeledInterventionSchema>;
+
+const UnlabeledInterventionsSchema = z.looseObject({
+  candidates: z.array(UnlabeledInterventionSchema),
+  more: z.boolean(),
+});
+
+export type UnlabeledInterventions = z.infer<typeof UnlabeledInterventionsSchema>;
+
+export interface UnlabeledInterventionsRequest {
+  readonly repo: string;
+  /** Omitted: the hub's widest window, which is retention. */
+  readonly withinMinutes?: number;
+}
+
+/** What `crosscheck pilot label` walks: the caller's own unasked, unlabelled deliveries (07 §12). */
+export const getUnlabeledInterventions = (
+  ctx: HubContext,
+  request: UnlabeledInterventionsRequest,
+): Promise<HubResult<UnlabeledInterventions>> => {
+  const window =
+    request.withinMinutes === undefined
+      ? ""
+      : `&withinMinutes=${String(request.withinMinutes)}`;
+  return hubRequest(ctx, {
+    method: "GET",
+    path: `/api/pilot-marks/unlabeled?repo=${encodeURIComponent(request.repo)}${window}`,
+    schema: UnlabeledInterventionsSchema,
+  });
+};
 
 /** Which of the caller's own unasked deliveries `crosscheck noise` could mean. */
 export const getMarkCandidates = (
