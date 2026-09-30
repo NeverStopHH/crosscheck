@@ -30,6 +30,11 @@ import {
   nothingRecentLine,
   refNeverReachedLine,
 } from "./cli/pilot-mark.ts";
+import {
+  ciReportHubFailureLine,
+  ciReportNotReportedLine,
+  ciReportRunLine,
+} from "./ci-report/render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
@@ -399,11 +404,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/cli/verdict-render.ts",
     framing: "framed",
     // THE ARRAY TAIL, per 00 §9.1a — appended after `cli-claim-revalidate`
-    // (02), which is where 05's `cli-ci-report` would have gone had 05 added
-    // one. It did not: 05 rendered its CI block inside `cli/status.ts`, an
-    // already-registered module, and covered it with a probe in
-    // test/ci-status-render.test.ts. So this is the next tail slot, and 07's
-    // `cli-pilot` follows it.
+    // (02), which is where 05's `cli-ci-report` would have gone had 05's HUB
+    // side added one. It did not: that half rendered its CI block inside
+    // `cli/status.ts`, an already-registered module, and covered it with a
+    // probe in test/ci-status-render.test.ts. So this was the next tail slot,
+    // 07's `cli-pilot` follows it, and the REPORTER half of 05 — built after
+    // all eight — registers `cli-ci-report` at the tail below `cli-pilot-mark`.
     //
     // THE PAYLOAD IS PLANTED IN THE WAIVER REASON, not only in the labels.
     // That slot is the whole point of this registration: a verdict is enum
@@ -482,6 +488,62 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         markFailureLine("http", payload),
       ].join("\n");
     },
+  },
+  {
+    kind: "corpus",
+    name: "cli-ci-report",
+    delivery: "pulled",
+    module: "src/ci-report/render.ts",
+    // 05 §5, THE ARRAY TAIL: the reporter runs on a CI runner and prints into
+    // the job log — counts, enum words, its own outcome, NEVER a test name.
+    // BARE for cli-claim-revalidate's reason: a log is a terminal-shaped
+    // surface with no QUOTED_DATA_NOTICE, so a « » pair would be a frame
+    // nothing explains.
+    //
+    // CORPUS, NOT THE `composite` 05 §5 NAMED, and the difference is a finding
+    // rather than a preference. The spec registered it composite on the
+    // premise that it "renders no untrusted text at all". The build found
+    // three slots the module does not write itself — the hub's failure
+    // sentence (bounded by MAX_HUB_MESSAGE_CHARS, the constant minted for
+    // "a string THE HUB chose, as a tool prints it back") and the workflow
+    // author's own `--job` and `--leg` — and a composite row for a module
+    // that imports nothing from the render layer is exactly the "decorative
+    // row" the meta-test refuses. So the three slots go through
+    // `bareUntrusted`, and the corpus attacks all of them at once.
+    framing: "bare",
+    render: (payload) =>
+      [
+        ciReportRunLine({
+          commitSha: "0123456789abcdef",
+          job: payload,
+          leg: payload,
+          runAttempt: 1,
+          stage: "same_job",
+          rerunFiles: 1,
+          tests: 3,
+          failures: 1,
+          skipped: 1,
+          rowsSent: 2,
+          nonGreen: 3,
+          ambiguousDropped: 1,
+          outcome: "truncated",
+          stored: { status: "accepted", id: "cir_0123456789abcdef0123456789abcdef" },
+        }),
+        ciReportHubFailureLine("0123456789abcdef", "primary", {
+          kind: "refused",
+          httpStatus: 401,
+          message: payload,
+        }),
+        ciReportHubFailureLine("0123456789abcdef", "same_job", {
+          kind: "network",
+          message: payload,
+        }),
+        ciReportHubFailureLine("0123456789abcdef", "primary", {
+          kind: "malformed",
+          message: payload,
+        }),
+        ciReportNotReportedLine("0123456789abcdef", "no_token"),
+      ].join(""),
   },
 ];
 
