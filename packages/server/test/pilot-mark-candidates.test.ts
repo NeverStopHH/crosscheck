@@ -16,7 +16,8 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { hintDeliveries } from "../src/db/schema.ts";
+import { PILOT_LABEL_MAX_CANDIDATES } from "../src/constants.ts";
+import { hintDeliveries, pilotMarks, workContexts } from "../src/db/schema.ts";
 import {
   TEST_ADMIN_TOKEN,
   TEST_START_ISO,
@@ -104,6 +105,157 @@ const ask = async (
 
 const candidatesOf = (body: Record<string, unknown>): readonly Candidate[] =>
   ((body.data as { candidates: Candidate[] }).candidates);
+
+interface Unlabeled extends Candidate {
+  readonly title: string | null;
+}
+
+/** The pointed work context, so the walker can show what was shown. */
+const pointed = async (
+  harness: TestHarness,
+  id: string,
+  sessionId: string,
+  title: string,
+): Promise<void> => {
+  await harness.db.insert(workContexts).values({
+    id,
+    sessionId,
+    title,
+    status: "implementing",
+    createdAt: new Date(TEST_START_ISO),
+  });
+};
+
+/** One label by `developer` on one delivery. */
+const labelled = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+  deliveryId: string,
+): Promise<void> => {
+  await harness.db.insert(pilotMarks).values({
+    id: `pm_${deliveryId}`,
+    repo: REPO,
+    refKind: "hint_delivery",
+    refId: deliveryId,
+    mark: "helpful",
+    markedBy: developer.developerId,
+    captureMode: "human",
+    createdAt: new Date(TEST_START_ISO),
+  });
+};
+
+const askUnlabeled = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+  query = "",
+): Promise<{ status: number; body: Record<string, unknown> }> => {
+  const response = await harness.app.request(
+    `/api/pilot-marks/unlabeled?repo=${encodeURIComponent(REPO)}${query}`,
+    jsonRequest("GET", developer.apiKey),
+  );
+  return {
+    status: response.status,
+    body: (await response.json()) as Record<string, unknown>,
+  };
+};
+
+const unlabeledOf = (body: Record<string, unknown>): readonly Unlabeled[] =>
+  (body.data as { candidates: Unlabeled[] }).candidates;
+
+/**
+ * WHAT `crosscheck pilot label` WALKS (07 §12): the caller's own unsolicited
+ * deliveries that the caller has not labelled, with what each pointed at.
+ */
+describe("GET /api/pilot-marks/unlabeled", () => {
+  test("lists the caller's own unlabelled interventions, newest first, with what each pointed at", async () => {
+    // Arrange
+    const { harness, nick, ken } = await setup();
+    await pointed(harness, "wc_one", THEIRS, "Widen the filter row");
+    await deliver(harness, { id: "hd_old", sessionId: MINE, refId: "wc_one", minutesAgo: 30 });
+    await deliver(harness, { id: "hd_new", sessionId: MINE, refId: "wc_gone", minutesAgo: 5 });
+    await deliver(harness, { id: "hd_ken", sessionId: THEIRS, refId: "wc_one", minutesAgo: 1 });
+
+    // Act
+    const { status, body } = await askUnlabeled(harness, nick, "&withinMinutes=60");
+
+    // Assert — Ken's is never offered; a pointer at nothing has no title
+    expect(status).toBe(200);
+    expect(unlabeledOf(body).map((row) => [row.id, row.title])).toEqual([
+      ["hd_new", null],
+      ["hd_old", "Widen the filter row"],
+    ]);
+    expect(unlabeledOf(body)[1]?.channel).toBe("prompt_hint");
+    expect((await askUnlabeled(harness, ken, "&withinMinutes=60")).body).toMatchObject({
+      data: { candidates: [{ id: "hd_ken" }] },
+    });
+  });
+
+  test("a delivery the caller already labelled is not offered again", async () => {
+    // Arrange — the walk is of what is LEFT; offering a labelled one again
+    // would make every run start with "already recorded"
+    const { harness, nick } = await setup();
+    await deliver(harness, { id: "hd_done", sessionId: MINE, refId: "wc_a", minutesAgo: 5 });
+    await deliver(harness, { id: "hd_todo", sessionId: MINE, refId: "wc_b", minutesAgo: 6 });
+    await labelled(harness, nick, "hd_done");
+
+    // Act
+    const { body } = await askUnlabeled(harness, nick, "&withinMinutes=60");
+
+    // Assert
+    expect(unlabeledOf(body).map((row) => row.id)).toEqual(["hd_todo"]);
+  });
+
+  test("an answer somebody asked for is not an intervention to label", async () => {
+    // Arrange
+    const { harness, nick } = await setup();
+    await deliver(harness, { id: "hd_asked", sessionId: MINE, refId: "wc_a", channel: "suspect", minutesAgo: 5 });
+
+    // Act
+    const { body } = await askUnlabeled(harness, nick, "&withinMinutes=60");
+
+    // Assert
+    expect(unlabeledOf(body)).toEqual([]);
+  });
+
+  test("older than the window is not offered — a person labels what they still remember", async () => {
+    // Arrange
+    const { harness, nick } = await setup();
+    await deliver(harness, { id: "hd_stale", sessionId: MINE, refId: "wc_a", minutesAgo: 61 });
+
+    // Act
+    const { body } = await askUnlabeled(harness, nick, "&withinMinutes=60");
+
+    // Assert
+    expect(unlabeledOf(body)).toEqual([]);
+  });
+
+  test("the walk is bounded, and the cut is said", async () => {
+    // Arrange — one more than the bound
+    const { harness, nick } = await setup();
+    for (let i = 0; i <= PILOT_LABEL_MAX_CANDIDATES; i += 1) {
+      await deliver(harness, { id: `hd_${String(i)}`, sessionId: MINE, refId: `wc_${String(i)}`, minutesAgo: i + 1 });
+    }
+
+    // Act
+    const { body } = await askUnlabeled(harness, nick, "&withinMinutes=60");
+
+    // Assert
+    expect(unlabeledOf(body)).toHaveLength(PILOT_LABEL_MAX_CANDIDATES);
+    expect((body.data as { more: boolean }).more).toBe(true);
+  });
+
+  test("a repo nobody enrolled is told, not listed", async () => {
+    // Arrange
+    const { harness, nick } = await setup({ enrolled: false });
+
+    // Act
+    const { status, body } = await askUnlabeled(harness, nick);
+
+    // Assert
+    expect(status).toBe(422);
+    expect((body.error as { code: string }).code).toBe("not_enrolled");
+  });
+});
 
 describe("GET /api/pilot-marks/candidates", () => {
   test("lists the caller's own recent deliveries, newest first", async () => {

@@ -32,7 +32,10 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { writePilotMark } from "../services/pilot.ts";
-import { readMarkCandidates } from "../services/pilot-candidates.ts";
+import {
+  readMarkCandidates,
+  readUnlabeledInterventions,
+} from "../services/pilot-candidates.ts";
 import type { MarkRefusal } from "../services/pilot.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
@@ -49,16 +52,23 @@ const MINUTES_PER_DAY = 1440;
  */
 const MAX_WINDOW_MINUTES = PILOT_RETENTION_DAYS * MINUTES_PER_DAY;
 
+const WithinMinutesSchema = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_WINDOW_MINUTES)
+  .default(MAX_WINDOW_MINUTES);
+
 const CandidatesQuerySchema = z.object({
   repo: z.string().min(1),
   sessions: z.array(z.string().min(1)).max(NOISE_MARK_MAX_SESSIONS),
   ref: z.string().min(1).optional(),
-  withinMinutes: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_WINDOW_MINUTES)
-    .default(MAX_WINDOW_MINUTES),
+  withinMinutes: WithinMinutesSchema,
+});
+
+const UnlabeledQuerySchema = z.object({
+  repo: z.string().min(1),
+  withinMinutes: WithinMinutesSchema,
 });
 
 /**
@@ -111,6 +121,30 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
       developerId: c.get("developer").id,
       sessions: parsed.data.sessions,
       ref: parsed.data.ref ?? null,
+      withinMinutes: parsed.data.withinMinutes,
+    });
+    if ("refusal" in outcome) {
+      return fail(c, 422, outcome.refusal, REFUSAL_SENTENCE[outcome.refusal]);
+    }
+    return ok(c, outcome);
+  });
+
+  /**
+   * WHAT `crosscheck pilot label` WALKS (07 §12) — the caller's own unasked
+   * deliveries the caller has not labelled, with what each pointed at. The
+   * same refusal on a repo nobody enrolled, for the same reason as above.
+   */
+  router.get("/unlabeled", developerAuth(deps), async (c) => {
+    const parsed = UnlabeledQuerySchema.safeParse({
+      repo: c.req.query("repo"),
+      withinMinutes: c.req.query("withinMinutes"),
+    });
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    const outcome = await readUnlabeledInterventions(deps, {
+      repo: parsed.data.repo,
+      developerId: c.get("developer").id,
       withinMinutes: parsed.data.withinMinutes,
     });
     if ("refusal" in outcome) {

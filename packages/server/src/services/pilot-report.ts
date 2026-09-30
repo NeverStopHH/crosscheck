@@ -83,6 +83,7 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { PILOT_ANSWER_SURFACES } from "./pilot.ts";
+import { POINTED_WORK_CONTEXT } from "./pilot-candidates.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { PilotAnswerSurface } from "./pilot.ts";
 import type { Db } from "../db/client.ts";
@@ -293,9 +294,8 @@ const zeroChannels = (): Record<DeliveryChannel, number> =>
     number
   >;
 
-/** The pointed-at work context of a delivery, whichever ref kind it names. */
-const POINTED = sql`CASE WHEN hd.ref_kind = 'work_context' THEN hd.ref_id
-  ELSE (SELECT c.work_context_id FROM claims c WHERE c.id = hd.ref_id) END`;
+/** The pointed-at work context of a delivery — one definition, shared with the label walk. */
+const POINTED = POINTED_WORK_CONTEXT;
 
 /**
  * WHEN A PULL COUNTS AS AN OPEN (corrected by adversarial review).
