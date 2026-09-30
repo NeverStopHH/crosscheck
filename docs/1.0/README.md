@@ -89,19 +89,22 @@ argument, with the measured #50-only dependencies, is 00 §9.7.
 
 ## The eight specs
 
-Status is **spec** (written, not built), **in progress**, or **shipped**.
+Status is **spec** (written, not built), **partly built**, or **shipped**. A row
+names the PR that built the spec and what it left open. Checked against the code
+at `7a070b8` (0.10.0): #58 brought 01, 02, 03, 05 and 06 into `main`, #63 brought
+04, 07, 08 and 01a.
 
 | # | spec | owns | status |
 |---|---|---|---|
-| 01 | [Canonical event model and per-session causal order](01-canonical-event-model.md) | **AT-4** | spec |
-| 01a | [The causal skeleton: retention by root reachability, attestation, declared provider guarantees](01a-causal-skeleton.md) | — (makes AT-4 durable; amends 01 §10 D2) | spec (revision 4); partly built — #62, see its §12 |
-| 02 | [Claim-to-code binding and individual commit identity](02-claim-code-binding.md) | **AT-2** | spec |
-| 03 | [Coverage integrity at the answer layer](03-coverage-integrity.md) | **AT-1, AT-9, AT-10** | spec |
-| 04 | [Verdict semantics, fence authority and the human waiver](04-verdict-semantics-and-fence-authority.md) | **AT-5, AT-6** | spec |
-| 05 | [CI ingestion keyed to a commit, with same-commit re-run](05-ci-ingestion.md) | **AT-8** | spec |
-| 06 | [Structured intent and the append-only intent ledger](06-intent-ledger.md) | — (supports AT-4, AT-3, AT-6) | spec |
-| 07 | [Pilot instrumentation for the five proofs](07-pilot-instrumentation.md) | — (measures AT-1, AT-5, AT-9) | spec |
-| 08 | [Two evidence axes and calibration measurement](08-evidence-axes-and-calibration.md) | **AT-3** | spec |
+| 01 | [Canonical event model and per-session causal order](01-canonical-event-model.md) | **AT-4** | shipped — #53 |
+| 01a | [The causal skeleton: retention by root reachability, attestation, declared provider guarantees](01a-causal-skeleton.md) | — (makes AT-4 durable; amends 01 §10 D2) | partly built — #62: the pin door, the skeleton identity and the generated sweep, running in `interim` mode. Not built: the attestation record, the declared provider guarantees, `full` mode (its §12) |
+| 02 | [Claim-to-code binding and individual commit identity](02-claim-code-binding.md) | **AT-2** | shipped — #55. Open: who may revalidate a claim (its D6 note on the downgrade-only rule) |
+| 03 | [Coverage integrity at the answer layer](03-coverage-integrity.md) | **AT-1, AT-9, AT-10** | shipped — #52 |
+| 04 | [Verdict semantics, fence authority and the human waiver](04-verdict-semantics-and-fence-authority.md) | **AT-5, AT-6** | shipped — #60. AT-6's human gate is a detection, not a prevention (its §10 D8) |
+| 05 | [CI ingestion keyed to a commit, with same-commit re-run](05-ci-ingestion.md) | **AT-8** | partly built — #57: the hub side (`ci_runs`, the flake filter, the `ci` coverage source). Not built: the reporter, so no repo has CI coverage yet |
+| 06 | [Structured intent and the append-only intent ledger](06-intent-ledger.md) | — (supports AT-4, AT-3, AT-6) | shipped — #56 |
+| 07 | [Pilot instrumentation for the five proofs](07-pilot-instrumentation.md) | — (measures AT-1, AT-5, AT-9) | shipped — #61. Open: D-E, whether its tables retain a session (its §11.8) |
+| 08 | [Two evidence axes and calibration measurement](08-evidence-axes-and-calibration.md) | **AT-3** | shipped with two narrowings — #59: the hub does not stamp the capture mode from the route (its §3.2a), and `repository_verified` has no ancestor leg (its §3.5) |
 
 **One AT has one owner.** This table is the authority; a spec header that disagrees
 with it is the spec that is wrong. Contributors are named but do not own: 06
