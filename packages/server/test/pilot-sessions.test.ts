@@ -18,7 +18,10 @@
 import { describe, expect, test } from "bun:test";
 
 import { agentSessions, pilotCounters, pilotSessions } from "../src/db/schema.ts";
-import { PILOT_MAX_SESSIONS } from "../src/constants.ts";
+import {
+  PILOT_DISCOVERY_COHORT_SESSIONS,
+  PILOT_SESSION_SET_CAP,
+} from "../src/constants.ts";
 import { recordPilotSession } from "../src/services/pilot.ts";
 import { recordSessionEvent } from "../src/services/session-events.ts";
 import {
@@ -97,6 +100,45 @@ const store = async (
 };
 
 const rows = (harness: TestHarness) => harness.db.select().from(pilotSessions);
+
+/**
+ * `count` finished sessions of this repo, written straight into the set: the
+ * cap and the cohort split are what is under test, not the registration
+ * path. A cohort is passed only where a test needs a row that the writer
+ * would not have placed there itself.
+ */
+const fill = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+  count: number,
+  prefix = "cc_fill_",
+  cohort: "discovery" | "replication" = "discovery",
+): Promise<void> => {
+  const filler = Array.from({ length: count }, (_unused, i) => ({
+    id: `${prefix}${String(i)}`,
+    developerId: developer.developerId,
+    agentKind: "claude-code",
+    repo: REPO,
+    branch: "main",
+    baseCommit: "abc1234",
+    status: "done" as const,
+    startedAt: NOW,
+    lastHeartbeatAt: NOW,
+  }));
+  await harness.db.insert(agentSessions).values(filler);
+  await harness.db.insert(pilotSessions).values(
+    filler.map((row) => ({
+      sessionId: row.id,
+      repo: REPO,
+      observedAt: NOW,
+      endReason: "reported" as const,
+      cohort,
+      coverage: [],
+      seqNullRecords: 0,
+      seqEpochs: 0,
+    })),
+  );
+};
 
 describe("one session's residue", () => {
   test("a repo that never enrolled stores nothing", async () => {
@@ -205,47 +247,72 @@ describe("one session's residue", () => {
     }
   });
 
-  test("the 51st is REFUSED and COUNTED, never dropped silently", async () => {
-    // Arrange — fill the set by hand rather than by registering fifty
+  test("the 201st is REFUSED and COUNTED, never dropped silently", async () => {
+    // Arrange — fill the set by hand rather than by registering two hundred
     // sessions: the cap is what is under test, not the registration path.
     // A measurement that hit its own ceiling and said nothing would report
-    // fifty sessions as though that were the population.
+    // the set as though it were the population.
     const { harness, developer } = await setup();
-    const filler = Array.from({ length: PILOT_MAX_SESSIONS }, (_unused, i) => ({
-      id: `cc_fill_${String(i)}`,
-      developerId: developer.developerId,
-      agentKind: "claude-code",
-      repo: REPO,
-      branch: "main",
-      baseCommit: "abc1234",
-      status: "done" as const,
-      startedAt: NOW,
-      lastHeartbeatAt: NOW,
-    }));
-    await harness.db.insert(agentSessions).values(filler);
-    await harness.db.insert(pilotSessions).values(
-      filler.map((row) => ({
-        sessionId: row.id,
-        repo: REPO,
-        observedAt: NOW,
-        endReason: "reported" as const,
-        coverage: [],
-        seqNullRecords: 0,
-        seqEpochs: 0,
-      })),
-    );
+    await fill(harness, developer, PILOT_SESSION_SET_CAP);
 
-    // Act — the fifty-first
+    // Act — the two-hundred-and-first
     await store(harness, developer);
 
     // Assert — not stored…
-    expect(await rows(harness)).toHaveLength(PILOT_MAX_SESSIONS);
+    expect(await rows(harness)).toHaveLength(PILOT_SESSION_SET_CAP);
     // …and the refusal is a number somebody can read.
     const counters = await harness.db.select().from(pilotCounters);
     const refused = counters.find(
       (row) => row.counter === "pilot_sessions_refused",
     );
     expect(Number(refused?.value ?? 0)).toBe(1);
+  });
+
+  test("the first fifty are the discovery cohort; the fifty-first opens replication", async () => {
+    // Arrange — the first pilot refused the fifty-first session outright,
+    // which stopped measuring exactly when real usage began. It is now the
+    // replication cohort's first row, and the discovery cohort is frozen.
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_DISCOVERY_COHORT_SESSIONS);
+
+    // Act
+    await store(harness, developer);
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
+    expect(own?.cohort).toBe("replication");
+    const refused = (await harness.db.select().from(pilotCounters)).find(
+      (row) => row.counter === "pilot_sessions_refused",
+    );
+    expect(refused).toBeUndefined();
+  });
+
+  test("a fresh repo's first session is discovery", async () => {
+    // Arrange & Act
+    const { harness, developer } = await setup();
+    await store(harness, developer);
+
+    // Assert
+    expect((await rows(harness))[0]?.cohort).toBe("discovery");
+  });
+
+  test("a cohort is frozen: a revived discovery session that ends again stays discovery", async () => {
+    // Arrange — this session is the fiftieth to end (discovery); then one
+    // more ends after it, so a recount would now place it fifty-first. A
+    // revived session that ends a second time must keep the cohort it
+    // entered, or the split would measure the reaper.
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_DISCOVERY_COHORT_SESSIONS - 1);
+    await store(harness, developer, "reaped");
+    await fill(harness, developer, 1, "cc_later_", "replication");
+
+    // Act — revived, then ended for real
+    await store(harness, developer, "reported");
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
+    expect(own?.endReason).toBe("reported");
+    expect(own?.cohort).toBe("discovery");
   });
 
   test("a revived session's SECOND end is the one that stands", async () => {
@@ -265,32 +332,10 @@ describe("one session's residue", () => {
   });
 
   test("a revived session in a FULL set keeps its own slot — its second end is not a refusal", async () => {
-    // Arrange — 49 other sessions plus this one, reaped: the set is full, and
-    // this session already holds a slot (found by adversarial review)
+    // Arrange — 199 other sessions plus this one, reaped: the set is full,
+    // and this session already holds a slot (found by adversarial review)
     const { harness, developer } = await setup();
-    const filler = Array.from({ length: PILOT_MAX_SESSIONS - 1 }, (_unused, i) => ({
-      id: `cc_fill_${String(i)}`,
-      developerId: developer.developerId,
-      agentKind: "claude-code",
-      repo: REPO,
-      branch: "main",
-      baseCommit: "abc1234",
-      status: "done" as const,
-      startedAt: NOW,
-      lastHeartbeatAt: NOW,
-    }));
-    await harness.db.insert(agentSessions).values(filler);
-    await harness.db.insert(pilotSessions).values(
-      filler.map((row) => ({
-        sessionId: row.id,
-        repo: REPO,
-        observedAt: NOW,
-        endReason: "reported" as const,
-        coverage: [],
-        seqNullRecords: 0,
-        seqEpochs: 0,
-      })),
-    );
+    await fill(harness, developer, PILOT_SESSION_SET_CAP - 1);
     await store(harness, developer, "reaped");
 
     // Act — revived, then ended for real

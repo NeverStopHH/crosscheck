@@ -863,18 +863,58 @@ export const CALIBRATION_MAX_CELLS = 8;
 export const CALIBRATION_MAX_CLAIMS = 500;
 
 /**
- * THE 50-SESSION SET (1.0 spec 07 §3.6).
+ * THE SESSION SET IN TWO COHORTS (1.0 spec 07 §3.6, revised §12).
  *
- * The pilot's per-session residue is bounded because it is a MEASUREMENT, not
- * a log: fifty sessions is the size the handover asked for, and a table that
- * grew with traffic would make the cost of measuring scale with the thing
- * being measured.
+ * The pilot's per-session residue is bounded because it is a MEASUREMENT,
+ * not a log: a table that grew with traffic would make the cost of measuring
+ * scale with the thing being measured. The first pilot stopped at fifty and
+ * refused every later session — exactly when real usage became interesting.
  *
- * THE 51st WRITE IS REFUSED AND COUNTED, never dropped silently — the cap is
- * a fact the report states about itself, which is non-negotiable #4 applied
- * to this project's own instrumentation.
+ * DISCOVERY is the preregistered fifty the handover asked for, frozen once
+ * full. REPLICATION is the next hundred and fifty, measured with the
+ * discovery figures already on the table, so a result that holds in the
+ * second cohort was not fitted to the first. Past the cap the write is still
+ * REFUSED AND COUNTED, never dropped silently — the cap is a fact the report
+ * states about itself, which is non-negotiable #4 applied to this project's
+ * own instrumentation. Two hundred is one hundred and fifty replication
+ * sessions on top of fifty: three chances to see what fifty saw once.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");console.log(c.PILOT_SESSION_SET_CAP === c.PILOT_DISCOVERY_COHORT_SESSIONS + c.PILOT_REPLICATION_COHORT_SESSIONS)'
+ * PRINTS: true
  */
-export const PILOT_MAX_SESSIONS = 50;
+export const PILOT_DISCOVERY_COHORT_SESSIONS = 50;
+export const PILOT_REPLICATION_COHORT_SESSIONS = 150;
+export const PILOT_SESSION_SET_CAP =
+  PILOT_DISCOVERY_COHORT_SESSIONS + PILOT_REPLICATION_COHORT_SESSIONS;
+
+/**
+ * THE PRECISION TARGET, DECLARED BEFORE MEASURING (07 §12). Half of the
+ * interventions a person labelled must have been labelled helpful.
+ *
+ * PROVENANCE: `docs/DESIGN.md` §11 proposed "hint-precision ≥ 0.5
+ * pulled/delivered" as the first dogfood success metric. The ratio measured
+ * there was the model's pull; this one is a human's verdict, but the bar is
+ * the same number for the same reason — below it, more of what this product
+ * says unasked is wrong than right, and a person stops reading. Stated as a
+ * fraction, and the report prints it beside the figure so the gap is seen
+ * rather than announced closed. NOT LOWERED to make a measurement pass.
+ */
+export const PILOT_TARGET_INTERVENTION_PRECISION = 0.5;
+
+/**
+ * How many label reasons one report prints (07 §12). A reason is a person's
+ * sentence about one intervention; ten newest is what a reader takes in on
+ * one screen, and the count beside the list says how many there were.
+ */
+export const PILOT_REPORT_MAX_LABEL_REASONS = 10;
+
+/**
+ * How many unlabelled interventions `crosscheck pilot label` walks in one
+ * sitting (07 §12). Twenty is a few minutes at one key each; past it the cut
+ * is said and the next run continues where this one stopped — a walk that
+ * never ends is a walk nobody finishes.
+ */
+export const PILOT_LABEL_MAX_CANDIDATES = 20;
 
 /**
  * How long a pilot row survives.

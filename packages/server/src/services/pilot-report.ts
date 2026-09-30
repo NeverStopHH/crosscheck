@@ -51,7 +51,7 @@ import type {
 import {
   GHOST_MIN_SHARED_TARGETS,
   PILOT_CONVERGENCE_WINDOW_HOURS,
-  PILOT_MAX_SESSIONS,
+  PILOT_SESSION_SET_CAP,
   PILOT_FIX_DIFF_MAX_NAMED_FILES,
   PILOT_REPORT_MAX_PRIOR_WORK,
   PILOT_REPORT_MAX_REPAIRS,
@@ -765,7 +765,7 @@ const readSessionSet = async (
   ]);
   return {
     used: rows.length,
-    cap: PILOT_MAX_SESSIONS,
+    cap: PILOT_SESSION_SET_CAP,
     refused: refused[0]?.n ?? 0,
     spanned: rows.filter((row) => row.epochs === 1).length,
     restarted: rows.filter((row) => (row.epochs ?? 0) > 1).length,
@@ -780,7 +780,7 @@ const notEnrolled = (): Omit<
 > => ({
   sessionSet: {
     used: 0,
-    cap: PILOT_MAX_SESSIONS,
+    cap: PILOT_SESSION_SET_CAP,
     refused: 0,
     spanned: 0,
     restarted: 0,

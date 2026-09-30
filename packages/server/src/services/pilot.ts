@@ -32,7 +32,11 @@ import {
   pins,
   sessionEvents,
 } from "../db/schema.ts";
-import { PILOT_MAX_SESSIONS, PILOT_RETENTION_DAYS } from "../constants.ts";
+import {
+  PILOT_DISCOVERY_COHORT_SESSIONS,
+  PILOT_RETENTION_DAYS,
+  PILOT_SESSION_SET_CAP,
+} from "../constants.ts";
 import { COVERAGE_SOURCES, isJudgeable, readCoverage } from "./coverage.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { CoverageRecord } from "./coverage.ts";
@@ -44,7 +48,7 @@ import {
   PULLED_DELIVERY_CHANNEL,
   containsSecret,
 } from "@crosscheck/schema";
-import type { PilotMark, PilotMarkRefKind } from "@crosscheck/schema";
+import type { PilotCohort, PilotMark, PilotMarkRefKind } from "@crosscheck/schema";
 
 interface Deps {
   readonly db: Db;
@@ -323,6 +327,18 @@ export interface RecordPilotSessionInput {
 }
 
 /**
+ * Which cohort the next row joins, given how many OTHER rows the repo holds,
+ * or null once the set is full. Slots 0–49 are discovery, 50–199
+ * replication; the boundary is the constant, never a literal.
+ */
+const cohortForSlot = (taken: number): PilotCohort | null => {
+  if (taken < PILOT_DISCOVERY_COHORT_SESSIONS) {
+    return "discovery";
+  }
+  return taken < PILOT_SESSION_SET_CAP ? "replication" : null;
+};
+
+/**
  * ONE SESSION'S RESIDUE, at the moment it ended (§3.6).
  *
  * WRITTEN HUB-SIDE, FROM WHAT THE HUB ALREADY HAS. §6 budgets zero new round
@@ -337,10 +353,17 @@ export interface RecordPilotSessionInput {
  * `readCoverage`. It is what the hub SAID at this instant, which is the only
  * proof-5 input that cannot be recomputed.
  *
- * THE 51st IS REFUSED AND COUNTED, never dropped silently. A measurement that
- * hit its own cap and said nothing would report fifty sessions as though that
+ * THE 201st IS REFUSED AND COUNTED, never dropped silently. A measurement
+ * that hit its own cap and said nothing would report the set as though it
  * were the population — non-negotiable 4 applied to this project's own
  * instrumentation.
+ *
+ * THE COHORT IS DECIDED BY HOW MANY OTHER ROWS THE REPO HOLDS (07 §12): the
+ * first fifty are `discovery`, the next hundred and fifty `replication`. It
+ * is written once and never updated — see the conflict clause below — so a
+ * revived session keeps the cohort it entered even when a recount would
+ * place it later. Otherwise the split between the two cohorts would move
+ * with the reaper, and a comparison between them would measure that.
  */
 export const recordPilotSession = async (
   deps: Deps,
@@ -364,7 +387,8 @@ export const recordPilotSession = async (
         ne(pilotSessions.sessionId, input.sessionId),
       ),
     );
-  if ((taken[0]?.n ?? 0) >= PILOT_MAX_SESSIONS) {
+  const cohort = cohortForSlot(taken[0]?.n ?? 0);
+  if (cohort === null) {
     await deps.db
       .insert(pilotCounters)
       .values({
@@ -397,6 +421,7 @@ export const recordPilotSession = async (
       repo: input.repo,
       observedAt: now,
       endReason: input.endReason,
+      cohort,
       // ENUMS ONLY. The record carries no instants and no free text — the
       // reason and the state are words this hub chose, and `gapSince` would
       // be an instant about a session that has ended.
@@ -415,6 +440,7 @@ export const recordPilotSession = async (
     // A REVIVED SESSION CAN END TWICE. `reviveReapedSession` undoes an
     // inferred end when a record arrives from that session, so the same id
     // reaches this function again — and the SECOND end is the true one.
+    // `cohort` IS NOT IN THIS SET: the row keeps the cohort it entered.
     .onConflictDoUpdate({
       target: pilotSessions.sessionId,
       set: {
