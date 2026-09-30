@@ -37,6 +37,17 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 -- databases and ones created before the column.
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reaped_at timestamptz;
 
+-- The connector's own account of what it lost (docs/1.0/loss-accounting.md
+-- §4.4): a snapshot of its ledgers at its last register, heartbeat or end.
+-- NULL loss_reported_at means "never reported" — not zero, not a gap. ALTER
+-- so one statement covers fresh databases and ones created before the
+-- columns; loss_kinds carries LOSS_KINDS keys only, folded by the service.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_reported_at timestamptz;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_total integer NOT NULL DEFAULT 0;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_kinds jsonb;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_oldest_at timestamptz;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);
 CREATE INDEX IF NOT EXISTS agent_sessions_heartbeat_idx

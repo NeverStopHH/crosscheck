@@ -1,4 +1,8 @@
-import { SeqFieldSchema, SessionStatusSchema } from "@crosscheck/schema";
+import {
+  SeqFieldSchema,
+  SessionStatusSchema,
+  TelemetryLossReportSchema,
+} from "@crosscheck/schema";
 import { z } from "zod";
 
 import {
@@ -14,15 +18,29 @@ export const CreateDeveloperBodySchema = z.object({
 
 /**
  * THE TWO SESSION EVENTS DO NOT TRAVEL AN ENVELOPE (spec 01 §3.2), and these
- * two bodies are where they actually go. Both are STRICT objects, so a `seq`
- * sent against the old shape would have been REFUSED rather than ignored — the
- * field has to be declared here as well as on the envelope.
+ * two bodies are where they actually go. A field has to be declared here as
+ * well as on the envelope to be READ at all: zod 4's `z.object` STRIPS a key
+ * it was not told about and answers 200 (docs/1.0/loss-accounting.md §4.2
+ * carries the directive), so a `seq` sent against the old shape would have
+ * been silently dropped rather than refused — an earlier version of this
+ * comment said "refused", which is not what a strip does.
  *
  * `SeqFieldSchema` is the same union the wire uses: a stamp, or the refusal a
  * seq-capable connector sends when it could not allocate. Optional forever, so
  * a connector from before the field registers exactly as it always did.
  */
 const SeqBodyField = { seq: SeqFieldSchema.optional() };
+
+/**
+ * THE CONNECTOR'S LOSS REPORT (docs/1.0/loss-accounting.md §4.2) rides the
+ * same three bodies: counts and kinds of the telemetry it knows it did not
+ * deliver. Optional forever for the same reason as `seq` — and the two
+ * absences mean different things, so the service reads them apart: no
+ * `losses` is a connector from before the field, never a report of zero.
+ * A block from a NEWER connector than this hub parses too, because the kinds
+ * map is loose on the wire and folded in the service (schema/telemetry-loss.ts).
+ */
+const LossBodyField = { losses: TelemetryLossReportSchema.optional() };
 
 /** Field rules consistent with AgentSessionSchema in @crosscheck/schema. */
 export const RegisterSessionBodySchema = z.object({
@@ -33,11 +51,13 @@ export const RegisterSessionBodySchema = z.object({
   baseCommit: z.string().min(1),
   status: SessionStatusSchema,
   ...SeqBodyField,
+  ...LossBodyField,
 });
 
 export const SessionStatusBodySchema = z.object({
   status: SessionStatusSchema.optional(),
   ...SeqBodyField,
+  ...LossBodyField,
 });
 
 export const PresenceQuerySchema = z.object({

@@ -1,6 +1,9 @@
 /**
  * Coverage integrity (docs/1.0/03-coverage-integrity.md) — "only judge when
- * you know you were watching", as a data structure.
+ * you know you were watching", as a data structure. The `agent_event` rung
+ * also reads the connector's OWN account of what it lost
+ * (docs/1.0/loss-accounting.md §4.5), because a connector that wrote "382
+ * records discarded" into its ledger has said it was not watching.
  *
  * THE SHAPE IS THE ARGUMENT. Coverage is FIVE ROWS, one per source, each with
  * its own state and its own named reason. It is never one number: a single
@@ -83,6 +86,13 @@ export type CoverageState = (typeof COVERAGE_STATES)[number];
  * timestamps and renderer-owned literals only — so landing it on a surface
  * adds no untrusted slot to that surface.
  *
+ * `telemetry_lost` and `record_kinds_ignored` are the two words the
+ * connector's own loss report can put on the `agent_event` rung
+ * (docs/1.0/loss-accounting.md §4.6): the first for records the connector
+ * captured and could not deliver or the hub refused, the second for record
+ * kinds the hub answered 200 to and ignored — that one's remedy is specific,
+ * upgrade the hub, which is why it is its own word.
+ *
  * The last four are RESERVED FOR 05 AND DORMANT until CI ingestion lands.
  * They are minted here rather than there because 05 §9.1 requests them, and a
  * second coverage enum living in a second package is exactly the drift
@@ -101,6 +111,8 @@ export const COVERAGE_REASONS = [
   "out_of_scope_1_0",
   "no_platform_rung",
   "hub_did_not_report",
+  "telemetry_lost",
+  "record_kinds_ignored",
   "ci_lanes_reported",
   "ci_lanes_missing",
   "ci_awaiting_rerun",
@@ -255,6 +267,16 @@ const toCount = (value: unknown): number => {
  *
  * A REAP OUTRANKS A SILENCE when both are present. A reap is a decision this
  * hub made and can revoke, so it is the one a reader can act on.
+ *
+ * A THIRD WAY OBSERVATION STOPS, AND IT OUTRANKS BOTH: the connector's own
+ * loss report (docs/1.0/loss-accounting.md §4.5), five columns on the same
+ * row, read by the same aggregate. A reported loss is a fact the connector
+ * wrote down and nobody can revoke, so its word comes first — and
+ * `record_kinds_ignored` before `telemetry_lost`, because its remedy is
+ * specific. Every loss term can only ADD to the gap: the reap and silence
+ * predicates are untouched, an unreported row is read as before, and
+ * `gapSince` takes the EARLIEST of the instants — the direction that cannot
+ * overstate what was seen.
  */
 /**
  * "This session reported a file target at all" — the same
@@ -273,6 +295,28 @@ const gapCondition = (
   cutoff: Date,
 ): SQL =>
   sql`(${table.reapedAt} is not null or (${table.endedAt} is null and ${table.lastHeartbeatAt} <= ${cutoff}))`;
+
+/**
+ * A LOSS THE CONNECTOR REPORTED, INSIDE THIS WINDOW (loss-accounting §4.5).
+ * Three terms, each a direction check: `loss_reported_at` non-null — an
+ * absent report is not zero and not a gap (§4.7); a positive total — a zero
+ * report is a statement of health; and a newest instant past `since`, the
+ * ONE term that can read a loss as out of scope, falling the safe way: a
+ * loss at instant X concerns records created no later than X, so a window
+ * opening after X asks about records the loss could not have touched. A loss
+ * the connector could not date (null newest) is read as current, because
+ * "we do not know when" must not become "not now".
+ */
+const lossCondition = (
+  table: typeof agentSessions | typeof scopeSessions,
+  since: Date,
+): SQL =>
+  sql`(${table.lossReportedAt} is not null and ${table.lossTotal} > 0 and (${table.lossNewestAt} is null or ${table.lossNewestAt} > ${since}))`;
+
+/** The one kind whose remedy is "upgrade the hub", read off the folded map. */
+const ignoredKindCondition = (
+  table: typeof agentSessions | typeof scopeSessions,
+): SQL => sql`coalesce((${table.lossKinds}->>'hub_ignored')::int, 0) > 0`;
 
 /**
  * §3.2a's `paths` half: count only the sessions that touched the surface the
@@ -348,7 +392,48 @@ const touchedScope = (
         sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,
       ),
     );
-  return sql`(${inArray(agentSessions.id, touched)} or ${inArray(agentSessions.id, unreported)})`;
+  // THE THIRD MEMBERSHIP (loss-accounting §4.5): a session that reported a
+  // loss inside the window is in EVERY scope. The lost record may be exactly
+  // the target on the pinned path, so this arm — like the one above it — can
+  // move an answer towards `incomplete` and never towards `complete`.
+  const lossy = deps.db
+    .select({ id: scopeSessions.id })
+    .from(scopeSessions)
+    .where(
+      and(
+        eq(scopeSessions.repo, repo),
+        gt(scopeSessions.lastHeartbeatAt, since),
+        lossCondition(scopeSessions, since),
+      ),
+    );
+  return sql`(${inArray(agentSessions.id, touched)} or ${inArray(agentSessions.id, unreported)} or ${inArray(agentSessions.id, lossy)})`;
+};
+
+/** The earlier of two instants, or whichever exists. */
+const earliestIso = (left: string | null, right: string | null): string | null =>
+  left === null || right === null
+    ? (left ?? right)
+    : Date.parse(left) <= Date.parse(right)
+      ? left
+      : right;
+
+/**
+ * The reason word, in precedence order (loss-accounting §4.5): the ignored
+ * kind first because its remedy is specific, any other loss next because it
+ * is a fact nobody can revoke, then 03's reap-over-silence rule unchanged.
+ */
+const agentGapReason = (
+  lost: number,
+  ignored: number,
+  reaped: number,
+): CoverageReason => {
+  if (ignored > 0) {
+    return "record_kinds_ignored";
+  }
+  if (lost > 0) {
+    return "telemetry_lost";
+  }
+  return reaped > 0 ? "session_reaped" : "session_silent";
 };
 
 const readAgentEventCoverage = async (
@@ -360,12 +445,16 @@ const readAgentEventCoverage = async (
 ): Promise<CoverageSourceRecord> => {
   const cutoff = presenceCutoff(now);
   const isGap = gapCondition(agentSessions, cutoff);
+  const isLost = lossCondition(agentSessions, since);
   const rows = await deps.db
     .select({
       total: sql`count(*)`,
       reaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,
       gaps: sql`count(*) filter (where ${isGap})`,
       gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
+      lost: sql`count(*) filter (where ${isLost})`,
+      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions)})`,
+      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
       observedAt: sql`max(${agentSessions.lastHeartbeatAt})`,
     })
     .from(agentSessions)
@@ -384,7 +473,9 @@ const readAgentEventCoverage = async (
     return sourceRecord("agent_event", "unknown", "no_session_in_window");
   }
   const observedAt = toIso(row?.observedAt);
-  if (toCount(row?.gaps) === 0) {
+  const gaps = toCount(row?.gaps);
+  const lost = toCount(row?.lost);
+  if (gaps === 0 && lost === 0) {
     return sourceRecord(
       "agent_event",
       "complete",
@@ -396,8 +487,11 @@ const readAgentEventCoverage = async (
   return sourceRecord(
     "agent_event",
     "incomplete",
-    toCount(row?.reaped) > 0 ? "session_reaped" : "session_silent",
-    toIso(row?.gapSince),
+    agentGapReason(lost, toCount(row?.ignored), toCount(row?.reaped)),
+    earliestIso(
+      lost > 0 ? toIso(row?.lossSince) : null,
+      gaps > 0 ? toIso(row?.gapSince) : null,
+    ),
     observedAt,
   );
 };

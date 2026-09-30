@@ -1,5 +1,10 @@
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
-import type { SeqField, SessionStatus } from "@crosscheck/schema";
+import { foldLossKinds } from "@crosscheck/schema";
+import type {
+  SeqField,
+  SessionStatus,
+  TelemetryLossReport,
+} from "@crosscheck/schema";
 
 import {
   EVENT_KINDS,
@@ -73,6 +78,37 @@ const requireWrittenRow = (rows: SessionRow[]): SessionRow => {
   return row;
 };
 
+type LossColumns = Pick<
+  typeof agentSessions.$inferInsert,
+  "lossReportedAt" | "lossTotal" | "lossKinds" | "lossOldestAt" | "lossNewestAt"
+>;
+
+const toInstant = (iso: string | null): Date | null =>
+  iso === null ? null : new Date(iso);
+
+/**
+ * THE CONNECTOR'S REPORT, FOLDED ONTO ITS ROW (docs/1.0/loss-accounting.md
+ * §4.4). Absent = touch nothing: a connector from before the field is read as
+ * "never reported", which is not zero and not a gap (§4.7). Present = last
+ * report wins, all five columns at once, so a row never carries the total of
+ * one report beside the span of another. `foldLossKinds` is what keeps a
+ * connector-chosen key off the row: a kind this hub does not know is counted
+ * under `unattributed`, never stored under its own name.
+ */
+const lossColumns = (
+  report: TelemetryLossReport | undefined,
+  now: Date,
+): Partial<LossColumns> =>
+  report === undefined
+    ? {}
+    : {
+        lossReportedAt: now,
+        lossTotal: report.total,
+        lossKinds: foldLossKinds(report.kinds),
+        lossOldestAt: toInstant(report.oldestAt),
+        lossNewestAt: toInstant(report.newestAt),
+      };
+
 export type RegisterSessionResult =
   | { readonly outcome: "created" | "updated"; readonly session: SessionView }
   | { readonly outcome: "foreign_session" }
@@ -97,6 +133,7 @@ export const registerSession = async (
       status: input.status,
       startedAt: timestamp,
       lastHeartbeatAt: timestamp,
+      ...lossColumns(input.losses, timestamp),
     })
     .onConflictDoNothing()
     .returning();
@@ -159,6 +196,7 @@ export const registerSession = async (
       branch: input.branch,
       baseCommit: input.baseCommit,
       lastHeartbeatAt: timestamp,
+      ...lossColumns(input.losses, timestamp),
     })
     .where(eq(agentSessions.id, input.id))
     .returning();
@@ -179,6 +217,7 @@ export const heartbeatSession = async (
   developerId: string,
   sessionId: string,
   status?: SessionStatus,
+  losses?: TelemetryLossReport,
 ): Promise<HeartbeatResult> => {
   const existing = await findSessionById(deps.db, sessionId);
   if (existing === undefined) {
@@ -191,11 +230,16 @@ export const heartbeatSession = async (
     return { outcome: "already_ended" };
   }
 
+  const now = deps.now();
   const updated = await deps.db
     .update(agentSessions)
     .set({
-      lastHeartbeatAt: deps.now(),
+      lastHeartbeatAt: now,
       ...(status === undefined ? {} : { status }),
+      // The connector's ledgers as of this beat (loss-accounting §4.2): the
+      // most frequent of the three carriers, so a loss mid-session reaches
+      // coverage within HEARTBEAT_MIN_INTERVAL_MS rather than at the end.
+      ...lossColumns(losses, now),
     })
     .where(eq(agentSessions.id, sessionId))
     .returning();
@@ -213,6 +257,7 @@ export const endSession = async (
   sessionId: string,
   status?: SessionStatus,
   seq?: SeqField,
+  losses?: TelemetryLossReport,
 ): Promise<EndSessionResult> => {
   const existing = await findSessionById(deps.db, sessionId);
   if (existing === undefined) {
@@ -223,6 +268,7 @@ export const endSession = async (
   }
 
   const finalStatus = status ?? DEFAULT_END_STATUS;
+  const now = deps.now();
   // A REAPED END IS AN INFERENCE; THIS ONE IS REPORTED. The reaper closes a
   // session it only presumes dead (`reaped_at`), and the session's own
   // SessionEnd is exactly the fact that settles it — so it replaces the
@@ -231,7 +277,13 @@ export const endSession = async (
   // eligible for 01a's sweep, and its `session.ended` position never written.
   const updated = await deps.db
     .update(agentSessions)
-    .set({ endedAt: deps.now(), status: finalStatus, reapedAt: null })
+    .set({
+      endedAt: now,
+      status: finalStatus,
+      reapedAt: null,
+      // The session's last word about its own ledgers (loss-accounting §4.2).
+      ...lossColumns(losses, now),
+    })
     .where(
       and(
         eq(agentSessions.id, sessionId),
