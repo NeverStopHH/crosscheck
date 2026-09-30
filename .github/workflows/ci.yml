@@ -148,7 +148,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 991
+    # PRINTS: 1007
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -156,6 +156,13 @@ jobs:
     # sentence somebody has to keep in step by hand:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
+    # PRINTS: .github/workflows/ci.yml 2
+    # PRINTS: packages/cli/src/ci-report/args.ts 2
+    # PRINTS: packages/cli/src/ci-report/junit.ts 2
+    # PRINTS: packages/cli/src/ci-report/post.ts 1
+    # PRINTS: packages/cli/src/ci-report/render.ts 1
+    # PRINTS: packages/cli/src/ci-report/report.ts 4
+    # PRINTS: packages/cli/src/ci-report/run.ts 4
     # PRINTS: packages/cli/src/cli/conference.ts 10
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 3
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
@@ -380,6 +387,7 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: absences.ts 5
     # PRINTS: answer-question.ts 1
+    # PRINTS: args.ts 2
     # PRINTS: ask-teammate.ts 1
     # PRINTS: before-submit-prompt.ts 1
     # PRINTS: bootstrap.sql 6
@@ -393,6 +401,7 @@ jobs:
     # PRINTS: capture-touched-files.ts 1
     # PRINTS: ci-coverage.ts 3
     # PRINTS: ci-delta.ts 4
+    # PRINTS: ci.yml 2
     # PRINTS: claim-drift.ts 5
     # PRINTS: claim-revalidation.ts 3
     # PRINTS: claim-revalidations.ts 7
@@ -454,6 +463,7 @@ jobs:
     # PRINTS: intent-ledger-authority.test.ts 1
     # PRINTS: intent-ledger.ts 9
     # PRINTS: intent.ts 1
+    # PRINTS: junit.ts 2
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
     # PRINTS: landed-context.ts 20
@@ -482,6 +492,7 @@ jobs:
     # PRINTS: pins.ts 11
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 8
+    # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 18
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
@@ -501,13 +512,14 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 64
+    # PRINTS: render.ts 65
     # PRINTS: repo-path.ts 1
-    # PRINTS: report.ts 2
+    # PRINTS: report.ts 6
     # PRINTS: retention-registry.ts 8
     # PRINTS: retention.ts 24
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 1
+    # PRINTS: run.ts 4
     # PRINTS: runner.ts 7
     # PRINTS: sanitize.ts 10
     # PRINTS: search-related-work.ts 1
