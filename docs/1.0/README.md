@@ -87,7 +87,7 @@ retention sweep needs 06's ledger as a root, and its `claims` column joins the m
 is lost waiting for it, because #53 ships with the sweep switched off (01a §10 D-D). The full
 argument, with the measured #50-only dependencies, is 00 §9.7.
 
-## The eight specs
+## The nine specs
 
 Status is **spec** (written, not built), **partly built**, or **shipped**. A row
 names the PR that built the spec and what it left open. Checked against the code
