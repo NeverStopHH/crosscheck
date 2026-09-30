@@ -12556,6 +12556,64 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/pglite-exit-code.test.ts`,
     because: "a script that opened an in-memory database never ends: a VERIFY claim hangs the claims check",
   },
+  {
+    // Trusted publishing, 2026-09-30: releases publish from CI, behind the
+    // preflight. 0.8.0 and 0.9.0 were packed from a stale clone by hand.
+    label: "a tag on a side branch publishes",
+    file: `${CLI}/scripts/release-preflight.ts`,
+    from: "    return exitCode === 0;",
+    to: "    return true;",
+    test: `${CLI}/test/release-preflight.test.ts`,
+    because: "a tag on an unmerged branch, or on a stale commit, ships code main never had",
+  },
+  {
+    label: "a tag publishes whatever version the packages carry",
+    file: `${CLI}/scripts/release-preflight.ts`,
+    from: "const disagreeing = manifests.filter((manifest) => manifest.version !== version);",
+    to: "const disagreeing = manifests.filter(() => false);",
+    test: `${CLI}/test/release-preflight.test.ts`,
+    because: "a v0.11.0 tag on a tree still at 0.10.0 tries to publish 0.10.0 again",
+  },
+  {
+    label: "a CI run still in progress counts as green",
+    file: `${CLI}/scripts/release-preflight.ts`,
+    from: '  if (found.status !== "completed") {',
+    to: '  if (found.status === "never") {',
+    test: `${CLI}/test/release-preflight.test.ts`,
+    because: "a release publishes before its tests have finished",
+  },
+  {
+    label: "a failed CI job counts as green",
+    file: `${CLI}/scripts/release-preflight.ts`,
+    from: '  return found.conclusion === "success" ? null :',
+    to: "  return null;\n  return found.conclusion === \"success\" ? null :",
+    test: `${CLI}/test/release-preflight.test.ts`,
+    because: "a release publishes from a commit whose suite is red",
+  },
+  {
+    label: "CI on a side branch vouches for the release",
+    file: `${CLI}/scripts/release-preflight.ts`,
+    from: "(entry) => entry.name === CI_WORKFLOW_NAME && entry.head_branch === MAINLINE_BRANCH,",
+    to: "(entry) => entry.name === CI_WORKFLOW_NAME,",
+    test: `${CLI}/test/release-preflight.test.ts`,
+    because: "a green pull-request run stands in for the main commit that was never tested",
+  },
+  {
+    label: "the publish workflow skips the preflight",
+    file: ".github/workflows/publish.yml",
+    from: "        run: bun packages/cli/scripts/release-preflight.ts\n",
+    to: '        run: "true"\n',
+    test: `${CLI}/test/publish-workflow.test.ts`,
+    because: "every tag publishes, whatever its version, branch or CI",
+  },
+  {
+    label: "the publish workflow asks for no OIDC token",
+    file: ".github/workflows/publish.yml",
+    from: "  id-token: write # the OIDC token npm exchanges for a one-publish credential",
+    to: "  id-token: none # the OIDC token npm exchanges for a one-publish credential",
+    test: `${CLI}/test/publish-workflow.test.ts`,
+    because: "trusted publishing cannot authenticate, and the fix someone reaches for is a stored npm token",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12630,6 +12688,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
+ * PRINTS: packages/cli/test/publish-workflow.test.ts 2
+ * PRINTS: packages/cli/test/release-preflight.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 13
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
