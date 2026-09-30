@@ -12556,6 +12556,32 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/pglite-exit-code.test.ts`,
     because: "a script that opened an in-memory database never ends: a VERIFY claim hangs the claims check",
   },
+  {
+    // External review, 2026-09-30: a solved tree kept the search floor after
+    // the code under its root cause had changed.
+    label: "search lifts a solved tree whatever its cause is still worth",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "        return validity !== undefined && isAssertableCause(validity);",
+    to: "        return true;",
+    test: `${SERVER}/test/solved-ranking.test.ts`,
+    because: "an answer about code that no longer exists outranks the work happening on it now",
+  },
+  {
+    label: "the solved floor lifts a cause bound to no commit",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: '  validity.commitBinding !== "none" &&\n  !NON_CURRENT_VALIDITY_STATES.has(validity.state);',
+    to: "  !NON_CURRENT_VALIDITY_STATES.has(validity.state);",
+    test: `${CORE}/test/claim-validity-parity.test.ts`,
+    because: "a cause nobody can ever revalidate is lifted as a settled answer, and search and hints disagree",
+  },
+  {
+    label: "the solved floor lifts a cause the code has moved past",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: '  validity.commitBinding !== "none" &&\n  !NON_CURRENT_VALIDITY_STATES.has(validity.state);',
+    to: '  validity.commitBinding !== "none";',
+    test: `${CORE}/test/claim-validity-parity.test.ts`,
+    because: "a stale, retracted or replaced cause is lifted as a settled answer, and search and hints disagree",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12698,6 +12724,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
  * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
@@ -12846,7 +12873,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-fanout.test.ts 2
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
- * PRINTS: packages/server/test/solved-ranking.test.ts 2
+ * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 1
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
