@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { TelemetryLossReport } from "@crosscheck/schema";
 import { COMMIT_SHA_PATTERN, ClaimValiditySchema } from "@crosscheck/schema";
 import type { ClaimRevalidationEntry, LandedContextRequest } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
@@ -205,6 +206,13 @@ export interface RegisterSessionInput {
    * different machine.
    */
   readonly seq?: SeqField;
+  /**
+   * The machine's loss ledgers, as counts and kinds (docs/1.0/loss-accounting.md
+   * §4.2). Optional on the type for the same reason as `seq`, and read the
+   * same way: absent is "a connector from before this field", never zero —
+   * so every flow that can read a ledger sends one, zeros included.
+   */
+  readonly losses?: TelemetryLossReport;
 }
 
 const encodeRepo = (repo: string): string =>
@@ -226,12 +234,16 @@ export const heartbeatSession = (
   ctx: HubContext,
   sessionId: string,
   status?: string,
+  losses?: TelemetryLossReport,
 ): Promise<HubResult<unknown>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/sessions/${encodeURIComponent(sessionId)}/heartbeat`,
     schema: z.unknown(),
-    body: status === undefined ? {} : { status },
+    body: {
+      ...(status === undefined ? {} : { status }),
+      ...(losses === undefined ? {} : { losses }),
+    },
     capture: true,
   });
 
@@ -245,12 +257,17 @@ export const endSession = (
   ctx: HubContext,
   sessionId: string,
   seq?: SeqField,
+  losses?: TelemetryLossReport,
 ): Promise<HubResult<unknown>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/sessions/${encodeURIComponent(sessionId)}/end`,
     schema: z.unknown(),
-    body: seq === undefined ? { status: "done" } : { status: "done", seq },
+    body: {
+      status: "done",
+      ...(seq === undefined ? {} : { seq }),
+      ...(losses === undefined ? {} : { losses }),
+    },
     capture: true,
   });
 

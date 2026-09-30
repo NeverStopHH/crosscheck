@@ -35,6 +35,7 @@ import {
 import { spoolFlushLockPath } from "../config/paths.ts";
 import { withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
+import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { bytesOfLines, writeCursorOffset } from "./cursor.ts";
 import { recordDrop } from "./drops.ts";
@@ -74,6 +75,50 @@ const parseLine = (line: string): Record<string, unknown> | null => {
 const pendingTotal = (spools: readonly SessionSpool[]): number =>
   spools.reduce((total, spool) => total + spool.lines.length, 0);
 
+const NOTHING_SENT: IngestSummary = {
+  accepted: 0,
+  duplicates: 0,
+  ignored: 0,
+  rejected: 0,
+};
+
+/**
+ * Sends the batch. Null when the hub did not take it at all — transport, an
+ * HTTP failure — and the records stay on disk for the next drain; an
+ * all-zero summary when there was nothing to send.
+ */
+const deliver = async (
+  ctx: HubContext,
+  records: readonly Record<string, unknown>[],
+): Promise<IngestSummary | null> => {
+  if (records.length === 0) {
+    return NOTHING_SENT;
+  }
+  const result = await postRecords(ctx, records);
+  return result.ok ? result.data : null;
+};
+
+/**
+ * The record KINDS behind a per-record status, counted off the envelopes
+ * this batch sent — `results[i]` is the hub's answer to `records[i]`, in
+ * order (server services/records.ts ingestRecords). Kinds are the
+ * connector's own vocabulary, so doctor can print them; a hub from before
+ * per-record results sends none, and the count then travels under no kind.
+ */
+const kindsWithStatus = (
+  records: readonly Record<string, unknown>[],
+  results: readonly RecordResult[] | undefined,
+  status: string,
+): Readonly<Record<string, number>> =>
+  (results ?? [])
+    .filter((result) => result.status === status)
+    .reduce<Record<string, number>>((kinds, result) => {
+      const kind = records[result.index]?.["kind"];
+      return typeof kind === "string"
+        ? { ...kinds, [kind]: (kinds[kind] ?? 0) + 1 }
+        : kinds;
+    }, {});
+
 /**
  * Sends one batch and moves that spool's cursor past it. Returns how many
  * records went, or null when the hub refused them and nothing was consumed.
@@ -99,20 +144,25 @@ const flushOneBatch = async (
     .filter((record): record is Record<string, unknown> => record !== null)
     .map((record) => withProducer(record, input.developerId, input.sessionId));
 
-  let refused = 0;
-  if (records.length > 0) {
-    const result = await postRecords(ctx, records);
-    if (!result.ok) {
-      return null;
-    }
-    // A 2xx is not a delivery. Ingest reports per-record outcomes, and a
-    // record the hub REFUSED is discarded by the cursor write below exactly
-    // like a torn line — so it is counted exactly like one. Nothing in the
-    // connector read `rejected` before, which is how a session the hub had
-    // closed could lose a whole afternoon while `spool drops` printed "none"
-    // (review finding B2-01/B2-07).
-    refused = result.data.rejected;
+  const summary = await deliver(ctx, records);
+  if (summary === null) {
+    return null;
   }
+  // A 2xx is not a delivery. Ingest reports per-record outcomes, and a
+  // record the hub REFUSED is discarded by the cursor write below exactly
+  // like a torn line — so it is counted exactly like one. Nothing in the
+  // connector read `rejected` before, which is how a session the hub had
+  // closed could lose a whole afternoon while `spool drops` printed "none"
+  // (review finding B2-01/B2-07).
+  //
+  // AND `ignored` IS THE SAME LOSS WEARING A 200. It is what a hub older than
+  // a record kind answers about that kind (server services/records.ts, the
+  // forward-compatibility rule), and it was read nowhere: a newer connector
+  // against an older hub lost whole record kinds while `spool drops` printed
+  // "none" (docs/1.0/loss-accounting.md §1). Counted with the kinds the hub
+  // ignored, so doctor can say what an upgrade would recover.
+  const refused = summary.rejected;
+  const ignored = summary.ignored;
   // Counted BEFORE the cursor moves past them, so a line that is not JSON —
   // the only thing a torn write can produce — becomes a visible drop instead
   // of a silent hole. Counting first can at worst double-count after a crash
@@ -134,6 +184,18 @@ const flushOneBatch = async (
       refused,
       "rejected",
       ctx.now(),
+      kindsWithStatus(records, summary.results, "rejected"),
+    );
+  }
+  if (ignored > 0) {
+    await recordDrop(
+      ctx.home,
+      ctx.repoKey,
+      spool.slug,
+      ignored,
+      "ignored",
+      ctx.now(),
+      kindsWithStatus(records, summary.results, "ignored"),
     );
   }
   // The spool as READ is the identity: the cursor may only move for the file

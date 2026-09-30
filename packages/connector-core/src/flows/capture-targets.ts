@@ -20,6 +20,7 @@
  * that captured targets must follow with `updateSessionState(withSeenTargets)`.
  */
 import { MAX_TARGETS_PER_INVOCATION } from "../constants.ts";
+import { sessionSlug } from "../config/paths.ts";
 import { isDenied, resolveDenylist } from "../capture/denylist.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import { fingerprint } from "../capture/fingerprint.ts";
@@ -29,6 +30,7 @@ import { ALLOCATION_FAILED, seqAt, withSeq } from "../capture/seq.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
 import { toRepoRelative } from "../capture/target-paths.ts";
 import { appendRecords } from "../spool/append.ts";
+import { recordDrop } from "../spool/drops.ts";
 import type { SeqField } from "@crosscheck/schema";
 import type { SeqRange } from "../state/session-state.ts";
 
@@ -79,7 +81,44 @@ export interface CaptureFileTargetsInput {
    * one acquisition, two consumers.
    */
   readonly seq?: SeqRange | null;
+  /**
+   * Whether the host event was an EDIT (docs/1.0/loss-accounting.md §4.3).
+   * The two refusals this flow books as drops — the per-call cap and the
+   * secret scan — are losses of a file touch only when the touch was an
+   * edit: an ACP `read` arrives with `locations` too, and a read the cap
+   * cut is not a lost edit. Defaults to true, the shape of every host event
+   * that reaches this flow except the ACP read; the same argument
+   * `withCaptureBookkeeping` makes for its counters.
+   */
+  readonly editFired?: boolean;
 }
+
+interface CaptureRefusals {
+  /** Paths never examined because the cap was reached before them. */
+  readonly capped: number;
+  /** Paths whose repo-relative id the secret scan refused. */
+  readonly secretPaths: number;
+}
+
+/**
+ * THE CAP AND THE SCAN USED TO BE A `break` AND A `continue` (loss-accounting
+ * §3 rows 8 and 9): the file touch was gone and nothing counted it. Both are
+ * now `.drops` lines, so append.ts's contract — on disk, delivered, or
+ * COUNTED — holds for capture as well. `capped` counts every path past the
+ * cut, which may include paths the denylist or the seen-set would have
+ * skipped anyway: over-counting a loss is the honest direction to fail in.
+ */
+const recordCaptureRefusals = async (
+  input: CaptureFileTargetsInput,
+  refusals: CaptureRefusals,
+): Promise<void> => {
+  if (input.editFired === false) {
+    return;
+  }
+  const slug = sessionSlug(input.hostSessionKey);
+  await recordDrop(input.home, input.repoKey, slug, refusals.capped, "capture-capped", input.now);
+  await recordDrop(input.home, input.repoKey, slug, refusals.secretPaths, "secret-path", input.now);
+};
 
 /**
  * Filters, spools, and returns the repo-relative paths captured — the caller
@@ -91,10 +130,13 @@ export const captureFileTargets = async (
   const patterns = resolveDenylist(input.denylist ?? undefined);
   const seen = new Set(input.seenTargets);
   const collected: string[] = [];
+  let secretPaths = 0;
+  let examined = 0;
   for (const path of input.paths) {
     if (collected.length >= MAX_TARGETS_PER_INVOCATION) {
       break;
     }
+    examined += 1;
     // The root the file's id is derived against: the caller's per-path
     // override (#17: the file's own worktree) when present, else the session
     // checkout. A null override means the caller already dropped and counted
@@ -110,12 +152,20 @@ export const captureFileTargets = async (
     if (relativePath === null || isDenied(relativePath, patterns)) {
       continue;
     }
-    if (containsSecret(relativePath) || seen.has(relativePath)) {
+    if (containsSecret(relativePath)) {
+      secretPaths += 1;
+      continue;
+    }
+    if (seen.has(relativePath)) {
       continue;
     }
     seen.add(relativePath);
     collected.push(relativePath);
   }
+  await recordCaptureRefusals(input, {
+    capped: input.paths.length - examined,
+    secretPaths,
+  });
   if (collected.length > 0) {
     await appendRecords(
       input.home,

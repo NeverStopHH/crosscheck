@@ -15,6 +15,7 @@
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
+import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import {
   UNKNOWN_DEVELOPER_ID,
   workContextRecord,
@@ -132,6 +133,12 @@ const registerWithRetry = async (
   baseId: string,
   epoch: string,
 ): Promise<Registration | typeof REPO_MISMATCH | null> => {
+  // THE LOSS REPORT, READ ONCE FOR THE LADDER (docs/1.0/loss-accounting.md
+  // §4.2). Registration runs right after `reapSpool`, which is where expiry
+  // drops and the unclosed count are written, so this is the call that
+  // carries a DEAD session's post-mortem losses to the hub. A local read of
+  // the ledgers; every rung of the ~r1/~r2 ladder sends the same snapshot.
+  const losses = await readTelemetryLossReport(input.home, input.repoKey);
   for (const suffix of RETRY_SUFFIXES) {
     const sessionId = `${baseId}${suffix}`;
     const result = await registerSession(input.hub, {
@@ -141,6 +148,7 @@ const registerWithRetry = async (
       branch: input.branch,
       baseCommit: input.baseCommit,
       status: input.status,
+      losses,
       // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the
       // only call that can send it: the allocator mints `eventSeq` at 0 and
       // hands out from 1, so nothing ever allocates this position — it is

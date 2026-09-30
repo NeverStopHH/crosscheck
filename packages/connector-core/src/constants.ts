@@ -1828,6 +1828,28 @@ export const MAX_SEARCH_CHARS = 2400;
 export const HUB_MAX_DIAGNOSIS_TARGETS = 100;
 
 /**
+ * Mirrors the hub's COVERAGE_SESSION_WINDOW_DAYS (server src/constants.ts):
+ * how far back the `agent_event` rung looks, and therefore how old a loss in
+ * this machine's ledgers can be and still be one the hub's coverage should
+ * reflect (docs/1.0/loss-accounting.md §5.2). Mirrored rather than sent for
+ * the same reason as HUB_MAX_DIAGNOSIS_TARGETS above: doctor compares a local
+ * ledger with a hub record, and the record does not carry its own window.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.HUB_COVERAGE_WINDOW_DAYS === s.COVERAGE_SESSION_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const HUB_COVERAGE_WINDOW_DAYS = 14;
+
+/**
+ * The capture-loss ledger's byte cap (state/loss-ledger.ts): past it the
+ * detail stops and the count becomes a floor doctor says out loud, rather
+ * than a file that grows with every timed-out hook for ever. The same figure
+ * the Cursor connector's drift ledger uses (connector-cursor/src/constants.ts
+ * MAX_DRIFT_LEDGER_BYTES), for the same reason.
+ */
+export const MAX_LOSS_LEDGER_BYTES = 65_536;
+
+/**
  * Target rows one diagnosis SHOWS, of however many the hub sent.
  *
  * The section exists so a reader about to edit the same corner sees the

@@ -69,6 +69,52 @@ const REAPED = recordOf([
   row("git", "complete", "commits_reported", null, "2026-09-15T09:00:00.000Z"),
 ]);
 
+describe("LOSS-9: the two loss reasons render, without a count and without a path", () => {
+  const LOST = recordOf([
+    row("agent_event", "incomplete", "telemetry_lost", GAP_ISO, GAP_ISO),
+    row("git", "complete", "commits_reported", null, "2026-09-15T09:00:00.000Z"),
+  ]);
+  const IGNORED = recordOf([
+    row("agent_event", "incomplete", "record_kinds_ignored", GAP_ISO, GAP_ISO),
+    row("git", "complete", "commits_reported", null, "2026-09-15T09:00:00.000Z"),
+  ]);
+
+  test("a reported loss names the instant it has been unreliable since, and its age", () => {
+    // Act
+    const clause = coverageClause(LOST, NOW);
+
+    // Assert
+    expect(clause).toBe(
+      `Coverage incomplete: agent telemetry on this repo was lost since ${GAP_SHOWN} (10d ago); git evidence reported.`,
+    );
+    expect(clause.length).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
+    expect(coverageNote(LOST, NOW)).toBe(clause);
+  });
+
+  test("an ignored record kind gets its own sentence, because its remedy is the hub's version", () => {
+    // Act
+    const clause = coverageClause(IGNORED, NOW);
+
+    // Assert
+    expect(clause).toBe(
+      `Coverage incomplete: the hub ignored agent record kinds on this repo since ${GAP_SHOWN} (10d ago); git evidence reported.`,
+    );
+    expect(clause).not.toContain("%");
+  });
+
+  test("a loss is repo-wide by construction: a file-set scope still says on this repo", () => {
+    // Arrange
+    const scoped: CoverageRecord = { ...LOST, scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] } };
+
+    // Act
+    const clause = coverageClause(scoped, NOW);
+
+    // Assert
+    expect(clause).toContain("on this repo");
+    expect(clause).not.toContain("on these files");
+  });
+});
+
 describe("COV-1's instant reaches the line", () => {
   test("a reaped agent_event names the minute observation stopped", () => {
     // Act
@@ -386,11 +432,15 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
   });
 
   test("every clause fits MAX_COVERAGE_LINE_CHARS", () => {
-    // Arrange: 4 states x 16 reasons, squared — every shape the enum admits
+    // Arrange: 4 states x 18 reasons, squared — every shape the enum admits
+    // (16 reasons before loss-accounting added `telemetry_lost` and
+    // `record_kinds_ignored`; the literal moves with the enum on purpose, so
+    // a reason added without a render case is a red line here, not a silent
+    // widening of the sweep)
     const shapes = everyShape();
 
     // Assert
-    expect(shapes.length).toBe(4096);
+    expect(shapes.length).toBe(5184);
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
       expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);

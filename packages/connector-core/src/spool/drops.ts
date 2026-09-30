@@ -22,6 +22,15 @@
  * itself can fail. `recordDrop` checks its result and, when a count reached no
  * ledger, says so in `unrecorded.dropmarker` — after which `doctor` reports the
  * total as a lower bound rather than as the truth.
+ *
+ * EVERY LINE CARRIES ITS REASON, AND THE REASON TRAVELS (docs/1.0/loss-accounting.md
+ * §4.3). `readDropSummary` is the three numbers doctor has always printed;
+ * `readDropDetail` beside it reads the same files by reason, with the record
+ * kinds an `ignored` line names and the span of the entries, because the
+ * connector now REPORTS these losses to the hub as counts and kinds and the
+ * hub turns them into a coverage reason. The archive line folds the reasons
+ * in; an archive written before it kept them reports its count as
+ * `unattributed`, which is the honest word for it.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -60,12 +69,35 @@ export type DropReason =
    * the hub had closed lost everything it captured while `spool drops` printed
    * "none" (review finding B2-01/B2-07).
    */
-  | "rejected";
+  | "rejected"
+  /**
+   * The hub answered 200 and IGNORED the record's kind — a hub from before
+   * that kind, or a kind never ingested over this route (server
+   * services/records.ts). The sibling of `rejected`, read nowhere until
+   * docs/1.0/loss-accounting.md: a newer connector against an older hub lost
+   * whole record kinds while `spool drops` printed "none". The line carries
+   * `kinds`, the record kinds the hub ignored, so doctor can say what to
+   * upgrade for.
+   */
+  | "ignored"
+  /** Paths past MAX_TARGETS_PER_INVOCATION in one tool call — never written. */
+  | "capture-capped"
+  /** A path the secret scan refused to spool — never written. */
+  | "secret-path"
+  /** An edit whose path resolved to no root of this repo — never written. */
+  | "outside-root";
+
+/** The word a pre-reason archive's count is reported under. */
+export const UNATTRIBUTED_DROP_REASON = "unattributed";
+
+const KindsSchema = z.record(z.string(), z.number().int().min(0));
 
 const DropSchema = z.looseObject({
   at: z.string().min(1),
   count: z.number().int().min(0),
   reason: z.string().min(1),
+  /** Record kinds behind the count, on `ignored` and `rejected` lines. */
+  kinds: KindsSchema.optional(),
 });
 
 export const DROPS_SUFFIX = ".drops";
@@ -172,6 +204,30 @@ const markUnrecordedDrop = async (
  */
 const LEDGER_TERMINATOR = "\n";
 
+/**
+ * Record kinds are the connector's own vocabulary (@crosscheck/schema
+ * KNOWN_RECORD_KINDS), but a ledger line is a file on disk that a renderer
+ * reads back, so a name is kept only when it has that vocabulary's shape and
+ * anything else is counted under `other`. The same screen runs at read time,
+ * because a line is a file and files get edited.
+ */
+const RECORD_KIND_PATTERN = /^[a-z][a-z0-9_]{0,40}$/;
+const OTHER_KIND = "other";
+
+const screenKinds = (
+  kinds: Readonly<Record<string, number>>,
+): Record<string, number> =>
+  Object.entries(kinds).reduce<Record<string, number>>(
+    (screened, [kind, count]) => {
+      if (count <= 0) {
+        return screened;
+      }
+      const name = RECORD_KIND_PATTERN.test(kind) ? kind : OTHER_KIND;
+      return { ...screened, [name]: (screened[name] ?? 0) + count };
+    },
+    {},
+  );
+
 export const recordDrop = async (
   home: string,
   key: string,
@@ -179,15 +235,20 @@ export const recordDrop = async (
   count: number,
   reason: DropReason,
   now: Date,
+  kinds: Readonly<Record<string, number>> = {},
 ): Promise<void> => {
   if (count <= 0) {
     return;
   }
   const path = spoolDropsPath(home, key, slug);
-  const outcome = await appendOnce(
-    path,
-    `${JSON.stringify({ at: now.toISOString(), count, reason })}\n`,
-  );
+  const screened = screenKinds(kinds);
+  const line = {
+    at: now.toISOString(),
+    count,
+    reason,
+    ...(Object.keys(screened).length === 0 ? {} : { kinds: screened }),
+  };
+  const outcome = await appendOnce(path, `${JSON.stringify(line)}\n`);
   if (outcome === "written") {
     return;
   }
@@ -227,6 +288,17 @@ const add = (left: DropSummary, right: DropSummary): DropSummary => ({
   malformed: left.malformed + right.malformed,
 });
 
+type Counts = Readonly<Record<string, number>>;
+
+const addCounts = (left: Counts, right: Counts): Counts =>
+  Object.entries(right).reduce<Record<string, number>>(
+    (sum, [name, count]) => ({ ...sum, [name]: (sum[name] ?? 0) + count }),
+    { ...left },
+  );
+
+const sumOf = (counts: Counts): number =>
+  Object.values(counts).reduce((sum, count) => sum + count, 0);
+
 interface DropSpan {
   readonly oldestMs: number | null;
   readonly newestMs: number | null;
@@ -261,49 +333,63 @@ export const newestDropMs = async (path: string): Promise<number | null> =>
   spanOf(toLines(await readTextOrNull(path))).newestMs;
 
 /**
- * The single line that survives the age sweep, holding what the removed ledgers
- * added up to. `reason: "aggregated"` distinguishes it from a real batch, and
- * the counts are carried explicitly so folding is lossless — summing the line
- * as if it were one batch would silently reset `entries` and `malformed`.
+ * The per-reason half of a ledger (docs/1.0/loss-accounting.md §4.3).
+ *
+ * `byReason` counts records under the line's own reason word; the
+ * `ignoredRecordKinds` map is the sum of the `kinds` an `ignored` line
+ * carries — the record kinds a hub older than this connector threw away,
+ * which is what doctor needs to say what an upgrade would recover.
  */
-const ArchiveSchema = z.looseObject({
-  at: z.string().min(1),
-  oldestAt: z.string().min(1),
-  count: z.number().int().min(0),
-  entries: z.number().int().min(0),
-  malformed: z.number().int().min(0),
-});
-
-interface Archive {
+export interface DropDetail {
   readonly summary: DropSummary;
-  readonly span: DropSpan;
+  /** Records by ledger reason; a pre-reason archive's count is `unattributed`. */
+  readonly byReason: Counts;
+  /** Ledger lines by reason. */
+  readonly entriesByReason: Counts;
+  /** Record kinds the hub ignored, summed over the `ignored` lines. */
+  readonly ignoredRecordKinds: Counts;
+  readonly oldestAt: string | null;
+  readonly newestAt: string | null;
 }
 
-const EMPTY_ARCHIVE: Archive = { summary: EMPTY_DROPS, span: NO_SPAN };
-
-const msOrNull = (value: string): number | null => {
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? null : ms;
+const EMPTY_DETAIL: DropDetail = {
+  summary: EMPTY_DROPS,
+  byReason: {},
+  entriesByReason: {},
+  ignoredRecordKinds: {},
+  oldestAt: null,
+  newestAt: null,
 };
 
-const readArchive = async (path: string): Promise<Archive> => {
-  const parsed = ArchiveSchema.safeParse(
-    safeJson(toLines(await readTextOrNull(path))[0] ?? ""),
+const isoOrNull = (ms: number | null): string | null =>
+  ms === null ? null : new Date(ms).toISOString();
+
+const detailOf = (lines: readonly string[]): DropDetail => {
+  const span = spanOf(lines);
+  return lines.reduce<DropDetail>(
+    (detail, line) => {
+      const parsed = DropSchema.safeParse(safeJson(line));
+      if (!parsed.success) {
+        return detail;
+      }
+      const { reason, count, kinds } = parsed.data;
+      return {
+        ...detail,
+        byReason: addCounts(detail.byReason, { [reason]: count }),
+        entriesByReason: addCounts(detail.entriesByReason, { [reason]: 1 }),
+        ignoredRecordKinds:
+          reason === "ignored" && kinds !== undefined
+            ? addCounts(detail.ignoredRecordKinds, screenKinds(kinds))
+            : detail.ignoredRecordKinds,
+      };
+    },
+    {
+      ...EMPTY_DETAIL,
+      summary: summarize(lines),
+      oldestAt: isoOrNull(span.oldestMs),
+      newestAt: isoOrNull(span.newestMs),
+    },
   );
-  if (!parsed.success) {
-    return EMPTY_ARCHIVE;
-  }
-  return {
-    summary: {
-      records: parsed.data.count,
-      entries: parsed.data.entries,
-      malformed: parsed.data.malformed,
-    },
-    span: {
-      oldestMs: msOrNull(parsed.data.oldestAt),
-      newestMs: msOrNull(parsed.data.at),
-    },
-  };
 };
 
 const earliest = (left: number | null, right: number | null): number | null =>
@@ -311,6 +397,71 @@ const earliest = (left: number | null, right: number | null): number | null =>
 
 const latest = (left: number | null, right: number | null): number | null =>
   left === null || right === null ? (left ?? right) : Math.max(left, right);
+
+const msOrNull = (value: string | null): number | null => {
+  if (value === null) {
+    return null;
+  }
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+};
+
+const addDetail = (left: DropDetail, right: DropDetail): DropDetail => ({
+  summary: add(left.summary, right.summary),
+  byReason: addCounts(left.byReason, right.byReason),
+  entriesByReason: addCounts(left.entriesByReason, right.entriesByReason),
+  ignoredRecordKinds: addCounts(left.ignoredRecordKinds, right.ignoredRecordKinds),
+  oldestAt: isoOrNull(earliest(msOrNull(left.oldestAt), msOrNull(right.oldestAt))),
+  newestAt: isoOrNull(latest(msOrNull(left.newestAt), msOrNull(right.newestAt))),
+});
+
+/**
+ * The single line that survives the age sweep, holding what the removed ledgers
+ * added up to. `reason: "aggregated"` distinguishes it from a real batch, and
+ * the counts are carried explicitly so folding is lossless — summing the line
+ * as if it were one batch would silently reset `entries` and `malformed`.
+ *
+ * `byReason`, `entriesByReason` and `ignoredKinds` are folded in beside them
+ * so the reasons survive the sweep too. An archive from before those fields
+ * parses without them, and the part of its count no reason accounts for is
+ * reported as `unattributed` — never dropped, never guessed.
+ */
+const ArchiveSchema = z.looseObject({
+  at: z.string().min(1),
+  oldestAt: z.string().min(1),
+  count: z.number().int().min(0),
+  entries: z.number().int().min(0),
+  malformed: z.number().int().min(0),
+  byReason: KindsSchema.optional(),
+  entriesByReason: KindsSchema.optional(),
+  ignoredKinds: KindsSchema.optional(),
+});
+
+const readArchiveDetail = async (path: string): Promise<DropDetail> => {
+  const parsed = ArchiveSchema.safeParse(
+    safeJson(toLines(await readTextOrNull(path))[0] ?? ""),
+  );
+  if (!parsed.success) {
+    return EMPTY_DETAIL;
+  }
+  const byReason = parsed.data.byReason ?? {};
+  const unattributed = parsed.data.count - sumOf(byReason);
+  return {
+    summary: {
+      records: parsed.data.count,
+      entries: parsed.data.entries,
+      malformed: parsed.data.malformed,
+    },
+    byReason:
+      unattributed > 0
+        ? addCounts(byReason, { [UNATTRIBUTED_DROP_REASON]: unattributed })
+        : byReason,
+    entriesByReason: parsed.data.entriesByReason ?? {},
+    ignoredRecordKinds: screenKinds(parsed.data.ignoredKinds ?? {}),
+    oldestAt: isoOrNull(msOrNull(parsed.data.oldestAt)),
+    newestAt: isoOrNull(msOrNull(parsed.data.at)),
+  };
+};
 
 const isEmpty = (summary: DropSummary): boolean =>
   summary.records === 0 && summary.entries === 0 && summary.malformed === 0;
@@ -333,49 +484,59 @@ export const archiveLedger = async (
   key: string,
   ledgerPath: string,
 ): Promise<void> => {
-  const lines = toLines(await readTextOrNull(ledgerPath));
-  const folding = summarize(lines);
-  if (isEmpty(folding)) {
+  const folding = detailOf(toLines(await readTextOrNull(ledgerPath)));
+  if (isEmpty(folding.summary)) {
     return;
   }
   const path = spoolDropsArchivePath(home, key);
-  const archive = await readArchive(path);
-  const span = spanOf(lines);
-  const total = add(archive.summary, folding);
-  const oldestMs = earliest(archive.span.oldestMs, span.oldestMs);
-  const newestMs = latest(archive.span.newestMs, span.newestMs);
-  const stamp = (ms: number | null): string =>
-    new Date(ms ?? Date.now()).toISOString();
+  const total = addDetail(await readArchiveDetail(path), folding);
+  const stamp = (iso: string | null): string => iso ?? new Date().toISOString();
+  // `unattributed` is a READ-side word for the count an older archive kept
+  // without reasons; written back under a reason it would look like a line
+  // somebody recorded, so it is left out of `byReason` and recovered from the
+  // difference again on the next read.
+  const { [UNATTRIBUTED_DROP_REASON]: _unattributed, ...byReason } = total.byReason;
   await writePrivateFile(
     path,
     `${JSON.stringify({
-      at: stamp(newestMs),
-      oldestAt: stamp(oldestMs),
-      count: total.records,
-      entries: total.entries,
-      malformed: total.malformed,
+      at: stamp(total.newestAt),
+      oldestAt: stamp(total.oldestAt),
+      count: total.summary.records,
+      entries: total.summary.entries,
+      malformed: total.summary.malformed,
       reason: "aggregated",
+      byReason,
+      entriesByReason: total.entriesByReason,
+      ignoredKinds: total.ignoredRecordKinds,
     })}\n`,
   );
+};
+
+const ledgerNames = async (dir: string): Promise<readonly string[]> => {
+  try {
+    return (await readdir(dir)).filter((name) => name.endsWith(DROPS_SUFFIX));
+  } catch {
+    return [];
+  }
 };
 
 /** Every drop this repo has recorded, counted from disk — aggregate included. */
 export const readDropSummary = async (
   home: string,
   key: string,
-): Promise<DropSummary> => {
+): Promise<DropSummary> => (await readDropDetail(home, key)).summary;
+
+/** The same files, by reason and with their span (loss-accounting §4.3). */
+export const readDropDetail = async (
+  home: string,
+  key: string,
+): Promise<DropDetail> => {
   const dir = spoolDir(home, key);
-  let names: readonly string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return EMPTY_DROPS;
-  }
-  const summaries = await Promise.all(
-    names
-      .filter((name) => name.endsWith(DROPS_SUFFIX))
-      .map(async (name) => summarize(toLines(await readTextOrNull(join(dir, name))))),
+  const details = await Promise.all(
+    (await ledgerNames(dir)).map(async (name) =>
+      detailOf(toLines(await readTextOrNull(join(dir, name)))),
+    ),
   );
-  const archive = await readArchive(spoolDropsArchivePath(home, key));
-  return summaries.reduce(add, archive.summary);
+  const archive = await readArchiveDetail(spoolDropsArchivePath(home, key));
+  return details.reduce(addDetail, archive);
 };
