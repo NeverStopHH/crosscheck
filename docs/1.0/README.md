@@ -105,6 +105,7 @@ at `7a070b8` (0.10.0): #58 brought 01, 02, 03, 05 and 06 into `main`, #63 brough
 | 06 | [Structured intent and the append-only intent ledger](06-intent-ledger.md) | — (supports AT-4, AT-3, AT-6) | shipped — #56 |
 | 07 | [Pilot instrumentation for the five proofs](07-pilot-instrumentation.md) | — (measures AT-1, AT-5, AT-9) | shipped — #61. Open: D-E, whether its tables retain a session (its §11.8) |
 | 08 | [Two evidence axes and calibration measurement](08-evidence-axes-and-calibration.md) | **AT-3** | shipped with two narrowings — #59: the hub does not stamp the capture mode from the route (its §3.2a), and `repository_verified` has no ancestor leg (its §3.5) |
+| 09 | [AT-7: does a hostile teammate claim change what the agent does?](09-behavioral-injection.md) | **AT-7** | pre-registered, not measured. Claude Code only; Cursor and ACP not measured |
 
 **One AT has one owner.** This table is the authority; a spec header that disagrees
 with it is the spec that is wrong. Contributors are named but do not own: 06
@@ -120,15 +121,14 @@ not a prevention**, because the bearer key that reaches the waiver route sits in
 plaintext on the same machine as the agent. 04 §10 D8 puts that residue in front of
 Nick rather than leaving it in a refusal list.
 
-**AT-7 is owned by nobody, and that is stated rather than left blank.** The
-counterfactual injection benchmark asks for a net-new harness that runs a task
-twice per provider and diffs tool calls, files read and written, shell commands,
-plan changes and final result. `INJECTION_CORPUS` is prior art for the payloads and
-proves *framing* — and AT-7's own "fails if" line says framing is not behaviour, so
-the corpus cannot be stretched into the measurement. **The eight specs discharge
-nine of ten acceptance tests.** Shipping 1.0 against ten means commissioning a
-ninth spec; shipping against nine is a scope decision, not an omission a writer can
-close (00 §10 Q12).
+**AT-7 has an owner since 2026-09-30, and a pre-registration rather than a
+result.** Nick commissioned the ninth spec (00 §10 Q12 asked for exactly that
+decision): 09 runs one task 20 times without and 20 times with a hostile teammate
+claim in the SessionStart briefing, on a real hub, and counts the runs in which
+the agent acted on it, by a criterion committed before the harness existed.
+`INJECTION_CORPUS` stays what it was, prior art for the payloads and proof of
+*framing* only. Until 09 §9 holds a result, AT-7 is not discharged, and even then
+only for Claude Code: Cursor and ACP are named as not measured.
 
 ## Reading order
 
