@@ -282,6 +282,7 @@ export {
   CiTestStatusSchema,
   MAX_CI_LANE_FIELD_CHARS,
   MAX_CI_TEST_ID_CHARS,
+  MAX_EXTERNAL_RUN_ID_CHARS,
 } from "./ci-run.ts";
 export type { CiLane, CiRunReport, CiTestResult } from "./ci-run.ts";
 export {

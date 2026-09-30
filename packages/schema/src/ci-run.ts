@@ -93,8 +93,12 @@ export const CI_MAX_TEST_ROWS = 200;
 /** `run_attempt` is 1-based at every provider that has the concept. */
 const MIN_RUN_ATTEMPT = 1;
 
-/** An opaque provider handle, kept only so a human can open the log. */
-const MAX_EXTERNAL_RUN_ID_CHARS = 120;
+/**
+ * An opaque provider handle, kept only so a human can open the log. Exported
+ * so the reporter (packages/cli/src/ci-report/args.ts) refuses an over-long
+ * `--run-id` by this name rather than by a second 120 of its own.
+ */
+export const MAX_EXTERNAL_RUN_ID_CHARS = 120;
 
 const laneField = z.string().max(MAX_CI_LANE_FIELD_CHARS);
 
