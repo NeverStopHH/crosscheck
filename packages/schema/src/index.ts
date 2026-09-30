@@ -5,9 +5,12 @@ export {
   CLAIM_CAPTURE_MODES,
   DELIVERY_CHANNELS,
   DeliveryChannelSchema,
+  PILOT_COHORTS,
   PILOT_END_REASONS,
+  PILOT_INTERVENTION_LABELS,
+  PILOT_LEGACY_NOISE_MARK,
   PILOT_MARKS,
-  PILOT_MARK_BY_REF_KIND,
+  PILOT_MARKS_BY_REF_KIND,
   PILOT_MARK_REF_KINDS,
   PILOT_RUNG_REFUSALS,
   PILOT_UNAVAILABLE_REASONS,
@@ -45,7 +48,9 @@ export type {
   ArtifactSensitivity,
   CaptureMode,
   DeliveryChannel,
+  PilotCohort,
   PilotEndReason,
+  PilotInterventionLabel,
   PilotMark,
   PilotMarkRefKind,
   PilotUnavailableReason,
@@ -140,7 +145,7 @@ export {
   WaiverRevokeSchema,
 } from "./waiver.ts";
 export type { WaiverGrant, WaiverKind, WaiverRevoke } from "./waiver.ts";
-export { PilotMarkSchema } from "./pilot-mark.ts";
+export { MAX_PILOT_LABEL_REASON_CHARS, PilotMarkSchema } from "./pilot-mark.ts";
 export type { PilotMarkInput } from "./pilot-mark.ts";
 
 export {

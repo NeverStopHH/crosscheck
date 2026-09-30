@@ -6,6 +6,7 @@ import {
   MAX_CLAIM_BODY_LENGTH,
   MAX_INTENT_AMEND_REASON_CHARS,
   MAX_INTENT_SUMMARY_CHARS,
+  MAX_PILOT_LABEL_REASON_CHARS,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
@@ -53,6 +54,8 @@ const INTENT_SUMMARY_CHECK_PATTERN =
   /work_context_intents_summary_length_check CHECK \(char_length\(summary\) <= (\d+)\)/;
 const INTENT_REASON_CHECK_PATTERN =
   /work_context_intents_reason_length_check\s+CHECK \(reason IS NULL OR char_length\(reason\) <= (\d+)\)/;
+const PILOT_REASON_CHECK_PATTERN =
+  /pilot_marks_reason_length_check\s+CHECK \(reason IS NULL OR char_length\(reason\) <= (\d+)\)/;
 
 describe("bootstrap.sql DDL sync", () => {
   test("claims body CHECK matches MAX_CLAIM_BODY_LENGTH", async () => {
@@ -515,6 +518,53 @@ describe("bootstrap.sql DDL sync", () => {
     ]) {
       expect(bootstrapSql, fragment).toContain(fragment);
     }
+  });
+
+  test("07 §12's two pilot columns are in BOTH authorities, with the reason bound", async () => {
+    // Arrange — `pilot_marks.reason` and `pilot_sessions.cohort` are ADDED
+    // columns: a hub that already has the table only ever gets them from the
+    // ALTER, and a fresh one only from the CREATE. Either alone is a
+    // deployment that differs from the other. The reason's bound is a
+    // database fact, held to the same constant the route applies.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const reasonCheck = guardedBlockNamed(bootstrapSql, "pilot_marks_reason_length_check").match(
+      PILOT_REASON_CHECK_PATTERN,
+    );
+
+    // Assert
+    for (const fragment of [
+      "ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS reason text",
+      "  reason text,",
+      "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'discovery'",
+      "cohort text NOT NULL DEFAULT 'discovery',",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+    expect(reasonCheck).not.toBeNull();
+    expect(Number(reasonCheck?.[1])).toBe(MAX_PILOT_LABEL_REASON_CHARS);
+  });
+
+  test("the reason column and its bound really exist after a bootstrap", async () => {
+    // Arrange — the text assertions above; this asks the database.
+    const harness = await createTestHarness();
+
+    // Act
+    const columns = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'pilot_marks' AND column_name = 'reason'`,
+    );
+    const cohort = await harness.db.execute(
+      sql`SELECT column_default AS d FROM information_schema.columns WHERE table_name = 'pilot_sessions' AND column_name = 'cohort'`,
+    );
+    const constraint = await harness.db.execute(
+      sql`SELECT conname AS n FROM pg_constraint WHERE conname = 'pilot_marks_reason_length_check'`,
+    );
+
+    // Assert
+    expect(columns.rows).toHaveLength(1);
+    expect(String(cohort.rows[0]?.d ?? "")).toContain("discovery");
+    expect(constraint.rows).toHaveLength(1);
   });
 
   test("the four pilot tables really exist after a bootstrap", async () => {

@@ -42,6 +42,8 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  MAX_PILOT_LABEL_REASON_CHARS,
+  PILOT_COHORTS,
   PILOT_END_REASONS,
   PILOT_MARKS,
   PILOT_MARK_REF_KINDS,
@@ -1085,9 +1087,12 @@ export const teamSettings = pgTable("team_settings", {
  * thing twice rather than made two complaints — otherwise the noise figure
  * would count keystrokes.
  *
- * NO FREE TEXT ANYWHERE. Every column is an id, an enum or a timestamp
- * (non-negotiable 6), which is also why the mark carries no reason: the
- * gesture is the whole message.
+ * ONE BOUNDED SENTENCE, OPTIONAL (07 §12, 2026-09-30). Every other column is
+ * an id, an enum or a timestamp (non-negotiable 6). `reason` is the one
+ * exception, admitted because a label without a word beside it cannot say
+ * WHY a pointer was noise, and the pilot exists to learn that. It is bounded
+ * by the pin recipe's cap, secret-scanned before it is stored, and rendered
+ * to nobody but the per-repo report, quoted and cleaned.
  */
 export const pilotMarks = pgTable(
   "pilot_marks",
@@ -1102,8 +1107,14 @@ export const pilotMarks = pgTable(
       .references(() => developers.id),
     captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
     createdAt: timestamptz("created_at").notNull(),
+    /** Null is the ordinary case: a label needs no sentence. */
+    reason: text("reason"),
   },
   (table) => [
+    check(
+      "pilot_marks_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
+    ),
     uniqueIndex("pilot_marks_ref_marker_idx").on(
       table.refKind,
       table.refId,
@@ -1245,6 +1256,15 @@ export const pilotSessions = pgTable(
     repo: text("repo").notNull(),
     observedAt: timestamptz("observed_at").notNull(),
     endReason: text("end_reason", { enum: PILOT_END_REASONS }).notNull(),
+    /**
+     * WHICH COHORT THIS SESSION BELONGS TO (07 §12): the first fifty rows of
+     * a repo are `discovery`, the next hundred and fifty `replication`. Set
+     * when the row is written and never updated — a revived session keeps
+     * the cohort it entered. DEFAULT `discovery` is the truthful backfill:
+     * a hub that had the fifty-row cap holds at most fifty rows, all of them
+     * the discovery cohort.
+     */
+    cohort: text("cohort", { enum: PILOT_COHORTS }).notNull().default("discovery"),
     /** FIVE {source,state,reason} triples, enums only — never free text. */
     coverage: jsonb("coverage").notNull(),
     seqEpoch: text("seq_epoch"),

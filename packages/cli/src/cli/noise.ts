@@ -41,7 +41,7 @@ import {
 import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import { SAFE_ID_PATTERN } from "@crosscheck/schema";
-import type { PilotMarkRefKind } from "@crosscheck/schema";
+import type { PilotInterventionLabel } from "@crosscheck/schema";
 
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
@@ -86,7 +86,10 @@ const AGENT_REFUSAL = [
 
 const DELIVERY_ID_PREFIX = "hd_";
 
-const HUB_KIND: PilotMarkRefKind = "hint_delivery";
+const HUB_KIND = "hint_delivery" as const;
+
+/** The one label this command sends: it is `crosscheck pilot label`'s `n` key, as one word. */
+const NOISE_LABEL: PilotInterventionLabel = "noise";
 
 const failed = (result: Extract<HubResult<unknown>, { ok: false }>): CliResult => ({
   stdout: markFailureLine(result.kind, result.message),
@@ -102,6 +105,7 @@ const mark = async (
     repo,
     refKind: HUB_KIND,
     refId: deliveryId,
+    label: NOISE_LABEL,
   });
   if (!result.ok) {
     return failed(result);

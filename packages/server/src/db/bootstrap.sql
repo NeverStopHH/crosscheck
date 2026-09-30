@@ -1109,8 +1109,33 @@ CREATE TABLE IF NOT EXISTS pilot_marks (
   mark text NOT NULL,
   marked_by text NOT NULL REFERENCES developers(id),
   capture_mode text NOT NULL,
-  created_at timestamptz NOT NULL
+  created_at timestamptz NOT NULL,
+  -- 07 12: one optional bounded sentence beside a label. Null is the
+  -- ordinary case. Keep in sync with MAX_PILOT_LABEL_REASON_CHARS in
+  -- @crosscheck/schema; a hub that already has the table gets the column
+  -- from the ALTER below and the bound from the guarded block.
+  reason text,
+  CONSTRAINT pilot_marks_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200)
 );
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS reason text;
+
+-- The reason's bound on a hub whose pilot_marks predates the column. Guarded
+-- the way the body length constraints are guarded: an unconditional DROP +
+-- ADD takes ACCESS EXCLUSIVE on every hub start and revalidates the table.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'pilot_marks_reason_length_check'
+      AND conrelid = 'pilot_marks'::regclass
+  ) THEN
+    ALTER TABLE pilot_marks ADD CONSTRAINT pilot_marks_reason_length_check
+      CHECK (reason IS NULL OR char_length(reason) <= 200);
+  END IF;
+END
+$$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
   ON pilot_marks (ref_kind, ref_id, marked_by);
@@ -1187,8 +1212,14 @@ CREATE TABLE IF NOT EXISTS pilot_sessions (
   seq_last integer,
   seq_gaps integer,
   seq_null_records integer,
-  seq_epochs integer
+  seq_epochs integer,
+  -- 07 12: the first fifty rows of a repo are 'discovery', the next hundred
+  -- and fifty 'replication'; set on insert, never updated. DEFAULT is the
+  -- truthful backfill: a hub with the old fifty-row cap holds only discovery.
+  cohort text NOT NULL DEFAULT 'discovery',
+  CONSTRAINT pilot_sessions_cohort_check CHECK (cohort IN ('discovery', 'replication'))
 );
+ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'discovery';
 
 CREATE INDEX IF NOT EXISTS pilot_sessions_repo_observed_idx
   ON pilot_sessions (repo, observed_at DESC);

@@ -81,6 +81,10 @@ const REFUSAL_SENTENCE: Record<MarkRefusal, string> = {
     "that was an answer somebody asked for; a noise mark is for what arrived without being asked",
   pin_broken:
     "that pin is recorded broken; if you fixed it, pin that surface again — a new pin on the same surface records the fix and links it to the break",
+  // The label AND the sentence are dropped together: a stored label with a
+  // redacted sentence would still be a derivative of the secret.
+  reason_secret:
+    "the reason looks like it holds a secret (a key, a token, a password), so nothing was recorded — say it again without it",
 };
 
 export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -129,6 +133,7 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
       refId: parsed.data.refId,
       mark: parsed.data.mark,
       markedBy: c.get("developer").id,
+      reason: parsed.data.reason ?? null,
     });
     if ("refusal" in outcome) {
       return fail(c, 422, outcome.refusal, REFUSAL_SENTENCE[outcome.refusal]);

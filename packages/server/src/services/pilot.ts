@@ -39,7 +39,11 @@ import type { CoverageRecord } from "./coverage.ts";
 import type { SuspectView } from "./suspect.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
-import { PULLED_DELIVERY_CHANNEL } from "@crosscheck/schema";
+import {
+  PILOT_LEGACY_NOISE_MARK,
+  PULLED_DELIVERY_CHANNEL,
+  containsSecret,
+} from "@crosscheck/schema";
 import type { PilotMark, PilotMarkRefKind } from "@crosscheck/schema";
 
 interface Deps {
@@ -438,7 +442,8 @@ export type MarkRefusal =
   | "unknown_ref"
   | "wrong_repo"
   | "not_unsolicited"
-  | "pin_broken";
+  | "pin_broken"
+  | "reason_secret";
 
 /** What a mark is about, reduced to what decides whether it may be made. */
 interface MarkTarget {
@@ -539,11 +544,22 @@ export interface WriteMarkInput {
   readonly refId: string;
   readonly mark: PilotMark;
   readonly markedBy: string;
+  /** One bounded sentence, or null — the ordinary case. */
+  readonly reason: string | null;
 }
 
 export type WriteMarkOutcome =
   | { readonly id: string; readonly repeated: boolean }
   | { readonly refusal: MarkRefusal };
+
+/**
+ * THE WORD THAT IS STORED (07 §12). An older client still sends `off_target`
+ * for what is now `noise`; one spelling goes forward so the table's
+ * vocabulary is three labels and the report's compatibility read of the old
+ * word is for rows that already exist, not for rows written today.
+ */
+const storedMark = (mark: PilotMark): PilotMark =>
+  mark === PILOT_LEGACY_NOISE_MARK ? "noise" : mark;
 
 /**
  * ONE PERSON'S ONE MARK ABOUT ONE THING (§3.2).
@@ -562,6 +578,12 @@ export type WriteMarkOutcome =
  *
  * REPO-SCOPED, like every other answer in this product. A mark on another
  * repo's delivery would count somebody else's noise against this team.
+ *
+ * THE REASON IS SCANNED AT THE HUB, whatever the client did (07 §12): "one
+ * helper, every writer" — a body posted straight at the route bypasses the
+ * CLI's own scan. A hit drops the whole mark and says so, never "store the
+ * label and redact the sentence": the person can say it again in a moment,
+ * and a stored derivative of a secret still leaks its shape.
  */
 export const writePilotMark = async (
   deps: Deps,
@@ -572,6 +594,9 @@ export const writePilotMark = async (
     // NOT silence: a person typed this, and "nothing happened" is the one
     // answer a gesture must never get.
     return { refusal: "not_enrolled" };
+  }
+  if (input.reason !== null && containsSecret(input.reason)) {
+    return { refusal: "reason_secret" };
   }
   const refusal = refuseMark(
     await readMarkTarget(deps, input.refKind, input.refId),
@@ -588,12 +613,13 @@ export const writePilotMark = async (
       repo: input.repo,
       refKind: input.refKind,
       refId: input.refId,
-      mark: input.mark,
+      mark: storedMark(input.mark),
       markedBy: input.markedBy,
       // STAMPED BY THE HUB. The body said what it OBSERVED; only the hub says
       // what that observation is worth.
       captureMode: HUMAN_CAPTURE_MODE,
       createdAt: deps.now(),
+      reason: input.reason,
     })
     .onConflictDoNothing()
     .returning({ id: pilotMarks.id });

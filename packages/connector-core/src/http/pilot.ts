@@ -24,8 +24,8 @@
  * renderer prints each as itself.
  */
 import { z } from "zod";
-import { PILOT_MARK_BY_REF_KIND, PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
-import type { PilotMarkRefKind } from "@crosscheck/schema";
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+import type { PilotInterventionLabel } from "@crosscheck/schema";
 
 import { hubRequest } from "./client.ts";
 import type { HubContext, HubResult } from "./client.ts";
@@ -158,25 +158,33 @@ const MarkResultSchema = z.looseObject({
 
 export type MarkResult = z.infer<typeof MarkResultSchema>;
 
-export interface PilotMarkRequest {
-  readonly repo: string;
-  readonly refKind: PilotMarkRefKind;
-  readonly refId: string;
-}
+/**
+ * WHAT A MARK IS ABOUT DECIDES WHAT IT MAY SAY. A pin takes one word,
+ * `surface_ok`, and no sentence; a delivery takes one of the three labels
+ * (07 §12) and, optionally, one bounded reason. The two shapes are two
+ * members of a union rather than optional fields, so a crossed pair — a
+ * label about a pin, a reason beside `pin --ok` — cannot be built.
+ */
+export type PilotMarkRequest =
+  | { readonly repo: string; readonly refKind: "pin"; readonly refId: string }
+  | {
+      readonly repo: string;
+      readonly refKind: "hint_delivery";
+      readonly refId: string;
+      readonly label: PilotInterventionLabel;
+      readonly reason?: string;
+    };
 
 /**
- * One person's one word about one thing. The WORD is derived from what the
- * mark is about, never chosen by the caller: a delivery takes `off_target`,
- * a pin takes `surface_ok` (PILOT_MARK_BY_REF_KIND), so a crossed pair has no
- * way to be sent. `presence` states what this process observed — a person at
- * a terminal — and the hub stamps what that is worth.
+ * One person's one word about one thing. `presence` states what this process
+ * observed — a person at a terminal — and the hub stamps what that is worth.
  *
  * NO AGENT PATH IN THIS PRODUCT'S CODE REACHES THIS (07 PIL-6, D3). An agent
  * marking the product's own interventions off-target would be the product
- * grading itself, so the only callers are the two human commands, each behind
- * the TTY gate — and the complete list of callers is pinned, so the day an MCP
- * tool gains one, CI goes red instead of the pilot quietly measuring the
- * model's taste.
+ * grading itself, so the only callers are the three human commands, each
+ * behind the TTY gate — and the complete list of callers is pinned, so the
+ * day an MCP tool gains one, CI goes red instead of the pilot quietly
+ * measuring the model's taste.
  *
  * WHAT THIS DOES NOT STOP, stated rather than implied (adversarial review):
  * an agent that wraps the command in a pty (`script -q /dev/null crosscheck
@@ -186,6 +194,7 @@ export interface PilotMarkRequest {
  *
  * VERIFY: grep -rl postPilotMark packages --include='*.ts' | grep /src/ | sort
  * PRINTS: packages/cli/src/cli/noise.ts
+ * PRINTS: packages/cli/src/cli/pilot-label.ts
  * PRINTS: packages/cli/src/cli/pin.ts
  * PRINTS: packages/connector-core/src/http/pilot.ts
  */
@@ -201,7 +210,12 @@ export const postPilotMark = (
       repo: request.repo,
       refKind: request.refKind,
       refId: request.refId,
-      mark: PILOT_MARK_BY_REF_KIND[request.refKind],
+      ...(request.refKind === "pin"
+        ? { mark: "surface_ok" }
+        : {
+            mark: request.label,
+            ...(request.reason === undefined ? {} : { reason: request.reason }),
+          }),
       presence: PIN_PRESENCE_TERMINAL,
     },
   });
