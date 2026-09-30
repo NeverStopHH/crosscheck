@@ -287,6 +287,13 @@ export const PILOT_UNAVAILABLE_REASONS = [
    * session that could have asked" (corrected by adversarial review).
    */
   "no_asking_host",
+  /**
+   * A precision over no verdict (07 §12): nobody labelled anything helpful
+   * or noise, so there is no ratio — a zero would read as "nothing helped".
+   */
+  "no_labels",
+  /** A label coverage over no intervention: nothing was shown, so nothing could be labelled. */
+  "no_interventions",
 ] as const;
 
 /**

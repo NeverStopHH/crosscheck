@@ -42,21 +42,34 @@
  * PRINTS: 1
  */
 import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
-import { DELIVERY_CHANNELS, TRIPWIRE_ASKING_HOSTS } from "@crosscheck/schema";
+import type { SQL } from "drizzle-orm";
+import {
+  DELIVERY_CHANNELS,
+  PILOT_COHORTS,
+  PILOT_LEGACY_NOISE_MARK,
+  PULLED_DELIVERY_CHANNEL,
+  TRIPWIRE_ASKING_HOSTS,
+} from "@crosscheck/schema";
 import type {
   DeliveryChannel,
+  PilotCohort,
+  PilotInterventionLabel,
   PilotUnavailableReason,
 } from "@crosscheck/schema";
 
 import {
   GHOST_MIN_SHARED_TARGETS,
   PILOT_CONVERGENCE_WINDOW_HOURS,
-  PILOT_SESSION_SET_CAP,
+  PILOT_DISCOVERY_COHORT_SESSIONS,
   PILOT_FIX_DIFF_MAX_NAMED_FILES,
+  PILOT_REPLICATION_COHORT_SESSIONS,
+  PILOT_REPORT_MAX_LABEL_REASONS,
   PILOT_REPORT_MAX_PRIOR_WORK,
   PILOT_REPORT_MAX_REPAIRS,
+  PILOT_SESSION_SET_CAP,
   PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100,
   PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
+  PILOT_TARGET_INTERVENTION_PRECISION,
 } from "../constants.ts";
 import {
   agentSessions,
@@ -168,16 +181,61 @@ export interface ProofAttribution {
   readonly answersAfterRepair: number;
 }
 
-export interface ProofPrecision {
+/**
+ * THE FOUR LABELLED FIGURES over one population of sessions (07 §12) — the
+ * report's window, or one cohort. An INTERVENTION is an unsolicited delivery
+ * to a session in the population; a LABEL is the recipient's word about it.
+ *
+ *   benefit   = helpful / sessions            (per hundred)
+ *   burden    = interventions / sessions      (per hundred)
+ *   precision = helpful / (helpful + noise)
+ *   coverage  = (helpful + noise + unclear) / interventions
+ *
+ * `unclear` ABSTAINS FROM PRECISION and counts toward coverage. An
+ * abstention scored as a miss would make precision fall with the labelers'
+ * honesty — the more often people admit they cannot tell, the worse the
+ * product would look — while dropping it from coverage would hide that they
+ * looked. It is printed on its own so it can be neither.
+ */
+export interface LabelFigures {
   readonly sessions: number;
+  readonly interventions: number;
+  readonly helpful: number;
+  readonly noise: number;
+  readonly unclear: number;
+  /** helpful + noise + unclear. */
+  readonly labelled: number;
+  readonly benefitPer100: Figure;
+  readonly burdenPer100: Figure;
+  readonly precision: Figure;
+  /** Printed beside precision, always: a precision from three labels is not a result. */
+  readonly labelCoverage: Figure;
+}
+
+export interface CohortFigures extends LabelFigures {
+  readonly cohort: PilotCohort;
+  readonly cap: number;
+}
+
+/** One sentence a person typed beside a label. The person is not carried. */
+export interface LabelReason {
+  readonly label: PilotInterventionLabel;
+  readonly reason: string;
+}
+
+export interface ProofPrecision extends LabelFigures {
+  /** PILOT_TARGET_INTERVENTION_PRECISION, declared before measuring. */
+  readonly precisionTarget: number;
   /** Unsolicited pointers an agent opened, per hundred sessions — a pull, not a verdict. */
   readonly openedPer100: Figure;
   readonly openedTargetPer100: number;
-  readonly offTargetMarks: number;
-  /** A FLOOR, never a value: marks are voluntary (§8.3). */
-  readonly offTargetPer100: Figure;
-  readonly offTargetCeilingPer100: number;
+  /** Sessions with at least one noise label, per hundred — the first pilot's ceiling, kept. */
+  readonly noisySessionsPer100: Figure;
+  readonly noisySessionsCeilingPer100: number;
   readonly surfaceOkMarks: number;
+  /** Newest first, bounded; the count beyond the bound is beside it. */
+  readonly reasons: readonly LabelReason[];
+  readonly reasonsBeyondList: number;
 }
 
 export interface SurfaceIntegrity {
@@ -190,6 +248,11 @@ export interface SessionSet {
   readonly used: number;
   readonly cap: number;
   readonly refused: number;
+  /** Rows in each cohort, and how many each holds when full (07 §12). */
+  readonly discovery: number;
+  readonly discoveryCap: number;
+  readonly replication: number;
+  readonly replicationCap: number;
   /** One epoch and at least one position: a span can be printed. */
   readonly spanned: number;
   /** More than one epoch: the counter restarted, and no span exists (PIL-7). */
@@ -209,8 +272,15 @@ export interface PilotReport {
   readonly collisions: ProofCollisions;
   readonly attribution: ProofAttribution;
   readonly precision: ProofPrecision;
+  /** Both cohorts, in PILOT_COHORTS order, each over its own sessions. */
+  readonly cohorts: readonly CohortFigures[];
   readonly integrity: readonly SurfaceIntegrity[];
 }
+
+const COHORT_CAP: Readonly<Record<PilotCohort, number>> = {
+  discovery: PILOT_DISCOVERY_COHORT_SESSIONS,
+  replication: PILOT_REPLICATION_COHORT_SESSIONS,
+};
 
 export interface ReadPilotReportInput {
   readonly repo: string;
@@ -622,17 +692,149 @@ const readAttribution = async (
   };
 };
 
+/** The SQL that reads as noise: the word written today and the word an older hub wrote. */
+const NOISE_WORDS = sql`('noise', ${PILOT_LEGACY_NOISE_MARK})`;
+
+/** A type alias, not an interface: `db.execute<T>` wants an index-signature-compatible row. */
+type LabelTally = {
+  readonly sessions: number;
+  readonly interventions: number;
+  readonly helpful: number;
+  readonly noise: number;
+  readonly unclear: number;
+};
+
+/** The four figures from one tally; each says why when it cannot be a number. */
+const labelFigures = (tally: LabelTally): LabelFigures => {
+  const labelled = tally.helpful + tally.noise + tally.unclear;
+  const verdicts = tally.helpful + tally.noise;
+  const per100 = (value: number): Figure =>
+    tally.sessions === 0
+      ? unavailable("no_sessions")
+      : measured((value * PER_HUNDRED) / tally.sessions);
+  return {
+    ...tally,
+    labelled,
+    benefitPer100: per100(tally.helpful),
+    burdenPer100: per100(tally.interventions),
+    precision:
+      verdicts === 0 ? unavailable("no_labels") : measured(tally.helpful / verdicts),
+    labelCoverage:
+      tally.interventions === 0
+        ? unavailable("no_interventions")
+        : measured(labelled / tally.interventions),
+  };
+};
+
 /**
- * PROOF 4 — proactive precision, and neither half is a human verdict.
+ * THE LABEL TALLY OVER ONE POPULATION, given as a SELECT of session ids: the
+ * report's window (sessions that started in it) or one cohort (the rows of
+ * `pilot_sessions` that carry it). One statement, in the database, so the
+ * cost of a report does not scale with the traffic it describes.
  *
- * *Corrected against the spec's mockup, which labels the first figure
- * "helpful per 100 sessions".* §8.1 refuses exactly that word: `pulled_at` is
- * set when the MODEL calls `get_diagnosis`, so a pull is an agent opening a
- * pointer, and reporting it as "a human found this helpful" is the
- * calibration lie. The figure is "opened"; its target keeps the constant's
- * name because the target was declared before any measurement.
+ * A LABEL IS THE RECIPIENT'S. The mark route refuses a mark from anybody but
+ * the person a delivery reached, and the unique key allows one per person,
+ * so a delivery carries at most one label and `labelled <= interventions`
+ * holds by construction rather than by clamping.
+ */
+const readLabelTally = async (deps: Deps, population: SQL): Promise<LabelTally> => {
+  const rows = await deps.db.execute<LabelTally>(sql`
+    WITH population AS (${population}),
+    intervention AS (
+      SELECT hd.id FROM hint_deliveries hd
+      JOIN population p ON p.id = hd.session_id
+      WHERE hd.channel <> ${PULLED_DELIVERY_CHANNEL}
+    ),
+    verdict AS (
+      SELECT m.mark FROM pilot_marks m
+      JOIN intervention i ON i.id = m.ref_id
+      WHERE m.ref_kind = 'hint_delivery'
+    )
+    SELECT (SELECT count(*)::int FROM population) AS sessions,
+           (SELECT count(*)::int FROM intervention) AS interventions,
+           count(*) FILTER (WHERE mark = 'helpful')::int AS helpful,
+           count(*) FILTER (WHERE mark IN ${NOISE_WORDS})::int AS noise,
+           count(*) FILTER (WHERE mark = 'unclear')::int AS unclear
+    FROM verdict`);
+  const row = rows.rows[0];
+  return {
+    sessions: row?.sessions ?? 0,
+    interventions: row?.interventions ?? 0,
+    helpful: row?.helpful ?? 0,
+    noise: row?.noise ?? 0,
+    unclear: row?.unclear ?? 0,
+  };
+};
+
+const windowPopulation = (repo: string, since: Date, until: Date): SQL =>
+  sql`SELECT s.id FROM agent_sessions s
+    WHERE s.repo = ${repo}
+      AND s.started_at >= ${since.toISOString()}::timestamptz
+      AND s.started_at < ${until.toISOString()}::timestamptz`;
+
+const cohortPopulation = (repo: string, cohort: PilotCohort): SQL =>
+  sql`SELECT ps.session_id AS id FROM pilot_sessions ps
+    WHERE ps.repo = ${repo} AND ps.cohort = ${cohort}`;
+
+/**
+ * THE TWO COHORTS, SIDE BY SIDE (07 §12). A cohort is its own population —
+ * the fifty or hundred and fifty sessions whose rows carry the word — and no
+ * window applies: the discovery cohort is frozen, and a window that cut it
+ * would report a different discovery cohort every week.
+ */
+const readCohorts = (deps: Deps, repo: string): Promise<readonly CohortFigures[]> =>
+  Promise.all(
+    PILOT_COHORTS.map(async (cohort) => ({
+      cohort,
+      cap: COHORT_CAP[cohort],
+      ...labelFigures(await readLabelTally(deps, cohortPopulation(repo, cohort))),
+    })),
+  );
+
+/**
+ * THE SENTENCES PEOPLE TYPED BESIDE A LABEL, newest first and bounded, with
+ * the total beside the list. The label is normalised so an older hub's word
+ * reads as what it meant. No developer id and no name leave the query: the
+ * sentence is a person's word about an intervention, not about a person.
+ */
+const readReasons = async (
+  deps: Deps,
+  repo: string,
+  since: Date,
+  until: Date,
+): Promise<{ readonly reasons: readonly LabelReason[]; readonly beyond: number }> => {
+  const rows = await deps.db.execute<{ mark: string; reason: string; total: number }>(sql`
+    SELECT m.mark AS mark, m.reason AS reason, count(*) OVER ()::int AS total
+    FROM pilot_marks m
+    JOIN hint_deliveries hd ON hd.id = m.ref_id
+    JOIN agent_sessions s ON s.id = hd.session_id
+    WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL
+      AND s.repo = ${repo}
+      AND m.created_at >= ${since.toISOString()}::timestamptz
+      AND m.created_at < ${until.toISOString()}::timestamptz
+    ORDER BY m.created_at DESC, m.id ASC
+    LIMIT ${PILOT_REPORT_MAX_LABEL_REASONS}`);
+  const reasons = rows.rows.map((row) => ({
+    label: (row.mark === PILOT_LEGACY_NOISE_MARK ? "noise" : row.mark) as PilotInterventionLabel,
+    reason: row.reason,
+  }));
+  return {
+    reasons,
+    beyond: Math.max(0, (rows.rows[0]?.total ?? 0) - reasons.length),
+  };
+};
+
+/**
+ * PROOF 4 — proactive precision, revised (07 §12): the human labels carry
+ * the figures, and the pull is kept as what it is.
  *
- * `suspect` IS EXCLUDED from "opened": it is a pulled answer, not a proactive
+ * *Corrected against the spec's mockup, which labelled the pull "helpful per
+ * 100 sessions".* `pulled_at` is set when the MODEL calls `get_diagnosis`,
+ * so a pull is an agent opening a pointer; it prints as "opened", a
+ * behavioural signal beside the human ones, and its target keeps the
+ * constant's name because the target was declared before any measurement.
+ *
+ * `suspect` IS EXCLUDED everywhere: it is a pulled answer, not a proactive
  * one, and proof 4 is about what arrived UNASKED.
  */
 const readPrecision = async (
@@ -641,69 +843,56 @@ const readPrecision = async (
   since: Date,
   until: Date,
 ): Promise<ProofPrecision> => {
-  // SESSIONS OVER SESSIONS (corrected by adversarial review). The target is
-  // "one session in twelve receiving something it opened" (§3.7), so the
-  // numerator counts SESSIONS — those that started in the window and opened
-  // at least one unasked pointer — never deliveries, which counted pointers
-  // to sessions that started earlier and read 500 per 100 over one session.
-  // The off-target rate is the same unit: sessions with at least one noise
-  // mark on a delivery to them. The mark count itself is still printed.
+  // SESSIONS OVER SESSIONS for the two behavioural rates (corrected by
+  // adversarial review): a session that opened five pointers is one session
+  // that opened something, and one with three noise labels is one noisy
+  // session. The four labelled figures count INTERVENTIONS (07 §12).
   const windowSessions = sql`s.repo = ${repo}
     AND s.started_at >= ${since.toISOString()}::timestamptz
     AND s.started_at < ${until.toISOString()}::timestamptz`;
-  const [sessionRows, opened, noisy, marks] = await Promise.all([
-    deps.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(agentSessions)
-      .where(
-        and(
-          eq(agentSessions.repo, repo),
-          gte(agentSessions.startedAt, since),
-          lt(agentSessions.startedAt, until),
-        ),
-      ),
+  const [tally, opened, noisy, surfaceOk, said] = await Promise.all([
+    readLabelTally(deps, windowPopulation(repo, since, until)),
     deps.db.execute<{ n: number }>(sql`
       SELECT count(DISTINCT s.id)::int AS n
       FROM agent_sessions s
       JOIN hint_deliveries hd ON hd.session_id = s.id
       WHERE ${windowSessions}
-        AND hd.channel <> 'suspect'
+        AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
         AND ${OPENED_AT} IS NOT NULL`),
     deps.db.execute<{ n: number }>(sql`
       SELECT count(DISTINCT s.id)::int AS n
       FROM pilot_marks m
       JOIN hint_deliveries hd ON hd.id = m.ref_id
       JOIN agent_sessions s ON s.id = hd.session_id
-      WHERE m.ref_kind = 'hint_delivery' AND m.mark = 'off_target'
+      WHERE m.ref_kind = 'hint_delivery' AND m.mark IN ${NOISE_WORDS}
         AND ${windowSessions}`),
     deps.db
-      .select({ mark: pilotMarks.mark, n: sql<number>`count(*)::int` })
+      .select({ n: sql<number>`count(*)::int` })
       .from(pilotMarks)
       .where(
         and(
           eq(pilotMarks.repo, repo),
+          eq(pilotMarks.mark, "surface_ok"),
           gte(pilotMarks.createdAt, since),
           lt(pilotMarks.createdAt, until),
         ),
-      )
-      .groupBy(pilotMarks.mark),
+      ),
+    readReasons(deps, repo, since, until),
   ]);
-  const sessions = sessionRows[0]?.n ?? 0;
-  const markCount = (mark: string): number =>
-    marks.find((row) => row.mark === mark)?.n ?? 0;
   const per100 = (value: number): Figure =>
-    sessions === 0
+    tally.sessions === 0
       ? unavailable("no_sessions")
-      : measured((value / sessions) * PER_HUNDRED);
-  const offTarget = markCount("off_target");
+      : measured((value / tally.sessions) * PER_HUNDRED);
   return {
-    sessions,
+    ...labelFigures(tally),
+    precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: per100(opened.rows[0]?.n ?? 0),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
-    offTargetMarks: offTarget,
-    offTargetPer100: per100(noisy.rows[0]?.n ?? 0),
-    offTargetCeilingPer100: PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100,
-    surfaceOkMarks: markCount("surface_ok"),
+    noisySessionsPer100: per100(noisy.rows[0]?.n ?? 0),
+    noisySessionsCeilingPer100: PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100,
+    surfaceOkMarks: surfaceOk[0]?.n ?? 0,
+    reasons: said.reasons,
+    reasonsBeyondList: said.beyond,
   };
 };
 
@@ -743,14 +932,14 @@ const readIntegrity = async (
   });
 };
 
-/** The 50-session set, and how many of its sequences can be read (PIL-7). */
+/** The session set, its two cohorts, and how many of its sequences can be read (PIL-7). */
 const readSessionSet = async (
   deps: Deps,
   repo: string,
 ): Promise<SessionSet> => {
   const [rows, refused] = await Promise.all([
     deps.db
-      .select({ epochs: pilotSessions.seqEpochs })
+      .select({ epochs: pilotSessions.seqEpochs, cohort: pilotSessions.cohort })
       .from(pilotSessions)
       .where(eq(pilotSessions.repo, repo)),
     deps.db
@@ -767,11 +956,29 @@ const readSessionSet = async (
     used: rows.length,
     cap: PILOT_SESSION_SET_CAP,
     refused: refused[0]?.n ?? 0,
+    discovery: rows.filter((row) => row.cohort === "discovery").length,
+    discoveryCap: COHORT_CAP.discovery,
+    replication: rows.filter((row) => row.cohort === "replication").length,
+    replicationCap: COHORT_CAP.replication,
     spanned: rows.filter((row) => row.epochs === 1).length,
     restarted: rows.filter((row) => (row.epochs ?? 0) > 1).length,
     notRecorded: rows.filter((row) => (row.epochs ?? 0) === 0).length,
   };
 };
+
+/** The labelled figures of a population nobody measured: every one says so. */
+const notInstrumentedLabels = (): LabelFigures => ({
+  sessions: 0,
+  interventions: 0,
+  helpful: 0,
+  noise: 0,
+  unclear: 0,
+  labelled: 0,
+  benefitPer100: unavailable("not_instrumented"),
+  burdenPer100: unavailable("not_instrumented"),
+  precision: unavailable("not_instrumented"),
+  labelCoverage: unavailable("not_instrumented"),
+});
 
 /** What an un-enrolled repo reports: nothing measured, and saying so. */
 const notEnrolled = (): Omit<
@@ -782,6 +989,10 @@ const notEnrolled = (): Omit<
     used: 0,
     cap: PILOT_SESSION_SET_CAP,
     refused: 0,
+    discovery: 0,
+    discoveryCap: COHORT_CAP.discovery,
+    replication: 0,
+    replicationCap: COHORT_CAP.replication,
     spanned: 0,
     restarted: 0,
     notRecorded: 0,
@@ -813,14 +1024,21 @@ const notEnrolled = (): Omit<
     answersAfterRepair: 0,
   },
   precision: {
-    sessions: 0,
+    ...notInstrumentedLabels(),
+    precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: unavailable("not_instrumented"),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
-    offTargetMarks: 0,
-    offTargetPer100: unavailable("not_instrumented"),
-    offTargetCeilingPer100: PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100,
+    noisySessionsPer100: unavailable("not_instrumented"),
+    noisySessionsCeilingPer100: PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100,
     surfaceOkMarks: 0,
+    reasons: [],
+    reasonsBeyondList: 0,
   },
+  cohorts: PILOT_COHORTS.map((cohort) => ({
+    cohort,
+    cap: COHORT_CAP[cohort],
+    ...notInstrumentedLabels(),
+  })),
   integrity: PILOT_ANSWER_SURFACES.map((surface) => ({
     surface,
     counters: null,
@@ -851,13 +1069,14 @@ export const readPilotReport = async (
   if (!settings.pilotEnrolled) {
     return { ...base, ...notEnrolled() };
   }
-  const [sessionSet, duplicateWork, collisions, attribution, precision, integrity] =
+  const [sessionSet, duplicateWork, collisions, attribution, precision, cohorts, integrity] =
     await Promise.all([
       readSessionSet(deps, input.repo),
       readDuplicateWork(deps, input.repo, since, until),
       readCollisions(deps, input.repo, since, until),
       readAttribution(deps, input.repo, since, until),
       readPrecision(deps, input.repo, since, until),
+      readCohorts(deps, input.repo),
       readIntegrity(deps, input.repo, since),
     ]);
   return {
@@ -867,6 +1086,7 @@ export const readPilotReport = async (
     collisions,
     attribution,
     precision,
+    cohorts,
     integrity,
   };
 };

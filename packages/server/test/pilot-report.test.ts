@@ -25,12 +25,20 @@ import {
   hintDeliveries,
   pilotAttributions,
   pilotCounters,
+  pilotMarks,
   pilotSessions,
   pinFiles,
   pins,
   workContextTargets,
   workContexts,
 } from "../src/db/schema.ts";
+import {
+  PILOT_DISCOVERY_COHORT_SESSIONS,
+  PILOT_REPLICATION_COHORT_SESSIONS,
+  PILOT_REPORT_MAX_LABEL_REASONS,
+  PILOT_SESSION_SET_CAP,
+  PILOT_TARGET_INTERVENTION_PRECISION,
+} from "../src/constants.ts";
 import { readPilotReport } from "../src/services/pilot-report.ts";
 import {
   TEST_ADMIN_TOKEN,
@@ -141,6 +149,69 @@ const report = (world: World, days = 56) =>
     { db: world.harness.db, now: () => NOW },
     { repo: REPO, days },
   );
+
+/** One human label on one delivery, by the test developer, an hour ago. */
+const label = async (
+  world: World,
+  deliveryId: string,
+  mark: "helpful" | "noise" | "unclear" | "off_target",
+  reason: string | null = null,
+  hoursAgo = 1,
+) => {
+  await world.harness.db.insert(pilotMarks).values({
+    id: `pm_${deliveryId}`,
+    repo: REPO,
+    refKind: "hint_delivery",
+    refId: deliveryId,
+    mark,
+    markedBy: world.developer.developerId,
+    captureMode: "human",
+    createdAt: at(hoursAgo),
+    reason,
+  });
+};
+
+/** A finished session in the set, in the cohort named. */
+const inCohort = async (
+  world: World,
+  id: string,
+  cohort: "discovery" | "replication",
+  epochs = 1,
+) => {
+  await world.harness.db.insert(pilotSessions).values({
+    sessionId: id,
+    repo: REPO,
+    observedAt: at(10),
+    endReason: "reported",
+    cohort,
+    coverage: [],
+    seqNullRecords: 0,
+    seqEpochs: epochs,
+  });
+};
+
+/**
+ * `sessions` sessions, `perSession` unsolicited deliveries to each, ids
+ * `hd_<session>_<n>`; returns the delivery ids in order.
+ */
+const interventions = async (
+  world: World,
+  sessions: number,
+  perSession: number,
+): Promise<readonly string[]> => {
+  await session(world, "s_prior", 100);
+  await context(world, "wc_prior", "s_prior", "prior work");
+  const ids: string[] = [];
+  for (let s = 0; s < sessions; s += 1) {
+    await session(world, `s_${String(s)}`, 20);
+    for (let n = 0; n < perSession; n += 1) {
+      const id = `hd_${String(s)}_${String(n)}`;
+      await deliver(world, id, `s_${String(s)}`, "wc_prior", "prompt_hint", 10, null);
+      ids.push(id);
+    }
+  }
+  return ids;
+};
 
 describe("a repo that never enrolled", () => {
   test("reports nothing measured — and says so on every figure", async () => {
@@ -720,7 +791,7 @@ describe("proof 5 — coverage integrity", () => {
   });
 });
 
-describe("the 50-session set", () => {
+describe("the session set", () => {
   test("PIL-7: spanned, restarted and not-recorded sessions are kept apart", async () => {
     // Arrange
     const world = await setup();
@@ -730,15 +801,7 @@ describe("the 50-session set", () => {
       ["s_3", 0],
     ] as const) {
       await session(world, id);
-      await world.harness.db.insert(pilotSessions).values({
-        sessionId: id,
-        repo: REPO,
-        observedAt: at(10),
-        endReason: "reported",
-        coverage: [],
-        seqNullRecords: 0,
-        seqEpochs: epochs,
-      });
+      await inCohort(world, id, "discovery", epochs);
     }
 
     // Act
@@ -747,12 +810,231 @@ describe("the 50-session set", () => {
     // Assert
     expect(out.sessionSet).toEqual({
       used: 3,
-      cap: 50,
+      cap: PILOT_SESSION_SET_CAP,
       refused: 0,
+      discovery: 3,
+      discoveryCap: PILOT_DISCOVERY_COHORT_SESSIONS,
+      replication: 0,
+      replicationCap: PILOT_REPLICATION_COHORT_SESSIONS,
       spanned: 1,
       restarted: 1,
       notRecorded: 1,
     });
+  });
+});
+
+/**
+ * PROOF 4, REVISED (07 §12, 2026-09-30): human labels, and the four figures
+ * the review asked for. The example is the review's own — four helpful and
+ * ten noise interventions read as two healthy per-100 rates while precision
+ * was 4/14 — and every figure prints beside the coverage that says how many
+ * interventions were labelled at all.
+ */
+describe("proof 4 — human labels", () => {
+  test("the review's example: 4 helpful and 10 noise of 40 interventions over 20 sessions", async () => {
+    // Arrange — two unsolicited pointers to each of twenty sessions; a
+    // person labelled fourteen of the forty
+    const world = await setup();
+    const ids = await interventions(world, 20, 2);
+    for (const id of ids.slice(0, 4)) {
+      await label(world, id, "helpful");
+    }
+    for (const id of ids.slice(4, 14)) {
+      await label(world, id, "noise");
+    }
+
+    // Act — a window that holds the twenty and not the prior session
+    const out = await report(world, 1);
+
+    // Assert — precision 4/14, and neither per-100 rate hides it
+    const proof = out.precision;
+    expect(proof.sessions).toBe(20);
+    expect(proof.interventions).toBe(40);
+    expect(proof.helpful).toBe(4);
+    expect(proof.noise).toBe(10);
+    expect(proof.unclear).toBe(0);
+    expect(proof.labelled).toBe(14);
+    expect(proof.precision).toEqual({ kind: "measured", value: 4 / 14 });
+    expect(proof.precisionTarget).toBe(PILOT_TARGET_INTERVENTION_PRECISION);
+    expect(proof.benefitPer100).toEqual({ kind: "measured", value: 20 });
+    expect(proof.burdenPer100).toEqual({ kind: "measured", value: 200 });
+    expect(proof.labelCoverage).toEqual({ kind: "measured", value: 14 / 40 });
+  });
+
+  test("unclear is shown apart and abstains from the precision denominator", async () => {
+    // Arrange — "I could not tell" is not "not helpful": scoring it as a
+    // miss would make precision fall with the labelers' honesty. It counts
+    // toward coverage — the person did look — and prints on its own.
+    const world = await setup();
+    const ids = await interventions(world, 20, 2);
+    for (const id of ids.slice(0, 4)) {
+      await label(world, id, "helpful");
+    }
+    for (const id of ids.slice(4, 14)) {
+      await label(world, id, "noise");
+    }
+    for (const id of ids.slice(14, 17)) {
+      await label(world, id, "unclear");
+    }
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.unclear).toBe(3);
+    expect(out.precision.labelled).toBe(17);
+    expect(out.precision.precision).toEqual({ kind: "measured", value: 4 / 14 });
+    expect(out.precision.labelCoverage).toEqual({ kind: "measured", value: 17 / 40 });
+  });
+
+  test("an older hub's off_target rows are read as noise", async () => {
+    // Arrange — the word an earlier build stored; nothing is rewritten
+    const world = await setup();
+    const ids = await interventions(world, 2, 1);
+    await label(world, ids[0] ?? "", "off_target");
+    await label(world, ids[1] ?? "", "helpful");
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.noise).toBe(1);
+    expect(out.precision.precision).toEqual({ kind: "measured", value: 0.5 });
+  });
+
+  test("precision over no verdict, and coverage over no intervention, are unavailable", async () => {
+    // Arrange — one session, one intervention, one `unclear`: somebody
+    // looked, nobody judged. A precision of 0 here would read as "nothing
+    // helped"; a coverage of 0 on a repo with no interventions as "nobody
+    // labels".
+    const world = await setup();
+    const ids = await interventions(world, 1, 1);
+    await label(world, ids[0] ?? "", "unclear");
+    const quiet = await setup();
+    await session(quiet, "s_quiet", 20);
+
+    // Act
+    const out = await report(world, 1);
+    const nothing = await report(quiet, 1);
+
+    // Assert
+    expect(out.precision.precision).toEqual({ kind: "unavailable", reason: "no_labels" });
+    expect(out.precision.labelCoverage).toEqual({ kind: "measured", value: 1 });
+    expect(nothing.precision.labelCoverage).toEqual({
+      kind: "unavailable",
+      reason: "no_interventions",
+    });
+    expect(nothing.precision.burdenPer100).toEqual({ kind: "measured", value: 0 });
+  });
+
+  test("the opened figure stays, as a behavioural signal beside the human ones", async () => {
+    // Arrange — one pointer the agent pulled, and no label on it
+    const world = await setup();
+    await session(world, "s_prior", 100);
+    await context(world, "wc_prior", "s_prior", "prior");
+    await session(world, "s_x", 20);
+    await deliver(world, "hd_x", "s_x", "wc_prior", "prompt_hint", 10, 5);
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert — opened is measured; helpful is zero, because nobody said so
+    expect(out.precision.openedPer100).toEqual({ kind: "measured", value: 100 });
+    expect(out.precision.helpful).toBe(0);
+    expect(out.precision.benefitPer100).toEqual({ kind: "measured", value: 0 });
+  });
+});
+
+describe("proof 4 — the two cohorts, side by side", () => {
+  test("each cohort is measured over its own sessions, whatever the window", async () => {
+    // Arrange — two discovery sessions with one intervention each, one
+    // labelled helpful; one replication session with two, one labelled
+    // noise. The cohort is the population: no window applies.
+    const world = await setup();
+    await session(world, "s_prior", 100);
+    await context(world, "wc_prior", "s_prior", "prior");
+    for (const [id, cohort] of [
+      ["s_d1", "discovery"],
+      ["s_d2", "discovery"],
+      ["s_r1", "replication"],
+    ] as const) {
+      await session(world, id, 500);
+      await inCohort(world, id, cohort);
+    }
+    await deliver(world, "hd_d1", "s_d1", "wc_prior", "briefing", 490, null);
+    await deliver(world, "hd_d2", "s_d2", "wc_prior", "briefing", 490, null);
+    await deliver(world, "hd_r1a", "s_r1", "wc_prior", "briefing", 490, null);
+    await deliver(world, "hd_r1b", "s_r1", "wc_prior", "prompt_hint", 490, null);
+    await label(world, "hd_d1", "helpful");
+    await label(world, "hd_r1a", "noise");
+
+    // Act — a one-day window that holds none of those sessions
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.cohorts.map((row) => row.cohort)).toEqual(["discovery", "replication"]);
+    const [discovery, replication] = out.cohorts;
+    expect(discovery?.sessions).toBe(2);
+    expect(discovery?.interventions).toBe(2);
+    expect(discovery?.benefitPer100).toEqual({ kind: "measured", value: 50 });
+    expect(discovery?.burdenPer100).toEqual({ kind: "measured", value: 100 });
+    expect(discovery?.precision).toEqual({ kind: "measured", value: 1 });
+    expect(discovery?.labelCoverage).toEqual({ kind: "measured", value: 0.5 });
+    expect(replication?.sessions).toBe(1);
+    expect(replication?.interventions).toBe(2);
+    expect(replication?.precision).toEqual({ kind: "measured", value: 0 });
+    expect(replication?.burdenPer100).toEqual({ kind: "measured", value: 200 });
+    // and the window's own figures saw none of it
+    expect(out.precision.sessions).toBe(0);
+  });
+
+  test("an empty cohort says so on every figure", async () => {
+    // Arrange & Act
+    const world = await setup();
+    const out = await report(world, 1);
+
+    // Assert
+    const [discovery] = out.cohorts;
+    expect(discovery?.sessions).toBe(0);
+    expect(discovery?.cap).toBe(PILOT_DISCOVERY_COHORT_SESSIONS);
+    expect(discovery?.benefitPer100).toEqual({ kind: "unavailable", reason: "no_sessions" });
+    expect(discovery?.precision).toEqual({ kind: "unavailable", reason: "no_labels" });
+  });
+});
+
+describe("proof 4 — the reasons people gave", () => {
+  test("a reason is listed beside its label, newest first, and the list is bounded", async () => {
+    // Arrange — more reasons than the report prints
+    const world = await setup();
+    const ids = await interventions(world, 1, PILOT_REPORT_MAX_LABEL_REASONS + 2);
+    for (const [index, id] of ids.entries()) {
+      await label(world, id, "noise", `reason ${String(index)}`, ids.length - index);
+    }
+    await label(world, "hd_none", "helpful");
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.reasons).toHaveLength(PILOT_REPORT_MAX_LABEL_REASONS);
+    expect(out.precision.reasons[0]).toEqual({
+      label: "noise",
+      reason: `reason ${String(ids.length - 1)}`,
+    });
+    expect(out.precision.reasonsBeyondList).toBe(2);
+  });
+
+  test("a legacy word's reason is listed under noise", async () => {
+    // Arrange
+    const world = await setup();
+    const ids = await interventions(world, 1, 1);
+    await label(world, ids[0] ?? "", "off_target", "stale pointer");
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.reasons).toEqual([{ label: "noise", reason: "stale pointer" }]);
   });
 });
 
@@ -764,11 +1046,13 @@ describe("no person appears anywhere in the report (§8.4)", () => {
     await session(world, "s_b");
     await context(world, "wc_b", "s_b", "prior work");
     await deliver(world, "hd_1", "s_a", "wc_b", "briefing", 50, 49);
+    await label(world, "hd_1", "helpful", "saved me an hour");
 
     // Act
     const text = JSON.stringify(await report(world));
 
-    // Assert
+    // Assert — the reason travels, the person who wrote it does not
+    expect(text).toContain("saved me an hour");
     expect(text).not.toContain(world.developer.developerId);
     expect(text).not.toContain("Nick");
   });
