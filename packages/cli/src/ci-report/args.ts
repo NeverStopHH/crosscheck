@@ -4,7 +4,7 @@
  * The workflow step passes the lane on the command line (spec 05 §10 D4):
  *
  *   --junit junit.xml --job test --leg ${{ matrix.os }}
- *   --ref ${{ github.ref_name }} --attempt ${{ github.run_attempt }}
+ *   --ref ${{ github.head_ref || github.ref_name }} --attempt ${{ github.run_attempt }}
  *   --run-id ${{ github.run_id }}
  *   --sha ${{ github.event.pull_request.head.sha || github.sha }}
  *

@@ -12720,6 +12720,36 @@ export const MUTATIONS: readonly Mutation[] = [
       "a regression is precisely the run that is never reported, and the hub " +
       "holds only the green runs of every lane",
   },
+  {
+    label: "the reporter step names a pull request's lane after its merge ref",
+    file: ".github/workflows/ci.yml",
+    from: "--ref ${{ github.head_ref || github.ref_name }}",
+    to: "--ref ${{ github.ref_name }}",
+    test: `${CLI}/test/ci-report-workflow.test.ts`,
+    because:
+      "every pull-request lane is filed under `<n>/merge`, a ref no developer's " +
+      "session names, instead of the branch spec 05 §3.1 says a ref is",
+  },
+  {
+    label: "the published CLI has no ci-report command",
+    file: `${CLI}/src/bin/crosscheck.ts`,
+    from: '  if (command === "ci-report") {',
+    to: '  if (command === "ci-report-unshipped") {',
+    test: `${CLI}/test/ci-report-entry.test.ts`,
+    because:
+      "another repository's CI has no packages/cli/scripts/ to run, so the " +
+      "reporter reaches exactly one repository and every other lane stays unknown",
+  },
+  {
+    label: "a throw inside the reporter turns the CI job red",
+    file: `${CLI}/src/ci-report/entry.ts`,
+    from: "      exitCode: EXIT_OK,",
+    to: "      exitCode: 1,",
+    test: `${CLI}/test/ci-report-entry.test.ts`,
+    because:
+      "a side channel that blocks merges when it breaks is the block-never-inform " +
+      "spec 05 §8.3 refuses, and a team switches the reporter off after the first one",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12768,8 +12798,9 @@ interface Outcome {
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
  * PRINTS: packages/cli/test/ci-report-build.test.ts 3
+ * PRINTS: packages/cli/test/ci-report-entry.test.ts 2
  * PRINTS: packages/cli/test/ci-report-junit.test.ts 2
- * PRINTS: packages/cli/test/ci-report-workflow.test.ts 2
+ * PRINTS: packages/cli/test/ci-report-workflow.test.ts 3
  * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 10

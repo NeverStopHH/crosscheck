@@ -43,8 +43,10 @@ jobs:
       # `--sha` is the HEAD sha: on a pull_request event `github.sha` is the
       # merge commit, which no developer's history contains, and a row keyed
       # on it would join zero sessions while looking exactly like "CI has not
-      # run yet" (05 §1.3, CI-1). packages/cli/test/ci-report-workflow.test.ts
-      # asserts this expression as a string over this file.
+      # run yet" (05 §1.3, CI-1). `--ref` is the branch for the same reason:
+      # `github.ref_name` on a pull_request event is `<n>/merge`, so the head
+      # ref comes first. packages/cli/test/ci-report-workflow.test.ts asserts
+      # both expressions as strings over this file.
       #
       # ON THIS REPOSITORY'S OWN CI both secrets are unset (the pilot hub sits
       # on a private tailnet), so the step prints one "not reported" line and
@@ -54,7 +56,8 @@ jobs:
         run: >-
           bun run packages/cli/scripts/ci-report.ts
           --junit junit.xml --job test --leg ${{ matrix.os }}
-          --ref ${{ github.ref_name }} --attempt ${{ github.run_attempt }}
+          --ref ${{ github.head_ref || github.ref_name }}
+          --attempt ${{ github.run_attempt }}
           --run-id ${{ github.run_id }}
           --sha ${{ github.event.pull_request.head.sha || github.sha }}
         env:
@@ -148,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1007
+    # PRINTS: 1010
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -156,8 +159,10 @@ jobs:
     # sentence somebody has to keep in step by hand:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
-    # PRINTS: .github/workflows/ci.yml 2
+    # PRINTS: .github/workflows/ci.yml 3
+    # PRINTS: packages/cli/src/bin/crosscheck.ts 1
     # PRINTS: packages/cli/src/ci-report/args.ts 2
+    # PRINTS: packages/cli/src/ci-report/entry.ts 1
     # PRINTS: packages/cli/src/ci-report/junit.ts 2
     # PRINTS: packages/cli/src/ci-report/post.ts 1
     # PRINTS: packages/cli/src/ci-report/render.ts 1
@@ -401,7 +406,7 @@ jobs:
     # PRINTS: capture-touched-files.ts 1
     # PRINTS: ci-coverage.ts 3
     # PRINTS: ci-delta.ts 4
-    # PRINTS: ci.yml 2
+    # PRINTS: ci.yml 3
     # PRINTS: claim-drift.ts 5
     # PRINTS: claim-revalidation.ts 3
     # PRINTS: claim-revalidations.ts 7
@@ -418,6 +423,7 @@ jobs:
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
     # PRINTS: coverage.ts 13
+    # PRINTS: crosscheck.ts 1
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
     # PRINTS: derive.ts 2
@@ -431,6 +437,7 @@ jobs:
     # PRINTS: doctor.ts 49
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 13
+    # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
     # PRINTS: envelope.ts 1
     # PRINTS: events.ts 1

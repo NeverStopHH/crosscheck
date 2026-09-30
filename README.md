@@ -216,22 +216,29 @@ A test that was green and is now red, in an area no active intent covers, is
 an unexplained change — but only if the hub knows the test was green at a
 named commit, and only if a re-run of that same commit says it is still red.
 The **CI reporter** feeds that. It is one step of the `test` job, after
-`bun test --reporter=junit --reporter-outfile=junit.xml`, on every matrix leg,
-with `if: always()` so a red suite is reported too:
+the tests wrote a junit file, on every matrix leg, with `if: always()` so a
+red suite is reported too. In your repository it runs from the published
+package, so the job needs Bun (`oven-sh/setup-bun@v2`) and nothing else:
 
 ```yaml
 - name: Report what CI saw to the crosscheck hub
   if: always()
   run: >-
-    bun run packages/cli/scripts/ci-report.ts
+    bunx crosscheck-hub ci-report
     --junit junit.xml --job test --leg ${{ matrix.os }}
-    --ref ${{ github.ref_name }} --attempt ${{ github.run_attempt }}
+    --ref ${{ github.head_ref || github.ref_name }}
+    --attempt ${{ github.run_attempt }}
     --run-id ${{ github.run_id }}
     --sha ${{ github.event.pull_request.head.sha || github.sha }}
   env:
     CROSSCHECK_HUB_URL: ${{ secrets.CROSSCHECK_HUB_URL }}
     CROSSCHECK_CI_TOKEN: ${{ secrets.CROSSCHECK_CI_TOKEN }}
 ```
+
+Any runner that writes JUnit XML works; `bun test --reporter=junit
+--reporter-outfile=junit.xml` is what this repository uses, and it runs the
+same reporter from source (`packages/cli/scripts/ci-report.ts`) so its own CI
+proves the code before it ships.
 
 The hub takes `CROSSCHECK_CI_TOKEN` in its own environment — a token of its
 own, deliberately not the admin token — and the workflow holds the same value
@@ -253,7 +260,9 @@ that is missing or half-written is filed as a `crashed` run — a lane that ran
 and said nothing, which is a different fact from a lane that never reported.
 `--sha` must be the head sha: on a `pull_request` event `github.sha` is the
 merge commit, which no developer's history contains, and a row keyed on it
-would join nothing while looking exactly like "CI has not run yet".
+would join nothing while looking exactly like "CI has not run yet". `--ref`
+is the branch for the same reason: `github.ref_name` on a pull request is
+`<n>/merge`.
 
 ### Asking a teammate something they never wrote down
 

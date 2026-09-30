@@ -826,19 +826,29 @@ which is what lets the re-run hand the same paths back.
    wrong shape: one line, exit 0, never a re-run (§8.3, #1). A wrong command line or
    a run outside GitHub Actions (no `GITHUB_REPOSITORY`) is a usage error, exit 64:
    deterministic, visible on the first run, and §8.2's refusal made executable. An
-   unexpected throw inside the script also exits 0, with its sentence.
+   unexpected throw inside the reporter also exits 0, with its sentence.
 6. **The repo key and the workflow name come from the runner's environment**
    (`GITHUB_SERVER_URL` + `GITHUB_REPOSITORY` through `normalizeRemoteUrl`;
    `GITHUB_WORKFLOW`), not from flags — D4's command line names neither.
 7. **`--leg` is optional** (`""` when absent), because `${{ matrix.os }}` on a job
    with no matrix expands to nothing; a value that is itself a flag is refused.
 
-**Open for Nick — `--ref ${{ github.ref_name }}` on a `pull_request` event is
-`<n>/merge`, not the branch.** D4 is followed literally, so a PR's lane ref is its
-merge-ref name. Functionally the lane still works (one ref per PR, default-ref
-fallback per §3.5 step 1), but §3.1 says `ref` *"is the branch"*; the analogue of
-the `--sha` expression would be `${{ github.head_ref || github.ref_name }}`. One
-workflow line either way; not decided here.
+8. **`--ref ${{ github.head_ref || github.ref_name }}`, not D4's
+   `${{ github.ref_name }}`** (decided 2026-09-30). On a `pull_request` event
+   `github.ref_name` is `<n>/merge`, not the branch §3.1 says `ref` *is* — the
+   ref-side twin of the merge-sha mistake CI-1 guards. The lane worked either way
+   (one ref per PR, default-ref fallback per §3.5 step 1), but a lane named
+   `2597/merge` matches no branch a developer's session names.
+   `ci-report-workflow.test.ts` asserts the expression over `ci.yml`, and a
+   mutation anchor reverts it.
+9. **The reporter is also a published command, `crosscheck ci-report`**
+   (`bunx crosscheck-hub ci-report …`), not only a script in this repository.
+   §3.7 placed it under `scripts/` because it is not a developer's command, which
+   still holds, but another repository's CI has no `packages/cli/scripts/` to run:
+   without the command, the reporter reached exactly one repository. Script and
+   command share `src/ci-report/entry.ts`, which holds the never-a-red-job rule;
+   `ci-report-entry.test.ts` spawns both and compares what a CI log shows, and
+   `npm-package.e2e.test.ts` runs the command from the packed tarball.
 
 **Doctor's CI-6 `WARN` naming the ambiguous count is not on any surface.** The
 hub stores `ambiguous_dropped` per run and `GET /api/ci-runs` returns it, but

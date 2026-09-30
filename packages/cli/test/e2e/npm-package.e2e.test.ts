@@ -348,6 +348,46 @@ describe("packed npm tarball", () => {
     expect(help.stdout).toContain("usage: crosscheck <command>");
   }, DRIVE_TIMEOUT_MS);
 
+  test("`bunx crosscheck-hub ci-report` runs from the tarball: another repo's CI step, no hub → one line, exit 0", async () => {
+    // Arrange: what a stranger's workflow has — a junit file in the checkout
+    // and the runner's GITHUB_* variables, no secrets configured yet. The
+    // reporter's dynamic import must resolve inside the PACKED layout, which
+    // no source-tree test can show.
+    const installed = await getInstalled();
+    if (!installed.ok) {
+      return warnSkip(installed.reason);
+    }
+    const checkout = await mkdtemp(join(tmpdir(), "crosscheck-ci-report-"));
+    cleanups.push(checkout);
+    await writeFile(
+      join(checkout, "junit.xml"),
+      '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites tests="1" failures="0" time="0.01">' +
+        '<testsuite name="a.test.ts" file="a.test.ts" tests="1" failures="0" time="0.01">' +
+        '<testcase name="passes" classname="a" time="0.001" file="a.test.ts" /></testsuite></testsuites>\n',
+    );
+
+    // Act
+    const result = await run(
+      [process.execPath, installed.shimPath, "ci-report", "--junit", "junit.xml", "--job", "test",
+        "--ref", "main", "--attempt", "1", "--run-id", "1", "--sha", "0123456789abcdef0123456789abcdef01234567"],
+      {
+        cwd: checkout,
+        env: {
+          PATH: process.env["PATH"],
+          HOME: checkout,
+          GITHUB_REPOSITORY: "acme/api",
+          GITHUB_SERVER_URL: "https://github.com",
+          GITHUB_WORKFLOW: "CI",
+        },
+      },
+    );
+
+    // Assert
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("not reported");
+    expect(result.stdout).not.toContain("internal failure");
+  }, DRIVE_TIMEOUT_MS);
+
   test("the package ROOT export keeps the full library surface: runCli AND the old connector-claude names", async () => {
     // Arrange: Block 8 moved `runCli`/`CliResult` from connector-claude to
     // packages/cli, whose index re-exports connector-claude wholesale — so

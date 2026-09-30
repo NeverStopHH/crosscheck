@@ -90,6 +90,9 @@ const USAGE = [
   "  acp-report <record-file>  which capture signals an agent emitted, from",
   "                            an `acp --record` transcript (per-agent",
   "                            capture-quality measurement)",
+  "  ci-report --junit <file> --job <name> --ref <branch> --sha <sha> …",
+  "                            a CI step, not a developer's command: send what",
+  "                            this run's tests saw to the hub (ci-report --help)",
   "",
 ].join("\n");
 

@@ -30,6 +30,7 @@ const WORKFLOW_PATH = join(
 );
 const HEAD_SHA_EXPRESSION =
   "--sha ${{ github.event.pull_request.head.sha || github.sha }}";
+const BRANCH_REF_EXPRESSION = "--ref ${{ github.head_ref || github.ref_name }}";
 const REPORTER_COMMAND = "bun run packages/cli/scripts/ci-report.ts";
 const HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -53,7 +54,7 @@ const reporterArgv = (job: string): readonly string[] => {
   return job
     .slice(start + REPORTER_COMMAND.length, end)
     .replace("${{ matrix.os }}", "ubuntu-latest")
-    .replace("${{ github.ref_name }}", "main")
+    .replace("${{ github.head_ref || github.ref_name }}", "feat/login-retry")
     .replace("${{ github.run_attempt }}", "1")
     .replace("${{ github.run_id }}", "35572434868")
     .replace("${{ github.event.pull_request.head.sha || github.sha }}", HEAD_SHA)
@@ -73,6 +74,13 @@ describe("CI-1: the reporter step resolves the head sha", () => {
     expect(job).not.toContain("--sha ${{ github.sha }}");
   });
 
+  test("the --ref argument is the branch: a pull request's head ref, else the pushed ref", () => {
+    // `github.ref_name` on a pull_request event is `<n>/merge`, not the branch
+    // spec 05 §3.1 says `ref` is — the ref-side twin of the merge-sha mistake.
+    expect(job).toContain(BRANCH_REF_EXPRESSION);
+    expect(job).not.toContain("--ref ${{ github.ref_name }}");
+  });
+
   test("the command line as written parses, and the sha it resolves is the one that is posted", () => {
     // The reporter's own parser over the workflow's own tokens: the sha in
     // `args` is what buildCiRunReport puts in `commitSha`, byte for byte.
@@ -83,7 +91,7 @@ describe("CI-1: the reporter step resolves the head sha", () => {
       expect(parsed.args.commitSha).toBe(HEAD_SHA);
       expect(parsed.args.job).toBe("test");
       expect(parsed.args.leg).toBe("ubuntu-latest");
-      expect(parsed.args.ref).toBe("main");
+      expect(parsed.args.ref).toBe("feat/login-retry");
       expect(parsed.args.runAttempt).toBe(1);
       expect(parsed.args.externalRunId).toBe("35572434868");
       expect(parsed.args.junitPath).toBe("junit.xml");
