@@ -119,7 +119,7 @@ const startHub = async (ciToken: string | null = CI_TOKEN): Promise<Hub> => {
   const { apiKey } = ((await developer.json()) as { data: { apiKey: string } })
     .data;
   return {
-    fetch: (url, init) => app.request(url, init),
+    fetch: async (url, init) => app.request(url, init),
     readRuns: async () => {
       const response = await app.request(
         `/api/ci-runs?repo=${encodeURIComponent(REPO)}&commit=${SHA}`,

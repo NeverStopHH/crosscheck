@@ -221,6 +221,23 @@ describe("a file the runner did not finish writing is refused, not half-read", (
     }
   });
 
+  test("a file cut BETWEEN two complete cases is a parse failure, not a shorter run", () => {
+    // Every tag before the cut is well formed; the file suite and the root are
+    // simply never closed. Read to the last complete case this would be a
+    // `completed` run of three tests — over a file whose root said seven.
+    const cut = MEASURED_XML.slice(
+      0,
+      MEASURED_XML.indexOf('<testsuite name="outer"'),
+    );
+
+    const result = parseJunit(cut);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("never closed");
+    }
+  });
+
   test("an empty file is a parse failure", () => {
     expect(parseJunit("").ok).toBe(false);
   });

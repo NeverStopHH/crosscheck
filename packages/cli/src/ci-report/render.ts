@@ -96,9 +96,9 @@ const rowsClause = (view: CiReportRunView): string =>
     ? `rows sent ${String(view.rowsSent)} of ${String(view.nonGreen)} non-green`
     : `rows sent ${String(view.rowsSent)}`;
 
-export const ciReportRunLine = (view: CiReportRunView): string =>
-  [
-    `${PREFIX} ${shortSha(view.commitSha)} ${laneLabel(view.job, view.leg)} attempt ${String(view.runAttempt)} (${stageLabel(view)}):`,
+export const ciReportRunLine = (view: CiReportRunView): string => {
+  const head = `${PREFIX} ${shortSha(view.commitSha)} ${laneLabel(view.job, view.leg)} attempt ${String(view.runAttempt)} (${stageLabel(view)}):`;
+  const counts = [
     `tests ${String(view.tests)}`,
     `failed ${String(view.failures)}`,
     `skipped ${String(view.skipped)}`,
@@ -106,7 +106,9 @@ export const ciReportRunLine = (view: CiReportRunView): string =>
     `ambiguous dropped ${String(view.ambiguousDropped)}`,
     `outcome ${view.outcome}`,
     `hub ${view.stored.status} ${view.stored.id}`,
-  ].join(" · ") + "\n";
+  ];
+  return `${head} ${counts.join(" · ")}\n`;
+};
 
 export type CiReportHubFailure = Exclude<CiRunPostOutcome, { kind: "stored" }>;
 

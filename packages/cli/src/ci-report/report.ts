@@ -116,7 +116,23 @@ const failedFilesOf = (cases: readonly JunitCase[]): readonly string[] => [
   ...new Set(cases.filter(isRed).map((testCase) => testCase.file)),
 ];
 
-const laneFields = (lane: CiReportLane, rerun: CiReportRerun) => ({
+/** The wire's lane and re-run columns; the totals and clock are the caller's. */
+type LaneFields = Pick<
+  CiRunReport,
+  | "repo"
+  | "provider"
+  | "workflow"
+  | "job"
+  | "leg"
+  | "ref"
+  | "commitSha"
+  | "runAttempt"
+  | "externalRunId"
+  | "rerunKind"
+  | "rerunOf"
+>;
+
+const laneFields = (lane: CiReportLane, rerun: CiReportRerun): LaneFields => ({
   repo: lane.repo,
   provider: CI_PROVIDER,
   workflow: lane.workflow,
