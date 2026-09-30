@@ -97,6 +97,7 @@ Status is **spec** (written, not built), **in progress**, or **shipped**.
 | 01a | [The causal skeleton: retention by root reachability, attestation, declared provider guarantees](01a-causal-skeleton.md) | — (makes AT-4 durable; amends 01 §10 D2) | spec (revision 4); partly built — #62, see its §12 |
 | 02 | [Claim-to-code binding and individual commit identity](02-claim-code-binding.md) | **AT-2** | spec |
 | 03 | [Coverage integrity at the answer layer](03-coverage-integrity.md) | **AT-1, AT-9, AT-10** | spec |
+| 03a | [Loss accounting: every known loss of telemetry reaches Coverage](loss-accounting.md) | — (extends 03; discharges principle 5 for the capture pipeline) | in progress |
 | 04 | [Verdict semantics, fence authority and the human waiver](04-verdict-semantics-and-fence-authority.md) | **AT-5, AT-6** | spec |
 | 05 | [CI ingestion keyed to a commit, with same-commit re-run](05-ci-ingestion.md) | **AT-8** | spec |
 | 06 | [Structured intent and the append-only intent ledger](06-intent-ledger.md) | — (supports AT-4, AT-3, AT-6) | spec |
