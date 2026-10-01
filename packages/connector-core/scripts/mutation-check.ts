@@ -12635,6 +12635,44 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "a line flood that overran the capture queue drops lines from capture with nothing but a log counter to show for it",
   },
+  {
+    // Found while finishing LOSS-7: the span travels to a hub whose schema
+    // takes ISO instants only, and the ledger reader passed `at` through raw.
+    label: "a garbled loss-ledger instant reaches the wire and the hub refuses every session call",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "  const ms = Date.parse(at);\n  return Number.isNaN(ms) ? null : new Date(ms).toISOString();\n",
+    to: "  return at;\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "one torn or hand-edited line in losses.jsonl makes register, heartbeat and end answer 400 for every session on the machine, so the connector that reported a loss stops reporting anything",
+  },
+  {
+    label: "an undatable loss narrows the span instead of making it unknown",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  if (drops.undated + capture.undated + unreadable > 0 || markerUndated) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "a recent loss with an unreadable date is left out of the span, the span says the newest loss is weeks old, and the hub reads the repo as complete",
+  },
+  {
+    label: "an undatable .drops line is never counted as undated",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "        undated: detail.undated + (isUndated(at) ? 1 : 0),\n",
+    to: "        undated: detail.undated,\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "a .drops line whose instant a hand edit garbled still counts, but the span ignores it and claims a narrower gap than the truth",
+  },
+  {
+    label: "a ledger holding only an unreadable line reports zero losses",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  const unreadable =\n    (drops.summary.malformed + capture.malformed) * UNREADABLE_LINE_FLOOR;\n",
+    to: "  const unreadable = 0;\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "a torn .drops line is the evidence a batch was lost, and a report of zero over it reads as health on the hub",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12820,6 +12858,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

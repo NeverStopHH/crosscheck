@@ -350,6 +350,13 @@ export interface DropDetail {
   readonly ignoredRecordKinds: Counts;
   readonly oldestAt: string | null;
   readonly newestAt: string | null;
+  /**
+   * Counted entries whose `at` would not parse — a hand edit, a torn line.
+   * Their records are in every count above and in NO span, so a span read
+   * beside a non-zero `undated` is narrower than the truth and the loss
+   * report refuses to send it (spool/loss-report.ts toLossReport).
+   */
+  readonly undated: number;
 }
 
 const EMPTY_DETAIL: DropDetail = {
@@ -359,7 +366,10 @@ const EMPTY_DETAIL: DropDetail = {
   ignoredRecordKinds: {},
   oldestAt: null,
   newestAt: null,
+  undated: 0,
 };
+
+const isUndated = (at: string): boolean => Number.isNaN(Date.parse(at));
 
 const isoOrNull = (ms: number | null): string | null =>
   ms === null ? null : new Date(ms).toISOString();
@@ -372,9 +382,10 @@ const detailOf = (lines: readonly string[]): DropDetail => {
       if (!parsed.success) {
         return detail;
       }
-      const { reason, count, kinds } = parsed.data;
+      const { at, reason, count, kinds } = parsed.data;
       return {
         ...detail,
+        undated: detail.undated + (isUndated(at) ? 1 : 0),
         byReason: addCounts(detail.byReason, { [reason]: count }),
         entriesByReason: addCounts(detail.entriesByReason, { [reason]: 1 }),
         ignoredRecordKinds:
@@ -413,6 +424,7 @@ const addDetail = (left: DropDetail, right: DropDetail): DropDetail => ({
   ignoredRecordKinds: addCounts(left.ignoredRecordKinds, right.ignoredRecordKinds),
   oldestAt: isoOrNull(earliest(msOrNull(left.oldestAt), msOrNull(right.oldestAt))),
   newestAt: isoOrNull(latest(msOrNull(left.newestAt), msOrNull(right.newestAt))),
+  undated: left.undated + right.undated,
 });
 
 /**
@@ -435,6 +447,7 @@ const ArchiveSchema = z.looseObject({
   byReason: KindsSchema.optional(),
   entriesByReason: KindsSchema.optional(),
   ignoredKinds: KindsSchema.optional(),
+  undated: z.number().int().min(0).optional(),
 });
 
 const readArchiveDetail = async (path: string): Promise<DropDetail> => {
@@ -446,6 +459,11 @@ const readArchiveDetail = async (path: string): Promise<DropDetail> => {
   }
   const byReason = parsed.data.byReason ?? {};
   const unattributed = parsed.data.count - sumOf(byReason);
+  const oldestAt = isoOrNull(msOrNull(parsed.data.oldestAt));
+  const newestAt = isoOrNull(msOrNull(parsed.data.at));
+  // An archive whose own instants do not parse holds counted records with no
+  // date — the same unknown span as an undated line, carried forward.
+  const undatedHere = parsed.data.count > 0 && (oldestAt === null || newestAt === null) ? 1 : 0;
   return {
     summary: {
       records: parsed.data.count,
@@ -458,8 +476,9 @@ const readArchiveDetail = async (path: string): Promise<DropDetail> => {
         : byReason,
     entriesByReason: parsed.data.entriesByReason ?? {},
     ignoredRecordKinds: screenKinds(parsed.data.ignoredKinds ?? {}),
-    oldestAt: isoOrNull(msOrNull(parsed.data.oldestAt)),
-    newestAt: isoOrNull(msOrNull(parsed.data.at)),
+    oldestAt,
+    newestAt,
+    undated: (parsed.data.undated ?? 0) + undatedHere,
   };
 };
 
@@ -508,6 +527,9 @@ export const archiveLedger = async (
       byReason,
       entriesByReason: total.entriesByReason,
       ignoredKinds: total.ignoredRecordKinds,
+      // Carried, because `stamp` above writes a real instant even when every
+      // folded line was undatable, and the archive must not launder that.
+      undated: total.undated,
     })}\n`,
   );
 };

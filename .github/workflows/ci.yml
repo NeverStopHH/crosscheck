@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 998
+    # PRINTS: 1002
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -245,12 +245,15 @@ jobs:
     # PRINTS: model/runner.ts 5
     # PRINTS: model/worker-env.ts 1
     # PRINTS: render-surfaces.ts 1
+    # PRINTS: spool/drops.ts 1
     # PRINTS: spool/lock.ts 2
+    # PRINTS: spool/loss-report.ts 2
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
     # PRINTS: state/git-lane-cost.ts 2
+    # PRINTS: state/loss-ledger.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 20
@@ -390,6 +393,7 @@ jobs:
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor.ts 49
+    # PRINTS: drops.ts 1
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 15
     # PRINTS: enums.ts 2
@@ -434,6 +438,8 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: lock.ts 2
+    # PRINTS: loss-ledger.ts 1
+    # PRINTS: loss-report.ts 2
     # PRINTS: noise.ts 5
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1

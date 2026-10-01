@@ -69,6 +69,50 @@ export interface LocalLosses {
   readonly isFloor: boolean;
 }
 
+/** The instant re-formatted from `Date.parse`, or null — the wire takes ISO only. */
+const wireInstant = (at: string): string | null => {
+  const ms = Date.parse(at);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+};
+
+/**
+ * An unreadable ledger line is evidence that a loss was WRITTEN, with its
+ * count unreadable: at least one, under no reason. Leaving it out would let
+ * a ledger holding only a torn line report zero — the strengthening
+ * direction §4.5 forbids.
+ */
+const UNREADABLE_LINE_FLOOR = 1;
+
+interface ReportSpan {
+  readonly oldestAt: string | null;
+  readonly newestAt: string | null;
+}
+
+/**
+ * The span the hub reads as "since when" and "still in the window". Any
+ * counted entry without a readable instant makes it UNKNOWN (both null)
+ * rather than the span of the entries that had one: the undated loss may be
+ * older than the oldest, or newer than the newest, and a span that left it
+ * out would claim a narrower gap than the truth. The hub reads a null
+ * newest as current and a null oldest as "since unknown" (§4.5).
+ */
+const spanOf = (
+  drops: DropDetail,
+  markerAt: string | null | undefined,
+  capture: CaptureLossSummary,
+  unreadable: number,
+): ReportSpan => {
+  const marker = markerAt === undefined || markerAt === null ? null : wireInstant(markerAt);
+  const markerUndated = markerAt !== undefined && markerAt !== null && marker === null;
+  if (drops.undated + capture.undated + unreadable > 0 || markerUndated) {
+    return { oldestAt: null, newestAt: null };
+  }
+  return {
+    oldestAt: earlierIso(earlierIso(drops.oldestAt, marker), capture.oldestAt),
+    newestAt: laterIso(laterIso(drops.newestAt, marker), capture.newestAt),
+  };
+};
+
 /** Pure, so the fold can be pinned without a filesystem. */
 export const toLossReport = (
   drops: DropDetail,
@@ -83,18 +127,19 @@ export const toLossReport = (
     unrecorded === null
       ? fromDrops
       : bump(fromDrops, lossKindOfDropReason(unrecorded.reason), unrecorded.count);
-  const kinds = Object.entries(capture.byKind).reduce<Counts>(
+  const withCapture = Object.entries(capture.byKind).reduce<Counts>(
     (sum, [kind, count]) => bump(sum, kind, count),
     withMarker,
   );
+  const unreadable =
+    (drops.summary.malformed + capture.malformed) * UNREADABLE_LINE_FLOOR;
+  const kinds = bump(withCapture, UNATTRIBUTED_LOSS_KIND, unreadable);
   const total =
-    drops.summary.records + (unrecorded?.count ?? 0) + capture.total;
-  const markerAt = unrecorded?.at ?? null;
+    drops.summary.records + (unrecorded?.count ?? 0) + capture.total + unreadable;
   return {
     total,
     kinds,
-    oldestAt: earlierIso(earlierIso(drops.oldestAt, markerAt), capture.oldestAt),
-    newestAt: laterIso(laterIso(drops.newestAt, markerAt), capture.newestAt),
+    ...spanOf(drops, unrecorded?.at, capture, unreadable),
   };
 };
 
@@ -113,7 +158,11 @@ export const readLocalLosses = async (
     drops,
     unrecorded,
     capture,
-    isFloor: unrecorded !== null || capture.atCap || drops.summary.malformed > 0,
+    isFloor:
+      unrecorded !== null ||
+      capture.atCap ||
+      drops.summary.malformed > 0 ||
+      capture.malformed > 0,
   };
 };
 

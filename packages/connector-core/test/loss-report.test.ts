@@ -5,9 +5,10 @@
  * spelling.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import { EMPTY_LOSS_REPORT } from "@crosscheck/schema";
+import { EMPTY_LOSS_REPORT, TelemetryLossReportSchema } from "@crosscheck/schema";
 
 import { HUB_COVERAGE_WINDOW_DAYS } from "../src/constants.ts";
 import {
@@ -26,7 +27,7 @@ import {
   hasRecentLoss,
   readLocalLosses,
 } from "../src/spool/loss-report.ts";
-import { recordCaptureLoss } from "../src/state/loss-ledger.ts";
+import { lossLedgerPath, recordCaptureLoss } from "../src/state/loss-ledger.ts";
 import { makeHome } from "./helpers.ts";
 
 const KEY = repoKey("http://127.0.0.1:9", "github.com/acme/api");
@@ -123,6 +124,83 @@ describe("LOSS-7: the report folds every ledger", () => {
     expect(detail.byReason).toEqual({ expired: 3, ignored: 2 });
     expect(detail.ignoredRecordKinds).toEqual({ claim_revalidation: 2 });
     expect(local.report.kinds).toEqual({ spool_expired: 3, hub_ignored: 2 });
+  });
+});
+
+describe("an instant a ledger cannot date never reaches the wire, and never narrows the span", () => {
+  test("a garbled capture-ledger instant still counts, the span is unknown, and the hub's schema accepts it", async () => {
+    // Arrange: a dated drop, then a capture-ledger line a hand edit left undatable
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 3, "expired", T1);
+    await ensureDir(join(path, "state"));
+    await writeFile(
+      lossLedgerPath(path),
+      `${JSON.stringify({ at: "yesterday", kind: "hook_timed_out", count: 1, key: KEY, detail: "stop" })}\n`,
+    );
+
+    // Act
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert: counted; "since when" unknown rather than the dated drop's day
+    expect(report.total).toBe(4);
+    expect(report.oldestAt).toBeNull();
+    expect(report.newestAt).toBeNull();
+    expect(TelemetryLossReportSchema.safeParse(report).success).toBe(true);
+  });
+
+  test("a garbled marker instant is the same unknown, never a string on the wire", async () => {
+    // Arrange
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 3, "expired", T1);
+    await writePrivateFile(
+      spoolUnrecordedDropsPath(path, KEY),
+      `${JSON.stringify({ at: "not-a-date", count: 4, reason: "write-failed" })}\n`,
+    );
+
+    // Act
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(report.total).toBe(7);
+    expect(report.newestAt).toBeNull();
+    expect(TelemetryLossReportSchema.safeParse(report).success).toBe(true);
+  });
+
+  test("an unreadable ledger line is at least one loss — unattributed and undated, never a report of zero", async () => {
+    // Arrange: a torn .drops line and a garbled capture-ledger line, nothing else
+    const path = await home();
+    await ensureDir(spoolDir(path, KEY));
+    await writeFile(spoolDropsPath(path, KEY, SLUG), '{"at":"2026-09-0\n', "utf8");
+    await ensureDir(join(path, "state"));
+    await writeFile(lossLedgerPath(path), "garbage\n", "utf8");
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert: a line exists because a loss was written; its count is unknown, so at least one
+    expect(local.report.total).toBe(2);
+    expect(local.report.kinds).toEqual({ unattributed: 2 });
+    expect(local.report.newestAt).toBeNull();
+    expect(local.isFloor).toBe(true);
+  });
+
+  test("an undatable .drops line leaves the span unknown too", async () => {
+    // Arrange
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 3, "expired", T1);
+    const ledger = spoolDropsPath(path, KEY, SLUG);
+    await writeFile(
+      ledger,
+      `${await Bun.file(ledger).text()}${JSON.stringify({ at: "soon", count: 2, reason: "rejected" })}\n`,
+    );
+
+    // Act
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(report.total).toBe(5);
+    expect(report.oldestAt).toBeNull();
+    expect(report.newestAt).toBeNull();
   });
 });
 

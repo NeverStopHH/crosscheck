@@ -133,6 +133,12 @@ export interface CaptureLossSummary {
   readonly newestAt: string | null;
   /** Lines that would not parse — counted, never silently skipped. */
   readonly malformed: number;
+  /**
+   * Charged lines whose `at` would not parse: in `total`, in no span. A span
+   * read beside a non-zero `undated` is narrower than the truth, and the loss
+   * report refuses to send it (spool/loss-report.ts toLossReport).
+   */
+  readonly undated: number;
   /** True when the ledger refused further detail: every count above is a floor. */
   readonly atCap: boolean;
 }
@@ -145,6 +151,7 @@ export const EMPTY_CAPTURE_LOSSES: CaptureLossSummary = {
   oldestAt: null,
   newestAt: null,
   malformed: 0,
+  undated: 0,
   atCap: false,
 };
 
@@ -171,10 +178,20 @@ const earlierIso = (left: string | null, right: string): string =>
 const laterIso = (left: string | null, right: string): string =>
   left === null || right > left ? right : left;
 
+/** The line's instant re-formatted from `Date.parse`, or null when it has none. */
+const instantOf = (at: string): string | null => {
+  const ms = Date.parse(at);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+};
+
 /**
  * This repo's share of the ledger: every line keyed to `key`, plus every
- * line keyed to nothing. Compared as strings, which orders correctly because
- * every stamp on this path is `Date#toISOString` — fixed width, UTC.
+ * line keyed to nothing. Instants are RE-FORMATTED through `Date.parse`
+ * before they are compared or returned — a line is a file and files get
+ * edited, and the span travels to the hub, whose schema refuses anything
+ * but an ISO instant (`TelemetryLossReportSchema`) — so the comparison as
+ * strings orders correctly: fixed width, UTC. A line with no readable
+ * instant is still charged, and counted as `undated` instead of spanned.
  */
 export const readCaptureLosses = async (
   home: string,
@@ -196,15 +213,21 @@ export const readCaptureLosses = async (
         return summary;
       }
       const detail = screenDetail(entry.detail) ?? OTHER_DETAIL;
-      return {
+      const at = instantOf(entry.at);
+      const charged = {
         ...summary,
         total: summary.total + entry.count,
         byKind: bump(summary.byKind, entry.kind, entry.count),
         byDetail: bump(summary.byDetail, `${entry.kind}:${detail}`, entry.count),
         unkeyed: summary.unkeyed + (entry.key === null ? entry.count : 0),
-        oldestAt: earlierIso(summary.oldestAt, entry.at),
-        newestAt: laterIso(summary.newestAt, entry.at),
       };
+      return at === null
+        ? { ...charged, undated: summary.undated + 1 }
+        : {
+            ...charged,
+            oldestAt: earlierIso(summary.oldestAt, at),
+            newestAt: laterIso(summary.newestAt, at),
+          };
     },
     { ...EMPTY_CAPTURE_LOSSES, atCap },
   );
