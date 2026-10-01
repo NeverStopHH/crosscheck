@@ -495,16 +495,37 @@ describe("the skeleton holds no text (CSK-10)", () => {
       }),
     );
     expect(pinned.status).toBe(200);
+    // 01a §12.6: the guarantee table joins CSK-10 now that it is built. A
+    // declaration whose unknown fields carry the marker, beside one it reads.
+    const declared = await w.harness.app.request(
+      "/api/sessions",
+      jsonRequest("POST", w.nick.apiKey, {
+        id: "ses_marked_declaration",
+        agentKind: "claude-code",
+        repo: REPO,
+        branch: "main",
+        baseCommit: "abc1234",
+        status: "analyzing",
+        guarantees: [
+          { kind: "file.modified", guarantee: "partial", reason: "unbracketed_lane" },
+          { kind: "claim.created", guarantee: "guaranteed", reason: `${MARK}_reason` },
+          { kind: `${MARK}.kind`, guarantee: "guaranteed", reason: "lifecycle" },
+        ],
+      }),
+    );
+    expect(declared.status).toBeLessThan(300);
 
     // Act
     const skeleton = await rows(
       w.harness,
       sql`SELECT row_to_json(t)::text AS j FROM session_events t
-          UNION ALL SELECT row_to_json(r)::text FROM pin_file_refs r`,
+          UNION ALL SELECT row_to_json(r)::text FROM pin_file_refs r
+          UNION ALL SELECT row_to_json(g)::text FROM session_causal_guarantees g`,
     );
 
     // Assert — the rows exist, and none carries the marker
-    expect(skeleton.length).toBeGreaterThanOrEqual(4);
+    expect(skeleton.length).toBeGreaterThanOrEqual(5);
+    expect(skeleton.map((row) => String(row["j"])).join("\n")).toContain("unbracketed_lane");
     expect(skeleton.map((row) => String(row["j"])).join("\n")).not.toContain(MARK);
   });
 });

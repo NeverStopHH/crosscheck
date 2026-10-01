@@ -98,6 +98,7 @@ describe("registerSessionFlow positions the session it opens", () => {
       fallbackDeveloperId: "dev_self",
       title: "register seq",
       now: new Date(),
+      guarantees: [],
     });
 
     // Assert: the epoch on the wire is the one the state file kept, and the
@@ -173,6 +174,7 @@ describe("a SessionStart re-fire registers under the epoch the session uses", ()
         fallbackDeveloperId: "dev_self",
         title: "register seq",
         now: new Date(),
+        guarantees: [],
       });
     };
 
@@ -261,6 +263,7 @@ describe("a re-fire over a foreign binding carries nothing", () => {
       fallbackDeveloperId: "dev_self",
       title: "register seq",
       now: new Date(),
+      guarantees: [],
     });
 
     // Assert: the foreign epoch reached neither half, and the two halves still

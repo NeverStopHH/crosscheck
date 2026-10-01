@@ -127,6 +127,11 @@ import type {
   GhostCheckEntry,
   PinRegistry,
 } from "@crosscheck/connector-core/http/hub.ts";
+import { DEFAULT_AGENT_KIND } from "@crosscheck/connector-core/constants.ts";
+import {
+  contradictionDoctorLine,
+  declarationDoctorLine,
+} from "@crosscheck/connector-core/guarantees/doctor.ts";
 import {
   formatQuestionCounts,
   questionWarning,
@@ -3733,6 +3738,9 @@ export const runDoctor = async (
     : null;
   const eventRetention = orderReport.ok ? orderReport.data.retention : null;
   const skeletonRetention = orderReport.ok ? orderReport.data.skeleton : null;
+  const contradictedDeclarations = orderReport.ok
+    ? orderReport.data.contradictedDeclarations
+    : null;
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -3845,6 +3853,7 @@ export const runDoctor = async (
     skewCheck,
     bunfigCheck,
     ...checkClaudeDerive(),
+    ...checkCausalGuarantees(contradictedDeclarations),
     ...(await checkCursor(
       identity.root,
       env,
@@ -3878,6 +3887,17 @@ export const runDoctor = async (
 const checkClaudeDerive = (): readonly Check[] =>
   claudeDoctorChecks().map((entry) =>
     check(entry.level, entry.name, entry.detail),
+  );
+
+/**
+ * 01a §5: what this connector's positions can support, per kind, and how many
+ * of the caller's declarations a row of their own overruled. Enum words from
+ * guarantees/declarations.ts and one count off the order report this command
+ * already read — no new hub round trip, and nothing a person or a hub wrote.
+ */
+const checkCausalGuarantees = (contradicted: number | null): readonly Check[] =>
+  [declarationDoctorLine(DEFAULT_AGENT_KIND), contradictionDoctorLine(contradicted)].map(
+    (line) => check(line.level, line.name, line.detail),
   );
 
 /**

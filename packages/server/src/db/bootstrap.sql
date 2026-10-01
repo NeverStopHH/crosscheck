@@ -625,6 +625,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS pin_file_refs_unresolved_idx
 CREATE INDEX IF NOT EXISTS pin_file_refs_file_ref_idx
   ON pin_file_refs (file_ref);
 
+-- WHAT A SESSION'S CONNECTOR DECLARED IT COULD ORDER (01a §3.6): enums only,
+-- at most nine rows a session. No row means undeclared, never guaranteed. A
+-- contradicting row rewrites a guaranteed one to partial /
+-- declaration_contradicted in place, so the cap outlives the rows that caused
+-- it. A non-retaining edge (retention registry): never swept.
+CREATE TABLE IF NOT EXISTS session_causal_guarantees (
+  session_id text NOT NULL REFERENCES agent_sessions(id),
+  kind text NOT NULL,
+  guarantee text NOT NULL,
+  reason text NOT NULL,
+  PRIMARY KEY (session_id, kind)
+);
+
 -- THE SKELETON SWEEP'S PROBES (01a §3.3g): the candidate sessions by end, and
 -- one index per root the sweep asks about once per candidate. Postgres does
 -- not index a foreign key's referencing side on its own, so without these the

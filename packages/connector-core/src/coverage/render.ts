@@ -357,10 +357,25 @@ const fit = (head: string, fragments: readonly string[]): string => {
     : `${line.slice(0, MAX_COVERAGE_LINE_CHARS - 1)}.`;
 };
 
+/**
+ * WHAT THE SESSIONS IN SCOPE COULD SAY ABOUT ORDER (01a §3.7, §5): the state
+ * and its reason, both enum values the parser admitted — no count, no
+ * sentence, no author text. Always rendered, `guaranteed` included: the line
+ * is where a reader learns whether a timing answer beside it can be trusted,
+ * and silence would read as the strong case. Placed AFTER the two judging
+ * rungs; on a line too full for it the REASON goes first, then the ages, and
+ * the state word never — so it is never the fragment `fit` drops.
+ */
+const orderFragment = (record: CoverageRecord, withReason: boolean): string =>
+  withReason
+    ? `order: ${record.order.state} (${record.order.reason})`
+    : `order: ${record.order.state}`;
+
 const fragmentsOf = (
   record: CoverageRecord,
   now: Date,
   ages: boolean,
+  orderReason: boolean,
 ): readonly string[] => {
   const reserved = record.sources
     .filter((row) => row.source !== "agent_event" && row.source !== "git")
@@ -368,6 +383,7 @@ const fragmentsOf = (
   return [
     agentEventFragment(record, rowOf(record, "agent_event"), now, ages),
     gitFragment(rowOf(record, "git"), now, ages),
+    orderFragment(record, orderReason),
     ...reserved,
   ].filter((fragment): fragment is string => fragment !== null);
 };
@@ -392,8 +408,19 @@ export const coverageClause = (record: CoverageRecord, now: Date): string => {
     return HUB_SILENT;
   }
   const head = headOf(record);
-  const aged = fragmentsOf(record, now, true);
-  return fit(head, holdsEvery(head, aged) ? aged : fragmentsOf(record, now, false));
+  // Spent in this order: the order block's REASON first, then the ages, and
+  // the order block's state word never (01a §3.7). The ages outrank the
+  // reason because COV-11 rests on them: a caveat repeated every day is told
+  // apart from a recurring gap only by its age (coverage-fire-rate.test.ts),
+  // while the reason is printed in full by doctor beside its count. `fit` cuts
+  // whole trailing fragments only if even the plainest line will not hold.
+  const attempts = [
+    fragmentsOf(record, now, true, true),
+    fragmentsOf(record, now, true, false),
+    fragmentsOf(record, now, false, true),
+  ];
+  const holding = attempts.find((fragments) => holdsEvery(head, fragments));
+  return fit(head, holding ?? fragmentsOf(record, now, false, false));
 };
 
 export const coverageNote = (

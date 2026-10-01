@@ -46,7 +46,10 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { readAbsenceCensus } from "./absences.ts";
+import { ALL_ORDER_KINDS, readCoverageOrder } from "./coverage-order.ts";
 import { presenceCutoff } from "./presence.ts";
+import { CAUSAL_GUARANTEES, ORDER_REASONS } from "@crosscheck/schema";
+import type { CoverageOrder, GuaranteeKind } from "@crosscheck/schema";
 import type { AbsenceCensus } from "./absences.ts";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { Db } from "../db/client.ts";
@@ -152,7 +155,17 @@ export interface CoverageRecord {
   readonly scope: CoverageScope;
   /** EXACTLY five, in COVERAGE_SOURCES order. */
   readonly sources: readonly CoverageSourceRecord[];
+  /**
+   * What the sessions in scope could say about ORDER (01a §3.7) — beside the
+   * sources, never one of them, read by no `isJudgeable`, and with NO count
+   * (COV-6). services/coverage-order.ts folds it.
+   */
+  readonly order: CoverageOrder;
 }
+
+/** The order block's vocabulary, re-exported so the wire twin is pinned to it. */
+export const ORDER_STATES = CAUSAL_GUARANTEES;
+export const COVERAGE_ORDER_REASONS = ORDER_REASONS;
 
 interface Deps {
   readonly db: Db;
@@ -161,6 +174,8 @@ interface Deps {
 
 export interface ReadCoverageOptions {
   readonly scope?: CoverageScope;
+  /** The kinds this question's order depends on; all nine when omitted (coverage-order.ts). */
+  readonly orderKinds?: readonly GuaranteeKind[];
 }
 
 const sourceRecord = (
@@ -637,6 +652,27 @@ export const isJudgeable = (record: CoverageRecord): boolean =>
  * told — the same rule every other answer on these routes already follows.
  * Coverage that ignored an opt-out would be a side channel around it.
  */
+/**
+ * THE SESSIONS THE `order` BLOCK FOLDS OVER — the agent_event rung's own
+ * scope (repo, window, and `touchedScope` under a path scope), restated here
+ * rather than threaded out of `readAgentEventCoverage` so the loss-reading
+ * code stays untouched; coverage-order.test.ts holds the two to one scope.
+ */
+const orderScope = (
+  deps: Deps,
+  now: Date,
+  repo: string,
+  since: Date,
+  paths: readonly string[],
+): SQL =>
+  and(
+    eq(agentSessions.repo, repo),
+    gt(agentSessions.lastHeartbeatAt, since),
+    ...(paths.length === 0
+      ? []
+      : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),
+  ) ?? sql`false`;
+
 export const readCoverage = async (
   deps: Deps,
   viewerDeveloperId: string,
@@ -646,9 +682,14 @@ export const readCoverage = async (
   const now = deps.now();
   const since = effectiveSince(now, options.scope);
   const paths = scopePaths(options.scope);
-  const [agentEvent, git] = await Promise.all([
+  const [agentEvent, git, order] = await Promise.all([
     readAgentEventCoverage(deps, now, repo, since, paths),
     readGitCoverage(deps, now, viewerDeveloperId, repo),
+    readCoverageOrder(
+      deps.db,
+      orderScope(deps, now, repo, since, paths),
+      options.orderKinds ?? ALL_ORDER_KINDS,
+    ),
   ]);
   return {
     repo,
@@ -658,5 +699,6 @@ export const readCoverage = async (
       ...(paths.length === 0 ? {} : { paths }),
     },
     sources: [agentEvent, git, ...REFUSED_RUNGS],
+    order,
   };
 };

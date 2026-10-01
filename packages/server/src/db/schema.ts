@@ -59,6 +59,9 @@ import {
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
   SESSION_STATUSES,
+  CAUSAL_GUARANTEES,
+  GUARANTEE_KINDS,
+  STORED_GUARANTEE_REASONS,
   STORED_TARGET_SOURCES,
   TARGET_KINDS,
   TEAM_PIN_POLICIES,
@@ -1046,6 +1049,32 @@ export const pinFileRefs = pgTable(
       .where(sql`${table.fileRef} IS NULL`),
     index("pin_file_refs_file_ref_idx").on(table.fileRef),
   ],
+);
+
+/**
+ * WHAT A SESSION'S CONNECTOR DECLARED IT COULD ORDER, per canonical kind
+ * (01a §3.6) — enums only, at most nine rows a session. Written when the
+ * session is created; a re-register may only weaken a row or remove it; a
+ * row this session sends that contradicts a `guaranteed` declaration rewrites
+ * it to `partial / declaration_contradicted` (services/causal-guarantees.ts).
+ * NO ROW MEANS UNDECLARED, never guaranteed: a session that sent nothing has
+ * nothing here and every reader reads `undeclared / provider_undeclared`.
+ *
+ * A non-retaining edge in the retention registry (01a §3.3b): a statement
+ * about a session, not a dependence on its order. It is never swept, so the
+ * cap it carries outlives the rows that caused it.
+ */
+export const sessionCausalGuarantees = pgTable(
+  "session_causal_guarantees",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id),
+    kind: text("kind", { enum: GUARANTEE_KINDS }).notNull(),
+    guarantee: text("guarantee", { enum: CAUSAL_GUARANTEES }).notNull(),
+    reason: text("reason", { enum: STORED_GUARANTEE_REASONS }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.sessionId, table.kind] })],
 );
 
 export const teamSettings = pgTable("team_settings", {

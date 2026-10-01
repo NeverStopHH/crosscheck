@@ -22,6 +22,7 @@ import { seqAt, withSeq } from "@crosscheck/connector-core/capture/seq.ts";
 import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import { endSession } from "@crosscheck/connector-core/http/hub.ts";
 import type { PresenceEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
+import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import {
   assembleBriefing,
   recordBriefingDeliveries,
@@ -248,6 +249,7 @@ export const handleSessionStart = async (
       title,
       status: INITIAL_STATUS,
       now,
+      guarantees: guaranteeDeclarationFor("claude-code"),
     });
   // Commit-evidence collection and default-branch resolution START here and
   // resolve DURING the flow's parallel hub-fetch block: their git timeouts

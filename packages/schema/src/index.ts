@@ -364,3 +364,26 @@ export type {
   SettledLossCounts,
   TelemetryLossReport,
 } from "./telemetry-loss.ts";
+export {
+  CAUSAL_GUARANTEES,
+  CAUSAL_GUARANTEE_REASONS,
+  GUARANTEE_KINDS,
+  GUARANTEE_OF_REASON,
+  MAX_GUARANTEE_FIELD_CHARS,
+  MAX_GUARANTEE_TRIPLES,
+  ORDER_REASONS,
+  ORDER_REASON_STRENGTH,
+  STORED_GUARANTEE_REASONS,
+  foldGuaranteeDeclaration,
+  stateOfOrderReason,
+  weakerGuarantee,
+} from "./causal-guarantees.ts";
+export type {
+  CausalGuarantee,
+  CausalGuaranteeReason,
+  CausalGuaranteeTriple,
+  CoverageOrder,
+  GuaranteeKind,
+  OrderReason,
+  StoredGuaranteeReason,
+} from "./causal-guarantees.ts";

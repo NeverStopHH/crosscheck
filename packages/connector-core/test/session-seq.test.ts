@@ -412,6 +412,7 @@ describe("SEQ-5 — a busy lock must mint a new epoch, never restart the old one
         title: "main @ api",
         status: "analyzing",
         now: new Date(),
+        guarantees: [],
       });
 
       // Assert

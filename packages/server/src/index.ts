@@ -41,7 +41,9 @@ export type {
   OrderedEvent,
   SessionCausalOrder,
 } from "./services/session-order.ts";
-export { seqKindFor } from "./services/record-handlers.ts";
+// TARGET_EVENT_KINDS beside seqKindFor: connector-core's declared-guarantee
+// build check (01a §3.6) holds its per-kind table to the hub's projection.
+export { TARGET_EVENT_KINDS, seqKindFor } from "./services/record-handlers.ts";
 // Exported so connector-core can pin its substance gate to the same terms
 // (test/claim-validity-parity.test.ts).
 export { isAssertableCause } from "./services/claim-validity.ts";
@@ -52,9 +54,11 @@ export type { Embedder } from "./services/embedder.ts";
 // connector's wire vocabulary is pinned against these three enums in
 // connector-core/test/coverage-wire.test.ts.
 export {
+  COVERAGE_ORDER_REASONS,
   COVERAGE_REASONS,
   COVERAGE_SOURCES,
   COVERAGE_STATES,
+  ORDER_STATES,
   isJudgeable,
   readCoverage,
 } from "./services/coverage.ts";

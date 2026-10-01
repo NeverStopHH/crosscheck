@@ -266,5 +266,8 @@ describe("which decoder matched reaches session state and doctor", () => {
     });
     const line = checks.find((entry) => entry.name === "summarizer (cursor)");
     expect(line?.detail).toContain("last tail decoded as prose");
+    // 01a §5: the section also says what this connector's positions support.
+    const guarantees = checks.find((entry) => entry.name === "causal guarantees (cursor-ide)");
+    expect(guarantees?.detail).toContain("file.modified partial (unbracketed_lane)");
   }, 20_000);
 });

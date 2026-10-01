@@ -52,6 +52,16 @@ const LossBodyField = {
   losses: TelemetryLossReportSchema.catch(UNREADABLE_LOSS_REPORT).optional(),
 };
 
+/**
+ * THE CONNECTOR'S DECLARED CAUSAL GUARANTEES (01a §3.6) — beside `losses`, the
+ * second optional enum-only block (loss-accounting.md §4.9). LOOSE ON THE WIRE
+ * ON PURPOSE: a connector newer than this hub sends kinds and reasons this hub
+ * has never heard of, and refusing the register over them would lose the
+ * session to protect a statement about it. `foldGuaranteeDeclaration` reads
+ * what it can and reads everything else as `undeclared`.
+ */
+const GuaranteeBodyField = { guarantees: z.unknown().optional() };
+
 /** Field rules consistent with AgentSessionSchema in @crosscheck/schema. */
 export const RegisterSessionBodySchema = z.object({
   id: z.string().min(1),
@@ -62,6 +72,7 @@ export const RegisterSessionBodySchema = z.object({
   status: SessionStatusSchema,
   ...SeqBodyField,
   ...LossBodyField,
+  ...GuaranteeBodyField,
 });
 
 export const SessionStatusBodySchema = z.object({

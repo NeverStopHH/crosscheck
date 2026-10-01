@@ -100,6 +100,7 @@ const runAllThree = async (fx: { home: string; repo: string; key: string }, host
     title: "main @ api",
     status: "analyzing",
     now: NOW,
+    guarantees: [],
   });
   await heartbeatMaybe({
     hub,

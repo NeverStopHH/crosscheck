@@ -10,6 +10,7 @@
  * `~r1` retry mints the fresh session Claude's recovery cannot).
  */
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
 import {
   readSessionState,
@@ -132,6 +133,7 @@ export const requireSessionState = async (
     // conversation — recovery happens once).
     title: await resolveFallbackWorkContextTitle(ctx.identity),
     status: IMPLEMENTING_STATUS,
+    guarantees: guaranteeDeclarationFor("cursor-ide"),
     // State-less reconstruction: stop the ladder on repo_mismatch, CLAIM the
     // state file rather than overwrite a racing sibling's (flow header).
     recovery: true,

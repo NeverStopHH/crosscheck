@@ -12,6 +12,8 @@
  * titles from session metadata) stays in each connector; this flow takes the
  * already-resolved values.
  */
+import type { CausalGuaranteeTriple } from "@crosscheck/schema";
+
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -113,6 +115,13 @@ export interface RegisterSessionFlowInput {
    * schema default): sessionStart callers deliver in-hook and owe nothing.
    */
   readonly briefingPending?: boolean;
+  /**
+   * The calling connector's declared causal guarantees — its own row of
+   * guarantees/declarations.ts, `guaranteeDeclarationFor(<connector>)`.
+   * REQUIRED so no host can register without deciding what it declares; the
+   * build check pins which connector each call site names.
+   */
+  readonly guarantees: readonly CausalGuaranteeTriple[];
 }
 
 export interface RegisterSessionFlowResult {
@@ -149,6 +158,7 @@ const registerWithRetry = async (
       baseCommit: input.baseCommit,
       status: input.status,
       losses,
+      guarantees: input.guarantees,
       // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the
       // only call that can send it: the allocator mints `eventSeq` at 0 and
       // hands out from 1, so nothing ever allocates this position — it is

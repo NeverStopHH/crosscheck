@@ -39,6 +39,7 @@ import type {
 import { intentScope, workContextIntents } from "../db/schema.ts";
 import { causalComparisonOf, compareEvents } from "./session-order.ts";
 import { seqReasonOf, windowFloorOf } from "./session-events.ts";
+import { capContradictedGuarantee, contradictsGuaranteed } from "./causal-guarantees.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type {
   CausalIndeterminacy,
@@ -498,6 +499,16 @@ export const appendIntentVersion = async (
           version: row.version,
           capped: false,
         };
+  }
+  // ROWS OUTRANK DECLARATIONS (01a §3.6), for the two kinds that live here
+  // rather than in `session_events`: a worker's version (observed) or one with
+  // no position caps a `guaranteed` declaration of its kind.
+  if (contradictsGuaranteed(intentSeqKind(provenance), stamp !== null, seqReasonOf(input.seq))) {
+    await capContradictedGuarantee(
+      deps.db,
+      input.authorSessionId,
+      head === null ? "intent.declared" : "intent.amended",
+    );
   }
   if (scope.length > 0) {
     await deps.db

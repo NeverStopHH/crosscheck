@@ -8,6 +8,7 @@ import {
 } from "../http/schemas.ts";
 import { SESSION_EVENT_RETENTION } from "../constants.ts";
 import { readSkeletonRetentionReport } from "../services/retention.ts";
+import { countContradictedDeclarations } from "../services/causal-guarantees.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readBrokenCausalOrders } from "../services/session-order.ts";
 import {
@@ -72,7 +73,15 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.get("/order", async (c) => {
     const orders = await readBrokenCausalOrders(deps.db, c.get("developer").id);
     const skeleton = await readSkeletonRetentionReport(deps);
-    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION, skeleton });
+    // 01a §5: how many of the caller's own session-kind declarations a row
+    // overruled — a count, and only about the caller's sessions.
+    const contradicted = await countContradictedDeclarations(deps.db, c.get("developer").id);
+    return ok(c, {
+      sessions: orders,
+      retention: SESSION_EVENT_RETENTION,
+      skeleton,
+      declarations: { contradicted },
+    });
   });
 
   router.post("/", async (c) => {
