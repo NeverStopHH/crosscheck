@@ -194,6 +194,45 @@ describe("parseStream", () => {
     expect(record.parseErrors).toBe(1);
   });
 
+  test("extracts the briefing from the real hook_response output string", () => {
+    // Arrange: the live CLI (2.1.x) emits the SessionStart hook's stdout as a
+    // JSON STRING under `output`, with `hook_event` naming the hook — not as a
+    // nested additionalContext object. The parser must dig through that string.
+    const realShape = lines([
+      { type: "system", subtype: "init", model: "claude-opus-5-5", mcp_servers: [] },
+      {
+        type: "system",
+        subtype: "hook_response",
+        hook_name: "SessionStart:startup",
+        hook_event: "SessionStart",
+        output: JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "SessionStart",
+            additionalContext: BRIEFING,
+          },
+        }),
+      },
+      {
+        type: "system",
+        subtype: "hook_response",
+        hook_name: "UserPromptSubmit",
+        hook_event: "UserPromptSubmit",
+        output: JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext: "crosscheck pointer: a teammate has notes …",
+          },
+        }),
+      },
+    ]);
+
+    // Act
+    const record = parseStream(realShape);
+
+    // Assert: the SessionStart briefing wins over the prompt pointer
+    expect(record.sessionStartBriefing).toBe(BRIEFING);
+  });
+
   test("an empty stream yields a record with no init and no turns", () => {
     // Act
     const record = parseStream("");

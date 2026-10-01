@@ -163,12 +163,45 @@ const contextCandidates = (node: unknown, found: ContextCandidate[]): void => {
       context,
       hookName:
         stringField(record, "hookEventName") ??
-        stringField(record, "hook_event_name"),
+        stringField(record, "hook_event_name") ??
+        stringField(record, "hook_event"),
     });
   }
   for (const value of Object.values(record)) {
+    // The live CLI carries a hook's stdout as a JSON STRING (the `output`
+    // field), so additionalContext sits inside a string rather than as an
+    // object key. Parse any string that could hold it and recurse into the
+    // result — tagged with this event's hook name when the embedded payload
+    // carries none of its own.
+    if (typeof value === "string" && value.includes("additionalContext")) {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        contextCandidates(tagHook(parsed, record), found);
+      } catch {
+        // Not JSON after all; nothing to recurse into.
+      }
+    }
     contextCandidates(value, found);
   }
+};
+
+/**
+ * When an embedded hook payload names no hook itself, lend it the enclosing
+ * event's hook name so the SessionStart preference still applies.
+ */
+const tagHook = (parsed: unknown, outer: Record<string, unknown>): unknown => {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return parsed;
+  }
+  const inner = parsed as Record<string, unknown>;
+  const names = ["hookEventName", "hook_event_name", "hook_event"];
+  if (names.some((name) => typeof inner[name] === "string")) {
+    return parsed;
+  }
+  const outerName = names
+    .map((name) => outer[name])
+    .find((value): value is string => typeof value === "string");
+  return outerName === undefined ? parsed : { ...inner, hook_event: outerName };
 };
 
 /**
