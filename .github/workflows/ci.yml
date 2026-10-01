@@ -322,8 +322,9 @@ jobs:
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
     # PRINTS: packages/server/src/services/pilot-label-figures.ts 12
-    # PRINTS: packages/server/src/services/pilot-report.ts 21
-    # PRINTS: packages/server/src/services/pilot.ts 33
+    # PRINTS: packages/server/src/services/pilot-report.ts 19
+    # PRINTS: packages/server/src/services/pilot-session-set.ts 9
+    # PRINTS: packages/server/src/services/pilot.ts 26
     # PRINTS: packages/server/src/services/pins.ts 8
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
@@ -450,8 +451,9 @@ jobs:
     # PRINTS: pilot-mark.ts 5
     # PRINTS: pilot-marks.ts 2
     # PRINTS: pilot-render.ts 22
-    # PRINTS: pilot-report.ts 21
-    # PRINTS: pilot.ts 41
+    # PRINTS: pilot-report.ts 19
+    # PRINTS: pilot-session-set.ts 9
+    # PRINTS: pilot.ts 34
     # PRINTS: pin-observability.ts 1
     # PRINTS: pin-paths.ts 8
     # PRINTS: pin-render.ts 3

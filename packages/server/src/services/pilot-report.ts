@@ -1,9 +1,11 @@
 /**
  * THE FIVE PROOFS, READ BACK (1.0 spec 07 §5).
  *
- * This module is the only reader of the pilot tables, and it is read-only:
- * nothing here writes, and nothing here decides anything a surface acts on.
- * It turns rows into numbers a person can argue with.
+ * This module is the report's only reader of the pilot tables — with the two
+ * it reads through, services/pilot-label-figures.ts and `readSessionSet` in
+ * services/pilot-session-set.ts — and it is read-only: nothing here writes,
+ * and nothing here decides anything a surface acts on. It turns rows into
+ * numbers a person can argue with.
  *
  * EVERY FIGURE IS EITHER MEASURED OR SAYS WHY NOT. That is the one rule this
  * file exists to keep, and it is a TYPE rather than a habit: a `Figure` is
@@ -38,9 +40,10 @@
  * which runs once, when the session ends or is reaped, and stores the residue
  * it needs so the report never goes back. Both halves are pinned — the first
  * over this file AND services/pilot-label-figures.ts, where proof 4's
- * labelled figures live:
+ * labelled figures live, AND services/pilot-session-set.ts, which reads the
+ * session set:
  *
- * VERIFY: grep -hv '^ \*' packages/server/src/services/pilot-report.ts packages/server/src/services/pilot-label-figures.ts | grep -c sessionEvents
+ * VERIFY: grep -hv '^ \*' packages/server/src/services/pilot-report.ts packages/server/src/services/pilot-label-figures.ts packages/server/src/services/pilot-session-set.ts | grep -c sessionEvents
  * PRINTS: 0
  * VERIFY: grep -c 'from(sessionEvents)' packages/server/src/services/pilot.ts
  * PRINTS: 1
@@ -49,7 +52,6 @@ import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import {
   DELIVERY_CHANNELS,
   PILOT_COHORTS,
-  PILOT_LEGACY_COHORT,
   PULLED_DELIVERY_CHANNEL,
   TRIPWIRE_ASKING_HOSTS,
 } from "@crosscheck/schema";
@@ -71,13 +73,14 @@ import {
   pilotAttributions,
   pilotCounters,
   pilotMarks,
-  pilotSessions,
   pinFiles,
   pins,
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { PILOT_ANSWER_SURFACES, PILOT_SET_COUNTERS } from "./pilot.ts";
+import { PILOT_ANSWER_SURFACES } from "./pilot.ts";
+import { readSessionSet } from "./pilot-session-set.ts";
+import type { SessionSet } from "./pilot-session-set.ts";
 import { POINTED_WORK_CONTEXT } from "./pilot-candidates.ts";
 import { PER_HUNDRED, measured, unavailable } from "./pilot-figure.ts";
 import type { Figure } from "./pilot-figure.ts";
@@ -96,6 +99,7 @@ import type { Clock } from "../types.ts";
 
 export type { Figure } from "./pilot-figure.ts";
 export type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
+export type { SessionSet } from "./pilot-session-set.ts";
 
 interface Deps {
   readonly db: Db;
@@ -203,30 +207,6 @@ export interface SurfaceIntegrity {
   readonly surface: PilotAnswerSurface;
   /** Null when the surface counted nothing — printed "not instrumented" (PIL-4). */
   readonly counters: Readonly<Record<string, number>> | null;
-}
-
-export interface SessionSet {
-  readonly used: number;
-  readonly cap: number;
-  /** Start positions past the cap, refused and counted. */
-  readonly refused: number;
-  /** What a 0.10 hub refused under its old fifty-session cap — never a refusal at THIS cap (M2). */
-  readonly legacyRefused: number;
-  /** Sessions that started before labels were available: outside the set, counted (M4). */
-  readonly beforeLabels: number;
-  /** Rows in each cohort, and how many each holds when full (07 §12). */
-  readonly discovery: number;
-  readonly discoveryCap: number;
-  readonly replication: number;
-  readonly replicationCap: number;
-  /** Rows a 0.10 hub wrote, before labels — in neither cohort and not in `used` (second review, H1). */
-  readonly legacy: number;
-  /** One epoch and at least one position: a span can be printed. */
-  readonly spanned: number;
-  /** More than one epoch: the counter restarted, and no span exists (PIL-7). */
-  readonly restarted: number;
-  /** No positioned record at all: sequence not recorded. */
-  readonly notRecorded: number;
 }
 
 export interface PilotReport {
@@ -769,53 +749,6 @@ const readIntegrity = async (
           : Object.fromEntries(mine.map((row) => [row.counter, row.value])),
     };
   });
-};
-
-/** The session set, its two cohorts, and how many of its sequences can be read (PIL-7). */
-const readSessionSet = async (
-  deps: Deps,
-  repo: string,
-): Promise<SessionSet> => {
-  const [rows, counts] = await Promise.all([
-    deps.db
-      .select({ epochs: pilotSessions.seqEpochs, cohort: pilotSessions.cohort })
-      .from(pilotSessions)
-      .where(eq(pilotSessions.repo, repo)),
-    deps.db
-      .select({
-        counter: pilotCounters.counter,
-        n: sql<number>`coalesce(sum(${pilotCounters.value}), 0)::int`,
-      })
-      .from(pilotCounters)
-      .where(
-        and(
-          eq(pilotCounters.repo, repo),
-          inArray(pilotCounters.counter, Object.values(PILOT_SET_COUNTERS)),
-        ),
-      )
-      .groupBy(pilotCounters.counter),
-  ]);
-  const counted = (name: string): number => counts.find((row) => row.counter === name)?.n ?? 0;
-  const discovery = rows.filter((row) => row.cohort === "discovery").length;
-  const replication = rows.filter((row) => row.cohort === "replication").length;
-  return {
-    // THE SET IS THE TWO COHORTS. A 0.10 row is counted apart: it was never
-    // in a cohort, and counting it here would fill the set with sessions
-    // nobody could label (second review, H1).
-    used: discovery + replication,
-    cap: PILOT_SESSION_SET_CAP,
-    refused: counted(PILOT_SET_COUNTERS.refused),
-    legacyRefused: counted(PILOT_SET_COUNTERS.legacyRefused),
-    beforeLabels: counted(PILOT_SET_COUNTERS.beforeLabels),
-    discovery,
-    discoveryCap: COHORT_CAP.discovery,
-    replication,
-    replicationCap: COHORT_CAP.replication,
-    legacy: rows.filter((row) => row.cohort === PILOT_LEGACY_COHORT).length,
-    spanned: rows.filter((row) => row.epochs === 1).length,
-    restarted: rows.filter((row) => (row.epochs ?? 0) > 1).length,
-    notRecorded: rows.filter((row) => (row.epochs ?? 0) === 0).length,
-  };
 };
 
 /** What an un-enrolled repo reports: nothing measured, and saying so. */

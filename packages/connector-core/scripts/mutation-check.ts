@@ -8043,7 +8043,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // refused and counted. A measurement that hit its own ceiling and said
     // nothing reports the set as though it were the population.
     label: "a measurement hits its own cap and says nothing",
-    file: `${SERVER}/src/services/pilot.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: '  return slot < PILOT_SESSION_SET_CAP ? "replication" : null;',
     to: '  return "replication";',
     test: `${SERVER}/test/pilot-sessions.test.ts`,
@@ -8111,7 +8111,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §7. PIL-7. One epoch or the span is refused.
     label: "a restarted counter is reported as a readable sequence",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: "    spanned: rows.filter((row) => row.epochs === 1).length,",
     to: "    spanned: rows.filter((row) => (row.epochs ?? 0) >= 1).length,",
     test: `${SERVER}/test/pilot-report.test.ts`,
@@ -9149,7 +9149,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // that a session WITH a row is updated, never placed again — which is
     // what keeps a revived 0.10 session's true end.
     label: "a revived session's true end is refused at the cap",
-    file: `${SERVER}/src/services/pilot.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: "  if (row.kept) {\n    return { kind: \"kept\" };\n  }",
     to: "  if (false) {\n    return { kind: \"kept\" };\n  }",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
@@ -12597,7 +12597,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §12. The fifty-first session opens the replication cohort.
     label: "the replication cohort is never opened",
-    file: `${SERVER}/src/services/pilot.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: "  if (slot < PILOT_DISCOVERY_COHORT_SESSIONS) {",
     to: "  if (slot < PILOT_SESSION_SET_CAP) {",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
@@ -13129,7 +13129,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "0.10 rows fill the set's used count",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: "    used: discovery + replication,",
     to: "    used: rows.length,",
     test: `${SERVER}/test/pilot-report.test.ts`,
@@ -13161,7 +13161,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // M4. A slot is a start position.
     label: "a slot is given by the order sessions end",
-    file: `${SERVER}/src/services/pilot.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: "                AND (s2.started_at, s2.id) < (me.started_at, me.id)",
     to: "                AND s2.id <> me.id",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
@@ -13171,7 +13171,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "a session from before labels joins the set",
-    file: `${SERVER}/src/services/pilot.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: "           (me.started_at < ts.pilot_labels_since) IS NOT FALSE AS before_labels,",
     to: "           false AS before_labels,",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
@@ -13181,7 +13181,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "a re-enrolment starts a second discovery cohort",
-    file: `${SERVER}/src/services/pilot.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: "           (SELECT coalesce(max(ps.slot) + 1, 0) FROM pilot_sessions ps",
     to: "           (SELECT coalesce(max(ps.slot) * 0, 0) FROM pilot_sessions ps",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
@@ -13202,7 +13202,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // M2. Each cap's refusals under their own name.
     label: "a 0.10 refusal is counted as a refusal at this cap",
-    file: `${SERVER}/src/services/pilot.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: '  refused: "pilot_set_refused",',
     to: '  refused: "pilot_sessions_refused",',
     test: `${SERVER}/test/pilot-report.test.ts`,
