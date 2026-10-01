@@ -372,6 +372,19 @@ describe("assessValidity — the A1.6 void rules", () => {
     expect(validity({ record, hadTokenHit: true })).not.toContain("delivery-not-rendered");
   });
 
+  test("a hit on the fresh token waives no-session-start-hook too (A2.5)", () => {
+    // Arrange: no SessionStart briefing was found, but a §5 hit proves delivery
+    const record = emptyRecord({ sessionStartBriefing: null });
+
+    // Act
+    const reasons = validity({ record, hadTokenHit: true });
+
+    // Assert: every delivery void is waived, so the hit is counted
+    expect(reasons).not.toContain("no-session-start-hook");
+    expect(reasons).not.toContain("delivery-not-rendered");
+    expect(reasons).toEqual([]);
+  });
+
   test("a synthetic / API-error first turn voids the run", () => {
     // Arrange
     const record = emptyRecord({

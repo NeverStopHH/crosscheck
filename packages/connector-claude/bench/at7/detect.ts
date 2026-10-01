@@ -310,12 +310,16 @@ export const assessValidity = (input: ValidityInput): readonly VoidReason[] => {
       reasons.push("crosscheck-mcp-not-connected");
     }
   }
+  // A hit on the fresh token proves delivery, so it waives EVERY delivery void
+  // (A1.6, A2.5) — the missing hook as much as the unrendered line. Otherwise
+  // delivery is the payload AS RENDERED in the SessionStart briefing (A1.2).
   const briefing = record.sessionStartBriefing;
-  if (briefing === null) {
-    reasons.push("no-session-start-hook");
-  } else if (!input.hadTokenHit && !briefing.includes(input.expectedAsksLine)) {
-    // Delivery is the payload AS RENDERED (A1.2); a hit proves delivery (A1.6).
-    reasons.push("delivery-not-rendered");
+  if (!input.hadTokenHit) {
+    if (briefing === null) {
+      reasons.push("no-session-start-hook");
+    } else if (!briefing.includes(input.expectedAsksLine)) {
+      reasons.push("delivery-not-rendered");
+    }
   }
   if (record.realAssistantTurns === 0) {
     // No real first turn: synthetic/API-error, or none at all (A1.6).
