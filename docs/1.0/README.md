@@ -101,7 +101,7 @@ at `7a070b8` (0.10.0): #58 brought 01, 02, 03, 05 and 06 into `main`, #63 brough
 | 02 | [Claim-to-code binding and individual commit identity](02-claim-code-binding.md) | **AT-2** | shipped — #55. Open: who may revalidate a claim (its D6 note on the downgrade-only rule) |
 | 03 | [Coverage integrity at the answer layer](03-coverage-integrity.md) | **AT-1, AT-9, AT-10** | shipped — #52 |
 | 04 | [Verdict semantics, fence authority and the human waiver](04-verdict-semantics-and-fence-authority.md) | **AT-5, AT-6** | shipped — #60. AT-6's human gate is a detection, not a prevention (its §10 D8) |
-| 05 | [CI ingestion keyed to a commit, with same-commit re-run](05-ci-ingestion.md) | **AT-8** | partly built — #57: the hub side (`ci_runs`, the flake filter, the `ci` coverage source). Not built: the reporter, so no repo has CI coverage yet |
+| 05 | [CI ingestion keyed to a commit, with same-commit re-run](05-ci-ingestion.md) | **AT-8** | built — #57: the hub side (`ci_runs`, the flake filter, the `ci` coverage source); batch 0930: the reporter, `crosscheck ci-report` (its §11). Open: doctor's CI-6 warning for the ambiguous count, and no repo reports until its CI is wired |
 | 06 | [Structured intent and the append-only intent ledger](06-intent-ledger.md) | — (supports AT-4, AT-3, AT-6) | shipped — #56 |
 | 07 | [Pilot instrumentation for the five proofs](07-pilot-instrumentation.md) | — (measures AT-1, AT-5, AT-9) | shipped — #61. Open: D-E, whether its tables retain a session (its §11.8) |
 | 08 | [Two evidence axes and calibration measurement](08-evidence-axes-and-calibration.md) | **AT-3** | shipped with two narrowings — #59: the hub does not stamp the capture mode from the route (its §3.2a), and `repository_verified` has no ancestor leg (its §3.5) |
