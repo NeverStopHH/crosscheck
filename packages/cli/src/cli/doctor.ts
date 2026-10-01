@@ -156,11 +156,15 @@ import {
   shadowedPinPaths,
 } from "./pin-observability.ts";
 import { checkSkeletonRetention } from "./doctor-retention.ts";
+import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
 import { checkLandedAuthors } from "./doctor-landed-authors.ts";
 import { announcementAnswerOf, passkeyDoctorCheck } from "./passkey-status.ts";
-import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import {
+  readLocalLosses,
+  readTelemetryLossReport,
+} from "@crosscheck/connector-core/spool/loss-report.ts";
 import {
   countCursorIdentityMismatches,
   oldestSpoolLineMs,
@@ -1268,27 +1272,14 @@ const checkSpool = async (
         )
       : check("PASS", "spool age", oldestMs === null ? "empty" : "fresh");
 
-  // Counted from the append-only `.drops` ledger, not from a shared counter:
-  // the number is exact even when several hooks dropped at the same moment.
-  const drops = await readDropSummary(home, key);
-  // Exact for what reached a ledger, that is. A batch whose ledger append
-  // failed is in no sum, so while this marker exists the number above is a
-  // floor and has to be read as one (spool/drops.ts).
-  const unrecorded = await readUnrecordedDrop(home, key);
-  const droppedCheck =
-    drops.records > 0 || drops.malformed > 0 || unrecorded !== null
-      ? check(
-          "WARN",
-          "spool drops",
-          `${drops.records} records discarded in ${drops.entries} batches` +
-            (drops.malformed > 0
-              ? `, ${drops.malformed} ledger entries unreadable`
-              : "") +
-            (unrecorded === null
-              ? ""
-              : `, plus at least one batch its ledger could not take (${unrecorded.count} records, ${unrecorded.reason}, ${unrecorded.at}) — the total is a lower bound`),
-        )
-      : check("PASS", "spool drops", "none");
+  // Counted from the append-only ledgers, not from a shared counter: exact
+  // even when several hooks dropped at the same moment, and a floor — said
+  // so on the line — while a batch the ledger could not take is marked
+  // (spool/drops.ts). Three lines from one read, in the one spelling
+  // `status` prints too (docs/1.0/loss-accounting.md §5.1): records
+  // discarded by reason, record kinds an older hub ignored, and the losses
+  // upstream of any record (doctor-losses.ts).
+  const lossLines = lossChecks(await readLocalLosses(home, key), now);
 
   // A session the hub still believes is running, because the `end` for it aged
   // out of the spool before any hook had the spare budget to deliver it. The
@@ -1335,7 +1326,7 @@ const checkSpool = async (
   return [
     depthCheck,
     ageCheck,
-    droppedCheck,
+    ...lossLines,
     unclosedCheck,
     await checkFlushLock(home, key),
   ];
@@ -1543,9 +1534,18 @@ const absenceAndCoverageChecks = async (
   repoId: string,
 ): Promise<readonly Check[]> => {
   const result = await getAbsences(ctx, repoId);
+  // §5.2's cross-check: this machine's report beside the hub's agent rung,
+  // both already in hand — the one line that can name a hub that stripped
+  // the report with a 200 (doctor-losses.ts says why nothing else can).
+  const reporting = coverageReportingCheck(
+    await readTelemetryLossReport(ctx.home, ctx.repoKey),
+    result.ok ? result.data.coverage : null,
+    ctx.now(),
+  );
   return [
     checkAbsences(result),
     ...coverageChecks(result),
+    ...(reporting === null ? [] : [reporting]),
     ...coverageExemptionChecks(),
   ];
 };

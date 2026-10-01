@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { FoldedLossKinds } from "@crosscheck/schema";
 
 import {
   bigint,
@@ -187,6 +188,29 @@ export const agentSessions = pgTable(
      * tombstone every later projection reads, and then writes nothing.
      */
     skeletonRetiredAt: timestamptz("skeleton_retired_at"),
+    /**
+     * THE CONNECTOR'S OWN ACCOUNT OF WHAT IT LOST (docs/1.0/loss-accounting.md
+     * §4.4): a snapshot of its ledgers, taken at its last register, heartbeat
+     * or end. NULL `loss_reported_at` means NEVER REPORTED — a connector from
+     * before the field — which is not zero and not a gap (§4.7); coverage
+     * reads such a row exactly as it did before the columns existed.
+     * `loss_kinds` holds LOSS_KINDS keys only: the service folds every key it
+     * does not know into `unattributed` before the write, so no connector-
+     * chosen string ever lands here. Five columns rather than a table, so the
+     * account dies with its row and owes the retention registry nothing.
+     */
+    lossReportedAt: timestamptz("loss_reported_at"),
+    lossTotal: integer("loss_total").notNull().default(0),
+    lossKinds: jsonb("loss_kinds").$type<FoldedLossKinds>(),
+    lossOldestAt: timestamptz("loss_oldest_at"),
+    lossNewestAt: timestamptz("loss_newest_at"),
+    /**
+     * An upper bound on the newest loss of the ignored KIND, or NULL when the
+     * report named none (loss-accounting §4.5; review C1). Coverage compares
+     * this instant instead of casting `loss_kinds` JSON at read time, which a
+     * single count past int4 turned into a read that threw for the repo.
+     */
+    lossIgnoredAt: timestamptz("loss_ignored_at"),
   },
   (table) => [
     index("agent_sessions_repo_idx").on(table.repo),

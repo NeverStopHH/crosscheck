@@ -41,6 +41,8 @@ import { join } from "node:path";
 
 import { GIT_TOUCHES_TIMEOUT_MS, MAX_GIT_TOUCH_CANDIDATES } from "../constants.ts";
 import { runGitOutcome } from "../git/git.ts";
+import { sessionSlug } from "../config/paths.ts";
+import { recordDrop } from "../spool/drops.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
@@ -116,13 +118,25 @@ export const captureGitTouches = async (
   if (!outcome.ok) {
     return UNAVAILABLE;
   }
-  const candidates = outcome.stdout
+  const changed = outcome.stdout
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    // Bounded BEFORE the stat calls: a 200-file rebase in the worktree must
-    // not cost 200 filesystem round trips inside a hook budget.
-    .slice(0, MAX_GIT_TOUCH_CANDIDATES);
+    .filter((line) => line.length > 0);
+  // Bounded BEFORE the stat calls: a 200-file rebase in the worktree must
+  // not cost 200 filesystem round trips inside a hook budget.
+  const candidates = changed.slice(0, MAX_GIT_TOUCH_CANDIDATES);
+  // REVIEW M5: the paths past the bound are never examined, so whether this
+  // session touched them is unknown — counted as `capture-capped`, the
+  // per-call cap's word. That over-counts the stale ones a dirty worktree
+  // carries, which is the direction a loss count may err in (§4.5).
+  await recordDrop(
+    input.home,
+    input.repoKey,
+    sessionSlug(input.hostSessionKey),
+    changed.length - candidates.length,
+    "capture-capped",
+    input.now,
+  );
   const fresh: string[] = [];
   for (const path of candidates) {
     if (await changedSince(input.repoRoot, path, input.since)) {

@@ -184,4 +184,18 @@ describe("the wire vocabulary matches the hub's own", () => {
     expect([...COVERAGE_STATES]).toEqual([...hubCoverage.COVERAGE_STATES]);
     expect([...COVERAGE_REASONS]).toEqual([...hubCoverage.COVERAGE_REASONS]);
   });
+
+  test("the two loss reasons sit after hub_did_not_report and before 05's ci block, in both lists", () => {
+    // docs/1.0/loss-accounting.md §4.6: appended where 05's reserved block
+    // stays contiguous, so a later spec extending either end moves nothing.
+    for (const reasons of [COVERAGE_REASONS, hubCoverage.COVERAGE_REASONS]) {
+      const at = reasons.indexOf("hub_did_not_report");
+      expect(reasons.slice(at, at + 4)).toEqual([
+        "hub_did_not_report",
+        "telemetry_lost",
+        "record_kinds_ignored",
+        "ci_lanes_reported",
+      ]);
+    }
+  });
 });

@@ -450,6 +450,40 @@ describe("bootstrap.sql DDL sync", () => {
     }
   });
 
+  test("the loss columns reach an EXISTING hub and really exist after a bootstrap", async () => {
+    // Arrange — the same trap as the case below: a column only in the CREATE
+    // never reaches a hub that already has the table. The loss columns are
+    // ALTER-only on purpose (the reaped_at pattern), so the text check is
+    // that each ALTER exists, and the database check is that they ran.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'agent_sessions' AND column_name LIKE 'loss\\_%' ORDER BY column_name`,
+    );
+
+    // Assert
+    for (const fragment of [
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_reported_at timestamptz;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_total integer NOT NULL DEFAULT 0;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_kinds jsonb;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_oldest_at timestamptz;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+    expect(rows.rows.map((row) => String(row.c))).toEqual([
+      "loss_ignored_at",
+      "loss_kinds",
+      "loss_newest_at",
+      "loss_oldest_at",
+      "loss_reported_at",
+      "loss_total",
+    ]);
+  });
+
   test("07's two new columns reach an EXISTING hub, not only a fresh one", async () => {
     // The trap this case exists for: a column added only to the CREATE TABLE
     // is a column no hub that already has the table will ever get, because

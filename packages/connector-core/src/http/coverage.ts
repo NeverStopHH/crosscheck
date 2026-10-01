@@ -51,6 +51,8 @@ export const COVERAGE_REASONS = [
   "out_of_scope_1_0",
   "no_platform_rung",
   "hub_did_not_report",
+  "telemetry_lost",
+  "record_kinds_ignored",
   "ci_lanes_reported",
   "ci_lanes_missing",
   "ci_awaiting_rerun",

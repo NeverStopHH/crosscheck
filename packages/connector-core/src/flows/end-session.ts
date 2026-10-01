@@ -29,6 +29,7 @@ import { endSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { readSessionSpool } from "../spool/files.ts";
 import { flushSpool } from "../spool/flush.ts";
+import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { seqAt } from "../capture/seq.ts";
 import { allocateSeq, deleteSessionState } from "../state/session-state.ts";
 import type { SeqField } from "@crosscheck/schema";
@@ -107,7 +108,13 @@ export const endSessionFlow = async (
     // reap's DeferredEnder; the records stay deliverable either way.
     return { undelivered, ended: false, seq };
   }
-  const result = await endSession(input.hub, input.crosscheckSessionId, seq);
+  // The session's last word about its own ledgers (docs/1.0/loss-accounting.md
+  // §4.2), read AFTER the drain above so a batch that drain had refused or
+  // the hub had ignored is already in it. The deferred path returns before
+  // this line and carries no report: the SessionStart that spends its marker
+  // registered with the same snapshot a moment earlier.
+  const losses = await readTelemetryLossReport(input.home, input.repoKey);
+  const result = await endSession(input.hub, input.crosscheckSessionId, seq, losses);
   if (result.ok) {
     await removeFile(spoolPendingEndPath(input.home, input.repoKey, slug));
   }

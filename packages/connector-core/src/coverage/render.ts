@@ -140,6 +140,27 @@ const INCOMPLETE_LABELS: Record<string, string> = {
   session_silent: "unclosed",
 };
 
+/**
+ * THE TWO LOSS REASONS (docs/1.0/loss-accounting.md §4.6) open the sentence
+ * differently: a session that went QUIET and a session that LOST records are
+ * two facts, and the second is the one the connector wrote down itself. The
+ * subject is always "on this repo", never "on these files", even under a
+ * file-set scope — a loss is repo-wide by construction (the ledger keeps no
+ * paths), and narrowing the sentence to the pinned files would claim a
+ * precision the data does not have. No count: coverage carries none.
+ */
+const lossOpening = (reason: string, when: string | null): string | null => {
+  const since = when === null ? "" : ` since ${when}`;
+  switch (reason) {
+    case "telemetry_lost":
+      return `agent telemetry on this repo was lost${since}`;
+    case "record_kinds_ignored":
+      return `the hub ignored agent record kinds on this repo${since}`;
+    default:
+      return null;
+  }
+};
+
 const agentEventFragment = (
   record: CoverageRecord,
   row: CoverageSourceRecord | undefined,
@@ -158,14 +179,20 @@ const agentEventFragment = (
   switch (row.state) {
     case "complete":
       return "agent sessions reported";
-    case "incomplete":
+    case "incomplete": {
+      const age = ages ? agedSince(row.gapSince, now) : null;
+      const loss = lossOpening(row.reason, when);
+      if (loss !== null) {
+        return `${loss}${parenthetical([age])}`;
+      }
       // The age first, the reason second: a reader scanning fourteen days of
       // briefings after ONE over-fired reap sees the same instant every day,
       // and only the age says the fact is ageing rather than recurring.
       return `${quiet}${parenthetical([
-        ages ? agedSince(row.gapSince, now) : null,
+        age,
         INCOMPLETE_LABELS[row.reason] ?? null,
       ])}`;
+    }
     case "unknown": {
       if (row.reason === "hub_did_not_report") {
         return null;

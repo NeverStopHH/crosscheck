@@ -332,3 +332,23 @@ export {
   hintDeliveryId,
   tripwireDeliveryId,
 } from "./delivery-id.ts";
+export {
+  EMPTY_LOSS_REPORT,
+  LOSS_KINDS,
+  MAX_LOSS_COUNT,
+  MAX_LOSS_KIND_CHARS,
+  MAX_LOSS_KIND_ENTRIES,
+  TelemetryLossReportSchema,
+  UNATTRIBUTED_LOSS_KIND,
+  UNREADABLE_LOSS_REPORT,
+  clampLossCount,
+  foldLossKinds,
+  isLossKind,
+  settleLossReport,
+} from "./telemetry-loss.ts";
+export type {
+  FoldedLossKinds,
+  LossKind,
+  SettledLossCounts,
+  TelemetryLossReport,
+} from "./telemetry-loss.ts";

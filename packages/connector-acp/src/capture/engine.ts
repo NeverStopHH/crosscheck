@@ -75,8 +75,9 @@ import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import { hubOrigin, isDisabled, loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
-import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
@@ -326,6 +327,57 @@ interface MutableCounters {
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+/** `ignored`: unparseable, oversized or unclassifiable — the observer could not read it. */
+const WIRE_UNREADABLE_DETAIL = "unreadable";
+/** `dropped`: refused by ACP_CAPTURE_MAX_PENDING_BYTES before dispatch. */
+const WIRE_PENDING_CAP_DETAIL = "pending-cap";
+/**
+ * Requests the pending map evicted past ACP_MAX_PENDING_REQUESTS (review M5):
+ * their responses capture nothing — a `session/new` whose answer arrives
+ * after its eviction never registers its session. Every eviction counts,
+ * including methods capture would not have read: the safe over-count.
+ */
+const WIRE_PENDING_EVICTED_DETAIL = "pending-evicted";
+
+/**
+ * THE WIRE LINES CAPTURE NEVER SAW (docs/1.0/loss-accounting.md §3 row 18).
+ * The two counters used to reach one log line at exit and no ledger, so an
+ * edit `tool_call` whose diff made its line oversized lost its `locations`
+ * while the hub read the repo as watched. Booked UNKEYED: a line that could
+ * not be read cannot say which session it belonged to, nor which repo — a
+ * lost `session/new` may be a repo this proxy never registered — so it is
+ * charged to every repo on the machine (§4.3), the direction that cannot
+ * overstate what was seen. A zero counter books nothing (recordCaptureLoss).
+ */
+const recordWireLosses = async (
+  home: string,
+  counters: Pick<MutableCounters, "ignored" | "dropped">,
+  evicted: number,
+  at: Date,
+): Promise<void> => {
+  await recordCaptureLoss(home, {
+    kind: "wire_unobserved",
+    count: evicted,
+    key: null,
+    detail: WIRE_PENDING_EVICTED_DETAIL,
+    now: at,
+  });
+  await recordCaptureLoss(home, {
+    kind: "wire_unobserved",
+    count: counters.ignored,
+    key: null,
+    detail: WIRE_UNREADABLE_DETAIL,
+    now: at,
+  });
+  await recordCaptureLoss(home, {
+    kind: "wire_unobserved",
+    count: counters.dropped,
+    key: null,
+    detail: WIRE_PENDING_CAP_DETAIL,
+    now: at,
+  });
+};
 
 export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
   const now = options.now ?? ((): Date => new Date());
@@ -1239,6 +1291,13 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       });
       await Promise.race([settle(), bounded]);
       clearTimeout(timer);
+      // Before the sessions end, so each end call carries them to the hub.
+      await recordWireLosses(
+        crosscheckHome(options.env),
+        counters,
+        pendingClient.evictions() + pendingAgent.evictions(),
+        now(),
+      );
       try {
         // End every live session (§2.4 last row: child exit → endSessionFlow),
         // then reap once per (home, repoKey) with a DeferredEnder bounded by

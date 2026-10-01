@@ -22,20 +22,38 @@
  * itself can fail. `recordDrop` checks its result and, when a count reached no
  * ledger, says so in `unrecorded.dropmarker` — after which `doctor` reports the
  * total as a lower bound rather than as the truth.
+ *
+ * EVERY LINE CARRIES ITS REASON, AND THE REASON TRAVELS (docs/1.0/loss-accounting.md
+ * §4.3). `readDropSummary` is the three numbers doctor has always printed;
+ * `readDropDetail` beside it reads the same files by reason, with the record
+ * kinds an `ignored` line names and the span of the entries, because the
+ * connector now REPORTS these losses to the hub as counts and kinds and the
+ * hub turns them into a coverage reason. The archive line folds the reasons
+ * in; an archive written before it kept them reports its count as
+ * `unattributed`, which is the honest word for it.
  */
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
 import {
-  readTextOrNull,
-  readJsonOrNull,
   spoolDir,
   spoolDropsArchivePath,
   spoolDropsPath,
   spoolUnrecordedDropsPath,
   writePrivateFile,
 } from "../config/paths.ts";
+import { addCount } from "./counts.ts";
+import type { Counts } from "./counts.ts";
+import {
+  NO_UNDATED,
+  ledgerInstant,
+  ledgerMs,
+  listLedgerNames,
+  mergeUndated,
+  readLedgerText,
+  undatedOf,
+} from "./ledger-read.ts";
+import type { UndatedContent } from "./ledger-read.ts";
 import { toLines } from "./lines.ts";
 import { appendOnce } from "./write.ts";
 
@@ -60,12 +78,44 @@ export type DropReason =
    * the hub had closed lost everything it captured while `spool drops` printed
    * "none" (review finding B2-01/B2-07).
    */
-  | "rejected";
+  | "rejected"
+  /**
+   * The hub answered 200 and IGNORED the record's kind — a hub from before
+   * that kind, or a kind never ingested over this route (server
+   * services/records.ts). The sibling of `rejected`, read nowhere until
+   * docs/1.0/loss-accounting.md: a newer connector against an older hub lost
+   * whole record kinds while `spool drops` printed "none". The line carries
+   * `kinds`, the record kinds the hub ignored, so doctor can say what to
+   * upgrade for.
+   */
+  | "ignored"
+  /** Paths past MAX_TARGETS_PER_INVOCATION in one tool call — never written. */
+  | "capture-capped"
+  /** A path the secret scan refused to spool — never written. */
+  | "secret-path"
+  /** An edit whose path resolved to no root of this repo — never written. */
+  | "outside-root";
+
+/** The word a pre-reason archive's count is reported under. */
+export const UNATTRIBUTED_DROP_REASON = "unattributed";
+
+/**
+ * A ledger file that exists and cannot be read holds an unknown number of
+ * lost records: at least this many (review M1, §2 "unknown, never zero").
+ */
+const UNREADABLE_FLOOR = 1;
+
+/** The marker reason for an unrecorded marker that will not parse; not a DropReason, so it reads as unattributed. */
+const UNREADABLE_REASON = "unreadable";
+
+const KindsSchema = z.record(z.string(), z.number().int().min(0));
 
 const DropSchema = z.looseObject({
   at: z.string().min(1),
   count: z.number().int().min(0),
   reason: z.string().min(1),
+  /** Record kinds behind the count, on `ignored` and `rejected` lines. */
+  kinds: KindsSchema.optional(),
 });
 
 export const DROPS_SUFFIX = ".drops";
@@ -91,6 +141,8 @@ export interface UnrecordedDrop {
   /** Records in the batch it could not take. */
   readonly count: number;
   readonly reason: string;
+  /** The marker file's mtime — an upper bound on `at` when `at` will not parse (review H2). */
+  readonly writtenBy: string | null;
 }
 
 const UnrecordedSchema = z.looseObject({
@@ -104,16 +156,22 @@ export const readUnrecordedDrop = async (
   home: string,
   key: string,
 ): Promise<UnrecordedDrop | null> => {
-  const parsed = UnrecordedSchema.safeParse(
-    await readJsonOrNull(spoolUnrecordedDropsPath(home, key)),
-  );
+  const { text, writtenBy, unreadable } = await readLedgerText(spoolUnrecordedDropsPath(home, key));
+  if (text === null && !unreadable) {
+    return null;
+  }
+  const parsed = UnrecordedSchema.safeParse(safeJson(text ?? ""));
+  // A marker that exists and will not parse still says a ledger append
+  // failed (review M1): one batch of unknown size, undated, bounded by the
+  // marker's mtime — never the absence of a marker.
   return parsed.success
     ? {
         at: parsed.data.at,
         count: parsed.data.count,
         reason: parsed.data.reason,
+        writtenBy,
       }
-    : null;
+    : { at: "", count: UNREADABLE_FLOOR, reason: UNREADABLE_REASON, writtenBy };
 };
 
 /**
@@ -172,6 +230,25 @@ const markUnrecordedDrop = async (
  */
 const LEDGER_TERMINATOR = "\n";
 
+/**
+ * Record kinds are the connector's own vocabulary (@crosscheck/schema
+ * KNOWN_RECORD_KINDS), but a ledger line is a file on disk that a renderer
+ * reads back, so a name is kept only when it has that vocabulary's shape and
+ * anything else is counted under `other`. The same screen runs at read time,
+ * because a line is a file and files get edited.
+ */
+const RECORD_KIND_PATTERN = /^[a-z][a-z0-9_]{0,40}$/;
+const OTHER_KIND = "other";
+
+const screenKinds = (kinds: Counts): Counts =>
+  Object.entries(kinds).reduce<Counts>(
+    (screened, [kind, count]) =>
+      count <= 0
+        ? screened
+        : addCount(screened, RECORD_KIND_PATTERN.test(kind) ? kind : OTHER_KIND, count),
+    {},
+  );
+
 export const recordDrop = async (
   home: string,
   key: string,
@@ -179,15 +256,20 @@ export const recordDrop = async (
   count: number,
   reason: DropReason,
   now: Date,
+  kinds: Readonly<Record<string, number>> = {},
 ): Promise<void> => {
   if (count <= 0) {
     return;
   }
   const path = spoolDropsPath(home, key, slug);
-  const outcome = await appendOnce(
-    path,
-    `${JSON.stringify({ at: now.toISOString(), count, reason })}\n`,
-  );
+  const screened = screenKinds(kinds);
+  const line = {
+    at: now.toISOString(),
+    count,
+    reason,
+    ...(Object.keys(screened).length === 0 ? {} : { kinds: screened }),
+  };
+  const outcome = await appendOnce(path, `${JSON.stringify(line)}\n`);
   if (outcome === "written") {
     return;
   }
@@ -227,6 +309,15 @@ const add = (left: DropSummary, right: DropSummary): DropSummary => ({
   malformed: left.malformed + right.malformed,
 });
 
+const addCounts = (left: Counts, right: Counts): Counts =>
+  Object.entries(right).reduce<Counts>(
+    (sum, [name, count]) => addCount(sum, name, count),
+    left,
+  );
+
+const sumOf = (counts: Counts): number =>
+  Object.values(counts).reduce((sum, count) => sum + count, 0);
+
 interface DropSpan {
   readonly oldestMs: number | null;
   readonly newestMs: number | null;
@@ -241,8 +332,8 @@ const spanOf = (lines: readonly string[]): DropSpan =>
     if (!parsed.success) {
       return span;
     }
-    const ms = Date.parse(parsed.data.at);
-    if (Number.isNaN(ms)) {
+    const ms = ledgerMs(parsed.data.at);
+    if (ms === null) {
       return span;
     }
     return {
@@ -256,54 +347,125 @@ const spanOf = (lines: readonly string[]): DropSpan =>
  * its mtime. Retention has to survive `reap` writing an expiry drop and then
  * considering that same ledger for removal in the same pass, and a file's mtime
  * says nothing useful once an injected or skewed clock is involved.
+ *
+ * EXCEPT WHEN THE CONTENT NAMES NO INSTANT AT ALL (review H2, PROBE 4): a
+ * ledger of torn or undatable lines answered null here, so `reap` never
+ * folded it and its repo's span stayed unknown for good. Its mtime is the
+ * one bound on when those lines were written, and reap ages it by that.
  */
-export const newestDropMs = async (path: string): Promise<number | null> =>
-  spanOf(toLines(await readTextOrNull(path))).newestMs;
-
-/**
- * The single line that survives the age sweep, holding what the removed ledgers
- * added up to. `reason: "aggregated"` distinguishes it from a real batch, and
- * the counts are carried explicitly so folding is lossless — summing the line
- * as if it were one batch would silently reset `entries` and `malformed`.
- */
-const ArchiveSchema = z.looseObject({
-  at: z.string().min(1),
-  oldestAt: z.string().min(1),
-  count: z.number().int().min(0),
-  entries: z.number().int().min(0),
-  malformed: z.number().int().min(0),
-});
-
-interface Archive {
-  readonly summary: DropSummary;
-  readonly span: DropSpan;
-}
-
-const EMPTY_ARCHIVE: Archive = { summary: EMPTY_DROPS, span: NO_SPAN };
-
-const msOrNull = (value: string): number | null => {
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? null : ms;
+export const newestDropMs = async (path: string): Promise<number | null> => {
+  const { text, writtenBy } = await readLedgerText(path);
+  const lines = toLines(text);
+  return spanOf(lines).newestMs ?? (lines.length > 0 ? ledgerMs(writtenBy) : null);
 };
 
-const readArchive = async (path: string): Promise<Archive> => {
-  const parsed = ArchiveSchema.safeParse(
-    safeJson(toLines(await readTextOrNull(path))[0] ?? ""),
-  );
-  if (!parsed.success) {
-    return EMPTY_ARCHIVE;
-  }
+/**
+ * The per-reason half of a ledger (docs/1.0/loss-accounting.md §4.3).
+ *
+ * `byReason` counts records under the line's own reason word; the
+ * `ignoredRecordKinds` map is the sum of the `kinds` an `ignored` line
+ * carries — the record kinds a hub older than this connector threw away,
+ * which is what doctor needs to say what an upgrade would recover.
+ */
+export interface DropDetail {
+  readonly summary: DropSummary;
+  /** Records by ledger reason; a pre-reason archive's count is `unattributed`. */
+  readonly byReason: Counts;
+  /** Ledger lines by reason. */
+  readonly entriesByReason: Counts;
+  /** Record kinds the hub ignored, summed over the `ignored` lines. */
+  readonly ignoredRecordKinds: Counts;
+  readonly oldestAt: string | null;
+  readonly newestAt: string | null;
+  /**
+   * Entries the span cannot date — lines whose `at` will not parse and lines
+   * that will not parse at all — with the latest instant they can have been
+   * written: their file's mtime (spool/ledger-read.ts, review H2). The
+   * report keeps the oldest unknown and takes the bound as a newest, which
+   * is later than the truth and lets the loss age out.
+   */
+  readonly undated: UndatedContent;
+  /** Ledger files, archives or directories that exist and could not be read (review M1). */
+  readonly unreadable: number;
+  /**
+   * The newest `ignored` entry (review M3) — its file's mtime when its own
+   * `at` will not parse — so the report can say whether the hub's remedy,
+   * "upgrade the hub", concerns its window at all. Null when none.
+   */
+  readonly ignoredNewestAt: string | null;
+}
+
+const laterIsoOf = (left: string | null, right: string | null): string | null =>
+  left === null || right === null ? (left ?? right) : right > left ? right : left;
+
+const EMPTY_DETAIL: DropDetail = {
+  summary: EMPTY_DROPS,
+  byReason: {},
+  entriesByReason: {},
+  ignoredRecordKinds: {},
+  oldestAt: null,
+  newestAt: null,
+  undated: NO_UNDATED,
+  unreadable: 0,
+  ignoredNewestAt: null,
+};
+
+/**
+ * WHAT AN UNREADABLE LEDGER IS WORTH (review M1): `records` lost under no
+ * reason — at least one, or the count an unparseable archive still names —
+ * undated and bounded by the file's mtime. It used to read as zero.
+ */
+const unreadableDetail = (records: number, writtenBy: string | null): DropDetail => {
+  const counted = Math.max(UNREADABLE_FLOOR, records);
   return {
-    summary: {
-      records: parsed.data.count,
-      entries: parsed.data.entries,
-      malformed: parsed.data.malformed,
-    },
-    span: {
-      oldestMs: msOrNull(parsed.data.oldestAt),
-      newestMs: msOrNull(parsed.data.at),
-    },
+    ...EMPTY_DETAIL,
+    summary: { records: counted, entries: 0, malformed: 0 },
+    byReason: { [UNATTRIBUTED_DROP_REASON]: counted },
+    undated: undatedOf(1, writtenBy),
+    unreadable: 1,
   };
+};
+
+const isUndated = (at: string): boolean => ledgerMs(at) === null;
+
+const isoOrNull = (ms: number | null): string | null =>
+  ms === null ? null : new Date(ms).toISOString();
+
+/** `writtenBy` is the ledger file's mtime: the bound its undatable lines take. */
+const detailOf = (lines: readonly string[], writtenBy: string | null): DropDetail => {
+  const span = spanOf(lines);
+  const summary = summarize(lines);
+  const counted = lines.reduce<DropDetail>(
+    (detail, line) => {
+      const parsed = DropSchema.safeParse(safeJson(line));
+      if (!parsed.success) {
+        return detail;
+      }
+      const { at, reason, count, kinds } = parsed.data;
+      return {
+        ...detail,
+        undated: isUndated(at) ? mergeUndated(detail.undated, undatedOf(1, writtenBy)) : detail.undated,
+        byReason: addCounts(detail.byReason, { [reason]: count }),
+        entriesByReason: addCounts(detail.entriesByReason, { [reason]: 1 }),
+        ignoredRecordKinds:
+          reason === "ignored" && kinds !== undefined
+            ? addCounts(detail.ignoredRecordKinds, screenKinds(kinds))
+            : detail.ignoredRecordKinds,
+        ignoredNewestAt:
+          reason === "ignored"
+            ? laterIsoOf(detail.ignoredNewestAt, ledgerInstant(at) ?? writtenBy)
+            : detail.ignoredNewestAt,
+      };
+    },
+    {
+      ...EMPTY_DETAIL,
+      summary,
+      oldestAt: isoOrNull(span.oldestMs),
+      newestAt: isoOrNull(span.newestMs),
+    },
+  );
+  // A line that will not parse names no instant either: same bound.
+  return { ...counted, undated: mergeUndated(counted.undated, undatedOf(summary.malformed, writtenBy)) };
 };
 
 const earliest = (left: number | null, right: number | null): number | null =>
@@ -311,6 +473,102 @@ const earliest = (left: number | null, right: number | null): number | null =>
 
 const latest = (left: number | null, right: number | null): number | null =>
   left === null || right === null ? (left ?? right) : Math.max(left, right);
+
+const msOrNull = (value: string | null): number | null => ledgerMs(value);
+
+const addDetail = (left: DropDetail, right: DropDetail): DropDetail => ({
+  summary: add(left.summary, right.summary),
+  byReason: addCounts(left.byReason, right.byReason),
+  entriesByReason: addCounts(left.entriesByReason, right.entriesByReason),
+  ignoredRecordKinds: addCounts(left.ignoredRecordKinds, right.ignoredRecordKinds),
+  oldestAt: isoOrNull(earliest(msOrNull(left.oldestAt), msOrNull(right.oldestAt))),
+  newestAt: isoOrNull(latest(msOrNull(left.newestAt), msOrNull(right.newestAt))),
+  undated: mergeUndated(left.undated, right.undated),
+  unreadable: left.unreadable + right.unreadable,
+  ignoredNewestAt: laterIsoOf(left.ignoredNewestAt, right.ignoredNewestAt),
+});
+
+/**
+ * The single line that survives the age sweep, holding what the removed ledgers
+ * added up to. `reason: "aggregated"` distinguishes it from a real batch, and
+ * the counts are carried explicitly so folding is lossless — summing the line
+ * as if it were one batch would silently reset `entries` and `malformed`.
+ *
+ * `byReason`, `entriesByReason` and `ignoredKinds` are folded in beside them
+ * so the reasons survive the sweep too. An archive from before those fields
+ * parses without them, and the part of its count no reason accounts for is
+ * reported as `unattributed` — never dropped, never guessed.
+ */
+const ArchiveSchema = z.looseObject({
+  at: z.string().min(1),
+  oldestAt: z.string().min(1),
+  count: z.number().int().min(0),
+  entries: z.number().int().min(0),
+  malformed: z.number().int().min(0),
+  byReason: KindsSchema.optional(),
+  entriesByReason: KindsSchema.optional(),
+  ignoredKinds: KindsSchema.optional(),
+  /** Undatable entries folded in, and their bound (review H2). */
+  undatable: z.number().int().min(0).optional(),
+  undatableBy: z.string().nullable().optional(),
+  /** This branch's first spelling of `undatable`, before it kept a bound. */
+  undated: z.number().int().min(0).optional(),
+  /** The newest ignored entry folded in (review M3). */
+  ignoredNewestAt: z.string().nullable().optional(),
+});
+
+/** What an archive that fails ArchiveSchema may still say about its size. */
+const LooseCountSchema = z.looseObject({ count: z.number().int().min(0) });
+
+const readArchiveDetail = async (path: string): Promise<DropDetail> => {
+  const { text, writtenBy, unreadable } = await readLedgerText(path);
+  if (unreadable) {
+    return unreadableDetail(UNREADABLE_FLOOR, writtenBy);
+  }
+  if (text === null) {
+    return EMPTY_DETAIL;
+  }
+  const line = safeJson(toLines(text)[0] ?? "");
+  const parsed = ArchiveSchema.safeParse(line);
+  if (!parsed.success) {
+    // Review M1 (PROBE 3): a torn archive holding 382 records read as zero.
+    const loose = LooseCountSchema.safeParse(line);
+    return unreadableDetail(loose.success ? loose.data.count : UNREADABLE_FLOOR, writtenBy);
+  }
+  const byReason = parsed.data.byReason ?? {};
+  const unattributed = parsed.data.count - sumOf(byReason);
+  const oldestAt = isoOrNull(msOrNull(parsed.data.oldestAt));
+  const newestAt = isoOrNull(msOrNull(parsed.data.at));
+  // An archive whose own instants do not parse holds counted records with no
+  // date — the same unknown span as an undated line, carried forward.
+  const undatedHere = parsed.data.count > 0 && (oldestAt === null || newestAt === null) ? 1 : 0;
+  return {
+    summary: {
+      records: parsed.data.count,
+      entries: parsed.data.entries,
+      malformed: parsed.data.malformed,
+    },
+    byReason:
+      unattributed > 0
+        ? addCounts(byReason, { [UNATTRIBUTED_DROP_REASON]: unattributed })
+        : byReason,
+    entriesByReason: parsed.data.entriesByReason ?? {},
+    ignoredRecordKinds: screenKinds(parsed.data.ignoredKinds ?? {}),
+    oldestAt,
+    newestAt,
+    // The bound the fold kept, else the archive's own mtime: it is rewritten
+    // at every fold, so it is no earlier than anything it holds.
+    undated: undatedOf(
+      (parsed.data.undatable ?? (parsed.data.undated ?? 0) + parsed.data.malformed) + undatedHere,
+      ledgerInstant(parsed.data.undatableBy) ?? writtenBy,
+    ),
+    unreadable: 0,
+    // An archive from before the field still bounds its ignored entries by
+    // its own mtime: later than the truth, never "outside the window" wrongly.
+    ignoredNewestAt:
+      ledgerInstant(parsed.data.ignoredNewestAt) ?? ((byReason["ignored"] ?? 0) > 0 ? writtenBy : null),
+  };
+};
 
 const isEmpty = (summary: DropSummary): boolean =>
   summary.records === 0 && summary.entries === 0 && summary.malformed === 0;
@@ -333,49 +591,66 @@ export const archiveLedger = async (
   key: string,
   ledgerPath: string,
 ): Promise<void> => {
-  const lines = toLines(await readTextOrNull(ledgerPath));
-  const folding = summarize(lines);
-  if (isEmpty(folding)) {
+  const ledger = await readLedgerText(ledgerPath);
+  const folding = detailOf(toLines(ledger.text), ledger.writtenBy);
+  if (isEmpty(folding.summary)) {
     return;
   }
   const path = spoolDropsArchivePath(home, key);
-  const archive = await readArchive(path);
-  const span = spanOf(lines);
-  const total = add(archive.summary, folding);
-  const oldestMs = earliest(archive.span.oldestMs, span.oldestMs);
-  const newestMs = latest(archive.span.newestMs, span.newestMs);
-  const stamp = (ms: number | null): string =>
-    new Date(ms ?? Date.now()).toISOString();
+  const total = addDetail(await readArchiveDetail(path), folding);
+  const stamp = (iso: string | null): string => iso ?? new Date().toISOString();
+  // `unattributed` is a READ-side word for the count an older archive kept
+  // without reasons; written back under a reason it would look like a line
+  // somebody recorded, so it is left out of `byReason` and recovered from the
+  // difference again on the next read.
+  const { [UNATTRIBUTED_DROP_REASON]: _unattributed, ...byReason } = total.byReason;
   await writePrivateFile(
     path,
     `${JSON.stringify({
-      at: stamp(newestMs),
-      oldestAt: stamp(oldestMs),
-      count: total.records,
-      entries: total.entries,
-      malformed: total.malformed,
+      at: stamp(total.newestAt),
+      oldestAt: stamp(total.oldestAt),
+      count: total.summary.records,
+      entries: total.summary.entries,
+      malformed: total.summary.malformed,
       reason: "aggregated",
+      byReason,
+      entriesByReason: total.entriesByReason,
+      ignoredKinds: total.ignoredRecordKinds,
+      // Carried, because `stamp` above writes a real instant even when every
+      // folded line was undatable, and the archive must not launder that —
+      // with the bound those lines had, so they still age out (review H2).
+      undatable: total.undated.count,
+      undatableBy: total.undated.by,
+      ignoredNewestAt: total.ignoredNewestAt,
     })}\n`,
   );
+};
+
+/** One ledger file: its detail, or — when it exists and cannot be read — an unknown loss. */
+const ledgerDetail = async (path: string): Promise<DropDetail> => {
+  const ledger = await readLedgerText(path);
+  return ledger.unreadable
+    ? unreadableDetail(UNREADABLE_FLOOR, ledger.writtenBy)
+    : detailOf(toLines(ledger.text), ledger.writtenBy);
 };
 
 /** Every drop this repo has recorded, counted from disk — aggregate included. */
 export const readDropSummary = async (
   home: string,
   key: string,
-): Promise<DropSummary> => {
+): Promise<DropSummary> => (await readDropDetail(home, key)).summary;
+
+/** The same files, by reason and with their span (loss-accounting §4.3). */
+export const readDropDetail = async (
+  home: string,
+  key: string,
+): Promise<DropDetail> => {
   const dir = spoolDir(home, key);
-  let names: readonly string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return EMPTY_DROPS;
-  }
-  const summaries = await Promise.all(
-    names
-      .filter((name) => name.endsWith(DROPS_SUFFIX))
-      .map(async (name) => summarize(toLines(await readTextOrNull(join(dir, name))))),
-  );
-  const archive = await readArchive(spoolDropsArchivePath(home, key));
-  return summaries.reduce(add, archive.summary);
+  const listing = await listLedgerNames(dir, DROPS_SUFFIX);
+  const details = await Promise.all(listing.names.map((name) => ledgerDetail(join(dir, name))));
+  // A spool directory that exists and cannot be listed hides every ledger in
+  // it: an unknown loss, never "no drops" (review M1).
+  const unlisted = listing.unreadable ? [unreadableDetail(UNREADABLE_FLOOR, listing.writtenBy)] : [];
+  const archive = await readArchiveDetail(spoolDropsArchivePath(home, key));
+  return [...details, ...unlisted].reduce(addDetail, archive);
 };
