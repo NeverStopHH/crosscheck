@@ -135,7 +135,9 @@ describe("foldGuaranteeDeclaration — folded, never refused, never strengthened
 
     // Act + Assert
     for (const sent of [[strong, weak], [weak, strong]]) {
-      expect(foldGuaranteeDeclaration(sent)).toEqual([weak]);
+      expect(foldGuaranteeDeclaration(sent)).toEqual([
+        { kind: "file.modified", guarantee: "partial", reason: "unbracketed_lane" },
+      ]);
     }
   });
 
