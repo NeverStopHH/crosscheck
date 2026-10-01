@@ -12616,6 +12616,25 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "a Cursor rename that kills every afterFileEdit capture is a doctor line and nothing else, and coverage reads complete over a repo whose edits all vanished",
   },
+  {
+    // LOSS-13's ACP half.
+    label: "an ACP wire line the observer could not read never reaches the loss ledger",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "    count: counters.ignored,\n",
+    to: "    count: 0,\n",
+    test: `${ACP}/test/wire-loss.test.ts`,
+    because:
+      "an edit tool_call whose diff made its line oversized loses its locations, the proxy logs one counter at exit, and the hub's coverage reads complete over the edit",
+  },
+  {
+    label: "an ACP wire line past the pending cap never reaches the loss ledger",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "    count: counters.dropped,\n",
+    to: "    count: 0,\n",
+    test: `${ACP}/test/wire-loss.test.ts`,
+    because:
+      "a line flood that overran the capture queue drops lines from capture with nothing but a log counter to show for it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12709,6 +12728,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
+ * PRINTS: packages/connector-acp/test/wire-loss.test.ts 2
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
