@@ -927,6 +927,24 @@ describe("proof 4 — human labels", () => {
     expect(nothing.precision.burdenPer100).toEqual({ kind: "measured", value: 0 });
   });
 
+  test("an answer somebody asked for is no intervention: not in burden, not in coverage", async () => {
+    // Arrange — one unasked pointer and one `suspect` answer to the same
+    // session. The answer was pulled; counting it would make asking a
+    // question raise the burden figure and dilute the label coverage.
+    const world = await setup();
+    const ids = await interventions(world, 1, 1);
+    await deliver(world, "hd_asked", "s_0", "wc_prior", "suspect", 10, null);
+    await label(world, ids[0] ?? "", "helpful");
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.interventions).toBe(1);
+    expect(out.precision.burdenPer100).toEqual({ kind: "measured", value: 100 });
+    expect(out.precision.labelCoverage).toEqual({ kind: "measured", value: 1 });
+  });
+
   test("the opened figure stays, as a behavioural signal beside the human ones", async () => {
     // Arrange — one pointer the agent pulled, and no label on it
     const world = await setup();

@@ -390,6 +390,25 @@ describe("POST /api/pilot-marks — the three labels", () => {
     expect(await rows(harness)).toHaveLength(0);
   });
 
+  test("a reason beside `pin --ok` is refused at the boundary — the recipe is the whole message", async () => {
+    // Arrange — a second text slot on a gesture that never needed one would
+    // be a second thing to scan, bound and render, reachable by a raw POST
+    // even though no command sends it.
+    const { harness, developer } = await setup();
+
+    // Act
+    const response = await mark(harness, developer, {
+      refKind: "pin",
+      refId: "pin_any",
+      mark: "surface_ok",
+      reason: "ran it twice",
+    });
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(await rows(harness)).toHaveLength(0);
+  });
+
   test("a blank reason is no reason", async () => {
     // Arrange & Act — an accidental space must not be stored as prose.
     const { harness, developer } = await setup();

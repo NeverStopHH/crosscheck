@@ -87,6 +87,35 @@ describe("the retention registry against the DDL (CSK-12)", () => {
     expect(references.length).toBeGreaterThanOrEqual(9);
   });
 
+  test("07 §12 leaves the pilot's retention classification exactly as it was", async () => {
+    // Arrange — the revision added `pilot_marks.reason` and
+    // `pilot_sessions.cohort` and raised the set's cap from 50 to 200. None of
+    // that may move a pilot relation across the root / non-retaining line:
+    // that is D-E's decision (07 §11.8), still open, not this revision's.
+    // `pilot_marks` references a developer and a ref id, never a session, so
+    // it has no entry and must not grow one by accident.
+    const ddl = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const pilot = RETENTION_REGISTRY.filter((relation) => relation.table.startsWith("pilot_")).map(
+      (relation) =>
+        relation.semantics === "root"
+          ? [relation.table, relation.column, relation.semantics, relation.name, relation.status, relation.liveness]
+          : [relation.table, relation.column, relation.semantics],
+    );
+    const pilotReferences = sessionReferencesIn(ddl)
+      .map(key)
+      .filter((name) => name.startsWith("pilot_"))
+      .sort();
+
+    // Assert
+    expect(pilot).toEqual([
+      ["pilot_sessions", "session_id", "root", "pilot_sessions", "built", "while_exists"],
+      ["pilot_attributions", "top_session_id", "root", "pilot_attributions", "built", "while_exists"],
+    ]);
+    expect(pilotReferences).toEqual(["pilot_attributions.top_session_id", "pilot_sessions.session_id"]);
+  });
+
   test("an entry that declines to retain says why", () => {
     // Act
     const unexplained = RETENTION_REGISTRY.filter(
