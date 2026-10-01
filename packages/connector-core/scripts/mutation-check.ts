@@ -12640,8 +12640,9 @@ export const MUTATIONS: readonly Mutation[] = [
     // takes ISO instants only, and the ledger reader passed `at` through raw.
     label: "a garbled loss-ledger instant reaches the wire and the hub refuses every session call",
     file: `${CORE}/src/state/loss-ledger.ts`,
-    from: "  const ms = Date.parse(at);\n  return Number.isNaN(ms) ? null : new Date(ms).toISOString();\n",
-    to: "  return at;\n",
+    // Review M2 moved the rule into spool/ledger-read.ts; the reader's call is the seat.
+    from: "const instantOf = (at: string): string | null => ledgerInstant(at);",
+    to: "const instantOf = (at: string): string | null => at;",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
       "one torn or hand-edited line in losses.jsonl makes register, heartbeat and end answer 400 for every session on the machine, so the connector that reported a loss stops reporting anything",
@@ -13093,6 +13094,30 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/coverage-losses.test.ts`,
     because: "a `__proto__` key vanishes from the stored kinds, and a reader of the row cannot tell what the rest of the total was",
   },
+  {
+    label: "a ledger count past int4 reaches the wire unsaturated",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    total: clampLossCount(total),\n",
+    to: "    total,\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a .drops line counting 3e9 (PROBE 6) makes a report the hub's schema refuses, and the session call it rides with it",
+  },
+  {
+    label: "a ledger instant past year 9999 reaches the wire",
+    file: `${CORE}/src/spool/ledger-read.ts`,
+    from: "  return Number.isFinite(ms) && ms >= FIRST_WIRE_MS && ms <= LAST_WIRE_MS ? ms : null;",
+    to: "  return Number.isFinite(ms) ? ms : null;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "Date.parse reads +275760-09-13, toISOString writes it back with the sign, and z.iso.datetime on the hub refuses the report",
+  },
+  {
+    label: "a report the wire schema refuses is sent anyway",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  if (TelemetryLossReportSchema.safeParse(report).success) {\n    return report;\n  }\n",
+    to: "  if (true) {\n    return report;\n  }\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a report no rule above made valid reaches a hub that refuses the register it rides, and the session never registers",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13281,7 +13306,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 3
- * PRINTS: packages/connector-core/test/loss-report.test.ts 11
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 14
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

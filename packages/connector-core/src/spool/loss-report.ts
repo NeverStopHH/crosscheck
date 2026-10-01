@@ -16,7 +16,9 @@
  */
 import {
   EMPTY_LOSS_REPORT,
+  TelemetryLossReportSchema,
   UNATTRIBUTED_LOSS_KIND,
+  clampLossCount,
 } from "@crosscheck/schema";
 import type { LossKind, TelemetryLossReport } from "@crosscheck/schema";
 
@@ -25,6 +27,7 @@ import { readCaptureLosses } from "../state/loss-ledger.ts";
 import type { CaptureLossSummary } from "../state/loss-ledger.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
+import { ledgerInstant } from "./ledger-read.ts";
 import {
   UNATTRIBUTED_DROP_REASON,
   readDropDetail,
@@ -79,11 +82,32 @@ export interface LocalLosses {
   readonly isFloor: boolean;
 }
 
-/** The instant re-formatted from `Date.parse`, or null — the wire takes ISO only. */
-const wireInstant = (at: string): string | null => {
-  const ms = Date.parse(at);
-  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+/** The instant as the wire carries it, or null (spool/ledger-read.ts, review M2). */
+const wireInstant = (at: string): string | null => ledgerInstant(at);
+
+/**
+ * THE LAST LINE OF DEFENCE FOR THE CALL THE REPORT RIDES (review M2). Every
+ * rule above aims at a report the hub's schema accepts; this checks it. A
+ * report that still fails — a vocabulary the hub cannot fold, a count no
+ * rule saturated — is sent as what is known for certain: at least one loss,
+ * under no reason, undated. A hub refusing the block used to refuse the
+ * register it rode, and a session whose registration fails never registers.
+ */
+export const toWireReport = (report: TelemetryLossReport): TelemetryLossReport => {
+  if (TelemetryLossReportSchema.safeParse(report).success) {
+    return report;
+  }
+  const total = Number.isSafeInteger(report.total)
+    ? clampLossCount(Math.max(UNREADABLE_LINE_FLOOR, report.total))
+    : UNREADABLE_LINE_FLOOR;
+  return { total, kinds: { [UNATTRIBUTED_LOSS_KIND]: total }, oldestAt: null, newestAt: null };
 };
+
+/** Every count saturated at MAX_LOSS_COUNT (schema/telemetry-loss.ts, review C1). */
+const saturated = (counts: Counts): Counts =>
+  Object.fromEntries(
+    Object.entries(counts).map(([kind, count]) => [kind, clampLossCount(count)]),
+  );
 
 /**
  * An unreadable ledger line is evidence that a loss was WRITTEN, with its
@@ -153,9 +177,12 @@ export const toLossReport = (
   const kinds = bump(withCapture, UNATTRIBUTED_LOSS_KIND, unreadable);
   const total =
     drops.summary.records + (unrecorded?.count ?? 0) + capture.total + unreadable;
+  // Saturated, never refused (review C1): coverage reads WHETHER and SINCE
+  // WHEN, so a count capped at int4 cannot change any coverage state, while a
+  // count past it used to make the hub refuse the call the report rode.
   return {
-    total,
-    kinds,
+    total: clampLossCount(total),
+    kinds: saturated(kinds),
     ...spanOf(drops, unrecorded?.at, capture, unreadable),
   };
 };
@@ -171,7 +198,7 @@ export const readLocalLosses = async (
   ]);
   const report = toLossReport(drops, unrecorded, capture);
   return {
-    report: report.total === 0 ? EMPTY_LOSS_REPORT : report,
+    report: report.total === 0 ? EMPTY_LOSS_REPORT : toWireReport(report),
     drops,
     unrecorded,
     capture,

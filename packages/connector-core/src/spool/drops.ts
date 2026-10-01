@@ -47,6 +47,7 @@ import {
 } from "../config/paths.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
+import { ledgerMs } from "./ledger-read.ts";
 import { toLines } from "./lines.ts";
 import { appendOnce } from "./write.ts";
 
@@ -308,8 +309,8 @@ const spanOf = (lines: readonly string[]): DropSpan =>
     if (!parsed.success) {
       return span;
     }
-    const ms = Date.parse(parsed.data.at);
-    if (Number.isNaN(ms)) {
+    const ms = ledgerMs(parsed.data.at);
+    if (ms === null) {
       return span;
     }
     return {
@@ -364,7 +365,7 @@ const EMPTY_DETAIL: DropDetail = {
   undated: 0,
 };
 
-const isUndated = (at: string): boolean => Number.isNaN(Date.parse(at));
+const isUndated = (at: string): boolean => ledgerMs(at) === null;
 
 const isoOrNull = (ms: number | null): string | null =>
   ms === null ? null : new Date(ms).toISOString();
@@ -404,13 +405,7 @@ const earliest = (left: number | null, right: number | null): number | null =>
 const latest = (left: number | null, right: number | null): number | null =>
   left === null || right === null ? (left ?? right) : Math.max(left, right);
 
-const msOrNull = (value: string | null): number | null => {
-  if (value === null) {
-    return null;
-  }
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? null : ms;
-};
+const msOrNull = (value: string | null): number | null => ledgerMs(value);
 
 const addDetail = (left: DropDetail, right: DropDetail): DropDetail => ({
   summary: add(left.summary, right.summary),

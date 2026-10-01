@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { EMPTY_LOSS_REPORT, TelemetryLossReportSchema } from "@crosscheck/schema";
+import { EMPTY_LOSS_REPORT, MAX_LOSS_COUNT, TelemetryLossReportSchema } from "@crosscheck/schema";
 
 import { HUB_COVERAGE_WINDOW_DAYS, MAX_LOSS_LEDGER_BYTES } from "../src/constants.ts";
 import {
@@ -26,6 +26,7 @@ import {
   formatLossLines,
   hasRecentLoss,
   readLocalLosses,
+  toWireReport,
 } from "../src/spool/loss-report.ts";
 import { lossLedgerPath, recordCaptureLoss } from "../src/state/loss-ledger.ts";
 import { makeHome } from "./helpers.ts";
@@ -218,6 +219,58 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
     expect(report.total).toBe(5);
     expect(report.oldestAt).toBeNull();
     expect(report.newestAt).toBeNull();
+  });
+});
+
+describe("review C1/M2, connector half: the report always parses on the hub's schema", () => {
+  test("PROBE 6: a ledger count past int4 is sent saturated, never as a report the hub refuses", async () => {
+    // Arrange
+    const path = await home();
+    await ensureDir(spoolDir(path, KEY));
+    await writeFile(
+      spoolDropsPath(path, KEY, SLUG),
+      `${JSON.stringify({ at: T4.toISOString(), count: 3_000_000_000, reason: "expired" })}\n`,
+      "utf8",
+    );
+
+    // Act
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert: saturated, still a loss, and valid on the wire
+    expect(report.total).toBe(MAX_LOSS_COUNT);
+    expect(report.kinds["spool_expired"]).toBe(MAX_LOSS_COUNT);
+    expect(TelemetryLossReportSchema.safeParse(report).success).toBe(true);
+  });
+
+  test("an instant past year 9999 is undated, never a string the hub's schema refuses", async () => {
+    // Arrange: Date.parse reads it; z.iso.datetime does not
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 3, "expired", T1);
+    await ensureDir(join(path, "state"));
+    await writeFile(
+      lossLedgerPath(path),
+      `${JSON.stringify({ at: "+275760-09-13T00:00:00.000Z", kind: "hook_timed_out", count: 1, key: KEY, detail: "stop" })}\n`,
+    );
+
+    // Act
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert: read as undated — the kinds survive; the wire fallback did not fire
+    expect(report.total).toBe(4);
+    expect(report.kinds).toEqual({ spool_expired: 3, hook_timed_out: 1 });
+    expect(TelemetryLossReportSchema.safeParse(report).success).toBe(true);
+  });
+
+  test("a report that still fails the wire schema is sent as a loss with no span", () => {
+    // Arrange: more kinds than the hub admits — the last line of defence
+    const kinds = Object.fromEntries(Array.from({ length: 30 }, (_unused, index) => [`k${String(index)}`, 1]));
+
+    // Act
+    const wire = toWireReport({ total: 30, kinds, oldestAt: T0.toISOString(), newestAt: T4.toISOString() });
+
+    // Assert: never zero, never a refused session call
+    expect(wire).toEqual({ total: 30, kinds: { unattributed: 30 }, oldestAt: null, newestAt: null });
+    expect(TelemetryLossReportSchema.safeParse(wire).success).toBe(true);
   });
 });
 

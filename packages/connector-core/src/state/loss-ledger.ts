@@ -32,6 +32,7 @@ import { MAX_LOSS_LEDGER_BYTES } from "../constants.ts";
 import { ensureDir, readTextOrNull } from "../config/paths.ts";
 import { addCount } from "../spool/counts.ts";
 import type { Counts } from "../spool/counts.ts";
+import { ledgerInstant } from "../spool/ledger-read.ts";
 import { toLines } from "../spool/lines.ts";
 
 /** The LOSS_KINDS (schema/telemetry-loss.ts) this ledger is the source of. */
@@ -174,11 +175,11 @@ const earlierIso = (left: string | null, right: string): string =>
 const laterIso = (left: string | null, right: string): string =>
   left === null || right > left ? right : left;
 
-/** The line's instant re-formatted from `Date.parse`, or null when it has none. */
-const instantOf = (at: string): string | null => {
-  const ms = Date.parse(at);
-  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
-};
+/**
+ * The line's instant as the wire carries it, or null when it has none
+ * (spool/ledger-read.ts: four-digit years only, review M2).
+ */
+const instantOf = (at: string): string | null => ledgerInstant(at);
 
 /**
  * This repo's share of the ledger: every line keyed to `key`, plus every
