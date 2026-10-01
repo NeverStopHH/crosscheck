@@ -528,7 +528,7 @@ export const ingestWorkContext = async (
  * inventing one for them would put a word in the shared vocabulary that means
  * nothing on any host.
  */
-const TARGET_EVENT_KINDS = {
+export const TARGET_EVENT_KINDS = {
   file: "file.modified",
   error_fingerprint: "tool.failed",
 } as const;

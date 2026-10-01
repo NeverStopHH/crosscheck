@@ -39,7 +39,9 @@ export type {
   OrderedEvent,
   SessionCausalOrder,
 } from "./services/session-order.ts";
-export { seqKindFor } from "./services/record-handlers.ts";
+// TARGET_EVENT_KINDS beside seqKindFor: connector-core's declared-guarantee
+// build check (01a §3.6) holds its per-kind table to the hub's projection.
+export { TARGET_EVENT_KINDS, seqKindFor } from "./services/record-handlers.ts";
 export { createEmbedderFromEnv } from "./services/embedder.ts";
 export type { Embedder } from "./services/embedder.ts";
 // 03's ground, exported because 04's verdict layer and 07's instrumentation
