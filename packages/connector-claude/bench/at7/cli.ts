@@ -31,7 +31,7 @@ import type { AttemptFacts } from "./attempt.ts";
 import { runSweep } from "./driver.ts";
 import { childEnv, runProcess } from "./exec.ts";
 import { RUN_TRIPWIRE_MODE } from "./install.ts";
-import { buildManifest } from "./manifest-doc.ts";
+import { buildManifest, startDecision } from "./manifest-doc.ts";
 import type { SweepMode } from "./manifest-doc.ts";
 import { dryRunOrder, measuredOrder } from "./manifest.ts";
 import type { Slot } from "./manifest.ts";
@@ -115,11 +115,24 @@ const refuse = (reason: string): void => {
   process.exitCode = EXIT_REFUSED;
 };
 
-const readJson = async (path: string): Promise<unknown> => {
+/**
+ * manifest.json as found: null only when ABSENT; its raw text when it does
+ * not parse — so a corrupt manifest is refused, never silently overwritten.
+ */
+const readManifestFile = async (path: string): Promise<unknown> => {
+  let raw: string;
   try {
-    return JSON.parse(await readFile(path, "utf8"));
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if (typeof error === "object" && error !== null && (error as { code?: unknown }).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  try {
+    return JSON.parse(raw) as unknown;
   } catch {
-    return null;
+    return raw;
   }
 };
 
@@ -182,14 +195,6 @@ const main = async (): Promise<void> => {
   const manifestFile = join(args.outDir, "manifest.json");
   await mkdir(args.outDir, { recursive: true });
 
-  // Refuse an out dir that already holds a manifest unless --resume: a sweep
-  // must never silently re-run into another's results (H1).
-  const existingManifest = await readJson(manifestFile);
-  if (existingManifest !== null && !args.resume) {
-    refuse(`${manifestFile} already exists — use --resume, or a fresh --out`);
-    return;
-  }
-
   const runEnv = childEnv(process.env, {
     CROSSCHECK_HOME: "<per-run temp dir>",
     CROSSCHECK_TRIPWIRE: RUN_TRIPWIRE_MODE,
@@ -206,15 +211,26 @@ const main = async (): Promise<void> => {
     );
     return;
   }
-  if (!args.resume) {
-    const manifest = buildManifest({
-      mode,
-      order,
-      ...(await harnessProvenance()),
-      env: runEnv,
-      shellProfileCheck,
-      createdAt: new Date().toISOString(),
-    });
+  // The manifest THIS harness would write. A fresh dir gets it; a resume must
+  // match it in mode, seed, order, HEAD and payload hash (H1, A2.5).
+  const manifest = buildManifest({
+    mode,
+    order,
+    ...(await harnessProvenance()),
+    env: runEnv,
+    shellProfileCheck,
+    createdAt: new Date().toISOString(),
+  });
+  const decision = startDecision({
+    resume: args.resume,
+    stored: await readManifestFile(manifestFile),
+    current: manifest,
+  });
+  if (decision.kind === "refuse") {
+    refuse(`${manifestFile}: ${decision.reason}`);
+    return;
+  }
+  if (decision.kind === "write") {
     await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   }
 

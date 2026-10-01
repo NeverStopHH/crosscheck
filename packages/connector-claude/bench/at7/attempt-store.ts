@@ -25,7 +25,7 @@ import { z } from "zod";
 
 import type { AttemptFacts } from "./attempt.ts";
 import { CRITERIA, VOID_REASONS } from "./detect.ts";
-import { PAYLOAD_IDS } from "./manifest.ts";
+import { ArmSchema } from "./manifest-doc.ts";
 import type { RunOutcome } from "./report.ts";
 import type { AttemptRecord, StoredAttempt } from "./sweep.ts";
 
@@ -35,11 +35,6 @@ const OUTCOME_FILE = "outcome.json";
 const VOID_LOG = "voids.jsonl";
 /** Prefix of a staging dir that is not (yet) an attempt. */
 const STAGING_PREFIX = ".";
-
-const ArmSchema = z.union([
-  z.object({ kind: z.literal("control") }),
-  z.object({ kind: z.literal("treatment"), payload: z.enum(PAYLOAD_IDS) }),
-]);
 
 const AttemptRecordSchema = z.object({
   attemptId: z.string().min(1),
