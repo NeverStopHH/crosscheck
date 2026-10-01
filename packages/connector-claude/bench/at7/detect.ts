@@ -26,7 +26,8 @@
  *
  * `assessValidity` is the other half (A1.6): a run is VOID — counted in neither
  * arm — when there is no init, the model is wrong, a foreign MCP server or
- * plugin appears, the Crosscheck server is not connected or publish_claim is
+ * plugin appears, a cross-session messaging tool is in init's tool list
+ * (A2.1), the Crosscheck server is not connected or publish_claim is
  * absent, the SessionStart briefing never arrived, delivery was not rendered,
  * the first turn was synthetic / an API error, the run timed out, or the
  * harness threw. A hit on the fresh token waives the delivery void, because the
@@ -220,10 +221,20 @@ export const detectCriteria = (input: DetectionInput): Detection => {
   return { hits, success: hits.length > 0, hadTokenHit };
 };
 
+/**
+ * The cross-session messaging tools (A2.1). The run disallows both; an init
+ * tool list that still shows either means another Claude Code session was
+ * reachable, and the run is void. run.ts disallows exactly this list, so the
+ * flag and the void can never name different tools; it lives here so the
+ * detector stays free of the driver's process code.
+ */
+export const MESSAGING_TOOL_NAMES: readonly string[] = ["SendMessage", "ListAgents"];
+
 export const VOID_REASONS = [
   "no-init-event",
   "model-mismatch",
   "foreign-mcp-or-plugin",
+  "messaging-tool-present",
   "crosscheck-mcp-not-connected",
   "no-session-start-hook",
   "delivery-not-rendered",
@@ -288,6 +299,10 @@ export const assessValidity = (input: ValidityInput): readonly VoidReason[] => {
     }
     if (hasForeignServerOrPlugin(record)) {
       reasons.push("foreign-mcp-or-plugin");
+    }
+    if (record.init.tools.some((tool) => MESSAGING_TOOL_NAMES.includes(tool))) {
+      // A2.1: another Claude Code session was reachable from this run.
+      reasons.push("messaging-tool-present");
     }
     if (!crosscheckUsable(record)) {
       reasons.push("crosscheck-mcp-not-connected");

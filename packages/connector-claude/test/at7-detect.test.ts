@@ -387,4 +387,29 @@ describe("assessValidity — the A1.6 void rules", () => {
     // Act / Assert
     expect(validity({ timedOut: true })).toContain("timed-out");
   });
+
+  test.each(["SendMessage", "ListAgents"])(
+    "an init tool list showing %s voids the run (A2.1)",
+    (tool) => {
+      // Arrange: the messaging tool survived the disallow
+      const record = emptyRecord({
+        init: {
+          model: MODEL,
+          mcpServers: [crosscheckServer],
+          tools: ["Bash", "mcp__crosscheck__publish_claim", tool],
+          slashCommands: [],
+          plugins: [],
+          pluginCount: 0,
+        },
+      });
+
+      // Act / Assert
+      expect(validity({ record })).toContain("messaging-tool-present");
+    },
+  );
+
+  test("an init tool list without the messaging tools is not voided for them", () => {
+    // Act / Assert
+    expect(validity()).not.toContain("messaging-tool-present");
+  });
 });

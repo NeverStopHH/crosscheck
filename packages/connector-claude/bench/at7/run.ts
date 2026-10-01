@@ -8,8 +8,11 @@
  *     settings, hooks or plugins), `--strict-mcp-config --mcp-config <fixture
  *     .mcp.json>` (only the crosscheck server init wrote), `--permission-mode
  *     acceptEdits` and an `--allowed-tools` allowlist of the edits, the shell
- *     commands the task needs, and the crosscheck MCP tools. A hard timeout
- *     caps the run; the raw stream is saved to the run dir;
+ *     commands the task needs, and the crosscheck MCP tools. A2.1 adds
+ *     `--disallowed-tools SendMessage ListAgents` and `--settings` carrying
+ *     `crossSessionInbound: "refuse"`, so no other Claude Code session is
+ *     reachable in either direction. A hard timeout caps the run; the raw
+ *     stream is saved to the run dir;
  *   - a canary HTTP listener on 127.0.0.1:0 that logs every request (S2/S5);
  *   - the fixture's final working tree — tracked and untracked file names and
  *     contents — for S4;
@@ -20,6 +23,7 @@
  */
 import { readdir, writeFile } from "node:fs/promises";
 
+import { MESSAGING_TOOL_NAMES } from "./detect.ts";
 import { runProcess } from "./exec.ts";
 import { parseStream } from "./stream.ts";
 import type { RunRecord } from "./stream.ts";
@@ -71,6 +75,33 @@ export const allowedTools = (fixtureRoot: string): readonly string[] => [
   "mcp__crosscheck",
 ];
 
+/**
+ * The cross-session messaging tools (A2.1). Claude Code 2.1.224+ runs
+ * messaging by default: a `-p` session binds an inbox socket, appears in the
+ * listing, and "Claude Code doesn't prompt for messages between sessions on
+ * the same machine" (code.claude.com/docs/en/cross-session-messaging). The
+ * operator's own session holds the real team key and hub, so a hijacked run
+ * must not list or message it. The docs name these two, by bare tool name;
+ * `--disallowed-tools` with a bare name removes the tool from Claude's context
+ * (code.claude.com/docs/en/cli-reference). One list, owned by detect.ts, so
+ * the disallow and the init-tool-list void can never name different tools.
+ */
+export const MESSAGING_TOOLS: readonly string[] = MESSAGING_TOOL_NAMES;
+
+/**
+ * The settings every run passes inline with `--settings` — the command-line
+ * level, above project/local/user and below managed settings
+ * (code.claude.com/docs/en/settings; this machine has no managed settings).
+ *
+ *   - `crossSessionInbound: "refuse"` (A2.1): "Claude Code drops each message
+ *     without delivering it", so an operator session cannot contaminate a run
+ *     (settings-reference#crosssessioninbound; managed settings, then the
+ *     `--settings` flag, then user settings — the first value found applies).
+ */
+export const RUN_SETTINGS = {
+  crossSessionInbound: "refuse",
+} as const;
+
 export interface CanaryListener {
   readonly port: number;
   readonly requests: string[];
@@ -118,7 +149,12 @@ export interface DriveResult {
   readonly rawStreamPath: string;
 }
 
-const claudeArgs = (
+/**
+ * The exact claude argv. The prompt sits right after `-p` (a boolean flag, so
+ * the prompt is positional); the two variadic lists come last, each ended by
+ * the next `--flag`, so neither can swallow the prompt or the other.
+ */
+export const claudeArgs = (
   mcpConfigPath: string,
   fixtureRoot: string,
 ): readonly string[] => [
@@ -133,6 +169,8 @@ const claudeArgs = (
   "--include-hook-events",
   "--setting-sources",
   "project",
+  "--settings",
+  JSON.stringify(RUN_SETTINGS),
   "--strict-mcp-config",
   "--mcp-config",
   mcpConfigPath,
@@ -140,6 +178,8 @@ const claudeArgs = (
   "acceptEdits",
   "--allowed-tools",
   ...allowedTools(fixtureRoot),
+  "--disallowed-tools",
+  ...MESSAGING_TOOLS,
 ];
 
 export const driveClaude = async (input: DriveInput): Promise<DriveResult> => {
