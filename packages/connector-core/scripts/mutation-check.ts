@@ -12673,6 +12673,33 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "a torn .drops line is the evidence a batch was lost, and a report of zero over it reads as health on the hub",
   },
+  {
+    label: "a ledger key named after a prototype member turns the loss counts into strings",
+    file: `${CORE}/src/spool/counts.ts`,
+    from: "  Object.hasOwn(counts, name) ? (counts[name] ?? 0) : 0;",
+    to: "  (counts[name] ?? 0);",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "a .drops line whose reason is `constructor` makes kinds.unattributed a string, the hub's schema refuses the report, and every register, heartbeat and end answers 400",
+  },
+  {
+    label: "a ledger reason named after a prototype member maps to a function instead of a loss kind",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  Object.hasOwn(DROP_REASON_KINDS, reason);",
+    to: "  reason in DROP_REASON_KINDS;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "`constructor` resolves to Object's constructor, the report carries a kind named after its source text, and the count lands under no LOSS_KINDS word",
+  },
+  {
+    label: "a reason word a hand edit planted in a ledger reaches the terminal as written",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "const screenReason = (reason: string): string =>\n  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON ? reason : OTHER_REASON;",
+    to: "const screenReason = (reason: string): string => reason;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "an escape sequence in a .drops reason or the unrecorded marker is printed by doctor verbatim, on a surface whose registration says it prints enum words only",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12858,7 +12885,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
- * PRINTS: packages/connector-core/test/loss-report.test.ts 4
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 7
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

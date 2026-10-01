@@ -45,6 +45,8 @@ import {
   spoolUnrecordedDropsPath,
   writePrivateFile,
 } from "../config/paths.ts";
+import { addCount } from "./counts.ts";
+import type { Counts } from "./counts.ts";
 import { toLines } from "./lines.ts";
 import { appendOnce } from "./write.ts";
 
@@ -214,17 +216,12 @@ const LEDGER_TERMINATOR = "\n";
 const RECORD_KIND_PATTERN = /^[a-z][a-z0-9_]{0,40}$/;
 const OTHER_KIND = "other";
 
-const screenKinds = (
-  kinds: Readonly<Record<string, number>>,
-): Record<string, number> =>
-  Object.entries(kinds).reduce<Record<string, number>>(
-    (screened, [kind, count]) => {
-      if (count <= 0) {
-        return screened;
-      }
-      const name = RECORD_KIND_PATTERN.test(kind) ? kind : OTHER_KIND;
-      return { ...screened, [name]: (screened[name] ?? 0) + count };
-    },
+const screenKinds = (kinds: Counts): Counts =>
+  Object.entries(kinds).reduce<Counts>(
+    (screened, [kind, count]) =>
+      count <= 0
+        ? screened
+        : addCount(screened, RECORD_KIND_PATTERN.test(kind) ? kind : OTHER_KIND, count),
     {},
   );
 
@@ -288,12 +285,10 @@ const add = (left: DropSummary, right: DropSummary): DropSummary => ({
   malformed: left.malformed + right.malformed,
 });
 
-type Counts = Readonly<Record<string, number>>;
-
 const addCounts = (left: Counts, right: Counts): Counts =>
-  Object.entries(right).reduce<Record<string, number>>(
-    (sum, [name, count]) => ({ ...sum, [name]: (sum[name] ?? 0) + count }),
-    { ...left },
+  Object.entries(right).reduce<Counts>(
+    (sum, [name, count]) => addCount(sum, name, count),
+    left,
   );
 
 const sumOf = (counts: Counts): number =>

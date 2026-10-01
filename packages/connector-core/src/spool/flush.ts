@@ -38,6 +38,8 @@ import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { bytesOfLines, writeCursorOffset } from "./cursor.ts";
+import { addCount } from "./counts.ts";
+import type { Counts } from "./counts.ts";
 import { recordDrop } from "./drops.ts";
 import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
@@ -109,14 +111,12 @@ const kindsWithStatus = (
   records: readonly Record<string, unknown>[],
   results: readonly RecordResult[] | undefined,
   status: string,
-): Readonly<Record<string, number>> =>
+): Counts =>
   (results ?? [])
     .filter((result) => result.status === status)
-    .reduce<Record<string, number>>((kinds, result) => {
+    .reduce<Counts>((kinds, result) => {
       const kind = records[result.index]?.["kind"];
-      return typeof kind === "string"
-        ? { ...kinds, [kind]: (kinds[kind] ?? 0) + 1 }
-        : kinds;
+      return typeof kind === "string" ? addCount(kinds, kind, 1) : kinds;
     }, {});
 
 /**

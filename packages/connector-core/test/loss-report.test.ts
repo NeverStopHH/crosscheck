@@ -225,6 +225,43 @@ describe("one spelling for doctor and status", () => {
     expect(`${lines.dropped ?? ""}${lines.ignored ?? ""}${lines.capture ?? ""}`).not.toContain("/");
   });
 
+  test("a reason word or marker a hand edit planted prints as the ledger's own vocabulary, never as the string", async () => {
+    // Arrange: a .drops line and a marker whose words are not the ledger's
+    const path = await home();
+    await ensureDir(spoolDir(path, KEY));
+    await writeFile(
+      spoolDropsPath(path, KEY, SLUG),
+      `${JSON.stringify({ at: T1.toISOString(), count: 2, reason: "\u001b[31mrm -rf" })}\n`,
+      "utf8",
+    );
+    await writePrivateFile(
+      spoolUnrecordedDropsPath(path, KEY),
+      `${JSON.stringify({ at: "\u001b]0;pwned\u0007", count: 4, reason: "\u001b[2J" })}\n`,
+    );
+
+    // Act
+    const { dropped } = formatLossLines(await readLocalLosses(path, KEY));
+
+    // Assert
+    expect(dropped).toContain("(other 2)");
+    expect(dropped).toContain("(4 records, other, undated)");
+    expect(dropped).not.toContain("\u001b");
+  });
+
+  test("a prototype member's name as a reason is no reason: unattributed on the wire, other on the line", async () => {
+    // Arrange
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 2, "constructor" as never, T1);
+    await recordDrop(path, KEY, SLUG, 1, "__proto__" as never, T1);
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(local.report.kinds).toEqual({ unattributed: 3 });
+    expect(formatLossLines(local).dropped).toContain("(other 3)");
+  });
+
   test("a clean machine prints nothing on any of the three", async () => {
     // Act
     const lines = formatLossLines(await readLocalLosses(await home(), KEY));

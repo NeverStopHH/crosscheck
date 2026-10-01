@@ -23,7 +23,13 @@ import type { LossKind, TelemetryLossReport } from "@crosscheck/schema";
 import { HUB_COVERAGE_WINDOW_DAYS, MS_PER_DAY } from "../constants.ts";
 import { readCaptureLosses } from "../state/loss-ledger.ts";
 import type { CaptureLossSummary } from "../state/loss-ledger.ts";
-import { readDropDetail, readUnrecordedDrop } from "./drops.ts";
+import { addCount } from "./counts.ts";
+import type { Counts } from "./counts.ts";
+import {
+  UNATTRIBUTED_DROP_REASON,
+  readDropDetail,
+  readUnrecordedDrop,
+} from "./drops.ts";
 import type { DropDetail, UnrecordedDrop } from "./drops.ts";
 
 /**
@@ -45,13 +51,17 @@ const DROP_REASON_KINDS: Readonly<Record<string, LossKind>> = {
   "outside-root": "touch_outside_root",
 };
 
-export const lossKindOfDropReason = (reason: string): LossKind =>
-  DROP_REASON_KINDS[reason] ?? UNATTRIBUTED_LOSS_KIND;
+/** Own keys only: `constructor` or `__proto__` in a ledger line is no reason. */
+const isDropReasonWord = (reason: string): boolean =>
+  Object.hasOwn(DROP_REASON_KINDS, reason);
 
-type Counts = Readonly<Record<string, number>>;
+export const lossKindOfDropReason = (reason: string): LossKind =>
+  isDropReasonWord(reason)
+    ? (DROP_REASON_KINDS[reason] ?? UNATTRIBUTED_LOSS_KIND)
+    : UNATTRIBUTED_LOSS_KIND;
 
 const bump = (counts: Counts, name: string, by: number): Counts =>
-  by <= 0 ? counts : { ...counts, [name]: (counts[name] ?? 0) + by };
+  by <= 0 ? counts : addCount(counts, name, by);
 
 const earlierIso = (left: string | null, right: string | null): string | null =>
   left === null || right === null ? (left ?? right) : right < left ? right : left;
@@ -227,22 +237,42 @@ export interface LossLines {
   readonly capture: string | null;
 }
 
+/** A word no ledger writer spells — what a hand edit or a torn line left. */
+const OTHER_REASON = "other";
+
+/**
+ * THE LEDGER'S OWN WORDS, AND NOTHING ELSE, REACH A TERMINAL. A `.drops`
+ * reason and the marker's fields are strings read back from files, and files
+ * get edited: a reason this module does not know prints as `other`, and the
+ * marker's instant is re-formatted from `Date.parse` or printed `undated`.
+ */
+const screenReason = (reason: string): string =>
+  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON ? reason : OTHER_REASON;
+
+const screenReasons = (counts: Counts): Counts =>
+  Object.entries(counts).reduce<Counts>(
+    (screened, [reason, count]) => bump(screened, screenReason(reason), count),
+    {},
+  );
+
+const markerClause = (marker: UnrecordedDrop | null): string =>
+  marker === null
+    ? ""
+    : `, plus at least one batch its ledger could not take (${String(marker.count)} records, ` +
+      `${screenReason(marker.reason)}, ${wireInstant(marker.at) ?? "undated"}) — the total is a lower bound`;
+
 const droppedLine = (local: LocalLosses): string | null => {
   const { summary } = local.drops;
   if (summary.records === 0 && summary.malformed === 0 && local.unrecorded === null) {
     return null;
   }
-  const unrecorded =
-    local.unrecorded === null
-      ? ""
-      : `, plus at least one batch its ledger could not take (${String(local.unrecorded.count)} records, ${local.unrecorded.reason}, ${local.unrecorded.at}) — the total is a lower bound`;
   const malformed =
     summary.malformed === 0
       ? ""
       : `, ${plural(summary.malformed, "ledger entry", "ledger entries")} unreadable`;
   return (
     `${plural(summary.records, "record")} discarded in ${plural(summary.entries, "batch", "batches")}` +
-    `${parenthetical(breakdown(local.drops.byReason))}${malformed}${unrecorded}`
+    `${parenthetical(breakdown(screenReasons(local.drops.byReason)))}${malformed}${markerClause(local.unrecorded)}`
   );
 };
 

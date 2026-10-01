@@ -30,6 +30,8 @@ import { z } from "zod";
 
 import { MAX_LOSS_LEDGER_BYTES } from "../constants.ts";
 import { ensureDir, readTextOrNull } from "../config/paths.ts";
+import { addCount } from "../spool/counts.ts";
+import type { Counts } from "../spool/counts.ts";
 import { toLines } from "../spool/lines.ts";
 
 /** The LOSS_KINDS (schema/telemetry-loss.ts) this ledger is the source of. */
@@ -163,14 +165,8 @@ const safeJson = (line: string): unknown => {
   }
 };
 
-const bump = (
-  counts: Readonly<Record<string, number>>,
-  name: string,
-  by: number,
-): Readonly<Record<string, number>> => ({
-  ...counts,
-  [name]: (counts[name] ?? 0) + by,
-});
+const bump = (counts: Counts, name: string, by: number): Counts =>
+  addCount(counts, name, by);
 
 const earlierIso = (left: string | null, right: string): string =>
   left === null || right < left ? right : left;
