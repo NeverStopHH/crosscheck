@@ -232,9 +232,69 @@ describe("enrolling through the page", () => {
     // Assert
     expect(response.status).toBe(422);
   });
+
+  test("a localhost ceremony from a peer that is not this machine is refused", async () => {
+    // Arrange — localhost names a different machine for every browser; an
+    // agent on the person's other device could serve its own page there.
+    for (const peerAddress of ["100.64.0.7", null]) {
+      const harness = await createTestHarness({ peerAddress });
+      const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+      const viewer = await viewerOf(harness, nick);
+      const { code } = await mintEnrolmentCode({
+        db: harness.db,
+        developerId: nick.developerId,
+        source: "admin",
+        now: harness.clock.now(),
+      });
+
+      // Act
+      const response = await ceremony(harness, viewer, "options", { action: "enrol", code, label: "MacBook" });
+
+      // Assert — an unknown peer is not taken for this machine either.
+      expect(response.status).toBe(422);
+      expect(((await response.json()) as { error: { code: string } }).error.code).toBe("origin_not_local");
+    }
+  });
 });
 
 describe("approving through the page", () => {
+  test("a verify refused before the signature check spends its ceremony", async () => {
+    // Arrange — a key that cannot sign here is refused before verifyAssertion;
+    // the same ceremony must not then be finishable with the right key.
+    const { harness, nick, ken } = await setup();
+    const kensKey = createSoftCredential();
+    await enrolViaUi(harness, await viewerOf(harness, ken), kensKey);
+    const kenViewer = await pastCoolOff(harness, ken);
+    const requestId = await pendingRequest(harness, nick.developerId);
+    const until = new Date(harness.clock.now().getTime() + 24 * HOUR).toISOString();
+    const fields = { action: "approve", subjectId: requestId, expiresAt: until, reason: "ok" };
+    const options = await dataOf<{ ceremonyId: string; publicKey: { challenge: string } }>(
+      await ceremony(harness, kenViewer, "options", fields),
+    );
+    const answerWith = (credential: SoftCredential) =>
+      ceremony(harness, kenViewer, "verify", {
+        ...fields,
+        ceremonyId: options.ceremonyId,
+        response: softAuthenticationResponse({
+          credential,
+          challenge: options.publicKey.challenge,
+          origin: TEST_WEBAUTHN_ORIGIN,
+          rpId: RP_ID,
+          signCount: 1,
+        }),
+      });
+
+    // Act
+    const stranger = await answerWith(createSoftCredential());
+    const retry = await answerWith(kensKey);
+
+    // Assert
+    expect(stranger.status).toBe(422);
+    expect(retry.status).toBe(422);
+    expect(((await retry.json()) as { error: { code: string } }).error.code).toBe("unknown_ceremony");
+    expect(await harness.db.select().from(fenceWaivers)).toHaveLength(0);
+  });
+
   test("PK-3: a usable passkey approves a request and the fence opens with passkey authority", async () => {
     // Arrange
     const { harness, nick, ken } = await setup();

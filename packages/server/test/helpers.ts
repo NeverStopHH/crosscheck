@@ -44,10 +44,18 @@ export interface TestHarnessOptions {
   readonly embedDeadlineMs?: number;
   /** Omitted = the hub's own localhost origin, as an unconfigured hub has (04a §7). */
   readonly webauthnOrigins?: readonly string[];
+  /**
+   * The TCP peer every request appears to come from. Omitted = loopback, the
+   * browser on the hub's own machine; `app.request` has no socket to read.
+   */
+  readonly peerAddress?: string | null;
 }
 
 /** The origin the harness accepts passkeys at unless a test says otherwise. */
 export const TEST_WEBAUTHN_ORIGIN = "http://localhost:7100";
+
+/** The browser on the hub's own machine. */
+const TEST_LOOPBACK_PEER = "127.0.0.1";
 
 export const createTestHarness = async (
   options: TestHarnessOptions = {},
@@ -66,6 +74,7 @@ export const createTestHarness = async (
       ? {}
       : { embedDeadlineMs: options.embedDeadlineMs }),
     webauthnOrigins: options.webauthnOrigins ?? [TEST_WEBAUTHN_ORIGIN],
+    peerAddress: () => (options.peerAddress === undefined ? TEST_LOOPBACK_PEER : options.peerAddress),
   });
   return { app, clock, db };
 };

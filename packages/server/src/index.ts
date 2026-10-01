@@ -1,6 +1,7 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 
 import { createApp } from "./app.ts";
+import { bunPeerAddress } from "./http/peer.ts";
 import { generateApiKey } from "./auth/keys.ts";
 import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
@@ -127,6 +128,8 @@ export interface CreateServerOptions {
    * `startServer` always passes the parsed `CROSSCHECK_WEBAUTHN_ORIGINS`.
    */
   readonly webauthnOrigins?: readonly string[];
+  /** Omitted = Bun's own `requestIP` (http/peer.ts); the test harness injects one. */
+  readonly peerAddress?: (c: Context<AppEnv>) => string | null;
 }
 
 /**
@@ -161,6 +164,7 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
       : { embedDeadlineMs: options.embedDeadlineMs }),
     uiSessionSecret: resolveUiSessionSecret(options.uiSessionSecret),
     webauthnOrigins: options.webauthnOrigins ?? [],
+    peerAddress: options.peerAddress ?? bunPeerAddress,
   });
 
 const MIN_PORT = 1;

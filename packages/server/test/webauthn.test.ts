@@ -26,6 +26,9 @@ const ORIGIN = "http://localhost:7100";
 const RP_ID = "localhost";
 const NICK = "dev_nick";
 const KEN = "dev_ken";
+/** The browser session a ceremony was minted in; an agent's own login is another one. */
+const SESSION = "session_person";
+const AGENT_SESSION = "session_agent";
 const START_MS = Date.parse("2026-09-30T12:00:00.000Z");
 const TERMS: CeremonyTerms = {
   pinId: "pin_fence",
@@ -52,6 +55,7 @@ const enrol = async (
   developerId: string = NICK,
 ): Promise<StoredCredential> => {
   const options = await webauthn.registrationOptions({
+    sessionKey: SESSION,
     developerId,
     userName: developerId,
     origin: ORIGIN,
@@ -62,6 +66,7 @@ const enrol = async (
   }
   const outcome = await webauthn.verifyRegistration({
     ceremonyId: options.ceremonyId,
+    sessionKey: SESSION,
     developerId,
     response: softRegistrationResponse({
       credential,
@@ -81,8 +86,10 @@ const approveOptions = async (
   stored: StoredCredential,
   terms: CeremonyTerms = TERMS,
   developerId: string = NICK,
+  sessionKey: string = SESSION,
 ) => {
   const options = await webauthn.authenticationOptions({
+    sessionKey,
     developerId,
     purpose: "approve",
     subject: "wr_1",
@@ -115,6 +122,12 @@ describe("which origins a hub accepts passkeys at (04a §7)", () => {
     );
   });
 
+  test("an IP address is refused at startup — browsers will not use one as an RP ID", () => {
+    for (const origin of ["http://127.0.0.1:7100", "http://[::1]:7100", "https://100.64.0.7"]) {
+      expect(() => parseWebAuthnOrigins(origin, 7100)).toThrow(/IP address/);
+    }
+  });
+
   test("something that is not a URL is refused at startup rather than skipped", () => {
     expect(() => parseWebAuthnOrigins("hub.tailnet.ts.net", 7100)).toThrow(
       /CROSSCHECK_WEBAUTHN_ORIGINS/,
@@ -144,6 +157,7 @@ describe("enrolment", () => {
 
     // Act
     const options = await webauthn.registrationOptions({
+      sessionKey: SESSION,
       developerId: NICK,
       userName: NICK,
       origin: "http://100.64.0.7:7100",
@@ -159,6 +173,7 @@ describe("enrolment", () => {
     const { webauthn } = setup();
     const credential = createSoftCredential();
     const options = await webauthn.registrationOptions({
+      sessionKey: SESSION,
       developerId: NICK,
       userName: NICK,
       origin: ORIGIN,
@@ -169,6 +184,7 @@ describe("enrolment", () => {
     // Act
     const outcome = await webauthn.verifyRegistration({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: NICK,
       response: softRegistrationResponse({
         credential,
@@ -195,6 +211,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     // Act
     const outcome = await webauthn.verifyAssertion({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: NICK,
       purpose: "approve",
       subject: "wr_1",
@@ -223,6 +240,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     // Act
     const outcome = await webauthn.verifyAssertion({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: NICK,
       purpose: "approve",
       subject: "wr_1",
@@ -256,6 +274,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     const verify = () =>
       webauthn.verifyAssertion({
         ceremonyId: options.ceremonyId,
+        sessionKey: SESSION,
         developerId: NICK,
         purpose: "approve",
         subject: "wr_1",
@@ -283,6 +302,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     // Act
     const outcome = await webauthn.verifyAssertion({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: NICK,
       purpose: "approve",
       subject: "wr_1",
@@ -312,6 +332,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     // Act
     const outcome = await webauthn.verifyAssertion({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: NICK,
       purpose: "approve",
       subject: "wr_1",
@@ -339,6 +360,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     // Act
     const outcome = await webauthn.verifyAssertion({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: KEN,
       purpose: "approve",
       subject: "wr_1",
@@ -366,6 +388,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     // Act
     const outcome = await webauthn.verifyAssertion({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: NICK,
       purpose: "revoke_waiver",
       subject: "wr_1",
@@ -393,6 +416,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     // Act
     const outcome = await webauthn.verifyAssertion({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: NICK,
       purpose: "approve",
       subject: "wr_1",
@@ -420,6 +444,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
     // Act
     const outcome = await webauthn.verifyAssertion({
       ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
       developerId: NICK,
       purpose: "approve",
       subject: "wr_1",
@@ -438,6 +463,66 @@ describe("an assertion signs exactly one set of terms, once", () => {
     expect(outcome).toEqual({ refusal: "response_rejected" });
   });
 
+  test("an assertion made inside a cross-origin frame is refused", async () => {
+    // Arrange — the library accepts crossOrigin:true without a topOrigin; a
+    // ceremony is only ever run on the hub's own page.
+    const { webauthn } = setup();
+    const credential = createSoftCredential();
+    const stored = await enrol(webauthn, credential);
+    const options = await approveOptions(webauthn, stored);
+
+    // Act
+    const outcome = await webauthn.verifyAssertion({
+      ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
+      developerId: NICK,
+      purpose: "approve",
+      subject: "wr_1",
+      terms: TERMS,
+      credential: stored,
+      response: softAuthenticationResponse({
+        credential,
+        challenge: options.options.challenge,
+        origin: ORIGIN,
+        rpId: RP_ID,
+        signCount: 1,
+        options: { crossOrigin: true },
+      }),
+    });
+
+    // Assert
+    expect(outcome).toEqual({ refusal: "response_rejected" });
+  });
+
+  test("a ceremony minted in one session cannot be finished in another", async () => {
+    // Arrange — the agent's own login is a session of the same developer.
+    const { webauthn } = setup();
+    const credential = createSoftCredential();
+    const stored = await enrol(webauthn, credential);
+    const options = await approveOptions(webauthn, stored);
+
+    // Act
+    const outcome = await webauthn.verifyAssertion({
+      ceremonyId: options.ceremonyId,
+      sessionKey: AGENT_SESSION,
+      developerId: NICK,
+      purpose: "approve",
+      subject: "wr_1",
+      terms: TERMS,
+      credential: stored,
+      response: softAuthenticationResponse({
+        credential,
+        challenge: options.options.challenge,
+        origin: ORIGIN,
+        rpId: RP_ID,
+        signCount: 1,
+      }),
+    });
+
+    // Assert
+    expect(outcome).toEqual({ refusal: "wrong_ceremony" });
+  });
+
   test("a credential enrolled under another RP ID is not offered for this origin", async () => {
     // Arrange — 04a §7: a passkey is bound to the RP ID it was enrolled under.
     const { webauthn } = setup([ORIGIN, "https://hub.tailnet.ts.net"]);
@@ -445,6 +530,7 @@ describe("an assertion signs exactly one set of terms, once", () => {
 
     // Act
     const options = await webauthn.authenticationOptions({
+      sessionKey: SESSION,
       developerId: NICK,
       purpose: "approve",
       subject: "wr_1",
@@ -455,5 +541,105 @@ describe("an assertion signs exactly one set of terms, once", () => {
 
     // Assert
     expect(options).toEqual({ refusal: "no_passkey_for_origin" });
+  });
+});
+
+describe("an agent with the api key cannot lock its person out of a ceremony (04a §5)", () => {
+  const verifyAs = (
+    webauthn: ReturnType<typeof createWebAuthn>,
+    credential: SoftCredential,
+    stored: StoredCredential,
+    options: { ceremonyId: string; options: { challenge: string } },
+  ) =>
+    webauthn.verifyAssertion({
+      ceremonyId: options.ceremonyId,
+      sessionKey: SESSION,
+      developerId: NICK,
+      purpose: "approve",
+      subject: "wr_1",
+      terms: TERMS,
+      credential: stored,
+      response: softAuthenticationResponse({
+        credential,
+        challenge: options.options.challenge,
+        origin: ORIGIN,
+        rpId: RP_ID,
+        signCount: 1,
+      }),
+    });
+
+  test("minting without end in its own session takes no slot from the person", async () => {
+    // Arrange — the agent logs in with the key: same developer, its own session.
+    const { webauthn } = setup();
+    const credential = createSoftCredential();
+    const stored = await enrol(webauthn, credential);
+    for (let i = 0; i < 50; i += 1) {
+      await approveOptions(webauthn, stored, TERMS, NICK, AGENT_SESSION);
+    }
+    const persons = await approveOptions(webauthn, stored);
+    for (let i = 0; i < 50; i += 1) {
+      await approveOptions(webauthn, stored, TERMS, NICK, AGENT_SESSION);
+    }
+
+    // Act
+    const outcome = await verifyAs(webauthn, credential, stored, persons);
+
+    // Assert
+    expect(outcome).toEqual({ newCounter: 1 });
+  });
+
+  test("spreading over sessions to the developer's cap still leaves the person a slot", async () => {
+    // Arrange — every agent session full, so the developer is at its cap.
+    const { webauthn } = setup();
+    const credential = createSoftCredential();
+    const stored = await enrol(webauthn, credential);
+    const agentSessions = ["a1", "a2", "a3", "a4"].map((id) => `${AGENT_SESSION}_${id}`);
+    const fill = async () => {
+      for (const session of agentSessions) {
+        for (let i = 0; i < 4; i += 1) {
+          await approveOptions(webauthn, stored, TERMS, NICK, session);
+        }
+      }
+    };
+    await fill();
+    const persons = await approveOptions(webauthn, stored);
+    await fill();
+
+    // Act
+    const outcome = await verifyAs(webauthn, credential, stored, persons);
+
+    // Assert
+    expect(outcome).toEqual({ newCounter: 1 });
+  });
+
+  test("a ceremony the route refused before the signature check is spent all the same", async () => {
+    // Arrange — single use even on failure: a refusal that left the ceremony
+    // standing would let the same nonce be tried again.
+    const { webauthn } = setup();
+    const credential = createSoftCredential();
+    const stored = await enrol(webauthn, credential);
+    const options = await approveOptions(webauthn, stored);
+
+    // Act
+    webauthn.discard({ ceremonyId: options.ceremonyId, sessionKey: SESSION, developerId: NICK });
+    const outcome = await verifyAs(webauthn, credential, stored, options);
+
+    // Assert
+    expect(outcome).toEqual({ refusal: "unknown_ceremony" });
+  });
+
+  test("another session cannot discard the person's ceremony", async () => {
+    // Arrange
+    const { webauthn } = setup();
+    const credential = createSoftCredential();
+    const stored = await enrol(webauthn, credential);
+    const options = await approveOptions(webauthn, stored);
+
+    // Act
+    webauthn.discard({ ceremonyId: options.ceremonyId, sessionKey: AGENT_SESSION, developerId: NICK });
+    const outcome = await verifyAs(webauthn, credential, stored, options);
+
+    // Assert
+    expect(outcome).toEqual({ newCounter: 1 });
   });
 });

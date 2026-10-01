@@ -12,7 +12,15 @@
  *
  * SINGLE USE, EVEN ON FAILURE. A verify attempt removes the ceremony before
  * anything is checked: a ceremony that survived a failed attempt is a nonce an
- * attacker may retry against.
+ * attacker may retry against. A route that refuses BEFORE it reaches verify
+ * calls `discard`, so the rule holds there too.
+ *
+ * BOUND TO ONE BROWSER SESSION. An agent holding the api key can log in as the
+ * same developer, so "same developer" cannot tell the person's prompt from the
+ * agent's. Each ceremony belongs to the session that minted it; slots are
+ * counted per session and, at the developer's cap, taken from whichever OTHER
+ * session holds the most — so a person who opens the page always gets a
+ * prompt, however many an agent keeps open.
  *
  * NOTHING SECRET AT REST. Pending ceremonies live in this closure; a hub
  * restart drops them and the person presses the button again — the trade
@@ -46,9 +54,12 @@ export const CEREMONY_TTL_MS = 5 * 60_000;
  * Bounds on what one hub holds in memory. A signed-in member can mint
  * ceremonies without finishing them; without a cap that is unbounded memory,
  * and without a per-developer cap one member's stuck tab locks out the rest.
+ * Neither of the two lower caps ever REFUSES: reaching one evicts an older
+ * prompt (see `mint`), because a refusal there is a lockout an agent can hold.
  */
 const MAX_PENDING_CEREMONIES = 1024;
-const MAX_PENDING_PER_DEVELOPER = 8;
+const MAX_PENDING_PER_DEVELOPER = 16;
+const MAX_PENDING_PER_SESSION = 4;
 const NONCE_BYTES = 16;
 const RP_NAME = "crosscheck";
 
@@ -84,8 +95,14 @@ export type WebAuthnRefusal =
   | "wrong_ceremony"
   | "response_rejected";
 
-interface PendingCeremony {
+/** Who may finish a ceremony: the developer AND the browser session that asked for it. */
+export interface CeremonyOwner {
   readonly developerId: string;
+  /** Opaque per UI session (the route hashes the session token); never a secret itself. */
+  readonly sessionKey: string;
+}
+
+interface PendingCeremony extends CeremonyOwner {
   readonly purpose: CeremonyPurpose;
   readonly subject: string;
   readonly nonce: Uint8Array;
@@ -121,16 +138,40 @@ const challengeOf = (
 };
 
 /**
- * Hostnames a browser treats as a secure context over plain http. Anything
- * else needs https, or the browser refuses the ceremony before the hub ever
- * sees it (04a §7).
+ * `localhost` and `*.localhost`: the hostnames a browser treats as a secure
+ * context over plain http AND accepts as an RP ID. Anything else needs https,
+ * or the browser refuses the ceremony before the hub ever sees it (04a §7).
  */
-const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
+export const isLocalhostName = (hostname: string): boolean =>
+  hostname === "localhost" || hostname.endsWith(".localhost");
+
+/** `127.0.0.1`, `[::1]`, `100.64.0.7` — `URL` has already normalised the spelling. */
+const isIpLiteral = (hostname: string): boolean =>
+  hostname.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 
 const isSecureContextOrigin = (url: URL): boolean =>
-  url.protocol === "https:" ||
-  (url.protocol === "http:" &&
-    (LOOPBACK_HOSTNAMES.has(url.hostname) || url.hostname.endsWith(".localhost")));
+  url.protocol === "https:" || (url.protocol === "http:" && isLocalhostName(url.hostname));
+
+/**
+ * A browser's `clientDataJSON` says whether the ceremony ran inside a frame
+ * from another origin. The library accepts `crossOrigin: true` without a
+ * `topOrigin`; a crosscheck ceremony only ever runs on the hub's own page, so
+ * any other answer — or one that does not parse — is refused.
+ */
+const isCrossOrigin = (clientDataJSON: string): boolean => {
+  try {
+    const parsed: unknown = JSON.parse(
+      new TextDecoder().decode(isoBase64URL.toBuffer(clientDataJSON)),
+    );
+    if (typeof parsed !== "object" || parsed === null) {
+      return true;
+    }
+    // Absent is what browsers from before the field send: same-origin.
+    return "crossOrigin" in parsed && parsed.crossOrigin !== false;
+  } catch {
+    return true;
+  }
+};
 
 /**
  * `CROSSCHECK_WEBAUTHN_ORIGINS`, read once at startup (04a §7).
@@ -156,6 +197,12 @@ export const parseWebAuthnOrigins = (raw: string | undefined, port: number): rea
       } catch {
         throw new Error(
           `CROSSCHECK_WEBAUTHN_ORIGINS: "${entry}" is not a URL — list origins like https://hub.tailnet.ts.net`,
+        );
+      }
+      if (isIpLiteral(url.hostname)) {
+        throw new Error(
+          `CROSSCHECK_WEBAUTHN_ORIGINS: browsers refuse passkeys at an IP address (${url.origin}) — ` +
+            "use http://localhost on the hub's machine, or an https hostname such as `tailscale serve` gives",
         );
       }
       if (!isSecureContextOrigin(url)) {
@@ -191,15 +238,54 @@ export const createWebAuthn = (config: WebAuthnConfig) => {
     }
   };
 
+  /** The oldest pending ceremony among `ids` — Map order is insertion order. */
+  const oldestOf = (ids: readonly string[]): string | undefined => ids[0];
+
+  /**
+   * Make room for one more of `owner`'s ceremonies by evicting, never by
+   * refusing: first the session's own oldest at its cap, then — at the
+   * developer's cap — the oldest of the OTHER session holding the most.
+   */
+  const makeRoom = (owner: CeremonyOwner): void => {
+    const byDeveloper = [...pending.entries()].filter(
+      ([, entry]) => entry.developerId === owner.developerId,
+    );
+    const ownSession = byDeveloper
+      .filter(([, entry]) => entry.sessionKey === owner.sessionKey)
+      .map(([id]) => id);
+    if (ownSession.length >= MAX_PENDING_PER_SESSION) {
+      const evicted = oldestOf(ownSession);
+      if (evicted !== undefined) {
+        pending.delete(evicted);
+      }
+      return;
+    }
+    if (byDeveloper.length < MAX_PENDING_PER_DEVELOPER) {
+      return;
+    }
+    const others = new Map<string, string[]>();
+    for (const [id, entry] of byDeveloper) {
+      if (entry.sessionKey !== owner.sessionKey) {
+        others.set(entry.sessionKey, [...(others.get(entry.sessionKey) ?? []), id]);
+      }
+    }
+    const fullest = [...others.values()].reduce<string[]>(
+      (most, ids) => (ids.length > most.length ? ids : most),
+      [],
+    );
+    const evicted = oldestOf(fullest);
+    if (evicted !== undefined) {
+      pending.delete(evicted);
+    }
+  };
+
   const mint = (
     ceremony: Omit<PendingCeremony, "nonce" | "expiresAtMs">,
   ): { id: string; nonce: Uint8Array } | { refusal: WebAuthnRefusal } => {
     const nowMs = config.nowMs();
     purgeExpired(nowMs);
-    const mine = [...pending.values()].filter(
-      (entry) => entry.developerId === ceremony.developerId,
-    ).length;
-    if (pending.size >= MAX_PENDING_CEREMONIES || mine >= MAX_PENDING_PER_DEVELOPER) {
+    makeRoom(ceremony);
+    if (pending.size >= MAX_PENDING_CEREMONIES) {
       return { refusal: "too_many_ceremonies" };
     }
     const id = randomUUID();
@@ -208,35 +294,50 @@ export const createWebAuthn = (config: WebAuthnConfig) => {
     return { id, nonce };
   };
 
-  /** Removes the ceremony FIRST, then judges it: single use even on failure. */
+  const isOwnedBy = (ceremony: PendingCeremony, owner: CeremonyOwner): boolean =>
+    ceremony.developerId === owner.developerId && ceremony.sessionKey === owner.sessionKey;
+
+  /**
+   * Removes the ceremony FIRST, then judges it: single use even on failure.
+   * Except for a caller who does not own it — another session spending the
+   * person's prompt by guessing at it would be a lockout of its own.
+   */
   const take = (
     id: string,
-    expected: Pick<PendingCeremony, "developerId" | "purpose" | "subject">,
+    expected: CeremonyOwner & Pick<PendingCeremony, "purpose" | "subject">,
   ): PendingCeremony | { refusal: WebAuthnRefusal } => {
     const ceremony = pending.get(id);
-    pending.delete(id);
     if (ceremony === undefined) {
       return { refusal: "unknown_ceremony" };
     }
+    if (!isOwnedBy(ceremony, expected)) {
+      return { refusal: "wrong_ceremony" };
+    }
+    pending.delete(id);
     if (ceremony.expiresAtMs <= config.nowMs()) {
       return { refusal: "ceremony_expired" };
     }
-    if (
-      ceremony.developerId !== expected.developerId ||
-      ceremony.purpose !== expected.purpose ||
-      ceremony.subject !== expected.subject
-    ) {
+    if (ceremony.purpose !== expected.purpose || ceremony.subject !== expected.subject) {
       return { refusal: "wrong_ceremony" };
     }
     return ceremony;
   };
 
-  const registrationOptions = async (input: {
-    readonly developerId: string;
-    readonly userName: string;
-    readonly origin: string;
-    readonly existing: readonly StoredCredential[];
-  }): Promise<
+  /** Spend a ceremony the route refused before verifying it — its owner's only. */
+  const discard = (input: CeremonyOwner & { readonly ceremonyId: string }): void => {
+    const ceremony = pending.get(input.ceremonyId);
+    if (ceremony !== undefined && isOwnedBy(ceremony, input)) {
+      pending.delete(input.ceremonyId);
+    }
+  };
+
+  const registrationOptions = async (
+    input: CeremonyOwner & {
+      readonly userName: string;
+      readonly origin: string;
+      readonly existing: readonly StoredCredential[];
+    },
+  ): Promise<
     | { ceremonyId: string; options: PublicKeyCredentialCreationOptionsJSON }
     | { refusal: WebAuthnRefusal }
   > => {
@@ -246,6 +347,7 @@ export const createWebAuthn = (config: WebAuthnConfig) => {
     }
     const minted = mint({
       developerId: input.developerId,
+      sessionKey: input.sessionKey,
       purpose: "enrol",
       subject: input.developerId,
       origin: input.origin,
@@ -273,18 +375,23 @@ export const createWebAuthn = (config: WebAuthnConfig) => {
     return { ceremonyId: minted.id, options };
   };
 
-  const verifyRegistration = async (input: {
-    readonly ceremonyId: string;
-    readonly developerId: string;
-    readonly response: RegistrationResponseJSON;
-  }): Promise<{ credential: StoredCredential } | { refusal: WebAuthnRefusal }> => {
+  const verifyRegistration = async (
+    input: CeremonyOwner & {
+      readonly ceremonyId: string;
+      readonly response: RegistrationResponseJSON;
+    },
+  ): Promise<{ credential: StoredCredential } | { refusal: WebAuthnRefusal }> => {
     const ceremony = take(input.ceremonyId, {
       developerId: input.developerId,
+      sessionKey: input.sessionKey,
       purpose: "enrol",
       subject: input.developerId,
     });
     if ("refusal" in ceremony) {
       return ceremony;
+    }
+    if (isCrossOrigin(input.response.response.clientDataJSON)) {
+      return { refusal: "response_rejected" };
     }
     try {
       const verified = await verifyRegistrationResponse({
@@ -317,14 +424,15 @@ export const createWebAuthn = (config: WebAuthnConfig) => {
     }
   };
 
-  const authenticationOptions = async (input: {
-    readonly developerId: string;
-    readonly purpose: CeremonyPurpose;
-    readonly subject: string;
-    readonly terms: CeremonyTerms;
-    readonly origin: string;
-    readonly credentials: readonly StoredCredential[];
-  }): Promise<
+  const authenticationOptions = async (
+    input: CeremonyOwner & {
+      readonly purpose: CeremonyPurpose;
+      readonly subject: string;
+      readonly terms: CeremonyTerms;
+      readonly origin: string;
+      readonly credentials: readonly StoredCredential[];
+    },
+  ): Promise<
     | { ceremonyId: string; options: PublicKeyCredentialRequestOptionsJSON }
     | { refusal: WebAuthnRefusal }
   > => {
@@ -338,6 +446,7 @@ export const createWebAuthn = (config: WebAuthnConfig) => {
     }
     const minted = mint({
       developerId: input.developerId,
+      sessionKey: input.sessionKey,
       purpose: input.purpose,
       subject: input.subject,
       origin: input.origin,
@@ -360,21 +469,25 @@ export const createWebAuthn = (config: WebAuthnConfig) => {
     return { ceremonyId: minted.id, options };
   };
 
-  const verifyAssertion = async (input: {
-    readonly ceremonyId: string;
-    readonly developerId: string;
-    readonly purpose: CeremonyPurpose;
-    readonly subject: string;
-    readonly terms: CeremonyTerms;
-    readonly credential: StoredCredential;
-    readonly response: AuthenticationResponseJSON;
-  }): Promise<{ newCounter: number } | { refusal: WebAuthnRefusal }> => {
+  const verifyAssertion = async (
+    input: CeremonyOwner & {
+      readonly ceremonyId: string;
+      readonly purpose: CeremonyPurpose;
+      readonly subject: string;
+      readonly terms: CeremonyTerms;
+      readonly credential: StoredCredential;
+      readonly response: AuthenticationResponseJSON;
+    },
+  ): Promise<{ newCounter: number } | { refusal: WebAuthnRefusal }> => {
     const ceremony = take(input.ceremonyId, input);
     if ("refusal" in ceremony) {
       return ceremony;
     }
     if (input.response.id !== input.credential.id || input.credential.rpId !== ceremony.rpId) {
       return { refusal: "wrong_ceremony" };
+    }
+    if (isCrossOrigin(input.response.response.clientDataJSON)) {
+      return { refusal: "response_rejected" };
     }
     try {
       const verified = await verifyAuthenticationResponse({
@@ -403,6 +516,7 @@ export const createWebAuthn = (config: WebAuthnConfig) => {
     verifyRegistration,
     authenticationOptions,
     verifyAssertion,
+    discard,
     isConfiguredOrigin: (origin: string): boolean => rpIdByOrigin.has(origin),
   };
 };

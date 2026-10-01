@@ -45,6 +45,8 @@ export interface SoftAuthenticatorOptions {
   readonly userVerified?: boolean;
   /** The 16-byte AAGUID; default all zero, which is what an emulator sends. */
   readonly aaguid?: Uint8Array;
+  /** Default false. True builds what a browser sends for a ceremony run inside a cross-origin frame. */
+  readonly crossOrigin?: boolean;
 }
 
 /** `Uint8Array<ArrayBuffer>` throughout: the library's `Uint8Array_`, never a shared-memory view. */
@@ -80,10 +82,8 @@ const flagsOf = (options: SoftAuthenticatorOptions, attested: boolean): number =
   (options.userVerified === false ? 0 : FLAG_USER_VERIFIED) |
   (attested ? FLAG_ATTESTED_CREDENTIAL : 0);
 
-const clientData = (type: string, challenge: string, origin: string): Bytes =>
-  new Uint8Array(
-    new TextEncoder().encode(JSON.stringify({ type, challenge, origin, crossOrigin: false })),
-  );
+const clientData = (type: string, challenge: string, origin: string, crossOrigin = false): Bytes =>
+  new Uint8Array(new TextEncoder().encode(JSON.stringify({ type, challenge, origin, crossOrigin })));
 
 const coseKey = (credential: SoftCredential): Bytes =>
   isoCBOR.encode(
@@ -143,7 +143,7 @@ export const softRegistrationResponse = (input: {
     clientExtensionResults: {},
     response: {
       clientDataJSON: isoBase64URL.fromBuffer(
-        clientData("webauthn.create", input.challenge, input.origin),
+        clientData("webauthn.create", input.challenge, input.origin, options.crossOrigin),
       ),
       attestationObject: isoBase64URL.fromBuffer(attestationObject),
       transports: ["internal" as const],
@@ -166,7 +166,7 @@ export const softAuthenticationResponse = (input: {
     new Uint8Array([flagsOf(options, false)]),
     uint32(input.signCount ?? 0),
   );
-  const clientDataJSON = clientData("webauthn.get", input.challenge, input.origin);
+  const clientDataJSON = clientData("webauthn.get", input.challenge, input.origin, options.crossOrigin);
   const signature = sign(
     "sha256",
     concat(authenticatorData, sha256(clientDataJSON)),

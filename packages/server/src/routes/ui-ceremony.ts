@@ -40,7 +40,9 @@ import {
 import { amendWaiver, approveRequest, readPendingRequest } from "../services/waiver-requests.ts";
 import type { WaiverRequestRefusal } from "../services/waiver-requests.ts";
 import { readLiveWaiver, revokeWaiver } from "../services/waivers.ts";
-import type { CeremonyPurpose, CeremonyTerms, WebAuthn } from "../services/webauthn.ts";
+import { isLocalhostName } from "../services/webauthn.ts";
+import type { CeremonyOwner, CeremonyPurpose, CeremonyTerms, WebAuthn } from "../services/webauthn.ts";
+import { isLoopbackAddress } from "../http/peer.ts";
 import { isCsrfValid } from "../ui/session.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 import { WAIVER_REQUEST_SENTENCE } from "./waiver-sentences.ts";
@@ -78,6 +80,8 @@ const VerifyExtrasSchema = z.object({
 /** One sentence per refusal a person can meet on these two endpoints. */
 const CEREMONY_SENTENCE = {
   missing_origin: "the request carried no Origin — open the page in a browser",
+  origin_not_local:
+    "a passkey at a localhost address only works from the hub's own machine — from anywhere else, use the hub's https address",
   origin_not_configured:
     "this hub does not accept passkeys at this address — use one listed in CROSSCHECK_WEBAUTHN_ORIGINS",
   no_passkey_for_origin:
@@ -151,11 +155,33 @@ const signedTermsOf = async (
   }
 };
 
+/**
+ * A `localhost` origin is a different machine for every browser that types
+ * it, so it is only believed from a loopback peer (http/peer.ts says why). An
+ * https origin names one host and needs no such rule.
+ */
+const isLocalOriginFromElsewhere = (c: Context<AppEnv>, deps: AppDeps, origin: string): boolean => {
+  let hostname: string;
+  try {
+    hostname = new URL(origin).hostname;
+  } catch {
+    // Not a URL: no configured origin matches it, and webauthn refuses it there.
+    return false;
+  }
+  if (!isLocalhostName(hostname)) {
+    return false;
+  }
+  const peer = deps.peerAddress(c);
+  return peer === null || !isLoopbackAddress(peer);
+};
+
 /** CSRF, then the fields, then the origin: what both endpoints refuse before any ceremony logic. */
 const readCeremonyRequest = async (
   c: Context<AppEnv>,
   deps: AppDeps,
-): Promise<{ fields: CeremonyFields; body: unknown; origin: string } | Response> => {
+): Promise<
+  { fields: CeremonyFields; body: unknown; origin: string; owner: CeremonyOwner } | Response
+> => {
   if (!isCsrfValid(deps.uiSessionSecret, c.get("uiSessionToken"), c.req.header(CSRF_HEADER) ?? "")) {
     return fail(c, 403, "csrf_invalid", "invalid or missing CSRF token — reload the page");
   }
@@ -168,7 +194,16 @@ const readCeremonyRequest = async (
   if (origin === undefined) {
     return refuse(c, "missing_origin");
   }
-  return { fields: parsed.data, body, origin };
+  if (isLocalOriginFromElsewhere(c, deps, origin)) {
+    return refuse(c, "origin_not_local");
+  }
+  const owner: CeremonyOwner = {
+    developerId: c.get("developer").id,
+    // The session token is a bearer secret; the ceremony map only needs to
+    // tell sessions apart, so it holds the digest.
+    sessionKey: digest(c.get("uiSessionToken")),
+  };
+  return { fields: parsed.data, body, origin, owner };
 };
 
 export const ceremonyOptions = async (
@@ -181,7 +216,7 @@ export const ceremonyOptions = async (
     return request;
   }
   const developer = c.get("developer");
-  const { fields, origin } = request;
+  const { fields, origin, owner } = request;
   if (fields.action === "enrol") {
     const valid = await isEnrolmentCodeValid({
       db: deps.db,
@@ -193,7 +228,7 @@ export const ceremonyOptions = async (
       return refuse(c, "code_invalid");
     }
     const minted = await webauthn.registrationOptions({
-      developerId: developer.id,
+      ...owner,
       userName: developer.email,
       origin,
       existing: await enrolledCredentials({ db: deps.db, developerId: developer.id }),
@@ -208,7 +243,7 @@ export const ceremonyOptions = async (
   }
   const usable = await usableCredentials({ db: deps.db, developerId: developer.id, now: deps.now() });
   const minted = await webauthn.authenticationOptions({
-    developerId: developer.id,
+    ...owner,
     ...signed,
     origin,
     credentials: usable.map((entry) => entry.credential),
@@ -337,13 +372,14 @@ const verifyEnrolment = async (
   c: Context<AppEnv>,
   deps: AppDeps,
   webauthn: WebAuthn,
+  owner: CeremonyOwner,
   fields: Extract<CeremonyFields, { action: "enrol" }>,
   extras: z.infer<typeof VerifyExtrasSchema>,
 ): Promise<Response> => {
-  const developerId = c.get("developer").id;
+  const developerId = owner.developerId;
   const verified = await webauthn.verifyRegistration({
+    ...owner,
     ceremonyId: extras.ceremonyId,
-    developerId,
     response: extras.response as unknown as RegistrationResponseJSON,
   });
   if ("refusal" in verified) {
@@ -375,23 +411,28 @@ export const ceremonyVerify = async (
   if (!extras.success) {
     return fail(c, 400, "validation_failed", formatIssues(extras.error));
   }
-  const { fields } = request;
+  const { fields, owner } = request;
   if (fields.action === "enrol") {
-    return verifyEnrolment(c, deps, webauthn, fields, extras.data);
+    return verifyEnrolment(c, deps, webauthn, owner, fields, extras.data);
   }
-  const developerId = c.get("developer").id;
+  const developerId = owner.developerId;
+  // Single use even when refused HERE, before the signature is looked at:
+  // a ceremony that survived would be a nonce to try again with another key.
+  const spend = (): void => webauthn.discard({ ...owner, ceremonyId: extras.data.ceremonyId });
   const signed = await signedTermsOf(deps, developerId, fields);
   if ("refusal" in signed) {
+    spend();
     return refuseWaiver(c, signed.refusal);
   }
   const usable = await usableCredentials({ db: deps.db, developerId, now: deps.now() });
   const match = usable.find((entry) => entry.credential.id === extras.data.response.id);
   if (match === undefined) {
+    spend();
     return refuse(c, "unknown_credential");
   }
   const verified = await webauthn.verifyAssertion({
+    ...owner,
     ceremonyId: extras.data.ceremonyId,
-    developerId,
     ...signed,
     credential: match.credential,
     response: extras.data.response as unknown as AuthenticationResponseJSON,

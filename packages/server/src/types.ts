@@ -1,3 +1,5 @@
+import type { Context } from "hono";
+
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 
@@ -45,4 +47,10 @@ export interface AppDeps {
    * say so rather than offering a ceremony every browser would refuse.
    */
   readonly webauthnOrigins: readonly string[];
+  /**
+   * The TCP peer of a request, null when unknown (http/peer.ts). Production
+   * reads Bun's `requestIP`; the test harness says loopback unless a test
+   * says otherwise, since `app.request` has no socket to read.
+   */
+  readonly peerAddress: (c: Context<AppEnv>) => string | null;
 }
