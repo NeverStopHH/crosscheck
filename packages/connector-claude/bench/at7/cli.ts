@@ -26,13 +26,16 @@ import { detectCriteria, assessValidity } from "./detect.ts";
 import { renderedAsksLine } from "./delivery.ts";
 import { mcpServerNames } from "./stream.ts";
 import { createFixture, commitWiring } from "./fixture.ts";
-import { childEnv } from "./exec.ts";
+import { childEnv, runProcess } from "./exec.ts";
 import { install, RUN_TRIPWIRE_MODE } from "./install.ts";
+import { worktreeRoot } from "./paths.ts";
 import { createDeveloper, seedDanaWork, startHub } from "./hub.ts";
 import { startHubProxy } from "./proxy.ts";
 import { dryRunOrder, measuredOrder } from "./manifest.ts";
 import type { Arm, Slot } from "./manifest.ts";
 import {
+  CONTROL_NOTE,
+  PAYLOAD_TEMPLATES,
   relevanceIntent,
   relevanceTitle,
   renderControlBody,
@@ -45,6 +48,7 @@ import {
   claudeVersion,
   collectWorkingTree,
   driveClaude,
+  fixtureGitDiff,
   RUN_MODEL,
   runFixtureTests,
   startCanary,
@@ -167,7 +171,7 @@ const runOneSlot = async (
       env: installed.env,
       rawStreamPath,
     });
-    const tree = await collectWorkingTree(fixture.repoRoot);
+    const tree = await collectWorkingTree(fixture.repoRoot, runDir);
     const taskSucceeded = await runFixtureTests(fixture.repoRoot);
 
     const detection = detectCriteria({
@@ -187,6 +191,13 @@ const runOneSlot = async (
       timedOut: drive.timedOut,
     });
     const { record } = drive;
+    // Fixture-relative paths so the §6 diff is not pure per-run path noise (M3).
+    const relativize = (paths: readonly string[]): readonly string[] =>
+      paths.map((path) =>
+        path.startsWith(`${fixture.repoRoot}/`)
+          ? path.slice(fixture.repoRoot.length + 1)
+          : path,
+      );
     const outcome: RunOutcome = {
       slotIndex: slot.index,
       arm: slot.arm,
@@ -198,9 +209,9 @@ const runOneSlot = async (
       turns: record.numTurns,
       durationMs: record.durationMs,
       costUsd: record.totalCostUsd,
-      filesRead: record.filesRead,
-      filesWritten: record.filesWritten,
-      filesEdited: record.filesEdited,
+      filesRead: relativize(record.filesRead),
+      filesWritten: relativize(record.filesWritten),
+      filesEdited: relativize(record.filesEdited),
       bashCommands: record.bashCommands,
       toolNames: record.toolUses.map((use) => use.name),
       todoItems: record.todoItems,
@@ -208,6 +219,31 @@ const runOneSlot = async (
     await writeFile(
       join(runDir, "outcome.json"),
       `${JSON.stringify({ ...outcome, timedOut: drive.timedOut }, null, 2)}\n`,
+      "utf8",
+    );
+    // The full §6 record, persisted for the human review (M4).
+    await writeFile(
+      join(runDir, "record.json"),
+      `${JSON.stringify(
+        {
+          slotIndex: slot.index,
+          arm: slot.arm,
+          model: record.init?.model ?? null,
+          mcpServers: record.init?.mcpServers ?? [],
+          plugins: record.init?.plugins ?? [],
+          pluginCount: record.init?.pluginCount ?? 0,
+          briefing: record.sessionStartBriefing,
+          firstAssistantText: record.firstAssistantText,
+          finalResultText: record.finalResultText,
+          todoItems: record.todoItems,
+          canaryRequests: canary.requests,
+          hubRequestBodies: proxy.requestBodies,
+          gitDiff: await fixtureGitDiff(fixture.repoRoot),
+          timedOut: drive.timedOut,
+        },
+        null,
+        2,
+      )}\n`,
       "utf8",
     );
     return {
@@ -329,6 +365,27 @@ const factsFromOutcome = (outcome: RunOutcome): SlotFacts => ({
   timedOut: false,
 });
 
+/** The identity of the harness at measurement time, for the manifest (M4, §3). */
+const harnessProvenance = async (): Promise<{
+  readonly claudeVersion: string;
+  readonly harnessHead: string;
+  readonly harnessDirty: boolean;
+  readonly payloadTemplateHash: string;
+}> => {
+  const root = worktreeRoot();
+  const head = await runProcess(["git", "rev-parse", "HEAD"], { cwd: root });
+  const status = await runProcess(["git", "status", "--porcelain"], { cwd: root });
+  const payloadTemplateHash = new Bun.CryptoHasher("sha256")
+    .update(JSON.stringify({ CONTROL_NOTE, PAYLOAD_TEMPLATES }))
+    .digest("hex");
+  return {
+    claudeVersion: await claudeVersion(),
+    harnessHead: head.stdout.trim(),
+    harnessDirty: status.stdout.trim().length > 0,
+    payloadTemplateHash,
+  };
+};
+
 const logLine = (facts: SlotFacts): string => {
   const { outcome } = facts;
   return (
@@ -369,9 +426,20 @@ const main = async (): Promise<void> => {
     CROSSCHECK_TRIPWIRE: RUN_TRIPWIRE_MODE,
   });
   if (!args.resume) {
+    const provenance = await harnessProvenance();
     await writeFile(
       manifestFile,
-      `${JSON.stringify({ mode, model: RUN_MODEL, env: runEnv, order }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          mode,
+          model: RUN_MODEL,
+          ...provenance,
+          env: runEnv,
+          order,
+        },
+        null,
+        2,
+      )}\n`,
       "utf8",
     );
   }
