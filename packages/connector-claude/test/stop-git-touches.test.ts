@@ -39,6 +39,7 @@ import { join } from "node:path";
 import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import { readSessionState, writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
 import { git } from "../../connector-core/test/helpers.ts";
 
@@ -223,5 +224,19 @@ describe("the Stop hook's git evidence lane", () => {
     expect(ran + skipped).toBe(1);
     console.log(`[stop-git-lane] Stop returned in ${String(elapsedMs)} ms (ceiling ${String(STOP_RETURN_CEILING_MS)})`);
     expect(elapsedMs).toBeLessThan(STOP_RETURN_CEILING_MS);
+  });
+
+  test("review M5: a skipped lane is a counted loss, keyed to this repo, not only a session-state number", async () => {
+    // Arrange: a Stop envelope of 2 x 200 ms, which can never leave the
+    // lane's GIT_TOUCHES_TIMEOUT_MS (250) unspent behind its own reserve
+    const fix = await fixture("stop-git-skip-loss", false);
+
+    // Act
+    await runHook("stop", stopPayload(fix), { ...fix.env, CROSSCHECK_TIMEOUT_MS: "200" });
+
+    // Assert
+    const losses = await readCaptureLosses(fix.home, fix.key);
+    expect(losses.byDetail["hook_timed_out:stop-git-lane"]).toBe(1);
+    expect(losses.unkeyed).toBe(0);
   });
 });

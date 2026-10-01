@@ -32,7 +32,7 @@ sibling count unread.
 
 **Several losses are not counted anywhere.** A tool call that touches more than `MAX_TARGETS_PER_INVOCATION`
 paths drops the rest with a `break` (`flows/capture-targets.ts:95-97`); the Stop-time git lane goes through the
-same cap (`constants.ts:2188`). A path the secret scan refuses is a `continue` (`:113`). A hook that exceeds its
+same cap, after its own bound `MAX_GIT_TOUCH_CANDIDATES` (`capture-git-touches.ts`). A path the secret scan refuses is a `continue` (`:113`). A hook that exceeds its
 budget resolves to `""` (`config/hook-budget.ts:58-70`) and the binary calls `process.exit` on that string
 (`cli/src/bin/crosscheck.ts:42-44`, `:56`), abandoning whatever the handler had not yet written — an append cut
 mid-write becomes a counted torn line, an append not yet started becomes nothing. The ACP engine skips wire lines
@@ -69,7 +69,7 @@ loss change a verdict, `suspect`, an absence, a hint, a solved match, or an empt
 | 5 | hub answered 200 and refused the record | `flush.ts:114`, `:129-138` | `.drops` `rejected` | the hub saw it and persisted nothing | yes | report → `telemetry_lost` |
 | 6 | **hub answered 200 and ignored the record's kind** | `records.ts:313-321`; connector reads nothing (`flush.ts:114`) | **not counted** | the hub counted and forgot | yes — a whole kind, e.g. a newer connector's evidence kinds | **new** `.drops` `ignored` with the kinds, report → `record_kinds_ignored` |
 | 7 | ledger append itself failed | `drops.ts:148-164` marker | `unrecorded.dropmarker` (last batch only, a floor) | no | yes | its count joins the report total; the report's `total` is a floor while the marker exists |
-| 8 | paths past `MAX_TARGETS_PER_INVOCATION` in one call | `capture-targets.ts:95-97` | **not counted** | no | yes — a `file` target lost; the git lane is capped too (`constants.ts:2188`) | **new** `.drops` `capture-capped`, report → `telemetry_lost` |
+| 8 | paths past `MAX_TARGETS_PER_INVOCATION` in one call | `capture-targets.ts:95-97` | **not counted** | no | yes — a `file` target lost; the git lane is capped too, first at `MAX_GIT_TOUCH_CANDIDATES` (counted since review M5) | **new** `.drops` `capture-capped`, report → `telemetry_lost` |
 | 9 | path refused by the secret scan | `capture-targets.ts:113` | **not counted** | no | yes — a pin can name the path | **new** `.drops` `secret-path`, report → `telemetry_lost` |
 | 10 | edit whose path resolved to no root of this repo | `capture/touched-root.ts:161`, booked `state/capture-bookkeeping.ts:163` | session state `outsideRootDrops` | no | **yes, one residual shape**: a linked worktree of the same repo that carries no committed config (`session-state.ts:196-205`) is *this* repo's file | **new** `.drops` `outside-root` when the event was an edit, report → `telemetry_lost` |
 | 11 | touch of a DIFFERENT connected repo (first-wins) | `touched-root.ts:159`, `capture-bookkeeping.ts:162` | session state `foreignRepoDrops`, machine-wide doctor/status line (`state/foreign-drops.ts`) | no | **no, for the bound repo** — proof §4.8.1 | stays local; cross-repo attribution refused (§8.3) |

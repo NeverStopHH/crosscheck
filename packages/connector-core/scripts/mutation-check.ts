@@ -13364,6 +13364,31 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/connected-repo.test.ts`,
     because: "every checkout on the machine owns a cut hook, and the M4 gate charges every connected repo again",
   },
+  // Review M5: the three losses that were still uncounted.
+  {
+    label: "dirty paths past the git lane's candidate bound are cut without a count",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "    changed.length - candidates.length,\n",
+    to: "    0,\n",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because: "a turn that touched the 61st dirty path loses it to a slice the freshness check never reaches, and nothing counts it",
+  },
+  {
+    label: "a skipped git lane is a session-state number and nothing else",
+    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    from: "  if (outcome.unavailable) {\n    await recordCaptureLoss(",
+    to: "  if (false) {\n    await recordCaptureLoss(",
+    test: `${CONNECTOR}/test/stop-git-touches.test.ts`,
+    because: "a session whose last turn skipped the lane loses its Bash-made edits, and the hub's coverage reads complete over them",
+  },
+  {
+    label: "requests the ACP pending map evicted reach a log line and no ledger",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "    count: evicted,\n",
+    to: "    count: 0,\n",
+    test: `${ACP}/test/wire-loss.test.ts`,
+    because: "a session/new whose answer arrives after its eviction never registers, and the proxy's only record of it is pending-evictions in the exit log",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13458,7 +13483,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
- * PRINTS: packages/connector-acp/test/wire-loss.test.ts 2
+ * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
@@ -13490,6 +13515,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
+ * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 1
@@ -13504,7 +13530,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
- * PRINTS: packages/connector-core/test/capture-losses.test.ts 5
+ * PRINTS: packages/connector-core/test/capture-losses.test.ts 6
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
