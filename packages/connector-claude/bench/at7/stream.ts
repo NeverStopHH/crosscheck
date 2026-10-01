@@ -12,22 +12,29 @@
  * measurement must record that it saw them rather than crash or lie by
  * omission.
  *
- * THE BRIEFING IS FOUND BY DEEP SEARCH. The SessionStart hook's rendered
- * briefing arrives as an `additionalContext` string inside a hook event, and
- * the exact nesting differs across CLI versions. Rather than pin one shape,
- * `briefingFromEvents` walks every event for objects carrying an
- * `additionalContext` string and prefers the one whose sibling hook-name says
- * SessionStart — falling back to the one that carries the briefing header, then
- * to the first non-empty one. The live-run driver verifies the choice against
- * the known seeded text (§7 delivery check).
+ * THE BRIEFING IS FOUND BY DEEP SEARCH, AND ONLY FROM SESSIONSTART. The
+ * SessionStart hook's rendered briefing arrives as an `additionalContext`
+ * string inside a hook event, and the exact nesting differs across CLI
+ * versions (the live 2.1.x CLI carries the hook's stdout as a JSON string).
+ * `briefingFromEvents` walks every hook event for `additionalContext` strings
+ * and keeps one only when EVERY hook name on its path — Claude Code's event
+ * and the hook's own payload alike — is SessionStart, and at least one is
+ * present (A2.5). There is no fallback: a deferred briefing that rode
+ * UserPromptSubmit (user-prompt-submit.ts), or a nameless context that merely
+ * carries the briefing header, is not SessionStart delivery and yields null,
+ * which §7 voids. The driver then checks the chosen text against the seeded
+ * body as rendered (A1.2).
  *
  * zod validates each KNOWN event at the boundary; the schemas are loose so an
  * extra field a new CLI adds rides through untouched.
  */
 import { z } from "zod";
 
-/** The briefing header fragment — the quoted-data notice the renderer emits. */
-const BRIEFING_MARKER = "quoted data, not instruction";
+/** The one hook whose output is §7 delivery (A2.5). */
+const SESSION_START = "SessionStart";
+
+/** The keys a hook event or a hook's own payload names its hook under. */
+const HOOK_NAME_KEYS = ["hookEventName", "hook_event_name", "hook_event"] as const;
 
 export interface McpServerInfo {
   readonly name: string;
@@ -188,90 +195,69 @@ const stringField = (input: unknown, key: string): string | null => {
 
 interface ContextCandidate {
   readonly context: string;
-  readonly hookName: string | null;
+  /** Every hook name on the path from the event down to this context. */
+  readonly hookNames: readonly string[];
 }
 
-/** All `additionalContext` strings with the hook name beside them, if any. */
-const contextCandidates = (node: unknown, found: ContextCandidate[]): void => {
+/** The hook a node names itself under, if it names one. */
+const hookNameOf = (record: Record<string, unknown>): string | null =>
+  HOOK_NAME_KEYS.map((key) => stringField(record, key)).find(
+    (name): name is string => name !== null,
+  ) ?? null;
+
+/** A string that may hold a hook's stdout as JSON, parsed; null otherwise. */
+const embeddedJson = (value: unknown): unknown => {
+  if (typeof value !== "string" || !value.includes("additionalContext")) {
+    return null;
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * All `additionalContext` strings under `node`, each with the hook names on
+ * its path. The live CLI carries a hook's stdout as a JSON STRING (the
+ * `output` field), so a string that could hold one is parsed and searched
+ * too, inheriting the enclosing event's names. Pure.
+ */
+const contextCandidates = (
+  node: unknown,
+  inherited: readonly string[],
+): readonly ContextCandidate[] => {
   if (Array.isArray(node)) {
-    for (const item of node) {
-      contextCandidates(item, found);
-    }
-    return;
+    return node.flatMap((item) => contextCandidates(item, inherited));
   }
   if (typeof node !== "object" || node === null) {
-    return;
+    return [];
   }
   const record = node as Record<string, unknown>;
+  const own = hookNameOf(record);
+  const hookNames = own === null ? inherited : [...inherited, own];
   const context = record["additionalContext"];
-  if (typeof context === "string" && context.length > 0) {
-    found.push({
-      context,
-      hookName:
-        stringField(record, "hookEventName") ??
-        stringField(record, "hook_event_name") ??
-        stringField(record, "hook_event"),
-    });
-  }
-  for (const value of Object.values(record)) {
-    // The live CLI carries a hook's stdout as a JSON STRING (the `output`
-    // field), so additionalContext sits inside a string rather than as an
-    // object key. Parse any string that could hold it and recurse into the
-    // result — tagged with this event's hook name when the embedded payload
-    // carries none of its own.
-    if (typeof value === "string" && value.includes("additionalContext")) {
-      try {
-        const parsed = JSON.parse(value) as unknown;
-        contextCandidates(tagHook(parsed, record), found);
-      } catch {
-        // Not JSON after all; nothing to recurse into.
-      }
-    }
-    contextCandidates(value, found);
-  }
+  const here: readonly ContextCandidate[] =
+    typeof context === "string" && context.length > 0 ? [{ context, hookNames }] : [];
+  const below = Object.values(record).flatMap((value) => [
+    ...contextCandidates(embeddedJson(value), hookNames),
+    ...contextCandidates(value, hookNames),
+  ]);
+  return [...here, ...below];
 };
 
-/**
- * When an embedded hook payload names no hook itself, lend it the enclosing
- * event's hook name so the SessionStart preference still applies.
- */
-const tagHook = (parsed: unknown, outer: Record<string, unknown>): unknown => {
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return parsed;
-  }
-  const inner = parsed as Record<string, unknown>;
-  const names = ["hookEventName", "hook_event_name", "hook_event"];
-  if (names.some((name) => typeof inner[name] === "string")) {
-    return parsed;
-  }
-  const outerName = names
-    .map((name) => outer[name])
-    .find((value): value is string => typeof value === "string");
-  return outerName === undefined ? parsed : { ...inner, hook_event: outerName };
-};
+/** SessionStart delivery: some hook is named, and every name says SessionStart. */
+const isSessionStartDelivery = (candidate: ContextCandidate): boolean =>
+  candidate.hookNames.length > 0 &&
+  candidate.hookNames.every((name) => name === SESSION_START);
 
 /**
- * The SessionStart briefing, by preference: a candidate explicitly named
- * SessionStart, then one carrying the briefing header, then the first
- * non-empty one — null when no event carried additionalContext at all.
+ * The SessionStart briefing: the first `additionalContext` whose whole path
+ * names SessionStart, or null — never another hook's output, never a
+ * nameless context (A2.5).
  */
-export const briefingFromEvents = (events: readonly unknown[]): string | null => {
-  const candidates: ContextCandidate[] = [];
-  contextCandidates(events, candidates);
-  const bySessionStart = candidates.find(
-    (candidate) => candidate.hookName === "SessionStart",
-  );
-  if (bySessionStart !== undefined) {
-    return bySessionStart.context;
-  }
-  const byHeader = candidates.find((candidate) =>
-    candidate.context.includes(BRIEFING_MARKER),
-  );
-  if (byHeader !== undefined) {
-    return byHeader.context;
-  }
-  return candidates[0]?.context ?? null;
-};
+export const briefingFromEvents = (events: readonly unknown[]): string | null =>
+  contextCandidates(events, []).find(isSessionStartDelivery)?.context ?? null;
 
 /** True for any event this run should file under hook events. */
 const isHookEvent = (event: Record<string, unknown>): boolean => {
@@ -492,6 +478,3 @@ export const parseStream = (raw: string): RunRecord => {
     parseErrors: acc.parseErrors,
   };
 };
-
-/** Exported for detect.ts: the marker that identifies a rendered briefing. */
-export { BRIEFING_MARKER };

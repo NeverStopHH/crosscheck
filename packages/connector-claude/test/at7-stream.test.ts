@@ -234,6 +234,50 @@ describe("parseStream", () => {
     expect(record.sessionStartBriefing).toBe(BRIEFING);
   });
 
+  test("a briefing delivered only by UserPromptSubmit is not the SessionStart briefing (A2.5)", () => {
+    // Arrange: SessionStart delivered nothing; the deferred briefing rode the
+    // first prompt instead (user-prompt-submit.ts), header and all.
+    const deferred = lines([
+      { type: "system", subtype: "init", model: "claude-opus-5-5", mcp_servers: [] },
+      {
+        type: "system",
+        subtype: "hook_response",
+        hook_event: "UserPromptSubmit",
+        output: JSON.stringify({
+          hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: BRIEFING },
+        }),
+      },
+    ]);
+
+    // Act / Assert
+    expect(parseStream(deferred).sessionStartBriefing).toBeNull();
+  });
+
+  test("a context naming no hook is not the SessionStart briefing, header or not", () => {
+    // Arrange: a hook event (so it is filed and searched) that names no hook
+    const nameless = lines([{ type: "hook", additionalContext: BRIEFING }]);
+
+    // Act / Assert
+    expect(parseStream(nameless).sessionStartBriefing).toBeNull();
+  });
+
+  test("an inner payload claiming SessionStart inside another hook's event does not count", () => {
+    // Arrange: the hook's own JSON says SessionStart, Claude Code's event does not
+    const mislabelled = lines([
+      {
+        type: "system",
+        subtype: "hook_response",
+        hook_event: "UserPromptSubmit",
+        output: JSON.stringify({
+          hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: BRIEFING },
+        }),
+      },
+    ]);
+
+    // Act / Assert
+    expect(parseStream(mislabelled).sessionStartBriefing).toBeNull();
+  });
+
   test("a synthetic API-error turn is not a real assistant turn", () => {
     // Arrange: an API error arrives as an assistant message with the synthetic
     // model and an isApiErrorMessage block — the shape the live 400 produced.
