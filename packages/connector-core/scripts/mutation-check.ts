@@ -12669,7 +12669,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "a precision over no verdict reads as nothing helped",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
     from: "      verdicts === 0 ? unavailable(\"no_labels\") : measured(tally.helpful / verdicts),",
     to: "      measured(verdicts === 0 ? 0 : tally.helpful / verdicts),",
     test: `${SERVER}/test/pilot-report.test.ts`,
@@ -12679,7 +12679,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "a coverage over no intervention reads as nobody labelling",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
     from:
       "      tally.interventions === 0\n        ? unavailable(\"no_interventions\")\n" +
       "        : measured(labelled / tally.interventions),",
@@ -12692,7 +12692,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // Rows an older hub wrote as `off_target` are noise; nothing is rewritten.
     label: "a label an older hub stored is lost from the noise count",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
     from: "const NOISE_WORDS = sql`('noise', ${PILOT_LEGACY_NOISE_MARK})`;",
     to: "const NOISE_WORDS = sql`('noise')`;",
     test: `${SERVER}/test/pilot-report.test.ts`,
@@ -12702,7 +12702,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "an answer somebody asked for is counted as an intervention",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
     from: "      JOIN population p ON p.id = hd.session_id\n      WHERE hd.channel <> ${PULLED_DELIVERY_CHANNEL}",
     to: "      JOIN population p ON p.id = hd.session_id\n      WHERE TRUE",
     test: `${SERVER}/test/pilot-report.test.ts`,
@@ -12713,7 +12713,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §12. A cohort is its own population, not the window's.
     label: "the two cohorts are the same population",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
     from: "    WHERE ps.repo = ${repo} AND ps.cohort = ${cohort}`;",
     to: "    WHERE ps.repo = ${repo}`;",
     test: `${SERVER}/test/pilot-report.test.ts`,
@@ -12723,7 +12723,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "the reasons list grows with every sentence anybody typed",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
     from: "    ORDER BY m.created_at DESC, m.id ASC\n    LIMIT ${PILOT_REPORT_MAX_LABEL_REASONS}",
     to: "    ORDER BY m.created_at DESC, m.id ASC",
     test: `${SERVER}/test/pilot-report.test.ts`,
@@ -12734,7 +12734,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // The reason renders in ONE place: its own repo's report.
     label: "a reason about another repo is printed in this repo's report",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
     from: "    WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL\n      AND s.repo = ${repo}",
     to: "    WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL",
     test: `${SERVER}/test/pilot-report.test.ts`,
