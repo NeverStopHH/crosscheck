@@ -13928,6 +13928,23 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/coverage-order.test.ts`,
     because: "the candidate list and the order block beside it are about two different sets of sessions",
   },
+  {
+    label: "ACP's deferred end drops the position its marker carries",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "it kept.\n                seq,\n",
+    to: "it kept.\n",
+    test: `${ACP}/test/capture-engine.test.ts`,
+    because:
+      "every deferred ACP end arrives pre_seq_connector, caps a lifecycle declaration the connector kept, and doctor blames a row of the session's own",
+  },
+  {
+    label: "the build check misses a deferred ender that drops the position",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "it kept.\n                seq,\n",
+    to: "it kept.\n",
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "session.ended has no evidence pattern and a forwarding ender allocates nothing, so no other check sees the dropped seq",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14012,6 +14029,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/waiver-render.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
+ * PRINTS: packages/connector-acp/test/capture-engine.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
@@ -14096,7 +14114,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
- * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 23
+ * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 24
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 2
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2

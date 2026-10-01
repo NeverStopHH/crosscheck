@@ -1184,7 +1184,8 @@ The evidence for each row:
   missed: the mid-session recovery in PostToolUse, `{ epoch: derived.seqEpoch, n: 0 }`
   (`connector-claude/src/hooks/post-tool-use.ts:78`).
 - **`session.ended`**: `end-session.ts:86` allocates the end before the state file is deleted, so
-  nothing can allocate after it. The deferred ender carries that same position on its marker.
+  nothing can allocate after it. The deferred ender carries that same position on its marker. Until
+  review H4 that was true for Claude and Cursor only: ACP's shutdown ender dropped it (§13.9).
 - **Claude `file.modified`**:
   - Edit-family calls are bracketed: `pre-tool-use.ts:188` opens the window and `post-tool-use.ts:284`
     closes it.
@@ -1255,6 +1256,10 @@ The evidence for each row:
   table (`connector-claude/src/hooks/session-start.ts:252`, `post-tool-use.ts:87`; Cursor
   `session-start.ts:122`, `recover.ts:136`; ACP `engine.ts:532`). Without that, a Cursor handler could
   type-check while sending Claude's table.
+- **Every `endSession` call forwards a position** (review H4). `session.ended` has no evidence
+  pattern, and a deferred ender forwards a marker's position without allocating one. So neither
+  check above can see an ender that drops it. The scan reads every `endSession(` call in the four
+  connector packages and refuses one without a third argument.
 
 **13.4 — Transport and storage.**
 
@@ -1386,3 +1391,12 @@ The evidence for each row:
   - The failure falls toward the weaker minimum: a fold over more sessions can only be lower.
   - Left as found: the agent_event rung itself still reads `complete / sessions_reported` for the same
     scope. That is 03's predicate, and the order block no longer inherits it (§13.10).
+- **H4 — ACP's deferred end sent no position.** `reapSpool` hands the ender the marker's seq. Claude
+  and Cursor forwarded it, but ACP's shutdown ender (`connector-acp/src/capture/engine.ts`) called
+  `endSession(hub, id)`.
+  - Every deferred ACP end arrived `pre_seq_connector`. That capped the `lifecycle` declaration and
+    made doctor's WARN blame a row of the session's own.
+  - ACP now forwards the seq. `capture-engine.test.ts` spends a marker at shutdown and reads the end
+    positioned at the marker's n.
+  - The scan rule in §13.3 refuses any `endSession(` call without a seq. The failure falls toward a
+    red build.

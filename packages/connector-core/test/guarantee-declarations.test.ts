@@ -604,6 +604,39 @@ const OWN_DECLARATION: Readonly<Record<GuaranteeConnector, RegExp>> = {
 };
 const REGISTER_CALL = /\b(?:registerSessionFlow|registerSession)\(/;
 
+const HUB_CLIENT = "packages/connector-core/src/http/hub.ts";
+/** `endSession(ctx, crosscheckSessionId, seq, losses)`: the position is the third argument. */
+const SEQ_ARGUMENT = 2;
+/** flows/end-session.ts plus the Claude, Cursor and ACP deferred enders. */
+const DEFERRED_END_CALLERS = 4;
+const OPENERS = new Set(["(", "[", "{"]);
+const CLOSERS = new Set([")", "]", "}"]);
+
+/** One call's top-level arguments, read from the character after its `(`. */
+const argumentsFrom = (source: string, start: number): readonly string[] => {
+  const args: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of source.slice(start)) {
+    if (depth === 0 && (char === "," || char === ")")) {
+      args.push(current.trim());
+      current = "";
+      if (char === ")") {
+        break;
+      }
+      continue;
+    }
+    depth += OPENERS.has(char) ? 1 : CLOSERS.has(char) ? -1 : 0;
+    current += char;
+  }
+  return args.filter((arg) => arg.length > 0);
+};
+
+const argumentsOfCalls = (source: string, callee: string): readonly (readonly string[])[] =>
+  [...source.matchAll(new RegExp(`\\b${callee}\\(`, "g"))].map((match) =>
+    argumentsFrom(source, (match.index ?? 0) + match[0].length),
+  );
+
 describe("the wire block a connector sends", () => {
   test("every register call in a connector package sends that connector's own declaration", async () => {
     for (const connector of GUARANTEE_CONNECTORS) {
@@ -623,6 +656,31 @@ describe("the wire block a connector sends", () => {
       expect(callers.length).toBeGreaterThan(0);
       expect(silent).toEqual([]);
     }
+  });
+
+  test("every endSession call in a connector package forwards a position (review H4)", async () => {
+    // Arrange: `session.ended` has no evidence pattern, and a module that
+    // forwards a marker's position allocates nothing — so neither the map nor
+    // the allocator scan sees a deferred ender that drops it.
+    const sources = (await Promise.all(PACKAGES.map(listSources))).flat();
+    const calls = (
+      await Promise.all(
+        sources.map(async (path) => {
+          const source = withoutComments(await Bun.file(join(REPO_ROOT, path)).text());
+          const importsIt = parseImports(path, source).some(
+            (entry) => entry.target === HUB_CLIENT && entry.names.includes("endSession"),
+          );
+          return importsIt ? argumentsOfCalls(source, "endSession").map((args) => ({ path, args })) : [];
+        }),
+      )
+    ).flat();
+    // Act
+    const unsequenced = calls
+      .filter(({ args }) => args.length < SEQ_ARGUMENT + 1 || args[SEQ_ARGUMENT] === "undefined")
+      .map(({ path, args }) => `${path}: endSession(${args.join(", ")})`);
+    // Assert: the flow and the three hosts' deferred enders, every one with its seq.
+    expect(calls.length).toBeGreaterThanOrEqual(DEFERRED_END_CALLERS);
+    expect(unsequenced).toEqual([]);
   });
 
   test("every connector sends nine triples a hub folds back to the same values", () => {
