@@ -114,13 +114,18 @@ export const LOSS_KINDS = [
   "wire_unobserved",      // ACP wire lines the observer could not read (lines, not records)
   "unattributed",         // counted before the ledger kept reasons, or a kind this hub does not know
 ] as const;
+export const MAX_LOSS_COUNT = 2_147_483_647;               // int4, the type of loss_total (review C1)
 export const TelemetryLossReportSchema = z.object({
-  total: z.number().int().min(0),                       // >= the sum of `kinds`; a floor while a ledger append failed
-  kinds: z.record(z.string(), z.number().int().min(0)), // keys folded to LOSS_KINDS by the HUB, never refused
+  total: z.number().int().min(0).max(MAX_LOSS_COUNT),       // >= the sum of `kinds`; a floor while a ledger append failed
+  kinds: z.record(z.string(), z.number().int().min(0).max(MAX_LOSS_COUNT)), // folded to LOSS_KINDS by the HUB
   oldestAt: z.iso.datetime().nullable(),
   newestAt: z.iso.datetime().nullable(),
+  ignoredNewestAt: z.iso.datetime().nullable().optional(),  // the newest hub_ignored loss (review M3)
 });
 ```
+
+The connector saturates every count at `MAX_LOSS_COUNT` and checks the final report against this schema before
+sending (`toWireReport`): one that still fails is sent as at least one undated `unattributed` loss.
 
 **No path, no record text, no record kind name crosses the wire.** The `ignored` ledger line keeps the record
 kinds the hub ignored (`{"claim_revalidation": 377}`) because doctor needs them to say *what* to upgrade for; they
@@ -207,30 +212,46 @@ charge is exact; on a many-repo machine it over-reports in the safe direction. N
 **The three writers, as built.** *Hooks:* `raceHookBudget` (`config/hook-budget.ts`) says which side won the
 race — `""` alone cannot tell a handler that chose silence from one the budget abandoned — and both runners
 (`connector-claude/src/hooks/runner.ts`, `connector-cursor/src/runner.ts`) append `hook_timed_out` AFTER the race,
-only on the timeout path, keyed once prepare resolved the repo and unkeyed before. *Cursor:* every drift rung in
-`prepareCursorHook` books `host_contract_drift` beside its drift-ledger line, always unkeyed — drift is counted
-before repo resolution, so the payload's repo is never known there. *ACP:* `shutdown` books `ignored` as
-`wire_unobserved/unreadable` and `dropped` as `wire_unobserved/pending-cap`, unkeyed — a line that could not be
-read names no session, and a lost `session/new` may be a repo the proxy never registered — and BEFORE the live
-sessions end, so each end call carries them (LOSS-13 proves it on the hub's row).
+only on the timeout path and only for capture hooks, keyed once prepare resolved the repo, else by the rule
+below. *Cursor:* every drift rung in `prepareCursorHook` books `host_contract_drift` beside its drift-ledger line,
+by the same rule — drift is counted before repo resolution, so the payload's repo is known there only through its
+conversation's state. *Claude's Stop* books a skipped or unanswered git lane (`hook_timed_out/stop-git-lane`,
+keyed), and the lane's candidate cut is a `capture-capped` drop (review M5). *ACP:* `shutdown` books `ignored`
+as `wire_unobserved/unreadable`, `dropped` as `wire_unobserved/pending-cap` and pending-map evictions as
+`wire_unobserved/pending-evicted`, unkeyed — a line that could not be read names no session, and a lost
+`session/new` may be a repo the proxy never registered — and BEFORE the live sessions end, so each end call
+carries them (LOSS-13 proves it on the hub's row).
 
-**Reading the ledgers back — a line is a file, and files get edited.** Four rules, each found by a test that
-failed first, each in the direction §2 demands:
+**Reading the ledgers back — a line is a file, and files get edited.** Five rules, each found by a test that
+failed first, each in the direction §2 demands (`spool/ledger-read.ts` holds the shared ones):
 
-1. *Instants are re-formatted through `Date.parse` before they are compared or sent.* The span travels to a
-   hub whose schema takes ISO instants only; one torn `at` used to make every register, heartbeat and end a 400.
-2. *An entry with no readable instant is counted and makes the span unknown* (`oldestAt`/`newestAt` null), not
-   the span of the entries that had one: the undated loss may be the newest. The hub reads a null newest as
-   current (§4.5); `DropDetail.undated` and `CaptureLossSummary.undated` carry the count, and the archive line
-   carries it through the fold.
-3. *An unreadable line is at least one `unattributed` loss*, never nothing: a ledger holding only a torn line
-   used to report zero.
-4. *A capture ledger at its cap makes the newest unknown.* It refuses new lines, so its newest instant froze at
-   the last one it took while hooks kept timing out — fourteen days later the hub would have read every refused
-   loss as outside the window. The oldest stays a true lower bound. Counts read own properties only
-   (`spool/counts.ts`): a reason named `constructor` used to turn `kinds` into strings the hub refuses.
+1. *Instants count only inside four-digit years and are re-formatted before they are compared or sent.* The span
+   travels to a hub whose schema takes ISO instants only; one torn `at`, or an extended year Date.parse reads
+   (`+275760-…`), used to make every register, heartbeat and end a 400. Counts saturate at `MAX_LOSS_COUNT`.
+2. *Undatable content takes its file's mtime as an upper bound* (review H2): no line was written after its file's
+   last modification. Undated and unreadable lines make the OLDEST unknown and bound the NEWEST by that mtime —
+   later than the truth, and finite, so the loss ages out instead of reading "current" for good. The archive keeps
+   the bound of what it folded (`undatable`, `undatableBy`); reap ages a ledger with no datable line by its mtime.
+3. *An unreadable line is at least one `unattributed` loss*, never nothing; and *only absence (ENOENT) reads as
+   zero* (review M1): a file or directory that exists and cannot be read or parsed is at least one loss — or the
+   count an unparseable archive still names — bounded by its mtime and said in doctor's lines.
+4. *A full capture ledger keeps a refusal marker* (review H1, `state/losses.refused.json`): every refused append is
+   counted and dated there, charged to every repo, and the append that fills the ledger records when it filled —
+   so a full ledger reports a repo's new losses (it used to report them as zero), dates them, and ages out
+   fourteen days after its last refusal. Only a full ledger with no readable marker reads its newest as unknown.
+5. *Counts read own properties only* (`spool/counts.ts`): a reason named `constructor` used to turn `kinds` into
+   strings the hub refuses.
 
-### 4.4 The hub — five columns, derived on read
+**Which hooks are booked, and to whom** (review M4). Only hooks that capture: Claude's session-start,
+post-tool-use, post-tool-use-failure and stop; Cursor's sessionStart, afterFileEdit, afterShellExecution,
+postToolUse, postToolUseFailure, stop. PreToolUse and UserPromptSubmit spool only informational records (§3
+row 25), beforeSubmitPrompt derives (§4.8.7), SessionEnd's end and drain leave records on disk (§4.8.4). A hook
+or drift that never resolved its repo is keyed by its session's state file when one exists, booked unkeyed only
+when a connected repo (a `.git` boundary that commits `.crosscheck.json`, or the `CROSSCHECK_HUB_URL` override)
+sits above one of its paths (`config/connected-repo.ts mayBeConnectedRepo`), and not at all otherwise — where no
+run of the hook would have captured for any repo. Unkeyed charges still over-report; they are never exact.
+
+### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a
 session-bearing relation without a declared contract fails the build) and no change to the sweep: the columns die
@@ -244,9 +265,15 @@ with their row. Appended to `agent_sessions` (`server/src/db/schema.ts:157-202`)
 | `loss_kinds` | jsonb | the report's `kinds`, keys folded to `LOSS_KINDS`, unknown keys summed into `unattributed` |
 | `loss_oldest_at` | timestamptz | the report's `oldestAt` |
 | `loss_newest_at` | timestamptz | the report's `newestAt` |
+| `loss_ignored_at` | timestamptz | the newest `hub_ignored` loss (`ignoredNewestAt`), else an upper bound — the report's `newestAt`, else the report instant; NULL = no ignored kind (review C1, M3) |
 
-`registerSession`, `heartbeatSession` and `endSession` (`server/src/services/sessions.ts:82-315`) write the five
-when the body carries a report and touch none of them when it does not. Last report wins: the report is a
+`registerSession`, `heartbeatSession` and `endSession` (`server/src/services/sessions.ts`) write the six
+when the body carries a report and touch none of them when it does not. The stored total is the larger of the
+sent `total` and the folded kinds' sum, saturated at int4, and the kinds account for all of it (`settleLossReport`:
+whatever they do not cover — a `__proto__` key zod's record parse drops — is `unattributed`). A block the hub
+cannot read — a count past `MAX_LOSS_COUNT`, an unsafe integer, more kinds than any vocabulary, an instant no ISO
+parser reads — is caught and stored as one undated loss (`UNREADABLE_LOSS_REPORT`, review M2): it no longer
+refuses the register it rides, and a session whose registration fails is never registered at all. Last report wins: the report is a
 snapshot of the machine's ledgers, not an increment, so two sessions on one machine reporting the same 382 is not
 double counting — coverage carries no count (03 §3.1) and reads only *whether* and *since when*.
 
@@ -257,7 +284,7 @@ and gains three filtered terms:
 
 ```
 lost      = count(*) filter (where loss_reported_at is not null and loss_total > 0 and loss_newest_at > since)
-ignored   = count(*) filter (where <lost> and coalesce((loss_kinds->>'hub_ignored')::int, 0) > 0)
+ignored   = count(*) filter (where <lost> and loss_ignored_at > since)   -- no JSON cast (review C1)
 lossSince = min(loss_oldest_at) filter (where <lost>)
 ```
 
@@ -601,19 +628,53 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
 6. **ACP wire lines are charged to every repo** (§4.3, the three writers). *Default taken: yes* — decision 2's
    rule, applied to a line that names no session. A chatty agent printing non-protocol lines on stdout marks
    every connected repo `incomplete` for fourteen days after its proxy exits.
-7. **A capture-loss ledger at its cap keeps the newest loss "current"** (§4.3 rule 4) until the ledger is
-   cleared, and nothing clears or compacts it today. *Taken because the alternative strengthens.*
-   *Recommendation:* fold lines older than `MAX_SPOOL_AGE_DAYS` into an archive line at reap, the way
-   `archiveLedger` folds `.drops` — with the race a single machine-wide file adds (rename, then fold) designed
-   rather than assumed.
+7. ~~A capture-loss ledger at its cap keeps the newest loss "current" until cleared.~~ *Superseded by review
+   H1:* the refusal marker dates every refused loss, so a full ledger ages out fourteen days after its last
+   refusal; only a full ledger with no readable marker still reads "current". Doctor names the full ledger and
+   when the file can be removed safely (fourteen days after its last write by any repo). Compaction is still not
+   built; *recommendation unchanged:* fold old lines into an archive at reap, the race designed (rename, then fold).
+8. **The git lane's cut counts every unexamined dirty path** (review M5). Paths past `MAX_GIT_TOUCH_CANDIDATES`
+   (60) are booked `capture-capped` on every Stop, stale ones included: a worktree that stays more than 60
+   files dirty reads `incomplete` for as long as it does. *Taken because their freshness is unknown.*
+   *Alternative:* stat more candidates (a stat is microseconds; the bound guards against thousands) and count only
+   the remainder.
+9. **A skipped or unanswered git lane is booked on every turn it happens** (review M5), though the next turn's
+   lane (window: the session's start) usually recovers the same touches. *Taken because the last turn's skip and
+   a touch reverted before the next run are lost for good.* *Refinement:* book only an unrecovered skip — the
+   session's last lane outcome, read at SessionEnd.
 
-Defaults taken in the build: 1 (all three carriers), 2 (null key charged to every repo), 5 (loss outranks reap),
-6 and 7 as stated. 3 and 4 are not code decisions.
+Defaults taken in the build: 1 (all three carriers), 2 (null key charged to every repo — narrowed by review M4
+to hooks a connected repo could own), 5 (loss outranks reap), 6, 8 and 9 as stated. 3 and 4 are not code
+decisions.
+
+## 12. Review 2026-10-01 — open list
+
+Each finding of the adversarial review was fixed (commits on this branch: C1 1d9e69f + f607d16, M2 the same two,
+H1 e468ed8, H2 d68b4f3, H3 c725e47, M1 e08ccb7, M3 3d34150, M4 8204550, M5 a03a970, LOW totals and `__proto__`
+in 1d9e69f, LOW recovery register and suite timeout in a752eb5), except these, stated rather than fixed:
+
+1. **`gapSince` can be narrower than the truth — display only.** `min(loss_oldest_at)` skips sessions whose
+   oldest is null (now: undatable content), the oldest is when a loss was *recorded*, not when the lost records
+   were made, and "lost since X" can show a reap's earlier instant. Coverage state never depends on it.
+2. **Clock skew.** A connector clock behind the hub's places fresh losses before a narrowed search `since`, which
+   then reads `complete`. The window is 14 days for the agent rung; narrowed scopes are the exposure.
+3. **A conference session registers without the report** (`cli/conference.ts`). It has no heartbeat, so its row
+   reads "never reported" and contributes no loss — the pre-loss behaviour. Strengthening only if it is the only
+   session in the window *and* the machine's ledgers hold an in-window loss. Not fixed: its register runs only
+   after a model produces a finding, and no cheap test reaches it.
+4. **An old connector against a new hub loses the reason word**: the two new reasons fail an old client's strict
+   enum per row, so a rung that read `incomplete / session_reaped` reads `unknown / hub_did_not_report` where a
+   loss outranks the reap. Fails closed; §4.7 did not cover it.
+5. **The ddl-sync test named "reach an EXISTING hub" runs on a fresh database** (text check plus a fresh
+   bootstrap). An upgrade test from a pre-loss schema is the honest version.
+6. **Privacy residue.** Unkeyed loss instants from other repos (and hubs) on the machine reach this repo's hub,
+   as counts and timestamps only — never a path, kind name or key.
 
 ## 11. As built
 
 Every LOSS-n has its test and at least one anchor in `connector-core/scripts/mutation-check.ts`, each proven
-`caught` with `prove-labels` (`anchor-scan`: 1043 anchors, 0 broken).
+`caught` with `prove-labels` (`anchor-scan`: 1085 anchors, 0 broken, after the review's fixes). Each review
+finding's guards carry the finding's name in the label's comment block at the tail of `MUTATIONS`.
 
 | | test (package/test) | anchors (label) |
 |---|---|---|
