@@ -543,6 +543,10 @@ describe("bootstrap.sql DDL sync", () => {
       "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'legacy'",
       "cohort text NOT NULL DEFAULT 'legacy',",
       "ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_labels_since timestamptz",
+      // The slot is a start position, unique per repo (second review, M1/M4).
+      "  slot integer,",
+      "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS slot integer",
+      "CREATE UNIQUE INDEX IF NOT EXISTS pilot_sessions_repo_slot_idx",
     ]) {
       expect(bootstrapSql, fragment).toContain(fragment);
     }
@@ -578,6 +582,7 @@ describe("bootstrap.sql DDL sync", () => {
     const harness = await createTestHarness();
     for (const statement of [
       sql`ALTER TABLE pilot_sessions DROP COLUMN cohort`,
+      sql`ALTER TABLE pilot_sessions DROP COLUMN slot`,
       sql`ALTER TABLE team_settings DROP COLUMN pilot_labels_since`,
       sql`INSERT INTO developers (id, name, email, api_key_hash, created_at)
           VALUES ('dev_old', 'Nick', 'nick-old@example.com', 'hash_old', now())`,
@@ -607,7 +612,11 @@ describe("bootstrap.sql DDL sync", () => {
     const check = await harness.db.execute(
       sql`SELECT conname AS n FROM pg_constraint WHERE conname = 'pilot_sessions_cohort_check'`,
     );
+    const slotIndex = await harness.db.execute(
+      sql`SELECT indexname AS n FROM pg_indexes WHERE indexname = 'pilot_sessions_repo_slot_idx'`,
+    );
     expect(row.rows[0]?.c).toBe("legacy");
+    expect(slotIndex.rows).toHaveLength(1);
     expect(since.rows).toEqual([
       { r: "github.com/acme/api", s: true },
       { r: "github.com/acme/web", s: false },
