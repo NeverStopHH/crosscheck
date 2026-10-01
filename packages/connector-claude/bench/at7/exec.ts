@@ -18,17 +18,28 @@ export interface ProcResult {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
-  /** True when the timeout killed the process before it exited on its own. */
+  /**
+   * True ONLY when this module's own timer killed the process (A2.5). Never
+   * derived from `proc.killed` or the exit code: Bun sets `killed` on every
+   * exited process, so a plain non-zero exit read as a timeout.
+   */
   readonly timedOut: boolean;
 }
 
 export interface ProcOptions {
   readonly cwd?: string;
-  /** Overrides merged over the current process env (never a bare replace). */
+  /**
+   * Variables the caller pins on top of the allowlist (`childEnv`). The child
+   * never sees the rest of the launching process's env.
+   */
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly stdin?: string;
+  /** The harness's own kill timer: SIGKILL after this many ms. */
   readonly timeoutMs?: number;
 }
+
+/** The signal the timer sends: a wedged run must not be able to ignore it. */
+const TIMEOUT_SIGNAL = "SIGKILL";
 
 /**
  * The only variables of the launching process a child inherits (A1.5). These
@@ -78,23 +89,29 @@ export const runProcess = async (
     stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
     stdout: "pipe",
     stderr: "pipe",
-    // Spread the optionals so `exactOptionalPropertyTypes` never sees an
+    // Spread the optional so `exactOptionalPropertyTypes` never sees an
     // explicit `undefined`, which fails the SpawnOptions overload.
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-    ...(options.timeoutMs === undefined
-      ? {}
-      : { timeout: options.timeoutMs, killSignal: "SIGKILL" as const }),
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return {
-    exitCode,
-    stdout,
-    stderr,
-    // Bun reports the kill signal rather than a code when the timeout fires.
-    timedOut: proc.killed && exitCode !== 0,
-  };
+  // The harness owns the timeout (A2.5): only THIS timer firing sets timedOut.
+  let killedByTimer = false;
+  const timer =
+    options.timeoutMs === undefined
+      ? null
+      : setTimeout(() => {
+          killedByTimer = true;
+          proc.kill(TIMEOUT_SIGNAL);
+        }, options.timeoutMs);
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { exitCode, stdout, stderr, timedOut: killedByTimer };
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
 };
