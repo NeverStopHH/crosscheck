@@ -671,6 +671,27 @@ export const SUSPECT_SEPARATION_RATIO = 1.5;
  */
 export const MAX_WAIVER_DAYS = 14;
 
+/**
+ * HOW LONG A NEW PASSKEY WAITS BEFORE IT MAY APPROVE, AMEND OR REVOKE ANYTHING
+ * (1.0 spec 04a §4.4).
+ *
+ * The hub cannot tell a passkey on Touch ID from one a program emulates, so an
+ * enrolment it did not expect is the one way an agent could plant an
+ * authority. The wait puts the ANNOUNCEMENT before the ability: a person who
+ * reads `crosscheck status` once a day sees "a passkey was enrolled for you"
+ * while it still cannot act, and revokes it with nothing more than the api
+ * key. A day, because that is the rhythm a person checks a status line on;
+ * shorter would let a planted passkey act overnight.
+ */
+export const PASSKEY_COOLOFF_HOURS = 24;
+
+/**
+ * HOW LONG AN ENROLMENT CODE STAYS VALID (04a §4.1). The admin hands it over
+ * out of band; a day covers "I'll do it tonight", and a code that lingered
+ * for weeks would be a credential nobody remembers is outstanding.
+ */
+export const ENROLMENT_CODE_TTL_HOURS = 24;
+
 // ── Coverage integrity (docs/1.0/03-coverage-integrity.md) ──────────────────
 
 /**
