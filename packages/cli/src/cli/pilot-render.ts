@@ -337,10 +337,20 @@ const legacyNoiseLines = (proof: PilotReport["precision"]): readonly string[] =>
         `${INDENT}noise marks from before labels (off_target) ${count(proof.legacyNoise)} — outside precision: nobody could label those interventions helpful`,
       ];
 
+/**
+ * WHAT "THE PERSON IT REACHED" RESTS ON, said where the claim is made
+ * (second review, "Can an agent label?"). The hub's only check is a presence
+ * literal any client can send; the key is a file on disk; a pty passes the
+ * walk's terminal check. Attribution names the developer, and an agent acting
+ * for that developer uses the same key — so attribution cannot detect it.
+ */
+const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key`;
+
 const precisionLines = (report: PilotReport): readonly string[] => {
   const proof = report.precision;
   return [
     "4. proactive precision — what arrived unasked, as the person it reached labelled it",
+    ATTRIBUTION_LIMIT_LINE,
     ...labelledSinceLines(report),
     ...labelledLines(proof),
     `${INDENT}behavioural signal: ${figure("opened per 100 sessions", proof.openedPer100, RATE_DECIMALS)} (target ${count(proof.openedTargetPer100)}, declared before measuring) — the agent pulled it; no person judged it`,

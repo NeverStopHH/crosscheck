@@ -358,6 +358,20 @@ describe("renderPilot", () => {
     expect(out).toContain("3 repaired break(s) recorded no commit at the break");
   });
 
+  test("proof 4 says plainly that the hub cannot tell a person's label from an agent's", () => {
+    // Arrange & Act — the second review's "Can an agent label?": the hub's
+    // only check is a presence literal any client can send, the key is a
+    // file on disk, and a pty passes the terminal check. A report that
+    // calls the labels a person's must say what that rests on.
+    const out = renderPilot(view());
+
+    // Assert — on proof 4, where the labels are presented as a person's
+    const proof4 = out.slice(out.indexOf("4. proactive precision"), out.indexOf("5. coverage"));
+    expect(proof4).toContain(
+      "labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key",
+    );
+  });
+
   test("the pull and the floor are named as what they are, and say so", () => {
     // Arrange & Act
     const out = renderPilot(view());

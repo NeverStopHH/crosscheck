@@ -147,6 +147,11 @@ export const TARGET_SOURCES = ["tool_edit", "git_diff"] as const;
  * positive signal, and opening a hint is the model's call, not a person's.
  * `unclear` is an abstention, kept apart so that "I could not tell" is never
  * scored as "not helpful".
+ *
+ * A PERSON'S BY RULE, NOT BY PROOF (07 §12.9). The CLI refuses a process with
+ * no terminal, but nothing at the hub tells a person's label from an agent's
+ * acting with the same developer key: the hub checks only a presence word
+ * any client can send.
  */
 export const PILOT_INTERVENTION_LABELS = ["helpful", "noise", "unclear"] as const;
 
