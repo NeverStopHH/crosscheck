@@ -217,11 +217,11 @@ const percent = (value: PilotFigure): string =>
     ? `${String(Math.round(value.value * PERCENT))}%`
     : unavailableClause(value.reason);
 
-/** `<label> <rate> <unit> per 100 sessions`, or `<label> unavailable — <why>`. */
+/** `<label> <rate> <unit> per 100 sessions`, or `<label> unavailable — <why>` — `figure`'s rule. */
 const perHundred = (label: string, value: PilotFigure, unit: string): string =>
   value.kind === "measured"
-    ? `${label} ${value.value.toFixed(RATE_DECIMALS)} ${unit} per 100 sessions`
-    : `${label} ${unavailableClause(value.reason)}`;
+    ? `${figure(label, value, RATE_DECIMALS)} ${unit} per 100 sessions`
+    : figure(label, value);
 
 /**
  * THE LABELLED FIGURES (07 §12), and PRECISION NEVER PRINTS ALONE: its
