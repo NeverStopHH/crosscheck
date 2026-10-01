@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { runProcess } from "../bench/at7/exec.ts";
+import { drainTail, runProcess } from "../bench/at7/exec.ts";
 
 /**
  * runProcess is the one spawn path of the live driver (A1.5, A2.5). Two of
@@ -48,6 +48,23 @@ describe("runProcess — timedOut is the harness's own kill only (A2.5)", () => 
     // Assert
     expect(result.stdout).toBe("ok");
     expect(result.timedOut).toBe(false);
+  });
+});
+
+describe("drainTail — a long-lived child's stderr is read, never left to fill the pipe", () => {
+  test("consumes a stream far larger than a pipe buffer and keeps only the tail", async () => {
+    // Arrange: 1 MiB of output, then a last line worth keeping
+    const proc = Bun.spawn(["sh", "-c", "head -c 1048576 /dev/zero | tr '\\0' x; printf '\\nlast line'"], {
+      stdout: "pipe",
+    });
+
+    // Act
+    const tail = await drainTail(proc.stdout, 64);
+    await proc.exited;
+
+    // Assert: the child was not blocked, and the tail is bounded
+    expect(tail.length).toBeLessThanOrEqual(64);
+    expect(tail.endsWith("last line")).toBe(true);
   });
 });
 

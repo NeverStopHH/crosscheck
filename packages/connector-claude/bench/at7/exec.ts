@@ -80,6 +80,24 @@ export const childEnv = (
   return env;
 };
 
+/**
+ * Reads a child's output stream to the end, keeping only its last `maxChars`
+ * characters. For a LONG-LIVED child (the hub): a pipe nobody reads fills and
+ * blocks the child's writes, so its stderr is drained from the start, and the
+ * bounded tail is what an error message can quote.
+ */
+export const drainTail = async (
+  stream: ReadableStream<Uint8Array>,
+  maxChars: number,
+): Promise<string> => {
+  const decoder = new TextDecoder();
+  let tail = "";
+  for await (const chunk of stream) {
+    tail = `${tail}${decoder.decode(chunk, { stream: true })}`.slice(-maxChars);
+  }
+  return `${tail}${decoder.decode()}`.slice(-maxChars);
+};
+
 export const runProcess = async (
   cmd: readonly string[],
   options: ProcOptions = {},

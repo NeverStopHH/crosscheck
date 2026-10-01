@@ -23,11 +23,13 @@
  */
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
 
-import { childEnv } from "./exec.ts";
+import { childEnv, drainTail } from "./exec.ts";
 import { crosscheckBinPath, runtimePath } from "./paths.ts";
 
 const READINESS_TIMEOUT_MS = 30_000;
 const READINESS_POLL_MS = 200;
+/** How much of the hub's stderr a startup failure quotes. */
+const STDERR_TAIL_CHARS = 4_000;
 const DANA_AGENT_KIND = "claude-code";
 
 export interface HubHandle {
@@ -98,6 +100,13 @@ export const startHub = async (dataDir: string): Promise<HubHandle> => {
     stdout: "ignore",
     stderr: "pipe",
   });
+  // Drain stderr from the start: an unread pipe fills and blocks the hub's
+  // writes mid-run. The bounded tail is what a startup failure quotes.
+  // A read error becomes the quoted text, not an unhandled rejection: on the
+  // success path nobody awaits this promise.
+  const stderrTail = drainTail(proc.stderr, STDERR_TAIL_CHARS).catch(
+    (error: unknown) => `(stderr unreadable: ${String(error)})`,
+  );
   const deadline = Date.now() + READINESS_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await isReachable(hubUrl)) {
@@ -113,8 +122,8 @@ export const startHub = async (dataDir: string): Promise<HubHandle> => {
     await sleep(READINESS_POLL_MS);
   }
   proc.kill();
-  const stderr = await new Response(proc.stderr).text();
-  throw new Error(`hub did not become reachable on ${hubUrl}: ${stderr.trim()}`);
+  await proc.exited;
+  throw new Error(`hub did not become reachable on ${hubUrl}: ${(await stderrTail).trim()}`);
 };
 
 interface JsonResponse {
