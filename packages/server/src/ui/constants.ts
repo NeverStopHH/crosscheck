@@ -24,6 +24,17 @@ export const UI_CSP =
   "default-src 'none'; style-src 'self'; img-src 'self'; " +
   "form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
+/**
+ * The CSP of the two passkey pages ONLY (1.0 spec 04a §5): `UI_CSP` plus a
+ * same-origin script and same-origin fetch, because WebAuthn has no path that
+ * does not go through `navigator.credentials`. Same-origin, so the one script
+ * the hub serves (ui/passkey-script.ts) is the only one that can run; no
+ * inline script, no third-party origin. Every other page keeps `UI_CSP`.
+ */
+export const UI_PASSKEY_CSP =
+  "default-src 'none'; style-src 'self'; img-src 'self'; script-src 'self'; connect-src 'self'; " +
+  "form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
 /** The stylesheet is static and secret-free; pages themselves are no-store. */
 export const UI_STYLES_CACHE_CONTROL = "public, max-age=3600";
 
