@@ -70,15 +70,24 @@ export const MAX_LOSS_KIND_ENTRIES = 24;
 /** A key longer than this is nobody's enum value. */
 export const MAX_LOSS_KIND_CHARS = 64;
 
+/**
+ * The largest count a report may carry: PostgreSQL `integer` (int4), the type
+ * of `agent_sessions.loss_total`. Review C1 (2026-10-01): with no bound, one
+ * report of 3e9 made the hub's INSERT fail with a 500, and a `hub_ignored` of
+ * 3e9 cast `::int` at read time made `readCoverage` throw for every developer
+ * on the repo. Coverage carries no count (03 §3.1) — it reads WHETHER and
+ * SINCE WHEN — so saturating a count here can never change a coverage state.
+ */
+export const MAX_LOSS_COUNT = 2_147_483_647;
+
+const LossCountSchema = z.number().int().min(0).max(MAX_LOSS_COUNT);
+
 export const TelemetryLossReportSchema = z.object({
   /** At least the sum of `kinds`; a FLOOR while a ledger append has failed. */
-  total: z.number().int().min(0),
+  total: LossCountSchema,
   /** Loose on the wire, folded on the hub — never refused for a key. */
   kinds: z
-    .record(
-      z.string().min(1).max(MAX_LOSS_KIND_CHARS),
-      z.number().int().min(0),
-    )
+    .record(z.string().min(1).max(MAX_LOSS_KIND_CHARS), LossCountSchema)
     .refine((kinds) => Object.keys(kinds).length <= MAX_LOSS_KIND_ENTRIES, {
       message: `kinds: at most ${String(MAX_LOSS_KIND_ENTRIES)} entries`,
     }),
@@ -86,6 +95,15 @@ export const TelemetryLossReportSchema = z.object({
   oldestAt: z.iso.datetime().nullable(),
   /** The latest such instant; null when there is none. */
   newestAt: z.iso.datetime().nullable(),
+  /**
+   * The newest loss of the `hub_ignored` kind (review M3). `kinds` counts
+   * all time, so without it an ignored drop from last year beside a fresh
+   * loss of another kind read `record_kinds_ignored` — "upgrade the hub" — on
+   * a hub upgraded long ago. Optional: a hub that reads no instant here
+   * falls back to `newestAt`, an upper bound, and absent is never "recent
+   * enough to ignore".
+   */
+  ignoredNewestAt: z.iso.datetime().nullable().optional(),
 });
 
 export type TelemetryLossReport = z.infer<typeof TelemetryLossReportSchema>;
@@ -115,3 +133,56 @@ export const foldLossKinds = (
     const kind: LossKind = isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;
     return { ...folded, [kind]: (folded[kind] ?? 0) + count };
   }, {});
+
+/**
+ * WHAT A HUB STORES FOR A REPORT IT CANNOT READ (review M2): a count past
+ * MAX_LOSS_COUNT, an unsafe integer, more kinds than any vocabulary, an
+ * instant no ISO parser reads, a block that is not an object. Refusing the
+ * block refused the whole register, heartbeat or end — and a session whose
+ * registration fails is never registered at all. The connector meant to say
+ * something about its losses, so the block reads as ONE loss with no span:
+ * §2's "an unreadable report reads as unknown, never as zero", in the one
+ * shape coverage can carry.
+ */
+export const UNREADABLE_LOSS_REPORT: TelemetryLossReport = {
+  total: 1,
+  kinds: { [UNATTRIBUTED_LOSS_KIND]: 1 },
+  oldestAt: null,
+  newestAt: null,
+};
+
+/** Saturates at MAX_LOSS_COUNT; a count is a floor, and coverage reads none. */
+export const clampLossCount = (count: number): number =>
+  Math.min(MAX_LOSS_COUNT, Math.max(0, count));
+
+export interface SettledLossCounts {
+  readonly total: number;
+  readonly kinds: FoldedLossKinds;
+}
+
+const sumKinds = (kinds: FoldedLossKinds): number =>
+  Object.values(kinds).reduce((sum, count) => sum + (count ?? 0), 0);
+
+/**
+ * THE COUNTS A HUB STORES, ONE RULE FOR ALL THREE CALLS. The total is the
+ * larger of the sent `total` and the sum of the folded kinds — a report of
+ * `{total: 0, kinds: {hub_ignored: 7}}` read `complete` when the hub trusted
+ * the total alone (review PROBE C) — and whatever the kinds do not account
+ * for is `unattributed`: that is where a key zod's record parse drops
+ * silently (`__proto__`, PROBE F) is folded. Both moves can only raise what
+ * the row says was lost; every count saturates at MAX_LOSS_COUNT.
+ */
+export const settleLossReport = (report: TelemetryLossReport): SettledLossCounts => {
+  const folded = foldLossKinds(report.kinds);
+  const counted = sumKinds(folded);
+  const total = clampLossCount(Math.max(report.total, counted));
+  const remainder = total - Math.min(total, counted);
+  const withRemainder: FoldedLossKinds =
+    remainder > 0
+      ? { ...folded, [UNATTRIBUTED_LOSS_KIND]: (folded[UNATTRIBUTED_LOSS_KIND] ?? 0) + remainder }
+      : folded;
+  const kinds = Object.fromEntries(
+    Object.entries(withRemainder).map(([kind, count]) => [kind, clampLossCount(count ?? 0)]),
+  ) as FoldedLossKinds;
+  return { total, kinds };
+};

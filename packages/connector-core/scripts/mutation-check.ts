@@ -12586,8 +12586,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a hook the budget cut before its repo resolved books no loss",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
-    from: "    if (outcome.timedOut) {\n      await recordHookTimeout(",
-    to: "    if (outcome.timedOut && resolved.value !== null) {\n      await recordHookTimeout(",
+    // Review M4 moved the unresolved path into unresolvedOwner.
+    from: "      const owner = resolved.value ?? (await unresolvedOwner(stdin, env));",
+    to: "      const owner = resolved.value;",
     test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
     because:
       "a hook whose slow git spawns ate the budget loses its capture with no repo known, and no repo is told — the known loss with no coverage reason the contract forbids (decision 10.2)",
@@ -12595,8 +12596,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "an abandoned hook's loss is never keyed to its own repo",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
-    from: "        resolved.value?.key ?? null,\n",
-    to: "        null,\n",
+    from: "        await recordHookTimeout(owner.home, name, owner.key, new Date());",
+    to: "        await recordHookTimeout(owner.home, name, null, new Date());",
     test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
     because:
       "every timed-out hook is charged to every repo on the machine, so one slow repo turns every other repo's coverage incomplete",
@@ -12604,7 +12605,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a cursor-hook the budget abandoned leaves no loss behind",
     file: `${CURSOR}/src/runner.ts`,
-    from: "    if (outcome.timedOut) {\n",
+    from: "    if (outcome.timedOut && CURSOR_CAPTURE_EVENTS.has(event)) {\n",
     to: "    if (false) {\n",
     test: `${CURSOR}/test/drift-loss.test.ts`,
     because:
@@ -12644,8 +12645,9 @@ export const MUTATIONS: readonly Mutation[] = [
     // takes ISO instants only, and the ledger reader passed `at` through raw.
     label: "a garbled loss-ledger instant reaches the wire and the hub refuses every session call",
     file: `${CORE}/src/state/loss-ledger.ts`,
-    from: "  const ms = Date.parse(at);\n  return Number.isNaN(ms) ? null : new Date(ms).toISOString();\n",
-    to: "  return at;\n",
+    // Review M2 moved the rule into spool/ledger-read.ts; the reader's call is the seat.
+    from: "const instantOf = (at: string): string | null => ledgerInstant(at);",
+    to: "const instantOf = (at: string): string | null => at;",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
       "one torn or hand-edited line in losses.jsonl makes register, heartbeat and end answer 400 for every session on the machine, so the connector that reported a loss stops reporting anything",
@@ -12653,8 +12655,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "an undatable loss narrows the span instead of making it unknown",
     file: `${CORE}/src/spool/loss-report.ts`,
-    from: "  if (drops.undated + capture.undated + unreadable > 0 || markerUndated) {",
-    to: "  if (false) {",
+    // Review H2: undatable content now bounds the newest; the oldest stays unknown.
+    from: "    oldestAt:\n      undated.count > 0\n        ? null\n        : earlierIso(earlierIso(drops.oldestAt, markerAt), capture.oldestAt),",
+    to: "    oldestAt: earlierIso(earlierIso(drops.oldestAt, markerAt), capture.oldestAt),",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
       "a recent loss with an unreadable date is left out of the span, the span says the newest loss is weeks old, and the hub reads the repo as complete",
@@ -12662,7 +12665,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "an undatable .drops line is never counted as undated",
     file: `${CORE}/src/spool/drops.ts`,
-    from: "        undated: detail.undated + (isUndated(at) ? 1 : 0),\n",
+    from: "        undated: isUndated(at) ? mergeUndated(detail.undated, undatedOf(1, writtenBy)) : detail.undated,\n",
     to: "        undated: detail.undated,\n",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
@@ -12743,7 +12746,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "doctor never prints the record kinds an older hub ignored",
     file: `${CLI}/src/cli/doctor-losses.ts`,
-    from: '    lineCheck("hub ignored records", lines.ignored),\n',
+    // Review M3 moved the line into ignoredCheck (recency-gated).
+    from: "    ignoredCheck(lines),\n",
     to: "",
     test: `${CLI}/test/doctor-losses.test.ts`,
     because:
@@ -12828,9 +12832,10 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // LOSS-5's named mutation: store the keys as sent.
     label: "a loss kind the hub does not know is stored under its own name",
-    file: `${SERVER}/src/services/sessions.ts`,
-    from: "        lossKinds: foldLossKinds(report.kinds),",
-    to: "        lossKinds: report.kinds,",
+    // The fold moved into the schema's settleLossReport with review C1.
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  const folded = foldLossKinds(report.kinds);",
+    to: "  const folded = report.kinds as FoldedLossKinds;",
     test: `${SERVER}/test/coverage-losses.test.ts`,
     because:
       "a connector-chosen string lands on a row coverage renders — an author-written slot on a record 03 §3.3 says carries none",
@@ -13015,7 +13020,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the capture-loss ledger grows without bound",
     file: `${CORE}/src/state/loss-ledger.ts`,
-    from: "    if (size >= MAX_LOSS_LEDGER_BYTES) {\n      return;\n    }\n",
+    from: "    if (size >= MAX_LOSS_LEDGER_BYTES) {\n      // Refused, never dropped (review H1): counted and dated in the marker.\n      await recordRefusedLoss(home, entry.kind, entry.count, entry.now);\n      return;\n    }\n",
     to: "",
     test: `${CORE}/test/loss-ledger.test.ts`,
     because: "a machine whose hooks time out every call appends a line per hook for ever, and every report re-reads all of it",
@@ -13039,8 +13044,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a capture ledger at its cap freezes the newest loss it reports",
     file: `${CORE}/src/spool/loss-report.ts`,
-    from: "    newestAt: capture.atCap\n      ? null\n      : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
-    to: "    newestAt: laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
+    // Review H1 narrowed the rule to a full ledger with no readable marker.
+    from: "      unboundedUndated || fullWithoutMarker\n",
+    to: "      unboundedUndated\n",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
       "a machine whose ledger filled a month ago keeps losing hooks, the report's newest stays a month old, and the hub reads the repo as complete",
@@ -13517,6 +13523,357 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${ACP}/test/derive-doctor.test.ts`,
     because: "an ACP user cannot learn that its host emits no commit.observed",
   },
+  // Review 2026-10-01 (C1 … LOW): each finding's guard.
+  {
+    label: "coverage casts the folded loss kinds to int4 at read time",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "): SQL => sql`${table.lossIgnoredAt} > ${since}`;",
+    to: "): SQL => sql`coalesce((${table.lossKinds}->>'hub_ignored')::int, 0) > 0`;",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "one report carrying hub_ignored 3e9 makes readCoverage throw for every developer on the repo — search, hints, suspect, pins and absences fail for fourteen days",
+  },
+  {
+    label: "the wire contract admits a loss count past int4",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "const LossCountSchema = z.number().int().min(0).max(MAX_LOSS_COUNT);",
+    to: "const LossCountSchema = z.number().int().min(0);",
+    test: `${SCHEMA}/test/telemetry-loss.test.ts`,
+    because: "every consumer of the report — the hub's int4 column first — has to defend against a count no column holds",
+  },
+  {
+    label: "a loss total past int4 reaches the hub's integer column",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  Math.min(MAX_LOSS_COUNT, Math.max(0, count));",
+    to: "  count;",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because: "kinds that each fit int4 sum past it, the session INSERT fails with a 500, and the session never registers (PROBE B's shape)",
+  },
+  {
+    label: "a loss block the hub cannot read refuses the session call it rides",
+    file: `${SERVER}/src/http/schemas.ts`,
+    from: "  losses: TelemetryLossReportSchema.catch(UNREADABLE_LOSS_REPORT).optional(),",
+    to: "  losses: TelemetryLossReportSchema.optional(),",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "a register carrying a report the hub cannot parse answers 400, the connector's registration ladder gives up, and the session is never registered at all",
+  },
+  {
+    label: "the hub trusts a total below the kinds it was sent",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  const total = clampLossCount(Math.max(report.total, counted));",
+    to: "  const total = clampLossCount(report.total);",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because: "a report of total 0 with hub_ignored 7 reads complete: a named loss counted as none",
+  },
+  {
+    label: "a loss kind zod's record parse drops leaves the stored kinds short of the total",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  const remainder = total - Math.min(total, counted);",
+    to: "  const remainder = 0;",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because: "a `__proto__` key vanishes from the stored kinds, and a reader of the row cannot tell what the rest of the total was",
+  },
+  {
+    label: "a ledger count past int4 reaches the wire unsaturated",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    total: clampLossCount(total),\n",
+    to: "    total,\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a .drops line counting 3e9 (PROBE 6) makes a report the hub's schema refuses, and the session call it rides with it",
+  },
+  {
+    label: "a ledger instant past year 9999 reaches the wire",
+    file: `${CORE}/src/spool/ledger-read.ts`,
+    from: "  return Number.isFinite(ms) && ms >= FIRST_WIRE_MS && ms <= LAST_WIRE_MS ? ms : null;",
+    to: "  return Number.isFinite(ms) ? ms : null;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "Date.parse reads +275760-09-13, toISOString writes it back with the sign, and z.iso.datetime on the hub refuses the report",
+  },
+  {
+    label: "a report the wire schema refuses is sent anyway",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  if (TelemetryLossReportSchema.safeParse(report).success) {\n    return report;\n  }\n",
+    to: "  if (true) {\n    return report;\n  }\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a report no rule above made valid reaches a hub that refuses the register it rides, and the session never registers",
+  },
+  {
+    // Review H1 (PROBE 1).
+    label: "a loss the full capture ledger refused leaves no trace",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "      await recordRefusedLoss(home, entry.kind, entry.count, entry.now);\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "other repos fill the machine-wide ledger, a hook in this repo times out, the repo reports total 0 and the hub reads complete",
+  },
+  {
+    label: "the refused capture losses are charged to no repo",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "  const summary = withRefusals(lines, refusals);",
+    to: "  const summary = lines;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the marker counts the refusal and no report ever carries it",
+  },
+  {
+    label: "a refused capture loss carries no instant",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "    newestAt: laterIso(summary.newestAt, refusals.newestAt),",
+    to: "    newestAt: summary.newestAt,",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a refusal today reads as undated or as the ledger's month-old newest, and the hub places it outside the window",
+  },
+  {
+    label: "the append that fills the capture ledger leaves no marker",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "      await markLossLedgerFull(home, entry.now);\n",
+    to: "",
+    test: `${CORE}/test/loss-ledger.test.ts`,
+    because: "a full ledger with no refusal yet has no marker, its newest reads unknown, and every repo with a line in it stays incomplete for good",
+  },
+  // Review H2: undatable content is bounded by its file's mtime and ages out.
+  {
+    label: "undatable ledger content is never bounded",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "        : laterIso(dated, undated.count > 0 ? undated.by : null),",
+    to: "        : dated,",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "one torn line in losses.jsonl reports every repo's loss as undated, the hub reads undated as current, and every repo on the machine is unjudgeable with no end date (PROBE 2)",
+  },
+  {
+    label: "a torn capture-ledger line takes no bound",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "          malformed: summary.malformed + 1,\n          undated: mergeUndated(summary.undated, undatedLine),\n",
+    to: "          malformed: summary.malformed + 1,\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the torn line is charged as a loss with no instant at all, and the span says nothing about when it can have happened",
+  },
+  {
+    label: "a marker whose instant will not parse narrows the span",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    marker !== null && markerAt === null ? undatedOf(1, marker.writtenBy) : NO_UNDATED;",
+    to: "    NO_UNDATED;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the batch the ledger could not take drops out of the span, and the newest reads as the last dated drop's, earlier than the truth",
+  },
+  {
+    label: "an archive forgets the bound of the undatable lines it folded",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      undatableBy: total.undated.by,\n",
+    to: "      undatableBy: null,\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a torn line folded at reap takes the archive's mtime, which every later fold moves forward, so it never ages out (PROBE 4)",
+  },
+  {
+    label: "a ledger with no datable line never ages out of reap",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "  return spanOf(lines).newestMs ?? (lines.length > 0 ? ledgerMs(writtenBy) : null);",
+    to: "  return spanOf(lines).newestMs;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "reap reads null and never folds the ledger, and the repo's span stays unknown for as long as the file exists (PROBE 4)",
+  },
+  // Review H3: doctor and status never say "none" over a report above zero.
+  {
+    label: "unreadable capture-ledger lines are counted and printed nowhere",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    capture.malformed === 0\n      ? null\n",
+    to: "    true\n      ? null\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "one torn line in losses.jsonl reports a loss on every repo, and doctor prints PASS capture losses none beside a hub that reads telemetry_lost",
+  },
+  {
+    label: "a full capture ledger is printed as nothing",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  if (!capture.atCap && capture.refused === 0) {\n    return null;\n  }\n",
+    to: "  if (true) {\n    return null;\n  }\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a ledger refusing every new loss reads like a healthy one, and nobody learns when it can safely be removed",
+  },
+  // Review M1: only a missing file reads as zero.
+  {
+    label: "a ledger file that cannot be read reads as missing",
+    file: `${CORE}/src/spool/ledger-read.ts`,
+    from: "    return isAbsence(error) ? ABSENT : { text: null, writtenBy, unreadable: true };",
+    to: "    return ABSENT;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a .drops file at mode 000 holding the afternoon's expired records reports total 0, and the hub reads complete",
+  },
+  {
+    label: "an unreadable .drops file is counted as no drops",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "  return ledger.unreadable\n    ? unreadableDetail(UNREADABLE_FLOOR, ledger.writtenBy)\n",
+    to: "  return false\n    ? unreadableDetail(UNREADABLE_FLOOR, ledger.writtenBy)\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a directory where the ledger belongs, or a file nobody may read, adds nothing to the report",
+  },
+  {
+    label: "an archive that will not parse reads as zero",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "    const loose = LooseCountSchema.safeParse(line);\n    return unreadableDetail(loose.success ? loose.data.count : UNREADABLE_FLOOR, writtenBy);\n",
+    to: "    return EMPTY_DETAIL;\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a torn archive holding 382 records reports none of them, and archived losses can still be inside the hub's window (PROBE 3)",
+  },
+  {
+    label: "a spool directory nobody may list reads as no drops",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "  const unlisted = listing.unreadable ? [unreadableDetail(UNREADABLE_FLOOR, listing.writtenBy)] : [];",
+    to: "  const unlisted: DropDetail[] = [];",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "every ledger in the directory is hidden and the report says nothing was lost",
+  },
+  {
+    label: "an unrecorded marker that will not parse reads as no marker",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "    : { at: \"\", count: UNREADABLE_FLOOR, reason: UNREADABLE_REASON, writtenBy };",
+    to: "    : null;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the one file that says a ledger append failed is ignored the moment it is torn",
+  },
+  {
+    label: "an unreadable capture-loss ledger reads as zero",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "  const lines = ledger.unreadable\n    ? unreadableLedger(ledger.writtenBy)\n",
+    to: "  const lines = false\n    ? unreadableLedger(ledger.writtenBy)\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "every hook timeout, host drift and wire loss on the machine is hidden behind one permission bit",
+  },
+  {
+    label: "a refusal marker that will not parse reads as no refusals",
+    file: `${CORE}/src/state/loss-refusals.ts`,
+    from: "  if (!parsed.success) {\n    return unreadableRefusals(writtenBy);\n  }\n",
+    to: "  if (!parsed.success) {\n    return null;\n  }\n",
+    test: `${CORE}/test/loss-ledger.test.ts`,
+    because: "the losses a full ledger refused vanish with the marker that counted them",
+  },
+  // Review M3: the ignored kind's word and remedy follow its newest instant.
+  {
+    label: "the hub words an ignored loss from before the window as the hub's own remedy",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    ? (toInstant(report.ignoredNewestAt ?? null) ?? toInstant(report.newestAt) ?? now)",
+    to: "    ? (toInstant(report.newestAt) ?? now)",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "an ignored drop the archive kept from last year beside a fresh cap drop reads record_kinds_ignored — upgrade the hub — on a hub upgraded long ago",
+  },
+  {
+    label: "the loss report never dates the ignored kind",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    ...(ignoredNewestAt === null ? {} : { ignoredNewestAt }),\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the hub can only bound the ignored kind by the report's newest loss of any kind (PROBE 5)",
+  },
+  {
+    label: "the archive forgets its newest ignored entry",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      ignoredNewestAt: total.ignoredNewestAt,\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "an archived ignored drop takes the archive's mtime, which every fold moves forward, so it stays inside the window for good",
+  },
+  {
+    label: "doctor tells an upgraded hub to upgrade",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  if (newest !== null && !isInsideWindow(newest, now)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "an ignored drop from before the window prints 'upgrade the hub' on every doctor run, and the one real old-hub warning drowns in it",
+  },
+  // Review M4: a loss is charged only where a connected repo could have lost capture.
+  {
+    label: "a timed-out hook that captures nothing is booked as a loss",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {",
+    to: "    if (outcome.timedOut) {",
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because: "a slow hub cutting PreToolUse or UserPromptSubmit, which spool only informational records, turns every repo telemetry_lost",
+  },
+  {
+    label: "a hook cut in an unconnected checkout is charged to every repo",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  return owned ? { home, key: null } : null;",
+    to: "  return { home, key: null };",
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because: "under a user-level install a slow git in any unconnected directory marks every connected repo incomplete",
+  },
+  {
+    label: "a hook cut in a registered session is charged to every repo instead of its own",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  if (state !== null) {\n    return { home, key: repoKey(state.hubUrl, state.repoId) };\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because: "the session's state names the repo, and every other connected repo is still charged with its loss",
+  },
+  {
+    label: "a cursor event that captures nothing is booked as a loss on timeout",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "    if (outcome.timedOut && CURSOR_CAPTURE_EVENTS.has(event)) {\n",
+    to: "    if (outcome.timedOut) {\n",
+    test: `${CURSOR}/test/drift-loss.test.ts`,
+    because: "a slow model behind beforeSubmitPrompt's intent derivation reads as lost capture on every repo",
+  },
+  {
+    label: "a drifted Cursor payload from an unconnected folder is charged to every repo",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "  return owned ? { key: null } : null;",
+    to: "  return { key: null };",
+    test: `${CURSOR}/test/drift-loss.test.ts`,
+    because: "a folderless Cursor window's drift marks every connected repo incomplete for fourteen days",
+  },
+  {
+    label: "a drifted Cursor payload in a registered conversation is charged to every repo",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "    if (state !== null) {\n      return { key: repoKey(state.hubUrl, state.repoId) };\n    }\n",
+    to: "",
+    test: `${CURSOR}/test/drift-loss.test.ts`,
+    because: "the conversation's state names the repo, and every other connected repo is still charged",
+  },
+  {
+    label: "a bare repo with no committed config is read as a connected one",
+    file: `${CORE}/src/config/connected-repo.ts`,
+    from: "      (env[\"CROSSCHECK_HUB_URL\"] !== undefined || (await readRepoConfig(root)) !== null)\n",
+    to: "      true\n",
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because: "every checkout on the machine owns a cut hook, and the M4 gate charges every connected repo again",
+  },
+  // Review M5: the three losses that were still uncounted.
+  {
+    label: "dirty paths past the git lane's candidate bound are cut without a count",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "    changed.length - candidates.length,\n",
+    to: "    0,\n",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because: "a turn that touched the 61st dirty path loses it to a slice the freshness check never reaches, and nothing counts it",
+  },
+  {
+    label: "a skipped git lane is a session-state number and nothing else",
+    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    from: "  if (outcome.unavailable) {\n    await recordCaptureLoss(",
+    to: "  if (false) {\n    await recordCaptureLoss(",
+    test: `${CONNECTOR}/test/stop-git-touches.test.ts`,
+    because: "a session whose last turn skipped the lane loses its Bash-made edits, and the hub's coverage reads complete over them",
+  },
+  {
+    label: "requests the ACP pending map evicted reach a log line and no ledger",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "    count: evicted,\n",
+    to: "    count: 0,\n",
+    test: `${ACP}/test/wire-loss.test.ts`,
+    because: "a session/new whose answer arrives after its eviction never registers, and the proxy's only record of it is pending-evictions in the exit log",
+  },
+  {
+    // Review LOW: not every register carried the report.
+    label: "a recovered session registers without the loss report",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "    losses: await readTelemetryLossReport(ctx.config.home, ctx.repoKey),\n",
+    to: "",
+    test: `${CONNECTOR}/test/recovery-losses.test.ts`,
+    because: "a hook installed mid-session rebuilds its row as 'never reported' until a heartbeat lands, and a recovered session that ends first never reports at all",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13611,7 +13968,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
- * PRINTS: packages/connector-acp/test/wire-loss.test.ts 2
+ * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
@@ -13629,7 +13986,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
- * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 3
+ * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 6
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
@@ -13639,10 +13996,12 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
+ * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 1
@@ -13657,7 +14016,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
- * PRINTS: packages/connector-core/test/capture-losses.test.ts 5
+ * PRINTS: packages/connector-core/test/capture-losses.test.ts 6
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
@@ -13668,7 +14027,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
- * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/connected-repo.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
@@ -13706,8 +14065,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
- * PRINTS: packages/connector-core/test/loss-ledger.test.ts 3
- * PRINTS: packages/connector-core/test/loss-report.test.ts 11
+ * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 33
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -13751,7 +14110,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
- * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 2
+ * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
@@ -13762,7 +14121,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/telemetry-loss.test.ts 1
+ * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 8
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -13772,7 +14131,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
- * PRINTS: packages/server/test/coverage-losses.test.ts 9
+ * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 7
  * PRINTS: packages/server/test/coverage.test.ts 12

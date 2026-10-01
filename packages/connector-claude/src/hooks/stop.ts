@@ -25,6 +25,7 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import { captureGitTouches } from "@crosscheck/connector-core/flows/capture-git-touches.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
+import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import {
   allocateSeq,
   readSessionState,
@@ -110,6 +111,9 @@ const estimateFireTokens = (sliceText: string): number =>
  * can never be short. Unused positions are gaps, and gaps are legal.
  */
 const GIT_LANE_SEQ_BLOCK = MAX_TARGETS_PER_INVOCATION;
+
+/** The capture-loss detail for a git lane this turn could not run (review M5). */
+const GIT_LANE_LOSS_DETAIL = "stop-git-lane";
 
 export const handleStop = async (
   ctx: HookContext,
@@ -216,6 +220,21 @@ export const handleStop = async (
   // codemods. One more locked write on a quiet turn is the price of a
   // verdict that can be true.
   const laneOutcome = { captured: outcome.paths, skipped: outcome.unavailable };
+  // REVIEW M5: A SKIPPED OR UNANSWERED LANE IS A LOSS, NOT ONLY A NUMBER IN
+  // SESSION STATE. Its window is the session's start, so the next turn's lane
+  // re-examines the same touches — but a session whose last turn skipped,
+  // or a touch reverted before the next run, is lost for good, and nothing
+  // told the hub. Booked keyed (this hook knows its repo), dated, so it ages
+  // out; the over-count for the turns a later lane recovers is the safe side.
+  if (outcome.unavailable) {
+    await recordCaptureLoss(ctx.config.home, {
+      kind: "hook_timed_out",
+      count: 1,
+      key: ctx.repoKey,
+      detail: GIT_LANE_LOSS_DETAIL,
+      now: ctx.now(),
+    });
+  }
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
     withGitTouches(fresh, laneOutcome),
   );

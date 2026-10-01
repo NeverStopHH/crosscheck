@@ -10,13 +10,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { MAX_TARGETS_PER_INVOCATION } from "../src/constants.ts";
+import { MAX_GIT_TOUCH_CANDIDATES, MAX_TARGETS_PER_INVOCATION } from "../src/constants.ts";
+import { captureGitTouches } from "../src/flows/capture-git-touches.ts";
 import { repoKey } from "../src/config/paths.ts";
 import type { Producer } from "../src/capture/records.ts";
 import { captureFileTargets } from "../src/flows/capture-targets.ts";
 import { captureTouchedFiles } from "../src/flows/capture-touched-files.ts";
 import { readDropDetail, readDropSummary } from "../src/spool/drops.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { git, makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
 const KEY = repoKey("http://127.0.0.1:9", REPO_ID);
@@ -129,5 +130,40 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
     const detail = await readDropDetail(fx.home, KEY);
     expect(detail.byReason["outside-root"]).toBe(1);
     expect(detail.summary.records).toBe(1);
+  });
+
+  test("review M5: dirty paths past the git lane's candidate bound are counted, not skipped unseen", async () => {
+    // Arrange: 65 tracked files, all modified since HEAD
+    const fx = await fixture("git-lane-cut");
+    const dirty = MAX_GIT_TOUCH_CANDIDATES + 5;
+    for (let index = 0; index < dirty; index += 1) {
+      await writeRepoFile(fx.repo, `src/f${String(index)}.ts`, "export const a = 1;\n");
+    }
+    await git(fx.repo, ["add", "-A"]);
+    await git(fx.repo, ["commit", "-m", "files"]);
+    for (let index = 0; index < dirty; index += 1) {
+      await writeRepoFile(fx.repo, `src/f${String(index)}.ts`, "export const a = 2;\n");
+    }
+
+    // Act
+    await captureGitTouches({
+      home: fx.home,
+      repoKey: KEY,
+      hostSessionKey: SESSION,
+      repoRoot: fx.repo,
+      workContextId: "wc_1",
+      producer: PRODUCER,
+      seenTargets: [],
+      denylist: null,
+      since: new Date(0),
+      now: NOW,
+    });
+
+    // Assert: the 5 cut before the freshness check, plus the 40 the per-call
+    // cap (MAX_TARGETS_PER_INVOCATION) cut from the 60 it examined
+    const detail = await readDropDetail(fx.home, KEY);
+    expect(detail.byReason["capture-capped"]).toBe(
+      dirty - MAX_GIT_TOUCH_CANDIDATES + (MAX_GIT_TOUCH_CANDIDATES - MAX_TARGETS_PER_INVOCATION),
+    );
   });
 });

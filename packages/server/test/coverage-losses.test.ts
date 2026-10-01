@@ -275,6 +275,170 @@ describe("LOSS-5: an unknown kind still counts and is never stored as text", () 
   });
 });
 
+describe("C1 (review 2026-10-01): one report can break neither the repo's coverage nor the call it rides", () => {
+  test("PROBE A: a hub_ignored count past int4 leaves another developer's coverage readable, and counts the loss", async () => {
+    // Arrange: an honest session beside one whose report carries 3e9
+    const { harness, developer } = await seed();
+    const other = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await registerTestSession(harness, other.apiKey, { id: "ses_honest" });
+
+    // Act
+    const response = await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({ total: 5, kinds: { hub_ignored: 3_000_000_000 } }),
+    });
+    const row = await agentEventOf(harness, other);
+
+    // Assert: the read answers, and it answers in the weakening direction
+    expect(response.status).toBeLessThan(300);
+    expect(row.state).toBe("incomplete");
+  });
+
+  test("a row an earlier hub stored with a count past int4 never breaks the read", async () => {
+    // Arrange: the row as this branch's first hub would have written it
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey, { losses: lossReport() });
+    await harness.db
+      .update(agentSessions)
+      .set({ lossKinds: { hub_ignored: 3_000_000_000 } })
+      .where(eq(agentSessions.id, SESSION_ID));
+
+    // Act
+    const row = await agentEventOf(harness, developer);
+
+    // Assert
+    expect(row.state).toBe("incomplete");
+  });
+
+  test("PROBE B: a total past int4 is stored as a loss, never a 500", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+
+    // Act
+    const response = await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({ total: 3_000_000_000, kinds: { spool_expired: 3_000_000_000 } }),
+    });
+    const stored = await sessionRow(harness);
+    const row = await agentEventOf(harness, developer);
+
+    // Assert
+    expect(response.status).toBeLessThan(300);
+    expect(stored.lossTotal).toBeGreaterThan(0);
+    expect(row.reason).toBe("telemetry_lost");
+  });
+
+  test("kinds that each fit int4 but sum past it are stored saturated, never a 500", async () => {
+    // Arrange: every count valid on the wire; only their sum overflows
+    const { harness, developer } = await seed();
+    const max = 2 ** 31 - 1;
+
+    // Act
+    const response = await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({ total: max, kinds: { spool_expired: max, hub_rejected: max } }),
+    });
+    const stored = await sessionRow(harness);
+
+    // Assert
+    expect(response.status).toBeLessThan(300);
+    expect(stored.lossTotal).toBe(max);
+  });
+
+  test.each([
+    ["an unsafe integer (PROBE E)", lossReport({ total: 1, kinds: { a: 9_007_199_254_740_993 } })],
+    ["more kinds than any vocabulary", lossReport({ kinds: Object.fromEntries(Array.from({ length: 30 }, (_unused, index) => [`k${String(index)}`, 1])) })],
+    ["an instant no ISO parser reads", lossReport({ newestAt: "+275760-09-13T00:00:00.000Z" })],
+    ["a block that is not an object", "garbage"],
+  ] as const)("M2: %s is a loss the hub records, undated, never a refused session", async (_label, losses) => {
+    // Arrange
+    const { harness, developer } = await seed();
+
+    // Act
+    const response = await registerTestSession(harness, developer.apiKey, { losses });
+    const stored = await sessionRow(harness);
+    const row = await agentEventOf(harness, developer);
+
+    // Assert: unreadable reads as a loss with no span — never as zero, never as a 400
+    expect(response.status).toBeLessThan(300);
+    expect(stored.lossTotal).toBeGreaterThan(0);
+    expect(stored.lossNewestAt).toBeNull();
+    expect(row.state).toBe("incomplete");
+  });
+
+  test("M3: an ignored loss older than the window is a loss, not the hub's own remedy", async () => {
+    // Arrange: a fresh loss of another kind beside an ignored one from long before the window
+    const { harness, developer } = await seed();
+
+    // Act
+    await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({
+        total: 3,
+        kinds: { hub_ignored: 2, spool_refused: 1 },
+        ignoredNewestAt: at(-(COVERAGE_SESSION_WINDOW_DAYS + 30) * DAY_MS),
+      }),
+    });
+    const row = await agentEventOf(harness, developer);
+
+    // Assert: still incomplete — the reason word follows the window
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("telemetry_lost");
+  });
+
+  test("M3: an ignored loss inside the window keeps its own word", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+
+    // Act
+    await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({
+        total: 3,
+        kinds: { hub_ignored: 2, spool_refused: 1 },
+        ignoredNewestAt: at(-1 * DAY_MS),
+      }),
+    });
+    const row = await agentEventOf(harness, developer);
+
+    // Assert
+    expect(row.reason).toBe("record_kinds_ignored");
+  });
+
+  test("PROBE C: kinds the total does not cover still count — the hub stores the larger", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+
+    // Act
+    await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({ total: 0, kinds: { hub_ignored: 7 } }),
+    });
+    const stored = await sessionRow(harness);
+    const row = await agentEventOf(harness, developer);
+
+    // Assert
+    expect(stored.lossTotal).toBe(7);
+    expect(row.reason).toBe("record_kinds_ignored");
+  });
+
+  test("PROBE F: a key zod's record drops (__proto__) is folded into unattributed, never lost", async () => {
+    // Arrange: raw JSON, because an object literal cannot carry an own __proto__
+    const { harness, developer } = await seed();
+    const body = JSON.stringify({ ...VALID_SESSION_BODY, losses: lossReport({ total: 4 }) }).replace(
+      '"kinds":{"spool_expired":5}',
+      '"kinds":{"__proto__":2,"constructor":2}',
+    );
+
+    // Act
+    const response = await harness.app.request("/api/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${developer.apiKey}` },
+      body,
+    });
+    const stored = await sessionRow(harness);
+
+    // Assert: the kinds account for the whole total, under a word this hub owns
+    expect(response.status).toBeLessThan(300);
+    expect(stored.lossTotal).toBe(4);
+    expect(stored.lossKinds).toEqual({ unattributed: 4 });
+  });
+});
+
 describe("a loss outranks a reap in the reason word, and the earliest instant wins", () => {
   test("one reaped session and one lossy session read telemetry_lost from the earlier of the two instants", async () => {
     // Arrange

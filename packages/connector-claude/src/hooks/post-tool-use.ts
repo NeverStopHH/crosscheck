@@ -17,6 +17,7 @@ import { registerSession } from "@crosscheck/connector-core/http/hub.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
+import { readTelemetryLossReport } from "@crosscheck/connector-core/spool/loss-report.ts";
 import {
   diagnosisPath,
   withCaptureBookkeeping,
@@ -96,6 +97,10 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
       derived.seqEpoch === null
         ? ALLOCATION_FAILED
         : { epoch: derived.seqEpoch, n: 0 },
+    // Every register carries the machine's loss report, zeros included
+    // (loss-accounting §4.2; review LOW): an omitted one reads as "a connector
+    // from before the field" on exactly the session a recovery rebuilt.
+    losses: await readTelemetryLossReport(ctx.config.home, ctx.repoKey),
   });
   // A conflict means the id belongs to somebody else, OR to a live session
   // this developer already bound to ANOTHER repo (the hub's repo_mismatch,

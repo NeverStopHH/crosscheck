@@ -336,6 +336,13 @@ const describeError = (error: unknown): string =>
 const WIRE_UNREADABLE_DETAIL = "unreadable";
 /** `dropped`: refused by ACP_CAPTURE_MAX_PENDING_BYTES before dispatch. */
 const WIRE_PENDING_CAP_DETAIL = "pending-cap";
+/**
+ * Requests the pending map evicted past ACP_MAX_PENDING_REQUESTS (review M5):
+ * their responses capture nothing — a `session/new` whose answer arrives
+ * after its eviction never registers its session. Every eviction counts,
+ * including methods capture would not have read: the safe over-count.
+ */
+const WIRE_PENDING_EVICTED_DETAIL = "pending-evicted";
 
 /**
  * THE WIRE LINES CAPTURE NEVER SAW (docs/1.0/loss-accounting.md §3 row 18).
@@ -350,8 +357,16 @@ const WIRE_PENDING_CAP_DETAIL = "pending-cap";
 const recordWireLosses = async (
   home: string,
   counters: Pick<MutableCounters, "ignored" | "dropped">,
+  evicted: number,
   at: Date,
 ): Promise<void> => {
+  await recordCaptureLoss(home, {
+    kind: "wire_unobserved",
+    count: evicted,
+    key: null,
+    detail: WIRE_PENDING_EVICTED_DETAIL,
+    now: at,
+  });
   await recordCaptureLoss(home, {
     kind: "wire_unobserved",
     count: counters.ignored,
@@ -1282,7 +1297,12 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       await Promise.race([settle(), bounded]);
       clearTimeout(timer);
       // Before the sessions end, so each end call carries them to the hub.
-      await recordWireLosses(crosscheckHome(options.env), counters, now());
+      await recordWireLosses(
+        crosscheckHome(options.env),
+        counters,
+        pendingClient.evictions() + pendingAgent.evictions(),
+        now(),
+      );
       try {
         // End every live session (§2.4 last row: child exit → endSessionFlow),
         // then reap once per (home, repoKey) with a DeferredEnder bounded by

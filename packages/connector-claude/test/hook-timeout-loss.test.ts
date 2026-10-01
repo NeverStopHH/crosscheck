@@ -20,6 +20,10 @@ import {
   lossLedgerPath,
   readCaptureLosses,
 } from "@crosscheck/connector-core/state/loss-ledger.ts";
+import {
+  deriveSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -114,6 +118,56 @@ describe("LOSS-12: a hook that runs out of budget is a counted loss, keyed when 
     expect(line?.["kind"]).toBe("hook_timed_out");
     expect(line?.["key"]).toBeNull();
     expect((await readCaptureLosses(home, "any-other-repo-key")).total).toBe(1);
+  });
+
+  test.each(["pre-tool-use", "user-prompt-submit", "session-end"] as const)(
+    "review M4: %s timing out books nothing — it captures nothing a coverage question rests on",
+    async (hook) => {
+      // Arrange
+      const { repo, home, env } = await fixture(`timeout-${hook}`, RESOLVING_TIMEOUT_MS);
+
+      // Act
+      await runHookWith(hook, neverSettles, editPayload(repo), env);
+
+      // Assert
+      expect(await Bun.file(lossLedgerPath(home)).exists()).toBe(false);
+    },
+  );
+
+  test("review M4: a capture hook cut in a directory no connected repo owns books nothing", async () => {
+    // Arrange: a plain directory, no .git anywhere above it
+    const { home, env } = await fixture("timeout-unconnected", UNRESOLVED_TIMEOUT_MS);
+    const outside = await makeHome("timeout-outside");
+    paths.push(outside);
+
+    // Act
+    await runHookWith("post-tool-use", neverSettles, editPayload(outside), env);
+
+    // Assert: no connected repo could have lost this hook's capture
+    expect(await Bun.file(lossLedgerPath(home)).exists()).toBe(false);
+  });
+
+  test("review M4: a hook cut before identity, in a session already registered, is booked to that session's repo", async () => {
+    // Arrange: the state file an earlier hook of this session wrote
+    const { repo, home, env } = await fixture("timeout-state-keyed", UNRESOLVED_TIMEOUT_MS);
+    await writeSessionState(
+      home,
+      deriveSessionState({
+        hostSessionKey: "timeout-loss-uuid",
+        repoId: REPO_ID,
+        repoRoot: repo,
+        hubUrl: HUB_URL,
+        developerId: null,
+        startedAt: new Date().toISOString(),
+      }),
+    );
+
+    // Act
+    await runHookWith("post-tool-use", neverSettles, editPayload(repo), env);
+
+    // Assert: keyed — no other repo on the machine is charged
+    const [line] = await ledgerLines(home);
+    expect(line?.["key"]).toBe(repoKey(HUB_URL, REPO_ID));
   });
 
   test("a hook that finishes inside its budget books nothing", async () => {

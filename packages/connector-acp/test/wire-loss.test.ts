@@ -19,7 +19,7 @@ import {
 } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { agentSessions } from "../../server/src/db/schema.ts";
 
-import { ACP_CAPTURE_MAX_PENDING_BYTES } from "../src/constants.ts";
+import { ACP_CAPTURE_MAX_PENDING_BYTES, ACP_MAX_PENDING_REQUESTS } from "../src/constants.ts";
 import {
   SHUTDOWN_BUDGET_MS,
   bootCaptureHub,
@@ -32,9 +32,15 @@ import type { CaptureHub, Harness } from "./fixtures/capture-harness.ts";
 let hub: CaptureHub;
 const cleanups: string[] = [];
 
+/**
+ * Booting the in-process hub (PGlite) took longer than bun's 5 s hook default
+ * on a loaded machine (review LOW); the boot is not what this file measures.
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+
 beforeAll(async () => {
   hub = await bootCaptureHub("acp-wire-loss");
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   hub.server.stop(true);
@@ -110,6 +116,22 @@ describe("LOSS-13: wire lines the ACP engine could not read reach the ledger at 
       (session) => session.id === "cc_acp-fake-agent--sess_wire",
     );
     expect(row?.lossKinds?.wire_unobserved).toBe(1);
+  });
+
+  test("review M5: requests the pending map evicted are wire lines whose answer capture never saw", async () => {
+    // Arrange: more unanswered requests than the map holds
+    const h = await harness("wire-pending-evicted");
+    for (let id = 0; id < ACP_MAX_PENDING_REQUESTS + 3; id += 1) {
+      h.capture.offer("c2a", wireLine({ jsonrpc: "2.0", id, method: "session/new", params: { cwd: h.repo, mcpServers: [] } }));
+    }
+    await h.capture.settle();
+
+    // Act
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert
+    const losses = await readCaptureLosses(h.home, "any-repo-key");
+    expect(losses.byDetail["wire_unobserved:pending-evicted"]).toBe(3);
   });
 
   test("an engine that read every line books nothing", async () => {

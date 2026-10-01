@@ -93,8 +93,8 @@ const plural = (count: number, noun: string): string =>
  * own fragments (connector-core spool/loss-report.ts formatLossLines) so the
  * two commands cannot describe one loss two ways.
  */
-const statusLossLines = (local: LocalLosses): readonly string[] => {
-  const { ignored, capture } = formatLossLines(local);
+const statusLossLines = (local: LocalLosses, now: Date): readonly string[] => {
+  const { ignored, capture } = formatLossLines(local, now);
   const parts = [ignored, capture].filter((part): part is string => part !== null);
   return parts.length === 0 ? [] : [`losses: ${parts.join(" · ")}`];
 };
@@ -305,7 +305,7 @@ export const runStatus = async (
   const local = await readLocalLosses(config.home, key);
   const drops = local.drops.summary;
   const unrecorded = local.unrecorded;
-  const lossLines = statusLossLines(local);
+  const lossLines = statusLossLines(local, now);
   // Foreign-repo drops (trial finding #9): a multi-repo workspace's second
   // connected repo goes silent under first-wins, and this line is where a
   // human finds out. Machine-wide (the dropping session is bound to the

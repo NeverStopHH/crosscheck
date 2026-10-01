@@ -19,7 +19,10 @@ import {
   loadReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
-import { findConnectedRepoRootForPaths } from "@crosscheck/connector-core/config/connected-repo.ts";
+import {
+  findConnectedRepoRootForPaths,
+  mayBeConnectedRepo,
+} from "@crosscheck/connector-core/config/connected-repo.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
@@ -244,6 +247,51 @@ const prepareAndRun = async (
 };
 
 /**
+ * THE HOOKS WHOSE ABANDONMENT CAN LOSE CAPTURE (review M4). SessionStart
+ * registers the session and spools its work context; PostToolUse spools the
+ * targets; PostToolUseFailure the fingerprint; Stop the git lane. The rest
+ * capture nothing a coverage question reads: PreToolUse spools the
+ * tripwire's ask and UserPromptSubmit its hint deliveries (informational,
+ * loss-accounting §3 row 25), and SessionEnd's end and drain leave the
+ * records on disk (§4.8.4) — a slow hub cutting those is no loss, and booking
+ * it made a slow hub read `telemetry_lost`.
+ */
+const CAPTURE_HOOKS: ReadonlySet<HookName> = new Set([
+  "session-start",
+  "post-tool-use",
+  "post-tool-use-failure",
+  "stop",
+]);
+
+interface LossOwner {
+  readonly home: string;
+  readonly key: string | null;
+}
+
+/**
+ * WHERE A CAPTURE HOOK THE BUDGET CUT BEFORE PREPARE RESOLVED ITS REPO IS
+ * BOOKED (review M4). Its session's state file names the repo outright when
+ * an earlier hook registered it — keyed, no other repo charged. Otherwise
+ * unkeyed (every repo) only when a connected repo sits above its cwd or a
+ * touched file (config/connected-repo.ts mayBeConnectedRepo); in an
+ * unconnected checkout no run of the hook would have captured for anyone,
+ * and charging every connected repo there over-reported for nothing.
+ */
+const unresolvedOwner = async (stdin: string, env: Env): Promise<LossOwner | null> => {
+  const payload = parseHookPayload(stdin);
+  if (payload === null) {
+    return null;
+  }
+  const home = crosscheckHome(env);
+  const state = await readSessionState(home, payload.session_id);
+  if (state !== null) {
+    return { home, key: repoKey(state.hubUrl, state.repoId) };
+  }
+  const owned = await mayBeConnectedRepo(env, payload.cwd, [payload.cwd], extractFilePaths(payload.tool_input));
+  return owned ? { home, key: null } : null;
+};
+
+/**
  * The one place hooks are allowed to fail: everything is caught, nothing is
  * written to stderr, and the caller always exits 0 (spec §E). The budget covers
  * preparation too — resolving repo identity spawns several git processes, and a
@@ -300,13 +348,11 @@ export const runHookWith = async (
     // written. Booked here, after the race, for the reason the fired marker
     // below is — and keyed to the repo when prepare got that far, unkeyed
     // (charged to every repo) when the budget beat repo identity.
-    if (outcome.timedOut) {
-      await recordHookTimeout(
-        resolved.value?.home ?? crosscheckHome(env),
-        name,
-        resolved.value?.key ?? null,
-        new Date(),
-      );
+    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {
+      const owner = resolved.value ?? (await unresolvedOwner(stdin, env));
+      if (owner !== null) {
+        await recordHookTimeout(owner.home, name, owner.key, new Date());
+      }
     }
     // AFTER the race, on purpose (trial finding M2, and the one budget risk
     // this row carries). Inside the raced promise this write would compete
