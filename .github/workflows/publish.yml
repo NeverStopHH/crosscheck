@@ -1,0 +1,51 @@
+name: Publish
+
+# Publishes crosscheck-hub to npm when a release tag is pushed, through npm's
+# trusted publishing (OIDC): no npm token exists anywhere, and npm attaches a
+# provenance attestation naming this repository, this workflow and the commit.
+# The trust is configured once on npmjs.com (docs/PUBLISHING.md) and names THIS
+# FILENAME, so renaming the file breaks publishing until that entry is changed.
+#
+# Nothing is published unless packages/cli/scripts/release-preflight.ts passes:
+# the tag is vMAJOR.MINOR.PATCH, every package carries that version, the tagged
+# commit is on main, and CI on that commit is green. Each check closes a way an
+# earlier release went wrong while it was published by hand from a laptop.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read # checkout
+  actions: read # the preflight reads CI's result on the tagged commit
+  id-token: write # the OIDC token npm exchanges for a one-publish credential
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the preflight asks git whether the tag is on main
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      # Trusted publishing needs npm >= 11.5.1 (docs.npmjs.com/trusted-publishers).
+      - run: npm install -g npm@^11.5.1 && npm --version
+      - run: bun install --frozen-lockfile
+      - name: Preflight — tag, versions, on main, CI green
+        run: bun packages/cli/scripts/release-preflight.ts
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Pack
+        run: echo "TARBALL=$(bun packages/cli/scripts/pack-npm.ts | tail -1)" >> "$GITHUB_ENV"
+      - name: Publish, with provenance attached by npm
+        run: npm publish "$TARBALL"
