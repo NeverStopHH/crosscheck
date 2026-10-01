@@ -198,15 +198,19 @@ const counter = async (harness: TestHarness, name: string): Promise<number> => {
 };
 
 describe("one session's residue", () => {
-  test("a repo that never enrolled stores nothing", async () => {
+  test("a repo that never enrolled stores nothing — not a row, not a count", async () => {
     // Arrange
     const { harness, developer } = await setup({ enrolled: false });
 
     // Act
     await store(harness, developer);
 
-    // Assert
+    // Assert — the second review's anchor run found the count unchecked: with
+    // the enrolment gate gone, the session fell to "before labels" (no
+    // settings row) and a counter row was written for a team that never
+    // agreed to be measured
     expect(await rows(harness)).toHaveLength(0);
+    expect(await harness.db.select().from(pilotCounters)).toHaveLength(0);
   });
 
   test("a single-epoch session gets its span", async () => {

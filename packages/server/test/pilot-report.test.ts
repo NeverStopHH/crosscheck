@@ -1105,8 +1105,9 @@ describe("proof 4 — the reasons people gave", () => {
     // Act
     const out = await report(world, 1);
 
-    // Assert
+    // Assert — neither its sentence nor its intervention is this repo's
     expect(out.precision.reasons).toEqual([]);
+    expect(out.precision.interventions).toBe(0);
     expect(JSON.stringify(out)).not.toContain("said about the other repo");
   });
 

@@ -191,11 +191,12 @@ export const readCohorts = (deps: Deps, repo: string): Promise<readonly CohortFi
  * be filtered by when a label was GIVEN while the tally counts by when the
  * session STARTED, so a reason could sit under figures its label was not
  * part of — and the exclusive `until` on the label's own instant could drop
- * a reason given in the same millisecond as the report.
+ * a reason given in the same millisecond as the report. The population is
+ * also the ONE repo scope: a second repo filter here masked a population
+ * that lost its own (found by the anchor run).
  */
 export const readReasons = async (
   deps: Deps,
-  repo: string,
   population: SQL,
 ): Promise<{ readonly reasons: readonly LabelReason[]; readonly beyond: number }> => {
   const rows = await deps.db.execute<{ mark: string; reason: string; total: number }>(sql`
@@ -206,7 +207,6 @@ export const readReasons = async (
     JOIN agent_sessions s ON s.id = hd.session_id
     JOIN population p ON p.id = s.id
     WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL
-      AND s.repo = ${repo}
     ORDER BY m.created_at DESC, m.id ASC
     LIMIT ${PILOT_REPORT_MAX_LABEL_REASONS}`);
   const reasons = rows.rows.map((row) => ({
@@ -272,7 +272,7 @@ export const readLabelledWindow = async (
   const population = windowPopulation(repo, from, window.until);
   const [tally, said, legacyNoise] = await Promise.all([
     readLabelTally(deps, population),
-    readReasons(deps, repo, population),
+    readReasons(deps, population),
     readLegacyNoise(deps, repo, window.since, window.until),
   ]);
   return {
