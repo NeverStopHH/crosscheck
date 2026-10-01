@@ -1061,6 +1061,29 @@ describe("proof 4 — the reasons people gave", () => {
     expect(out.precision.reasonsBeyondList).toBe(2);
   });
 
+  test("L5: a reason is listed only when its label is counted — the same sessions as the tally", async () => {
+    // Arrange — a session that started before a one-day window, labelled
+    // an hour ago with a reason: its label is outside the tally, so its
+    // sentence must not sit under figures it is not part of. The second
+    // review found the list filtered by when the label was given.
+    const world = await setup();
+    await session(world, "s_prior", 100);
+    await context(world, "wc_prior", "s_prior", "prior work");
+    await session(world, "s_old", 30);
+    await deliver(world, "hd_old", "s_old", "wc_prior", "prompt_hint", 29, null);
+    await label(world, "hd_old", "noise", "outside the window's sessions", 1);
+    await session(world, "s_in", 5);
+    await deliver(world, "hd_in", "s_in", "wc_prior", "prompt_hint", 4, null);
+    await label(world, "hd_in", "helpful", "inside them", 1);
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.reasons).toEqual([{ label: "helpful", reason: "inside them" }]);
+    expect(out.precision.reasonsBeyondList).toBe(0);
+  });
+
   test("a reason given about another repo's intervention never reaches this repo's report", async () => {
     // Arrange — the one place a reason is rendered is its OWN repo's report
     // (07 §12); one about a delivery to another repo's session belongs there

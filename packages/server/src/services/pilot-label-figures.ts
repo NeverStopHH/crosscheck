@@ -186,22 +186,27 @@ export const readCohorts = (deps: Deps, repo: string): Promise<readonly CohortFi
  * the total beside the list. The label is normalised so an older hub's word
  * reads as what it meant. No developer id and no name leave the query: the
  * sentence is a person's word about an intervention, not about a person.
+ *
+ * FROM THE SAME SESSIONS AS THE TALLY (second review, L5). The list used to
+ * be filtered by when a label was GIVEN while the tally counts by when the
+ * session STARTED, so a reason could sit under figures its label was not
+ * part of — and the exclusive `until` on the label's own instant could drop
+ * a reason given in the same millisecond as the report.
  */
 export const readReasons = async (
   deps: Deps,
   repo: string,
-  since: Date,
-  until: Date,
+  population: SQL,
 ): Promise<{ readonly reasons: readonly LabelReason[]; readonly beyond: number }> => {
   const rows = await deps.db.execute<{ mark: string; reason: string; total: number }>(sql`
+    WITH population AS (${population})
     SELECT m.mark AS mark, m.reason AS reason, count(*) OVER ()::int AS total
     FROM pilot_marks m
     JOIN hint_deliveries hd ON hd.id = m.ref_id
     JOIN agent_sessions s ON s.id = hd.session_id
+    JOIN population p ON p.id = s.id
     WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL
       AND s.repo = ${repo}
-      AND m.created_at >= ${since.toISOString()}::timestamptz
-      AND m.created_at < ${until.toISOString()}::timestamptz
     ORDER BY m.created_at DESC, m.id ASC
     LIMIT ${PILOT_REPORT_MAX_LABEL_REASONS}`);
   const reasons = rows.rows.map((row) => ({
@@ -264,9 +269,10 @@ export const readLabelledWindow = async (
   labelsSince: Date,
 ): Promise<LabelledWindow> => {
   const from = labelsSince.getTime() > window.since.getTime() ? labelsSince : window.since;
+  const population = windowPopulation(repo, from, window.until);
   const [tally, said, legacyNoise] = await Promise.all([
-    readLabelTally(deps, windowPopulation(repo, from, window.until)),
-    readReasons(deps, repo, window.since, window.until),
+    readLabelTally(deps, population),
+    readReasons(deps, repo, population),
     readLegacyNoise(deps, repo, window.since, window.until),
   ]);
   return {
