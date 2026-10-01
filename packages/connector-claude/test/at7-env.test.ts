@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { CHILD_ENV_ALLOWLIST, childEnv } from "../bench/at7/exec.ts";
-import { assertRepoConfigHub } from "../bench/at7/install.ts";
+import type { ProcOptions, ProcResult } from "../bench/at7/exec.ts";
+import { assertRepoConfigHub, install } from "../bench/at7/install.ts";
+import type { InstallInput } from "../bench/at7/install.ts";
 
 /**
  * A1.5: every child the harness spawns gets an explicit allowlist (PATH, HOME,
@@ -91,5 +96,78 @@ describe("assertRepoConfigHub", () => {
   test("throws when the config is unreadable", () => {
     // Act / Assert
     expect(() => assertRepoConfigHub("not json", "http://127.0.0.1:5123")).toThrow();
+  });
+});
+
+/**
+ * install() itself, with the `crosscheck login/init` processes faked: the
+ * repo-config check is CALLED (A1.5 "Wrong hub"), the key goes on stdin, and
+ * init gets the caller's command prefix. Temp dirs only; nothing spawned.
+ */
+describe("install", () => {
+  const HUB = "http://127.0.0.1:5123";
+  let root: string;
+  let calls: { cmd: readonly string[]; options: ProcOptions }[];
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "install-"));
+    await mkdir(join(root, "slugkit"));
+    calls = [];
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const installInput = (): InstallInput => ({
+    home: join(root, "crosscheck-home"),
+    runTempDir: root,
+    hubUrl: HUB,
+    readerKey: "reader-key-placeholder",
+    fixtureRoot: join(root, "slugkit"),
+    commandPrefix: "/bin/bun /work/crosscheck/packages/cli/src/bin/crosscheck.ts",
+  });
+
+  /** A fake runner: login succeeds; init writes the three files, naming `writtenHub`. */
+  const fakeRunner =
+    (writtenHub: string) =>
+    async (cmd: readonly string[], options: ProcOptions = {}): Promise<ProcResult> => {
+      calls.push({ cmd, options });
+      if (cmd.includes("init")) {
+        const fixture = join(root, "slugkit");
+        await mkdir(join(fixture, ".claude"), { recursive: true });
+        await writeFile(join(fixture, ".claude", "settings.json"), "{}", "utf8");
+        await writeFile(join(fixture, ".mcp.json"), "{}", "utf8");
+        await writeFile(join(fixture, ".crosscheck.json"), JSON.stringify({ hubUrl: writtenHub }), "utf8");
+      }
+      return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+    };
+
+  test("refuses when init wrote another hub into .crosscheck.json", async () => {
+    // Act / Assert
+    expect(install(installInput(), fakeRunner("https://team-hub.example"))).rejects.toThrow(
+      /names hub https:\/\/team-hub\.example/,
+    );
+  });
+
+  test("passes when init wrote the run's own hub, with the key on stdin only", async () => {
+    // Act
+    const result = await install(installInput(), fakeRunner(HUB));
+    const login = calls.find((call) => call.cmd.includes("login"));
+
+    // Assert
+    expect(result.env["CROSSCHECK_HOME"]).toBe(join(root, "crosscheck-home"));
+    expect(login?.options.stdin).toBe("reader-key-placeholder\n");
+    expect(login?.cmd.join(" ")).not.toContain("reader-key-placeholder");
+  });
+
+  test("hands init the caller's command prefix (A2.4)", async () => {
+    // Act
+    await install(installInput(), fakeRunner(HUB));
+    const init = calls.find((call) => call.cmd.includes("init"));
+
+    // Assert
+    const flag = init?.cmd.indexOf("--command-prefix") ?? -1;
+    expect(init?.cmd[flag + 1]).toBe("/bin/bun /work/crosscheck/packages/cli/src/bin/crosscheck.ts");
   });
 });

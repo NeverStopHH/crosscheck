@@ -114,7 +114,13 @@ export const assertRepoConfigHub = (raw: string, expectedHubUrl: string): void =
   }
 };
 
-export const install = async (input: InstallInput): Promise<InstallResult> => {
+/** How install spawns `crosscheck login/init` — `runProcess`, or a test's fake. */
+export type ProcessRunner = typeof runProcess;
+
+export const install = async (
+  input: InstallInput,
+  run: ProcessRunner = runProcess,
+): Promise<InstallResult> => {
   assertHomeUnderRun(input.home, input.runTempDir);
   await mkdir(input.home, { recursive: true });
   const env = {
@@ -122,7 +128,7 @@ export const install = async (input: InstallInput): Promise<InstallResult> => {
     CROSSCHECK_TRIPWIRE: RUN_TRIPWIRE_MODE,
   };
 
-  const login = await runProcess(
+  const login = await run(
     [runtimePath(), crosscheckBinPath(), "login", input.hubUrl],
     { env, stdin: `${input.readerKey}\n` },
   );
@@ -130,7 +136,7 @@ export const install = async (input: InstallInput): Promise<InstallResult> => {
     throw new Error(`crosscheck login failed (${String(login.exitCode)})`);
   }
 
-  const init = await runProcess(
+  const init = await run(
     [
       runtimePath(),
       crosscheckBinPath(),
