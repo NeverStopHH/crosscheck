@@ -26,6 +26,7 @@
  * the arrangement http/coverage.ts already runs.
  */
 import { z } from "zod";
+import { WAIVER_AUTHORITIES } from "@crosscheck/schema";
 
 export const ATTRIBUTIONS = [
   "ATTRIBUTED",
@@ -138,6 +139,13 @@ export const WaiverRefSchema = z.looseObject({
   // unsafe direction. The empty string renders as "no reason recorded".
   reason: z.string().default(""),
   grantedByName: z.string().default(""),
+  /**
+   * Which authority opened it (04a §6). An absent or unknown value reads as
+   * `terminal`, the WEAKER one: a hub from before 04a only ever wrote that
+   * kind, and reading an unknown authority as a passkey would claim a person
+   * signed what nobody can show was signed.
+   */
+  authority: z.enum(WAIVER_AUTHORITIES).catch("terminal"),
 });
 
 const VerdictSchema = z

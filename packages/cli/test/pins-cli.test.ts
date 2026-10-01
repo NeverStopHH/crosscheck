@@ -359,7 +359,7 @@ describe("crosscheck pin list at scale", () => {
           renamedPaths: 0,
           renamedAt: null,
           renamedByName: null,
-          liveWaiver: null,
+          liveWaiver: null, version: 1,
         },
       ],
       coverage: {
@@ -409,7 +409,7 @@ describe("crosscheck pin list at scale", () => {
       renamedPaths: 0,
       renamedAt: null,
       renamedByName: null,
-      liveWaiver: null,
+      liveWaiver: null, version: 1,
     });
     const registry = {
       pins: Array.from({ length: 200 }, (_unused, index) => row(index)),
@@ -456,7 +456,7 @@ describe("crosscheck pin list at scale", () => {
           renamedPaths: 1,
           renamedAt: new Date(now.getTime() - 120_000).toISOString(),
           renamedByName: "Ken",
-          liveWaiver: null,
+          liveWaiver: null, version: 1,
         },
       ],
       coverage: {

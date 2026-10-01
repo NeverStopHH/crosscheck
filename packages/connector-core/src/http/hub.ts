@@ -2413,6 +2413,13 @@ export const PinEntrySchema = z.looseObject({
    * the absent reading UNDERSTATES permission rather than inventing it.
    */
   liveWaiver: WaiverRefSchema.nullish().transform((value) => value ?? null),
+  /**
+   * Which version of the invariant the pin is at (04 §3.5) — what a waiver
+   * request names. Defaulted to 1, the version every pin had before sweeps
+   * could bump it; a wrong guess costs a `stale_version` refusal, never a
+   * waiver over paths nobody asked about.
+   */
+  version: z.number().int().min(1).default(1),
 });
 
 export type PinEntry = z.infer<typeof PinEntrySchema>;
@@ -2592,6 +2599,69 @@ export const sweepPins = async (
   }
   return { ok: true, data: { applied, ignored }, dateHeader };
 };
+
+export interface WaiverRequestBody {
+  readonly repo: string;
+  readonly pinId: string;
+  readonly pinVersion: number;
+  readonly reason: string;
+  readonly expiresAt: string;
+}
+
+const RequestedWaiverSchema = z.looseObject({
+  id: z.string().min(1),
+  approvePath: z.string().min(1),
+});
+
+/**
+ * ASK FOR A FENCE TO OPEN (1.0 spec 04a §6) — the only waiver write an api
+ * key has left. It opens nothing; the hub answers with the page where a
+ * person approves it with a passkey.
+ */
+export const requestWaiver = (
+  ctx: HubContext,
+  body: WaiverRequestBody,
+): Promise<HubResult<z.infer<typeof RequestedWaiverSchema>>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/waiver-requests",
+    schema: RequestedWaiverSchema,
+    body,
+  });
+
+/** One waiver request as `pin list` shows it. */
+export const WaiverRequestEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  pinId: z.string().min(1),
+  pinVersion: z.number().int().min(1),
+  requestedByName: z.string().default(""),
+  reason: z.string().default(""),
+  expiresAt: z.string().min(1),
+  status: z.string().min(1),
+});
+
+export type WaiverRequestEntry = z.infer<typeof WaiverRequestEntrySchema>;
+
+const WaiverRequestListSchema = z
+  .looseObject({ requests: z.array(z.unknown()).default([]) })
+  .transform((value): readonly WaiverRequestEntry[] =>
+    // The tolerant-row rule: one malformed request must not cost the listing.
+    value.requests
+      .map((row) => WaiverRequestEntrySchema.safeParse(row))
+      .filter((parsed) => parsed.success)
+      .map((parsed) => parsed.data),
+  );
+
+/** The repo's waiver requests, every status, newest first. */
+export const getWaiverRequests = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly WaiverRequestEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/waiver-requests${encodeRepo(repo)}`,
+    schema: WaiverRequestListSchema,
+  });
 
 /**
  * One candidate session. NO developer name and NO developer id — by design,

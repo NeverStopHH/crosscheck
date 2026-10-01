@@ -35,7 +35,12 @@ import {
   MAX_PIN_SURFACE_CHARS,
   MAX_WAIVER_REASON_CHARS,
 } from "@crosscheck/schema";
-import type { PinEntry, PinRegistry } from "@crosscheck/connector-core/http/hub.ts";
+import type { WaiverAuthority } from "@crosscheck/schema";
+import type {
+  PinEntry,
+  PinRegistry,
+  WaiverRequestEntry,
+} from "@crosscheck/connector-core/http/hub.ts";
 
 import { pinCoverageSentence } from "./pin-observability.ts";
 
@@ -130,6 +135,7 @@ const waiverLines = (pin: PinEntry, now: Date): readonly string[] => {
       : bareUntrusted(waiver.grantedByName);
   return [
     `  WAIVED by ${granter} until ${waiver.expiresAt} (${untilOf(waiver.expiresAt, now)}) — this pin's conflict is not reported while the fence is open`,
+    `  ${AUTHORITY_LINE[waiver.authority]}`,
     `  their reason: ${
       waiver.reason === ""
         ? "no reason recorded"
@@ -138,7 +144,38 @@ const waiverLines = (pin: PinEntry, now: Date): readonly string[] => {
   ];
 };
 
-const pinLines = (pin: PinEntry, now: Date): readonly string[] => {
+/**
+ * WHO SAID YES, as the hub recorded it (04a §6, PK-11). A `terminal` waiver
+ * was opened the pre-04a way — an api key plus a presence field any agent
+ * holding the key could send — and is named as the weaker kind every time it
+ * is printed, until it runs out on its own expiry.
+ */
+const AUTHORITY_LINE: Readonly<Record<WaiverAuthority, string>> = {
+  passkey: "approved with a person's passkey",
+  terminal:
+    "opened from a terminal before passkeys — the weaker kind, which any agent holding the api key could send",
+};
+
+/**
+ * A REQUEST WAITING FOR A PERSON, on the row it asks about (04a §6). It opens
+ * nothing, and the line says so: a reader who saw only "requested" might take
+ * the fence for open. The requester's reason is their prose — framed, one pair
+ * on its own line, like a waiver's.
+ */
+const requestLines = (request: WaiverRequestEntry): readonly string[] => [
+  `  waiver requested by ${
+    request.requestedByName === "" ? "a developer this hub did not name" : bareUntrusted(request.requestedByName)
+  } until ${request.expiresAt} — waiting for a person to approve it with a passkey; the fence stays closed`,
+  `  their reason: ${
+    request.reason === "" ? "no reason recorded" : quotedBody(request.reason, MAX_WAIVER_REASON_CHARS)
+  }`,
+];
+
+const pinLines = (
+  pin: PinEntry,
+  now: Date,
+  requests: readonly WaiverRequestEntry[],
+): readonly string[] => {
   const state =
     pin.brokeAt !== null
       ? `RETRACTED ${ageOf(pin.brokeAt, now)}${pin.brokeByName === null ? "" : ` by ${bareUntrusted(pin.brokeByName)}`}`
@@ -165,8 +202,40 @@ const pinLines = (pin: PinEntry, now: Date): readonly string[] => {
       : [`  check: ${quotedBody(pin.check, MAX_PIN_CHECK_CHARS)}`]),
     fileLine(pin),
     ...waiverLines(pin, now),
+    ...requests
+      .filter((request) => request.pinId === pin.id && request.status === "pending")
+      .flatMap(requestLines),
   ];
 };
+
+/**
+ * What `crosscheck pin --waive` prints when the hub took the request (04a §6).
+ *
+ * TWO SLOTS ARE FOREIGN, AND ONLY TWO: the request id the hub chose and the
+ * pin id from argv, both through `safeId`. The expiry and the approval URL
+ * are built LOCALLY — the expiry from this process's own clock and `--until`,
+ * the URL from the configured hub URL and a fixed path — and never taken from
+ * the hub's answer: a hub-chosen path printed for an agent to follow would be
+ * an instruction channel, and the agent that asked is the likely reader.
+ */
+export const renderWaiverRequested = (input: {
+  readonly requestId: string;
+  readonly pinId: string;
+  /** Local: this process computed it from `--until`. */
+  readonly expiresAt: string;
+  /** Local: the configured hub URL plus the fixed approval path. */
+  readonly approveUrl: string;
+}): string =>
+  [
+    `requested ${safeId(input.requestId)}: open ${safeId(input.pinId)} until ${input.expiresAt}.`,
+    "the fence stays closed until a person approves it with a passkey at:",
+    `  ${input.approveUrl}`,
+    "",
+  ].join("\n");
+
+/** A `--waive` naming a pin this repo's registry does not hold. */
+export const noSuchPinLine = (pinId: string): string =>
+  `no pin ${safeId(pinId)} on this repo — crosscheck pin list shows them\n`;
 
 /**
  * The whole listing. The header names the repo the registry belongs to, and
@@ -177,6 +246,8 @@ export const renderPinList = (
   repoId: string,
   registry: PinRegistry,
   now: Date,
+  /** The repo's waiver requests (04a §6); `null` = the hub did not answer, which is said. */
+  requests: readonly WaiverRequestEntry[] | null = [],
 ): string => {
   // THE LISTING IS A PAGE, THE DENOMINATOR IS THE WHOLE. The hub caps the
   // rows at MAX_PINS_LISTED while counting every pin for the coverage line,
@@ -206,9 +277,14 @@ export const renderPinList = (
           `showing ${String(shown)} of ${String(total)} — newest first, live and retracted alike; the rest are counted above but not listed`,
         ]
       : []),
+    // NOT SILENT ABOUT WHAT IT COULD NOT READ: "no request is waiting" and
+    // "the hub did not say" are different facts.
+    ...(requests === null
+      ? ["waiver requests: unknown — the hub did not answer, so a pending request would not show here"]
+      : []),
     ...(registry.pins.length === 0
       ? ['(no pins yet — crosscheck pin "a surface that works" --files … --check "…" records one)']
-      : registry.pins.flatMap((pin) => pinLines(pin, now))),
+      : registry.pins.flatMap((pin) => pinLines(pin, now, requests ?? []))),
     "",
   ].join("\n");
 };

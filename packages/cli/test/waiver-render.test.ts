@@ -51,6 +51,7 @@ const pin = (over: Partial<PinEntry> = {}): PinEntry => ({
   renamedAt: null,
   renamedByName: null,
   liveWaiver: null,
+  version: 1,
   ...over,
 });
 
@@ -74,6 +75,7 @@ const waived = (expiresAt: string, reason: string = REASON): PinEntry =>
       expiresAt,
       reason,
       grantedByName: "Nick",
+      authority: "passkey",
     },
   });
 

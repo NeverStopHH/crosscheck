@@ -37,6 +37,8 @@ import {
   breakPin,
   createPin,
   getPins,
+  getWaiverRequests,
+  requestWaiver,
   sweepPins,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext, PinSweepUpdate } from "@crosscheck/connector-core/http/hub.ts";
@@ -49,7 +51,7 @@ import {
   PinSchema,
 } from "@crosscheck/schema";
 import { postPilotMark } from "@crosscheck/connector-core/http/pilot.ts";
-import { renderPinList } from "./pin-render.ts";
+import { noSuchPinLine, renderPinList, renderWaiverRequested } from "./pin-render.ts";
 import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
 import type { CliResult } from "./login.ts";
 
@@ -58,6 +60,9 @@ export const PIN_FLAG_CHECK = "--check";
 export const PIN_FLAG_BROKE = "--broke";
 export const PIN_FLAG_SWEEP = "--sweep";
 export const PIN_FLAG_OK = "--ok";
+export const PIN_FLAG_WAIVE = "--waive";
+export const PIN_FLAG_UNTIL = "--until";
+export const PIN_FLAG_REASON = "--reason";
 
 export const PIN_USAGE = [
   'usage: crosscheck pin "<surface>" --files <path…> [--check "<30-second recipe>"]',
@@ -65,11 +70,14 @@ export const PIN_USAGE = [
   "   or: crosscheck pin --broke <id>   you ran the check and it failed",
   "   or: crosscheck pin --ok <id>      you ran the check and it passed",
   "   or: crosscheck pin --sweep        re-resolve pinned paths against git",
+  '   or: crosscheck pin --waive <id> --until <2d|12h|date> --reason "<why>"',
+  "                                     ask a person to open this pin's fence",
   "",
   "  A pin says a named surface WORKS right now: the files behind it, the",
   "  commit you verified at, and a check anybody can run in 30 seconds.",
   `  At most ${String(MAX_SPEAKING_PIN_FILES)} files may ever speak; up to ${String(MAX_PIN_FILES)} are briefing-only.`,
   "  Pinning needs a person at a terminal — an agent cannot vouch for you.",
+  "  A waiver is only ASKED for here; a person approves it with a passkey.",
   "",
 ].join("\n");
 
@@ -149,6 +157,9 @@ interface PinArgs {
   readonly ok: string | null;
   readonly sweep: boolean;
   readonly list: boolean;
+  readonly waive: string | null;
+  readonly until: string | undefined;
+  readonly reason: string | undefined;
 }
 
 /**
@@ -163,6 +174,9 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
   let ok: string | null = null;
   let sweep = false;
   let list = false;
+  let waive: string | null = null;
+  let until: string | undefined;
+  let reason: string | undefined;
   let index = 0;
   while (index < argv.length) {
     const token = argv[index] as string;
@@ -194,6 +208,21 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
       index += 1;
       continue;
     }
+    if (token === PIN_FLAG_WAIVE) {
+      waive = argv[index + 1] ?? null;
+      index += 2;
+      continue;
+    }
+    if (token === PIN_FLAG_UNTIL) {
+      until = argv[index + 1];
+      index += 2;
+      continue;
+    }
+    if (token === PIN_FLAG_REASON) {
+      reason = argv[index + 1];
+      index += 2;
+      continue;
+    }
     if (token === "list") {
       list = true;
       index += 1;
@@ -204,7 +233,7 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
     }
     index += 1;
   }
-  return { surface, files, check, broke, ok, sweep, list };
+  return { surface, files, check, broke, ok, sweep, list, waive, until, reason };
 };
 
 const listPins = async (
@@ -215,8 +244,82 @@ const listPins = async (
   if (!registry.ok) {
     return failureResult(registry);
   }
+  // A hub that cannot list requests (older than 04a, or failing) still lists
+  // its pins; the render says the requests are unknown rather than absent.
+  const requests = await getWaiverRequests(resolved.ctx, resolved.repoId);
   return {
-    stdout: renderPinList(resolved.repoId, registry.data, now),
+    stdout: renderPinList(resolved.repoId, registry.data, now, requests.ok ? requests.data : null),
+    exitCode: EXIT_OK,
+  };
+};
+
+const HOUR_MS = 3_600_000;
+const UNTIL_PATTERN = /^(\d+)\s*([hd])$/;
+
+/** Where a person approves a waiver on the hub's web UI (server: routes/waiver-requests.ts). */
+const WAIVER_APPROVAL_PATH = "/ui/waivers";
+
+/** `2d`, `12h`, or a date the person typed; null when it is none of them. */
+export const parseUntil = (value: string, now: Date): string | null => {
+  const relative = UNTIL_PATTERN.exec(value.trim());
+  if (relative !== null) {
+    const amount = Number(relative[1]);
+    const hours = relative[2] === "d" ? amount * 24 : amount;
+    return amount > 0 ? new Date(now.getTime() + hours * HOUR_MS).toISOString() : null;
+  }
+  const absolute = /^\d{4}-\d{2}-\d{2}/.test(value.trim()) ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(absolute) ? null : new Date(absolute).toISOString();
+};
+
+const WAIVE_USAGE_ERROR = (detail: string): CliResult => ({
+  stdout: `${detail}\n${PIN_USAGE}`,
+  exitCode: EXIT_USAGE,
+});
+
+/**
+ * `--waive <id>` — ASK for a fence to open (04a §6).
+ *
+ * NO TERMINAL GATE, deliberately, and the inverse of every other `pin` path:
+ * an agent blocked by a protected conflict is exactly who should ask, and
+ * asking opens nothing. The request names the pin's CURRENT version, read
+ * from the registry, so a sweep that moves the paths before a person
+ * approves makes the approval fail rather than sign off on other files.
+ */
+const requestFenceWaiver = async (resolved: Resolved, args: PinArgs, pinId: string): Promise<CliResult> => {
+  if (args.reason === undefined || args.reason.trim() === "") {
+    return WAIVE_USAGE_ERROR("a waiver request needs --reason: a permission nobody can account for is one nobody should grant");
+  }
+  const expiresAt = args.until === undefined ? null : parseUntil(args.until, new Date());
+  if (expiresAt === null) {
+    return WAIVE_USAGE_ERROR("a waiver request needs --until as hours (12h), days (2d) or a date (2026-10-03)");
+  }
+  const registry = await getPins(resolved.ctx, resolved.repoId);
+  if (!registry.ok) {
+    return failureResult(registry);
+  }
+  const pin = registry.data.pins.find((entry) => entry.id === pinId);
+  if (pin === undefined) {
+    return { stdout: noSuchPinLine(pinId), exitCode: EXIT_FAIL };
+  }
+  const requested = await requestWaiver(resolved.ctx, {
+    repo: resolved.repoId,
+    pinId,
+    pinVersion: pin.version,
+    reason: args.reason.trim(),
+    expiresAt,
+  });
+  if (!requested.ok) {
+    return failureResult(requested);
+  }
+  return {
+    stdout: renderWaiverRequested({
+      requestId: requested.data.id,
+      pinId,
+      expiresAt,
+      // Built HERE, from the configured hub URL and a fixed path — never the
+      // hub's `approvePath`, which this command does not print (pin-render.ts).
+      approveUrl: `${resolved.ctx.hubUrl.replace(/\/+$/, "")}${WAIVER_APPROVAL_PATH}`,
+    }),
     exitCode: EXIT_OK,
   };
 };
@@ -429,6 +532,9 @@ export const runPin = async (
   }
   if (args.sweep) {
     return runSweep(resolved);
+  }
+  if (args.waive !== null) {
+    return requestFenceWaiver(resolved, args, args.waive);
   }
   if (args.broke !== null) {
     // The retraction takes the human gate too: it is the falsifier

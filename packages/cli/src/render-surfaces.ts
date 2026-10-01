@@ -13,9 +13,10 @@ import type {
   PinRegistry,
   SuspectCandidate,
   SuspectView,
+  WaiverRequestEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
 
-import { renderPinList } from "./cli/pin-render.ts";
+import { noSuchPinLine, renderPinList, renderWaiverRequested } from "./cli/pin-render.ts";
 import { pinStatusLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
 import { verdictLines } from "./cli/verdict-render.ts";
@@ -67,7 +68,22 @@ const pinWith = (payload: string): PinEntry => ({
     expiresAt: ISO,
     reason: payload,
     grantedByName: payload,
+    // 04a: the WEAKER authority, so the corpus also renders the line that
+    // says a waiver was opened from a terminal before passkeys.
+    authority: "terminal",
   },
+  version: 1,
+});
+
+/** A pending waiver request on the fixture pin, every author-written slot planted (04a §6). */
+const requestWith = (payload: string): WaiverRequestEntry => ({
+  id: "wr_11111111-2222-4333-8444-555555555555",
+  pinId: "pin_11111111-2222-4333-8444-555555555555",
+  pinVersion: 1,
+  requestedByName: payload,
+  reason: payload,
+  expiresAt: ISO,
+  status: "pending",
 });
 
 /**
@@ -324,7 +340,28 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // here" runs exactly this command through Bash. So unlike `status` it
     // carries the quoted-data notice, and the corpus holds it to the framed
     // class on every payload.
-    render: (payload) => renderPinList(payload, registryWith(payload), NOW),
+    // 04a: a PENDING waiver request rides along, so the requester's name and
+    // reason — the two new untrusted slots on this surface — are attacked too.
+    render: (payload) => renderPinList(payload, registryWith(payload), NOW, [requestWith(payload)]),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pin-waive",
+    delivery: "pulled",
+    module: "src/cli/pin-render.ts",
+    // BARE: what `crosscheck pin --waive` prints is two ids, an instant and
+    // the approval URL — no teammate's prose. The FOREIGN slots are planted:
+    // the request id the hub chose and the pin id from argv. The instant and
+    // the URL are built by the command itself (pin-render.ts says why the
+    // hub's path is never printed), so they carry fixed local values here.
+    framing: "bare",
+    render: (payload) =>
+      renderWaiverRequested({
+        requestId: payload,
+        pinId: payload,
+        expiresAt: ISO,
+        approveUrl: "http://localhost:7100/ui/waivers",
+      }) + noSuchPinLine(payload),
   },
   {
     kind: "corpus",
