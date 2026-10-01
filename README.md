@@ -187,6 +187,51 @@ matches a pinned path. That last one matters because a denied path is never
 captured at all, so `suspect` would otherwise answer "no session touched this
 surface" about a file everybody touched.
 
+#### Opening a fence takes a person's passkey
+
+Sometimes a pinned surface is broken on purpose for a while — a rollout, a
+migration. A **waiver** keeps that conflict quiet for at most fourteen days,
+with a reason on the record. An agent can only *ask* for one:
+
+```bash
+crosscheck pin --waive <pin-id> --expires 2d --reason "rollout is blocked; the fix lands Monday"
+# requested wr_…: open pin_… until 2026-10-03T12:00:00.000Z.
+# the fence stays closed until a person approves it with a passkey at:
+#   https://hub.example.ts.net/ui/waivers
+```
+
+A person approves it on that page with a **passkey** — Touch ID, Windows Hello
+or a phone. The passkey signs exactly the expiry and reason shown; the hub
+refuses any other terms. The API key cannot open or close a fence at all: it
+sits in `~/.crosscheck/config.json`, where every agent on your machine can read
+it, and a passkey is the one credential an agent cannot use.
+
+**Setting it up.** The admin mints a one-time enrolment code for each person
+and hands it over out of band:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$HUB_URL/api/developers/<developer-id>/passkey-enrollments"
+```
+
+The person opens `/ui/passkeys`, enters the code, and enrols the passkey. A new
+passkey can approve only after 24 hours, and until then `crosscheck status` and
+`crosscheck doctor` announce it to everyone. A passkey nobody expected is seen
+before it can act, and its owner can revoke it with nothing more than a login.
+
+Browsers allow passkeys only over https, or on `localhost`. On the hub's own
+machine `http://localhost:7100` works as it is. Teammates on a tailnet need the
+hub behind https, for example `tailscale serve --bg 7100`. List every address
+people open it at, then restart the hub:
+
+```bash
+CROSSCHECK_WEBAUTHN_ORIGINS=http://localhost:7100,https://hub.example.ts.net
+```
+
+A passkey works only at the address it was enrolled at. What this still leaves
+open, such as a software passkey enrolled with a stolen code, is stated in
+[spec 04a §8](docs/1.0/04a-human-waiver-authority.md).
+
 #### What this makes visible about people
 
 `crosscheck suspect` prints session identifiers, the agent that ran each

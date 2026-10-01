@@ -93,7 +93,8 @@ did not go backwards when the authenticator keeps one.
   exists in the repo, the version is current, the expiry is in the future and
   within `MAX_WAIVER_DAYS` — and stores a pending request. The fence stays
   closed. The answer names the approval page. The CLI front is `crosscheck pin
-  waive <pin-id> --until <date|Nd> --reason "<why>"`, which prints *"requested —
+  --waive <pin-id> --expires <2d|12h|date> --reason "<why>"` (§11: built as a
+  `pin` flag, and `--expires` rather than `--until`), which prints *"requested —
   the fence stays closed until a person approves it with a passkey at <url>"*.
   `POST /api/waiver-requests/:id/withdraw` lets the requester take it back.
 - **Approve** (passkey, `/ui/waivers`): writes the `grant` row in the same
@@ -195,6 +196,62 @@ verification, not to bypass it.
 - No attestation is required, and none is used as a gate; the AAGUID name is shown
   only.
 
-## 11. What the build found
+## 11. What the build found (2026-10-01)
 
-*Appended when built.*
+*Appended, never inserted: §1–§10 are cited by number.* Built on
+`feat/passkey-waiver-authority`. PK-1 to PK-12 each have a test, and each has
+a mutation anchor in `connector-core/scripts/mutation-check.ts` (19 anchors in
+all, every one `caught`).
+
+**Where this spec was wrong, and what was done instead:**
+
+1. **§6 said every new table is registered in the retention registry.** The
+   registry (`services/retention-registry.ts`) lists the relations that reference
+   a *session*. None of `passkeys`, `passkey_enrollments` or `waiver_requests`
+   does, so none belongs there; the CSK-12 foreign-key walk has nothing to find.
+2. **§6 had `crosscheck pin waive` print the approval URL the hub sends.** The
+   render-surface registry flagged that as hub-chosen text printed for an agent
+   to follow, which is an instruction channel. The CLI builds the URL itself from
+   the configured hub URL and a fixed path, and never prints the hub's
+   `approvePath` (`cli/pin-render.ts`).
+3. **§6 named the command `crosscheck pin waive … --until`.** It is built as a
+   `pin` flag, `--waive`, next to `--broke` and `--ok`, and the expiry flag is
+   `--expires`. `--until` is a git time flag, and CCB-2
+   (`staleness-axis.test.ts`) keeps every src module free of those so that
+   staleness has one definition. Allowing it in `pin.ts` would have blinded
+   that guard for the whole file.
+
+**What the build added that the spec did not name:**
+
+- **`fence_waivers.credential_id` is a foreign key** to `passkeys.credential_id`.
+  It sits on top of the CHECK, so a grant cannot name a device that was never
+  enrolled. The drizzle column `authority` has no default, which makes
+  forgetting it a compile error; the database default `'terminal'` only labels
+  rows written before 04a.
+- **The terms sit inside the challenge** (`nonce ‖ SHA-256(purpose, subject,
+  terms)`), so PK-4 is enforced by the signature check itself, not by a second
+  comparison that could be dropped.
+- **An approval may shorten the asked-for expiry, never lengthen it**
+  (`expiry_beyond_request`), and a fence has at most one pending request
+  (`already_requested`).
+- **The cool-off outlives the UI session.** A session lasts 12 hours and a
+  cool-off lasts 24, so a person who enrols logs in again the next day before
+  approving. That is the intended order.
+- **Doctor counts and `status` names.** Doctor's registration promises no
+  foreign text, so its passkey check counts enrolments that are cooling off and
+  points to `crosscheck status`. Status names who enrolled, the device and the
+  authenticator, each through `bareUntrusted`.
+- **Two pages run JavaScript, and only these two.** `/ui/passkeys` and
+  `/ui/waivers` replace the UI's `default-src 'none'` with `script-src 'self';
+  connect-src 'self'` and load a single same-origin script
+  (`ui/passkey-script.ts`). Every other page stays script-free, which is tested
+  and anchored.
+- **`CROSSCHECK_WEBAUTHN_ORIGINS` is checked at startup.** An `http` origin that
+  is not `localhost` stops the hub with a pointer to `tailscale serve`. Without
+  that check, every browser would refuse the ceremony later, in front of a
+  person, and nothing would say why.
+
+**Not built, as §8 and §10 left it:** TOTP; an admin page for minting codes (the
+API and a curl line are documented in the README); a notification to the
+approver when a request arrives (requests show on `/ui/waivers` and in
+`crosscheck pin list`).

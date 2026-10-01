@@ -12556,6 +12556,169 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/pglite-exit-code.test.ts`,
     because: "a script that opened an in-memory database never ends: a VERIFY claim hangs the claims check",
   },
+  // ── 04a: the human waiver authority — a passkey the agent cannot hold ──
+  {
+    label: "an api key opens a human-verified fence again (PK-1)",
+    file: `${SERVER}/src/routes/fence-waivers.ts`,
+    from:
+      '  router.post("/", developerAuth(deps), (c) =>\n' +
+      '    fail(c, 403, "passkey_required", PASSKEY_REQUIRED_SENTENCE),\n' +
+      "  );",
+    to: '  router.post("/", developerAuth(deps), (c) => ok(c, { id: "fw_forged" }, 201));',
+    test: `${SERVER}/test/fence-waivers.test.ts`,
+    because:
+      "any agent holding ~/.crosscheck/config.json lifts a protected conflict on a human-declared invariant with no person involved",
+  },
+  {
+    label: "two requests for one fence wait at once",
+    file: `${SERVER}/src/services/waiver-requests.ts`,
+    from: '  if (pending[0] !== undefined) {\n    return { refusal: "already_requested" };',
+    to: '  if (false) {\n    return { refusal: "already_requested" };',
+    test: `${SERVER}/test/waiver-requests.test.ts`,
+    because: "one decision gets two prompts, and the second approval silently overrides the first person's expiry",
+  },
+  {
+    label: "a passkey approval is recorded as the weaker terminal authority (PK-3)",
+    file: `${SERVER}/src/services/waivers.ts`,
+    from:
+      "    authority: PASSKEY_AUTHORITY,\n    credentialId: input.credentialId,\n    requestId: input.requestId,",
+    to: '    authority: "terminal" as const,\n    credentialId: input.credentialId,\n    requestId: input.requestId,',
+    test: `${SERVER}/test/waiver-requests.test.ts`,
+    because: "a signed approval reads as one any agent could have sent, and the record stops telling them apart",
+  },
+  {
+    label: "a passkey answer that fails verification is accepted",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: '    } catch {\n      return { refusal: "response_rejected" };\n    }\n  };\n\n  return {',
+    to: "    } catch {\n      return { newCounter: 0 };\n    }\n  };\n\n  return {",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "a forged, replayed or unverified assertion opens a fence, and the passkey proves nothing",
+  },
+  {
+    label: "a passkey signature no longer covers the terms shown (PK-4)",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "  const digest = sha256(JSON.stringify([purpose, subject, canonicalTerms(terms)]));",
+    to: "  const digest = sha256(JSON.stringify([purpose, subject]));",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "a person signs a two-hour waiver and the hub stores fourteen days under their name",
+  },
+  {
+    label: "a passkey ceremony can be spent twice (PK-5)",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "    const ceremony = pending.get(id);\n    pending.delete(id);",
+    to: "    const ceremony = pending.get(id);",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "a captured assertion replays into a second approval nobody made",
+  },
+  {
+    label: "a passkey assertion without user verification is accepted (PK-6)",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "        requireUserVerification: true,\n      });\n      return verified.verified",
+    to: "        requireUserVerification: false,\n      });\n      return verified.verified",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "a key touched by nobody — no fingerprint, no PIN — approves a waiver as if a person had",
+  },
+  {
+    label: "a passkey still cooling off can approve (PK-7)",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from:
+      "        isNull(passkeys.revokedAt),\n        lte(passkeys.usableFrom, input.now),\n      ),\n    );\n  return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));",
+    to:
+      "        isNull(passkeys.revokedAt),\n        lte(passkeys.createdAt, input.now),\n      ),\n    );\n  return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));",
+    test: `${SERVER}/test/passkeys.test.ts`,
+    because: "a planted passkey acts in its first minute, before the announcement could reach anybody",
+  },
+  {
+    label: "an enrolment code works twice (PK-8)",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: "    isNull(passkeyEnrollments.usedAt),\n",
+    to: "",
+    test: `${SERVER}/test/passkeys.test.ts`,
+    because: "a code handed to a person also enrols whatever else reads it later, an agent's emulated passkey included",
+  },
+  {
+    label: "a ceremony minted for one developer is finished by another (PK-9)",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "      ceremony.developerId !== expected.developerId ||\n",
+    to: "",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "one member's prompt is completed in another member's session, under the wrong name",
+  },
+  {
+    label: "doctor stops warning while a passkey enrolment is cooling off (PK-10)",
+    file: `${CLI}/src/cli/passkey-status.ts`,
+    from:
+      "  const cooling = view.enrolments.filter((enrolment) => enrolment.coolingOff && !enrolment.revoked).length;",
+    to: "  const cooling = 0;",
+    test: `${CLI}/test/passkey-status.test.ts`,
+    because: "a planted passkey sits out its day unannounced and then approves, the one window doctor existed to show",
+  },
+  {
+    label: "pin list calls a terminal waiver a passkey approval (PK-11)",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from:
+      "  terminal:\n    \"opened from a terminal before passkeys — the weaker kind, which any agent holding the api key could send\",",
+    to: '  terminal: "approved with a person\'s passkey",',
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "a waiver any agent could have opened reads as one a person signed",
+  },
+  {
+    label: "a waiver of unstated authority reads as a passkey approval (PK-11)",
+    file: `${CORE}/src/http/verdict.ts`,
+    from: '  authority: z.enum(WAIVER_AUTHORITIES).catch("terminal"),',
+    to: '  authority: z.enum(WAIVER_AUTHORITIES).catch("passkey"),',
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "an older hub's unsigned waiver is rendered as signed, a claim nobody can show",
+  },
+  {
+    label: "a request whose pin moved to a new version is approved (PK-12)",
+    file: `${SERVER}/src/services/waiver-requests.ts`,
+    from: '  return pin.version === input.pinVersion ? null : "stale_version";',
+    to: "  return null;",
+    test: `${SERVER}/test/waiver-requests.test.ts`,
+    because: "consent given for one set of paths opens a fence over the paths a sweep moved it to",
+  },
+  {
+    label: "an approval may lengthen the expiry the request asked for",
+    file: `${SERVER}/src/services/waiver-requests.ts`,
+    from: "    if (input.expiresAt.getTime() > request.expiresAt.getTime()) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/waiver-requests.test.ts`,
+    because: "an approval grants more than anybody asked for, a second request nobody made",
+  },
+  {
+    label: "the api key revokes a passkey after its cool-off",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: '  if (by.kind === "owner" && row.usableFrom.getTime() <= input.now.getTime()) {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/passkeys.test.ts`,
+    because: "an agent with the key locks its human out of the one authority the agent cannot use itself",
+  },
+  {
+    label: "a hub starts offering passkeys at an origin no browser will run them at",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "      if (!isSecureContextOrigin(url)) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "a tailnet member meets a refused ceremony at the approval page with no reason, instead of a startup error",
+  },
+  {
+    label: "a passkey ceremony runs without the session's CSRF header",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from:
+      '  if (!isCsrfValid(deps.uiSessionSecret, c.get("uiSessionToken"), c.req.header(CSRF_HEADER) ?? "")) {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "another page in the person's browser starts ceremonies in their session",
+  },
+  {
+    label: "the waivers page loses the CSP its script needs",
+    file: `${SERVER}/src/routes/ui-passkeys.tsx`,
+    from: '    c.header("Content-Security-Policy", UI_PASSKEY_CSP);\n    const now = deps.now();\n    const [requests',
+    to: "    const now = deps.now();\n    const [requests",
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "the browser refuses the ceremony script and no waiver can be approved at all",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12625,6 +12788,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
+ * PRINTS: packages/cli/test/passkey-status.test.ts 1
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
@@ -12636,7 +12800,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/verdict-render.test.ts 4
- * PRINTS: packages/cli/test/waiver-render.test.ts 3
+ * PRINTS: packages/cli/test/waiver-render.test.ts 5
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
@@ -12802,6 +12966,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
+ * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
@@ -12813,6 +12978,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 20
  * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
+ * PRINTS: packages/server/test/passkeys.test.ts 3
  * PRINTS: packages/server/test/pglite-exit-code.test.ts 5
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
@@ -12849,11 +13015,14 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 1
+ * PRINTS: packages/server/test/ui-passkeys.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
+ * PRINTS: packages/server/test/waiver-requests.test.ts 4
  * PRINTS: packages/server/test/waivers.test.ts 3
+ * PRINTS: packages/server/test/webauthn.test.ts 6
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();

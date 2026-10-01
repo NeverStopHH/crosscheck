@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 991
+    # PRINTS: 1010
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -133,10 +133,11 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor.ts 41
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 5
+    # PRINTS: packages/cli/src/cli/passkey-status.ts 1
     # PRINTS: packages/cli/src/cli/pilot-render.ts 12
     # PRINTS: packages/cli/src/cli/pilot.ts 3
     # PRINTS: packages/cli/src/cli/pin-observability.ts 1
-    # PRINTS: packages/cli/src/cli/pin-render.ts 3
+    # PRINTS: packages/cli/src/cli/pin-render.ts 4
     # PRINTS: packages/cli/src/cli/pin.ts 3
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 6
@@ -218,7 +219,7 @@ jobs:
     # PRINTS: http/hub.ts 6
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 2
-    # PRINTS: http/verdict.ts 1
+    # PRINTS: http/verdict.ts 2
     # PRINTS: kit.ts 1
     # PRINTS: landed-changes/fetch-state.ts 10
     # PRINTS: landed-changes/fetch-switch.ts 4
@@ -288,12 +289,15 @@ jobs:
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/routes/absences.ts 1
     # PRINTS: packages/server/src/routes/events.ts 1
+    # PRINTS: packages/server/src/routes/fence-waivers.ts 1
     # PRINTS: packages/server/src/routes/hints.ts 1
     # PRINTS: packages/server/src/routes/landed.ts 3
     # PRINTS: packages/server/src/routes/pins.ts 3
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 2
+    # PRINTS: packages/server/src/routes/ui-ceremony.ts 1
+    # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
     # PRINTS: packages/server/src/routes/work-contexts.ts 1
     # PRINTS: packages/server/src/services/absences.ts 4
     # PRINTS: packages/server/src/services/calibration.ts 1
@@ -316,6 +320,7 @@ jobs:
     # PRINTS: packages/server/src/services/landed-context.ts 17
     # PRINTS: packages/server/src/services/landed-notices.ts 27
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
+    # PRINTS: packages/server/src/services/passkeys.ts 3
     # PRINTS: packages/server/src/services/pilot-candidates.ts 7
     # PRINTS: packages/server/src/services/pilot-report.ts 19
     # PRINTS: packages/server/src/services/pilot.ts 23
@@ -340,7 +345,9 @@ jobs:
     # PRINTS: packages/server/src/services/team-settings.ts 1
     # PRINTS: packages/server/src/services/time-window.ts 1
     # PRINTS: packages/server/src/services/verdict.ts 4
-    # PRINTS: packages/server/src/services/waivers.ts 3
+    # PRINTS: packages/server/src/services/waiver-requests.ts 3
+    # PRINTS: packages/server/src/services/waivers.ts 4
+    # PRINTS: packages/server/src/services/webauthn.ts 6
     # PRINTS: packages/server/src/ui/pages/feed.tsx 1
     # PRINTS: packages/server/src/ui/session.ts 1
     # PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
@@ -398,6 +405,7 @@ jobs:
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
     # PRINTS: feed.tsx 1
+    # PRINTS: fence-waivers.ts 1
     # PRINTS: fetch-state.ts 10
     # PRINTS: fetch-switch.ts 4
     # PRINTS: fetch-trigger.ts 3
@@ -437,6 +445,8 @@ jobs:
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
+    # PRINTS: passkey-status.ts 1
+    # PRINTS: passkeys.ts 3
     # PRINTS: payload.ts 1
     # PRINTS: pilot-candidates.ts 7
     # PRINTS: pilot-mark.ts 1
@@ -445,7 +455,7 @@ jobs:
     # PRINTS: pilot.ts 28
     # PRINTS: pin-observability.ts 1
     # PRINTS: pin-paths.ts 8
-    # PRINTS: pin-render.ts 3
+    # PRINTS: pin-render.ts 4
     # PRINTS: pin-sweep.ts 2
     # PRINTS: pin.ts 5
     # PRINTS: pins.ts 11
@@ -516,12 +526,16 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 2
+    # PRINTS: ui-ceremony.ts 1
+    # PRINTS: ui-passkeys.tsx 1
     # PRINTS: user-prompt-submit.ts 4
     # PRINTS: v1.ts 2
     # PRINTS: verdict-latency.test.ts 1
     # PRINTS: verdict-render.ts 2
-    # PRINTS: verdict.ts 5
-    # PRINTS: waivers.ts 3
+    # PRINTS: verdict.ts 6
+    # PRINTS: waiver-requests.ts 3
+    # PRINTS: waivers.ts 4
+    # PRINTS: webauthn.ts 6
     # PRINTS: work-contexts.ts 1
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7
