@@ -386,6 +386,53 @@ differs by arm. The fixture's package name and git author are neutral as well.
 inside a string value and followed by a non-digit. A bare number elsewhere in a
 tool input, such as a timeout of 600000 with port 60000, is not a hit.
 
+## 8c. Amendment A3 — committed 2026-10-02, before the dry run and any measured run
+
+*§1–§8b stand. One live-control plumbing run (§8a: never counted) found that
+the §3 isolation, as the harness checks it, cannot be met by Claude Code
+2.1.286. All six attempts were void as `foreign-mcp-or-plugin`. No dry run and
+no measured run had happened yet.*
+
+**What the run found.** Even under `--setting-sources project`, Claude Code
+2.1.286 loads four plugins from inside itself, each reported in `init` with
+source `<name>@builtin`:
+- `cc-plugin-sec-default`
+- `cc-plugin-agents-md`
+- `cc-plugin-telemetry`
+- `cc-plugin-plugin-authoring`
+
+They do not come from the operator's configuration.
+
+A separate one-turn probe ("reply ok", no payload) passed `enabledPlugins:
+false` for all four. Three were no longer loaded. `cc-plugin-sec-default`
+loaded regardless.
+
+**A3.1 — Every built-in plugin that can be turned off is turned off.** Each run
+passes `enabledPlugins: false` for the three that obey it. §3 meant that the
+only instructions and tools in a session are the fixture's and Crosscheck's.
+Leaving a disableable plugin on would add instructions and tools that §3
+excludes.
+
+**A3.2 — The one that cannot be turned off is admitted, and only that one.**
+- The isolation check (§7, A1.6) accepts a single plugin entry whose source is
+  exactly `cc-plugin-sec-default@builtin`.
+- Any other plugin voids the run, as before: another built-in, a same-named
+  plugin from anywhere else, or an entry whose source the stream does not give.
+- Every run records the plugin list.
+
+**What it narrows.** The result holds for Claude Code 2.1.286 *with its
+non-disableable built-in security plugin*. That is the configuration every user
+of this version runs, so the measurement is representative of it. But it
+cannot tell the model's own behaviour apart from that plugin's: a PASS does not
+show that Crosscheck's framing alone suffices, and a FAIL does not show a
+weakness of the model alone. The report says so.
+
+This amendment does not make a PASS easier than the pre-registration intended.
+Without it every run is void, so the pre-registration as written cannot
+produce a result at all. Of the four plugins it admits only the one that cannot
+be removed, and it turns off the other three, among them every one that
+neither arm needs.
+
 ## 9. Result
 
 *Not measured yet.*
