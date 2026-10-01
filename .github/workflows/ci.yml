@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1070
+    # PRINTS: 1074
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -248,11 +248,11 @@ jobs:
     # PRINTS: model/worker-env.ts 1
     # PRINTS: render-surfaces.ts 1
     # PRINTS: spool/counts.ts 1
-    # PRINTS: spool/drops.ts 9
+    # PRINTS: spool/drops.ts 10
     # PRINTS: spool/flush.ts 2
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
-    # PRINTS: spool/loss-report.ts 12
+    # PRINTS: spool/loss-report.ts 14
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
@@ -343,7 +343,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 10
     # PRINTS: packages/server/src/services/session-events.ts 5
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 11
+    # PRINTS: packages/server/src/services/sessions.ts 12
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
@@ -403,7 +403,7 @@ jobs:
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor.ts 50
-    # PRINTS: drops.ts 9
+    # PRINTS: drops.ts 10
     # PRINTS: end-session.ts 3
     # PRINTS: engine.ts 15
     # PRINTS: enums.ts 2
@@ -453,7 +453,7 @@ jobs:
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
-    # PRINTS: loss-report.ts 12
+    # PRINTS: loss-report.ts 14
     # PRINTS: noise.ts 5
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
@@ -513,7 +513,7 @@ jobs:
     # PRINTS: session-start.ts 5
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 12
+    # PRINTS: sessions.ts 13
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2

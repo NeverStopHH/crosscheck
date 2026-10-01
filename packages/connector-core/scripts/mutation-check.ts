@@ -12741,7 +12741,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "doctor never prints the record kinds an older hub ignored",
     file: `${CLI}/src/cli/doctor-losses.ts`,
-    from: '    lineCheck("hub ignored records", lines.ignored),\n',
+    // Review M3 moved the line into ignoredCheck (recency-gated).
+    from: "    ignoredCheck(lines),\n",
     to: "",
     test: `${CLI}/test/doctor-losses.test.ts`,
     because:
@@ -13271,6 +13272,40 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/loss-ledger.test.ts`,
     because: "the losses a full ledger refused vanish with the marker that counted them",
   },
+  // Review M3: the ignored kind's word and remedy follow its newest instant.
+  {
+    label: "the hub words an ignored loss from before the window as the hub's own remedy",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    ? (toInstant(report.ignoredNewestAt ?? null) ?? toInstant(report.newestAt) ?? now)",
+    to: "    ? (toInstant(report.newestAt) ?? now)",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "an ignored drop the archive kept from last year beside a fresh cap drop reads record_kinds_ignored — upgrade the hub — on a hub upgraded long ago",
+  },
+  {
+    label: "the loss report never dates the ignored kind",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    ...(ignoredNewestAt === null ? {} : { ignoredNewestAt }),\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the hub can only bound the ignored kind by the report's newest loss of any kind (PROBE 5)",
+  },
+  {
+    label: "the archive forgets its newest ignored entry",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      ignoredNewestAt: total.ignoredNewestAt,\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "an archived ignored drop takes the archive's mtime, which every fold moves forward, so it stays inside the window for good",
+  },
+  {
+    label: "doctor tells an upgraded hub to upgrade",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  if (newest !== null && !isInsideWindow(newest, now)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "an ignored drop from before the window prints 'upgrade the hub' on every doctor run, and the one real old-hub warning drowns in it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13459,7 +13494,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
- * PRINTS: packages/connector-core/test/loss-report.test.ts 30
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 33
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -13521,7 +13556,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
- * PRINTS: packages/server/test/coverage-losses.test.ts 14
+ * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync.test.ts 7

@@ -363,6 +363,43 @@ describe("C1 (review 2026-10-01): one report can break neither the repo's covera
     expect(row.state).toBe("incomplete");
   });
 
+  test("M3: an ignored loss older than the window is a loss, not the hub's own remedy", async () => {
+    // Arrange: a fresh loss of another kind beside an ignored one from long before the window
+    const { harness, developer } = await seed();
+
+    // Act
+    await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({
+        total: 3,
+        kinds: { hub_ignored: 2, spool_refused: 1 },
+        ignoredNewestAt: at(-(COVERAGE_SESSION_WINDOW_DAYS + 30) * DAY_MS),
+      }),
+    });
+    const row = await agentEventOf(harness, developer);
+
+    // Assert: still incomplete — the reason word follows the window
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("telemetry_lost");
+  });
+
+  test("M3: an ignored loss inside the window keeps its own word", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+
+    // Act
+    await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({
+        total: 3,
+        kinds: { hub_ignored: 2, spool_refused: 1 },
+        ignoredNewestAt: at(-1 * DAY_MS),
+      }),
+    });
+    const row = await agentEventOf(harness, developer);
+
+    // Assert
+    expect(row.reason).toBe("record_kinds_ignored");
+  });
+
   test("PROBE C: kinds the total does not cover still count — the hub stores the larger", async () => {
     // Arrange
     const { harness, developer } = await seed();

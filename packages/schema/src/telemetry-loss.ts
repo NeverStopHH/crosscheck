@@ -95,6 +95,15 @@ export const TelemetryLossReportSchema = z.object({
   oldestAt: z.iso.datetime().nullable(),
   /** The latest such instant; null when there is none. */
   newestAt: z.iso.datetime().nullable(),
+  /**
+   * The newest loss of the `hub_ignored` kind (review M3). `kinds` counts
+   * all time, so without it an ignored drop from last year beside a fresh
+   * loss of another kind read `record_kinds_ignored` — "upgrade the hub" — on
+   * a hub upgraded long ago. Optional: a hub that reads no instant here
+   * falls back to `newestAt`, an upper bound, and absent is never "recent
+   * enough to ignore".
+   */
+  ignoredNewestAt: z.iso.datetime().nullable().optional(),
 });
 
 export type TelemetryLossReport = z.infer<typeof TelemetryLossReportSchema>;

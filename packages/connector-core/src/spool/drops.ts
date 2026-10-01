@@ -387,7 +387,16 @@ export interface DropDetail {
   readonly undated: UndatedContent;
   /** Ledger files, archives or directories that exist and could not be read (review M1). */
   readonly unreadable: number;
+  /**
+   * The newest `ignored` entry (review M3) — its file's mtime when its own
+   * `at` will not parse — so the report can say whether the hub's remedy,
+   * "upgrade the hub", concerns its window at all. Null when none.
+   */
+  readonly ignoredNewestAt: string | null;
 }
+
+const laterIsoOf = (left: string | null, right: string | null): string | null =>
+  left === null || right === null ? (left ?? right) : right > left ? right : left;
 
 const EMPTY_DETAIL: DropDetail = {
   summary: EMPTY_DROPS,
@@ -398,6 +407,7 @@ const EMPTY_DETAIL: DropDetail = {
   newestAt: null,
   undated: NO_UNDATED,
   unreadable: 0,
+  ignoredNewestAt: null,
 };
 
 /**
@@ -441,6 +451,10 @@ const detailOf = (lines: readonly string[], writtenBy: string | null): DropDetai
           reason === "ignored" && kinds !== undefined
             ? addCounts(detail.ignoredRecordKinds, screenKinds(kinds))
             : detail.ignoredRecordKinds,
+        ignoredNewestAt:
+          reason === "ignored"
+            ? laterIsoOf(detail.ignoredNewestAt, ledgerInstant(at) ?? writtenBy)
+            : detail.ignoredNewestAt,
       };
     },
     {
@@ -471,6 +485,7 @@ const addDetail = (left: DropDetail, right: DropDetail): DropDetail => ({
   newestAt: isoOrNull(latest(msOrNull(left.newestAt), msOrNull(right.newestAt))),
   undated: mergeUndated(left.undated, right.undated),
   unreadable: left.unreadable + right.unreadable,
+  ignoredNewestAt: laterIsoOf(left.ignoredNewestAt, right.ignoredNewestAt),
 });
 
 /**
@@ -498,6 +513,8 @@ const ArchiveSchema = z.looseObject({
   undatableBy: z.string().nullable().optional(),
   /** This branch's first spelling of `undatable`, before it kept a bound. */
   undated: z.number().int().min(0).optional(),
+  /** The newest ignored entry folded in (review M3). */
+  ignoredNewestAt: z.string().nullable().optional(),
 });
 
 /** What an archive that fails ArchiveSchema may still say about its size. */
@@ -546,6 +563,10 @@ const readArchiveDetail = async (path: string): Promise<DropDetail> => {
       ledgerInstant(parsed.data.undatableBy) ?? writtenBy,
     ),
     unreadable: 0,
+    // An archive from before the field still bounds its ignored entries by
+    // its own mtime: later than the truth, never "outside the window" wrongly.
+    ignoredNewestAt:
+      ledgerInstant(parsed.data.ignoredNewestAt) ?? ((byReason["ignored"] ?? 0) > 0 ? writtenBy : null),
   };
 };
 
@@ -600,6 +621,7 @@ export const archiveLedger = async (
       // with the bound those lines had, so they still age out (review H2).
       undatable: total.undated.count,
       undatableBy: total.undated.by,
+      ignoredNewestAt: total.ignoredNewestAt,
     })}\n`,
   );
 };

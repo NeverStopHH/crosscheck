@@ -30,7 +30,7 @@ import {
   formatLossLines,
   hasRecentLoss,
 } from "@crosscheck/connector-core/spool/loss-report.ts";
-import type { LocalLosses } from "@crosscheck/connector-core/spool/loss-report.ts";
+import type { LocalLosses, LossLines } from "@crosscheck/connector-core/spool/loss-report.ts";
 
 import type { Check, CheckLevel } from "./doctor.ts";
 
@@ -51,12 +51,24 @@ const lossCheck = (level: CheckLevel, name: string, detail: string): Check => ({
 const lineCheck = (name: string, line: string | null): Check =>
   line === null ? lossCheck("PASS", name, "none") : lossCheck("WARN", name, line);
 
+const IGNORED = "hub ignored records";
+
+/**
+ * Review M3: ignored records inside the hub's window are the WARN with the
+ * remedy; ones from before it are a PASS that still names them — an upgraded
+ * hub is not told to upgrade by an archive that outlives the window.
+ */
+const ignoredCheck = (lines: LossLines): Check =>
+  lines.ignored !== null
+    ? lossCheck("WARN", IGNORED, lines.ignored)
+    : lossCheck("PASS", IGNORED, lines.ignoredEarlier ?? "none");
+
 /** §5.1: the three ledger lines, in the order the ledgers are layered. */
-export const lossChecks = (local: LocalLosses): readonly Check[] => {
-  const lines = formatLossLines(local);
+export const lossChecks = (local: LocalLosses, now: Date): readonly Check[] => {
+  const lines = formatLossLines(local, now);
   return [
     lineCheck("spool drops", lines.dropped),
-    lineCheck("hub ignored records", lines.ignored),
+    ignoredCheck(lines),
     lineCheck("capture losses", lines.capture),
   ];
 };

@@ -186,11 +186,23 @@ export const toLossReport = (
   // Saturated, never refused (review C1): coverage reads WHETHER and SINCE
   // WHEN, so a count capped at int4 cannot change any coverage state, while a
   // count past it used to make the hub refuse the call the report rode.
+  const ignoredNewestAt = (kinds["hub_ignored"] ?? 0) > 0 ? ignoredNewestOf(drops, unrecorded) : null;
   return {
     total: clampLossCount(total),
     kinds: saturated(kinds),
     ...spanOf(drops, unrecorded, capture),
+    // Review M3: the hub's word for this kind follows its newest instant, not
+    // the archive's lifetime. Omitted when unknown: the hub then bounds it by
+    // `newestAt`, which is never earlier.
+    ...(ignoredNewestAt === null ? {} : { ignoredNewestAt }),
   };
+};
+
+/** The newest ignored loss: the ledgers' own, or the marker's when its batch was an ignored one. */
+const ignoredNewestOf = (drops: DropDetail, unrecorded: UnrecordedDrop | null): string | null => {
+  const marker =
+    unrecorded?.reason === "ignored" ? (wireInstant(unrecorded.at) ?? unrecorded.writtenBy) : null;
+  return laterIso(drops.ignoredNewestAt, marker);
 };
 
 export const readLocalLosses = async (
@@ -229,6 +241,12 @@ export const readTelemetryLossReport = async (
  * HUB_COVERAGE_WINDOW_DAYS. A loss with no instant at all is read as recent,
  * because "we do not know when" must not become "not now".
  */
+/** The hub's window rule for one instant; one that will not parse reads as inside it. */
+const isInsideWindow = (iso: string, now: Date): boolean => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) || now.getTime() - ms < HUB_COVERAGE_WINDOW_DAYS * MS_PER_DAY;
+};
+
 export const hasRecentLoss = (report: TelemetryLossReport, now: Date): boolean => {
   if (report.total === 0) {
     return false;
@@ -272,8 +290,10 @@ const detailsOf = (capture: CaptureLossSummary, kind: LossKind): string =>
 export interface LossLines {
   /** The spool-drops sentence: records discarded, in batches, by reason. */
   readonly dropped: string | null;
-  /** Records a hub older than this connector threw away, with their kinds. */
+  /** Records a hub older than this connector threw away INSIDE the hub's window, with their kinds and the remedy. */
   readonly ignored: string | null;
+  /** Ignored records whose newest predates the window: said, without telling anyone to upgrade (review M3). */
+  readonly ignoredEarlier: string | null;
   /** Losses upstream of any record: timed-out hooks, host drift, wire lines. */
   readonly capture: string | null;
 }
@@ -323,17 +343,37 @@ const droppedLine = (local: LocalLosses): string | null => {
   );
 };
 
-const ignoredLine = (local: LocalLosses): string | null => {
+/**
+ * THE IGNORED KIND, GATED ON THE WINDOW (review M3). An ignored drop the
+ * archive kept from before an upgrade used to print "upgrade the hub" for
+ * ever. Inside the hub's window (or undated — unknown reads as recent) it is
+ * the WARN with the remedy; before it, a statement of fact with no remedy.
+ */
+const ignoredLines = (
+  local: LocalLosses,
+  now: Date,
+): Pick<LossLines, "ignored" | "ignoredEarlier"> => {
   const records = local.drops.byReason["ignored"] ?? 0;
   if (records === 0) {
-    return null;
+    return { ignored: null, ignoredEarlier: null };
+  }
+  const newest = local.report.ignoredNewestAt ?? null;
+  if (newest !== null && !isInsideWindow(newest, now)) {
+    return {
+      ignored: null,
+      ignoredEarlier:
+        `${plural(records, "record")} ignored by the hub before its ${String(HUB_COVERAGE_WINDOW_DAYS)}-day window ` +
+        `(the newest at ${minuteOf(newest)}) — outside every coverage question it answers now`,
+    };
   }
   const batches = local.drops.entriesByReason["ignored"] ?? 0;
-  return (
-    `${plural(records, "record")} in ${plural(batches, "batch", "batches")} ignored by the hub` +
-    `${parenthetical(breakdown(local.drops.ignoredRecordKinds))} — a hub older than this ` +
-    "connector discards record kinds it does not know; upgrade the hub"
-  );
+  return {
+    ignored:
+      `${plural(records, "record")} in ${plural(batches, "batch", "batches")} ignored by the hub` +
+      `${parenthetical(breakdown(local.drops.ignoredRecordKinds))} — a hub older than this ` +
+      "connector discards record kinds it does not know; upgrade the hub",
+    ignoredEarlier: null,
+  };
 };
 
 const kindParts = (capture: CaptureLossSummary): readonly (string | null)[] => {
@@ -397,8 +437,8 @@ const captureLine = (local: LocalLosses): string | null => {
 };
 
 /** One spelling for both commands (the spool-drops discipline). */
-export const formatLossLines = (local: LocalLosses): LossLines => ({
+export const formatLossLines = (local: LocalLosses, now: Date): LossLines => ({
   dropped: droppedLine(local),
-  ignored: ignoredLine(local),
+  ...ignoredLines(local, now),
   capture: captureLine(local),
 });

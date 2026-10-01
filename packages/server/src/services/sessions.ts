@@ -96,9 +96,10 @@ const toInstant = (iso: string | null): Date | null =>
  * WHAT COVERAGE NEEDS ABOUT THE IGNORED KIND, DECIDED ONCE, ON WRITE (review
  * C1). The rung used to cast `loss_kinds->>'hub_ignored'` to int4 at read
  * time, and one report carrying 3e9 made every read of the repo throw. The
- * read now compares an instant: an UPPER BOUND on the newest ignored loss —
- * the report's newest, which no single loss in it postdates, or `now` when
- * the report could not date it, since nothing reported now happened later.
+ * read now compares an instant: the newest ignored loss when the report
+ * dates it (`ignoredNewestAt`, review M3), else an UPPER BOUND on it — the
+ * report's newest, which no single loss in it postdates, or `now` when the
+ * report could not date it, since nothing reported now happened later.
  * An upper bound errs towards "still in the window", the weakening side.
  */
 const ignoredUpperBound = (
@@ -106,7 +107,9 @@ const ignoredUpperBound = (
   report: TelemetryLossReport,
   now: Date,
 ): Date | null =>
-  (settled.kinds.hub_ignored ?? 0) > 0 ? (toInstant(report.newestAt) ?? now) : null;
+  (settled.kinds.hub_ignored ?? 0) > 0
+    ? (toInstant(report.ignoredNewestAt ?? null) ?? toInstant(report.newestAt) ?? now)
+    : null;
 
 const reportedColumns = (
   report: TelemetryLossReport,

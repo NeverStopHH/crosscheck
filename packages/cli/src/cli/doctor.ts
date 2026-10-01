@@ -1277,7 +1277,7 @@ const checkSpool = async (
   // `status` prints too (docs/1.0/loss-accounting.md §5.1): records
   // discarded by reason, record kinds an older hub ignored, and the losses
   // upstream of any record (doctor-losses.ts).
-  const lossLines = lossChecks(await readLocalLosses(home, key));
+  const lossLines = lossChecks(await readLocalLosses(home, key), now);
 
   // A session the hub still believes is running, because the `end` for it aged
   // out of the spool before any hook had the spare budget to deliver it. The

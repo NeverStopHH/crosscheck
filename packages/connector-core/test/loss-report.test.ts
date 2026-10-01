@@ -76,6 +76,7 @@ describe("LOSS-7: the report folds every ledger", () => {
       kinds: { spool_refused: 5, spool_expired: 3, hub_ignored: 2, hook_timed_out: 1 },
       oldestAt: T0.toISOString(),
       newestAt: T4.toISOString(),
+      ignoredNewestAt: T2.toISOString(),
     });
     expect(local.isFloor).toBe(true);
     expect(local.drops.ignoredRecordKinds["claim_revalidation"]).toBe(2);
@@ -306,6 +307,41 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
   });
 });
 
+describe("review M3: the ignored kind and its remedy follow the window, not the archive's lifetime", () => {
+  const ANCIENT = new Date("2025-01-01T00:00:00.000Z");
+
+  test("PROBE 5: an ignored drop from 2025 beside a fresh cap drop does not tell anyone to upgrade the hub", async () => {
+    // Arrange: an ignored drop folded long ago, then an unrelated loss today
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 2, "ignored", ANCIENT, { claim_revalidation: 2 });
+    await archiveLedger(path, KEY, spoolDropsPath(path, KEY, SLUG));
+    await rm(spoolDropsPath(path, KEY, SLUG));
+    await recordDrop(path, KEY, sessionSlug("s2"), 1, "cap", T4);
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+    const lines = formatLossLines(local, T4);
+
+    // Assert: the wire dates the ignored kind; doctor names it as earlier, not as a remedy
+    expect(local.report.ignoredNewestAt).toBe(ANCIENT.toISOString());
+    expect(lines.ignored).toBeNull();
+    expect(lines.ignoredEarlier).toContain("2 records ignored by the hub before its 14-day window");
+  });
+
+  test("an ignored drop inside the window still names the remedy", async () => {
+    // Arrange
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 2, "ignored", T4, { claim_revalidation: 2 });
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(local.report.ignoredNewestAt).toBe(T4.toISOString());
+    expect(formatLossLines(local, T4).ignored).toContain("upgrade the hub");
+  });
+});
+
 describe("review M1: a ledger that exists and cannot be read is a loss, never zero", () => {
   test("PROBE 3: an archive that will not parse keeps the count it still names", async () => {
     // Arrange: an archive line missing oldestAt — every field the reader needs but one
@@ -367,7 +403,7 @@ describe("review M1: a ledger that exists and cannot be read is a loss, never ze
 
     // Assert: unknown is never zero (§2), and a line says so (H3)
     expect(local.report.total).toBeGreaterThanOrEqual(1);
-    const lines = formatLossLines(local);
+    const lines = formatLossLines(local, T4);
     expect([lines.dropped, lines.ignored, lines.capture].some((line) => line !== null)).toBe(true);
   });
 
@@ -449,7 +485,7 @@ describe("one spelling for doctor and status", () => {
     await recordCaptureLoss(path, { kind: "host_contract_drift", count: 2, key: KEY, detail: "afterFileEdit", now: T4 });
 
     // Act
-    const lines = formatLossLines(await readLocalLosses(path, KEY));
+    const lines = formatLossLines(await readLocalLosses(path, KEY), T4);
 
     // Assert
     expect(lines.dropped).toBe("5 records discarded in 2 batches (expired 3, ignored 2)");
@@ -475,7 +511,7 @@ describe("one spelling for doctor and status", () => {
     );
 
     // Act
-    const { dropped } = formatLossLines(await readLocalLosses(path, KEY));
+    const { dropped } = formatLossLines(await readLocalLosses(path, KEY), T4);
 
     // Assert
     expect(dropped).toContain("(other 2)");
@@ -489,7 +525,7 @@ describe("one spelling for doctor and status", () => {
 
     // Act
     await recordDrop(path, KEY, SLUG, 2, "ignored", T1, { "Bad\u001b[31mKind": 2 });
-    const { ignored } = formatLossLines(await readLocalLosses(path, KEY));
+    const { ignored } = formatLossLines(await readLocalLosses(path, KEY), T4);
 
     // Assert
     const ledger = await Bun.file(spoolDropsPath(path, KEY, SLUG)).text();
@@ -508,7 +544,7 @@ describe("one spelling for doctor and status", () => {
 
     // Assert
     expect(local.report.kinds).toEqual({ unattributed: 3 });
-    expect(formatLossLines(local).dropped).toContain("(other 3)");
+    expect(formatLossLines(local, T4).dropped).toContain("(other 3)");
   });
 
   test.each([
@@ -537,7 +573,7 @@ describe("one spelling for doctor and status", () => {
 
     // Act
     const local = await readLocalLosses(path, KEY);
-    const lines = formatLossLines(local);
+    const lines = formatLossLines(local, T4);
 
     // Assert: doctor and status cannot pass all three while the hub is told of a loss
     expect(local.report.total).toBeGreaterThan(0);
@@ -553,7 +589,7 @@ describe("one spelling for doctor and status", () => {
     await recordHookTimeout(path, "post-tool-use", KEY, T4);
 
     // Act
-    const { capture } = formatLossLines(await readLocalLosses(path, KEY));
+    const { capture } = formatLossLines(await readLocalLosses(path, KEY), T4);
 
     // Assert
     expect(capture).toContain("1 loss refused past its cap");
@@ -568,7 +604,7 @@ describe("one spelling for doctor and status", () => {
     await writeFile(lossLedgerPath(path), "garbage\nmore garbage\n", "utf8");
 
     // Act
-    const { capture } = formatLossLines(await readLocalLosses(path, KEY));
+    const { capture } = formatLossLines(await readLocalLosses(path, KEY), T4);
 
     // Assert
     expect(capture).toContain("2 capture-ledger lines unreadable, counted as one loss each");
@@ -576,10 +612,10 @@ describe("one spelling for doctor and status", () => {
 
   test("a clean machine prints nothing on any of the three", async () => {
     // Act
-    const lines = formatLossLines(await readLocalLosses(await home(), KEY));
+    const lines = formatLossLines(await readLocalLosses(await home(), KEY), T4);
 
     // Assert
-    expect(lines).toEqual({ dropped: null, ignored: null, capture: null });
+    expect(lines).toEqual({ dropped: null, ignored: null, ignoredEarlier: null, capture: null });
   });
 });
 
