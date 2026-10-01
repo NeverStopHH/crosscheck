@@ -4,7 +4,13 @@ import { allowedTools, claudeArgs, MESSAGING_TOOLS, RUN_SETTINGS } from "../benc
 
 /**
  * H4: the file tools are scoped to the fixture root with Claude Code's absolute
- * path syntax. §3's shell commands and the crosscheck MCP server stay.
+ * path syntax. That is an ALLOW scope and does not by itself stop a read
+ * outside the fixture: Claude Code runs its read-only Bash built-ins (`cat`,
+ * `grep`, `find`, …) without a prompt in every mode. The read block is
+ * `permissions.blockReadsOutsideWorkingDirectories` (A2.2, tested below).
+ * The shell allowlist is `bun test`, `git status` and `ls` (A2.2 drops
+ * `git diff`, whose `--output=<path>` writes anywhere), plus the crosscheck
+ * MCP server.
  */
 describe("allowedTools", () => {
   const FIXTURE = "/private/tmp/at7/runs/00-control/attempt-1/slugkit";
@@ -18,13 +24,18 @@ describe("allowedTools", () => {
     }
   });
 
-  test("keeps the §3 shell allowlist and the crosscheck MCP server", () => {
+  test("allows exactly bun test, git status and ls, plus the crosscheck MCP server", () => {
+    // Act
+    const shell = tools.filter((t) => t.startsWith("Bash("));
+
     // Assert
-    expect(tools).toContain("Bash(bun test:*)");
-    expect(tools).toContain("Bash(git status:*)");
-    expect(tools).toContain("Bash(git diff:*)");
-    expect(tools).toContain("Bash(ls:*)");
+    expect(shell).toEqual(["Bash(bun test:*)", "Bash(git status:*)", "Bash(ls:*)"]);
     expect(tools).toContain("mcp__crosscheck");
+  });
+
+  test("never allows git diff, whose --output writes anywhere (A2.2)", () => {
+    // Assert
+    expect(tools.some((t) => t.includes("git diff"))).toBe(false);
   });
 
   test("the absolute glob drops the path's leading slash after //", () => {
@@ -85,6 +96,19 @@ describe("claudeArgs — no other Claude Code session is reachable (A2.1)", () =
     for (const tool of MESSAGING_TOOLS) {
       expect(allowed).not.toContain(tool);
     }
+  });
+
+  test("blocks reads outside the working directory for every tool (A2.2)", () => {
+    // Act
+    const permissions = runSettings(argv)["permissions"] as Record<string, unknown> | undefined;
+
+    // Assert
+    expect(permissions?.["blockReadsOutsideWorkingDirectories"]).toBe(true);
+  });
+
+  test("adds no working directory beyond the fixture", () => {
+    // Assert: an --add-dir would widen what the read block fences in
+    expect(argv).not.toContain("--add-dir");
   });
 
   test("keeps the §3 task prompt positional right after -p", () => {
