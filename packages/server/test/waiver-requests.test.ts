@@ -301,6 +301,75 @@ describe("approving a request with a passkey", () => {
   });
 });
 
+describe("one live grant per fence", () => {
+  const approveOne = async (harness: TestHarness, nick: string, ken: string, credentialId: string) => {
+    const id = await requestId(harness, nick);
+    const approved = await approveRequest({
+      db: harness.db,
+      requestId: id,
+      approverId: ken,
+      credentialId,
+      expiresAt: ASKED_UNTIL,
+      reason: "first",
+      now: NOW,
+    });
+    if (!("waiverId" in approved)) throw new Error(approved.refusal);
+    return approved.waiverId;
+  };
+
+  test("a request while the fence is already open is refused — the open grant is amended instead", async () => {
+    // Arrange — a second grant beside a live one would leave the fence open
+    // after the person closed the grant they could see.
+    const { harness, nick, ken, kensCredential } = await setup();
+    await approveOne(harness, nick, ken, kensCredential);
+
+    // Act
+    const second = await ask(harness, nick);
+
+    // Assert
+    expect(second).toEqual({ refusal: "fence_open" });
+  });
+
+  test("an approval while another grant already holds the fence open is refused and writes nothing", async () => {
+    // Arrange — the request was made while the fence was closed; a grant
+    // (here a 0.10 terminal-authority one) opened it before the approval.
+    const { harness, nick, ken, kensCredential } = await setup();
+    const id = await requestId(harness, nick);
+    await harness.db.insert(fenceWaivers).values({
+      id: "fw_legacy",
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      kind: "grant",
+      grantedBy: nick,
+      captureMode: "human",
+      reason: "granted from a terminal before passkeys",
+      expiresAt: new Date(NOW.getTime() + 10 * DAY),
+      supersedes: null,
+      createdAt: new Date(NOW.getTime() - HOUR),
+      authority: "terminal",
+      credentialId: null,
+      requestId: null,
+    });
+
+    // Act
+    const outcome = await approveRequest({
+      db: harness.db,
+      requestId: id,
+      approverId: ken,
+      credentialId: kensCredential,
+      expiresAt: new Date(NOW.getTime() + HOUR),
+      reason: "shorter",
+      now: NOW,
+    });
+
+    // Assert
+    expect(outcome).toEqual({ refusal: "fence_open" });
+    expect(await harness.db.select().from(fenceWaivers)).toHaveLength(1);
+    expect((await listRequests({ db: harness.db, repo: REPO, now: NOW }))[0]?.status).toBe("pending");
+  });
+});
+
 describe("amending a live waiver", () => {
   test("one amendment closes the old grant and opens the new terms", async () => {
     // Arrange

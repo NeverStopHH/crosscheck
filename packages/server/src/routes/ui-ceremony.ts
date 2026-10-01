@@ -39,7 +39,7 @@ import {
 } from "../services/passkeys.ts";
 import { amendWaiver, approveRequest, readPendingRequest } from "../services/waiver-requests.ts";
 import type { WaiverRequestRefusal } from "../services/waiver-requests.ts";
-import { revokeWaiver } from "../services/waivers.ts";
+import { readLiveWaiver, revokeWaiver } from "../services/waivers.ts";
 import type { CeremonyPurpose, CeremonyTerms, WebAuthn } from "../services/webauthn.ts";
 import { isCsrfValid } from "../ui/session.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -218,13 +218,32 @@ export const ceremonyOptions = async (
     : ok(c, { ceremonyId: minted.ceremonyId, publicKey: minted.options });
 };
 
-const waiverRepoOf = async (deps: AppDeps, waiverId: string): Promise<string | null> => {
+const waiverTargetOf = async (
+  deps: AppDeps,
+  waiverId: string,
+): Promise<{ repo: string; pinId: string; pinVersion: number } | null> => {
   const rows = await deps.db
-    .select({ repo: fenceWaivers.repo })
+    .select({ repo: fenceWaivers.repo, pinId: fenceWaivers.pinId, pinVersion: fenceWaivers.pinVersion })
     .from(fenceWaivers)
     .where(eq(fenceWaivers.id, waiverId))
     .limit(1);
-  return rows[0]?.repo ?? null;
+  return rows[0] ?? null;
+};
+
+/**
+ * WHAT THE FENCE IS AFTER A CLOSE, read back rather than assumed. One live
+ * grant per fence is the rule (services/waiver-requests.ts), but a grant from
+ * before it — or one written past it — would keep the fence open, and "shut
+ * again" would then be a sentence the verdict contradicts.
+ */
+const closedSentence = async (
+  deps: AppDeps,
+  target: { repo: string; pinId: string; pinVersion: number },
+): Promise<string> => {
+  const still = await readLiveWaiver({ db: deps.db, ...target, now: deps.now() });
+  return still === null
+    ? "Closed — the fence is shut again."
+    : `Closed that waiver — but the fence is STILL OPEN until ${still.expiresAt} under another one; close that too.`;
 };
 
 /** Amend or close a fence: both need the waiver's repo, which the page does not send. */
@@ -234,10 +253,11 @@ const performOnWaiver = async (
   fields: Extract<AssertionFields, { action: "amend" | "revoke_waiver" }>,
   credentialId: string,
 ): Promise<Response> => {
-  const repo = await waiverRepoOf(deps, fields.subjectId);
-  if (repo === null) {
+  const target = await waiverTargetOf(deps, fields.subjectId);
+  if (target === null) {
     return refuseWaiver(c, "unknown_waiver");
   }
+  const { repo } = target;
   const developerId = c.get("developer").id;
   const outcome =
     fields.action === "amend"
@@ -267,7 +287,7 @@ const performOnWaiver = async (
     message:
       fields.action === "amend"
         ? `Amended — the fence is open until ${fields.expiresAt}.`
-        : "Closed — the fence is shut again.",
+        : await closedSentence(deps, target),
   });
 };
 

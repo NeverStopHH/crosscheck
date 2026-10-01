@@ -29,4 +29,6 @@ export const WAIVER_REQUEST_SENTENCE: Record<WaiverRequestRefusal, string> = {
   not_a_grant: "that row is a revocation, not a grant",
   already_revoked: "that waiver has already been revoked",
   not_live: "that waiver is no longer holding the fence open, so there is nothing to amend",
+  fence_open:
+    "that fence is already open — a person changes its terms by amending the open waiver on /ui/waivers",
 };

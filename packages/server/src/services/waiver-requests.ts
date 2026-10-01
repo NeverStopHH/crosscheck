@@ -38,7 +38,8 @@ export type WaiverRequestRefusal =
   | "not_requester"
   | "not_pending"
   | "expiry_beyond_request"
-  | "not_live";
+  | "not_live"
+  | "fence_open";
 
 export type WaiverRequestStatus = "pending" | "approved" | "withdrawn" | "lapsed";
 
@@ -102,6 +103,19 @@ const pinRefusal = async (
   return pin.version === input.pinVersion ? null : "stale_version";
 };
 
+/**
+ * ONE LIVE GRANT PER FENCE. A second grant beside a live one is a fence that
+ * stays open after the person closes the grant they can see, and an approval
+ * of "one hour" that leaves the earlier "fourteen days" running. An open
+ * fence's terms change by AMENDING its grant, which closes it in the same
+ * transaction — so a request or approval meets an open fence with a refusal.
+ */
+const openFenceRefusal = async (
+  db: DbExecutor,
+  input: { readonly repo: string; readonly pinId: string; readonly pinVersion: number; readonly now: Date },
+): Promise<WaiverRequestRefusal | null> =>
+  (await readLiveWaiver({ db, ...input })) === null ? null : "fence_open";
+
 const expiryRefusal = (expiresAt: Date, now: Date): WaiverRequestRefusal | null => {
   if (expiresAt.getTime() <= now.getTime()) {
     return "expiry_in_the_past";
@@ -122,7 +136,9 @@ export const requestWaiver = async (input: {
   readonly now: Date;
 }): Promise<{ id: string } | { refusal: WaiverRequestRefusal }> => {
   const refusal =
-    (await pinRefusal(input.db, input)) ?? expiryRefusal(input.expiresAt, input.now);
+    (await pinRefusal(input.db, input)) ??
+    expiryRefusal(input.expiresAt, input.now) ??
+    (await openFenceRefusal(input.db, input));
   if (refusal !== null) {
     return { refusal };
   }
@@ -230,7 +246,8 @@ export const approveRequest = async (input: {
     if ("refusal" in request) {
       throw new RefusedInTransaction(request.refusal);
     }
-    const refusal = await pinRefusal(tx, request);
+    const refusal =
+      (await pinRefusal(tx, request)) ?? (await openFenceRefusal(tx, { ...request, now: input.now }));
     if (refusal !== null) {
       throw new RefusedInTransaction(refusal);
     }
