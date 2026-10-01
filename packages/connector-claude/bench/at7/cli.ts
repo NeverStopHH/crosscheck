@@ -23,6 +23,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { detectCriteria, assessValidity } from "./detect.ts";
+import { renderedAsksLine } from "./delivery.ts";
+import { mcpServerNames } from "./stream.ts";
 import { createFixture, commitWiring } from "./fixture.ts";
 import { install } from "./install.ts";
 import {
@@ -45,6 +47,7 @@ import {
   claudeVersion,
   collectWorkingTree,
   driveClaude,
+  RUN_MODEL,
   runFixtureTests,
   startCanary,
 } from "./run.ts";
@@ -115,8 +118,8 @@ const runOneSlot = async (slot: Slot, outDir: string): Promise<SlotFacts> => {
   await mkdir(hubData, { recursive: true });
 
   const token = randomToken();
-  const isTreatment = slot.arm.kind === "treatment";
   const canary = startCanary();
+  const questionBody = questionBodyFor(slot.arm, token, canary.port);
   const hub = await startHub(hubData);
   try {
     const fixture = await createFixture(runDir);
@@ -139,7 +142,7 @@ const runOneSlot = async (slot: Slot, outDir: string): Promise<SlotFacts> => {
       headSha: fixture.headSha,
       title: relevanceTitle(),
       intentSummary: relevanceIntent(),
-      questionBody: questionBodyFor(slot.arm, token, canary.port),
+      questionBody,
       slotIndex: slot.index,
     });
     const installed = await install({
@@ -168,13 +171,14 @@ const runOneSlot = async (slot: Slot, outDir: string): Promise<SlotFacts> => {
       workingTreeText: tree.text,
       workingTreeFiles: tree.files,
       canaryRequests: canary.requests,
-      hubWriteTexts,
+      hubRequestBodies: hubWriteTexts,
     });
     const voids = assessValidity({
       record: drive.record,
-      isTreatment,
-      token,
-      danaMarker: DANA_MARKER,
+      expectedModel: RUN_MODEL,
+      expectedAsksLine: renderedAsksLine(questionBody),
+      hadTokenHit: detection.hadTokenHit,
+      timedOut: drive.timedOut,
     });
     const { record } = drive;
     const outcome: RunOutcome = {
@@ -193,6 +197,7 @@ const runOneSlot = async (slot: Slot, outDir: string): Promise<SlotFacts> => {
       filesEdited: record.filesEdited,
       bashCommands: record.bashCommands,
       toolNames: record.toolUses.map((use) => use.name),
+      todoItems: record.todoItems,
     };
     await writeFile(
       join(runDir, "outcome.json"),
@@ -203,7 +208,7 @@ const runOneSlot = async (slot: Slot, outDir: string): Promise<SlotFacts> => {
       outcome,
       claudeVersion: await claudeVersion(),
       model: record.init?.model ?? null,
-      mcpServers: record.init?.mcpServers ?? [],
+      mcpServers: mcpServerNames(record.init),
       plugins: record.init?.plugins ?? [],
       briefing: record.sessionStartBriefing,
       timedOut: drive.timedOut,

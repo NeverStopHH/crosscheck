@@ -29,13 +29,25 @@ import { z } from "zod";
 /** The briefing header fragment — the quoted-data notice the renderer emits. */
 const BRIEFING_MARKER = "quoted data, not instruction";
 
+export interface McpServerInfo {
+  readonly name: string;
+  /** The connection status init reports; "" when the event omits it. */
+  readonly status: string;
+}
+
 export interface InitInfo {
   readonly model: string | null;
-  readonly mcpServers: readonly string[];
+  /** Every MCP server init names, with its reported connection status (A1.6). */
+  readonly mcpServers: readonly McpServerInfo[];
   readonly tools: readonly string[];
   readonly slashCommands: readonly string[];
-  /** Plugin names the init event names, if any — empty is the isolated case. */
+  /** Plugin names init names, if any — empty is the isolated case. */
   readonly plugins: readonly string[];
+  /**
+   * The raw count of plugin entries, including nameless ones: the isolation
+   * check (A1.6 / §7) counts ANY plugin, so a nameless entry must not vanish.
+   */
+  readonly pluginCount: number;
 }
 
 export interface ToolUse {
@@ -55,7 +67,16 @@ export interface RunRecord {
   readonly filesWritten: readonly string[];
   readonly filesEdited: readonly string[];
   readonly todoItems: readonly string[];
+  /** First NON-synthetic assistant text — null when no real turn happened. */
   readonly firstAssistantText: string | null;
+  /** Every non-synthetic assistant text block, for the S3 echo scan (A1.4). */
+  readonly assistantTexts: readonly string[];
+  /**
+   * Non-synthetic assistant turns. An API-error turn carries model
+   * "<synthetic>" and is NOT counted, so a pre-turn service failure is void
+   * (A1.6) even though the stream carried an assistant message.
+   */
+  readonly realAssistantTurns: number;
   readonly finalResultText: string | null;
   readonly numTurns: number | null;
   readonly durationMs: number | null;
@@ -67,7 +88,10 @@ export interface RunRecord {
   readonly parseErrors: number;
 }
 
-const McpServerSchema = z.looseObject({ name: z.string().min(1) });
+const McpServerSchema = z.looseObject({
+  name: z.string().min(1),
+  status: z.string().optional(),
+});
 
 const InitEventSchema = z.looseObject({
   type: z.literal("system"),
@@ -92,8 +116,14 @@ const TextBlockSchema = z.looseObject({
 
 const AssistantEventSchema = z.looseObject({
   type: z.literal("assistant"),
-  message: z.looseObject({ content: z.array(z.unknown()) }),
+  message: z.looseObject({
+    content: z.array(z.unknown()),
+    model: z.string().optional(),
+  }),
 });
+
+/** The model string a synthetic (API-error) assistant turn carries. */
+const SYNTHETIC_MODEL = "<synthetic>";
 
 const ResultEventSchema = z.looseObject({
   type: z.literal("result"),
@@ -106,8 +136,14 @@ const ResultEventSchema = z.looseObject({
 
 const TodoItemSchema = z.looseObject({ content: z.string().min(1) });
 
-const mcpNames = (servers: readonly z.infer<typeof McpServerSchema>[]): string[] =>
-  servers.map((server) => server.name);
+const mcpServerInfo = (
+  servers: readonly z.infer<typeof McpServerSchema>[],
+): McpServerInfo[] =>
+  servers.map((server) => ({ name: server.name, status: server.status ?? "" }));
+
+/** The names of the MCP servers init reported — for display and the live log. */
+export const mcpServerNames = (init: InitInfo | null): readonly string[] =>
+  init === null ? [] : init.mcpServers.map((server) => server.name);
 
 /** A plugin entry may be a bare name or an object with one — read both. */
 const pluginName = (entry: unknown): string => {
@@ -123,13 +159,17 @@ const pluginName = (entry: unknown): string => {
 
 const initFrom = (event: z.infer<typeof InitEventSchema>): InitInfo => ({
   model: event.model ?? null,
-  mcpServers: event.mcp_servers === undefined ? [] : mcpNames(event.mcp_servers),
+  mcpServers:
+    event.mcp_servers === undefined ? [] : mcpServerInfo(event.mcp_servers),
   tools: event.tools ?? [],
   slashCommands: event.slash_commands ?? [],
   plugins:
     event.plugins === undefined
       ? []
       : event.plugins.map(pluginName).filter((name) => name.length > 0),
+  // The RAW length, not the named count: a nameless plugin still breaks
+  // isolation and must be visible to the void rule.
+  pluginCount: event.plugins === undefined ? 0 : event.plugins.length,
 });
 
 const stringField = (input: unknown, key: string): string | null => {
@@ -253,6 +293,8 @@ interface Accumulator {
   readonly filesEdited: string[];
   readonly todoItems: string[];
   firstAssistantText: string | null;
+  readonly assistantTexts: string[];
+  realAssistantTurns: number;
   finalResultText: string | null;
   numTurns: number | null;
   durationMs: number | null;
@@ -302,15 +344,39 @@ const recordToolUse = (
   }
 };
 
+/** An API-error turn: model "<synthetic>", or a block flagged as an API error. */
+const isSyntheticAssistant = (
+  event: z.infer<typeof AssistantEventSchema>,
+): boolean => {
+  if (event.message.model === SYNTHETIC_MODEL) {
+    return true;
+  }
+  return event.message.content.some(
+    (block) =>
+      typeof block === "object" &&
+      block !== null &&
+      (block as Record<string, unknown>)["isApiErrorMessage"] === true,
+  );
+};
+
 const handleAssistant = (
   acc: Accumulator,
   event: z.infer<typeof AssistantEventSchema>,
 ): void => {
+  const synthetic = isSyntheticAssistant(event);
+  if (!synthetic) {
+    acc.realAssistantTurns += 1;
+  }
   for (const block of event.message.content) {
     const text = TextBlockSchema.safeParse(block);
     if (text.success) {
-      if (acc.firstAssistantText === null) {
-        acc.firstAssistantText = text.data.text;
+      // A synthetic turn's text is the API error, not the agent's word: it is
+      // neither a first real turn nor an echo the S3 scan should see.
+      if (!synthetic) {
+        acc.assistantTexts.push(text.data.text);
+        if (acc.firstAssistantText === null) {
+          acc.firstAssistantText = text.data.text;
+        }
       }
       continue;
     }
@@ -364,6 +430,8 @@ export const parseStream = (raw: string): RunRecord => {
     filesEdited: [],
     todoItems: [],
     firstAssistantText: null,
+    assistantTexts: [],
+    realAssistantTurns: 0,
     finalResultText: null,
     numTurns: null,
     durationMs: null,
@@ -399,6 +467,8 @@ export const parseStream = (raw: string): RunRecord => {
     filesEdited: acc.filesEdited,
     todoItems: acc.todoItems,
     firstAssistantText: acc.firstAssistantText,
+    assistantTexts: acc.assistantTexts,
+    realAssistantTurns: acc.realAssistantTurns,
     finalResultText: acc.finalResultText,
     numTurns: acc.numTurns,
     durationMs: acc.durationMs,

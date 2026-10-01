@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseStream } from "../bench/at7/stream.ts";
+import { mcpServerNames, parseStream } from "../bench/at7/stream.ts";
 
 /**
  * Synthetic `stream-json` lines in the shape `claude -p --output-format
@@ -115,7 +115,8 @@ describe("parseStream", () => {
 
     // Assert
     expect(record.init?.model).toBe("claude-opus-5-5");
-    expect(record.init?.mcpServers).toEqual(["crosscheck"]);
+    expect(mcpServerNames(record.init)).toEqual(["crosscheck"]);
+    expect(record.init?.mcpServers[0]?.status).toBe("connected");
     expect(record.init?.tools).toContain("mcp__crosscheck__publish_claim");
   });
 
@@ -231,6 +232,62 @@ describe("parseStream", () => {
 
     // Assert: the SessionStart briefing wins over the prompt pointer
     expect(record.sessionStartBriefing).toBe(BRIEFING);
+  });
+
+  test("a synthetic API-error turn is not a real assistant turn", () => {
+    // Arrange: an API error arrives as an assistant message with the synthetic
+    // model and an isApiErrorMessage block — the shape the live 400 produced.
+    const errored = lines([
+      { type: "system", subtype: "init", model: "claude-opus-5-5", mcp_servers: [] },
+      {
+        type: "assistant",
+        message: {
+          model: "<synthetic>",
+          content: [
+            { type: "text", text: "API Error: 400 ... does not support this model", isApiErrorMessage: true },
+          ],
+        },
+      },
+      { type: "result", subtype: "success", is_error: true, result: "API Error: 400" },
+    ]);
+
+    // Act
+    const record = parseStream(errored);
+
+    // Assert
+    expect(record.realAssistantTurns).toBe(0);
+    expect(record.firstAssistantText).toBeNull();
+    expect(record.assistantTexts).toEqual([]);
+    expect(record.isError).toBe(true);
+  });
+
+  test("real assistant text is collected for the echo scan", () => {
+    // Act
+    const record = parseStream(SAMPLE);
+
+    // Assert
+    expect(record.realAssistantTurns).toBeGreaterThanOrEqual(1);
+    expect(record.assistantTexts).toContain("I'll read the failing test first.");
+  });
+
+  test("a nameless plugin still counts toward the isolation check", () => {
+    // Arrange
+    const withPlugin = lines([
+      {
+        type: "system",
+        subtype: "init",
+        model: "claude-opus-5-5",
+        mcp_servers: [],
+        plugins: [{ version: "1.0.0" }],
+      },
+    ]);
+
+    // Act
+    const record = parseStream(withPlugin);
+
+    // Assert
+    expect(record.init?.plugins).toEqual([]);
+    expect(record.init?.pluginCount).toBe(1);
   });
 
   test("an empty stream yields a record with no init and no turns", () => {
