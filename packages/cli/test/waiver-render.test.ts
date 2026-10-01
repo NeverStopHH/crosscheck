@@ -21,6 +21,7 @@ import type {
   PinEntry,
   PinRegistry,
 } from "@crosscheck/connector-core/http/hub.ts";
+import { WaiverRefSchema } from "@crosscheck/connector-core/http/verdict.ts";
 
 import { renderPinList } from "../src/cli/pin-render.ts";
 import { pinStatusLines } from "../src/cli/pin-observability.ts";
@@ -109,6 +110,45 @@ describe("crosscheck pin list — the guard AND its exception", () => {
     for (const line of rendered.split("\n")) {
       expect(line.split("«").length).toBeLessThanOrEqual(2);
     }
+  });
+
+  test("PK-11: a waiver opened from a terminal before passkeys is named as the weaker kind", () => {
+    // Arrange — 04a §6: such a grant still holds until its own expiry, and every
+    // reader must be told it was opened the way any agent with the key could.
+    const legacy = pin({
+      liveWaiver: {
+        id: "fw_11111111-2222-4333-8444-555555555555",
+        pinVersion: 1,
+        expiresAt: EXPIRY,
+        reason: REASON,
+        grantedByName: "Nick",
+        authority: "terminal",
+      },
+    });
+
+    // Act
+    const rendered = renderPinList(REPO, registry([legacy]), NOW);
+
+    // Assert
+    expect(rendered).toContain("opened from a terminal before passkeys — the weaker kind");
+    expect(renderPinList(REPO, registry([waived(EXPIRY)]), NOW)).toContain(
+      "approved with a person's passkey",
+    );
+  });
+
+  test("PK-11: a waiver whose authority the hub did not say reads as the weaker kind", () => {
+    // Arrange — a hub from before 04a sends no authority at all; reading that
+    // as a passkey would claim a signature nobody can show.
+    const parsed = WaiverRefSchema.parse({
+      id: "fw_1",
+      pinVersion: 1,
+      expiresAt: EXPIRY,
+      reason: REASON,
+      grantedByName: "Nick",
+    });
+
+    // Assert
+    expect(parsed.authority).toBe("terminal");
   });
 
   test("a pin with no live waiver prints no waiver lines at all", () => {

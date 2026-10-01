@@ -88,7 +88,7 @@ describe("crosscheck pin --waive — asking, not opening", () => {
   test("an agent (no terminal) may ask; the answer says the fence stays closed and where a person approves", async () => {
     // Act
     const result = await runAs(
-      ["pin", "--waive", pinId, "--until", "2d", "--reason", "Rollout is blocked; the fix lands Monday"],
+      ["pin", "--waive", pinId, "--expires", "2d", "--reason", "Rollout is blocked; the fix lands Monday"],
       false,
     );
 
@@ -114,7 +114,7 @@ describe("crosscheck pin --waive — asking, not opening", () => {
   test("a second ask while one is pending is refused with the hub's sentence", async () => {
     // Act
     const result = await runAs(
-      ["pin", "--waive", pinId, "--until", "1d", "--reason", "asking again"],
+      ["pin", "--waive", pinId, "--expires", "1d", "--reason", "asking again"],
       false,
     );
 
@@ -125,29 +125,29 @@ describe("crosscheck pin --waive — asking, not opening", () => {
 
   test("no reason is a usage error — a waiver without a reason is a permission nobody can account for", async () => {
     // Act
-    const result = await runAs(["pin", "--waive", pinId, "--until", "1d"], false);
+    const result = await runAs(["pin", "--waive", pinId, "--expires", "1d"], false);
 
     // Assert
     expect(result.exitCode).toBe(EXIT_USAGE);
     expect(result.stdout).toContain("--reason");
   });
 
-  test("an --until that is not a date or a number of hours or days is a usage error", async () => {
+  test("an --expires that is not a date or a number of hours or days is a usage error", async () => {
     // Act
     const result = await runAs(
-      ["pin", "--waive", pinId, "--until", "next tuesday", "--reason", "x"],
+      ["pin", "--waive", pinId, "--expires", "next tuesday", "--reason", "x"],
       false,
     );
 
     // Assert
     expect(result.exitCode).toBe(EXIT_USAGE);
-    expect(result.stdout).toContain("--until");
+    expect(result.stdout).toContain("--expires");
   });
 
   test("a pin this repo does not have is named as such", async () => {
     // Act
     const result = await runAs(
-      ["pin", "--waive", "pin_nothing", "--until", "1d", "--reason", "x"],
+      ["pin", "--waive", "pin_nothing", "--expires", "1d", "--reason", "x"],
       false,
     );
 

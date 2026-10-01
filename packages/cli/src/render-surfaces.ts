@@ -17,6 +17,7 @@ import type {
 } from "@crosscheck/connector-core/http/hub.ts";
 
 import { noSuchPinLine, renderPinList, renderWaiverRequested } from "./cli/pin-render.ts";
+import { passkeyStatusLines } from "./cli/passkey-status.ts";
 import { pinStatusLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
 import { verdictLines } from "./cli/verdict-render.ts";
@@ -343,6 +344,40 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // 04a: a PENDING waiver request rides along, so the requester's name and
     // reason — the two new untrusted slots on this surface — are attacked too.
     render: (payload) => renderPinList(payload, registryWith(payload), NOW, [requestWith(payload)]),
+  },
+  {
+    kind: "corpus",
+    name: "cli-passkey-status",
+    delivery: "pulled",
+    module: "src/cli/passkey-status.ts",
+    // BARE, like the rest of `status`: one line per enrolment naming who,
+    // which device and which authenticator — a developer's name, a device
+    // label somebody typed and an authenticator name derived from what the
+    // device sent. All three are planted; the doctor check prints counts.
+    framing: "bare",
+    render: (payload) =>
+      [
+        ...passkeyStatusLines(
+          {
+            enrolments: [
+              {
+                passkeyId: payload,
+                developerName: payload,
+                label: payload,
+                authenticator: payload,
+                createdAt: ISO,
+                usableFrom: ISO,
+                coolingOff: true,
+                revoked: false,
+              },
+            ],
+            usablePasskeys: 0,
+          },
+          "http://localhost:7100",
+          NOW,
+        ),
+        "",
+      ].join("\n"),
   },
   {
     kind: "corpus",

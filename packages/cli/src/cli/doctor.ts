@@ -111,6 +111,7 @@ import {
   getSessionOrderReport,
   getHintStats,
   getOpenSessions,
+  getPasskeyAnnouncements,
   getPins,
   getSuspect,
   getIntentPositions,
@@ -158,6 +159,7 @@ import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
 import { checkLandedAuthors } from "./doctor-landed-authors.ts";
+import { passkeyDoctorCheck } from "./passkey-status.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -3588,6 +3590,7 @@ export const runDoctor = async (
     privacyCheck,
     intentLedgerCheck,
     pilotReport,
+    passkeyAnnouncements,
   ] = await Promise.all([
     // ONE GET for both: the absence findings and the coverage record ride
     // the same response (03 §3.5), so reading them twice would be a second
@@ -3623,6 +3626,9 @@ export const runDoctor = async (
       repo: identity.repoId,
       days: DOCTOR_PILOT_WINDOW_DAYS,
     }),
+    // 04a §4.3: an enrolment still cooling off is a WARN until a person has
+    // looked at it — counts here, names on `crosscheck status`.
+    getPasskeyAnnouncements(hubCtx),
   ]);
   // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
   // only known once the registry above has answered, so it cannot join the
@@ -3655,6 +3661,7 @@ export const runDoctor = async (
     ghostOverlapCheck,
     privacyCheck,
     intentLedgerCheck,
+    passkeyDoctorCheck(passkeyAnnouncements.ok ? passkeyAnnouncements.data : null, config.hubUrl),
   ];
 
   const skewCheck = ((): Check => {

@@ -61,7 +61,12 @@ export const PIN_FLAG_BROKE = "--broke";
 export const PIN_FLAG_SWEEP = "--sweep";
 export const PIN_FLAG_OK = "--ok";
 export const PIN_FLAG_WAIVE = "--waive";
-export const PIN_FLAG_UNTIL = "--until";
+/**
+ * NOT `--until`: that word is a git time flag, and CCB-2 keeps every src
+ * module free of them so staleness has one definition. The hub field is
+ * `expiresAt`, so the flag says the same.
+ */
+export const PIN_FLAG_EXPIRES = "--expires";
 export const PIN_FLAG_REASON = "--reason";
 
 export const PIN_USAGE = [
@@ -70,7 +75,7 @@ export const PIN_USAGE = [
   "   or: crosscheck pin --broke <id>   you ran the check and it failed",
   "   or: crosscheck pin --ok <id>      you ran the check and it passed",
   "   or: crosscheck pin --sweep        re-resolve pinned paths against git",
-  '   or: crosscheck pin --waive <id> --until <2d|12h|date> --reason "<why>"',
+  '   or: crosscheck pin --waive <id> --expires <2d|12h|date> --reason "<why>"',
   "                                     ask a person to open this pin's fence",
   "",
   "  A pin says a named surface WORKS right now: the files behind it, the",
@@ -158,7 +163,7 @@ interface PinArgs {
   readonly sweep: boolean;
   readonly list: boolean;
   readonly waive: string | null;
-  readonly until: string | undefined;
+  readonly expires: string | undefined;
   readonly reason: string | undefined;
 }
 
@@ -175,7 +180,7 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
   let sweep = false;
   let list = false;
   let waive: string | null = null;
-  let until: string | undefined;
+  let expires: string | undefined;
   let reason: string | undefined;
   let index = 0;
   while (index < argv.length) {
@@ -213,8 +218,8 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
       index += 2;
       continue;
     }
-    if (token === PIN_FLAG_UNTIL) {
-      until = argv[index + 1];
+    if (token === PIN_FLAG_EXPIRES) {
+      expires = argv[index + 1];
       index += 2;
       continue;
     }
@@ -233,7 +238,7 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
     }
     index += 1;
   }
-  return { surface, files, check, broke, ok, sweep, list, waive, until, reason };
+  return { surface, files, check, broke, ok, sweep, list, waive, expires, reason };
 };
 
 const listPins = async (
@@ -254,14 +259,14 @@ const listPins = async (
 };
 
 const HOUR_MS = 3_600_000;
-const UNTIL_PATTERN = /^(\d+)\s*([hd])$/;
+const EXPIRY_PATTERN = /^(\d+)\s*([hd])$/;
 
 /** Where a person approves a waiver on the hub's web UI (server: routes/waiver-requests.ts). */
 const WAIVER_APPROVAL_PATH = "/ui/waivers";
 
 /** `2d`, `12h`, or a date the person typed; null when it is none of them. */
-export const parseUntil = (value: string, now: Date): string | null => {
-  const relative = UNTIL_PATTERN.exec(value.trim());
+export const parseExpiry = (value: string, now: Date): string | null => {
+  const relative = EXPIRY_PATTERN.exec(value.trim());
   if (relative !== null) {
     const amount = Number(relative[1]);
     const hours = relative[2] === "d" ? amount * 24 : amount;
@@ -289,9 +294,9 @@ const requestFenceWaiver = async (resolved: Resolved, args: PinArgs, pinId: stri
   if (args.reason === undefined || args.reason.trim() === "") {
     return WAIVE_USAGE_ERROR("a waiver request needs --reason: a permission nobody can account for is one nobody should grant");
   }
-  const expiresAt = args.until === undefined ? null : parseUntil(args.until, new Date());
+  const expiresAt = args.expires === undefined ? null : parseExpiry(args.expires, new Date());
   if (expiresAt === null) {
-    return WAIVE_USAGE_ERROR("a waiver request needs --until as hours (12h), days (2d) or a date (2026-10-03)");
+    return WAIVE_USAGE_ERROR("a waiver request needs --expires as hours (12h), days (2d) or a date (2026-10-03)");
   }
   const registry = await getPins(resolved.ctx, resolved.repoId);
   if (!registry.ok) {

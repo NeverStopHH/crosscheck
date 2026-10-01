@@ -692,6 +692,14 @@ export const PASSKEY_COOLOFF_HOURS = 24;
  */
 export const ENROLMENT_CODE_TTL_HOURS = 24;
 
+/**
+ * HOW LONG AN ENROLMENT STAYS ANNOUNCED on `status` and `doctor` (04a §4.3).
+ * A week: the cool-off is one day, and a person away for a long weekend should
+ * still find "a passkey was enrolled for you" waiting when they return — the
+ * announcement is how an enrolment nobody expected gets noticed at all.
+ */
+export const PASSKEY_ANNOUNCEMENT_DAYS = 7;
+
 // ── Coverage integrity (docs/1.0/03-coverage-integrity.md) ──────────────────
 
 /**

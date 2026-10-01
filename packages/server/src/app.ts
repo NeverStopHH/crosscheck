@@ -15,6 +15,7 @@ import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
 import { intentLedgerRoutes } from "./routes/intent-ledger.ts";
 import { landedRoutes } from "./routes/landed.ts";
+import { passkeyRoutes } from "./routes/passkeys.ts";
 import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
@@ -92,6 +93,8 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/fence-waivers", fenceWaiverRoutes(deps));
   // 04a §6: what an api key may still do about a fence — ask.
   app.route("/api/waiver-requests", waiverRequestRoutes(deps));
+  // 04a §4.3: the enrolment announcements status and doctor print.
+  app.route("/api/passkeys", passkeyRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));

@@ -213,7 +213,7 @@ const pinLines = (
  *
  * TWO SLOTS ARE FOREIGN, AND ONLY TWO: the request id the hub chose and the
  * pin id from argv, both through `safeId`. The expiry and the approval URL
- * are built LOCALLY — the expiry from this process's own clock and `--until`,
+ * are built LOCALLY — the expiry from this process's own clock and `--expires`,
  * the URL from the configured hub URL and a fixed path — and never taken from
  * the hub's answer: a hub-chosen path printed for an agent to follow would be
  * an instruction channel, and the agent that asked is the likely reader.
@@ -221,7 +221,7 @@ const pinLines = (
 export const renderWaiverRequested = (input: {
   readonly requestId: string;
   readonly pinId: string;
-  /** Local: this process computed it from `--until`. */
+  /** Local: this process computed it from `--expires`. */
   readonly expiresAt: string;
   /** Local: the configured hub URL plus the fixed approval path. */
   readonly approveUrl: string;

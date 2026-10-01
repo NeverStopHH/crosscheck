@@ -2652,6 +2652,53 @@ const WaiverRequestListSchema = z
       .map((parsed) => parsed.data),
   );
 
+/**
+ * One passkey enrolment as the hub announces it (04a §4.3). Defaults lean
+ * toward ANNOUNCING: a row whose cool-off state is missing reads as cooling
+ * off (a warning a person can dismiss), and an unreadable instant reads as
+ * one rather than costing the row — hiding an enrolment is the unsafe way.
+ */
+export const PasskeyAnnouncementSchema = z.looseObject({
+  passkeyId: z.string().min(1),
+  developerName: z.string().default(""),
+  label: z.string().default(""),
+  authenticator: z.string().default("unknown authenticator"),
+  createdAt: z.iso.datetime().catch("an unreadable time"),
+  usableFrom: z.iso.datetime().catch("an unreadable time"),
+  coolingOff: z.boolean().default(true),
+  revoked: z.boolean().default(false),
+});
+
+export interface PasskeyAnnouncements {
+  readonly enrolments: readonly z.infer<typeof PasskeyAnnouncementSchema>[];
+  readonly usablePasskeys: number;
+}
+
+const PasskeyAnnouncementsSchema = z
+  .looseObject({
+    enrolments: z.array(z.unknown()).default([]),
+    usablePasskeys: z.number().int().min(0).default(0),
+  })
+  .transform(
+    (value): PasskeyAnnouncements => ({
+      enrolments: value.enrolments
+        .map((row) => PasskeyAnnouncementSchema.safeParse(row))
+        .filter((parsed) => parsed.success)
+        .map((parsed) => parsed.data),
+      usablePasskeys: value.usablePasskeys,
+    }),
+  );
+
+/** Recent enrolments and how many passkeys can approve — `status` and `doctor` read it. */
+export const getPasskeyAnnouncements = (
+  ctx: HubContext,
+): Promise<HubResult<PasskeyAnnouncements>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/passkeys/announcements",
+    schema: PasskeyAnnouncementsSchema,
+  });
+
 /** The repo's waiver requests, every status, newest first. */
 export const getWaiverRequests = (
   ctx: HubContext,
