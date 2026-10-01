@@ -28,9 +28,21 @@ import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import {
   HTTP_TIMEOUT_MS,
+  MAX_LOSS_LEDGER_BYTES,
   POST_TOOL_USE_BUDGET_RATIO,
   PRE_TOOL_USE_BUDGET_RATIO,
+  SESSION_START_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
+import {
+  ensureDir,
+  sessionSlug,
+  spoolUnrecordedDropsPath,
+  writePrivateFile,
+} from "@crosscheck/connector-core/config/paths.ts";
+import { recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import { readTelemetryLossReport } from "@crosscheck/connector-core/spool/loss-report.ts";
+import { lossLedgerPath } from "@crosscheck/connector-core/state/loss-ledger.ts";
+import { TEAMMATE_NAME, startSlowHub } from "./fixtures/slow-hub.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
@@ -309,4 +321,109 @@ describe("the per-tool worktree resolution fits the PostToolUse budget", () => {
     );
     expect(p95).toBeLessThan(TRIPWIRE_RECORD_ALLOWANCE_MS);
   });
+});
+
+/**
+ * LOSS-12, second half (docs/1.0/loss-accounting.md §4.2, §6): the report is
+ * MEASURED, not asserted. SessionStart reads it once — registration carries
+ * it; the deferred ender does not — so what it adds is one local read of the
+ * repo's `.drops` files, the archive, the unrecorded marker and the
+ * capture-loss ledger. "Without" is a home with no ledgers, where that read
+ * is a failed readdir and three failed opens; "with" is the worst shape the
+ * owner's machine has shown (382 records in 343 batches) plus a capture-loss
+ * ledger at its cap. Samples are interleaved so machine drift lands on both
+ * arms. The one assertion is the bound that binds: the loaded hook still
+ * answers its briefing inside SessionStart's budget.
+ */
+const SESSION_START_BUDGET_MS = SESSION_START_BUDGET_RATIO * HTTP_TIMEOUT_MS;
+const REPORT_SAMPLES = 20;
+/** The owner's doctor line: "382 records discarded in 343 batches". */
+const OWNER_BATCHES = 343;
+const OWNER_RECORDS = 382;
+/** Spread over this many dead sessions' ledgers, so the readdir has files to open. */
+const OWNER_LEDGER_FILES = 20;
+const OWNER_REASONS = ["expired", "rejected", "cap", "ignored"] as const;
+
+const p95Of = (samples: readonly number[]): number =>
+  [...samples].sort((a, b) => a - b)[Math.ceil(samples.length * P95) - 1] ??
+  Number.POSITIVE_INFINITY;
+
+const seedOwnerLedgers = async (home: string, key: string): Promise<void> => {
+  const now = new Date();
+  for (let batch = 0; batch < OWNER_BATCHES; batch += 1) {
+    const reason = OWNER_REASONS[batch % OWNER_REASONS.length] ?? "expired";
+    await recordDrop(
+      home,
+      key,
+      sessionSlug(`dead-${String(batch % OWNER_LEDGER_FILES)}`),
+      batch < OWNER_RECORDS - OWNER_BATCHES ? 2 : 1,
+      reason,
+      now,
+      reason === "ignored" ? { claim_revalidation: 1 } : {},
+    );
+  }
+  await writePrivateFile(
+    spoolUnrecordedDropsPath(home, key),
+    `${JSON.stringify({ at: now.toISOString(), count: 3, reason: "write-failed" })}\n`,
+  );
+  const line = `${JSON.stringify({ at: now.toISOString(), kind: "hook_timed_out", count: 1, key, detail: "post-tool-use" })}\n`;
+  await ensureDir(join(home, "state"));
+  await writeFile(lossLedgerPath(home), line.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / line.length)), "utf8");
+};
+
+const startPayload = (repo: string, run: number): string =>
+  JSON.stringify({
+    session_id: `loss-latency-${String(run)}`,
+    cwd: repo,
+    hook_event_name: "SessionStart",
+    source: "startup",
+  });
+
+describe("LOSS-12: what the loss report costs SessionStart, measured", () => {
+  test("SessionStart p95 with and without the report, and the read alone", async () => {
+    // Arrange: one hub answering at once, one clean home, one loaded home
+    const hub = startSlowHub({ ingest: 0, end: 0, other: 0 });
+    const repo = await makeRepo("losslat", { remote: "git@github.com:acme/api.git" });
+    const clean = await makeHome("losslat-clean");
+    const loaded = await makeHome("losslat-loaded");
+    paths.push(repo, clean, loaded);
+    const key = repoKey(hub.url, REPO_ID);
+    await seedOwnerLedgers(loaded, key);
+    const envOf = (home: string): Env => ({ ...env(home), CROSSCHECK_HUB_URL: hub.url });
+    const without: number[] = [];
+    const withReport: number[] = [];
+    const readAlone: number[] = [];
+    let lastLoaded = "";
+
+    try {
+      // Act
+      for (let run = 0; run < REPORT_SAMPLES; run += 1) {
+        const startClean = performance.now();
+        await runHook("session-start", startPayload(repo, run), envOf(clean));
+        without.push(performance.now() - startClean);
+
+        const startLoaded = performance.now();
+        lastLoaded = await runHook("session-start", startPayload(repo, run), envOf(loaded));
+        withReport.push(performance.now() - startLoaded);
+
+        const startRead = performance.now();
+        await readTelemetryLossReport(loaded, key);
+        readAlone.push(performance.now() - startRead);
+      }
+    } finally {
+      hub.stop();
+    }
+
+    // Assert: the numbers are the deliverable; the budget is the one bound
+    const report = await readTelemetryLossReport(loaded, key);
+    console.log(
+      `[capture-latency] LOSS-12 SessionStart p95 ${p95Of(without).toFixed(1)} ms without the report (no ledgers), ` +
+        `${p95Of(withReport).toFixed(1)} ms with it (${String(report.total)} losses); ` +
+        `report read alone p95 ${p95Of(readAlone).toFixed(2)} ms; ${String(REPORT_SAMPLES)} interleaved runs; ` +
+        `budget ${String(SESSION_START_BUDGET_MS)} ms`,
+    );
+    expect(report.total).toBeGreaterThan(OWNER_RECORDS);
+    expect(lastLoaded).toContain(TEAMMATE_NAME);
+    expect(p95Of(withReport)).toBeLessThan(SESSION_START_BUDGET_MS);
+  }, 120_000);
 });
