@@ -219,7 +219,7 @@ reader opens is a pull, and §2.1 scopes mute to unasked surfaces.
 
 ## 11. Open questions
 
-- License (MIT vs Apache-2.0) before going public.
+- ~~License (MIT vs Apache-2.0) before going public.~~ Decided: the hub is FSL-1.1-ALv2, every other package Apache-2.0, with a CLA (see [`LICENSE`](../LICENSE) and [`CLA.md`](../CLA.md)).
 - PGlite concurrency validation outcome (see §2) — may flip the default deploy story.
 - Embedding default: ship keyless-degraded as default, or prompt for a key during `init`?
 - First dogfood team and success metric (proposal: hint-precision ≥ 0.5 pulled/delivered and ≥1 documented prevented collision per week).
