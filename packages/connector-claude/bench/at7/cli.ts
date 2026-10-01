@@ -11,9 +11,10 @@
  * dir BEFORE the first run. Results live OUTSIDE the repo by default (a temp
  * root) unless --out is given.
  *
- * `--live-control` is the single plumbing check the pre-registration permits
- * after the harness is green: ONE control run, to prove delivery, isolation and
- * detection end to end. It is not counted, and it never runs a treatment.
+ * `--live-control` is a plumbing check, not part of the pre-registered run
+ * order (§8 does not mention it): ONE control run to prove delivery, isolation
+ * and detection end to end. It is never counted, never runs a treatment, and is
+ * reported as a plumbing check.
  *
  * Keys and tokens are never printed — the per-run log names arms and verdicts,
  * not secrets.
