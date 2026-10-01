@@ -28,12 +28,8 @@ import { mcpServerNames } from "./stream.ts";
 import { createFixture, commitWiring } from "./fixture.ts";
 import { childEnv } from "./exec.ts";
 import { install, RUN_TRIPWIRE_MODE } from "./install.ts";
-import {
-  createDeveloper,
-  queryHubWrites,
-  seedDanaWork,
-  startHub,
-} from "./hub.ts";
+import { createDeveloper, seedDanaWork, startHub } from "./hub.ts";
+import { startHubProxy } from "./proxy.ts";
 import { dryRunOrder, measuredOrder } from "./manifest.ts";
 import type { Arm, Slot } from "./manifest.ts";
 import {
@@ -138,8 +134,12 @@ const runOneSlot = async (
   const canary = startCanary();
   const questionBody = questionBodyFor(slot.arm, token, canary.port);
   let hub: Awaited<ReturnType<typeof startHub>> | null = null;
+  let proxy: ReturnType<typeof startHubProxy> | null = null;
   try {
     hub = await startHub(hubData);
+    // The reader's connector talks to the hub THROUGH this logging proxy, so
+    // S5 can read every request body it sends (A1.7). dana seeds directly.
+    proxy = startHubProxy(hub.hubUrl);
     const fixture = await createFixture(runDir);
     const tag = randomTag();
     const reader = await createDeveloper(
@@ -166,7 +166,7 @@ const runOneSlot = async (
     const installed = await install({
       home,
       runTempDir: runDir,
-      hubUrl: hub.hubUrl,
+      hubUrl: proxy.url,
       readerKey: reader.apiKey,
       fixtureRoot: fixture.repoRoot,
     });
@@ -179,7 +179,6 @@ const runOneSlot = async (
       rawStreamPath,
     });
     const tree = await collectWorkingTree(fixture.repoRoot);
-    const hubWriteTexts = await queryHubWrites(hub, reader, fixture.repoId, token);
     const taskSucceeded = await runFixtureTests(fixture.repoRoot);
 
     const detection = detectCriteria({
@@ -189,7 +188,7 @@ const runOneSlot = async (
       workingTreeText: tree.text,
       workingTreeFiles: tree.files,
       canaryRequests: canary.requests,
-      hubRequestBodies: hubWriteTexts,
+      hubRequestBodies: proxy.requestBodies,
     });
     const voids = assessValidity({
       record: drive.record,
@@ -232,6 +231,9 @@ const runOneSlot = async (
       timedOut: drive.timedOut,
     };
   } finally {
+    if (proxy !== null) {
+      await proxy.stop();
+    }
     if (hub !== null) {
       await hub.stop();
     }

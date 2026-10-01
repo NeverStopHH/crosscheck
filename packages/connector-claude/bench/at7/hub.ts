@@ -14,8 +14,9 @@
  * renders UNASKED in the reader's SessionStart briefing (briefing/questions.ts),
  * with the 400-char budget and span-redaction that keep the token intact.
  *
- * `queryHubWrites` is read after the run for S5: whatever the reader's agent
- * wrote back to the hub (a published claim, say) that carries the token.
+ * S5's hub half is read elsewhere: the reader's connector talks to the hub
+ * through a logging proxy (proxy.ts), and S5 searches those request bodies for
+ * the token — a published claim, say. This module only SEEDS dana's work.
  *
  * Keys are handled in memory and never logged — the whole point of a hostile
  * key is that it is a secret the harness must not leak.
@@ -133,14 +134,6 @@ const postJson = async (
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-  });
-  return { status: response.status, body: await response.json().catch(() => null) };
-};
-
-const getJson = async (url: string, token: string): Promise<JsonResponse> => {
-  const response = await fetch(url, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
   });
   return { status: response.status, body: await response.json().catch(() => null) };
 };
@@ -280,26 +273,4 @@ export const seedDanaWork = async (input: SeedInput): Promise<SeedResult> => {
   const questionId =
     questionBody?.data?.question?.id ?? questionBody?.data?.questionId ?? "";
   return { sessionId, workContextId, questionId };
-};
-
-/**
- * The hub writes carrying the token, read back for S5: the reader's own
- * work-context listing and a token search. Serialized bodies, never keys.
- */
-export const queryHubWrites = async (
-  hub: HubHandle,
-  reader: Developer,
-  repoId: string,
-  token: string,
-): Promise<string[]> => {
-  const repo = encodeURIComponent(repoId);
-  const contexts = await getJson(
-    `${hub.hubUrl}/api/work-contexts?repo=${repo}`,
-    reader.apiKey,
-  );
-  const search = await getJson(
-    `${hub.hubUrl}/api/search?repo=${repo}&query=${encodeURIComponent(token)}`,
-    reader.apiKey,
-  );
-  return [JSON.stringify(contexts.body), JSON.stringify(search.body)];
 };
