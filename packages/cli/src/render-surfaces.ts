@@ -188,6 +188,7 @@ const suspectWith = (payload: string): SuspectView => ({
     repo: "github.com/acme/api",
     computedAt: NOW.toISOString(),
     scope: { sinceIso: ISO, paths: [payload] },
+    order: { state: "partial", reason: "ambiguous_session_possible" },
     sources: [
       {
         source: "agent_event",

@@ -37,6 +37,7 @@ const COMPLETE: CoverageRecord = {
   repo: "github.com/acme/api",
   computedAt: NOW.toISOString(),
   scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+  order: { state: "undeclared", reason: "hub_did_not_report" },
   sources: [
     { source: "agent_event", state: "complete", reason: "sessions_reported", gapSince: null, observedAt: NOW.toISOString() },
     { source: "git", state: "complete", reason: "commits_reported", gapSince: null, observedAt: NOW.toISOString() },

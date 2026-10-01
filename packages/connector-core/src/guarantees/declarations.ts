@@ -18,7 +18,12 @@
  * comment names the line that decides it. §3.6's table was the starting
  * point; where the code disagrees with it, the code wins and 01a §13 says so.
  */
-import { GUARANTEE_KINDS, GUARANTEE_OF_REASON } from "@crosscheck/schema";
+import {
+  CAUSAL_GUARANTEE_REASONS,
+  GUARANTEE_KINDS,
+  GUARANTEE_OF_REASON,
+  ORDER_REASON_STRENGTH,
+} from "@crosscheck/schema";
 import type {
   CausalGuarantee,
   CausalGuaranteeReason,
@@ -67,25 +72,14 @@ const LANE_REASON: Readonly<Record<GuaranteeLane, CausalGuaranteeReason>> = {
 };
 
 /**
- * EVERY REASON, WEAKEST FIRST — the order the fold resolves ties in. A
- * reason's state is fixed by GUARANTEE_OF_REASON, and this list keeps the
- * states in CAUSAL_GUARANTEES' order, so ranking by reason alone never lets a
- * weaker state outrank a stronger one. Inside `partial` the derived worker is
- * weakest (§3.6: "the summarizer's claims are a weaker lane than MCP
- * ambiguity"), then the unbracketed and observing lanes, whose positions are
- * upper bounds, then the MCP lane, whose positions are emitted when present.
+ * EVERY DECLARED REASON, WEAKEST FIRST — read out of the schema's one order
+ * (ORDER_REASON_STRENGTH), so this fold and the hub's fold over a coverage
+ * scope cannot rank two reasons differently.
  */
-export const REASON_STRENGTH: readonly CausalGuaranteeReason[] = [
-  "provider_undeclared",
-  "not_built",
-  "no_emitter",
-  "derived_after_the_fact",
-  "unbracketed_lane",
-  "observed_lane_only",
-  "ambiguous_session_possible",
-  "bracketed_by_pre_tool",
-  "lifecycle",
-];
+export const REASON_STRENGTH: readonly CausalGuaranteeReason[] = ORDER_REASON_STRENGTH.filter(
+  (reason): reason is CausalGuaranteeReason =>
+    (CAUSAL_GUARANTEE_REASONS as readonly string[]).includes(reason),
+);
 
 const strengthOf = (reason: CausalGuaranteeReason): number => REASON_STRENGTH.indexOf(reason);
 

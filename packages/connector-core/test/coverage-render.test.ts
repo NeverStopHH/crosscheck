@@ -26,6 +26,7 @@ import {
   COVERAGE_SOURCES,
   COVERAGE_STATES,
   UNKNOWN_COVERAGE,
+  UNREPORTED_ORDER,
   coverageStateOf,
 } from "../src/http/coverage.ts";
 import type {
@@ -56,6 +57,7 @@ const recordOf = (
   repo: "github.com/acme/api",
   computedAt: NOW.toISOString(),
   scope: { sinceIso: "2026-09-01T10:00:00.000Z" },
+  order: UNREPORTED_ORDER,
   sources: [
     ...rows,
     ...COVERAGE_SOURCES.filter(
@@ -247,6 +249,7 @@ describe("the sentence is about the question that was asked", () => {
       repo: "github.com/acme/api",
       computedAt: NOW.toISOString(),
       scope: { sinceIso: new Date(NOW.getTime() - 3_600_000).toISOString() },
+      order: UNREPORTED_ORDER,
       sources: [
         row("agent_event", "unknown", "no_session_in_window"),
         row("git", "complete", "commits_reported", null, GAP_ISO),
@@ -273,6 +276,7 @@ describe("the sentence is about the question that was asked", () => {
       repo: "github.com/acme/api",
       computedAt: NOW.toISOString(),
       scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+      order: UNREPORTED_ORDER,
       sources: [
         row("agent_event", "unknown", "no_session_in_window"),
         row("git", "complete", "commits_reported", null, GAP_ISO),
@@ -295,6 +299,7 @@ describe("the sentence is about the question that was asked", () => {
       repo: "github.com/acme/api",
       computedAt: NOW.toISOString(),
       scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+      order: UNREPORTED_ORDER,
       sources: [
         row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
         row("git", "complete", "commits_reported", null, GAP_ISO),
@@ -559,13 +564,16 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
   });
 
   test("the record the renderer reads exposes no numeric aggregate", () => {
-    // Assert: every own value is a string, null, or the five-row array.
+    // Assert: every own value is a string, null, or the five-row array — and
+    // the order block (01a §3.7) is two strings, no count.
     for (const [key, value] of Object.entries(REAPED)) {
-      if (key === "sources" || key === "scope") {
+      if (key === "sources" || key === "scope" || key === "order") {
         continue;
       }
       expect(typeof value === "string" || value === null).toBe(true);
     }
+    expect(Object.keys(REAPED.order).sort()).toEqual(["reason", "state"]);
+    expect(Object.values(REAPED.order).every((value) => typeof value === "string")).toBe(true);
   });
 });
 

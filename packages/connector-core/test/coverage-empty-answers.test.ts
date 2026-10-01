@@ -30,6 +30,7 @@ const reaped = (): CoverageRecord => ({
   repo: "github.com/acme/api",
   computedAt: NOW.toISOString(),
   scope: { sinceIso: "2026-09-01T10:00:00.000Z" },
+  order: { state: "undeclared", reason: "hub_did_not_report" },
   sources: [
     {
       source: "agent_event",

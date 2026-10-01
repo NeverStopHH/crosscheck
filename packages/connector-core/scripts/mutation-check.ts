@@ -13060,7 +13060,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "the derived worker ranks above the MCP picker",
-    file: `${CORE}/src/guarantees/declarations.ts`,
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
     from: '  "derived_after_the_fact",\n  "unbracketed_lane",\n  "observed_lane_only",\n  "ambiguous_session_possible",\n',
     to: '  "ambiguous_session_possible",\n  "unbracketed_lane",\n  "observed_lane_only",\n  "derived_after_the_fact",\n',
     test: `${CORE}/test/guarantee-declarations.test.ts`,
@@ -13343,6 +13343,79 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/guarantee-declarations.test.ts`,
     because: "a register type-checks with any connector's table, and the hub stores the wrong one's statement",
   },
+  // 01a §3.7 — the coverage record's order block.
+  {
+    label: "an empty coverage scope folds to an answer about sessions it does not have",
+    file: `${SERVER}/src/services/coverage-order.ts`,
+    from: "  if (sessions === 0) {\n    return NO_SESSION;\n  }\n",
+    to: "",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "less observation produces a different statement than no observation (CSK-8)",
+  },
+  {
+    label: "a session that declared nothing drops out of the order fold",
+    file: `${SERVER}/src/services/coverage-order.ts`,
+    from: '  if (toCount(row?.["declared"]) < sessions * needed.length) {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "an older connector's session in scope leaves the answer reading the newer one's guarantee (CSK-8)",
+  },
+  {
+    label: "the order fold takes the strongest session",
+    file: `${SERVER}/src/services/coverage-order.ts`,
+    from: "           min(d.weakest) AS weakest",
+    to: "           max(d.weakest) AS weakest",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "one over-declaring session decides the line every other session is under",
+  },
+  {
+    label: "the order fold takes a session's strongest kind",
+    file: `${SERVER}/src/services/coverage-order.ts`,
+    from: "SELECT count(*) AS declared, min(${STRENGTH_RANK}) AS weakest",
+    to: "SELECT count(*) AS declared, max(${STRENGTH_RANK}) AS weakest",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "a session that cannot see commits reads guaranteed on a question that needs every kind",
+  },
+  {
+    label: "an unknown stored reason ranks as the strongest",
+    file: `${SERVER}/src/services/coverage-order.ts`,
+    from: 'const UNKNOWN_STORED_RANK = ORDER_REASON_STRENGTH.indexOf("provider_undeclared");',
+    to: 'const UNKNOWN_STORED_RANK = ORDER_REASON_STRENGTH.indexOf("lifecycle");',
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "a value only a newer hub could write reads as the strongest guarantee on this one",
+  },
+  {
+    label: "every coverage read folds the order over every kind",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      options.orderKinds ?? ALL_ORDER_KINDS,\n",
+    to: "      ALL_ORDER_KINDS,\n",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "a touch question is answered unavailable because the session cannot see commits — the reason names a kind the question never asked about",
+  },
+  {
+    label: "the order fold ignores the path scope",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),\n  ) ?? sql`false`;",
+    to: "      : []),\n  ) ?? sql`false`;",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "the order line describes sessions the agent_event rung beside it left out",
+  },
+  {
+    label: "an order block whose state is not its reason's is read as sent",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: "  return parsed.success && stateOfOrderReason(parsed.data.reason) === parsed.data.state\n",
+    to: "  return parsed.success\n",
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because: "`guaranteed / no_emitter` from a broken hub is printed as guaranteed",
+  },
+  {
+    label: "a hub that sent no order block is read as guaranteed",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: "    order: toOrder(envelope.data.order),\n",
+    to: '    order: { state: "guaranteed", reason: "lifecycle" },\n',
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because: "an old hub's silence becomes the strongest statement on every surface (COV-3)",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13500,7 +13573,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 12
- * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
+ * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
@@ -13599,6 +13672,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 9
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
+ * PRINTS: packages/server/test/coverage-order.test.ts 7
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync.test.ts 7
  * PRINTS: packages/server/test/developer-emails.test.ts 2

@@ -22,6 +22,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readCoverage } from "../services/coverage.ts";
+import { EXPLANATION_TIMING_KINDS } from "../services/coverage-order.ts";
 import { resolveSuspectScope, suspectSessions } from "../services/suspect.ts";
 import { readTeamSettings } from "../services/team-settings.ts";
 import { computeVerdict } from "../services/verdict.ts";
@@ -97,6 +98,9 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
           ).toISOString(),
           paths: scope.scope.files,
         },
+        // 04's verdict carries explanationTimingFor's answer: an edit against
+        // intent versions (services/coverage-order.ts).
+        orderKinds: EXPLANATION_TIMING_KINDS,
       }),
     ]);
     // THE VERDICT RIDES AS A SIBLING FIELD (04 §5), the shape 03 §3.5 uses for

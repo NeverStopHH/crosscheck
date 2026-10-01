@@ -132,17 +132,23 @@ describe("COV-2: five rows, in order, no scalar", () => {
       REPO,
     );
 
-    // Assert: every own value is a string, or the five-row array itself.
+    // Assert: every own value is a string, or the five-row array itself —
+    // and `order` (01a §3.7) is two strings and nothing else: it carried
+    // `sessions: number` in a draft, and a count here is exactly what COV-6
+    // exists to refuse.
     const scalars = Object.entries(record).filter(
-      ([key]) => key !== "sources" && key !== "scope",
+      ([key]) => key !== "sources" && key !== "scope" && key !== "order",
     );
     expect(scalars.every(([, value]) => typeof value === "string")).toBe(true);
     expect(Object.keys(record).sort()).toEqual([
       "computedAt",
+      "order",
       "repo",
       "scope",
       "sources",
     ]);
+    expect(Object.keys(record.order).sort()).toEqual(["reason", "state"]);
+    expect(Object.values(record.order).every((value) => typeof value === "string")).toBe(true);
   });
 });
 

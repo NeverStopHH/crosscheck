@@ -30,6 +30,7 @@ const reaped = (): CoverageRecord => ({
   repo: "github.com/acme/api",
   computedAt: NOW.toISOString(),
   scope: { sinceIso: GAP_ISO },
+  order: { state: "undeclared", reason: "hub_did_not_report" },
   sources: [
     { source: "agent_event", state: "incomplete", reason: "session_reaped", gapSince: GAP_ISO, observedAt: GAP_ISO },
     { source: "git", state: "complete", reason: "commits_reported", gapSince: null, observedAt: GAP_ISO },

@@ -14,7 +14,9 @@ import {
   GUARANTEE_OF_REASON,
   MAX_GUARANTEE_TRIPLES,
   ORDER_REASONS,
+  ORDER_REASON_STRENGTH,
   foldGuaranteeDeclaration,
+  stateOfOrderReason,
   weakerGuarantee,
 } from "../src/causal-guarantees.ts";
 import { LEDGER_EVENT_KINDS, SESSION_EVENT_KINDS } from "../src/session-event.ts";
@@ -179,5 +181,41 @@ describe("foldGuaranteeDeclaration — folded, never refused, never strengthened
         { kind: "session.started", guarantee: "guaranteed", reason: "lifecycle" },
       ]).map((triple) => triple.kind),
     ).toEqual(["session.started", "session.ended"]);
+  });
+});
+
+describe("the one strength order every fold resolves ties by", () => {
+  test("it lists every order reason exactly once", () => {
+    expect([...ORDER_REASON_STRENGTH].sort()).toEqual([...ORDER_REASONS].sort());
+  });
+
+  test("a reason never outranks a reason of a stronger state", () => {
+    // Arrange
+    const ranks = ORDER_REASON_STRENGTH.map((reason) =>
+      CAUSAL_GUARANTEES.indexOf(stateOfOrderReason(reason)),
+    );
+    // Assert: non-decreasing, so ranking by reason alone is ranking by state first.
+    expect(ranks).toEqual([...ranks].sort((left, right) => left - right));
+  });
+
+  test("a contradicted declaration is partial and the weakest partial there is", () => {
+    // Arrange
+    const firstPartial = ORDER_REASON_STRENGTH.findIndex(
+      (reason) => stateOfOrderReason(reason) === "partial",
+    );
+    // Assert
+    expect(stateOfOrderReason("declaration_contradicted")).toBe("partial");
+    expect(ORDER_REASON_STRENGTH[firstPartial]).toBe("declaration_contradicted");
+  });
+
+  test("the reading side's own reasons are undeclared", () => {
+    expect(stateOfOrderReason("no_session_in_scope")).toBe("undeclared");
+    expect(stateOfOrderReason("hub_did_not_report")).toBe("undeclared");
+  });
+
+  test("the summarizer's lane is weaker than the MCP picker's (01a §3.6)", () => {
+    expect(ORDER_REASON_STRENGTH.indexOf("derived_after_the_fact")).toBeLessThan(
+      ORDER_REASON_STRENGTH.indexOf("ambiguous_session_possible"),
+    );
   });
 });

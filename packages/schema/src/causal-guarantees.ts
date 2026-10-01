@@ -94,6 +94,41 @@ export const ORDER_REASONS = [
 ] as const;
 
 /**
+ * EVERY ORDER REASON, WEAKEST FIRST — the one order every fold here resolves
+ * ties by: the connector's lane fold (connector-core guarantees/declarations.ts
+ * reads the causal reasons out of it) and the hub's fold over a coverage scope.
+ * A reason's state is fixed (`stateOfOrderReason`), and the list keeps the
+ * states in CAUSAL_GUARANTEES' order, so ranking by reason alone never lets a
+ * weaker state outrank a stronger one. Inside `partial`: a contradicted
+ * declaration first (a row disproved it); then the derived worker (§3.6: "the
+ * summarizer's claims are a weaker lane than MCP ambiguity"); then the
+ * unbracketed and observing lanes, whose positions are upper bounds; then the
+ * MCP lane, whose positions are emitted when present.
+ */
+export const ORDER_REASON_STRENGTH: readonly OrderReason[] = [
+  "no_session_in_scope",
+  "hub_did_not_report",
+  "provider_undeclared",
+  "not_built",
+  "no_emitter",
+  "declaration_contradicted",
+  "derived_after_the_fact",
+  "unbracketed_lane",
+  "observed_lane_only",
+  "ambiguous_session_possible",
+  "bracketed_by_pre_tool",
+  "lifecycle",
+];
+
+/** The state an order reason belongs to: a declared reason's own, the reader's three below. */
+export const stateOfOrderReason = (reason: OrderReason): CausalGuarantee => {
+  if (isMember(CAUSAL_GUARANTEE_REASONS, reason)) {
+    return GUARANTEE_OF_REASON[reason];
+  }
+  return reason === "declaration_contradicted" ? "partial" : "undeclared";
+};
+
+/**
  * WHAT A HUB'S `session_causal_guarantees.reason` CAN HOLD: a declared reason,
  * or the cap a contradicting row wrote over a `guaranteed` one (01a §3.6,
  * "rows outrank declarations"). The cap is stored, not derived on read, so it

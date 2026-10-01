@@ -49,9 +49,11 @@ export type { Embedder } from "./services/embedder.ts";
 // connector's wire vocabulary is pinned against these three enums in
 // connector-core/test/coverage-wire.test.ts.
 export {
+  COVERAGE_ORDER_REASONS,
   COVERAGE_REASONS,
   COVERAGE_SOURCES,
   COVERAGE_STATES,
+  ORDER_STATES,
   isJudgeable,
   readCoverage,
 } from "./services/coverage.ts";

@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1080
+    # PRINTS: 1089
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -212,13 +212,13 @@ jobs:
     # PRINTS: git/pin-sweep.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: guarantees/check.ts 17
-    # PRINTS: guarantees/declarations.ts 5
+    # PRINTS: guarantees/declarations.ts 4
     # PRINTS: hints/delivery.ts 7
     # PRINTS: hints/precision.ts 2
     # PRINTS: hints/render.ts 18
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
-    # PRINTS: http/coverage.ts 1
+    # PRINTS: http/coverage.ts 3
     # PRINTS: http/hub.ts 7
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 2
@@ -280,7 +280,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
     # PRINTS: packages/connector-cursor/src/runner.ts 2
-    # PRINTS: packages/schema/src/causal-guarantees.ts 5
+    # PRINTS: packages/schema/src/causal-guarantees.ts 6
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/enums.ts 2
@@ -317,7 +317,8 @@ jobs:
     # PRINTS: packages/server/src/services/commit-evidence.ts 1
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
-    # PRINTS: packages/server/src/services/coverage.ts 19
+    # PRINTS: packages/server/src/services/coverage-order.ts 5
+    # PRINTS: packages/server/src/services/coverage.ts 21
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 10
     # PRINTS: packages/server/src/services/diagnosis.ts 3
@@ -373,7 +374,7 @@ jobs:
     # PRINTS: capture-latency.test.ts 1
     # PRINTS: capture-targets.ts 5
     # PRINTS: capture-touched-files.ts 3
-    # PRINTS: causal-guarantees.ts 10
+    # PRINTS: causal-guarantees.ts 11
     # PRINTS: check.ts 17
     # PRINTS: ci-coverage.ts 3
     # PRINTS: ci-delta.ts 4
@@ -393,8 +394,9 @@ jobs:
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
     # PRINTS: counts.ts 1
-    # PRINTS: coverage.ts 20
-    # PRINTS: declarations.ts 5
+    # PRINTS: coverage-order.ts 5
+    # PRINTS: coverage.ts 24
+    # PRINTS: declarations.ts 4
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
     # PRINTS: derive.ts 2

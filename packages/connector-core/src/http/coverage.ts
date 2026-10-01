@@ -22,6 +22,8 @@
  * against the server's own so drift is a red build rather than a review catch.
  */
 import { z } from "zod";
+import { CAUSAL_GUARANTEES, ORDER_REASONS, stateOfOrderReason } from "@crosscheck/schema";
+import type { CoverageOrder } from "@crosscheck/schema";
 
 export const COVERAGE_SOURCES = [
   "agent_event",
@@ -90,7 +92,34 @@ export interface CoverageRecord {
   readonly computedAt: string | null;
   readonly scope: CoverageScope | null;
   readonly sources: readonly CoverageSourceRecord[];
+  /**
+   * What the sessions in scope could say about ORDER (01a §3.7): beside the
+   * sources, never one of them, no count. Never absent here: a hub that sent
+   * none, or one this client cannot read, is `undeclared / hub_did_not_report`
+   * — COV-3's "absent is never silence", applied to the new block.
+   */
+  readonly order: CoverageOrder;
 }
+
+/** The order block's vocabulary — the schema's, pinned to the hub's by coverage-wire.test.ts. */
+export const ORDER_STATES = CAUSAL_GUARANTEES;
+export const COVERAGE_ORDER_REASONS = ORDER_REASONS;
+
+/** The order block of a hub that sent none, or one this client cannot read. */
+export const UNREPORTED_ORDER: CoverageOrder = { state: "undeclared", reason: "hub_did_not_report" };
+
+const CoverageOrderSchema = z.object({
+  state: z.enum(CAUSAL_GUARANTEES),
+  reason: z.enum(ORDER_REASONS),
+});
+
+/** A block whose state is not its reason's own says two things; it is read as neither. */
+const toOrder = (raw: unknown): CoverageOrder => {
+  const parsed = CoverageOrderSchema.safeParse(raw);
+  return parsed.success && stateOfOrderReason(parsed.data.reason) === parsed.data.state
+    ? { state: parsed.data.state, reason: parsed.data.reason }
+    : UNREPORTED_ORDER;
+};
 
 const CoverageSourceRecordSchema = z.looseObject({
   source: z.enum(COVERAGE_SOURCES),
@@ -110,6 +139,7 @@ const CoverageEnvelopeSchema = z.looseObject({
   computedAt: z.string().min(1).nullable().default(null),
   scope: z.unknown().optional(),
   sources: z.array(z.unknown()).default([]),
+  order: z.unknown().optional(),
 });
 
 /** Rebuilt field by field: an absent `paths` is absent, never `undefined`. */
@@ -138,6 +168,7 @@ export const UNKNOWN_COVERAGE: CoverageRecord = {
   computedAt: null,
   scope: null,
   sources: COVERAGE_SOURCES.map(unknownRow),
+  order: UNREPORTED_ORDER,
 };
 
 /**
@@ -165,6 +196,7 @@ export const parseCoverage = (raw: unknown): CoverageRecord => {
     sources: COVERAGE_SOURCES.map(
       (source) => bySource.get(source) ?? unknownRow(source),
     ),
+    order: toOrder(envelope.data.order),
   };
 };
 
