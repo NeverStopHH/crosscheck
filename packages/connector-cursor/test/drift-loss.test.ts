@@ -25,7 +25,15 @@ import {
   lossLedgerPath,
   readCaptureLosses,
 } from "@crosscheck/connector-core/state/loss-ledger.ts";
-import { AFTER_FILE_EDIT_INPUT } from "./fixtures/cursor-contract/payloads.ts";
+import {
+  deriveSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
+import { cursorHostSessionKey } from "@crosscheck/connector-core/state/host-session-key.ts";
+import {
+  AFTER_FILE_EDIT_INPUT,
+  BEFORE_SUBMIT_PROMPT_INPUT,
+} from "./fixtures/cursor-contract/payloads.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -64,14 +72,25 @@ const ledgerLines = async (home: string): Promise<readonly Record<string, unknow
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 };
 
+const connectedRepo = async (label: string): Promise<string> => {
+  const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
+  paths.push(repo);
+  return repo;
+};
+
 describe("LOSS-13: host contract drift reaches the loss ledger", () => {
   test("an afterFileEdit with no file_path appends host_contract_drift, unkeyed, naming the event", async () => {
-    // Arrange
+    // Arrange: a workspace inside a repo this machine reports for
     const { home, env } = await homeEnv("drift-loss-field");
+    const repo = await connectedRepo("drift-loss-field-repo");
     const { file_path: _dropped, ...withoutPath } = AFTER_FILE_EDIT_INPUT;
 
     // Act
-    const out = await runCursorHook("afterFileEdit", JSON.stringify(withoutPath), env);
+    const out = await runCursorHook(
+      "afterFileEdit",
+      JSON.stringify({ ...withoutPath, workspace_roots: [repo] }),
+      env,
+    );
 
     // Assert: fail-open output, and a loss every repo on this machine is charged with
     expect(out).toBe("{}");
@@ -84,15 +103,53 @@ describe("LOSS-13: host contract drift reaches the loss ledger", () => {
   });
 
   test("non-JSON stdin on a registered hook is the same loss", async () => {
-    // Arrange
+    // Arrange: the documented CURSOR_PROJECT_DIR is the one place left to look
     const { home, env } = await homeEnv("drift-loss-garbage");
+    const repo = await connectedRepo("drift-loss-garbage-repo");
 
     // Act
-    await runCursorHook("stop", "this is not json", env);
+    await runCursorHook("stop", "this is not json", { ...env, CURSOR_PROJECT_DIR: repo });
 
     // Assert
     const losses = await readCaptureLosses(home, "any-repo-key");
     expect(losses.byDetail["host_contract_drift:stop"]).toBe(1);
+  });
+
+  test("review M4: a drifted payload from a folder no connected repo owns books no loss", async () => {
+    // Arrange: a folderless-looking workspace — a plain directory, no .git above
+    const { home, env } = await homeEnv("drift-loss-unconnected");
+    const { file_path: _dropped, ...withoutPath } = AFTER_FILE_EDIT_INPUT;
+
+    // Act
+    await runCursorHook("afterFileEdit", JSON.stringify({ ...withoutPath, workspace_roots: [home] }), env);
+
+    // Assert: the drift ledger still says Cursor renamed something; no repo is charged
+    expect(await Bun.file(lossLedgerPath(home)).exists()).toBe(false);
+  });
+
+  test("review M4: a drifted payload in a registered conversation is keyed to its repo", async () => {
+    // Arrange: the state the conversation's earlier hooks wrote
+    const { home, env } = await homeEnv("drift-loss-state");
+    const repo = await connectedRepo("drift-loss-state-repo");
+    await writeSessionState(
+      home,
+      deriveSessionState({
+        hostSessionKey: cursorHostSessionKey(AFTER_FILE_EDIT_INPUT.conversation_id),
+        repoId: REPO_ID,
+        repoRoot: repo,
+        hubUrl: DEAD_HUB_URL,
+        developerId: null,
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    const { file_path: _dropped, ...withoutPath } = AFTER_FILE_EDIT_INPUT;
+
+    // Act
+    await runCursorHook("afterFileEdit", JSON.stringify(withoutPath), env);
+
+    // Assert
+    const [line] = await ledgerLines(home);
+    expect(line?.["key"]).toBe(repoKey(DEAD_HUB_URL, REPO_ID));
   });
 
   test("a payload that drifts nothing books nothing", async () => {
@@ -112,6 +169,23 @@ describe("LOSS-13: host contract drift reaches the loss ledger", () => {
 });
 
 describe("LOSS-12 on the Cursor runner: an abandoned handler is a counted loss", () => {
+  test("review M4: beforeSubmitPrompt timing out books nothing — it derives, it does not capture", async () => {
+    // Arrange
+    const repo = await connectedRepo("cursor-timeout-prompt");
+    const { home, env } = await homeEnv("cursor-timeout-prompt");
+
+    // Act
+    await runCursorHookWith(
+      "beforeSubmitPrompt",
+      () => new Promise<string>(() => {}),
+      JSON.stringify({ ...BEFORE_SUBMIT_PROMPT_INPUT, workspace_roots: [repo] }),
+      { ...env, CROSSCHECK_TIMEOUT_MS: RESOLVING_TIMEOUT_MS, CROSSCHECK_SSH_CANONICALIZE: "off" },
+    );
+
+    // Assert
+    expect(await Bun.file(lossLedgerPath(home)).exists()).toBe(false);
+  });
+
   test("an afterFileEdit whose handler outlives its budget appends hook_timed_out under its repo", async () => {
     // Arrange
     const repo = await makeRepo("cursor-timeout", { remote: "git@github.com:acme/api.git" });

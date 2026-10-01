@@ -40,7 +40,11 @@ import {
   loadReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
-import { findConnectedRepoRootForPaths } from "@crosscheck/connector-core/config/connected-repo.ts";
+import {
+  findConnectedRepoRootForPaths,
+  mayBeConnectedRepo,
+} from "@crosscheck/connector-core/config/connected-repo.ts";
+import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   crosscheckHome,
@@ -175,23 +179,82 @@ const resolveCursorRepo = async (
 };
 
 /**
+ * WHOSE LOSS A CURSOR EVENT WITH NO RESOLVED REPO IS (review M4). The
+ * conversation's state file names the repo outright when an earlier hook
+ * registered it — keyed, no other repo charged. Otherwise unkeyed (every
+ * repo) only when a connected repo sits above the workspace root, the cwd,
+ * CURSOR_PROJECT_DIR or the touched file (config/connected-repo.ts); a
+ * folderless window or an unconnected checkout loses nothing any connected
+ * repo would have captured, and charging them all over-reported for nothing.
+ */
+const cursorLossOwner = async (
+  env: Env,
+  payload: CursorPayload | null,
+): Promise<{ readonly key: string | null } | null> => {
+  const conversationId = safeHostSessionId(payload?.conversation_id ?? "");
+  if (conversationId !== null) {
+    const state = await readSessionState(crosscheckHome(env), cursorHostSessionKey(conversationId));
+    if (state !== null) {
+      return { key: repoKey(state.hubUrl, state.repoId) };
+    }
+  }
+  const dirs = [payload?.workspace_roots?.[0], payload?.cwd, env["CURSOR_PROJECT_DIR"]].filter(
+    (dir): dir is string => typeof dir === "string" && dir.length > 0,
+  );
+  const files = payload?.file_path === undefined ? [] : [payload.file_path];
+  const owned = await mayBeConnectedRepo(env, dirs[0] ?? ROOT_DIR, dirs, files);
+  return owned ? { key: null } : null;
+};
+
+/** Where relative candidates resolve when the payload names no directory at all. */
+const ROOT_DIR = "/";
+
+/**
+ * THE EVENTS WHOSE ABANDONMENT CAN LOSE CAPTURE (review M4), the Claude
+ * runner's split on this host: beforeSubmitPrompt derives intent (§4.8.7)
+ * and sessionEnd ends and drains with the records left on disk (§4.8.4).
+ */
+const CURSOR_CAPTURE_EVENTS: ReadonlySet<CursorHookEvent> = new Set([
+  "sessionStart",
+  "afterFileEdit",
+  "afterShellExecution",
+  "postToolUse",
+  "postToolUseFailure",
+  "stop",
+]);
+
+const unresolvedCursorOwner = async (
+  env: Env,
+  stdin: string,
+): Promise<{ readonly home: string; readonly key: string | null } | null> => {
+  const owner = await cursorLossOwner(env, parseCursorPayload(stdin));
+  return owner === null ? null : { home: crosscheckHome(env), key: owner.key };
+};
+
+/**
  * ONE DRIFTED PAYLOAD, BOOKED TWICE (docs/1.0/loss-accounting.md §3 row 19).
  * The drift ledger keeps the field names for doctor's "Cursor renamed
  * something"; the capture-loss ledger keeps the fact that capture got nothing
- * from this event, which is what reaches the hub's coverage. Unkeyed on
- * purpose: drift is counted before repo resolution, so which repo lost the
- * event is unknown, and an unknown repo is charged to every repo (§4.3).
+ * from this event, which is what reaches the hub's coverage — keyed or
+ * unkeyed by `cursorLossOwner`, and not at all where no connected repo could
+ * have captured it (review M4).
  */
 const recordDrift = async (
   home: string,
   event: CursorHookEvent,
   missing: readonly string[],
+  env: Env,
+  payload: CursorPayload | null,
 ): Promise<void> => {
   await recordContractDrift(home, event, missing);
+  const owner = await cursorLossOwner(env, payload);
+  if (owner === null) {
+    return;
+  }
   await recordCaptureLoss(home, {
     kind: "host_contract_drift",
     count: 1,
-    key: null,
+    key: owner.key,
     detail: event,
     now: new Date(),
   });
@@ -220,7 +283,7 @@ export const prepareCursorHook = async (
   const home = crosscheckHome(env);
   const payload = parseCursorPayload(stdin);
   if (payload === null) {
-    await recordDrift(home, event, [UNPARSEABLE_MARKER]);
+    await recordDrift(home, event, [UNPARSEABLE_MARKER], env, null);
     return null;
   }
   const missing = [...missingMappedFields(event, payload)];
@@ -232,7 +295,7 @@ export const prepareCursorHook = async (
     missing.push("workspace_roots");
   }
   if (missing.length > 0 || workspaceRoot === undefined) {
-    await recordDrift(home, event, missing);
+    await recordDrift(home, event, missing, env, payload);
     return null;
   }
   // The conversation id is host-minted, not charset-guaranteed: the shared
@@ -243,7 +306,7 @@ export const prepareCursorHook = async (
   // with nothing printable left cannot key anything: named drift, silence.
   const conversationId = safeHostSessionId(payload.conversation_id ?? "");
   if (conversationId === null) {
-    await recordDrift(home, event, ["conversation_id"]);
+    await recordDrift(home, event, ["conversation_id"], env, payload);
     return null;
   }
   const agentKind =
@@ -333,14 +396,13 @@ export const runCursorHookWith = async (
     );
     // The Claude runner's rule, same race (docs/1.0/loss-accounting.md §3
     // row 14): a handler the budget abandoned may not have captured, so it is
-    // booked after the race, keyed when prepare resolved the repo.
-    if (outcome.timedOut) {
-      await recordHookTimeout(
-        resolved.value?.home ?? crosscheckHome(env),
-        event,
-        resolved.value?.key ?? null,
-        new Date(),
-      );
+    // booked after the race — for capture events only, keyed when prepare
+    // resolved the repo, else by `cursorLossOwner` (review M4).
+    if (outcome.timedOut && CURSOR_CAPTURE_EVENTS.has(event)) {
+      const owner = resolved.value ?? (await unresolvedCursorOwner(env, stdin));
+      if (owner !== null) {
+        await recordHookTimeout(owner.home, event, owner.key, new Date());
+      }
     }
     return outcome.output.length === 0 ? CURSOR_NO_OP_OUTPUT : outcome.output;
   } catch {

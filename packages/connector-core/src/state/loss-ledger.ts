@@ -12,8 +12,11 @@
  * Cursor payload with no workspace root cannot be keyed either — so `key` is
  * nullable, and a null key is CHARGED TO EVERY REPO this machine reports for
  * (§4.3, Nick's decision 10.2): the loss happened somewhere, and the
- * conservative reading is that it may have been here. Exact on a one-repo
- * machine; over-reporting in the safe direction on a many-repo one.
+ * conservative reading is that it may have been here. Never exact: the
+ * writers book a null key only when the session's state names no repo and a
+ * connected repo sits above one of the hook's paths (review M4,
+ * config/connected-repo.ts mayBeConnectedRepo) — so a loss in an unconnected
+ * checkout charges nobody, and the residue over-reports, the safe direction.
  *
  * Append-only for the sync-state lesson (spool/drops.ts header): racing hook
  * processes lose read-modify-write increments, appends they do not. Bounded

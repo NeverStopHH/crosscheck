@@ -50,6 +50,7 @@
 import { dirname, resolve, sep } from "node:path";
 import { stat } from "node:fs/promises";
 
+import type { Env } from "./paths.ts";
 import { readRepoConfig } from "./repo-config.ts";
 
 /** The repo-boundary marker — a checkout's directory or a worktree's file. */
@@ -138,4 +139,63 @@ export const findConnectedRepoRootForPaths = async (
     }
   }
   return null;
+};
+
+/** The first `.git` boundary at or above `start`, or null; git metadata itself is no repo. */
+const repoBoundaryAbove = async (start: string): Promise<string | null> => {
+  if (start.split(sep).includes(GIT_ENTRY_NAME)) {
+    return null;
+  }
+  let dir = start;
+  for (let level = 0; level < CONNECTED_ROOT_WALK_MAX_LEVELS; level += 1) {
+    if (await hasGitEntry(dir)) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      return null;
+    }
+    dir = parent;
+  }
+  return null;
+};
+
+/**
+ * COULD A CONNECTED REPO OWN A HOOK THAT NEVER RESOLVED ITS REPO? (review M4,
+ * docs/1.0/loss-accounting.md §4.3). A hook the budget cut before repo
+ * identity resolved is booked to EVERY repo on the machine — but under a
+ * user-level install hooks fire in unconnected checkouts too, and a slow git
+ * there used to charge every connected repo. This answers whether any
+ * candidate the hook named (its cwd or workspace root, walked from itself;
+ * a touched file, walked from its parent) sits inside a repo the connector
+ * would report for: the first `.git` boundary decides, as in
+ * findConnectedRepoRootForFile, and it is connected when it commits a
+ * .crosscheck.json or when CROSSCHECK_HUB_URL makes every repo reportable
+ * (config.ts loadReportableConfig). A stat per level and one small read, no
+ * git, so it is cheap on the timeout path it runs on.
+ *
+ * The direction: false only when no candidate is inside any connected repo,
+ * which is exactly when no run of the hook — cut or not — would have
+ * captured anything for one.
+ */
+export const mayBeConnectedRepo = async (
+  env: Env,
+  cwd: string,
+  dirs: readonly string[],
+  files: readonly string[],
+): Promise<boolean> => {
+  const starts = [
+    ...dirs.map((dir) => resolve(cwd, dir)),
+    ...files.map((file) => dirname(resolve(cwd, file))),
+  ].slice(0, CONNECTED_ROOT_MAX_CANDIDATE_PATHS + 1);
+  for (const start of starts) {
+    const root = await repoBoundaryAbove(start);
+    if (
+      root !== null &&
+      (env["CROSSCHECK_HUB_URL"] !== undefined || (await readRepoConfig(root)) !== null)
+    ) {
+      return true;
+    }
+  }
+  return false;
 };

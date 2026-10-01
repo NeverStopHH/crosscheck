@@ -12582,8 +12582,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a hook the budget cut before its repo resolved books no loss",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
-    from: "    if (outcome.timedOut) {\n      await recordHookTimeout(",
-    to: "    if (outcome.timedOut && resolved.value !== null) {\n      await recordHookTimeout(",
+    // Review M4 moved the unresolved path into unresolvedOwner.
+    from: "      const owner = resolved.value ?? (await unresolvedOwner(stdin, env));",
+    to: "      const owner = resolved.value;",
     test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
     because:
       "a hook whose slow git spawns ate the budget loses its capture with no repo known, and no repo is told — the known loss with no coverage reason the contract forbids (decision 10.2)",
@@ -12591,8 +12592,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "an abandoned hook's loss is never keyed to its own repo",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
-    from: "        resolved.value?.key ?? null,\n",
-    to: "        null,\n",
+    from: "        await recordHookTimeout(owner.home, name, owner.key, new Date());",
+    to: "        await recordHookTimeout(owner.home, name, null, new Date());",
     test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
     because:
       "every timed-out hook is charged to every repo on the machine, so one slow repo turns every other repo's coverage incomplete",
@@ -12600,7 +12601,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a cursor-hook the budget abandoned leaves no loss behind",
     file: `${CURSOR}/src/runner.ts`,
-    from: "    if (outcome.timedOut) {\n",
+    from: "    if (outcome.timedOut && CURSOR_CAPTURE_EVENTS.has(event)) {\n",
     to: "    if (false) {\n",
     test: `${CURSOR}/test/drift-loss.test.ts`,
     because:
@@ -13306,6 +13307,63 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/loss-report.test.ts`,
     because: "an ignored drop from before the window prints 'upgrade the hub' on every doctor run, and the one real old-hub warning drowns in it",
   },
+  // Review M4: a loss is charged only where a connected repo could have lost capture.
+  {
+    label: "a timed-out hook that captures nothing is booked as a loss",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {",
+    to: "    if (outcome.timedOut) {",
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because: "a slow hub cutting PreToolUse or UserPromptSubmit, which spool only informational records, turns every repo telemetry_lost",
+  },
+  {
+    label: "a hook cut in an unconnected checkout is charged to every repo",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  return owned ? { home, key: null } : null;",
+    to: "  return { home, key: null };",
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because: "under a user-level install a slow git in any unconnected directory marks every connected repo incomplete",
+  },
+  {
+    label: "a hook cut in a registered session is charged to every repo instead of its own",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  if (state !== null) {\n    return { home, key: repoKey(state.hubUrl, state.repoId) };\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because: "the session's state names the repo, and every other connected repo is still charged with its loss",
+  },
+  {
+    label: "a cursor event that captures nothing is booked as a loss on timeout",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "    if (outcome.timedOut && CURSOR_CAPTURE_EVENTS.has(event)) {\n",
+    to: "    if (outcome.timedOut) {\n",
+    test: `${CURSOR}/test/drift-loss.test.ts`,
+    because: "a slow model behind beforeSubmitPrompt's intent derivation reads as lost capture on every repo",
+  },
+  {
+    label: "a drifted Cursor payload from an unconnected folder is charged to every repo",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "  return owned ? { key: null } : null;",
+    to: "  return { key: null };",
+    test: `${CURSOR}/test/drift-loss.test.ts`,
+    because: "a folderless Cursor window's drift marks every connected repo incomplete for fourteen days",
+  },
+  {
+    label: "a drifted Cursor payload in a registered conversation is charged to every repo",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "    if (state !== null) {\n      return { key: repoKey(state.hubUrl, state.repoId) };\n    }\n",
+    to: "",
+    test: `${CURSOR}/test/drift-loss.test.ts`,
+    because: "the conversation's state names the repo, and every other connected repo is still charged",
+  },
+  {
+    label: "a bare repo with no committed config is read as a connected one",
+    file: `${CORE}/src/config/connected-repo.ts`,
+    from: "      (env[\"CROSSCHECK_HUB_URL\"] !== undefined || (await readRepoConfig(root)) !== null)\n",
+    to: "      true\n",
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because: "every checkout on the machine owns a cut hook, and the M4 gate charges every connected repo again",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13418,7 +13476,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
- * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 3
+ * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 6
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
@@ -13457,7 +13515,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
- * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/connected-repo.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
@@ -13537,7 +13595,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
- * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 2
+ * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
