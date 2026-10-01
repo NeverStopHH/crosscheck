@@ -9,21 +9,25 @@
  * surface nobody counted prints `not instrumented` and never a zero, and
  * an opened count that cannot name the prior work it pointed at is withheld.
  *
- * TWO WORDS NEVER APPEAR (§8.1). "Prevented" is a counterfactual nobody
- * observed — the report says surfaced, opened, converged. "Helpful" is a human
- * verdict, and what was measured is the MODEL pulling a pointer through
- * `get_diagnosis`; the column is "opened".
+ * ONE WORD NEVER APPEARS, AND ONE APPEARS IN ONE PLACE ONLY (§8.1, §12).
+ * "Prevented" is a counterfactual nobody observed — the report says
+ * surfaced, opened, converged. "Helpful" is a human verdict: since §12 a
+ * person can give it (`crosscheck pilot label`), so it names that label and
+ * nothing else — never the line about the MODEL pulling a pointer through
+ * `get_diagnosis`, whose column is "opened".
  *
  * NO PERSON APPEARS (§8.4). The hub sends no developer id, no name and no
- * per-person grouping, so there is nothing here to leak. The one piece of
- * author-written text is a work-context TITLE — the prior work an opened
- * pointer named — and it is framed as quoted data, which is why this surface
- * is registered in the framed class with the notice on its own line.
+ * per-person grouping, so there is nothing here to leak. Two pieces of
+ * author-written text reach this page: a work-context TITLE — the prior work
+ * an opened pointer named — and, since §12, the optional REASON a person
+ * typed beside a label. Both are framed as quoted data, which is why this
+ * surface is registered in the framed class with the notice on its own line.
  */
 import {
   MAX_HUB_MESSAGE_CHARS,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "@crosscheck/connector-core/constants.ts";
+import { MAX_PILOT_LABEL_REASON_CHARS } from "@crosscheck/schema";
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import {
   bareUntrusted,
@@ -38,7 +42,9 @@ import { DELIVERY_CHANNELS, MAX_PIN_PATH_CHARS } from "@crosscheck/schema";
 import type { PilotUnavailableReason } from "@crosscheck/schema";
 import type { FixDiffOutcome } from "@crosscheck/connector-core/git/fix-diff.ts";
 import type {
+  PilotCohortFigures,
   PilotFigure,
+  PilotLabelFigures,
   PilotRepair,
   PilotReport,
 } from "@crosscheck/connector-core/http/pilot.ts";
@@ -57,6 +63,9 @@ export interface PilotView {
 /** One decimal: a per-100 rate with more reads as a precision it does not have. */
 const RATE_DECIMALS = 1;
 
+/** A ratio prints as a whole percentage, for RATE_DECIMALS' reason: the count beside it carries the rest. */
+const PERCENT = 100;
+
 const INDENT = "   ";
 
 /**
@@ -71,6 +80,8 @@ const REASON_SENTENCE: Readonly<Record<PilotUnavailableReason, string>> = {
   no_sessions: "no sessions in this window",
   nothing_flagged: "nothing was flagged",
   no_asking_host: "no session in this window ran on a host that can ask before an edit",
+  no_labels: "nobody has labelled an intervention helpful or noise yet",
+  no_interventions: "nothing arrived unasked, so there was nothing to label",
 };
 
 const isKnownReason = (reason: string): reason is PilotUnavailableReason =>
@@ -200,13 +211,95 @@ const attributionLines = (view: PilotView): readonly string[] => {
   ];
 };
 
+/** A ratio as a whole percentage, or `unavailable — <why>`. Never "0%" for "not measured". */
+const percent = (value: PilotFigure): string =>
+  value.kind === "measured"
+    ? `${String(Math.round(value.value * PERCENT))}%`
+    : unavailableClause(value.reason);
+
+/** `<label> <rate> <unit> per 100 sessions`, or `<label> unavailable — <why>`. */
+const perHundred = (label: string, value: PilotFigure, unit: string): string =>
+  value.kind === "measured"
+    ? `${label} ${value.value.toFixed(RATE_DECIMALS)} ${unit} per 100 sessions`
+    : `${label} ${unavailableClause(value.reason)}`;
+
+/**
+ * THE LABELLED FIGURES (07 §12), and PRECISION NEVER PRINTS ALONE: its
+ * verdict count and the label coverage share its line, so a precision from
+ * three labels out of forty interventions cannot be read as a result.
+ * `unclear` abstained from the denominator and is printed beside it, so it
+ * can be neither hidden nor scored.
+ */
+const labelledLines = (proof: PilotReport["precision"]): readonly string[] => {
+  const verdicts = proof.helpful + proof.noise;
+  const precision =
+    proof.precision.kind === "measured"
+      ? `precision ${percent(proof.precision)} (${count(proof.helpful)} helpful of ${count(verdicts)} verdicts; target ${percent({ kind: "measured", value: proof.precisionTarget })}, declared before measuring)`
+      : `precision ${percent(proof.precision)}`;
+  const coverage =
+    proof.labelCoverage.kind === "measured"
+      ? `label coverage ${percent(proof.labelCoverage)} (${count(proof.labelled)} of ${count(proof.interventions)} interventions labelled)`
+      : `label coverage ${percent(proof.labelCoverage)}`;
+  return [
+    `${INDENT}${perHundred("benefit", proof.benefitPer100, "helpful")} · ${perHundred("burden", proof.burdenPer100, "interventions")}`,
+    `${INDENT}${precision} · ${coverage} · unclear ${count(proof.unclear)} (abstained, not in the denominator)`,
+  ];
+};
+
+/**
+ * THE SENTENCES PEOPLE TYPED, quoted as data. The label word comes off the
+ * wire as an open string and prints bare; the reason is a person's prose and
+ * is framed and bounded exactly like a title. No list, no lines.
+ */
+const reasonLines = (proof: PilotReport["precision"]): readonly string[] =>
+  proof.reasons.length === 0 && proof.reasonsBeyondList === 0
+    ? []
+    : [
+        `${INDENT}reasons people gave, newest first:`,
+        ...proof.reasons.map(
+          (said) =>
+            `${INDENT}  ${bareUntrusted(said.label)}: ${quoted(said.reason, MAX_PILOT_LABEL_REASON_CHARS)}`,
+        ),
+        ...(proof.reasonsBeyondList > 0
+          ? [`${INDENT}  (+${count(proof.reasonsBeyondList)} more, not listed)`]
+          : []),
+      ];
+
+/** One cohort on one line, its own population; an empty one says so and nothing else. */
+const cohortLine = (cohort: PilotCohortFigures): string => {
+  const full = cohort.sessions >= cohort.cap ? " (full — membership frozen)" : "";
+  const head = `${INDENT}  ${bareUntrusted(cohort.cohort)} ${count(cohort.sessions)}/${count(cohort.cap)} sessions${full}`;
+  if (cohort.sessions === 0) {
+    return `${head} — empty`;
+  }
+  const rate = (value: PilotFigure): string =>
+    value.kind === "measured" ? value.value.toFixed(RATE_DECIMALS) : unavailableClause(value.reason);
+  const verdicts =
+    cohort.precision.kind === "measured"
+      ? ` (${count(cohort.helpful)} of ${count(cohort.helpful + cohort.noise)})`
+      : "";
+  return `${head} · interventions ${count(cohort.interventions)} · benefit ${rate(cohort.benefitPer100)} · burden ${rate(cohort.burdenPer100)} · precision ${percent(cohort.precision)}${verdicts} · coverage ${percent(cohort.labelCoverage)} · unclear ${count(cohort.unclear)}`;
+};
+
+const cohortLines = (cohorts: readonly PilotCohortFigures[]): readonly string[] => [
+  `${INDENT}cohorts, side by side — each over its own sessions, whatever the window:`,
+  ...cohorts.map(cohortLine),
+];
+
+/**
+ * PROOF 4, REVISED (07 §12): the human labels carry the figures; the pull
+ * and the noisy-session floor stay, each named as what it is.
+ */
 const precisionLines = (report: PilotReport): readonly string[] => {
   const proof = report.precision;
   return [
-    "4. proactive precision",
-    `${INDENT}${figure("opened per 100 sessions", proof.openedPer100, RATE_DECIMALS)} (target ${count(proof.openedTargetPer100)}, declared before measuring) — the agent pulled it; no person judged it`,
-    `${INDENT}${figure("off-target marks per 100 sessions", proof.offTargetPer100, RATE_DECIMALS)} (ceiling ${count(proof.offTargetCeilingPer100)}) — a FLOOR: marks are voluntary`,
+    "4. proactive precision — what arrived unasked, as the person it reached labelled it",
+    ...labelledLines(proof),
+    `${INDENT}behavioural signal: ${figure("opened per 100 sessions", proof.openedPer100, RATE_DECIMALS)} (target ${count(proof.openedTargetPer100)}, declared before measuring) — the agent pulled it; no person judged it`,
+    `${INDENT}${figure("noisy sessions per 100", proof.noisySessionsPer100, RATE_DECIMALS)} (ceiling ${count(proof.noisySessionsCeilingPer100)}) — a FLOOR: labels are voluntary`,
     `${INDENT}surface-ok marks ${count(proof.surfaceOkMarks)}`,
+    ...reasonLines(proof),
+    ...cohortLines(report.cohorts),
   ];
 };
 
@@ -348,7 +441,7 @@ export const renderPilot = (view: PilotView): string => {
   }
   const set = report.sessionSet;
   return [
-    `${headerLine(report)} · ${count(report.precision.sessions)} sessions · session set ${count(set.used)}/${count(set.cap)}, ${count(set.refused)} refused at the cap`,
+    `${headerLine(report)} · ${count(report.precision.sessions)} sessions · session set ${count(set.used)}/${count(set.cap)} (discovery ${count(set.discovery)}/${count(set.discoveryCap)} · replication ${count(set.replication)}/${count(set.replicationCap)}), ${count(set.refused)} refused at the cap`,
     QUOTED_DATA_NOTICE,
     ...duplicateWorkLines(report),
     ...collisionLines(report),

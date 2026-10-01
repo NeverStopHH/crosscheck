@@ -49,8 +49,12 @@ const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
   days: 1,
   sessionSet: {
     used: 31,
-    cap: 50,
+    cap: 200,
     refused: shape.refused ?? 0,
+    discovery: 31,
+    discoveryCap: 50,
+    replication: 0,
+    replicationCap: 150,
     spanned: 30,
     restarted: 1,
     notRecorded: 0,
@@ -82,16 +86,38 @@ const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
     answersAfterRepair: 0,
   },
   precision: {
-    sessions: 0,
+    ...unlabelled(),
+    precisionTarget: 0.5,
     openedPer100: { kind: "unavailable", reason: "no_sessions" },
     openedTargetPer100: 8,
-    offTargetMarks: 0,
-    offTargetPer100: { kind: "unavailable", reason: "no_sessions" },
-    offTargetCeilingPer100: 20,
+    noisySessionsPer100: { kind: "unavailable", reason: "no_sessions" },
+    noisySessionsCeilingPer100: 20,
     surfaceOkMarks: 0,
+    reasons: [],
+    reasonsBeyondList: 0,
   },
+  cohorts: [
+    { cohort: "discovery", cap: 50, ...unlabelled() },
+    { cohort: "replication", cap: 150, ...unlabelled() },
+  ],
   integrity: shape.integrity ?? [{ surface: "api-suspect", counters: null }],
 });
+
+/** A population with no sessions: every labelled figure says so. */
+function unlabelled(): Record<string, unknown> {
+  return {
+    sessions: 0,
+    interventions: 0,
+    helpful: 0,
+    noise: 0,
+    unclear: 0,
+    labelled: 0,
+    benefitPer100: { kind: "unavailable", reason: "no_sessions" },
+    burdenPer100: { kind: "unavailable", reason: "no_sessions" },
+    precision: { kind: "unavailable", reason: "no_labels" },
+    labelCoverage: { kind: "unavailable", reason: "no_interventions" },
+  };
+}
 
 const hubWith = (answer: () => Response): string => {
   const server = Bun.serve({
@@ -143,7 +169,9 @@ describe("the pilot doctor lines", () => {
     const stdout = await doctor(serving({}));
 
     // Assert
-    expect(stdout).toContain("PASS  pilot  enrolled · session set 31 of 50");
+    expect(stdout).toContain(
+      "PASS  pilot  enrolled · session set 31 of 200 (discovery 31 of 50 · replication 0 of 150)",
+    );
     expect(stdout).not.toContain("refused at the cap");
   });
 

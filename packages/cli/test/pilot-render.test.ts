@@ -10,10 +10,55 @@
 import { describe, expect, test } from "bun:test";
 
 import type { FixDiffOutcome } from "@crosscheck/connector-core/git/fix-diff.ts";
-import type { PilotReport } from "@crosscheck/connector-core/http/pilot.ts";
+import type {
+  PilotLabelFigures,
+  PilotReport,
+} from "@crosscheck/connector-core/http/pilot.ts";
 
 import { renderPilot } from "../src/cli/pilot-render.ts";
 import type { PilotView } from "../src/cli/pilot-render.ts";
+
+/** The review's example over the window: 4 helpful, 10 noise, 3 unclear of 2,416 over 1,208 sessions. */
+const windowLabels = (): PilotLabelFigures => ({
+  sessions: 1208,
+  interventions: 2416,
+  helpful: 4,
+  noise: 10,
+  unclear: 3,
+  labelled: 17,
+  benefitPer100: { kind: "measured", value: (4 * 100) / 1208 },
+  burdenPer100: { kind: "measured", value: 200 },
+  precision: { kind: "measured", value: 4 / 14 },
+  labelCoverage: { kind: "measured", value: 17 / 2416 },
+});
+
+/** The same labels inside the discovery cohort's 31 sessions and 62 interventions. */
+const discoveryLabels = (): PilotLabelFigures => ({
+  sessions: 31,
+  interventions: 62,
+  helpful: 4,
+  noise: 10,
+  unclear: 3,
+  labelled: 17,
+  benefitPer100: { kind: "measured", value: (4 * 100) / 31 },
+  burdenPer100: { kind: "measured", value: 200 },
+  precision: { kind: "measured", value: 4 / 14 },
+  labelCoverage: { kind: "measured", value: 17 / 62 },
+});
+
+/** A cohort nobody has entered yet: every figure says why it is absent. */
+const emptyLabels = (): PilotLabelFigures => ({
+  sessions: 0,
+  interventions: 0,
+  helpful: 0,
+  noise: 0,
+  unclear: 0,
+  labelled: 0,
+  benefitPer100: { kind: "unavailable", reason: "no_sessions" },
+  burdenPer100: { kind: "unavailable", reason: "no_sessions" },
+  precision: { kind: "unavailable", reason: "no_labels" },
+  labelCoverage: { kind: "unavailable", reason: "no_interventions" },
+});
 
 const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
   repo: "github.com/acme/api",
@@ -21,7 +66,18 @@ const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
   sinceIso: "2026-07-20T12:00:00.000Z",
   untilIso: "2026-09-14T12:00:00.000Z",
   days: 56,
-  sessionSet: { used: 31, cap: 50, refused: 0, spanned: 29, restarted: 1, notRecorded: 1 },
+  sessionSet: {
+    used: 31,
+    cap: 200,
+    refused: 0,
+    discovery: 31,
+    discoveryCap: 50,
+    replication: 0,
+    replicationCap: 150,
+    spanned: 29,
+    restarted: 1,
+    notRecorded: 1,
+  },
   duplicateWork: {
     surfaced: 312,
     opened: 74,
@@ -68,14 +124,20 @@ const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
     answersAfterRepair: 0,
   },
   precision: {
-    sessions: 1208,
+    ...windowLabels(),
+    precisionTarget: 0.5,
     openedPer100: { kind: "measured", value: 6.1 },
     openedTargetPer100: 8,
-    offTargetMarks: 11,
-    offTargetPer100: { kind: "measured", value: 0.9 },
-    offTargetCeilingPer100: 20,
+    noisySessionsPer100: { kind: "measured", value: 0.9 },
+    noisySessionsCeilingPer100: 20,
     surfaceOkMarks: 4,
+    reasons: [{ label: "noise", reason: "stale pointer" }],
+    reasonsBeyondList: 3,
   },
+  cohorts: [
+    { cohort: "discovery", cap: 50, ...discoveryLabels() },
+    { cohort: "replication", cap: 150, ...emptyLabels() },
+  ],
   integrity: [
     {
       surface: "api-suspect",
@@ -239,9 +301,12 @@ describe("renderPilot", () => {
     // Arrange & Act
     const out = renderPilot(view());
 
-    // Assert
+    // Assert — proof 3 states counts and never a percentage: a rate over a
+    // handful of repairs reads as a result it is not. (Proof 4's precision
+    // is a ratio by definition, and prints its own denominator beside it.)
+    const proof3 = out.slice(out.indexOf("3. attribution accuracy"), out.indexOf("4. "));
     expect(out).toContain("hit 1 · miss 1 · excluded (coverage gap at answer time) 1 · no repair pin yet 2");
-    expect(out).not.toMatch(/\d+%/);
+    expect(proof3).not.toMatch(/\d+%/);
   });
 
   test("outcomes that are not verdicts are counted apart from hit and miss", () => {
@@ -287,13 +352,91 @@ describe("renderPilot", () => {
     expect(out).toContain("3 repaired break(s) recorded no commit at the break");
   });
 
-  test("the precision figures are a pull and a floor, and say so", () => {
+  test("the pull and the floor are named as what they are, and say so", () => {
     // Arrange & Act
     const out = renderPilot(view());
 
     // Assert
-    expect(out).toContain("opened per 100 sessions 6.1 (target 8, declared before measuring)");
-    expect(out).toContain("off-target marks per 100 sessions 0.9 (ceiling 20) — a FLOOR: marks are voluntary");
+    expect(out).toContain(
+      "opened per 100 sessions 6.1 (target 8, declared before measuring) — the agent pulled it; no person judged it",
+    );
+    expect(out).toContain("noisy sessions per 100 0.9 (ceiling 20) — a FLOOR: labels are voluntary");
+  });
+
+  test("precision prints beside its label coverage, and unclear apart (07 §12)", () => {
+    // Arrange & Act — a precision from three labels out of forty must never
+    // read as a result, so coverage is on the same line, always.
+    const out = renderPilot(view());
+
+    // Assert
+    expect(out).toContain("benefit 0.3 helpful per 100 sessions · burden 200.0 interventions per 100 sessions");
+    expect(out).toContain(
+      "precision 29% (4 helpful of 14 verdicts; target 50%, declared before measuring) · label coverage 1% (17 of 2,416 interventions labelled) · unclear 3 (abstained, not in the denominator)",
+    );
+  });
+
+  test("a precision with no verdict prints its reason, never 0%", () => {
+    // Arrange
+    const built = report();
+    const out = renderPilot(
+      view({
+        precision: {
+          ...built.precision,
+          precision: { kind: "unavailable", reason: "no_labels" },
+        },
+      }),
+    );
+
+    // Assert
+    expect(out).toContain("precision unavailable — nobody has labelled an intervention helpful or noise yet");
+    expect(out).not.toContain("precision 0%");
+  });
+
+  test("the two cohorts print side by side, an empty one saying so", () => {
+    // Arrange & Act
+    const out = renderPilot(view());
+
+    // Assert
+    expect(out).toContain("cohorts, side by side");
+    expect(out).toContain(
+      "discovery 31/50 sessions · interventions 62 · benefit 12.9 · burden 200.0 · precision 29% (4 of 14) · coverage 27% · unclear 3",
+    );
+    expect(out).toContain("replication 0/150 sessions — empty");
+  });
+
+  test("a full discovery cohort says it is frozen", () => {
+    // Arrange — the preregistered fifty; a reader comparing the two cohorts
+    // must know no session joins the first one any more (its labels can
+    // still arrive, so the line says MEMBERSHIP, not figures)
+    const full = { cohort: "discovery", cap: 50, ...discoveryLabels(), sessions: 50 };
+    const empty = { cohort: "replication", cap: 150, ...emptyLabels() };
+
+    // Act
+    const out = renderPilot(view({ cohorts: [full, empty] }));
+
+    // Assert
+    expect(out).toContain("discovery 50/50 sessions (full — membership frozen)");
+  });
+
+  test("the header names the set and both cohorts' fill", () => {
+    // Arrange & Act
+    const out = renderPilot(view());
+
+    // Assert — the set no longer stops at fifty; the refusal past the cap
+    // is still a count on the first line
+    expect(out).toContain(
+      "session set 31/200 (discovery 31/50 · replication 0/150), 0 refused at the cap",
+    );
+  });
+
+  test("a reason is quoted as data, with the count beyond the list", () => {
+    // Arrange & Act
+    const out = renderPilot(view());
+
+    // Assert
+    expect(out).toContain("reasons people gave, newest first:");
+    expect(out).toContain("noise: «stale pointer»");
+    expect(out).toContain("(+3 more, not listed)");
   });
 
   test("a restarted sequence is counted without a span (PIL-7)", () => {
@@ -304,14 +447,16 @@ describe("renderPilot", () => {
     expect(out).toContain("sequence: 29 spanned · 1 restarted (no span: the counter started over) · 1 not recorded");
   });
 
-  test("the words the spec refuses never appear (§8.1)", () => {
+  test("the words the spec refuses never appear where they would lie (§8.1, §12)", () => {
     // Arrange & Act — "prevented" is a counterfactual nobody observed, and
-    // "helpful" is a human verdict when what was measured is the MODEL
-    // pulling a pointer.
+    // "helpful" is a human verdict: since §12 it names a human label and
+    // nothing else, so the line about the MODEL pulling a pointer never
+    // carries it.
     const out = renderPilot(view());
+    const opened = out.split("\n").find((line) => line.includes("opened per 100")) ?? "";
 
     // Assert
     expect(out).not.toMatch(/prevent/i);
-    expect(out).not.toMatch(/helpful/i);
+    expect(opened).not.toMatch(/helpful/i);
   });
 });

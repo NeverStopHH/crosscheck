@@ -45,7 +45,18 @@ const report = (): Record<string, unknown> => ({
   sinceIso: "2026-07-20T12:00:00.000Z",
   untilIso: "2026-09-14T12:00:00.000Z",
   days: 56,
-  sessionSet: { used: 3, cap: 50, refused: 0, spanned: 3, restarted: 0, notRecorded: 0 },
+  sessionSet: {
+    used: 3,
+    cap: 200,
+    refused: 0,
+    discovery: 3,
+    discoveryCap: 50,
+    replication: 0,
+    replicationCap: 150,
+    spanned: 3,
+    restarted: 0,
+    notRecorded: 0,
+  },
   duplicateWork: {
     surfaced: 4,
     opened: 1,
@@ -82,16 +93,39 @@ const report = (): Record<string, unknown> => ({
     answersAfterRepair: 0,
   },
   precision: {
-    sessions: 3,
+    ...labelled(3),
+    precisionTarget: 0.5,
     openedPer100: { kind: "measured", value: 33.3 },
     openedTargetPer100: 8,
-    offTargetMarks: 0,
-    offTargetPer100: { kind: "measured", value: 0 },
-    offTargetCeilingPer100: 20,
+    noisySessionsPer100: { kind: "measured", value: 0 },
+    noisySessionsCeilingPer100: 20,
     surfaceOkMarks: 0,
+    reasons: [],
+    reasonsBeyondList: 0,
   },
+  cohorts: [
+    { cohort: "discovery", cap: 50, ...labelled(3) },
+    { cohort: "replication", cap: 150, ...labelled(0) },
+  ],
   integrity: [{ surface: "api-suspect", counters: null }],
 });
+
+/** A labelled population with nothing labelled yet. */
+function labelled(sessions: number): Record<string, unknown> {
+  const none = { kind: "unavailable", reason: "no_sessions" };
+  return {
+    sessions,
+    interventions: 0,
+    helpful: 0,
+    noise: 0,
+    unclear: 0,
+    labelled: 0,
+    benefitPer100: sessions === 0 ? none : { kind: "measured", value: 0 },
+    burdenPer100: sessions === 0 ? none : { kind: "measured", value: 0 },
+    precision: { kind: "unavailable", reason: "no_labels" },
+    labelCoverage: { kind: "unavailable", reason: "no_interventions" },
+  };
+}
 
 const run = (
   argv: readonly string[],

@@ -2200,7 +2200,7 @@ const pilotFigures = (
   ["both landed", report.collisions.bothLanded],
   ["ci regressed", report.collisions.ciRegressed],
   ["opened per 100", report.precision.openedPer100],
-  ["off-target per 100", report.precision.offTargetPer100],
+  ["noisy sessions per 100", report.precision.noisySessionsPer100],
 ];
 
 const isRungRefusal = (reason: string): boolean =>
@@ -2266,7 +2266,7 @@ const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
     check(
       "PASS",
       "pilot",
-      `enrolled · session set ${String(set.used)} of ${String(set.cap)}${
+      `enrolled · session set ${String(set.used)} of ${String(set.cap)} (discovery ${String(set.discovery)} of ${String(set.discoveryCap)} · replication ${String(set.replication)} of ${String(set.replicationCap)})${
         set.refused > 0
           ? ` — full: ${String(set.refused)} later session(s) refused at the cap and counted, never dropped`
           : ""
