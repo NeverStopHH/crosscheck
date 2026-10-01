@@ -8,7 +8,12 @@ import { describe, expect, test } from "bun:test";
 
 import type { PasskeyAnnouncements } from "@crosscheck/connector-core/http/hub.ts";
 
-import { passkeyDoctorCheck, passkeyStatusLines } from "../src/cli/passkey-status.ts";
+import {
+  HUB_PREDATES_PASSKEYS,
+  announcementAnswerOf,
+  passkeyDoctorCheck,
+  passkeyStatusLines,
+} from "../src/cli/passkey-status.ts";
 
 const NOW = new Date("2026-09-30T12:00:00.000Z");
 const HUB = "https://hub.tailnet.ts.net";
@@ -28,6 +33,8 @@ const enrolment = (over: Partial<PasskeyAnnouncements["enrolments"][number]> = {
 const view = (over: Partial<PasskeyAnnouncements> = {}): PasskeyAnnouncements => ({
   enrolments: [],
   usablePasskeys: 1,
+  enrolmentsTotal: null,
+  coolingOff: null,
   ...over,
 });
 
@@ -96,11 +103,48 @@ describe("doctor check", () => {
     });
   });
 
-  test("an unanswered hub is not measured", () => {
+  test("an unanswered hub is a WARN — silence is not 'nothing enrolled'", () => {
     expect(passkeyDoctorCheck(null, HUB)).toEqual({
-      level: "PASS",
+      level: "WARN",
       name: "passkeys",
-      detail: "not measured — the hub did not answer",
+      detail: "unknown — the hub did not answer, so an enrolment would not show here",
     });
+  });
+
+  test("the hub's own count decides, not the rows it listed", () => {
+    // Arrange — the hub lists 20 rows at most; the 21st cooling enrolment
+    // must still count.
+    const check = passkeyDoctorCheck(view({ enrolments: [], coolingOff: 3, enrolmentsTotal: 25 }), HUB);
+
+    // Assert
+    expect(check.level).toBe("WARN");
+    expect(check.detail).toContain("3 passkey enrolments are still cooling off");
+  });
+
+  test("a hub that predates passkeys has nothing to announce, and says how fences open there", () => {
+    expect(passkeyDoctorCheck(HUB_PREDATES_PASSKEYS, HUB).level).toBe("PASS");
+    expect(passkeyStatusLines(HUB_PREDATES_PASSKEYS, HUB, NOW).join("\n")).toContain(
+      "this hub predates passkeys",
+    );
+  });
+
+  test("the answer is read from the hub's reply: 404 predates, any other failure is unknown", () => {
+    const failure = (status: number) =>
+      ({ ok: false, kind: "http", status, code: "x", message: "x" }) as const;
+
+    expect(announcementAnswerOf(failure(404))).toBe(HUB_PREDATES_PASSKEYS);
+    expect(announcementAnswerOf(failure(500))).toBeNull();
+  });
+});
+
+describe("a listing the hub cut short", () => {
+  test("status says how many more enrolments there were", () => {
+    const lines = passkeyStatusLines(
+      view({ enrolments: [enrolment()], enrolmentsTotal: 26, coolingOff: 1 }),
+      HUB,
+      NOW,
+    ).join("\n");
+
+    expect(lines).toContain(`and 25 more enrolment(s) this week — all of them at ${HUB}/ui/passkeys`);
   });
 });

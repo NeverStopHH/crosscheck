@@ -2670,14 +2670,24 @@ export const PasskeyAnnouncementSchema = z.looseObject({
 });
 
 export interface PasskeyAnnouncements {
+  /** The newest enrolments of the window — a page, bounded by the hub. */
   readonly enrolments: readonly z.infer<typeof PasskeyAnnouncementSchema>[];
   readonly usablePasskeys: number;
+  /**
+   * The WHOLE window, counted by the hub: every enrolment, and those still
+   * cooling off and unrevoked. Null when the hub did not say; a reader then
+   * counts the listed page and must call that a lower bound.
+   */
+  readonly enrolmentsTotal: number | null;
+  readonly coolingOff: number | null;
 }
 
 const PasskeyAnnouncementsSchema = z
   .looseObject({
     enrolments: z.array(z.unknown()).default([]),
     usablePasskeys: z.number().int().min(0).default(0),
+    enrolmentsTotal: z.number().int().min(0).nullable().catch(null).default(null),
+    coolingOff: z.number().int().min(0).nullable().catch(null).default(null),
   })
   .transform(
     (value): PasskeyAnnouncements => ({
@@ -2686,6 +2696,8 @@ const PasskeyAnnouncementsSchema = z
         .filter((parsed) => parsed.success)
         .map((parsed) => parsed.data),
       usablePasskeys: value.usablePasskeys,
+      enrolmentsTotal: value.enrolmentsTotal,
+      coolingOff: value.coolingOff,
     }),
   );
 

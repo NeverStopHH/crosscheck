@@ -372,6 +372,8 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
               },
             ],
             usablePasskeys: 0,
+            enrolmentsTotal: 2,
+            coolingOff: 1,
           },
           "http://localhost:7100",
           NOW,

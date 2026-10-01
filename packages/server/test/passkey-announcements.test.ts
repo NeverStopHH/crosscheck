@@ -63,4 +63,31 @@ describe("GET /api/passkeys/announcements", () => {
     expect(body.data.enrolments).toEqual([]);
     expect(body.data.usablePasskeys).toBe(1);
   });
+
+  test("the counts cover the whole window, not the page the hub lists", async () => {
+    // Arrange — more enrolments than one announcement lists; the 21st
+    // cooling-off one is exactly the one a person would otherwise not see.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    for (let i = 0; i < 25; i += 1) {
+      await seedPasskey(harness.db, nick.developerId, {
+        createdAt: new Date(NOW.getTime() - (i + 1) * 60_000),
+        usableFrom: new Date(NOW.getTime() + DAY),
+      });
+    }
+
+    // Act
+    const response = await harness.app.request(
+      "/api/passkeys/announcements",
+      jsonRequest("GET", nick.apiKey),
+    );
+    const body = (await response.json()) as {
+      data: Announcements & { enrolmentsTotal: number; coolingOff: number };
+    };
+
+    // Assert
+    expect(body.data.enrolments).toHaveLength(20);
+    expect(body.data.enrolmentsTotal).toBe(25);
+    expect(body.data.coolingOff).toBe(25);
+  });
 });

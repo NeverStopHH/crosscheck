@@ -159,7 +159,7 @@ import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
 import { checkLandedAuthors } from "./doctor-landed-authors.ts";
-import { passkeyDoctorCheck } from "./passkey-status.ts";
+import { announcementAnswerOf, passkeyDoctorCheck } from "./passkey-status.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -3661,7 +3661,7 @@ export const runDoctor = async (
     ghostOverlapCheck,
     privacyCheck,
     intentLedgerCheck,
-    passkeyDoctorCheck(passkeyAnnouncements.ok ? passkeyAnnouncements.data : null, config.hubUrl),
+    passkeyDoctorCheck(announcementAnswerOf(passkeyAnnouncements), config.hubUrl),
   ];
 
   const skewCheck = ((): Check => {

@@ -15,7 +15,11 @@ import { Hono } from "hono";
 import { PASSKEY_ANNOUNCEMENT_DAYS } from "../constants.ts";
 import { ok } from "../http/envelope.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { countUsablePasskeys, listRecentEnrolments } from "../services/passkeys.ts";
+import {
+  countRecentEnrolments,
+  countUsablePasskeys,
+  listRecentEnrolments,
+} from "../services/passkeys.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const MS_PER_DAY = 86_400_000;
@@ -26,15 +30,20 @@ export const passkeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
 
   router.get("/announcements", async (c) => {
     const now = deps.now();
-    const [enrolments, usablePasskeys] = await Promise.all([
-      listRecentEnrolments({
-        db: deps.db,
-        since: new Date(now.getTime() - PASSKEY_ANNOUNCEMENT_DAYS * MS_PER_DAY),
-        now,
-      }),
+    const since = new Date(now.getTime() - PASSKEY_ANNOUNCEMENT_DAYS * MS_PER_DAY);
+    const [enrolments, counted, usablePasskeys] = await Promise.all([
+      listRecentEnrolments({ db: deps.db, since, now }),
+      countRecentEnrolments({ db: deps.db, since, now }),
       countUsablePasskeys({ db: deps.db, now }),
     ]);
-    return ok(c, { enrolments, usablePasskeys });
+    // The listing is a page; the counts are the window, so a reader can say
+    // "and N more" and count cooling-off enrolments it was never shown.
+    return ok(c, {
+      enrolments,
+      usablePasskeys,
+      enrolmentsTotal: counted.total,
+      coolingOff: counted.coolingOff,
+    });
   });
 
   return router;

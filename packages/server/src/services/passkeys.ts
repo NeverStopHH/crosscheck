@@ -400,6 +400,28 @@ export const listRecentEnrolments = async (input: {
   }));
 };
 
+/**
+ * THE WHOLE WINDOW, COUNTED — what the bounded listing above cannot say. A
+ * reader that counted the listed page would miss the 21st enrolment, and a
+ * planted passkey only has to arrive in a busy week to be that one.
+ */
+export const countRecentEnrolments = async (input: {
+  readonly db: DbExecutor;
+  readonly since: Date;
+  readonly now: Date;
+}): Promise<{ total: number; coolingOff: number }> => {
+  const rows = await input.db
+    .select({ usableFrom: passkeys.usableFrom, revokedAt: passkeys.revokedAt })
+    .from(passkeys)
+    .where(gte(passkeys.createdAt, input.since));
+  return {
+    total: rows.length,
+    coolingOff: rows.filter(
+      (row) => row.revokedAt === null && row.usableFrom.getTime() > input.now.getTime(),
+    ).length,
+  };
+};
+
 /** How many passkeys on this hub may sign now — zero means nobody can approve a waiver. */
 export const countUsablePasskeys = async (input: {
   readonly db: DbExecutor;
