@@ -322,6 +322,10 @@ did find is below: first what was fixed, then what stays open and why.
 11. **Two pins with the same surface looked identical on the approval card**
     (9c58753). The cards now name the pin id.
 
+Each fix has a mutation anchor in `connector-core/scripts/mutation-check.ts`:
+21 new ones, plus 4 repaired whose source text the fixes had moved. All 25 are
+`caught`.
+
 **Open, stated rather than hidden** (this corrects §8.1 and §8.4, which
 understated it):
 

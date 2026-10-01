@@ -9470,8 +9470,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // an age, and reusing the age helper is the natural mistake.
     label: "an open fence is dated as though it had already lapsed",
     file: `${CLI}/src/cli/pin-render.ts`,
-    from: "until ${waiver.expiresAt} (${untilOf(waiver.expiresAt, now)})",
-    to: "until ${waiver.expiresAt} (${ageOf(waiver.expiresAt, now)})",
+    from: "until ${instantOf(waiver.expiresAt)} (${untilOf(waiver.expiresAt, now)})",
+    to: "until ${instantOf(waiver.expiresAt)} (${ageOf(waiver.expiresAt, now)})",
     test: `${CLI}/test/waiver-render.test.ts`,
     because:
       "the deadline a person has to plan against renders as a negative age " +
@@ -12605,8 +12605,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a passkey ceremony can be spent twice (PK-5)",
     file: `${SERVER}/src/services/webauthn.ts`,
-    from: "    const ceremony = pending.get(id);\n    pending.delete(id);",
-    to: "    const ceremony = pending.get(id);",
+    from: "    pending.delete(id);\n    if (ceremony.expiresAtMs <= config.nowMs()) {",
+    to: "    if (ceremony.expiresAtMs <= config.nowMs()) {",
     test: `${SERVER}/test/webauthn.test.ts`,
     because: "a captured assertion replays into a second approval nobody made",
   },
@@ -12639,16 +12639,15 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a ceremony minted for one developer is finished by another (PK-9)",
     file: `${SERVER}/src/services/webauthn.ts`,
-    from: "      ceremony.developerId !== expected.developerId ||\n",
-    to: "",
+    from: "    ceremony.developerId === owner.developerId && ceremony.sessionKey === owner.sessionKey;",
+    to: "    ceremony.sessionKey === owner.sessionKey;",
     test: `${SERVER}/test/webauthn.test.ts`,
     because: "one member's prompt is completed in another member's session, under the wrong name",
   },
   {
     label: "doctor stops warning while a passkey enrolment is cooling off (PK-10)",
     file: `${CLI}/src/cli/passkey-status.ts`,
-    from:
-      "  const cooling = view.enrolments.filter((enrolment) => enrolment.coolingOff && !enrolment.revoked).length;",
+    from: "  const cooling = coolingOffCount(view);",
     to: "  const cooling = 0;",
     test: `${CLI}/test/passkey-status.test.ts`,
     because: "a planted passkey sits out its day unannounced and then approves, the one window doctor existed to show",
@@ -12719,6 +12718,177 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/ui-passkeys.test.ts`,
     because: "the browser refuses the ceremony script and no waiver can be approved at all",
   },
+  // ── 04a §12: what the security review fixed ──
+  {
+    label: "a second grant opens beside a live one",
+    file: `${SERVER}/src/services/waiver-requests.ts`,
+    from: '  (await readLiveWaiver({ db, ...input })) === null ? null : "fence_open";',
+    to: "  null;",
+    test: `${SERVER}/test/waiver-requests.test.ts`,
+    because: "a one-hour approval leaves the earlier fourteen-day grant running, and closing the visible one leaves the fence open",
+  },
+  {
+    label: "closing a waiver says shut while another grant holds the fence",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "  return still === null\n",
+    to: "  return true\n",
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "a person reads 'shut again' and walks away from a fence the verdict still reads as open",
+  },
+  {
+    label: "an agent's prompts lock the person out at the developer's cap",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "    makeRoom(ceremony);\n    if (pending.size >= MAX_PENDING_CEREMONIES) {",
+    to:
+      "    if (pending.size >= MAX_PENDING_CEREMONIES || " +
+      "[...pending.values()].filter((entry) => entry.developerId === ceremony.developerId).length >= 8) {",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "an agent holding only the api key keeps eight prompts open and the person can no longer close a fence",
+  },
+  {
+    label: "one session's prompts crowd out the person's",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "    if (ownSession.length >= MAX_PENDING_PER_SESSION) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "an agent's own login fills the developer's slots and evicts the prompt the person is about to touch",
+  },
+  {
+    label: "a ceremony is finished in another session of the same developer",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: " && ceremony.sessionKey === owner.sessionKey;",
+    to: ";",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "the agent's session, logged in with the key, finishes or spends the prompt the person opened",
+  },
+  {
+    label: "a refused verify leaves its ceremony standing",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: '    spend();\n    return refuse(c, "unknown_credential");',
+    to: '    return refuse(c, "unknown_credential");',
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "a nonce refused for one key can be tried again with another, against 'single use, even on failure'",
+  },
+  {
+    label: "an assertion from a cross-origin frame is accepted",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: '    return "crossOrigin" in parsed && parsed.crossOrigin !== false;',
+    to: "    return false;",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "a page framing the hub collects a signature the person thought they gave the hub's own page",
+  },
+  {
+    label: "a passkey origin may be an IP address",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "      if (isIpLiteral(url.hostname)) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/webauthn.test.ts`,
+    because: "the hub starts at an address every browser refuses as an RP ID, and the person meets the failure instead",
+  },
+  {
+    label: "a localhost ceremony is believed from another machine",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "  return peer === null || !isLoopbackAddress(peer);",
+    to: "  return false;",
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "an agent on the person's other device serves its own localhost page and posts the synced passkey's signature across the tailnet",
+  },
+  {
+    label: "pin --waive prints the hub's failure text raw",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  const said = hubSaid(result.message);",
+    to: "  const said = result.message;",
+    test: `${CLI}/test/pin-waive-hostile-hub.test.ts`,
+    because: "a hub-chosen line lands in the context of the agent the command was built for, as if the tool had said it",
+  },
+  {
+    label: "pin list prints a hub-sent expiry as the hub sent it",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: '  return Number.isNaN(ms) ? "an unreadable time" : new Date(ms).toISOString();',
+    to: "  return iso;",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "a waiver kept for its unreadable expiry carries a line of the hub's choosing into pin list",
+  },
+  {
+    label: "status prints a hub-sent expiry as the hub sent it",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: '  const next = earliest === undefined ? "an unreadable time" : new Date(earliest).toISOString();',
+    to: '  const next = expiries[0] ?? "";',
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "status is a bare surface, and a hub-chosen expiry string puts foreign text on it",
+  },
+  {
+    label: "a passkey's sign counter can go backwards",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: "    .set({ signCount: sql`GREATEST(${passkeys.signCount}, ${input.counter})` })",
+    to: "    .set({ signCount: input.counter })",
+    test: `${SERVER}/test/passkeys.test.ts`,
+    because: "two verifies finishing out of order store the lower count, and a cloned key's next assertion passes as fresh",
+  },
+  {
+    label: "a self-reported AAGUID is announced as fact",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: "`says it is ${name}, unverified`",
+    to: "name",
+    test: `${SERVER}/test/passkeys.test.ts`,
+    because: "a software key reporting iCloud Keychain's AAGUID is announced exactly as the person's own device would be",
+  },
+  {
+    label: "doctor passes while the hub is silent about passkeys",
+    file: `${CLI}/src/cli/passkey-status.ts`,
+    from: '    return { level: "WARN", name: "passkeys", detail: UNANSWERED };',
+    to: '    return { level: "PASS", name: "passkeys", detail: UNANSWERED };',
+    test: `${CLI}/test/passkey-status.test.ts`,
+    because: "a planted passkey hides behind a hub that merely did not answer, and doctor reads green",
+  },
+  {
+    label: "doctor counts only the enrolments the hub listed",
+    file: `${CLI}/src/cli/passkey-status.ts`,
+    from: "  view.coolingOff ??\n",
+    to: "",
+    test: `${CLI}/test/passkey-status.test.ts`,
+    because: "the 21st cooling-off enrolment of a busy week is never counted, and doctor passes",
+  },
+  {
+    label: "the hub counts only the page it lists",
+    file: `${SERVER}/src/routes/passkeys.ts`,
+    from: "      enrolmentsTotal: counted.total,",
+    to: "      enrolmentsTotal: enrolments.length,",
+    test: `${SERVER}/test/passkey-announcements.test.ts`,
+    because: "every reader is told the listed page is the whole week",
+  },
+  {
+    label: "status hides the enrolments past the listed page",
+    file: `${CLI}/src/cli/passkey-status.ts`,
+    from: "  const unlisted = (view.enrolmentsTotal ?? 0) - view.enrolments.length;",
+    to: "  const unlisted = 0;",
+    test: `${CLI}/test/passkey-status.test.ts`,
+    because: "a person reading status sees twenty enrolments and no sign there were more",
+  },
+  {
+    label: "the hub's own page stops announcing enrolments",
+    file: `${SERVER}/src/ui/pages/passkeys.tsx`,
+    from: "    <RecentEnrolments recent={recent} total={recentTotal} />\n",
+    to: "",
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "the one announcement channel that does not run beside the agent goes dark",
+  },
+  {
+    label: "the approval card stops naming the pin",
+    file: `${SERVER}/src/ui/pages/waivers.tsx`,
+    from: "      pin {capped(request.pinId, UI_MAX_LABEL_CHARS)} · ",
+    to: "      ",
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "two pins with the same surface sentence look identical and the person approves the wrong one",
+  },
+  {
+    label: "the database stores a passkey with an enrolment source the code does not know",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: " CONSTRAINT passkeys_enrolled_via_check CHECK (enrolled_via IN ('admin', 'passkey'))",
+    to: "",
+    test: `${SERVER}/test/passkeys.test.ts`,
+    because: "a row no enrolment path writes is stored as if one had, and nothing reading it can tell",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12788,11 +12958,12 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/passkey-status.test.ts 1
+ * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
+ * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 13
@@ -12800,7 +12971,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/verdict-render.test.ts 4
- * PRINTS: packages/cli/test/waiver-render.test.ts 5
+ * PRINTS: packages/cli/test/waiver-render.test.ts 7
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
@@ -12978,7 +13149,8 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 20
  * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
- * PRINTS: packages/server/test/passkeys.test.ts 3
+ * PRINTS: packages/server/test/passkey-announcements.test.ts 1
+ * PRINTS: packages/server/test/passkeys.test.ts 6
  * PRINTS: packages/server/test/pglite-exit-code.test.ts 5
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
@@ -13015,14 +13187,14 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 1
- * PRINTS: packages/server/test/ui-passkeys.test.ts 2
+ * PRINTS: packages/server/test/ui-passkeys.test.ts 7
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
- * PRINTS: packages/server/test/waiver-requests.test.ts 4
+ * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
- * PRINTS: packages/server/test/webauthn.test.ts 6
+ * PRINTS: packages/server/test/webauthn.test.ts 11
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();

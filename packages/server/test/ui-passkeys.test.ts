@@ -257,6 +257,71 @@ describe("enrolling through the page", () => {
   });
 });
 
+describe("closing a fence through the page", () => {
+  test("closing one grant while another still holds the fence says the fence is STILL OPEN", async () => {
+    // Arrange — a 0.10 terminal grant and a passkey grant on one fence: the
+    // close must not report "shut" while the verdict still reads open.
+    const { harness, nick, ken } = await setup();
+    const kensKey = createSoftCredential();
+    await enrolViaUi(harness, await viewerOf(harness, ken), kensKey);
+    const kenViewer = await pastCoolOff(harness, ken);
+    const now = harness.clock.now();
+    const grant = {
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      kind: "grant",
+      captureMode: "human",
+      supersedes: null,
+      requestId: null,
+    } as const;
+    await harness.db.insert(fenceWaivers).values([
+      {
+        ...grant,
+        id: "fw_legacy",
+        grantedBy: nick.developerId,
+        reason: "opened from a terminal before passkeys",
+        expiresAt: new Date(now.getTime() + 72 * HOUR),
+        createdAt: new Date(now.getTime() - 2 * HOUR),
+        authority: "terminal",
+        credentialId: null,
+      },
+      {
+        ...grant,
+        id: "fw_passkey",
+        grantedBy: ken.developerId,
+        reason: "approved with a passkey",
+        expiresAt: new Date(now.getTime() + 2 * HOUR),
+        createdAt: new Date(now.getTime() - HOUR),
+        authority: "passkey",
+        credentialId: kensKey.id,
+      },
+    ]);
+    const fields = { action: "revoke_waiver", subjectId: "fw_passkey", reason: "the rollout finished" };
+    const options = await dataOf<{ ceremonyId: string; publicKey: { challenge: string } }>(
+      await ceremony(harness, kenViewer, "options", fields),
+    );
+
+    // Act
+    const response = await ceremony(harness, kenViewer, "verify", {
+      ...fields,
+      ceremonyId: options.ceremonyId,
+      response: softAuthenticationResponse({
+        credential: kensKey,
+        challenge: options.publicKey.challenge,
+        origin: TEST_WEBAUTHN_ORIGIN,
+        rpId: RP_ID,
+        signCount: 1,
+      }),
+    });
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect((await dataOf<{ message: string }>(response)).message).toContain("STILL OPEN");
+    expect((await live(harness))?.id).toBe("fw_legacy");
+  });
+});
+
 describe("approving through the page", () => {
   test("a verify refused before the signature check spends its ceremony", async () => {
     // Arrange — a key that cannot sign here is refused before verifyAssertion;
