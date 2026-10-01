@@ -17,7 +17,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { PILOT_LABEL_MAX_CANDIDATES } from "../src/constants.ts";
-import { hintDeliveries, pilotMarks, workContexts } from "../src/db/schema.ts";
+import { eq } from "drizzle-orm";
+
+import { hintDeliveries, pilotMarks, teamSettings, workContexts } from "../src/db/schema.ts";
 import {
   TEST_ADMIN_TOKEN,
   TEST_START_ISO,
@@ -207,6 +209,24 @@ describe("GET /api/pilot-marks/unlabeled", () => {
     // Assert — still offered (it reached Nick), but nothing of the other repo is printed
     expect(unlabeledOf(body).map((row) => [row.id, row.title])).toEqual([["hd_cross", null]]);
     expect(JSON.stringify(body)).not.toContain("Another repo's plan");
+  });
+
+  test("a delivery to a session that started before labels existed is not offered — its label could not count", async () => {
+    // Arrange — the labelled figures count only sessions that started once
+    // labels were available (second review, M5); offering this one would ask
+    // a person for a verdict the report then drops
+    const { harness, nick } = await setup();
+    await harness.db
+      .update(teamSettings)
+      .set({ pilotLabelsSince: new Date(new Date(TEST_START_ISO).getTime() + MS_PER_MINUTE) })
+      .where(eq(teamSettings.repo, REPO));
+    await deliver(harness, { id: "hd_early", sessionId: MINE, refId: "wc_a", minutesAgo: 5 });
+
+    // Act
+    const { body } = await askUnlabeled(harness, nick, "&withinMinutes=60");
+
+    // Assert
+    expect(unlabeledOf(body)).toEqual([]);
   });
 
   test("a delivery the caller already labelled is not offered again", async () => {

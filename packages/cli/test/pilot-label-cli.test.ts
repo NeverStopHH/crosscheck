@@ -123,9 +123,11 @@ const scenario = async (name: string): Promise<Scenario> => {
   const home = await makeHome(`label-${name}`);
   cleanup.push(repoRoot, home);
   const reader = await createDeveloper(`Reader ${name}`);
+  // ENROLLED FIRST, as a real team is: labels count only for sessions that
+  // start once the repo can be labelled (07 §12, second review, M5).
+  await send("PUT", "/api/team-settings", ADMIN_TOKEN, { repo: repoId, pilotEnrolled: true });
   const sessionId = await registerSession(reader, repoId);
   const kenSessionId = await registerSession(ken, repoId);
-  await send("PUT", "/api/team-settings", ADMIN_TOKEN, { repo: repoId, pilotEnrolled: true });
   return { repoRoot, repoId, reader, sessionId, kenSessionId, home };
 };
 

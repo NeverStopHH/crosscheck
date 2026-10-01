@@ -63,6 +63,7 @@ const emptyLabels = (): PilotLabelFigures => ({
 const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
   repo: "github.com/acme/api",
   enrolled: true,
+  labelsSinceIso: "2026-07-01T12:00:00.000Z",
   sinceIso: "2026-07-20T12:00:00.000Z",
   untilIso: "2026-09-14T12:00:00.000Z",
   days: 56,
@@ -74,6 +75,7 @@ const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
     discoveryCap: 50,
     replication: 0,
     replicationCap: 150,
+    legacy: 0,
     spanned: 29,
     restarted: 1,
     notRecorded: 1,
@@ -125,6 +127,8 @@ const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
   },
   precision: {
     ...windowLabels(),
+    labelledSinceIso: "2026-07-20T12:00:00.000Z",
+    legacyNoise: 0,
     precisionTarget: 0.5,
     openedPer100: { kind: "measured", value: 6.1 },
     openedTargetPer100: 8,
@@ -416,6 +420,52 @@ describe("renderPilot", () => {
 
     // Assert
     expect(out).toContain("discovery 50/50 sessions (full — membership frozen)");
+  });
+
+  test("the labelled figures say where they start when labels came after the window did (H1, M5)", () => {
+    // Arrange — labels became available mid-window: the earlier sessions
+    // could not be labelled, and a reader must not take the figures for the
+    // whole eight weeks
+    const base = report();
+    const out = renderPilot(
+      view({
+        labelsSinceIso: "2026-09-01T09:30:00.000Z",
+        precision: { ...base.precision, labelledSinceIso: "2026-09-01T09:30:00.000Z" },
+      }),
+    );
+
+    // Assert
+    expect(out).toContain(
+      "labelled figures count sessions from 2026-09-01, when labels became available here — earlier ones could not be labelled",
+    );
+  });
+
+  test("an unclipped window says nothing about where labels start", () => {
+    // Arrange & Act
+    const out = renderPilot(view());
+
+    // Assert
+    expect(out).not.toContain("labelled figures count sessions from");
+  });
+
+  test("0.10 noise marks print as their own count, outside precision (H1)", () => {
+    // Arrange
+    const base = report();
+    const out = renderPilot(view({ precision: { ...base.precision, legacyNoise: 6 } }));
+
+    // Assert
+    expect(out).toContain(
+      "noise marks from before labels (off_target) 6 — outside precision: nobody could label those interventions helpful",
+    );
+  });
+
+  test("the header counts the 0.10 rows apart, in neither cohort (H1)", () => {
+    // Arrange
+    const base = report();
+    const out = renderPilot(view({ sessionSet: { ...base.sessionSet, legacy: 30 } }));
+
+    // Assert
+    expect(out).toContain("· 30 recorded before labels, in neither cohort");
   });
 
   test("the header names the set and both cohorts' fill", () => {

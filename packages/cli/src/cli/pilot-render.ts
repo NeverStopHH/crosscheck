@@ -290,13 +290,38 @@ const cohortLines = (cohorts: readonly PilotCohortFigures[]): readonly string[] 
  * PROOF 4, REVISED (07 §12): the human labels carry the figures; the pull
  * and the noisy-session floor stay, each named as what it is.
  */
+/**
+ * WHERE THE LABELLED FIGURES START, when that is not the window's start
+ * (second review, H1, M5): sessions that began before labels were available
+ * could not be labelled, so the hub leaves them out, and a reader must not
+ * take the figures for the whole window.
+ */
+const labelledSinceLines = (report: PilotReport): readonly string[] => {
+  const from = report.precision.labelledSinceIso;
+  return from === null || from === report.sinceIso
+    ? []
+    : [
+        `${INDENT}labelled figures count sessions from ${isoDay(from)}, when labels became available here — earlier ones could not be labelled`,
+      ];
+};
+
+/** 0.10's one word, counted and kept outside precision — it never had a `helpful` beside it. */
+const legacyNoiseLines = (proof: PilotReport["precision"]): readonly string[] =>
+  proof.legacyNoise === 0
+    ? []
+    : [
+        `${INDENT}noise marks from before labels (off_target) ${count(proof.legacyNoise)} — outside precision: nobody could label those interventions helpful`,
+      ];
+
 const precisionLines = (report: PilotReport): readonly string[] => {
   const proof = report.precision;
   return [
     "4. proactive precision — what arrived unasked, as the person it reached labelled it",
+    ...labelledSinceLines(report),
     ...labelledLines(proof),
     `${INDENT}behavioural signal: ${figure("opened per 100 sessions", proof.openedPer100, RATE_DECIMALS)} (target ${count(proof.openedTargetPer100)}, declared before measuring) — the agent pulled it; no person judged it`,
     `${INDENT}${figure("noisy sessions per 100", proof.noisySessionsPer100, RATE_DECIMALS)} (ceiling ${count(proof.noisySessionsCeilingPer100)}) — a FLOOR: labels are voluntary`,
+    ...legacyNoiseLines(proof),
     `${INDENT}surface-ok marks ${count(proof.surfaceOkMarks)}`,
     ...reasonLines(proof),
     ...cohortLines(report.cohorts),
@@ -441,7 +466,9 @@ export const renderPilot = (view: PilotView): string => {
   }
   const set = report.sessionSet;
   return [
-    `${headerLine(report)} · ${count(report.precision.sessions)} sessions · session set ${count(set.used)}/${count(set.cap)} (discovery ${count(set.discovery)}/${count(set.discoveryCap)} · replication ${count(set.replication)}/${count(set.replicationCap)}), ${count(set.refused)} refused at the cap`,
+    `${headerLine(report)} · ${count(report.precision.sessions)} sessions · session set ${count(set.used)}/${count(set.cap)} (discovery ${count(set.discovery)}/${count(set.discoveryCap)} · replication ${count(set.replication)}/${count(set.replicationCap)}), ${count(set.refused)} refused at the cap${
+      set.legacy > 0 ? ` · ${count(set.legacy)} recorded before labels, in neither cohort` : ""
+    }`,
     QUOTED_DATA_NOTICE,
     ...duplicateWorkLines(report),
     ...collisionLines(report),

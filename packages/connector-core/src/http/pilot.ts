@@ -111,6 +111,8 @@ export type PilotCohortFigures = z.infer<typeof CohortFiguresSchema>;
 export const PilotReportSchema = z.looseObject({
   repo: z.string().min(1),
   enrolled: z.boolean(),
+  /** When labels became available on this repo; null when it was never enrolled (07 §12). */
+  labelsSinceIso: z.string().nullable(),
   sinceIso: z.string().min(1),
   untilIso: z.string().min(1),
   days: z.number().int().min(1),
@@ -122,6 +124,8 @@ export const PilotReportSchema = z.looseObject({
     discoveryCap: CountSchema,
     replication: CountSchema,
     replicationCap: CountSchema,
+    /** Rows a 0.10 hub wrote, in neither cohort — strict, so "0" is never a guess. */
+    legacy: CountSchema,
     spanned: CountSchema,
     restarted: CountSchema,
     notRecorded: CountSchema,
@@ -153,6 +157,10 @@ export const PilotReportSchema = z.looseObject({
     answersAfterRepair: CountSchema,
   }),
   precision: LabelFiguresSchema.extend({
+    /** Where the labelled figures start; null when nothing is measured. */
+    labelledSinceIso: z.string().nullable(),
+    /** 0.10 `off_target` marks, outside precision (second review, H1). */
+    legacyNoise: CountSchema,
     precisionTarget: z.number().finite().min(0).max(1),
     openedPer100: PilotFigureSchema,
     openedTargetPer100: z.number().finite().min(0),

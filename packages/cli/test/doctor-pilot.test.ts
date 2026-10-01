@@ -44,6 +44,7 @@ interface ReportShape {
 const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
   repo: "github.com/acme/api",
   enrolled: shape.enrolled ?? true,
+  labelsSinceIso: "2026-09-01T00:00:00.000Z",
   sinceIso: "2026-09-23T00:00:00.000Z",
   untilIso: "2026-09-24T00:00:00.000Z",
   days: 1,
@@ -55,6 +56,7 @@ const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
     discoveryCap: 50,
     replication: 0,
     replicationCap: 150,
+    legacy: 0,
     spanned: 30,
     restarted: 1,
     notRecorded: 0,
@@ -87,6 +89,8 @@ const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
   },
   precision: {
     ...unlabelled(),
+    labelledSinceIso: "2026-09-23T00:00:00.000Z",
+    legacyNoise: 0,
     precisionTarget: 0.5,
     openedPer100: { kind: "unavailable", reason: "no_sessions" },
     openedTargetPer100: 8,

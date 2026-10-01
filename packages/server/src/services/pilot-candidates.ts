@@ -162,6 +162,11 @@ type UnlabeledRow = {
  * And it is THIS REPO's, as in the report (07 §11.9): a delivery's ref is the
  * client's own word, so a pointer at another repo's work context is listed
  * — it did reach this person — with no title rather than with that repo's.
+ *
+ * ONLY WHAT A LABEL CAN COUNT FOR (07 §12, second review, M5): a delivery to
+ * a session that started before labels became available is outside the
+ * labelled figures, so asking a person to judge it would collect a verdict
+ * the report then drops. A NULL `pilot_labels_since` matches nothing.
  */
 export const readUnlabeledInterventions = async (
   deps: Deps,
@@ -180,7 +185,9 @@ export const readUnlabeledInterventions = async (
     LEFT JOIN work_contexts wc ON wc.id = (${POINTED_WORK_CONTEXT})
       AND EXISTS (SELECT 1 FROM agent_sessions owner
                   WHERE owner.id = wc.session_id AND owner.repo = ${input.repo})
+    JOIN team_settings ts ON ts.repo = s.repo
     WHERE s.repo = ${input.repo}
+      AND s.started_at >= ts.pilot_labels_since
       AND s.developer_id = ${input.developerId}
       AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
       AND hd.delivered_at >= ${since.toISOString()}::timestamptz

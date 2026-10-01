@@ -267,6 +267,7 @@ const pilotWith = (payload: string): PilotView => {
     report: {
       repo: payload,
       enrolled: true,
+      labelsSinceIso: payload,
       sinceIso: payload,
       untilIso: payload,
       days: 56,
@@ -278,6 +279,7 @@ const pilotWith = (payload: string): PilotView => {
         discoveryCap: 50,
         replication: 0,
         replicationCap: 150,
+        legacy: 1,
         spanned: 1,
         restarted: 1,
         notRecorded: 1,
@@ -310,6 +312,10 @@ const pilotWith = (payload: string): PilotView => {
       },
       precision: {
         ...labels,
+        // A real instant, unlike sinceIso's payload, so the "labelled
+        // figures count sessions from" line is in the corpus document.
+        labelledSinceIso: ISO,
+        legacyNoise: 1,
         precisionTarget: 0.5,
         openedPer100: unavailable,
         openedTargetPer100: 8,

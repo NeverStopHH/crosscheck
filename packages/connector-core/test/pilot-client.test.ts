@@ -55,6 +55,7 @@ const measured = (value: number) => ({ kind: "measured", value });
 const wireReport = (): Record<string, unknown> => ({
   repo: REPO,
   enrolled: true,
+  labelsSinceIso: "2026-07-01T12:00:00.000Z",
   sinceIso: "2026-07-20T00:00:00.000Z",
   untilIso: "2026-09-14T00:00:00.000Z",
   days: 56,
@@ -66,6 +67,7 @@ const wireReport = (): Record<string, unknown> => ({
     discoveryCap: 50,
     replication: 0,
     replicationCap: 150,
+    legacy: 0,
     spanned: 29,
     restarted: 1,
     notRecorded: 1,
@@ -115,6 +117,8 @@ const wireReport = (): Record<string, unknown> => ({
   },
   precision: {
     ...labelFigures(),
+    labelledSinceIso: "2026-07-20T12:00:00.000Z",
+    legacyNoise: 0,
     precisionTarget: 0.5,
     openedPer100: measured(6.1),
     openedTargetPer100: 8,
