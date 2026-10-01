@@ -36,17 +36,21 @@ const EPOCH = "0d9c8b7a-6f5e-4d4c-8b3a-2f1e0d9c8b7a";
 /** One day back: inside every window this file asks about. */
 const SCOPE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Every kind declared at its strongest — a connector that over-declares. */
+/**
+ * Every kind declared at the strongest the hub admits for it (schema
+ * `isAdmissibleReason`): `guaranteed` where the kind can carry it, the
+ * strongest `partial` reason where it cannot.
+ */
 const ALL_GUARANTEED = [
   { kind: "session.started", guarantee: "guaranteed", reason: "lifecycle" },
   { kind: "session.ended", guarantee: "guaranteed", reason: "lifecycle" },
   { kind: "file.modified", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
   { kind: "tool.failed", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-  { kind: "claim.created", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-  { kind: "claim.invalidated", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-  { kind: "commit.observed", guarantee: "guaranteed", reason: "lifecycle" },
-  { kind: "intent.declared", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-  { kind: "intent.amended", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
+  { kind: "claim.created", guarantee: "partial", reason: "ambiguous_session_possible" },
+  { kind: "claim.invalidated", guarantee: "partial", reason: "ambiguous_session_possible" },
+  { kind: "commit.observed", guarantee: "partial", reason: "ambiguous_session_possible" },
+  { kind: "intent.declared", guarantee: "partial", reason: "ambiguous_session_possible" },
+  { kind: "intent.amended", guarantee: "partial", reason: "ambiguous_session_possible" },
 ] as const;
 
 const withKind = (kind: string, guarantee: string, reason: string): readonly unknown[] =>

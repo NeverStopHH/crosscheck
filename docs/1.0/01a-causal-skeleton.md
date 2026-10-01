@@ -1348,3 +1348,18 @@ The evidence for each row:
 4. Should `crosscheck conference` register sessions with a declaration of its own (every kind
    `unavailable / no_emitter`)? Today they read `undeclared` and pull any scope containing them to
    `undeclared`.
+
+**13.9 — What the review of 2026-10-02 changed.** Each entry names the direction its failure falls.
+
+- **H2 — a `guaranteed` reason must be one the kind can carry.** Coherence (reason ↔ state) was the only
+  check, so any client could store `commit.observed guaranteed / bracketed_by_pre_tool`, and
+  `GET /api/absences` read `order: guaranteed`. The fold now also asks `isAdmissibleReason`
+  (`schema/src/causal-guarantees.ts`):
+  - `lifecycle` only on `session.started` and `session.ended`;
+  - `bracketed_by_pre_tool` only on `BRACKETABLE_KINDS` (`file.modified`, `tool.failed`), which a server
+    test holds equal to `TARGET_EVENT_KINDS`;
+  - never on `commit.observed`, `claim.*` or `intent.*`.
+  - Every weaker reason stays admissible on every kind. An inadmissible pair reads `undeclared /
+    provider_undeclared`, so the failure falls toward the weakest reading. The caps for the kinds that
+    can no longer be stored `guaranteed` stay, as a second guard for a row that reaches the table
+    another way.

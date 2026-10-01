@@ -184,6 +184,72 @@ describe("foldGuaranteeDeclaration — folded, never refused, never strengthened
   });
 });
 
+describe("a guaranteed reason the kind cannot carry reads undeclared", () => {
+  const STRONG_REASONS = CAUSAL_GUARANTEE_REASONS.filter(
+    (reason) => GUARANTEE_OF_REASON[reason] === "guaranteed",
+  );
+  const ADMITTED: readonly (readonly [string, string])[] = [
+    ["session.started", "lifecycle"],
+    ["session.ended", "lifecycle"],
+    ["file.modified", "bracketed_by_pre_tool"],
+    ["tool.failed", "bracketed_by_pre_tool"],
+  ];
+  const isAdmitted = (kind: string, reason: string): boolean =>
+    ADMITTED.some(([admittedKind, admittedReason]) => admittedKind === kind && admittedReason === reason);
+
+  test.each([
+    // The hub stores every commit row observed: no client can bracket one.
+    ["commit.observed", "bracketed_by_pre_tool"],
+    ["commit.observed", "lifecycle"],
+    // `lifecycle` is n = 0 or the terminal position: only the two session kinds have one.
+    ["file.modified", "lifecycle"],
+    ["tool.failed", "lifecycle"],
+    // The MCP picker can withhold a claim's or an intent's position.
+    ["claim.created", "lifecycle"],
+    ["claim.invalidated", "bracketed_by_pre_tool"],
+    ["intent.declared", "bracketed_by_pre_tool"],
+    ["intent.amended", "lifecycle"],
+    // A pre-tool bracket opens around a tool; no tool starts or ends a session.
+    ["session.started", "bracketed_by_pre_tool"],
+    ["session.ended", "bracketed_by_pre_tool"],
+  ] as const)("%s guaranteed / %s is read as undeclared", (kind, reason) => {
+    // Act
+    const folded = foldGuaranteeDeclaration([{ kind, guarantee: "guaranteed", reason }]);
+
+    // Assert
+    expect(folded).toEqual([{ kind, guarantee: "undeclared", reason: "provider_undeclared" }]);
+  });
+
+  test("across every kind and every strong reason, only the four admitted pairs stay guaranteed", () => {
+    for (const kind of GUARANTEE_KINDS) {
+      for (const reason of STRONG_REASONS) {
+        // Act
+        const [folded] = foldGuaranteeDeclaration([{ kind, guarantee: "guaranteed", reason }]);
+
+        // Assert
+        expect(folded?.guarantee, `${kind} / ${reason}`).toBe(
+          isAdmitted(kind, reason) ? "guaranteed" : "undeclared",
+        );
+      }
+    }
+  });
+
+  test("every kind keeps every weaker reason: the rule can only lower a declaration", () => {
+    const weakReasons = CAUSAL_GUARANTEE_REASONS.filter(
+      (reason) => GUARANTEE_OF_REASON[reason] !== "guaranteed" && reason !== "provider_undeclared",
+    );
+    for (const kind of GUARANTEE_KINDS) {
+      for (const reason of weakReasons) {
+        // Arrange
+        const triple = { kind, guarantee: GUARANTEE_OF_REASON[reason], reason };
+
+        // Act + Assert
+        expect(foldGuaranteeDeclaration([triple]), `${kind} / ${reason}`).toEqual([triple]);
+      }
+    }
+  });
+});
+
 describe("the one strength order every fold resolves ties by", () => {
   test("it lists every order reason exactly once", () => {
     expect([...ORDER_REASON_STRENGTH].sort()).toEqual([...ORDER_REASONS].sort());

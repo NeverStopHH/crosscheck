@@ -13874,6 +13874,24 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CONNECTOR}/test/recovery-losses.test.ts`,
     because: "a hook installed mid-session rebuilds its row as 'never reported' until a heartbeat lands, and a recovered session that ends first never reports at all",
   },
+  // Review 2026-10-02 of provider guarantees (H1 … L5): each finding's guard.
+  {
+    label: "the hub stores a guarantee its kind cannot carry",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "    isAdmissibleReason(kind, reason);",
+    to: "    true;",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because:
+      "any client registers commit.observed guaranteed / bracketed_by_pre_tool, and GET /api/absences reads order: guaranteed for a kind the hub itself stores observed",
+  },
+  {
+    label: "commit.observed admits a pre-tool bracket",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: '  "commit.observed": [],',
+    to: '  "commit.observed": ["bracketed_by_pre_tool"],',
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "a commit row is stored observed unconditionally, so a bracketed commit declaration is a claim the hub can prove false and stores anyway",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14114,7 +14132,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
- * PRINTS: packages/schema/test/causal-guarantees.test.ts 5
+ * PRINTS: packages/schema/test/causal-guarantees.test.ts 6
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
@@ -14123,7 +14141,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
- * PRINTS: packages/server/test/causal-guarantees.test.ts 8
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 9
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1

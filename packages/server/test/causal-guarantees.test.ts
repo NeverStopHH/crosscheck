@@ -10,10 +10,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { GUARANTEE_KINDS } from "@crosscheck/schema";
+import { BRACKETABLE_KINDS, GUARANTEE_KINDS } from "@crosscheck/schema";
+import type { GuaranteeKind } from "@crosscheck/schema";
 
 import { SESSION_REAP_STALE_HOURS } from "../src/constants.ts";
 import { sessionCausalGuarantees } from "../src/db/schema.ts";
+import { TARGET_EVENT_KINDS } from "../src/services/record-handlers.ts";
 import { reapStaleSessions } from "../src/services/sessions.ts";
 import {
   countContradictedDeclarations,
@@ -70,6 +72,17 @@ const effective = async (
     throw new Error("no reading for the session");
   }
   return found;
+};
+
+/**
+ * A `guaranteed` row for a kind the wire fold no longer admits (review H2),
+ * written straight into the table: the cap is the second guard, and it has to
+ * hold for a row that reached the table some other way.
+ */
+const holdGuaranteed = async (harness: TestHarness, kind: GuaranteeKind): Promise<void> => {
+  await harness.db
+    .insert(sessionCausalGuarantees)
+    .values({ sessionId: SESSION, kind, guarantee: "guaranteed", reason: "bracketed_by_pre_tool" });
 };
 
 const storedRows = async (harness: TestHarness): Promise<number> =>
@@ -160,6 +173,32 @@ describe("the declaration a session registers with", () => {
     expect(reading.get("session.ended")).toEqual({ state: "unavailable", reason: "not_built" });
   });
 
+  test("a guarantee the kind cannot carry is stored as nothing, and no read folds it to guaranteed", async () => {
+    // Arrange: any client can claim a bracket for a commit and a lifecycle for an edit.
+    const { harness, developer } = await seed([
+      { kind: "commit.observed", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
+      { kind: "file.modified", guarantee: "guaranteed", reason: "lifecycle" },
+      { kind: "claim.created", guarantee: "guaranteed", reason: "lifecycle" },
+    ]);
+    // Act
+    const reading = await effective(harness);
+    const response = await harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(VALID_SESSION_BODY.repo)}`,
+      jsonRequest("GET", developer.apiKey),
+    );
+    const body = (await response.json()) as { data: { coverage: { order: unknown } } };
+    // Assert
+    expect(await storedRows(harness)).toBe(0);
+    for (const kind of ["commit.observed", "file.modified", "claim.created"] as const) {
+      expect(reading.get(kind)).toEqual({ state: "undeclared", reason: "provider_undeclared" });
+    }
+    expect(body.data.coverage.order).toEqual({ state: "undeclared", reason: "provider_undeclared" });
+  });
+
+  test("the schema's bracketable kinds are the kinds a target record projects to", () => {
+    expect([...BRACKETABLE_KINDS].sort()).toEqual(Object.values(TARGET_EVENT_KINDS).sort());
+  });
+
   test("a re-register that sends no block leaves every kind undeclared", async () => {
     // Arrange
     const { harness, developer } = await seed([BRACKETED_EDIT]);
@@ -222,10 +261,9 @@ describe("rows outrank declarations", () => {
   });
 
   test("a derived intent version caps a bracketed intent.declared, though it lives outside session_events", async () => {
-    // Arrange: a connector that over-declares the intent kinds.
-    const { harness, developer } = await seed([
-      { kind: "intent.declared", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-    ]);
+    // Arrange: an over-declared intent kind, stored past the wire fold.
+    const { harness, developer } = await seed();
+    await holdGuaranteed(harness, "intent.declared");
     // Act: the ledger's first version, written by a worker — stored observed.
     await postRecords(harness, developer, {
       ...recordEnvelope(
