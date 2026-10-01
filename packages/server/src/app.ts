@@ -28,6 +28,7 @@ import { teamSettingsRoutes } from "./routes/team-settings.ts";
 import { solvedMatchesRoutes } from "./routes/solved-matches.ts";
 import { suspectRoutes } from "./routes/suspect.ts";
 import { uiRoutes } from "./routes/ui.tsx";
+import { waiverRequestRoutes } from "./routes/waiver-requests.ts";
 import { workContextsRoutes } from "./routes/work-contexts.ts";
 import type { AppDeps, AppEnv } from "./types.ts";
 
@@ -89,6 +90,8 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // dedicated token, read is any member.
   app.route("/api/ci-runs", ciRunsRoutes(deps));
   app.route("/api/fence-waivers", fenceWaiverRoutes(deps));
+  // 04a §6: what an api key may still do about a fence — ask.
+  app.route("/api/waiver-requests", waiverRequestRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));
