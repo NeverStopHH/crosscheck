@@ -1236,10 +1236,19 @@ CREATE TABLE IF NOT EXISTS pilot_sessions (
   -- exists when this column is ADDED was written by a 0.10 hub, before
   -- anybody could label an intervention helpful, so it is in neither cohort.
   cohort text NOT NULL DEFAULT 'legacy',
+  slot integer,
   CONSTRAINT pilot_sessions_cohort_check
     CHECK (cohort IN ('discovery', 'replication', 'legacy'))
 );
 ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'legacy';
+
+-- 07 12, second review (M1, M4): a session's SLOT is its start position among
+-- the repo's sessions since labels became available — 0..49 discovery,
+-- 50..199 replication. NULL on a 0.10 row. UNIQUE, so two sessions can never
+-- hold one slot, whatever order or concurrency they end in.
+ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS slot integer;
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_sessions_repo_slot_idx
+  ON pilot_sessions (repo, slot);
 
 -- The cohort CHECK on a hub whose pilot_sessions predates the column (second
 -- review, L3: the CREATE's constraint never reaches an upgraded hub). Guarded

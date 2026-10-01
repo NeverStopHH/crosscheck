@@ -20,7 +20,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, lt, ne, sql } from "drizzle-orm";
+import { and, asc, eq, lt, notInArray, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -328,15 +328,105 @@ export interface RecordPilotSessionInput {
 }
 
 /**
- * Which cohort the next row joins, given how many OTHER rows the repo holds,
- * or null once the set is full. Slots 0–49 are discovery, 50–199
- * replication; the boundary is the constant, never a literal.
+ * Which cohort a slot belongs to, or null past the set. Slots 0–49 are
+ * discovery, 50–199 replication; the boundary is the constant, never a
+ * literal.
  */
-const cohortForSlot = (taken: number): PilotCohort | null => {
-  if (taken < PILOT_DISCOVERY_COHORT_SESSIONS) {
+const cohortForSlot = (slot: number): PilotCohort | null => {
+  if (slot < PILOT_DISCOVERY_COHORT_SESSIONS) {
     return "discovery";
   }
-  return taken < PILOT_SESSION_SET_CAP ? "replication" : null;
+  return slot < PILOT_SESSION_SET_CAP ? "replication" : null;
+};
+
+/** What happens to one ending session's row. */
+type Placement =
+  /** It already has a row: a revived session's second end, which updates the residue only. */
+  | { readonly kind: "kept" }
+  | { readonly kind: "slot"; readonly slot: number; readonly cohort: PilotCohort }
+  /** It started before labels became available: outside the set, and counted. */
+  | { readonly kind: "before_labels" }
+  /** Its start position is past the cap: refused, and counted. */
+  | { readonly kind: "refused" }
+  | { readonly kind: "unknown_session" };
+
+type PlacementRow = {
+  readonly kept: boolean;
+  readonly before_labels: boolean;
+  readonly base: number;
+  readonly ahead: number;
+};
+
+/**
+ * A SLOT IS A START POSITION (07 §12, second review, M1 and M4): this
+ * session's place, in `(started_at, id)` order, among the repo's sessions
+ * that started once labels were available. The first pilot counted the rows
+ * already STORED and inserted the next: two sessions ending at once both
+ * took the fiftieth slot (the review measured 52 in discovery), and a short
+ * session that began late took discovery from a long one that began early.
+ *
+ * A start position is a function of immutable data — `started_at` is
+ * stamped by this hub at registration and no `agent_sessions` row is ever
+ * deleted — so concurrent ends compute different slots without a lock, and
+ * `pilot_sessions_repo_slot_idx` (UNIQUE) holds it at the database too.
+ *
+ * `base` CONTINUES A RE-ENROLMENT: slots held by rows of an earlier
+ * enrolment (sessions that started before the current `pilot_labels_since`)
+ * are not handed out again, so a team that leaves and comes back resumes
+ * the set instead of starting a second discovery cohort. `ahead` is bounded
+ * by the cap, so the count never scans more than two hundred rows.
+ */
+const placeSession = async (
+  deps: Deps,
+  input: RecordPilotSessionInput,
+): Promise<Placement> => {
+  const rows = await deps.db.execute<PlacementRow>(sql`
+    SELECT EXISTS (SELECT 1 FROM pilot_sessions ps WHERE ps.session_id = me.id) AS kept,
+           (me.started_at < ts.pilot_labels_since) IS NOT FALSE AS before_labels,
+           (SELECT coalesce(max(ps.slot) + 1, 0) FROM pilot_sessions ps
+              JOIN agent_sessions o ON o.id = ps.session_id
+              WHERE ps.repo = ${input.repo} AND o.started_at < ts.pilot_labels_since)::int AS base,
+           (SELECT count(*) FROM (
+              SELECT 1 FROM agent_sessions s2
+              WHERE s2.repo = ${input.repo}
+                AND s2.started_at >= ts.pilot_labels_since
+                AND (s2.started_at, s2.id) < (me.started_at, me.id)
+              LIMIT ${PILOT_SESSION_SET_CAP}) ahead)::int AS ahead
+    FROM agent_sessions me
+    LEFT JOIN team_settings ts ON ts.repo = ${input.repo}
+    WHERE me.id = ${input.sessionId}`);
+  const row = rows.rows[0];
+  if (row === undefined) {
+    return { kind: "unknown_session" };
+  }
+  if (row.kept) {
+    return { kind: "kept" };
+  }
+  if (row.before_labels) {
+    return { kind: "before_labels" };
+  }
+  const slot = row.base + row.ahead;
+  const cohort = cohortForSlot(slot);
+  return cohort === null ? { kind: "refused" } : { kind: "slot", slot, cohort };
+};
+
+/** One more of a session-set counter, today; UPSERT, so the table stays bounded. */
+const countSessionSet = async (deps: Deps, repo: string, counter: string): Promise<void> => {
+  const now = deps.now();
+  await deps.db
+    .insert(pilotCounters)
+    .values({
+      repo,
+      day: utcDay(now),
+      surface: "pilot-sessions",
+      counter,
+      value: 1,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [pilotCounters.repo, pilotCounters.day, pilotCounters.surface, pilotCounters.counter],
+      set: { value: sql`${pilotCounters.value} + 1`, updatedAt: now },
+    });
 };
 
 /**
@@ -349,22 +439,24 @@ const cohortForSlot = (taken: number): PilotCohort | null => {
  * `coverage` IS A SNAPSHOT AND SAYS SO. 03 §3.2 refuses a coverage TABLE
  * because a stored verdict outlives its evidence — `reaped_at` is revocable,
  * so the same question answered tomorrow can answer differently. This stores
- * five triples anyway, bounded exactly as §9 promises: at most fifty sessions
- * on an enrolled repo, never read by an answer surface, never a fallback for
+ * five triples anyway, bounded as §9 promises: at most two hundred sessions
+ * on an enrolled repo (PILOT_SESSION_SET_CAP, plus the 0.10 rows of an
+ * upgraded hub), never read by an answer surface, never a fallback for
  * `readCoverage`. It is what the hub SAID at this instant, which is the only
  * proof-5 input that cannot be recomputed.
  *
  * THE 201st IS REFUSED AND COUNTED, never dropped silently. A measurement
  * that hit its own cap and said nothing would report the set as though it
  * were the population — non-negotiable 4 applied to this project's own
- * instrumentation.
+ * instrumentation. A session that started BEFORE labels became available
+ * is outside the set for the same honesty, and counted the same way.
  *
- * THE COHORT IS DECIDED BY HOW MANY OTHER ROWS THE REPO HOLDS (07 §12): the
- * first fifty are `discovery`, the next hundred and fifty `replication`. It
- * is written once and never updated — see the conflict clause below — so a
- * revived session keeps the cohort it entered even when a recount would
- * place it later. Otherwise the split between the two cohorts would move
- * with the reaper, and a comparison between them would measure that.
+ * THE COHORT IS THE SLOT'S (`placeSession`): the first fifty sessions to
+ * start are `discovery`, the next hundred and fifty `replication`. It is
+ * written once and never updated — see the conflict clause below — so a
+ * revived session keeps the cohort it entered. Otherwise the split between
+ * the two cohorts would move with the reaper, and a comparison between them
+ * would measure that.
  */
 export const recordPilotSession = async (
   deps: Deps,
@@ -374,45 +466,31 @@ export const recordPilotSession = async (
   if (!settings.pilotEnrolled) {
     return;
   }
-  const now = deps.now();
-  // THIS SESSION IS NOT COUNTED AGAINST ITSELF (corrected by adversarial
-  // review): a revived session that ends again already HOLDS a slot, and
-  // counting that slot made a full set refuse its true second end — booked
-  // as a refusal, with its row left saying `reaped`. Nor is a 0.10 row: it
-  // was never in a cohort (second review, H1).
-  const taken = await deps.db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(pilotSessions)
-    .where(
-      and(
-        eq(pilotSessions.repo, input.repo),
-        ne(pilotSessions.sessionId, input.sessionId),
-        ne(pilotSessions.cohort, PILOT_LEGACY_COHORT),
-      ),
-    );
-  const cohort = cohortForSlot(taken[0]?.n ?? 0);
-  if (cohort === null) {
-    await deps.db
-      .insert(pilotCounters)
-      .values({
-        repo: input.repo,
-        day: utcDay(now),
-        surface: "pilot-sessions",
-        counter: PILOT_SESSIONS_REFUSED,
-        value: 1,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [
-          pilotCounters.repo,
-          pilotCounters.day,
-          pilotCounters.surface,
-          pilotCounters.counter,
-        ],
-        set: { value: sql`${pilotCounters.value} + 1`, updatedAt: now },
-      });
+  const placement = await placeSession(deps, input);
+  if (placement.kind === "unknown_session") {
     return;
   }
+  if (placement.kind === "before_labels") {
+    await countSessionSet(deps, input.repo, PILOT_SESSIONS_BEFORE_LABELS);
+    return;
+  }
+  if (placement.kind === "refused") {
+    await countSessionSet(deps, input.repo, PILOT_SESSIONS_REFUSED);
+    return;
+  }
+  await writeSessionResidue(deps, input, placement);
+};
+
+/**
+ * The row itself: a new one at its slot, or — for a session that already
+ * has one — the residue of its true, second end, slot and cohort untouched.
+ */
+const writeSessionResidue = async (
+  deps: Deps,
+  input: RecordPilotSessionInput,
+  placement: Extract<Placement, { kind: "kept" | "slot" }>,
+): Promise<void> => {
+  const now = deps.now();
   const [coverage, seq] = await Promise.all([
     readCoverage(deps, input.developerId, input.repo),
     readSeqResidue(deps, input.sessionId),
@@ -424,7 +502,10 @@ export const recordPilotSession = async (
       repo: input.repo,
       observedAt: now,
       endReason: input.endReason,
-      cohort,
+      // A "kept" placement only reaches the conflict clause below, which
+      // leaves both columns as they were; the values here are never stored.
+      cohort: placement.kind === "slot" ? placement.cohort : PILOT_LEGACY_COHORT,
+      slot: placement.kind === "slot" ? placement.slot : null,
       // ENUMS ONLY. The record carries no instants and no free text — the
       // reason and the state are words this hub chose, and `gapSince` would
       // be an instant about a session that has ended.
@@ -443,7 +524,7 @@ export const recordPilotSession = async (
     // A REVIVED SESSION CAN END TWICE. `reviveReapedSession` undoes an
     // inferred end when a record arrives from that session, so the same id
     // reaches this function again — and the SECOND end is the true one.
-    // `cohort` IS NOT IN THIS SET: the row keeps the cohort it entered.
+    // `cohort` AND `slot` ARE NOT IN THIS SET: the row keeps what it entered.
     .onConflictDoUpdate({
       target: pilotSessions.sessionId,
       set: {
@@ -659,8 +740,15 @@ export const writePilotMark = async (
 
 const MS_PER_RETENTION_DAY = 86_400_000;
 
-/** The one counter that describes the session set rather than a day's traffic. */
+/** The counters that describe the session set rather than a day's traffic. */
 const PILOT_SESSIONS_REFUSED = "pilot_sessions_refused";
+/**
+ * Sessions that ended on an enrolled repo but started before labels were
+ * available there (second review, M4): outside the set, so the set's size
+ * is smaller than the repo's traffic — and this says by how much.
+ */
+const PILOT_SESSIONS_BEFORE_LABELS = "pilot_sessions_before_labels";
+const SESSION_SET_COUNTERS = [PILOT_SESSIONS_REFUSED, PILOT_SESSIONS_BEFORE_LABELS];
 
 /**
  * THE MEASUREMENT AGES OUT (07 §4) — `pilot_counters` and
@@ -698,10 +786,10 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
     .where(
       and(
         lt(pilotCounters.day, utcDay(cutoff)),
-        // THE REFUSAL COUNT LIVES AS LONG AS THE SET IT DESCRIBES (corrected
+        // THE SET'S COUNTS LIVE AS LONG AS THE SET THEY DESCRIBE (corrected
         // by adversarial review): `pilot_sessions` is never pruned, so aging
-        // this out made a full set read as the whole population again.
-        ne(pilotCounters.counter, PILOT_SESSIONS_REFUSED),
+        // these out made a full set read as the whole population again.
+        notInArray(pilotCounters.counter, SESSION_SET_COUNTERS),
       ),
     );
   await deps.db

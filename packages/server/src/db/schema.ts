@@ -1275,6 +1275,13 @@ export const pilotSessions = pgTable(
      * helpful, and belongs to neither cohort.
      */
     cohort: text("cohort", { enum: PILOT_SESSION_COHORTS }).notNull().default(PILOT_LEGACY_COHORT),
+    /**
+     * THIS SESSION'S START POSITION among the repo's sessions since labels
+     * became available (second review, M1/M4): 0–49 discovery, 50–199
+     * replication. Null on a 0.10 row. Unique per repo, so two sessions
+     * ending at once can never share one.
+     */
+    slot: integer("slot"),
     /** FIVE {source,state,reason} triples, enums only — never free text. */
     coverage: jsonb("coverage").notNull(),
     seqEpoch: text("seq_epoch"),
@@ -1290,6 +1297,7 @@ export const pilotSessions = pgTable(
       table.repo,
       table.observedAt.desc(),
     ),
+    uniqueIndex("pilot_sessions_repo_slot_idx").on(table.repo, table.slot),
     check(
       "pilot_sessions_cohort_check",
       sql`${table.cohort} IN (${sql.raw(PILOT_SESSION_COHORTS.map((cohort) => `'${cohort}'`).join(", "))})`,
