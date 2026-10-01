@@ -2038,8 +2038,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // targets.
     label: "a double-wired post-tool-use captures the same file twice",
     file: `${CORE}/src/flows/capture-targets.ts`,
-    from: "    if (containsSecret(relativePath) || seen.has(relativePath)) {",
-    to: "    if (containsSecret(relativePath)) {",
+    // Loss accounting split the scan from the seen-set (the scan's refusal
+    // is now a counted `secret-path` drop); the seen-set check is its own
+    // statement, and deleting it is the same defect.
+    from: "    if (seen.has(relativePath)) {\n      continue;\n    }\n",
+    to: "",
     test: `${CONNECTOR}/test/double-wiring.test.ts`,
     because:
       "capture stops being exactly-once under double wiring: every edit in " +
@@ -6043,8 +6046,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // cold-start artefact.
     label: "a scoped read rescans every session once per session",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "  return sql`(${inArray(agentSessions.id, touched)} or ${inArray(agentSessions.id, unreported)})`;",
-    to: "  return sql`(exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file' and ${inArray(workContextTargets.value, [...paths])}) or (${gapCondition(agentSessions, cutoff)} and not ${reportedAnyFileTarget(agentSessions.id)}))`;",
+    // Loss accounting added a third, UNCORRELATED membership (the lossy
+    // sessions, loss-accounting §4.5); it stays as it is in `to`, so the
+    // mutation changes the plan of the first two arms and nothing else.
+    from: "  return sql`(${inArray(agentSessions.id, touched)} or ${inArray(agentSessions.id, unreported)} or ${inArray(agentSessions.id, lossy)})`;",
+    to: "  return sql`(exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file' and ${inArray(workContextTargets.value, [...paths])}) or (${gapCondition(agentSessions, cutoff)} and not ${reportedAnyFileTarget(agentSessions.id)}) or ${inArray(agentSessions.id, lossy)})`;",
     test: `${SERVER}/test/coverage-measurement.test.ts`,
     because:
       "measured on a 200-developer corpus the scoped read goes from 10 ms " +
@@ -6399,8 +6405,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // sentence, so the reader converted by hand to compare them.
     label: "an instant is printed with no way to tell how old it is",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "        ages ? agedSince(row.gapSince, now) : null,",
-    to: "        null,",
+    // Loss accounting hoisted the age into one binding both the loss
+    // sentence and the quiet sentence read; nulling it is the same defect.
+    from: "      const age = ages ? agedSince(row.gapSince, now) : null;",
+    to: "      const age = null;",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "fourteen days of briefings after ONE over-fired reap carry the same " +
