@@ -190,6 +190,25 @@ describe("GET /api/pilot-marks/unlabeled", () => {
     });
   });
 
+  test("a pointer at ANOTHER repo's work context is listed without its title", async () => {
+    // Arrange — a delivery's ref is the client's own word, so a client can
+    // point one at any work context on the hub. The report scopes prior-work
+    // titles to the repo for exactly this reason (07 §11.9); the walk must
+    // not be the door that reopens it.
+    const { harness, nick, ken } = await setup();
+    const elsewhere = "cc_44444444-2222-4333-8444-555555555555";
+    await registerTestSession(harness, ken.apiKey, { id: elsewhere, repo: "github.com/acme/secret" });
+    await pointed(harness, "wc_elsewhere", elsewhere, "Another repo's plan");
+    await deliver(harness, { id: "hd_cross", sessionId: MINE, refId: "wc_elsewhere", minutesAgo: 5 });
+
+    // Act
+    const { body } = await askUnlabeled(harness, nick, "&withinMinutes=60");
+
+    // Assert — still offered (it reached Nick), but nothing of the other repo is printed
+    expect(unlabeledOf(body).map((row) => [row.id, row.title])).toEqual([["hd_cross", null]]);
+    expect(JSON.stringify(body)).not.toContain("Another repo's plan");
+  });
+
   test("a delivery the caller already labelled is not offered again", async () => {
     // Arrange — the walk is of what is LEFT; offering a labelled one again
     // would make every run start with "already recorded"

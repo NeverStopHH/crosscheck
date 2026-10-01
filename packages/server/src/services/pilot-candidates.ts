@@ -159,6 +159,9 @@ type UnlabeledRow = {
  *
  * THE TITLE IS A TEAMMATE'S PROSE. It rides here so a person can judge what
  * they were shown; the CLI frames it as quoted data, as the report does.
+ * And it is THIS REPO's, as in the report (07 §11.9): a delivery's ref is the
+ * client's own word, so a pointer at another repo's work context is listed
+ * — it did reach this person — with no title rather than with that repo's.
  */
 export const readUnlabeledInterventions = async (
   deps: Deps,
@@ -175,6 +178,8 @@ export const readUnlabeledInterventions = async (
     FROM hint_deliveries hd
     JOIN agent_sessions s ON s.id = hd.session_id
     LEFT JOIN work_contexts wc ON wc.id = (${POINTED_WORK_CONTEXT})
+      AND EXISTS (SELECT 1 FROM agent_sessions owner
+                  WHERE owner.id = wc.session_id AND owner.repo = ${input.repo})
     WHERE s.repo = ${input.repo}
       AND s.developer_id = ${input.developerId}
       AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
