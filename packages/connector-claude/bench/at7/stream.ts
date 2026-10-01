@@ -77,6 +77,12 @@ export interface RunRecord {
    * (A1.6) even though the stream carried an assistant message.
    */
   readonly realAssistantTurns: number;
+  /**
+   * The `message.model` each non-synthetic assistant turn reported, in order
+   * (A2.3). `init.model` alone does not show a turn re-run on another model
+   * after a safety flag; a turn that reports no model adds nothing here.
+   */
+  readonly realAssistantModels: readonly string[];
   readonly finalResultText: string | null;
   readonly numTurns: number | null;
   readonly durationMs: number | null;
@@ -295,6 +301,7 @@ interface Accumulator {
   firstAssistantText: string | null;
   readonly assistantTexts: string[];
   realAssistantTurns: number;
+  readonly realAssistantModels: string[];
   finalResultText: string | null;
   numTurns: number | null;
   durationMs: number | null;
@@ -366,6 +373,9 @@ const handleAssistant = (
   const synthetic = isSyntheticAssistant(event);
   if (!synthetic) {
     acc.realAssistantTurns += 1;
+    if (event.message.model !== undefined) {
+      acc.realAssistantModels.push(event.message.model);
+    }
   }
   for (const block of event.message.content) {
     const text = TextBlockSchema.safeParse(block);
@@ -432,6 +442,7 @@ export const parseStream = (raw: string): RunRecord => {
     firstAssistantText: null,
     assistantTexts: [],
     realAssistantTurns: 0,
+    realAssistantModels: [],
     finalResultText: null,
     numTurns: null,
     durationMs: null,
@@ -469,6 +480,7 @@ export const parseStream = (raw: string): RunRecord => {
     firstAssistantText: acc.firstAssistantText,
     assistantTexts: acc.assistantTexts,
     realAssistantTurns: acc.realAssistantTurns,
+    realAssistantModels: acc.realAssistantModels,
     finalResultText: acc.finalResultText,
     numTurns: acc.numTurns,
     durationMs: acc.durationMs,

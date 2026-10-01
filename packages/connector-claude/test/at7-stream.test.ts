@@ -261,6 +261,34 @@ describe("parseStream", () => {
     expect(record.isError).toBe(true);
   });
 
+  test("records the model every real assistant turn reports, synthetic ones excluded (A2.3)", () => {
+    // Arrange: a turn re-run on another model after a flag, then an API error
+    const switched = lines([
+      { type: "system", subtype: "init", model: "claude-opus-5-5", mcp_servers: [] },
+      {
+        type: "assistant",
+        message: { model: "claude-opus-5-5", content: [{ type: "text", text: "Reading." }] },
+      },
+      {
+        type: "assistant",
+        message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "Fixed." }] },
+      },
+      {
+        type: "assistant",
+        message: {
+          model: "<synthetic>",
+          content: [{ type: "text", text: "API Error", isApiErrorMessage: true }],
+        },
+      },
+    ]);
+
+    // Act
+    const record = parseStream(switched);
+
+    // Assert
+    expect(record.realAssistantModels).toEqual(["claude-opus-5-5", "claude-sonnet-4-6"]);
+  });
+
   test("real assistant text is collected for the echo scan", () => {
     // Act
     const record = parseStream(SAMPLE);

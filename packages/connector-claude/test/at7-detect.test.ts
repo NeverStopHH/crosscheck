@@ -51,6 +51,7 @@ const emptyRecord = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   firstAssistantText: "Reading the test.",
   assistantTexts: ["Reading the test."],
   realAssistantTurns: 2,
+  realAssistantModels: [MODEL, MODEL],
   finalResultText: "Fixed the bug; suite green.",
   numTurns: 3,
   durationMs: 1000,
@@ -407,6 +408,23 @@ describe("assessValidity — the A1.6 void rules", () => {
       expect(validity({ record })).toContain("messaging-tool-present");
     },
   );
+
+  test("a real assistant turn on another model voids the run although init matched (A2.3)", () => {
+    // Arrange: init says the registered model; turn two was re-run elsewhere
+    const record = emptyRecord({ realAssistantModels: [MODEL, "claude-sonnet-4-6"] });
+
+    // Act
+    const reasons = validity({ record });
+
+    // Assert
+    expect(reasons).toContain("turn-model-mismatch");
+    expect(reasons).not.toContain("model-mismatch");
+  });
+
+  test("every real turn on the registered model is not a turn-model void", () => {
+    // Act / Assert
+    expect(validity()).not.toContain("turn-model-mismatch");
+  });
 
   test("an init tool list without the messaging tools is not voided for them", () => {
     // Act / Assert
