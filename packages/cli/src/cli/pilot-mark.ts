@@ -1,6 +1,8 @@
 /**
  * What `crosscheck noise` and `crosscheck pin --ok` say back (1.0 spec 07
- * §3.2) — the pilot's two human gestures.
+ * §3.2) — two of the pilot's three human gestures. The third, `crosscheck
+ * pilot label` (§12), shows each intervention again and so quotes a title:
+ * its lines are framed, in pilot-label-render.ts, not here.
  *
  * EVERY GESTURE GETS AN ANSWER. "Recorded", "you had already said that",
  * "nothing reached you", "name the one you mean", or the hub's own refusal:
@@ -45,9 +47,12 @@ export const markRecordedLine = (
       ? `already recorded: you had said ${shown}'s check passed — it still counts once, however often it is said\n`
       : `recorded: you ran ${shown}'s check and watched it pass — the pin's notice is now falsifiable in both directions\n`;
   }
+  // A REPEAT NAMES NO WORD: since 07 §12 the first label may have been
+  // `helpful` or `unclear` from `crosscheck pilot label`, and the first one
+  // stands — so "you had marked it noise" could be false.
   return repeated
-    ? `already recorded: you had marked ${shown} off-target — it still counts once, however often it is said\n`
-    : `recorded: ${shown} is off-target. It counts once toward this repo's noise figure, and it names nobody\n`;
+    ? `already recorded: you had labelled ${shown} — a label counts once, and a second one changes nothing\n`
+    : `recorded: ${shown} is noise. It counts once toward this repo's pilot figures, and it names nobody\n`;
 };
 
 /**

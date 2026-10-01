@@ -1,10 +1,13 @@
 /**
  * `crosscheck noise [<id>]` — one word, typed beside a session that got an
- * intervention it did not need (1.0 spec 07 §3.2).
+ * intervention it did not need (1.0 spec 07 §3.2). Since §12 it is the
+ * one-word shortcut for `crosscheck pilot label`'s `n` key: it sends the
+ * label `noise`, which the walk then no longer offers.
  *
  * NO TEXT, NO QUESTION, NO SURVEY (§8.3). The word is the whole message. A
  * measurement that interrupts somebody to ask how the measurement is going
- * has changed the thing it measures, so this never prompts for anything.
+ * has changed the thing it measures, so this never prompts for anything; a
+ * person who wants to say WHY uses the walk, where Shift adds a sentence.
  *
  * WHICH DELIVERY, resolved from as little as possible:
  *   · no id — the caller's own unasked deliveries to the sessions LIVE ON THIS
@@ -59,7 +62,9 @@ export const NOISE_USAGE = [
   "usage: crosscheck noise [<id>]",
   "",
   "  One word, typed beside a session that got an intervention it did not",
-  "  need: records that pointer as off-target for this repo's pilot.",
+  "  need: labels that pointer noise for this repo's pilot — the shortcut",
+  "  for `crosscheck pilot label`'s n key, which also takes helpful and",
+  "  unclear, and a reason.",
   "",
   "  With no id it finds the one that reached a live session of this repo on",
   "  this machine in the last hour, and lists them if there were several.",

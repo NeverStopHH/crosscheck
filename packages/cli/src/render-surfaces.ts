@@ -30,6 +30,22 @@ import {
   nothingRecentLine,
   refNeverReachedLine,
 } from "./cli/pilot-mark.ts";
+import {
+  interventionLine,
+  labelRecordedLine,
+  labelRefusedLine,
+  nothingToLabelLine,
+  reasonSecretLine,
+  reasonTooLongLine,
+  skippedLine,
+  unknownKeyLine,
+  walkHeaderLines,
+  walkSummaryLines,
+  walkUnreachableLine,
+  decisionEchoLine,
+  keyPromptLine,
+  reasonPromptLine,
+} from "./cli/pilot-label-render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
@@ -522,6 +538,59 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         refNeverReachedLine(payload),
         markFailureLine("network", payload),
         markFailureLine("http", payload),
+      ].join("\n");
+    },
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot-label",
+    delivery: "pulled",
+    module: "src/cli/pilot-label-render.ts",
+    // 07 §12, THE ARRAY TAIL. `crosscheck pilot label` shows each
+    // intervention again AFTER the session, so it prints what was shown — a
+    // teammate's work-context title — and is FRAMED, with the notice in the
+    // walk's header. The payload is planted in the title (the exposed slot),
+    // the channel word, the ref id, the delivery time and the hub's refusal
+    // sentence; a title-less candidate and every line the walk can write are
+    // in the document, so no sentence of the walk goes unattacked.
+    framing: "framed",
+    render: (payload) => {
+      const candidate = {
+        id: payload,
+        sessionId: payload,
+        channel: payload,
+        refKind: payload,
+        refId: payload,
+        deliveredAt: payload,
+        title: payload,
+      };
+      const tally = {
+        total: 3,
+        helpful: 1,
+        noise: 1,
+        unclear: 1,
+        skipped: 1,
+        already: 1,
+        refused: 1,
+        notReached: 1,
+      };
+      return [
+        walkHeaderLines(3, true, 1440),
+        interventionLine(candidate, 0, 3, NOW),
+        interventionLine({ ...candidate, title: null }, 1, 3, NOW),
+        keyPromptLine(),
+        decisionEchoLine("noise"),
+        unknownKeyLine(),
+        reasonPromptLine(),
+        reasonTooLongLine(201),
+        reasonSecretLine(),
+        labelRecordedLine("helpful", true, false),
+        labelRecordedLine("noise", false, true),
+        skippedLine(),
+        labelRefusedLine(payload),
+        walkUnreachableLine(payload),
+        nothingToLabelLine(1440),
+        walkSummaryLines(tally, true),
       ].join("\n");
     },
   },

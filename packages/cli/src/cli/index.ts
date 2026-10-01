@@ -43,6 +43,8 @@ import {
   PILOT_USAGE,
   runPilot,
 } from "./pilot.ts";
+import { PILOT_LABEL_SUBCOMMAND, runPilotLabel } from "./pilot-label.ts";
+import type { LabelTerminal } from "./terminal.ts";
 import { REVALIDATE_USAGE, runRevalidate } from "./revalidate.ts";
 import { runStatus } from "./status.ts";
 import { resolveVersion } from "./version.ts";
@@ -72,8 +74,10 @@ const USAGE = [
   "                            they said they were doing",
   "  pilot [--days N] [--json] the five proofs for this repo, each measured",
   "                            or saying why not (per repo, never per person)",
+  "  pilot label               label what reached you unasked, one key each:",
+  "                            helpful, noise or unclear (humans only)",
   "  noise [<id>]              one word: the intervention a session just got",
-  "                            was off-target (no text, no question)",
+  "                            was noise (pilot label's n key, as a command)",
   "  revalidate                ask whether the code under this repo's recorded",
   "                            claims has moved, and record what this clone saw",
   "  presence [off|on]         hide/show your live presence to teammates",
@@ -160,6 +164,12 @@ export interface CliOptions {
    * agent must not be able to vouch for a human (cli/pin.ts).
    */
   readonly isInteractive?: InteractiveProbe;
+  /**
+   * The one conversation this CLI holds — `crosscheck pilot label` reads a
+   * key per intervention (cli/terminal.ts). A parameter for the same reason
+   * as `isInteractive`; omitted, it is this process's own terminal.
+   */
+  readonly terminal?: LabelTerminal;
 }
 
 export const runCli = async (
@@ -238,11 +248,14 @@ export const runCli = async (
     case "suspect":
       return runSuspect(rest, env, cwd);
     // 07 §5. A pull like the two above: one hub read, then the fix diffs run
-    // on this clone, because the hub holds no repository.
+    // on this clone, because the hub holds no repository. 07 §12's label
+    // walk is the one subcommand: a person's verdicts, gated like `noise`.
     case "pilot":
-      return runPilot(rest, env, cwd);
-    // 07 §3.2. The pilot's one human input: typed beside a session, gated on
-    // a person at a terminal exactly as `pin` is.
+      return rest[0] === PILOT_LABEL_SUBCOMMAND
+        ? runPilotLabel(rest.slice(1), env, cwd, options.isInteractive, options.terminal)
+        : runPilot(rest, env, cwd);
+    // 07 §3.2. The one-word shortcut for `pilot label`'s `n` key: typed beside
+    // a session, gated on a person at a terminal exactly as `pin` is.
     case "noise":
       return options.isInteractive === undefined
         ? runNoise(rest, env, cwd)
