@@ -8,11 +8,12 @@
 import type { FC } from "hono/jsx";
 import { MAX_PASSKEY_LABEL_CHARS } from "@crosscheck/schema";
 
+import { PASSKEY_ANNOUNCEMENT_DAYS } from "../../constants.ts";
 import { UI_MAX_LABEL_CHARS } from "../constants.ts";
 import { capped } from "../format.ts";
 import { Layout } from "../layout.tsx";
 import type { ViewerChrome } from "../layout.tsx";
-import type { PasskeyView } from "../../services/passkeys.ts";
+import type { EnrolmentAnnouncement, PasskeyView } from "../../services/passkeys.ts";
 import { CeremonyChrome, NoOriginNotice } from "./ceremony-chrome.tsx";
 
 const stateOf = (passkey: PasskeyView): string => {
@@ -51,11 +52,53 @@ const PasskeyRow: FC<{ readonly passkey: PasskeyView; readonly csrfToken: string
   </li>
 );
 
+const announcedStateOf = (enrolment: EnrolmentAnnouncement): string => {
+  if (enrolment.revoked) {
+    return "revoked";
+  }
+  return enrolment.coolingOff
+    ? `still cooling off — can approve from ${enrolment.usableFrom}; not expected? tell them or the admin before then`
+    : "can approve";
+};
+
+/**
+ * THE HUB'S OWN ANNOUNCEMENT (04a §4.3), on a page the hub serves. `status`
+ * and `doctor` say the same, but they run beside the agent and read a hub URL
+ * the agent can rewrite; this list reaches the person's browser from the hub.
+ */
+const RecentEnrolments: FC<{
+  readonly recent: readonly EnrolmentAnnouncement[];
+  readonly total: number;
+}> = ({ recent, total }) => (
+  <div class="card">
+    <h2>Enrolled on this hub in the last {String(PASSKEY_ANNOUNCEMENT_DAYS)} days</h2>
+    {recent.length === 0 ? (
+      <p>No passkey was enrolled on this hub in that time.</p>
+    ) : (
+      <ul class="artifacts">
+        {recent.map((enrolment) => (
+          <li class="artifact">
+            <span class="label">{capped(enrolment.developerName, UI_MAX_LABEL_CHARS)}</span>{" "}
+            <span class="meta">
+              {capped(enrolment.label, UI_MAX_LABEL_CHARS)} · {enrolment.authenticator} · enrolled{" "}
+              {enrolment.createdAt}
+            </span>{" "}
+            <span class="label">{announcedStateOf(enrolment)}</span>
+          </li>
+        ))}
+      </ul>
+    )}
+    {total > recent.length ? <p>And {String(total - recent.length)} more not listed here.</p> : null}
+  </div>
+);
+
 interface PasskeysPageProps {
   readonly viewer: ViewerChrome;
   readonly passkeys: readonly PasskeyView[];
   readonly hasOrigin: boolean;
   readonly canAuthoriseAnother: boolean;
+  readonly recent: readonly EnrolmentAnnouncement[];
+  readonly recentTotal: number;
 }
 
 export const PasskeysPage: FC<PasskeysPageProps> = ({
@@ -63,6 +106,8 @@ export const PasskeysPage: FC<PasskeysPageProps> = ({
   passkeys,
   hasOrigin,
   canAuthoriseAnother,
+  recent,
+  recentTotal,
 }) => (
   <Layout title="Passkeys" viewer={viewer}>
     <h1>Passkeys</h1>
@@ -113,5 +158,6 @@ export const PasskeysPage: FC<PasskeysPageProps> = ({
         <CeremonyChrome csrfToken={viewer.csrfToken} />
       </>
     )}
+    <RecentEnrolments recent={recent} total={recentTotal} />
   </Layout>
 );

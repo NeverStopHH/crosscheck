@@ -12,7 +12,7 @@
  */
 import { Hono } from "hono";
 
-import { PASSKEY_ANNOUNCEMENT_DAYS } from "../constants.ts";
+import { MS_PER_DAY, PASSKEY_ANNOUNCEMENT_DAYS } from "../constants.ts";
 import { ok } from "../http/envelope.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import {
@@ -21,8 +21,6 @@ import {
   listRecentEnrolments,
 } from "../services/passkeys.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
-
-const MS_PER_DAY = 86_400_000;
 
 export const passkeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();

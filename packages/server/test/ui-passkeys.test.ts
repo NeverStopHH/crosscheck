@@ -403,6 +403,22 @@ describe("the pages themselves", () => {
     expect(html).toContain(`pin ${PIN}`);
   });
 
+  test("every member's passkey page announces the hub's recent enrolments, cooling off included", async () => {
+    // Arrange — the hub serves this page itself, so the announcement does not
+    // depend on a CLI running in the same environment as the agent.
+    const { harness, nick, ken } = await setup();
+    await enrolViaUi(harness, await viewerOf(harness, ken), createSoftCredential());
+    const cookie = await loginUi(harness, nick.apiKey);
+
+    // Act
+    const html = await (await uiGet(harness, "/ui/passkeys", cookie)).text();
+
+    // Assert
+    expect(html).toContain("Enrolled on this hub in the last");
+    expect(html).toContain("Ken");
+    expect(html).toContain("still cooling off");
+  });
+
   test("its owner revokes a cooling-off passkey with the plain form", async () => {
     // Arrange
     const { harness, nick } = await setup();

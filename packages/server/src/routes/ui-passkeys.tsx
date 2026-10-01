@@ -17,7 +17,14 @@
  */
 import { Hono } from "hono";
 
-import { listPasskeys, revokePasskey, usableCredentials } from "../services/passkeys.ts";
+import { MS_PER_DAY, PASSKEY_ANNOUNCEMENT_DAYS } from "../constants.ts";
+import {
+  countRecentEnrolments,
+  listPasskeys,
+  listRecentEnrolments,
+  revokePasskey,
+  usableCredentials,
+} from "../services/passkeys.ts";
 import { listRequests } from "../services/waiver-requests.ts";
 import { listOpenFences } from "../services/waivers.ts";
 import { createWebAuthn } from "../services/webauthn.ts";
@@ -55,9 +62,12 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
     c.header("Content-Security-Policy", UI_PASSKEY_CSP);
     const developerId = c.get("developer").id;
     const now = deps.now();
-    const [passkeys, usable] = await Promise.all([
+    const since = new Date(now.getTime() - PASSKEY_ANNOUNCEMENT_DAYS * MS_PER_DAY);
+    const [passkeys, usable, recent, counted] = await Promise.all([
       listPasskeys({ db: deps.db, developerId, now }),
       usableCredentials({ db: deps.db, developerId, now }),
+      listRecentEnrolments({ db: deps.db, since, now }),
+      countRecentEnrolments({ db: deps.db, since, now }),
     ]);
     return c.html(
       <PasskeysPage
@@ -65,6 +75,8 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
         passkeys={passkeys}
         hasOrigin={hasOrigin}
         canAuthoriseAnother={usable.length > 0}
+        recent={recent}
+        recentTotal={counted.total}
       />,
     );
   });
