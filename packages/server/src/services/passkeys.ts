@@ -21,7 +21,7 @@
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-import { and, desc, eq, gt, gte, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, gt, gte, isNull, lte, sql } from "drizzle-orm";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 import type { EnrolmentSource, PasskeyRevoker } from "@crosscheck/schema";
 
@@ -51,6 +51,11 @@ const ZERO_AAGUID = "00000000-0000-0000-0000-000000000000";
  * From the community list github.com/passkeydeveloper/passkey-authenticator-aaguids.
  * A wrong or missing entry changes a word in an announcement and nothing
  * else: no decision anywhere reads this map.
+ *
+ * SHOWN AS A CLAIM. With attestation "none" the AAGUID is whatever the
+ * authenticator says, and a software key can say iCloud Keychain's — so an
+ * announcement that read "(iCloud Keychain)" would vouch for the one thing
+ * the hub cannot check.
  */
 const AUTHENTICATOR_NAMES: ReadonlyMap<string, string> = new Map([
   ["fbfc3007-154e-4ecc-8c0b-6e020557d7bd", "iCloud Keychain"],
@@ -67,7 +72,8 @@ export const authenticatorName = (aaguid: string): string => {
   if (aaguid === ZERO_AAGUID) {
     return "unknown authenticator";
   }
-  return AUTHENTICATOR_NAMES.get(aaguid) ?? `unrecognised authenticator ${aaguid}`;
+  const name = AUTHENTICATOR_NAMES.get(aaguid);
+  return name === undefined ? `unrecognised authenticator ${aaguid}` : `says it is ${name}, unverified`;
 };
 
 const toBase32 = (bytes: Uint8Array): string => {
@@ -242,7 +248,11 @@ export const enrolledCredentials = async (input: {
   return rows.map(storedOf);
 };
 
-/** The counter a verified assertion reported, so a later lower one reads as a clone. */
+/**
+ * The counter a verified assertion reported, so a later lower one reads as a
+ * clone. Only ever RAISED: two verifies that finish out of order must not
+ * store the smaller count, which would let a cloned key's next one pass.
+ */
 export const recordSignCount = async (input: {
   readonly db: DbExecutor;
   readonly credentialId: string;
@@ -250,7 +260,7 @@ export const recordSignCount = async (input: {
 }): Promise<void> => {
   await input.db
     .update(passkeys)
-    .set({ signCount: input.counter })
+    .set({ signCount: sql`GREATEST(${passkeys.signCount}, ${input.counter})` })
     .where(eq(passkeys.credentialId, input.credentialId));
 };
 

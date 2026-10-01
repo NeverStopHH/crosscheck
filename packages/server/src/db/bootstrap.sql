@@ -1248,20 +1248,22 @@ CREATE TABLE IF NOT EXISTS passkeys (
   developer_id text NOT NULL REFERENCES developers(id),
   credential_id text NOT NULL,
   public_key text NOT NULL,
-  sign_count bigint NOT NULL,
+  sign_count bigint NOT NULL CONSTRAINT passkeys_sign_count_check CHECK (sign_count >= 0),
   transports jsonb NOT NULL,
   rp_id text NOT NULL,
   aaguid text NOT NULL,
   backed_up boolean NOT NULL,
   -- keep in sync with MAX_PASSKEY_LABEL_CHARS in @crosscheck/schema
   label text NOT NULL CONSTRAINT passkeys_label_length_check CHECK (char_length(label) <= 60),
-  enrolled_via text NOT NULL,
+  -- keep in sync with ENROLMENT_SOURCES and PASSKEY_REVOKERS in @crosscheck/schema
+  enrolled_via text NOT NULL CONSTRAINT passkeys_enrolled_via_check CHECK (enrolled_via IN ('admin', 'passkey')),
   created_at timestamptz NOT NULL,
   -- created_at plus the cool-off, stored so a later constant change cannot
   -- shorten the wait of a passkey enrolled under the old one.
   usable_from timestamptz NOT NULL CONSTRAINT passkeys_cooloff_check CHECK (usable_from >= created_at),
   revoked_at timestamptz,
-  revoked_by_kind text,
+  revoked_by_kind text CONSTRAINT passkeys_revoked_by_kind_check
+    CHECK (revoked_by_kind IS NULL OR revoked_by_kind IN ('owner', 'admin', 'passkey')),
   revoked_by text,
   CONSTRAINT passkeys_revocation_shape_check
     CHECK ((revoked_at IS NULL AND revoked_by_kind IS NULL)

@@ -16,6 +16,7 @@ import {
   isEnrolmentCodeValid,
   listRecentEnrolments,
   mintEnrolmentCode,
+  recordSignCount,
   revokePasskey,
   usableCredentials,
 } from "../src/services/passkeys.ts";
@@ -332,11 +333,59 @@ describe("PK-10: every enrolment is announced, cool-off included", () => {
     );
   });
 
-  test("a known AAGUID is named, an unknown one says so", () => {
-    expect(authenticatorName(ICLOUD_KEYCHAIN_AAGUID)).toBe("iCloud Keychain");
+  test("a known AAGUID is named as a claim, an unknown one says so", () => {
+    // The AAGUID is whatever the authenticator reports; a software key can
+    // report iCloud Keychain's, so the name is never shown as a fact.
+    expect(authenticatorName(ICLOUD_KEYCHAIN_AAGUID)).toBe("says it is iCloud Keychain, unverified");
     expect(authenticatorName(ZERO_AAGUID)).toBe("unknown authenticator");
     expect(authenticatorName("12345678-1234-1234-1234-123456789abc")).toBe(
       "unrecognised authenticator 12345678-1234-1234-1234-123456789abc",
     );
+  });
+});
+
+describe("the passkey record keeps its own shape", () => {
+  test("a lower signature counter never overwrites a higher one", async () => {
+    // Arrange — two verifies finishing out of order report 5, then 3; the
+    // stored 3 would let a cloned key's next 4 pass as fresh.
+    const { harness, nick } = await setup();
+    await enrolled(harness, nick, "cred_counter");
+
+    // Act
+    await recordSignCount({ db: harness.db, credentialId: "cred_counter", counter: 5 });
+    await recordSignCount({ db: harness.db, credentialId: "cred_counter", counter: 3 });
+
+    // Assert
+    const [row] = await harness.db.select().from(passkeys);
+    expect(row?.signCount).toBe(5);
+  });
+
+  test("an enrolment source, revoker or counter the code does not know is refused by the database", async () => {
+    // Arrange
+    const { harness, nick } = await setup();
+    const row = {
+      developerId: nick,
+      publicKey: "k",
+      signCount: 0,
+      transports: [],
+      rpId: "localhost",
+      aaguid: ZERO_AAGUID,
+      backedUp: false,
+      label: "x",
+      enrolledVia: "admin" as const,
+      createdAt: NOW,
+      usableFrom: new Date(NOW.getTime() + HOUR),
+    };
+    const insert = async (id: string, over: Record<string, unknown>): Promise<void> => {
+      const values = { ...row, id, credentialId: id, ...over } as typeof row & { id: string; credentialId: string };
+      await harness.db.insert(passkeys).values(values);
+    };
+
+    // Act & Assert
+    await expect(insert("pk_a", { enrolledVia: "anything" })).rejects.toThrow();
+    await expect(insert("pk_b", { revokedAt: NOW, revokedByKind: "nobody" })).rejects.toThrow();
+    await expect(insert("pk_c", { signCount: -1 })).rejects.toThrow();
+    await insert("pk_ok", {});
+    expect(await harness.db.select().from(passkeys)).toHaveLength(1);
   });
 });

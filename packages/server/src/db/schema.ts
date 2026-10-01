@@ -1389,6 +1389,15 @@ export const passkeys = pgTable(
       sql`(${table.revokedAt} IS NULL AND ${table.revokedByKind} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByKind} IS NOT NULL)`,
     ),
     check("passkeys_cooloff_check", sql`${table.usableFrom} >= ${table.createdAt}`),
+    check(
+      "passkeys_enrolled_via_check",
+      sql`${table.enrolledVia} IN (${sql.raw(ENROLMENT_SOURCES.map((value) => `'${value}'`).join(", "))})`,
+    ),
+    check(
+      "passkeys_revoked_by_kind_check",
+      sql`${table.revokedByKind} IS NULL OR ${table.revokedByKind} IN (${sql.raw(PASSKEY_REVOKERS.map((value) => `'${value}'`).join(", "))})`,
+    ),
+    check("passkeys_sign_count_check", sql`${table.signCount} >= 0`),
   ],
 );
 
