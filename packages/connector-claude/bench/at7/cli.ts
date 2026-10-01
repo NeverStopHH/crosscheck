@@ -20,9 +20,11 @@
  * not secrets.
  */
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { buildManifest } from "./manifest-doc.ts";
+import { checkShellProfiles, profilePaths } from "./profile.ts";
 import { detectCriteria, assessValidity } from "./detect.ts";
 import { renderedAsksLine } from "./delivery.ts";
 import { mcpServerNames } from "./stream.ts";
@@ -426,23 +428,33 @@ const main = async (): Promise<void> => {
     CROSSCHECK_HOME: "<per-run temp dir>",
     CROSSCHECK_TRIPWIRE: RUN_TRIPWIRE_MODE,
   });
+  // A2.2 residue: the Bash tool sources the user's shell profile, which the
+  // env allowlist does not bound. Refuse to measure on a machine whose profile
+  // sets a CROSSCHECK_/CLAUDE_/ANTHROPIC_ name; the check rides in the manifest.
+  const shellProfileCheck = await checkShellProfiles(
+    profilePaths(homedir(), process.env["ZDOTDIR"]),
+  );
+  if (!shellProfileCheck.clean) {
+    const flagged = shellProfileCheck.files
+      .filter((file) => file.present && (!file.readable || file.watched.length > 0))
+      .map((file) => `${file.path}${file.readable ? `: ${file.watched.join(", ")}` : " (unreadable)"}`);
+    process.stdout.write(
+      `refusing: a shell profile sets a CROSSCHECK_/CLAUDE_/ANTHROPIC_ variable or cannot be read (A2.2):\n  ${flagged.join("\n  ")}\n`,
+    );
+    process.exitCode = 2;
+    return;
+  }
   if (!args.resume) {
     const provenance = await harnessProvenance();
-    await writeFile(
-      manifestFile,
-      `${JSON.stringify(
-        {
-          mode,
-          model: RUN_MODEL,
-          ...provenance,
-          env: runEnv,
-          order,
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
+    const manifest = buildManifest({
+      mode,
+      order,
+      ...provenance,
+      env: runEnv,
+      shellProfileCheck,
+      createdAt: new Date().toISOString(),
+    });
+    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   }
 
   // Resume: completed winners are kept, their void attempts replayed into the
