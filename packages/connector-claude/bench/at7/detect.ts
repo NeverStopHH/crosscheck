@@ -300,6 +300,26 @@ export interface ValidityInput {
   readonly hubRequestCount: number;
 }
 
+/**
+ * The one plugin a run may carry (A3): shipped inside Claude Code 2.1.286 and
+ * loaded even when `enabledPlugins` sets it false, so every session of this
+ * version has it, in both arms. Matched by its full source, so a same-named
+ * plugin from a marketplace is still foreign. Every other plugin voids.
+ */
+export const NON_DISABLEABLE_PLUGIN_SOURCES: readonly string[] = ["cc-plugin-sec-default@builtin"];
+
+const hasForeignPlugin = (init: NonNullable<RunRecord["init"]>): boolean => {
+  if (init.pluginCount === 0) {
+    return false;
+  }
+  const sources = init.pluginSources;
+  // Fail closed: sources missing or not one per entry means some entry is unknown.
+  if (sources === undefined || sources.length !== init.pluginCount) {
+    return true;
+  }
+  return sources.some((source) => !NON_DISABLEABLE_PLUGIN_SOURCES.includes(source));
+};
+
 const hasForeignServerOrPlugin = (record: RunRecord): boolean => {
   const init = record.init;
   if (init === null) {
@@ -308,7 +328,7 @@ const hasForeignServerOrPlugin = (record: RunRecord): boolean => {
   const foreignServer = init.mcpServers.some(
     (server) => server.name !== CROSSCHECK_SERVER_NAME,
   );
-  return foreignServer || init.pluginCount > 0;
+  return foreignServer || hasForeignPlugin(init);
 };
 
 const crosscheckUsable = (record: RunRecord): boolean => {

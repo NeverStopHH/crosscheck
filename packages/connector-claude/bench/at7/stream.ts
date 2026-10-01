@@ -55,6 +55,13 @@ export interface InitInfo {
    * check (A1.6 / §7) counts ANY plugin, so a nameless entry must not vanish.
    */
   readonly pluginCount: number;
+  /**
+   * Each plugin entry's `source` as init gives it (`<name>@builtin` for the
+   * ones shipped inside Claude Code), "" where an entry carries none. Absent
+   * when the record was built without it; the isolation check then admits no
+   * plugin at all (A3).
+   */
+  readonly pluginSources?: readonly string[];
 }
 
 export interface ToolUse {
@@ -170,6 +177,15 @@ const pluginName = (entry: unknown): string => {
   return "";
 };
 
+/** A plugin entry's `source`, or "" — a bare name or a source-less object is no admitted source. */
+const pluginSource = (entry: unknown): string => {
+  if (typeof entry === "object" && entry !== null && "source" in entry) {
+    const source = (entry as Record<string, unknown>)["source"];
+    return typeof source === "string" ? source : "";
+  }
+  return "";
+};
+
 const initFrom = (event: z.infer<typeof InitEventSchema>): InitInfo => ({
   model: event.model ?? null,
   mcpServers:
@@ -183,6 +199,7 @@ const initFrom = (event: z.infer<typeof InitEventSchema>): InitInfo => ({
   // The RAW length, not the named count: a nameless plugin still breaks
   // isolation and must be visible to the void rule.
   pluginCount: event.plugins === undefined ? 0 : event.plugins.length,
+  pluginSources: event.plugins === undefined ? [] : event.plugins.map(pluginSource),
 });
 
 const stringField = (input: unknown, key: string): string | null => {

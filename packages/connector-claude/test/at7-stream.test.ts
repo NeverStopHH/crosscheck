@@ -362,6 +362,30 @@ describe("parseStream", () => {
     expect(record.init?.pluginCount).toBe(1);
   });
 
+  test("A3: each plugin's source is read as init gives it, and a missing one as empty", () => {
+    // Arrange — 2.1.286's shape: { name, path: "builtin", source: "<name>@builtin" }.
+    const withPlugins = lines([
+      {
+        type: "system",
+        subtype: "init",
+        model: "claude-opus-5-5",
+        mcp_servers: [],
+        plugins: [
+          { name: "cc-plugin-sec-default", path: "builtin", source: "cc-plugin-sec-default@builtin" },
+          { name: "mine" },
+          "bare-name",
+        ],
+      },
+    ]);
+
+    // Act
+    const record = parseStream(withPlugins);
+
+    // Assert
+    expect(record.init?.pluginSources).toEqual(["cc-plugin-sec-default@builtin", "", ""]);
+    expect(record.init?.pluginCount).toBe(3);
+  });
+
   test("an empty stream yields a record with no init and no turns", () => {
     // Act
     const record = parseStream("");

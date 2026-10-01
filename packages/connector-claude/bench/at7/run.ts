@@ -115,9 +115,23 @@ export const MESSAGING_TOOLS: readonly string[] = MESSAGING_TOOL_NAMES;
  *     (settings-reference). The run passes no `--add-dir`, so the only
  *     working directory is the fixture root. Requires Claude Code 2.1.257+.
  */
+/**
+ * The built-in plugins a run turns off (A3). Claude Code 2.1.286 loads four
+ * plugins from inside itself even under `--setting-sources project`; a probe
+ * found these three obey `enabledPlugins: false`, and the fourth
+ * (cc-plugin-sec-default) loads regardless — detect.ts admits exactly that
+ * one. §3's isolation names only the fixture's and Crosscheck's instructions.
+ */
+export const DISABLED_BUILTIN_PLUGINS: readonly string[] = [
+  "cc-plugin-agents-md@builtin",
+  "cc-plugin-telemetry@builtin",
+  "cc-plugin-plugin-authoring@builtin",
+];
+
 export const RUN_SETTINGS = {
   crossSessionInbound: "refuse",
   permissions: { blockReadsOutsideWorkingDirectories: true },
+  enabledPlugins: Object.fromEntries(DISABLED_BUILTIN_PLUGINS.map((plugin) => [plugin, false])),
 } as const;
 
 export interface CanaryListener {

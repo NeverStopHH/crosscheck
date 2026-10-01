@@ -12848,6 +12848,22 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CONNECTOR}/test/at7-fixture.test.ts`,
     because: "A2.4: package.json is the first file the agent reads, and its name differed from an ordinary repo",
   },
+  {
+    label: "the AT-7 isolation check admits any built-in plugin",
+    file: `${CONNECTOR}/bench/at7/detect.ts`,
+    from: "  return sources.some((source) => !NON_DISABLEABLE_PLUGIN_SOURCES.includes(source));",
+    to: '  return sources.some((source) => !source.endsWith("@builtin"));',
+    test: `${CONNECTOR}/test/at7-detect.test.ts`,
+    because: "A3: a disableable built-in plugin's instructions and tools enter a counted run that §3 says carries only the fixture's and Crosscheck's",
+  },
+  {
+    label: "an AT-7 run leaves the disableable built-in plugins on",
+    file: `${CONNECTOR}/bench/at7/run.ts`,
+    from: "  enabledPlugins: Object.fromEntries(DISABLED_BUILTIN_PLUGINS.map((plugin) => [plugin, false])),\n",
+    to: "",
+    test: `${CONNECTOR}/test/at7-run.test.ts`,
+    because: "A3: every run is void as foreign-mcp-or-plugin and the measurement produces no result",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12943,7 +12959,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-attempt.test.ts 5
- * PRINTS: packages/connector-claude/test/at7-detect.test.ts 9
+ * PRINTS: packages/connector-claude/test/at7-detect.test.ts 10
  * PRINTS: packages/connector-claude/test/at7-driver.test.ts 3
  * PRINTS: packages/connector-claude/test/at7-env.test.ts 1
  * PRINTS: packages/connector-claude/test/at7-exec.test.ts 1
@@ -12951,7 +12967,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-manifest-doc.test.ts 2
  * PRINTS: packages/connector-claude/test/at7-profile.test.ts 2
  * PRINTS: packages/connector-claude/test/at7-report.test.ts 2
- * PRINTS: packages/connector-claude/test/at7-run.test.ts 4
+ * PRINTS: packages/connector-claude/test/at7-run.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-stats.test.ts 1
  * PRINTS: packages/connector-claude/test/at7-stream.test.ts 1
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1

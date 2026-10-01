@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1023
+    # PRINTS: 1025
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -153,7 +153,7 @@ jobs:
     # PRINTS: packages/connector-acp/src/report.ts 1
     # PRINTS: packages/connector-acp/src/wire/v1.ts 2
     # PRINTS: packages/connector-claude/bench/at7/attempt.ts 5
-    # PRINTS: packages/connector-claude/bench/at7/detect.ts 9
+    # PRINTS: packages/connector-claude/bench/at7/detect.ts 10
     # PRINTS: packages/connector-claude/bench/at7/driver.ts 1
     # PRINTS: packages/connector-claude/bench/at7/exec.ts 1
     # PRINTS: packages/connector-claude/bench/at7/fixture.ts 1
@@ -161,7 +161,7 @@ jobs:
     # PRINTS: packages/connector-claude/bench/at7/manifest-doc.ts 2
     # PRINTS: packages/connector-claude/bench/at7/profile.ts 2
     # PRINTS: packages/connector-claude/bench/at7/report.ts 2
-    # PRINTS: packages/connector-claude/bench/at7/run.ts 4
+    # PRINTS: packages/connector-claude/bench/at7/run.ts 5
     # PRINTS: packages/connector-claude/bench/at7/stats.ts 1
     # PRINTS: packages/connector-claude/bench/at7/stream.ts 1
     # PRINTS: packages/connector-claude/bench/at7/sweep.ts 2
@@ -395,7 +395,7 @@ jobs:
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
     # PRINTS: derive.ts 2
-    # PRINTS: detect.ts 9
+    # PRINTS: detect.ts 10
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
@@ -498,7 +498,7 @@ jobs:
     # PRINTS: retention.ts 24
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 1
-    # PRINTS: run.ts 4
+    # PRINTS: run.ts 5
     # PRINTS: runner.ts 7
     # PRINTS: sanitize.ts 10
     # PRINTS: search-related-work.ts 1

@@ -363,6 +363,69 @@ describe("assessValidity — the A1.6 void rules", () => {
     expect(validity({ record })).toContain("foreign-mcp-or-plugin");
   });
 
+  test("A3: the one built-in plugin Claude Code will not disable does not void the run", () => {
+    // Arrange — 2.1.286 loads cc-plugin-sec-default@builtin even when
+    // enabledPlugins sets it false; every run carries it, in both arms.
+    const record = emptyRecord({
+      init: {
+        model: MODEL,
+        mcpServers: [crosscheckServer],
+        tools: ["mcp__crosscheck__publish_claim"],
+        slashCommands: [],
+        plugins: ["cc-plugin-sec-default"],
+        pluginCount: 1,
+        pluginSources: ["cc-plugin-sec-default@builtin"],
+      },
+    });
+
+    // Act / Assert
+    expect(validity({ record })).not.toContain("foreign-mcp-or-plugin");
+  });
+
+  test("A3: any other plugin voids the run, built-in or same-named from elsewhere", () => {
+    // Arrange
+    const withSources = (sources: readonly string[]) =>
+      emptyRecord({
+        init: {
+          model: MODEL,
+          mcpServers: [crosscheckServer],
+          tools: ["mcp__crosscheck__publish_claim"],
+          slashCommands: [],
+          plugins: sources.map((source) => source.split("@")[0] ?? ""),
+          pluginCount: sources.length,
+          pluginSources: sources,
+        },
+      });
+
+    // Act / Assert
+    expect(validity({ record: withSources(["cc-plugin-agents-md@builtin"]) })).toContain(
+      "foreign-mcp-or-plugin",
+    );
+    expect(validity({ record: withSources(["cc-plugin-sec-default@some-marketplace"]) })).toContain(
+      "foreign-mcp-or-plugin",
+    );
+    expect(
+      validity({ record: withSources(["cc-plugin-sec-default@builtin", "my-plugin@local"]) }),
+    ).toContain("foreign-mcp-or-plugin");
+  });
+
+  test("A3: a plugin whose source the stream did not give voids the run", () => {
+    // Arrange — no sources recorded at all: unknown is not the admitted one.
+    const record = emptyRecord({
+      init: {
+        model: MODEL,
+        mcpServers: [crosscheckServer],
+        tools: ["mcp__crosscheck__publish_claim"],
+        slashCommands: [],
+        plugins: ["cc-plugin-sec-default"],
+        pluginCount: 1,
+      },
+    });
+
+    // Act / Assert
+    expect(validity({ record })).toContain("foreign-mcp-or-plugin");
+  });
+
   test("the Crosscheck server not connected voids the run", () => {
     // Arrange
     const record = emptyRecord({

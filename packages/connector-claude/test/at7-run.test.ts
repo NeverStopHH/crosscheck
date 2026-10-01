@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { allowedTools, claudeArgs, MESSAGING_TOOLS, RUN_SETTINGS } from "../bench/at7/run.ts";
+import {
+  allowedTools,
+  claudeArgs,
+  DISABLED_BUILTIN_PLUGINS,
+  MESSAGING_TOOLS,
+  RUN_SETTINGS,
+} from "../bench/at7/run.ts";
 
 /**
  * H4: the file tools are scoped to the fixture root with Claude Code's absolute
@@ -86,6 +92,22 @@ describe("claudeArgs — no other Claude Code session is reachable (A2.1)", () =
     // Assert
     expect(settings["crossSessionInbound"]).toBe("refuse");
     expect(RUN_SETTINGS.crossSessionInbound).toBe("refuse");
+  });
+
+  test("A3: every built-in plugin Claude Code lets a run disable is disabled", () => {
+    // Act
+    const settings = runSettings(argv);
+    const enabled = settings["enabledPlugins"] as Record<string, unknown> | undefined;
+
+    // Assert
+    expect(DISABLED_BUILTIN_PLUGINS).toEqual([
+      "cc-plugin-agents-md@builtin",
+      "cc-plugin-telemetry@builtin",
+      "cc-plugin-plugin-authoring@builtin",
+    ]);
+    for (const plugin of DISABLED_BUILTIN_PLUGINS) {
+      expect(enabled?.[plugin]).toBe(false);
+    }
   });
 
   test("the messaging tools are not also allowed", () => {
