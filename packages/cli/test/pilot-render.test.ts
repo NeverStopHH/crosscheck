@@ -377,8 +377,41 @@ describe("renderPilot", () => {
     // Assert
     expect(out).toContain("benefit 0.3 helpful per 100 sessions · burden 200.0 interventions per 100 sessions");
     expect(out).toContain(
-      "precision 29% (4 helpful of 14 verdicts; target 50%, declared before measuring) · label coverage 1% (17 of 2,416 interventions labelled) · unclear 3 (abstained, not in the denominator)",
+      "precision 29% (4 helpful of 14 verdicts; below the 50% target, declared before measuring) · label coverage 1% (17 of 2,416 interventions labelled) · unclear 3 (abstained, not in the denominator)",
     );
+  });
+
+  test("M3: just below the target never prints as meeting it", () => {
+    // Arrange — the second review: 50 helpful of 101 (49.5%) printed
+    // "precision 50% … target 50%", a pass that did not happen
+    const base = report();
+    const out = renderPilot(
+      view({
+        precision: {
+          ...base.precision,
+          helpful: 50,
+          noise: 51,
+          precision: { kind: "measured", value: 50 / 101 },
+        },
+      }),
+    );
+
+    // Assert — the side is the raw value's, and the digits show it
+    expect(out).toContain("precision 49.5% (50 helpful of 101 verdicts; below the 50% target");
+    expect(out).not.toContain("precision 50%");
+  });
+
+  test("exactly at the target says so", () => {
+    // Arrange
+    const base = report();
+    const out = renderPilot(
+      view({
+        precision: { ...base.precision, helpful: 7, noise: 7, precision: { kind: "measured", value: 0.5 } },
+      }),
+    );
+
+    // Assert
+    expect(out).toContain("precision 50% (7 helpful of 14 verdicts; at or above the 50% target");
   });
 
   test("a precision with no verdict prints its reason, never 0%", () => {

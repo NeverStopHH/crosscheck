@@ -230,11 +230,29 @@ const perHundred = (label: string, value: PilotFigure, unit: string): string =>
  * `unclear` abstained from the denominator and is printed beside it, so it
  * can be neither hidden nor scored.
  */
+/**
+ * THE SIDE OF THE TARGET IS THE RAW VALUE'S (second review, M3). A whole
+ * percent printed 49.5% as "50%" beside a 50% target — a pass that did not
+ * happen. The word comes from the unrounded value, and where rounding would
+ * make the two figures read alike while they differ, one decimal is shown.
+ */
+const precisionAgainstTarget = (value: number, target: number, verdicts: string): string => {
+  const rounded = Math.round(value * PERCENT);
+  const hidden = rounded === Math.round(target * PERCENT) && value !== target;
+  const shown = hidden ? `${(value * PERCENT).toFixed(RATE_DECIMALS)}%` : `${String(rounded)}%`;
+  const side = value >= target ? "at or above" : "below";
+  return `precision ${shown} (${verdicts}; ${side} the ${String(Math.round(target * PERCENT))}% target, declared before measuring)`;
+};
+
 const labelledLines = (proof: PilotReport["precision"]): readonly string[] => {
   const verdicts = proof.helpful + proof.noise;
   const precision =
     proof.precision.kind === "measured"
-      ? `precision ${percent(proof.precision)} (${count(proof.helpful)} helpful of ${count(verdicts)} verdicts; target ${percent({ kind: "measured", value: proof.precisionTarget })}, declared before measuring)`
+      ? precisionAgainstTarget(
+          proof.precision.value,
+          proof.precisionTarget,
+          `${count(proof.helpful)} helpful of ${count(verdicts)} verdicts`,
+        )
       : `precision ${percent(proof.precision)}`;
   const coverage =
     proof.labelCoverage.kind === "measured"
