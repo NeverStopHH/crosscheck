@@ -28,6 +28,7 @@
  */
 import { formatAge, QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import { quoted, quotedBody, safeId } from "@crosscheck/connector-core/mcp/render.ts";
 import {
   MAX_PIN_CHECK_CHARS,
@@ -64,6 +65,17 @@ const untilOf = (iso: string, now: Date): string => {
   return Number.isNaN(ms)
     ? "an unreadable time"
     : `in ${formatAge(Math.max(0, ms - now.getTime()))}`;
+};
+
+/**
+ * A HUB-SENT INSTANT, PRINTED AS THIS PROCESS WRITES IT. The wire schema keeps
+ * a waiver whose expiry it cannot read (dropping it would show an open fence
+ * as closed), so the string can be anything; re-serialising it means the hub
+ * never chooses the characters on the line.
+ */
+const instantOf = (iso: string): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? "an unreadable time" : new Date(ms).toISOString();
 };
 
 /**
@@ -134,7 +146,7 @@ const waiverLines = (pin: PinEntry, now: Date): readonly string[] => {
       ? "a developer this hub did not name"
       : bareUntrusted(waiver.grantedByName);
   return [
-    `  WAIVED by ${granter} until ${waiver.expiresAt} (${untilOf(waiver.expiresAt, now)}) — this pin's conflict is not reported while the fence is open`,
+    `  WAIVED by ${granter} until ${instantOf(waiver.expiresAt)} (${untilOf(waiver.expiresAt, now)}) — this pin's conflict is not reported while the fence is open`,
     `  ${AUTHORITY_LINE[waiver.authority]}`,
     `  their reason: ${
       waiver.reason === ""
@@ -165,7 +177,7 @@ const AUTHORITY_LINE: Readonly<Record<WaiverAuthority, string>> = {
 const requestLines = (request: WaiverRequestEntry): readonly string[] => [
   `  waiver requested by ${
     request.requestedByName === "" ? "a developer this hub did not name" : bareUntrusted(request.requestedByName)
-  } until ${request.expiresAt} — waiting for a person to approve it with a passkey; the fence stays closed`,
+  } until ${instantOf(request.expiresAt)} — waiting for a person to approve it with a passkey; the fence stays closed`,
   `  their reason: ${
     request.reason === "" ? "no reason recorded" : quotedBody(request.reason, MAX_WAIVER_REASON_CHARS)
   }`,
@@ -232,6 +244,9 @@ export const renderWaiverRequested = (input: {
     `  ${input.approveUrl}`,
     "",
   ].join("\n");
+
+/** The hub's own failure sentence, bounded as doctor bounds it — never printed raw. */
+export const hubSaid = (message: string): string => bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);
 
 /** A `--waive` naming a pin this repo's registry does not hold. */
 export const noSuchPinLine = (pinId: string): string =>

@@ -238,12 +238,19 @@ export const guardSettingsSentence = (settings: TeamSettings): string => {
 const waiverSentence = (registry: PinRegistry): string | null => {
   const expiries = registry.pins
     .map((pin) => pin.liveWaiver?.expiresAt)
-    .filter((value): value is string => value !== undefined && value !== "")
-    .sort();
-  const next = expiries[0];
-  if (next === undefined) {
+    .filter((value): value is string => value !== undefined && value !== "");
+  if (expiries.length === 0) {
     return null;
   }
+  // Re-serialised, never echoed: the wire keeps an expiry it cannot read (a
+  // dropped waiver would read as a closed fence), so the string is the hub's
+  // choice until this process writes it.
+  const readable = expiries
+    .map((iso) => Date.parse(iso))
+    .filter((ms) => !Number.isNaN(ms))
+    .sort((a, b) => a - b);
+  const earliest = readable[0];
+  const next = earliest === undefined ? "an unreadable time" : new Date(earliest).toISOString();
   return `${String(expiries.length)} live waiver(s) — next expires ${next}; run crosscheck pin list to see who opened which, and why`;
 };
 

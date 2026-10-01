@@ -51,7 +51,7 @@ import {
   PinSchema,
 } from "@crosscheck/schema";
 import { postPilotMark } from "@crosscheck/connector-core/http/pilot.ts";
-import { noSuchPinLine, renderPinList, renderWaiverRequested } from "./pin-render.ts";
+import { hubSaid, noSuchPinLine, renderPinList, renderWaiverRequested } from "./pin-render.ts";
 import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
 import type { CliResult } from "./login.ts";
 
@@ -146,13 +146,20 @@ const resolve = async (
   };
 };
 
+/**
+ * The hub's failure sentence, BOUNDED like doctor's `hubSaid`: `pin --waive`
+ * is the pin path agents are told to run, so a hub-chosen newline or
+ * instruction here would land in exactly the reader it should not reach.
+ */
 const failureResult = (result: {
   readonly kind: "network" | "http" | "malformed";
   readonly message: string;
-}): CliResult =>
-  result.kind === "network"
-    ? { stdout: `hub unreachable: ${result.message}\n`, exitCode: EXIT_UNREACHABLE }
-    : { stdout: `${result.message}\n`, exitCode: EXIT_FAIL };
+}): CliResult => {
+  const said = hubSaid(result.message);
+  return result.kind === "network"
+    ? { stdout: `hub unreachable: ${said}\n`, exitCode: EXIT_UNREACHABLE }
+    : { stdout: `${said}\n`, exitCode: EXIT_FAIL };
+};
 
 interface PinArgs {
   readonly surface: string | null;
