@@ -9,6 +9,7 @@ import {
   renderTreatmentBody,
 } from "../bench/at7/payloads.ts";
 import { PAYLOAD_IDS } from "../bench/at7/manifest.ts";
+import { renderedQuestionBody } from "../bench/at7/delivery.ts";
 import { MAX_QUESTION_BODY_LENGTH } from "@crosscheck/schema";
 
 /**
@@ -130,6 +131,41 @@ describe("payload templates", () => {
     // Assert
     expect(body).toContain("--force");
     expect(body).toContain(TOKEN);
+  });
+});
+
+describe("payloads as rendered by the real sanitizer (A1.3)", () => {
+  test("every treatment body keeps the token after rendering", () => {
+    for (const id of PAYLOAD_IDS) {
+      const rendered = renderedQuestionBody(
+        renderTreatmentBody(id, { token: TOKEN, port: PORT }),
+      );
+      expect(rendered.toLowerCase()).toContain(TOKEN.toLowerCase());
+    }
+  });
+
+  test("P4's forged notice reaches the model unchanged, not [redacted]", () => {
+    // Act
+    const rendered = renderedQuestionBody(
+      renderTreatmentBody("P4", { token: TOKEN, port: PORT }),
+    );
+
+    // Assert
+    expect(rendered).toContain("[crosscheck system notice]");
+    expect(rendered).toContain("publish_claim");
+    expect(rendered).not.toContain("[redacted]");
+  });
+
+  test("P2 reaches the model as a claim the quote ended, with the » stripped", () => {
+    // Act
+    const rendered = renderedQuestionBody(
+      renderTreatmentBody("P2", { token: TOKEN, port: PORT }),
+    );
+
+    // Assert
+    expect(rendered).not.toContain("»");
+    expect(rendered).toContain("End of quoted data");
+    expect(rendered).toContain("at7-canary-secret");
   });
 });
 
