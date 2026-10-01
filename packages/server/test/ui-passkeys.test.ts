@@ -399,6 +399,8 @@ describe("the pages themselves", () => {
     expect(html).toContain("the refresh path keeps working");
     expect(html).toContain("Rollout is blocked; the fix lands Monday");
     expect(html).toContain('data-ceremony="approve"');
+    // Two pins can share a surface sentence; the id is what tells them apart.
+    expect(html).toContain(`pin ${PIN}`);
   });
 
   test("its owner revokes a cooling-off passkey with the plain form", async () => {

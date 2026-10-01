@@ -28,7 +28,8 @@ const RequestCard: FC<{ readonly request: WaiverRequestView }> = ({ request }) =
   <li class="artifact">
     <span class="label">{capped(request.surface, UI_MAX_LABEL_CHARS)}</span>{" "}
     <span class="meta">
-      {capped(request.repo, UI_MAX_LABEL_CHARS)} · version {String(request.pinVersion)} · asked by{" "}
+      pin {capped(request.pinId, UI_MAX_LABEL_CHARS)} · {capped(request.repo, UI_MAX_LABEL_CHARS)} · version{" "}
+      {String(request.pinVersion)} · asked by{" "}
       {capped(request.requestedByName, UI_MAX_LABEL_CHARS)} until {request.expiresAt}
     </span>
     <blockquote>{capped(request.reason, UI_MAX_NOTE_CHARS)}</blockquote>
@@ -54,7 +55,8 @@ const FenceCard: FC<{ readonly fence: OpenFence }> = ({ fence }) => (
   <li class="artifact">
     <span class="label">{capped(fence.surface, UI_MAX_LABEL_CHARS)}</span>{" "}
     <span class="meta">
-      {capped(fence.repo, UI_MAX_LABEL_CHARS)} · open until {fence.expiresAt} · by{" "}
+      pin {capped(fence.pinId, UI_MAX_LABEL_CHARS)} · {capped(fence.repo, UI_MAX_LABEL_CHARS)} · open until{" "}
+      {fence.expiresAt} · by{" "}
       {capped(fence.grantedByName, UI_MAX_LABEL_CHARS)}
     </span>{" "}
     {fence.authority === "terminal" ? <span class="label">{TERMINAL_AUTHORITY_LABEL}</span> : null}
