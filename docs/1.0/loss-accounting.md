@@ -164,8 +164,11 @@ it on every call, **zeros included** — an all-zero report is a statement, an a
 **What each call costs.** The report is a local read: `readdir` of the repo's spool directory, the `.drops`
 files still present (a ledger is folded into the archive once its newest entry is older than
 `MAX_SPOOL_AGE_DAYS`, `reap.ts:299-326`), the archive line, the marker, and the loss ledger (bounded by
-`MAX_LOSS_LEDGER_BYTES`, §4.3). `doctor` already performs the same reads on every run. **Measurement refusal:**
-no millisecond figure is stated here; LOSS-12 measures it on the existing harness before merge.
+`MAX_LOSS_LEDGER_BYTES`, §4.3). `doctor` already performs the same reads on every run. **Measured** (LOSS-12,
+`connector-claude/test/capture-latency.test.ts`, darwin/arm64, two runs of 20 interleaved samples): the read
+alone p95 **1.46 / 1.37 ms** on a home loaded to the owner's worst shape (382 records in 343 batches, the
+marker, a capture-loss ledger at its cap: 941 losses); SessionStart p95 **74.9 / 68.4 ms** on a home with no
+ledgers against **69.7 / 67.5 ms** loaded — the difference is inside machine noise; the budget is 1000 ms.
 
 **Not carried by the deferred ender** (`reap.ts:425-481`; the three enders at
 `connector-claude/src/hooks/session-start.ts:182`, `connector-cursor/src/handlers/session-start.ts:74`,
@@ -200,6 +203,32 @@ drift ledger is (`drift.ts:12-14`): past the cap the detail stops and the count 
 **A null key is charged to every repo this machine reports for.** A hook that dies before it knows its repo has
 lost telemetry *somewhere*; the conservative reading is that it may have been here. On a one-repo machine the
 charge is exact; on a many-repo machine it over-reports in the safe direction. Nick's decision 10.2.
+
+**The three writers, as built.** *Hooks:* `raceHookBudget` (`config/hook-budget.ts`) says which side won the
+race — `""` alone cannot tell a handler that chose silence from one the budget abandoned — and both runners
+(`connector-claude/src/hooks/runner.ts`, `connector-cursor/src/runner.ts`) append `hook_timed_out` AFTER the race,
+only on the timeout path, keyed once prepare resolved the repo and unkeyed before. *Cursor:* every drift rung in
+`prepareCursorHook` books `host_contract_drift` beside its drift-ledger line, always unkeyed — drift is counted
+before repo resolution, so the payload's repo is never known there. *ACP:* `shutdown` books `ignored` as
+`wire_unobserved/unreadable` and `dropped` as `wire_unobserved/pending-cap`, unkeyed — a line that could not be
+read names no session, and a lost `session/new` may be a repo the proxy never registered — and BEFORE the live
+sessions end, so each end call carries them (LOSS-13 proves it on the hub's row).
+
+**Reading the ledgers back — a line is a file, and files get edited.** Four rules, each found by a test that
+failed first, each in the direction §2 demands:
+
+1. *Instants are re-formatted through `Date.parse` before they are compared or sent.* The span travels to a
+   hub whose schema takes ISO instants only; one torn `at` used to make every register, heartbeat and end a 400.
+2. *An entry with no readable instant is counted and makes the span unknown* (`oldestAt`/`newestAt` null), not
+   the span of the entries that had one: the undated loss may be the newest. The hub reads a null newest as
+   current (§4.5); `DropDetail.undated` and `CaptureLossSummary.undated` carry the count, and the archive line
+   carries it through the fold.
+3. *An unreadable line is at least one `unattributed` loss*, never nothing: a ledger holding only a torn line
+   used to report zero.
+4. *A capture ledger at its cap makes the newest unknown.* It refuses new lines, so its newest instant froze at
+   the last one it took while hooks kept timing out — fourteen days later the hub would have read every refused
+   loss as outside the window. The oldest stays a true lower bound. Counts read own properties only
+   (`spool/counts.ts`): a reason named `constructor` used to turn `kinds` into strings the hub refuses.
 
 ### 4.4 The hub — five columns, derived on read
 
@@ -423,12 +452,19 @@ PASS  capture losses      none
 report and the hub's `agent_event` row:
 
 ```
-WARN  coverage reporting  local ledgers hold 382 telemetry losses newer than 14 days, but the hub's coverage
-                          for this repo reads complete: the hub has not recorded them (a hub older than this
-                          connector never will) — upgrade the hub
+WARN  coverage reporting  local ledgers hold 382 telemetry losses, the newest at 2026-09-30T08:13Z, inside the
+                          hub's 14-day coverage window, but the hub's coverage for this repo reads complete: the
+                          hub has not recorded them — the next session registration or heartbeat from this
+                          machine sends them, and a hub older than this connector discards them; if this
+                          persists, upgrade the hub
 PASS  coverage reporting  the hub's coverage reflects the losses this connector reported
 PASS  coverage reporting  no recent losses to reflect
 ```
+
+The count is the report's total (all time, archive included), so the sentence names the newest instant rather
+than claiming every loss is recent; an undated newest reads *"the newest undated, which the hub reads as
+current"*. The remedy names the benign cause first: a loss written after the last heartbeat is not yet on the
+hub, and the WARN clears on the next beat.
 
 It WARNs on exactly one contradiction: recent local losses and a `complete` agent rung. Any other hub answer
 (`incomplete` for any reason, `unknown`, unreachable) is not a contradiction and gets no line of its own —
@@ -447,9 +483,10 @@ the pin lane. COV-9's registry walk is unaffected: no module gains or loses a co
 
 **Zero new hub round trips.** The report rides three calls that already exist. Hub-side cost is five columns on
 an UPDATE that already runs. The client-side read is bounded by the number of `.drops` files younger than seven
-days plus two small files; LOSS-12 measures SessionStart p95 with and without the report on
-`connector-claude/test/capture-latency.test.ts`, as COV-8 did. The heartbeat is throttled at 20 s, so the read
-happens at most three times a minute per session while tools fire.
+days plus two small files; LOSS-12 measured it (§4.2): 1.4 ms p95 on the worst shape seen, and SessionStart p95
+indistinguishable with and without it. The heartbeat is throttled at 20 s, so the read happens at most three
+times a minute per session while tools fire. A hook the budget abandoned pays one `stat` and one append after
+its race, on the timeout path only.
 
 ## 7. Acceptance tests
 
@@ -511,8 +548,8 @@ at shutdown. *Mutation:* drop the Cursor append.
 3. **No cross-repo attribution of foreign-repo drops** (§4.8.1): a repo id may belong to another hub.
 4. **No `gapSince` clamping** (§4.5).
 5. **No new render surface, no new endpoint, no new table.**
-6. **Not measured here:** the report's read cost and the fraction of real installs that flip to `incomplete` on
-   upgrade. LOSS-12 measures the first; the second is a rollout observation for Nick (§10.3).
+6. **Not measured here:** the fraction of real installs that flip to `incomplete` on upgrade — a rollout
+   observation for Nick (§10.3). The report's read cost is measured (§4.2).
 7. **The seen-set is not a loss and denylist drops are not counted** (§4.8.2, §4.8.3); both are stated so they
    are not mistaken for oversights.
 8. **No structural loss kind.** "This host cannot observe X" is a guarantee (01a §3.6), never a `LOSS_KINDS`
@@ -526,9 +563,15 @@ per-test block in the script. `mutation-check.ts` appends at the array tail — 
 
 **`server/src/http/schemas.ts:15-19`** says the two session bodies are *strict* objects that would *refuse* an
 undeclared field. Under zod 4 a `z.object` strips it (§4.2's directive); the comment's conclusion — the field
-must be declared to be read — stands, and the comment is corrected to say why.
+must be declared to be read — stands, and the comment is corrected to say why (done with the hub commit).
 
-**`coverage-wire.test.ts:181-187`** pins the three enums; both `COVERAGE_REASONS` lists change in one commit.
+**`coverage-wire.test.ts:181-187`** pins the three enums. *As built, the two `COVERAGE_REASONS` lists did NOT
+change in one commit:* the hub's list changed with the hub commit (164acf2) and the connector's with the next
+(8c827c9), so that test is red at 164acf2 alone. History is not rewritten (no rebase on this branch); the lists
+agree from 8c827c9 on, and the placement before 05's block is now pinned in both lists by its own test.
+
+**Three existing anchors moved under the loss commits** — the seen-set check, the scoped-read plan and the
+coverage age — and matched zero times until re-anchored (dff4149); `anchor-scan` reads `0 broken` again.
 
 **`flush.ts`, `drops.ts`, `append.ts`** — editor after B2-01/B2-07; the `rejected` path is the template and is
 not changed. **`capture-targets.ts` / `capture-touched-files.ts`** — the `resolveRoot` directive at
@@ -555,3 +598,36 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
    list. Not built here.
 5. **Loss outranks reap in the reason word** (§4.5). *Default: yes.* The alternative keeps 03's word on repos
    that have both, and hides the one with the different remedy.
+6. **ACP wire lines are charged to every repo** (§4.3, the three writers). *Default taken: yes* — decision 2's
+   rule, applied to a line that names no session. A chatty agent printing non-protocol lines on stdout marks
+   every connected repo `incomplete` for fourteen days after its proxy exits.
+7. **A capture-loss ledger at its cap keeps the newest loss "current"** (§4.3 rule 4) until the ledger is
+   cleared, and nothing clears or compacts it today. *Taken because the alternative strengthens.*
+   *Recommendation:* fold lines older than `MAX_SPOOL_AGE_DAYS` into an archive line at reap, the way
+   `archiveLedger` folds `.drops` — with the race a single machine-wide file adds (rename, then fold) designed
+   rather than assumed.
+
+Defaults taken in the build: 1 (all three carriers), 2 (null key charged to every repo), 5 (loss outranks reap),
+6 and 7 as stated. 3 and 4 are not code decisions.
+
+## 11. As built
+
+Every LOSS-n has its test and at least one anchor in `connector-core/scripts/mutation-check.ts`, each proven
+`caught` with `prove-labels` (`anchor-scan`: 1043 anchors, 0 broken).
+
+| | test (package/test) | anchors (label) |
+|---|---|---|
+| LOSS-1 | server `coverage-losses` LOSS-1 | a reported loss leaves the agent rung complete · a report of zero turns the rung incomplete · an absent loss report is stored as a report of zero · the loss instant never reaches gapSince |
+| LOSS-2 | server `coverage-losses` LOSS-2, outranks | an ignored record kind is answered as an ordinary loss · a reap outranks a reported loss in the reason word |
+| LOSS-3 | server `coverage-losses` LOSS-3 | a lossy session leaves a scoped question |
+| LOSS-4 | server `coverage-losses` LOSS-4 | a loss older than the window still gaps the window |
+| LOSS-5 | server `coverage-losses` LOSS-5; schema `telemetry-loss`; server `ddl-sync` | a loss kind the hub does not know is stored under its own name · the loss-kind fold keeps a key the hub does not know · an existing hub never gains the loss columns |
+| LOSS-6 | core `spool-ignored` | the flush reads the hub's ignored count as zero · an ignored drop forgets which record kinds the hub ignored |
+| LOSS-7 | core `loss-report` | the loss report leaves the unrecorded marker's count out · an archive from before reasons reports its count under no kind · the four read-back rules (§4.3) and the two prototype-key anchors |
+| LOSS-8 | core `session-losses` | the heartbeat body leaves the loss report behind · the heartbeat flow reads the report and never sends it · registration never carries the post-mortem losses · a session's end never carries its last report |
+| LOSS-9 | core `coverage-render` (both sentences, corpus in `gapSince`); core `coverage-wire` (placement) | the telemetry_lost reason renders as a session that went quiet · the record_kinds_ignored reason renders as a session that went quiet · a loss sentence prints the hub's gapSince as sent |
+| LOSS-10 | cli `doctor-losses` | doctor calls a hub that recorded the loss an old hub · doctor never names a hub that stripped the loss report · doctor holds a loss older than the hub's window against the hub · doctor drops the coverage-reporting line on its way out · doctor never prints the record kinds an older hub ignored · status never prints the losses line |
+| LOSS-11 | core `capture-losses` | paths past the per-call cap are cut without a count · a path the secret scan refuses is dropped without a count · an ACP read the cap cut is counted as a lost edit · an edit outside every root of the repo is dropped without a count · a read outside every root is counted as a lost edit |
+| LOSS-12 | claude `hook-timeout-loss`; cursor `drift-loss`; claude `capture-latency` (measured, §4.2) | a hook the budget abandoned leaves no loss behind · a hook the budget cut before its repo resolved books no loss · an abandoned hook's loss is never keyed to its own repo · a cursor-hook the budget abandoned leaves no loss behind |
+| LOSS-13 | cursor `drift-loss`; acp `wire-loss` | a drifted Cursor payload never reaches the loss ledger · an ACP wire line the observer could not read never reaches the loss ledger · an ACP wire line past the pending cap never reaches the loss ledger |
+| ledger | core `loss-ledger`, `loss-report` | a loss no repo could be named for is charged to no repo · the capture-loss ledger grows without bound · a capture-loss detail is stored as the writer passed it · an ignored line keeps a record kind outside the connector's vocabulary · a reason word a hand edit planted in a ledger reaches the terminal as written |
