@@ -430,6 +430,69 @@ describe("one spelling for doctor and status", () => {
     expect(formatLossLines(local).dropped).toContain("(other 3)");
   });
 
+  test.each([
+    ["one torn capture-ledger line (the H2 state)", async (path: string) => {
+      await ensureDir(join(path, "state"));
+      await writeFile(lossLedgerPath(path), "garbage\n", "utf8");
+    }],
+    ["a loss the full ledger refused (the H1 state)", async (path: string) => {
+      await ensureDir(join(path, "state"));
+      const other = `${JSON.stringify({ at: T0.toISOString(), kind: "hook_timed_out", count: 1, key: "another-repo", detail: "stop" })}\n`;
+      await writeFile(lossLedgerPath(path), other.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / other.length)), "utf8");
+      await recordHookTimeout(path, "post-tool-use", KEY, T4);
+    }],
+    ["one torn .drops line", async (path: string) => {
+      await ensureDir(spoolDir(path, KEY));
+      await writeFile(spoolDropsPath(path, KEY, SLUG), '{"at":"2026\n', "utf8");
+    }],
+    ["an unrecorded marker alone", async (path: string) => {
+      await ensureDir(spoolDir(path, KEY));
+      await writePrivateFile(spoolUnrecordedDropsPath(path, KEY), `${JSON.stringify({ at: T4.toISOString(), count: 2, reason: "cap" })}\n`);
+    }],
+  ] as const)("H3: %s — a report above zero is never a 'none' on every line", async (_label, arrange) => {
+    // Arrange
+    const path = await home();
+    await arrange(path);
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+    const lines = formatLossLines(local);
+
+    // Assert: doctor and status cannot pass all three while the hub is told of a loss
+    expect(local.report.total).toBeGreaterThan(0);
+    expect([lines.dropped, lines.ignored, lines.capture].some((line) => line !== null)).toBe(true);
+  });
+
+  test("H3: a full capture ledger says since when, how many it refused, and when it can be removed", async () => {
+    // Arrange
+    const path = await home();
+    await ensureDir(join(path, "state"));
+    const other = `${JSON.stringify({ at: T0.toISOString(), kind: "hook_timed_out", count: 1, key: "another-repo", detail: "stop" })}\n`;
+    await writeFile(lossLedgerPath(path), other.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / other.length)), "utf8");
+    await recordHookTimeout(path, "post-tool-use", KEY, T4);
+
+    // Act
+    const { capture } = formatLossLines(await readLocalLosses(path, KEY));
+
+    // Assert
+    expect(capture).toContain("1 loss refused past its cap");
+    expect(capture).toContain(`the newest at ${T4.toISOString().slice(0, 16)}Z`);
+    expect(capture).toContain("the file can be removed once 14 days have passed since its last write");
+  });
+
+  test("H3: unreadable capture-ledger lines are named, counted one loss each", async () => {
+    // Arrange
+    const path = await home();
+    await ensureDir(join(path, "state"));
+    await writeFile(lossLedgerPath(path), "garbage\nmore garbage\n", "utf8");
+
+    // Act
+    const { capture } = formatLossLines(await readLocalLosses(path, KEY));
+
+    // Assert
+    expect(capture).toContain("2 capture-ledger lines unreadable, counted as one loss each");
+  });
+
   test("a clean machine prints nothing on any of the three", async () => {
     // Act
     const lines = formatLossLines(await readLocalLosses(await home(), KEY));

@@ -13133,8 +13133,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the refused capture losses are charged to no repo",
     file: `${CORE}/src/state/loss-ledger.ts`,
-    from: "  return withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy), refusals);",
-    to: "  return raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy);",
+    from: "  const summary = withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy), refusals);",
+    to: "  const summary = raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy);",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "the marker counts the refusal and no report ever carries it",
   },
@@ -13195,6 +13195,24 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "  return spanOf(lines).newestMs;",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "reap reads null and never folds the ledger, and the repo's span stays unknown for as long as the file exists (PROBE 4)",
+  },
+  // Review H3: doctor and status never say "none" over a report above zero.
+  {
+    label: "unreadable capture-ledger lines are counted and printed nowhere",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    capture.malformed === 0\n      ? null\n",
+    to: "    true\n      ? null\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "one torn line in losses.jsonl reports a loss on every repo, and doctor prints PASS capture losses none beside a hub that reads telemetry_lost",
+  },
+  {
+    label: "a full capture ledger is printed as nothing",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  if (!capture.atCap && capture.refused === 0) {\n    return null;\n  }\n",
+    to: "  if (true) {\n    return null;\n  }\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a ledger refusing every new loss reads like a healthy one, and nobody learns when it can safely be removed",
   },
 ];
 
@@ -13384,7 +13402,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 4
- * PRINTS: packages/connector-core/test/loss-report.test.ts 22
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 24
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

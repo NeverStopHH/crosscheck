@@ -330,12 +330,11 @@ const ignoredLine = (local: LocalLosses): string | null => {
   );
 };
 
-const captureLine = (local: LocalLosses): string | null => {
-  const { capture } = local;
+const kindParts = (capture: CaptureLossSummary): readonly (string | null)[] => {
   const hooks = capture.byKind["hook_timed_out"] ?? 0;
   const drift = capture.byKind["host_contract_drift"] ?? 0;
   const wire = capture.byKind["wire_unobserved"] ?? 0;
-  const parts = [
+  return [
     hooks === 0
       ? null
       : `${plural(hooks, "hook")} exceeded ${hooks === 1 ? "its" : "their"} budget before capture could finish${parenthetical(detailsOf(capture, "hook_timed_out"))}`,
@@ -345,14 +344,48 @@ const captureLine = (local: LocalLosses): string | null => {
     wire === 0
       ? null
       : `${plural(wire, "ACP wire line")} could not be read by the observer`,
-  ].filter((part): part is string => part !== null);
-  if (parts.length === 0) {
+    // Review H3: these were counted into the report and printed nowhere.
+    capture.malformed === 0
+      ? null
+      : `${plural(capture.malformed, "capture-ledger line")} unreadable, counted as one loss each`,
+  ];
+};
+
+/** `2026-09-05T08:13Z` — the minute, as doctor's coverage line prints instants. */
+const ISO_MINUTE_CHARS = 16;
+
+const minuteOf = (iso: string): string => `${iso.slice(0, ISO_MINUTE_CHARS)}Z`;
+
+/**
+ * A FULL LEDGER, SAID OUT LOUD (review H3): since when, what it refused, and
+ * the one safe way to clear it. Fourteen days after the file's last write by
+ * any repo, nothing in it is inside any repo's window, so removing it then
+ * changes no coverage state — any earlier, and it would erase a loss the hub
+ * still has to hear about.
+ */
+const fullLedgerClause = (capture: CaptureLossSummary): string | null => {
+  if (!capture.atCap && capture.refused === 0) {
     return null;
   }
-  const floor = capture.atCap
-    ? " — the ledger is at its cap, so these counts are floors and the hub reads the newest of them as current"
-    : "";
-  return `${parts.join(" · ")}${floor}`;
+  const since = capture.fullSince === null ? "full" : `full since ${minuteOf(capture.fullSince)}`;
+  const refused =
+    capture.refused === 0
+      ? "nothing refused yet"
+      : `${plural(capture.refused, "loss", "losses")} refused past its cap, counted without detail and charged to every repo${capture.refusedNewestAt === null ? "" : `, the newest at ${minuteOf(capture.refusedNewestAt)}`}`;
+  const clear =
+    capture.lastWriteAt === null
+      ? "its last write is unknown, so the hub reads its newest loss as current"
+      : `the file can be removed once ${String(HUB_COVERAGE_WINDOW_DAYS)} days have passed since its last write (${minuteOf(capture.lastWriteAt)})`;
+  return `the capture-loss ledger is ${since}: ${refused} — the counts are floors; ${clear}`;
+};
+
+const captureLine = (local: LocalLosses): string | null => {
+  const parts = kindParts(local.capture).filter((part): part is string => part !== null);
+  const full = fullLedgerClause(local.capture);
+  if (parts.length === 0 && full === null) {
+    return null;
+  }
+  return [parts.join(" · "), full].filter((part) => part !== null && part.length > 0).join(" — ");
 };
 
 /** One spelling for both commands (the spool-drops discipline). */

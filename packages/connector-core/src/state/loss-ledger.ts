@@ -168,6 +168,14 @@ export interface CaptureLossSummary {
   readonly refused: number;
   /** When the ledger filled, from its marker; null when no readable marker exists. */
   readonly fullSince: string | null;
+  /** The newest refusal, from the marker; null when none. */
+  readonly refusedNewestAt: string | null;
+  /**
+   * The ledger's last write by ANY repo — its mtime or the newest refusal,
+   * whichever is later. Fourteen days after it, nothing the file holds is
+   * inside any repo's window, so removing the file changes no coverage.
+   */
+  readonly lastWriteAt: string | null;
 }
 
 export const EMPTY_CAPTURE_LOSSES: CaptureLossSummary = {
@@ -182,6 +190,8 @@ export const EMPTY_CAPTURE_LOSSES: CaptureLossSummary = {
   atCap: false,
   refused: 0,
   fullSince: null,
+  refusedNewestAt: null,
+  lastWriteAt: null,
 };
 
 const safeJson = (line: string): unknown => {
@@ -225,8 +235,15 @@ export const readCaptureLosses = async (
     readLossRefusals(home),
   ]);
   const raw = ledger.text;
-  return withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy), refusals);
+  const summary = withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy), refusals);
+  return {
+    ...summary,
+    lastWriteAt: laterOrNull(ledger.writtenBy, refusals?.newestAt ?? null),
+  };
 };
+
+const laterOrNull = (left: string | null, right: string | null): string | null =>
+  left === null || right === null ? (left ?? right) : right > left ? right : left;
 
 const CAPTURE_KIND_SET: ReadonlySet<string> = new Set(CAPTURE_LOSS_KINDS);
 
@@ -258,6 +275,7 @@ const withRefusals = (
     unkeyed: summary.unkeyed + refused,
     refused,
     fullSince: refusals.fullSince,
+    refusedNewestAt: refused > 0 ? refusals.newestAt : null,
     oldestAt: refused > 0 ? earlierIso(summary.oldestAt, refusals.fullSince) : summary.oldestAt,
     newestAt: laterIso(summary.newestAt, refusals.newestAt),
   };
