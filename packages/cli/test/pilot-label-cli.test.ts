@@ -475,6 +475,19 @@ describe("crosscheck pilot label — who may walk, and what is said", () => {
     expect(await reportOf(s)).toMatchObject({ helpful: 0, noise: 0, unclear: 0 });
   });
 
+  test("an intervention older than a day is not offered — a label is a memory, not a guess", async () => {
+    // Arrange — twenty-five hours ago, one hour past the walk's window
+    const s = await scenario("stale");
+    await deliver(s, "wc_stale_a", 25 * 60);
+
+    // Act
+    const result = await walk(s, scripted(["h"]));
+
+    // Assert
+    expect(result.stdout).toContain("there is nothing to label");
+    expect(await reportOf(s)).toMatchObject({ helpful: 0 });
+  });
+
   test("nothing left to label is said, not silent", async () => {
     // Arrange
     const s = await scenario("empty");

@@ -1042,6 +1042,32 @@ describe("proof 4 — the reasons people gave", () => {
     expect(out.precision.reasonsBeyondList).toBe(2);
   });
 
+  test("a reason given about another repo's intervention never reaches this repo's report", async () => {
+    // Arrange — the one place a reason is rendered is its OWN repo's report
+    // (07 §12); one about a delivery to another repo's session belongs there
+    const world = await setup();
+    await world.harness.db.insert(agentSessions).values({
+      id: "s_elsewhere",
+      developerId: world.developer.developerId,
+      agentKind: "claude-code",
+      repo: "github.com/acme/other",
+      branch: "main",
+      baseCommit: "abc1234",
+      status: "implementing",
+      startedAt: at(20),
+      lastHeartbeatAt: at(20),
+    });
+    await deliver(world, "hd_elsewhere", "s_elsewhere", "wc_any", "prompt_hint", 10, null);
+    await label(world, "hd_elsewhere", "noise", "said about the other repo");
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.reasons).toEqual([]);
+    expect(JSON.stringify(out)).not.toContain("said about the other repo");
+  });
+
   test("a legacy word's reason is listed under noise", async () => {
     // Arrange
     const world = await setup();
