@@ -209,6 +209,19 @@ export const PILOT_MARKS_BY_REF_KIND = {
 export const PILOT_COHORTS = ["discovery", "replication"] as const;
 
 /**
+ * A ROW FROM BEFORE LABELS EXISTED, in neither cohort (07 §12, second
+ * review, H1). A 0.10 hub could store only `off_target`, so nobody could
+ * label its interventions helpful; counting its rows into discovery printed a
+ * measured 0% precision that described the old vocabulary, not the product.
+ * Only the backfill writes this value — `pilot_sessions.cohort`'s DEFAULT on
+ * the hub start that adds the column.
+ */
+export const PILOT_LEGACY_COHORT = "legacy" as const;
+
+/** Every value `pilot_sessions.cohort` may hold: the two cohorts, and the rows from before them. */
+export const PILOT_SESSION_COHORTS = [...PILOT_COHORTS, PILOT_LEGACY_COHORT] as const;
+
+/**
  * HOW A SESSION ENDED, and the distinction is the whole reason the pilot
  * stores it (07 §3.6).
  *

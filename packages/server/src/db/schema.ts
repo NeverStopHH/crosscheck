@@ -43,7 +43,8 @@ import {
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
   MAX_PILOT_LABEL_REASON_CHARS,
-  PILOT_COHORTS,
+  PILOT_LEGACY_COHORT,
+  PILOT_SESSION_COHORTS,
   PILOT_END_REASONS,
   PILOT_MARKS,
   PILOT_MARK_REF_KINDS,
@@ -1041,6 +1042,14 @@ export const teamSettings = pgTable("team_settings", {
    * is one configured before this column existed.
    */
   pilotEnrolled: boolean("pilot_enrolled").notNull().default(false),
+  /**
+   * WHEN LABELS BECAME AVAILABLE ON THIS REPO (07 §12, second review): the
+   * moment enrolment last turned on — or, for a repo enrolled under a 0.10
+   * hub, the first start of a hub that has labels (bootstrap.sql backfills
+   * it). The labelled figures and the cohorts count only sessions that
+   * started at or after it. Null while the repo has never been enrolled.
+   */
+  pilotLabelsSince: timestamptz("pilot_labels_since"),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
@@ -1257,14 +1266,15 @@ export const pilotSessions = pgTable(
     observedAt: timestamptz("observed_at").notNull(),
     endReason: text("end_reason", { enum: PILOT_END_REASONS }).notNull(),
     /**
-     * WHICH COHORT THIS SESSION BELONGS TO (07 §12): the first fifty rows of
-     * a repo are `discovery`, the next hundred and fifty `replication`. Set
-     * when the row is written and never updated — a revived session keeps
-     * the cohort it entered. DEFAULT `discovery` is the truthful backfill:
-     * a hub that had the fifty-row cap holds at most fifty rows, all of them
-     * the discovery cohort.
+     * WHICH COHORT THIS SESSION BELONGS TO (07 §12): the first fifty sessions
+     * of a repo are `discovery`, the next hundred and fifty `replication`.
+     * Set when the row is written and never updated — a revived session keeps
+     * the cohort it entered. DEFAULT `legacy` is the truthful backfill
+     * (second review, H1): a row that exists when the column is added was
+     * written by a 0.10 hub, before anybody could label an intervention
+     * helpful, and belongs to neither cohort.
      */
-    cohort: text("cohort", { enum: PILOT_COHORTS }).notNull().default("discovery"),
+    cohort: text("cohort", { enum: PILOT_SESSION_COHORTS }).notNull().default(PILOT_LEGACY_COHORT),
     /** FIVE {source,state,reason} triples, enums only — never free text. */
     coverage: jsonb("coverage").notNull(),
     seqEpoch: text("seq_epoch"),
@@ -1279,6 +1289,10 @@ export const pilotSessions = pgTable(
     index("pilot_sessions_repo_observed_idx").on(
       table.repo,
       table.observedAt.desc(),
+    ),
+    check(
+      "pilot_sessions_cohort_check",
+      sql`${table.cohort} IN (${sql.raw(PILOT_SESSION_COHORTS.map((cohort) => `'${cohort}'`).join(", "))})`,
     ),
   ],
 );

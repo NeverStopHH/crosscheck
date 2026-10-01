@@ -53,6 +53,12 @@ export interface TeamSettingsView {
    * the column default are the same answer on purpose.
    */
   readonly pilotEnrolled: boolean;
+  /**
+   * WHEN LABELS BECAME AVAILABLE (07 §12, second review): the moment
+   * enrolment last turned on. The labelled figures and the cohorts count
+   * only sessions that started at or after it. Null until first enrolled.
+   */
+  readonly pilotLabelsSince: string | null;
   /** Null while the repo has never been configured — the defaults are in use. */
   readonly updatedAt: string | null;
 }
@@ -86,6 +92,7 @@ export const readTeamSettings = async (
       pinPolicy: teamSettings.pinPolicy,
       suspectAttribution: teamSettings.suspectAttribution,
       pilotEnrolled: teamSettings.pilotEnrolled,
+      pilotLabelsSince: teamSettings.pilotLabelsSince,
       updatedAt: teamSettings.updatedAt,
     })
     .from(teamSettings)
@@ -98,6 +105,7 @@ export const readTeamSettings = async (
       pinPolicy: DEFAULT_TEAM_SETTINGS.pinPolicy,
       suspectAttribution: DEFAULT_TEAM_SETTINGS.suspectAttribution,
       pilotEnrolled: DEFAULT_TEAM_SETTINGS.pilotEnrolled,
+      pilotLabelsSince: null,
       updatedAt: null,
     };
   }
@@ -106,8 +114,26 @@ export const readTeamSettings = async (
     pinPolicy: row.pinPolicy,
     suspectAttribution: row.suspectAttribution,
     pilotEnrolled: row.pilotEnrolled,
+    pilotLabelsSince: row.pilotLabelsSince?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
   };
+};
+
+/**
+ * THE INSTANT LABELS BECAME AVAILABLE, after this write. Stamped NOW when
+ * enrolment turns on — a re-enrolment is a new consent, and the sessions of
+ * the gap between were never measured — and otherwise kept as it was,
+ * leaving included: a team that leaves keeps the record of when it joined.
+ */
+const labelsSinceAfter = (
+  current: TeamSettingsView,
+  nextEnrolled: boolean,
+  now: Date,
+): Date | null => {
+  if (nextEnrolled && !current.pilotEnrolled) {
+    return now;
+  }
+  return current.pilotLabelsSince === null ? null : new Date(current.pilotLabelsSince);
 };
 
 export interface WriteTeamSettingsInput {
@@ -127,12 +153,15 @@ export const writeTeamSettings = async (
   input: WriteTeamSettingsInput,
 ): Promise<TeamSettingsView> => {
   const current = await readTeamSettings(deps, input.repo);
+  const now = deps.now();
+  const pilotEnrolled = input.pilotEnrolled ?? current.pilotEnrolled;
   const next = {
     repo: input.repo,
     pinPolicy: input.pinPolicy ?? current.pinPolicy,
     suspectAttribution: input.suspectAttribution ?? current.suspectAttribution,
-    pilotEnrolled: input.pilotEnrolled ?? current.pilotEnrolled,
-    updatedAt: deps.now(),
+    pilotEnrolled,
+    pilotLabelsSince: labelsSinceAfter(current, pilotEnrolled, now),
+    updatedAt: now,
   };
   await deps.db
     .insert(teamSettings)
@@ -143,8 +172,13 @@ export const writeTeamSettings = async (
         pinPolicy: next.pinPolicy,
         suspectAttribution: next.suspectAttribution,
         pilotEnrolled: next.pilotEnrolled,
+        pilotLabelsSince: next.pilotLabelsSince,
         updatedAt: next.updatedAt,
       },
     });
-  return { ...next, updatedAt: next.updatedAt.toISOString() };
+  return {
+    ...next,
+    pilotLabelsSince: next.pilotLabelsSince?.toISOString() ?? null,
+    updatedAt: next.updatedAt.toISOString(),
+  };
 };

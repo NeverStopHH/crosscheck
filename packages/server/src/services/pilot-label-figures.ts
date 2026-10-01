@@ -75,7 +75,14 @@ export const COHORT_CAP: Readonly<Record<PilotCohort, number>> = {
   replication: PILOT_REPLICATION_COHORT_SESSIONS,
 };
 
-/** The SQL that reads as noise: the word written today and the word an older hub wrote. */
+/**
+ * The SQL that reads as noise for the NOISY-SESSIONS FLOOR: the word written
+ * today and the word a 0.10 hub wrote. That floor predates the labels and
+ * counts marks of either era. The labelled tally does NOT use it: an
+ * `off_target` mark was the only word its era had, so it is counted apart
+ * (`readLegacyNoise`) and never enters a precision denominator that could
+ * not have held a `helpful` beside it (second review, H1).
+ */
 export const NOISE_WORDS = sql`('noise', ${PILOT_LEGACY_NOISE_MARK})`;
 
 /** A type alias, not an interface: `db.execute<T>` wants an index-signature-compatible row. */
@@ -136,7 +143,7 @@ export const readLabelTally = async (deps: Deps, population: SQL): Promise<Label
     SELECT (SELECT count(*)::int FROM population) AS sessions,
            (SELECT count(*)::int FROM intervention) AS interventions,
            count(*) FILTER (WHERE mark = 'helpful')::int AS helpful,
-           count(*) FILTER (WHERE mark IN ${NOISE_WORDS})::int AS noise,
+           count(*) FILTER (WHERE mark = 'noise')::int AS noise,
            count(*) FILTER (WHERE mark = 'unclear')::int AS unclear
     FROM verdict`);
   const row = rows.rows[0];
@@ -204,6 +211,70 @@ export const readReasons = async (
   return {
     reasons,
     beyond: Math.max(0, (rows.rows[0]?.total ?? 0) - reasons.length),
+  };
+};
+
+/**
+ * THE 0.10 NOISE MARKS in the window (second review, H1): `off_target` on an
+ * intervention to a session that started in it. Counted — a team's earlier
+ * complaints are not erased — and printed on their own line, outside
+ * precision: nobody could have labelled those interventions helpful.
+ */
+const readLegacyNoise = async (
+  deps: Deps,
+  repo: string,
+  since: Date,
+  until: Date,
+): Promise<number> => {
+  const rows = await deps.db.execute<{ n: number }>(sql`
+    SELECT count(*)::int AS n
+    FROM pilot_marks m
+    JOIN hint_deliveries hd ON hd.id = m.ref_id
+    JOIN agent_sessions s ON s.id = hd.session_id
+    WHERE m.ref_kind = 'hint_delivery' AND m.mark = ${PILOT_LEGACY_NOISE_MARK}
+      AND s.repo = ${repo}
+      AND s.started_at >= ${since.toISOString()}::timestamptz
+      AND s.started_at < ${until.toISOString()}::timestamptz`);
+  return rows.rows[0]?.n ?? 0;
+};
+
+/** The window's labelled figures, from where labels existed, and what sits beside them. */
+export interface LabelledWindow {
+  readonly figures: LabelFigures;
+  /** The labelled population's start: the window's, or later when labels arrived later. */
+  readonly labelledSince: Date;
+  readonly reasons: readonly LabelReason[];
+  readonly reasonsBeyondList: number;
+  readonly legacyNoise: number;
+}
+
+/**
+ * PROOF 4 OVER THE WINDOW, FROM WHEN LABELS EXISTED (second review, H1, M5).
+ * A session that started before `labelsSince` could not be labelled helpful
+ * — on a 0.10 hub the word did not exist, and on a repo enrolled today
+ * nobody could label yesterday's pointers — so the population starts at the
+ * later of the window's start and `labelsSince`. Counting the earlier ones
+ * printed a measured 0% precision and a 0.0 benefit that were artefacts of
+ * the old data, for eight weeks after an upgrade.
+ */
+export const readLabelledWindow = async (
+  deps: Deps,
+  repo: string,
+  window: { readonly since: Date; readonly until: Date },
+  labelsSince: Date,
+): Promise<LabelledWindow> => {
+  const from = labelsSince.getTime() > window.since.getTime() ? labelsSince : window.since;
+  const [tally, said, legacyNoise] = await Promise.all([
+    readLabelTally(deps, windowPopulation(repo, from, window.until)),
+    readReasons(deps, repo, window.since, window.until),
+    readLegacyNoise(deps, repo, window.since, window.until),
+  ]);
+  return {
+    figures: labelFigures(tally),
+    labelledSince: from,
+    reasons: said.reasons,
+    reasonsBeyondList: said.beyond,
+    legacyNoise,
   };
 };
 

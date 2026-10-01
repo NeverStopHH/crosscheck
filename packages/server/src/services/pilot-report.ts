@@ -47,6 +47,7 @@ import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import {
   DELIVERY_CHANNELS,
   PILOT_COHORTS,
+  PILOT_LEGACY_COHORT,
   PULLED_DELIVERY_CHANNEL,
   TRIPWIRE_ASKING_HOSTS,
 } from "@crosscheck/schema";
@@ -81,12 +82,9 @@ import type { Figure } from "./pilot-figure.ts";
 import {
   COHORT_CAP,
   NOISE_WORDS,
-  labelFigures,
   notInstrumentedLabels,
   readCohorts,
-  readLabelTally,
-  readReasons,
-  windowPopulation,
+  readLabelledWindow,
 } from "./pilot-label-figures.ts";
 import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
@@ -181,6 +179,10 @@ export interface ProofAttribution {
 
 /** Proof 4: the labelled figures (services/pilot-label-figures.ts) and the two behavioural rates. */
 export interface ProofPrecision extends LabelFigures {
+  /** Where the labelled figures start: the window's start, or later when labels arrived later. Null when nothing is measured. */
+  readonly labelledSinceIso: string | null;
+  /** 0.10 `off_target` marks on the window's interventions — counted, and kept outside precision. */
+  readonly legacyNoise: number;
   /** PILOT_TARGET_INTERVENTION_PRECISION, declared before measuring. */
   readonly precisionTarget: number;
   /** Unsolicited pointers an agent opened, per hundred sessions — a pull, not a verdict. */
@@ -210,6 +212,8 @@ export interface SessionSet {
   readonly discoveryCap: number;
   readonly replication: number;
   readonly replicationCap: number;
+  /** Rows a 0.10 hub wrote, before labels — in neither cohort and not in `used` (second review, H1). */
+  readonly legacy: number;
   /** One epoch and at least one position: a span can be printed. */
   readonly spanned: number;
   /** More than one epoch: the counter restarted, and no span exists (PIL-7). */
@@ -221,6 +225,8 @@ export interface SessionSet {
 export interface PilotReport {
   readonly repo: string;
   readonly enrolled: boolean;
+  /** When labels became available on this repo (team_settings); null when it was never enrolled. */
+  readonly labelsSinceIso: string | null;
   readonly sinceIso: string;
   readonly untilIso: string;
   readonly days: number;
@@ -659,18 +665,23 @@ const readAttribution = async (
 const readPrecision = async (
   deps: Deps,
   repo: string,
-  since: Date,
-  until: Date,
+  window: { readonly since: Date; readonly until: Date },
+  labelsSince: Date,
 ): Promise<ProofPrecision> => {
   // SESSIONS OVER SESSIONS for the two behavioural rates (corrected by
   // adversarial review): a session that opened five pointers is one session
   // that opened something, and one with three noise labels is one noisy
-  // session. The four labelled figures count INTERVENTIONS (07 §12).
+  // session. Both are over the WHOLE window — they predate the labels and
+  // are comparable with the first pilot's — while the four labelled figures
+  // count INTERVENTIONS from when labels existed (07 §12, second review).
+  const { since, until } = window;
   const windowSessions = sql`s.repo = ${repo}
     AND s.started_at >= ${since.toISOString()}::timestamptz
     AND s.started_at < ${until.toISOString()}::timestamptz`;
-  const [tally, opened, noisy, surfaceOk, said] = await Promise.all([
-    readLabelTally(deps, windowPopulation(repo, since, until)),
+  const [labelled, sessions, opened, noisy, surfaceOk] = await Promise.all([
+    readLabelledWindow(deps, repo, window, labelsSince),
+    deps.db.execute<{ n: number }>(sql`
+      SELECT count(*)::int AS n FROM agent_sessions s WHERE ${windowSessions}`),
     deps.db.execute<{ n: number }>(sql`
       SELECT count(DISTINCT s.id)::int AS n
       FROM agent_sessions s
@@ -696,22 +707,24 @@ const readPrecision = async (
           lt(pilotMarks.createdAt, until),
         ),
       ),
-    readReasons(deps, repo, since, until),
   ]);
+  const windowCount = sessions.rows[0]?.n ?? 0;
   const per100 = (value: number): Figure =>
-    tally.sessions === 0
+    windowCount === 0
       ? unavailable("no_sessions")
-      : measured((value / tally.sessions) * PER_HUNDRED);
+      : measured((value / windowCount) * PER_HUNDRED);
   return {
-    ...labelFigures(tally),
+    ...labelled.figures,
+    labelledSinceIso: labelled.labelledSince.toISOString(),
+    legacyNoise: labelled.legacyNoise,
     precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: per100(opened.rows[0]?.n ?? 0),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
     noisySessionsPer100: per100(noisy.rows[0]?.n ?? 0),
     noisySessionsCeilingPer100: PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100,
     surfaceOkMarks: surfaceOk[0]?.n ?? 0,
-    reasons: said.reasons,
-    reasonsBeyondList: said.beyond,
+    reasons: labelled.reasons,
+    reasonsBeyondList: labelled.reasonsBeyondList,
   };
 };
 
@@ -771,14 +784,20 @@ const readSessionSet = async (
         ),
       ),
   ]);
+  const discovery = rows.filter((row) => row.cohort === "discovery").length;
+  const replication = rows.filter((row) => row.cohort === "replication").length;
   return {
-    used: rows.length,
+    // THE SET IS THE TWO COHORTS. A 0.10 row is counted apart: it was never
+    // in a cohort, and counting it here would fill the set with sessions
+    // nobody could label (second review, H1).
+    used: discovery + replication,
     cap: PILOT_SESSION_SET_CAP,
     refused: refused[0]?.n ?? 0,
-    discovery: rows.filter((row) => row.cohort === "discovery").length,
+    discovery,
     discoveryCap: COHORT_CAP.discovery,
-    replication: rows.filter((row) => row.cohort === "replication").length,
+    replication,
     replicationCap: COHORT_CAP.replication,
+    legacy: rows.filter((row) => row.cohort === PILOT_LEGACY_COHORT).length,
     spanned: rows.filter((row) => row.epochs === 1).length,
     restarted: rows.filter((row) => (row.epochs ?? 0) > 1).length,
     notRecorded: rows.filter((row) => (row.epochs ?? 0) === 0).length,
@@ -788,7 +807,7 @@ const readSessionSet = async (
 /** What an un-enrolled repo reports: nothing measured, and saying so. */
 const notEnrolled = (): Omit<
   PilotReport,
-  "repo" | "enrolled" | "sinceIso" | "untilIso" | "days"
+  "repo" | "enrolled" | "labelsSinceIso" | "sinceIso" | "untilIso" | "days"
 > => ({
   sessionSet: {
     used: 0,
@@ -798,6 +817,7 @@ const notEnrolled = (): Omit<
     discoveryCap: COHORT_CAP.discovery,
     replication: 0,
     replicationCap: COHORT_CAP.replication,
+    legacy: 0,
     spanned: 0,
     restarted: 0,
     notRecorded: 0,
@@ -830,6 +850,8 @@ const notEnrolled = (): Omit<
   },
   precision: {
     ...notInstrumentedLabels(),
+    labelledSinceIso: null,
+    legacyNoise: 0,
     precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: unavailable("not_instrumented"),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
@@ -867,6 +889,7 @@ export const readPilotReport = async (
   const base = {
     repo: input.repo,
     enrolled: settings.pilotEnrolled,
+    labelsSinceIso: settings.pilotLabelsSince,
     sinceIso: since.toISOString(),
     untilIso: until.toISOString(),
     days: input.days,
@@ -874,13 +897,18 @@ export const readPilotReport = async (
   if (!settings.pilotEnrolled) {
     return { ...base, ...notEnrolled() };
   }
+  // An enrolled repo always has the instant (enrolment and the bootstrap
+  // backfill both write it); if one ever lacks it, NOTHING is labelled
+  // countable rather than everything — the conservative of the two errors.
+  const labelsSince =
+    settings.pilotLabelsSince === null ? until : new Date(settings.pilotLabelsSince);
   const [sessionSet, duplicateWork, collisions, attribution, precision, cohorts, integrity] =
     await Promise.all([
       readSessionSet(deps, input.repo),
       readDuplicateWork(deps, input.repo, since, until),
       readCollisions(deps, input.repo, since, until),
       readAttribution(deps, input.repo, since, until),
-      readPrecision(deps, input.repo, since, until),
+      readPrecision(deps, input.repo, { since, until }, labelsSince),
       readCohorts(deps, input.repo),
       readIntegrity(deps, input.repo, since),
     ]);

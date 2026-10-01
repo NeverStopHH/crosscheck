@@ -44,6 +44,7 @@ import type { SuspectView } from "./suspect.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import {
+  PILOT_LEGACY_COHORT,
   PILOT_LEGACY_NOISE_MARK,
   PULLED_DELIVERY_CHANNEL,
   containsSecret,
@@ -377,7 +378,8 @@ export const recordPilotSession = async (
   // THIS SESSION IS NOT COUNTED AGAINST ITSELF (corrected by adversarial
   // review): a revived session that ends again already HOLDS a slot, and
   // counting that slot made a full set refuse its true second end — booked
-  // as a refusal, with its row left saying `reaped`.
+  // as a refusal, with its row left saying `reaped`. Nor is a 0.10 row: it
+  // was never in a cohort (second review, H1).
   const taken = await deps.db
     .select({ n: sql<number>`count(*)::int` })
     .from(pilotSessions)
@@ -385,6 +387,7 @@ export const recordPilotSession = async (
       and(
         eq(pilotSessions.repo, input.repo),
         ne(pilotSessions.sessionId, input.sessionId),
+        ne(pilotSessions.cohort, PILOT_LEGACY_COHORT),
       ),
     );
   const cohort = cohortForSlot(taken[0]?.n ?? 0);

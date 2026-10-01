@@ -112,7 +112,7 @@ const fill = async (
   developer: TestDeveloper,
   count: number,
   prefix = "cc_fill_",
-  cohort: "discovery" | "replication" = "discovery",
+  cohort: "discovery" | "replication" | "legacy" = "discovery",
 ): Promise<void> => {
   const filler = Array.from({ length: count }, (_unused, i) => ({
     id: `${prefix}${String(i)}`,
@@ -285,6 +285,21 @@ describe("one session's residue", () => {
       (row) => row.counter === "pilot_sessions_refused",
     );
     expect(refused).toBeUndefined();
+  });
+
+  test("a 0.10 hub's fifty old rows take no slot: the first new session is discovery", async () => {
+    // Arrange — the upgrade backfills every old row as `legacy` (second
+    // review, H1); those sessions could never be labelled helpful, so they
+    // must not fill the preregistered cohort before it has begun
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_DISCOVERY_COHORT_SESSIONS, "cc_old_", "legacy");
+
+    // Act
+    await store(harness, developer);
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
+    expect(own?.cohort).toBe("discovery");
   });
 
   test("a fresh repo's first session is discovery", async () => {

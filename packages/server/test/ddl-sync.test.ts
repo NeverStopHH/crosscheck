@@ -537,8 +537,12 @@ describe("bootstrap.sql DDL sync", () => {
     for (const fragment of [
       "ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS reason text",
       "  reason text,",
-      "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'discovery'",
-      "cohort text NOT NULL DEFAULT 'discovery',",
+      // 'legacy', not 'discovery' (second review, H1): every row that exists
+      // when the column is added was written by a 0.10 hub, before anybody
+      // could label anything helpful, so it belongs to neither cohort.
+      "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'legacy'",
+      "cohort text NOT NULL DEFAULT 'legacy',",
+      "ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_labels_since timestamptz",
     ]) {
       expect(bootstrapSql, fragment).toContain(fragment);
     }
@@ -563,8 +567,52 @@ describe("bootstrap.sql DDL sync", () => {
 
     // Assert
     expect(columns.rows).toHaveLength(1);
-    expect(String(cohort.rows[0]?.d ?? "")).toContain("discovery");
+    expect(String(cohort.rows[0]?.d ?? "")).toContain("legacy");
     expect(constraint.rows).toHaveLength(1);
+  });
+
+  test("a hub that ran the 0.10 pilot upgrades: old rows are `legacy`, enrolled repos get labels-since, the cohort CHECK exists", async () => {
+    // Arrange — the 0.10 shape: no `pilot_sessions.cohort`, no
+    // `team_settings.pilot_labels_since`; one enrolled repo and one recorded
+    // session. bootstrap.sql then runs IN FULL, as it does on every hub start.
+    const harness = await createTestHarness();
+    for (const statement of [
+      sql`ALTER TABLE pilot_sessions DROP COLUMN cohort`,
+      sql`ALTER TABLE team_settings DROP COLUMN pilot_labels_since`,
+      sql`INSERT INTO developers (id, name, email, api_key_hash, created_at)
+          VALUES ('dev_old', 'Nick', 'nick-old@example.com', 'hash_old', now())`,
+      sql`INSERT INTO agent_sessions
+            (id, developer_id, agent_kind, repo, branch, base_commit, status, started_at, last_heartbeat_at)
+          VALUES ('ses_old', 'dev_old', 'claude-code', 'github.com/acme/api', 'main', 'a1b2c3d4', 'done', now(), now())`,
+      sql`INSERT INTO pilot_sessions (session_id, repo, observed_at, end_reason, coverage)
+          VALUES ('ses_old', 'github.com/acme/api', now(), 'reported', '[]'::jsonb)`,
+      sql`INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at)
+          VALUES ('github.com/acme/api', 'anyone', 'sessions', true, now()),
+                 ('github.com/acme/web', 'anyone', 'sessions', false, now())`,
+    ]) {
+      await harness.db.execute(statement);
+    }
+    const client = (harness.db as unknown as { $client: { exec: (text: string) => Promise<unknown> } }).$client;
+
+    // Act
+    await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
+
+    // Assert — the old row is outside both cohorts; only the enrolled repo
+    // learns when labels became available; and a cohort word nobody defined
+    // is refused on THIS hub too, not only on a fresh one (L3)
+    const row = await harness.db.execute(sql`SELECT cohort AS c FROM pilot_sessions WHERE session_id = 'ses_old'`);
+    const since = await harness.db.execute(
+      sql`SELECT repo AS r, pilot_labels_since IS NOT NULL AS s FROM team_settings ORDER BY repo`,
+    );
+    const check = await harness.db.execute(
+      sql`SELECT conname AS n FROM pg_constraint WHERE conname = 'pilot_sessions_cohort_check'`,
+    );
+    expect(row.rows[0]?.c).toBe("legacy");
+    expect(since.rows).toEqual([
+      { r: "github.com/acme/api", s: true },
+      { r: "github.com/acme/web", s: false },
+    ]);
+    expect(check.rows).toHaveLength(1);
   });
 
   test("the four pilot tables really exist after a bootstrap", async () => {
