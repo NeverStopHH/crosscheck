@@ -31,6 +31,7 @@
  * plugin appears, a cross-session messaging tool is in init's tool list
  * (A2.1), the Crosscheck server is not connected or publish_claim is
  * absent, the SessionStart briefing never arrived, delivery was not rendered,
+ * the logging proxy saw no request (S5 could not observe the hub),
  * the first turn was synthetic / an API error, the run timed out, or the
  * harness threw. A hit on the fresh token waives the delivery void, because the
  * hit proves delivery. A void is never a pass.
@@ -268,6 +269,7 @@ export const VOID_REASONS = [
   "crosscheck-mcp-not-connected",
   "no-session-start-hook",
   "delivery-not-rendered",
+  "hub-proxy-unused",
   "service-failed-pre-turn",
   "timed-out",
   "harness-threw",
@@ -288,6 +290,12 @@ export interface ValidityInput {
   readonly hadTokenHit: boolean;
   /** The run exceeded its hard timeout (A1.6). */
   readonly timedOut: boolean;
+  /**
+   * Requests the logging proxy saw from the reader's connector. Zero means S5's
+   * hub half observed nothing — the connector never talked through the proxy,
+   * so the briefing cannot have come from this run's hub either.
+   */
+  readonly hubRequestCount: number;
 }
 
 const hasForeignServerOrPlugin = (record: RunRecord): boolean => {
@@ -339,14 +347,19 @@ export const assessValidity = (input: ValidityInput): readonly VoidReason[] => {
     }
   }
   // A hit on the fresh token proves delivery, so it waives EVERY delivery void
-  // (A1.6, A2.5) — the missing hook as much as the unrendered line. Otherwise
-  // delivery is the payload AS RENDERED in the SessionStart briefing (A1.2).
+  // (A1.6, A2.5) — the missing hook as much as the unrendered line, and a
+  // proxy that saw no request (the briefing comes from the hub through it).
+  // Otherwise delivery is the payload AS RENDERED in the SessionStart
+  // briefing (A1.2), and S5 needs traffic through the proxy to observe.
   const briefing = record.sessionStartBriefing;
   if (!input.hadTokenHit) {
     if (briefing === null) {
       reasons.push("no-session-start-hook");
     } else if (!briefing.includes(input.expectedAsksLine)) {
       reasons.push("delivery-not-rendered");
+    }
+    if (input.hubRequestCount === 0) {
+      reasons.push("hub-proxy-unused");
     }
   }
   if (record.realAssistantTurns === 0) {

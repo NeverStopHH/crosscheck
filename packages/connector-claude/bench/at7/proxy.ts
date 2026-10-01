@@ -17,16 +17,26 @@ export interface LoggingProxy {
   readonly url: string;
   /** Every request body seen, in order — the S5 haystack. */
   readonly requestBodies: string[];
+  /**
+   * One line per request, bodiless GETs included (`METHOD /path?query @ ISO`):
+   * proof that the connector's traffic flowed through here at all, and the
+   * count the attempt waits on to go quiet.
+   */
+  readonly requests: string[];
   stop: () => Promise<void>;
 }
 
 export const startHubProxy = (hubUrl: string): LoggingProxy => {
   const requestBodies: string[] = [];
+  const requests: string[] = [];
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     fetch: async (request) => {
       const incoming = new URL(request.url);
+      requests.push(
+        `${request.method} ${incoming.pathname}${incoming.search} @ ${new Date().toISOString()}`,
+      );
       const body = await request.text();
       if (body.length > 0) {
         requestBodies.push(body);
@@ -50,6 +60,7 @@ export const startHubProxy = (hubUrl: string): LoggingProxy => {
   return {
     url: `http://127.0.0.1:${String(server.port)}`,
     requestBodies,
+    requests,
     stop: async () => {
       await server.stop(true);
     },

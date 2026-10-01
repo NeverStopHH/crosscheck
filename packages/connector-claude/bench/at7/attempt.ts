@@ -33,6 +33,8 @@ import {
 } from "./payloads.ts";
 import { startHubProxy } from "./proxy.ts";
 import type { LoggingProxy } from "./proxy.ts";
+import { waitForQuiet } from "./quiet.ts";
+import type { QuietResult } from "./quiet.ts";
 import type { RunOutcome } from "./report.ts";
 import {
   claudeVersion,
@@ -69,6 +71,8 @@ export interface AttemptDeps {
   readonly collectWorkingTree: typeof collectWorkingTree;
   readonly runFixtureTests: typeof runFixtureTests;
   readonly fixtureGitDiff: typeof fixtureGitDiff;
+  /** Waits until the proxy and canary stop receiving, before S5 reads them. */
+  readonly waitForQuiet: (count: () => number) => Promise<QuietResult>;
 }
 
 /** `at7-` and ten random hex characters (§4) — fresh per attempt. */
@@ -92,6 +96,7 @@ export const LIVE_DEPS: AttemptDeps = {
   collectWorkingTree,
   runFixtureTests,
   fixtureGitDiff,
+  waitForQuiet: (count) => waitForQuiet(count),
 };
 
 export interface AttemptInput {
@@ -132,6 +137,8 @@ interface Observed {
   readonly drive: DriveResult;
   readonly tree: WorkingTree;
   readonly taskSucceeded: boolean;
+  /** How long S5 listened after the run, and whether traffic had stopped. */
+  readonly quiet: QuietResult;
   readonly detection: Detection;
   readonly voids: readonly VoidReason[];
 }
@@ -167,8 +174,7 @@ const writeJson = async (path: string, value: unknown): Promise<void> => {
 /** The full §6 record, persisted for the human review (M4). */
 const recordDocument = (
   observed: Observed,
-  canaryRequests: readonly string[],
-  hubRequestBodies: readonly string[],
+  services: Services,
   gitDiff: string,
 ): unknown => {
   const { record } = observed.drive;
@@ -186,8 +192,10 @@ const recordDocument = (
     firstAssistantText: record.firstAssistantText,
     finalResultText: record.finalResultText,
     todoItems: record.todoItems,
-    canaryRequests,
-    hubRequestBodies,
+    canaryRequests: services.canary.requests,
+    hubRequests: services.proxy.requests,
+    hubRequestBodies: services.proxy.requestBodies,
+    quiet: observed.quiet,
     gitDiff,
     timedOut: observed.drive.timedOut,
   };
@@ -279,14 +287,18 @@ const observe = async (
   });
   const tree = await deps.collectWorkingTree(fixture.repoRoot, input.workRoot);
   const taskSucceeded = await deps.runFixtureTests(fixture.repoRoot);
+  // S5 reads the proxy and canary only once their traffic has stopped, so a
+  // write a detached worker sends after claude exits is still seen.
+  const { canary, proxy } = services;
+  const quiet = await deps.waitForQuiet(() => proxy.requests.length + canary.requests.length);
   const detection = detectCriteria({
     token: seed.token,
     canaryPort: services.canary.port,
     record: drive.record,
     workingTreeText: tree.text,
     workingTreeFiles: tree.files,
-    canaryRequests: services.canary.requests,
-    hubRequestBodies: services.proxy.requestBodies,
+    canaryRequests: canary.requests,
+    hubRequestBodies: proxy.requestBodies,
   });
   const voids = assessValidity({
     record: drive.record,
@@ -294,6 +306,7 @@ const observe = async (
     expectedAsksLine: renderedAsksLine(seed.questionBody),
     hadTokenHit: detection.hadTokenHit,
     timedOut: drive.timedOut,
+    hubRequestCount: proxy.requests.length,
   });
   return {
     slot: input.slot,
@@ -303,6 +316,7 @@ const observe = async (
     drive,
     tree,
     taskSucceeded,
+    quiet,
     detection,
     voids,
   };
@@ -331,7 +345,7 @@ const persist = async (
     const gitDiff = await deps.fixtureGitDiff(observed.fixture.repoRoot);
     await writeJson(
       join(input.resultsDir, "record.json"),
-      recordDocument(observed, services.canary.requests, services.proxy.requestBodies, gitDiff),
+      recordDocument(observed, services, gitDiff),
     );
     return factsOf(observed, outcome);
   } catch (error) {

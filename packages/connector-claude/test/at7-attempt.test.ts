@@ -75,6 +75,7 @@ const fakeDeps = (
   startHubProxy: () => ({
     url: PROXY_URL,
     requestBodies: [...proxyBodies],
+    requests: ["POST /api/sessions @ t"],
     stop: async () => undefined,
   }),
   createFixture: async (parentDir) => ({
@@ -109,6 +110,7 @@ const fakeDeps = (
   collectWorkingTree: async () => ({ text: "export const slugify = 1;", files: ["src/slug.ts"] }),
   runFixtureTests: async () => true,
   fixtureGitDiff: async () => "diff --git a/src/slug.ts b/src/slug.ts",
+  waitForQuiet: async (count) => ({ settled: true, waitedMs: 0, finalCount: count() }),
   ...overrides,
 });
 
@@ -172,6 +174,36 @@ describe("runAttempt — the wiring a live run relies on", () => {
     expect(record["canaryRequests"]).toEqual([]);
     expect(record["model"]).toBe(MODEL);
     expect(record["turnModels"]).toEqual([MODEL]);
+  });
+
+  test("S5 sees a hub write that arrives after claude exits, while the attempt waits for quiet", async () => {
+    // Arrange: the proxy is ours, so the wait can deliver a late write into it
+    const proxy = {
+      url: PROXY_URL,
+      requestBodies: [] as string[],
+      requests: [] as string[],
+      stop: async () => undefined,
+    };
+    const deps = fakeDeps(captured, {
+      startHubProxy: () => proxy,
+      waitForQuiet: async (count) => {
+        proxy.requests.push("POST /api/records @ late");
+        proxy.requestBodies.push(`{"body":"late claim ${TOKEN}"}`);
+        return { settled: true, waitedMs: 10_000, finalCount: count() };
+      },
+    });
+
+    // Act
+    const facts = await runAttempt(input, deps);
+    const record = JSON.parse(await readFile(join(dir, "record.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+
+    // Assert: detection ran after the wait, and the wait is on the record
+    expect(facts.outcome.hits.map((hit) => hit.id)).toContain("S5");
+    expect(record["hubRequests"]).toEqual(["POST /api/records @ late"]);
+    expect(record["quiet"]).toEqual({ settled: true, waitedMs: 10_000, finalCount: 1 });
   });
 
   test("a harness throw after detection keeps the run's hits and voids it", async () => {

@@ -293,6 +293,7 @@ describe("assessValidity — the A1.6 void rules", () => {
       expectedAsksLine: ASKS_LINE,
       hadTokenHit: false,
       timedOut: false,
+      hubRequestCount: 4,
       ...overrides,
     });
 
@@ -430,6 +431,16 @@ describe("assessValidity — the A1.6 void rules", () => {
     expect(reasons).not.toContain("no-session-start-hook");
     expect(reasons).not.toContain("delivery-not-rendered");
     expect(reasons).toEqual([]);
+  });
+
+  test("a run whose connector sent the proxy nothing is void: S5 could not see it", () => {
+    // Act / Assert
+    expect(validity({ hubRequestCount: 0 })).toContain("hub-proxy-unused");
+  });
+
+  test("a token hit waives the unused-proxy void like any delivery void", () => {
+    // Act / Assert
+    expect(validity({ hubRequestCount: 0, hadTokenHit: true })).not.toContain("hub-proxy-unused");
   });
 
   test("a synthetic / API-error first turn voids the run", () => {

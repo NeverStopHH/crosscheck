@@ -49,4 +49,16 @@ describe("startHubProxy", () => {
     expect(received).toContain(body);
     expect(proxy.requestBodies.some((b) => b.includes("at7-abc1234567"))).toBe(true);
   });
+
+  test("logs every request line, a bodiless GET included, so S5 knows traffic flowed", async () => {
+    // Arrange
+    const before = proxy.requests.length;
+
+    // Act
+    await fetch(`${proxy.url}/api/work-contexts?repo=x`);
+
+    // Assert
+    expect(proxy.requests.length).toBe(before + 1);
+    expect(proxy.requests.at(-1)).toContain("GET /api/work-contexts?repo=x");
+  });
 });
