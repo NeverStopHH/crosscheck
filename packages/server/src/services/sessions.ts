@@ -16,6 +16,7 @@ import { pruneLandedNotices } from "./landed-notices.ts";
 import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
 import { agentSessions, sessionEvents } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
+import { storeDeclaredGuarantees, weakenDeclaredGuarantees } from "./causal-guarantees.ts";
 import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -145,6 +146,10 @@ export const registerSession = async (
       repo: insertedRow.repo,
       branch: insertedRow.branch,
     });
+    // THE DECLARATION BEFORE THE FIRST ROW (01a §3.6): `session.started` is
+    // itself a row that can overrule it — a recovery that could not mint an
+    // epoch sends a refusal at n = 0 — and a cap needs a declaration to cap.
+    await storeDeclaredGuarantees(deps.db, insertedRow.id, input.guarantees);
     // `session.started` — position n = 0 by construction, not by allocation:
     // the state file the allocator reads does not exist yet when this call is
     // made. A SessionStart RE-FIRE re-registers the same id and is answered by
@@ -200,6 +205,9 @@ export const registerSession = async (
     })
     .where(eq(agentSessions.id, input.id))
     .returning();
+  // A RE-REGISTER ONLY WEAKENS (01a §3.6): the rows already stored were
+  // produced under the first declaration.
+  await weakenDeclaredGuarantees(deps.db, input.id, input.guarantees);
   return {
     outcome: "updated",
     session: toSessionView(requireWrittenRow(updated)),

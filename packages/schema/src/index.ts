@@ -348,6 +348,7 @@ export {
   MAX_GUARANTEE_FIELD_CHARS,
   MAX_GUARANTEE_TRIPLES,
   ORDER_REASONS,
+  STORED_GUARANTEE_REASONS,
   foldGuaranteeDeclaration,
   weakerGuarantee,
 } from "./causal-guarantees.ts";
@@ -358,4 +359,5 @@ export type {
   CoverageOrder,
   GuaranteeKind,
   OrderReason,
+  StoredGuaranteeReason,
 } from "./causal-guarantees.ts";

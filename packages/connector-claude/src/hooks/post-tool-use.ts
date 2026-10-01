@@ -14,6 +14,7 @@ import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSession } from "@crosscheck/connector-core/http/hub.ts";
+import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
@@ -81,6 +82,9 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     branch: ctx.identity.branch,
     baseCommit: ctx.identity.baseCommit,
     status: IMPLEMENTING_STATUS,
+    // A recovery CREATES the session, so it carries the declaration a
+    // SessionStart would have (01a §3.6) — the hub stores it only on create.
+    guarantees: guaranteeDeclarationFor("claude-code"),
     // A RECOVERY IS A CREATE, so it mints an epoch like SessionStart does and
     // `session.started` takes position 0 under it. Sending nothing would file
     // a current connector under `pre_seq_connector` — "a connector from

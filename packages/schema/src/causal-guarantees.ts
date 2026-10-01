@@ -93,6 +93,19 @@ export const ORDER_REASONS = [
   "hub_did_not_report",
 ] as const;
 
+/**
+ * WHAT A HUB'S `session_causal_guarantees.reason` CAN HOLD: a declared reason,
+ * or the cap a contradicting row wrote over a `guaranteed` one (01a §3.6,
+ * "rows outrank declarations"). The cap is stored, not derived on read, so it
+ * survives the rows that caused it — a swept skeleton must not lift it.
+ */
+export const STORED_GUARANTEE_REASONS = [
+  ...CAUSAL_GUARANTEE_REASONS,
+  "declaration_contradicted",
+] as const;
+
+export type StoredGuaranteeReason = (typeof STORED_GUARANTEE_REASONS)[number];
+
 export type OrderReason = (typeof ORDER_REASONS)[number];
 
 /** The coverage record's order block: a state and its reason, and NO count (03 COV-6). */

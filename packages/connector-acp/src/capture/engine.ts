@@ -91,6 +91,10 @@ import type { AssembledBriefing } from "@crosscheck/connector-core/flows/briefin
 import { endSessionFlow } from "@crosscheck/connector-core/flows/end-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import {
+  ACP_CONNECTOR,
+  guaranteeDeclarationFor,
+} from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
@@ -525,6 +529,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       title: await resolveFallbackWorkContextTitle(identity),
       status: INITIAL_STATUS,
       now: at,
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
     });
     const session: CaptureSession = {
       acpSessionId,

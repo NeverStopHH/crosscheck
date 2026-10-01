@@ -185,6 +185,16 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
     reason:
       "no skeleton kind projects a question, so nothing a question depends on is in the skeleton",
   },
+  {
+    // 01a §3.3b's own classification. Not a root: retaining through it would
+    // keep every declaring session for ever. Not skeleton either: the sweep
+    // must not take it, because the cap a contradicting row wrote here is
+    // the only trace of that row once the row itself is swept.
+    table: "session_causal_guarantees",
+    column: "session_id",
+    semantics: "non_retaining_edge",
+    reason: "a declaration about a session, not a dependence on its order",
+  },
 ];
 
 export const retentionRoots = (

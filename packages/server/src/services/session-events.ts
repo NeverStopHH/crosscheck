@@ -28,6 +28,7 @@ import type {
 
 import { agentSessions, sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
+import { capContradictedGuarantee, contradictsGuaranteed } from "./causal-guarantees.ts";
 import type { OrderedEvent } from "./session-order.ts";
 import type { Clock } from "../types.ts";
 
@@ -214,6 +215,13 @@ export const recordSessionEvent = async (
         FROM agent_sessions s
        WHERE s.id = ${input.sessionId} AND s.skeleton_retired_at IS NULL
       ON CONFLICT DO NOTHING`);
+    // ROWS OUTRANK DECLARATIONS (01a §3.6): an upper bound or a withheld
+    // position caps a `guaranteed` declaration of this kind — in the same
+    // call, so no surface reads the declaration past the row that overruled
+    // it, and stored, so a sweep of the row cannot lift the cap.
+    if (contradictsGuaranteed(input.seqKind, seqN !== null, seqReason)) {
+      await capContradictedGuarantee(deps.db, input.sessionId, input.kind);
+    }
     return id;
   };
   if (stamp === null) {

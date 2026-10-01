@@ -14,6 +14,9 @@ import {
   NO_COMMIT_SHA,
 } from "@crosscheck/schema";
 
+import { getTableConfig } from "drizzle-orm/pg-core";
+
+import { sessionCausalGuarantees } from "../src/db/schema.ts";
 import { createTestHarness } from "./helpers.ts";
 
 const BOOTSTRAP_SQL_URL = new URL("../src/db/bootstrap.sql", import.meta.url);
@@ -751,5 +754,34 @@ describe("bootstrap.sql DDL sync", () => {
       "pilot_attributions_top_session_idx",
       "work_context_intents_session_idx",
     ]);
+  });
+
+  test("session_causal_guarantees has drizzle's columns and key on a real bootstrap, idempotently", async () => {
+    // Arrange — drizzle's columns are the authority every service writes by;
+    // a bootstrap that spelled one differently is a register that 500s on
+    // exactly the deployments that run bootstrap.sql.
+    const harness = await createTestHarness();
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const drizzleColumns = getTableConfig(sessionCausalGuarantees)
+      .columns.map((column) => column.name)
+      .sort();
+
+    // Act: the harness ran the whole file once; a restart runs this statement
+    // again (db.execute prepares one command, so it is cut out on its own).
+    const statement = /CREATE TABLE IF NOT EXISTS session_causal_guarantees \([\s\S]*?\);/.exec(
+      bootstrapSql,
+    )?.[0];
+    await harness.db.execute(sql.raw(statement ?? "SELECT missing_statement"));
+    const columns = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'session_causal_guarantees' ORDER BY column_name`,
+    );
+    const key = await harness.db.execute(
+      sql`SELECT a.attname AS c FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = 'session_causal_guarantees'::regclass AND i.indisprimary ORDER BY a.attname`,
+    );
+
+    // Assert
+    expect(bootstrapSql).toContain("CREATE TABLE IF NOT EXISTS session_causal_guarantees (");
+    expect(columns.rows.map((row) => String(row["c"]))).toEqual(drizzleColumns);
+    expect(key.rows.map((row) => String(row["c"]))).toEqual(["kind", "session_id"]);
   });
 });

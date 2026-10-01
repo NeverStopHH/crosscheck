@@ -179,11 +179,20 @@ const listSources = async (pkg: string): Promise<readonly string[]> => {
     .map((entry) => relative(REPO_ROOT, join(entry.parentPath, entry.name)));
 };
 
+/**
+ * CODE ONLY. A comment that quotes `{ epoch, n: 0 }` or `envelopeFor(…,
+ * "claim"` is not a producer — and the first version of this scan read one in
+ * guarantees/declarations.ts as a fourth session.started origin. A `//` after
+ * a colon or quote is a URL or a string, not a comment.
+ */
+const withoutComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+
 const scan = async (): Promise<ReadonlyMap<string, ScannedModule>> => {
   const paths = (await Promise.all(PACKAGES.map(listSources))).flat();
   const scanned = await Promise.all(
     paths.map(async (path): Promise<[string, ScannedModule]> => {
-      const source = await Bun.file(join(REPO_ROOT, path)).text();
+      const source = withoutComments(await Bun.file(join(REPO_ROOT, path)).text());
       const imports = parseImports(path, source);
       const origin = ORIGIN_PATTERN.test(source);
       const facts: ModuleFacts = {
@@ -583,7 +592,39 @@ describe("the weakest-lane fold", () => {
   });
 });
 
+/**
+ * WHICH DECLARATION EACH REGISTER SENDS. A register call names its connector
+ * by the literal or constant it passes `guaranteeDeclarationFor`; a Cursor
+ * handler sending Claude's table would type-check and over-declare.
+ */
+const OWN_DECLARATION: Readonly<Record<GuaranteeConnector, RegExp>> = {
+  "claude-code": /guaranteeDeclarationFor\((?:"claude-code"|DEFAULT_AGENT_KIND)\)/,
+  "cursor-ide": /guaranteeDeclarationFor\((?:"cursor-ide"|CURSOR_AGENT_KIND)\)/,
+  "acp:*": /guaranteeDeclarationFor\((?:"acp:\*"|ACP_CONNECTOR)\)/,
+};
+const REGISTER_CALL = /\b(?:registerSessionFlow|registerSession)\(/;
+
 describe("the wire block a connector sends", () => {
+  test("every register call in a connector package sends that connector's own declaration", async () => {
+    for (const connector of GUARANTEE_CONNECTORS) {
+      // Arrange
+      const pkg = PACKAGE_OF[connector].replace("packages/", "");
+      const sources = await listSources(pkg);
+      const callers = (
+        await Promise.all(
+          sources.map(async (path) => ({ path, source: await Bun.file(join(REPO_ROOT, path)).text() })),
+        )
+      ).filter((entry) => REGISTER_CALL.test(entry.source));
+      // Act
+      const silent = callers
+        .filter((entry) => !OWN_DECLARATION[connector].test(entry.source))
+        .map((entry) => entry.path);
+      // Assert
+      expect(callers.length).toBeGreaterThan(0);
+      expect(silent).toEqual([]);
+    }
+  });
+
   test("every connector sends nine triples a hub folds back to the same values", () => {
     for (const connector of GUARANTEE_CONNECTORS) {
       // Act

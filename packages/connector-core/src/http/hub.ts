@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { TelemetryLossReport } from "@crosscheck/schema";
+import type { CausalGuaranteeTriple, TelemetryLossReport } from "@crosscheck/schema";
 import { COMMIT_SHA_PATTERN, ClaimValiditySchema } from "@crosscheck/schema";
 import type { ClaimRevalidationEntry, LandedContextRequest } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
@@ -213,6 +213,13 @@ export interface RegisterSessionInput {
    * so every flow that can read a ledger sends one, zeros included.
    */
   readonly losses?: TelemetryLossReport;
+  /**
+   * This connector's declared causal guarantees (01a §3.6): nine enum triples,
+   * the structural statement beside `losses`' runtime one (loss-accounting
+   * §4.9). Optional on the type for `crosscheck conference`, which registers
+   * a session with no host lanes at all; the hub reads absent as undeclared.
+   */
+  readonly guarantees?: readonly CausalGuaranteeTriple[];
 }
 
 const encodeRepo = (repo: string): string =>

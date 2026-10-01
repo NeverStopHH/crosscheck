@@ -13218,6 +13218,131 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/guarantee-declarations.test.ts`,
     because: "session.started's producer is the one module that allocates nothing, so a table can drop it unseen",
   },
+  // 01a §3.6 — the vocabulary's fold, read by every hub.
+  {
+    label: "a triple this hub cannot read keeps the state it arrived with",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "  return coherent ? { kind, guarantee: GUARANTEE_OF_REASON[reason], reason } : { kind, ...UNDECLARED };",
+    to: "  return { kind, guarantee: guarantee as CausalGuarantee, reason: reason as CausalGuaranteeReason };",
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "a newer connector's `guaranteed / vendor_magic` is stored as guaranteed on a hub that cannot say what it means",
+  },
+  {
+    label: "a kind declared twice keeps the stronger triple",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "held !== undefined && rankOf(held.guarantee) <= rankOf(triple.guarantee) ? held : triple;",
+    to: "held !== undefined && rankOf(held.guarantee) >= rankOf(triple.guarantee) ? held : triple;",
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "a block that says partial and guaranteed for one kind is read as guaranteed",
+  },
+  {
+    label: "an oversized declaration is cut instead of stored as nothing",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "  if (!Array.isArray(raw) || raw.length > MAX_GUARANTEE_TRIPLES) {",
+    to: "  if (!Array.isArray(raw)) {",
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "a block past the cap keeps whichever triples came first, and those may be the strong ones",
+  },
+  {
+    label: "the weaker of two guarantees is the stronger one",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "): CausalGuarantee => (rankOf(right) < rankOf(left) ? right : left);",
+    to: "): CausalGuarantee => (rankOf(right) > rankOf(left) ? right : left);",
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "every fold built on it goes the strengthening way",
+  },
+  {
+    // The unknown-kind drop in foldTriple is backed by this final pass over
+    // GUARANTEE_KINDS, so mutating either alone changes nothing observable;
+    // this is the pass that also fixes the order two equal blocks compare in.
+    label: "a folded declaration keeps the order and the kinds it arrived with",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "  return GUARANTEE_KINDS.flatMap((kind) => {\n    const triple = byKind.get(kind);\n    return triple === undefined ? [] : [triple];\n  });",
+    to: "  return [...byKind.values()];",
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "two equal declarations sent in different orders are stored as different values",
+  },
+  // 01a §3.6 — transport, storage and "rows outrank declarations".
+  {
+    label: "a re-register strengthens a session's declaration",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "    } else if (rankOf(next.guarantee) < rankOf(row.guarantee)) {",
+    to: "    } else if (rankOf(next.guarantee) !== rankOf(row.guarantee)) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "rows produced under a partial declaration are re-described as guaranteed after the fact",
+  },
+  {
+    label: "a re-register that declares nothing keeps the old declaration",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: '    if (next === undefined || next.guarantee === "undeclared") {',
+    to: "    if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an older connector on the same session goes on reading as the newer one's statement",
+  },
+  {
+    label: "a withheld position does not overrule a lifecycle declaration",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: '): boolean => seqKind === "observed" || (!positioned && seqReason !== "reaped_end");',
+    to: '): boolean => seqKind === "observed";',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a session.ended with no position still reads lifecycle-guaranteed",
+  },
+  {
+    label: "a reap overrules a lifecycle declaration",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: '): boolean => seqKind === "observed" || (!positioned && seqReason !== "reaped_end");',
+    to: '): boolean => seqKind === "observed" || !positioned;',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "the hub's own inference from silence is counted as the connector contradicting itself",
+  },
+  {
+    label: "a contradicting row rewrites declarations that were never guaranteed",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: '        eq(sessionCausalGuarantees.guarantee, "guaranteed"),\n',
+    to: "",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an `unavailable` declaration is raised to partial by the row that cap was meant for",
+  },
+  {
+    label: "a contradicting session_events row is counted nowhere and caps nothing",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null, seqReason)) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an unbracketed edit from a session that declared bracketed leaves every surface reading guaranteed (CSK-9)",
+  },
+  {
+    label: "a contradicting intent version caps nothing",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  if (contradictsGuaranteed(intentSeqKind(provenance), stamp !== null, seqReasonOf(input.seq))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "the two intent kinds live outside session_events, so a cap written only there misses them",
+  },
+  {
+    label: "the declaration table is dropped from the retention registry",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: '    table: "session_causal_guarantees",\n',
+    to: '    table: "session_causal_guarantees_unregistered",\n',
+    test: `${SERVER}/test/retention-registry.test.ts`,
+    because: "a relation that references a session has no declared retention meaning (CSK-12)",
+  },
+  {
+    label: "the register flow drops the declaration it was given",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      guarantees: input.guarantees,\n",
+    to: "",
+    test: `${CORE}/test/register-guarantees.test.ts`,
+    because: "every session of a current connector reads undeclared on the hub, and nothing says why",
+  },
+  {
+    label: "Claude's SessionStart sends another connector's declaration",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: '      guarantees: guaranteeDeclarationFor("claude-code"),\n',
+    to: '      guarantees: guaranteeDeclarationFor("cursor-ide"),\n',
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "a register type-checks with any connector's table, and the hub stores the wrong one's statement",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13384,7 +13509,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
- * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 22
+ * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 23
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
@@ -13424,6 +13549,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
+ * PRINTS: packages/connector-core/test/register-guarantees.test.ts 1
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 5
@@ -13454,6 +13580,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/schema/test/causal-guarantees.test.ts 5
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
@@ -13462,6 +13589,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 1
  * PRINTS: packages/server/test/calibration.test.ts 1
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 7
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
@@ -13500,7 +13628,7 @@ interface Outcome {
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2
- * PRINTS: packages/server/test/retention-registry.test.ts 1
+ * PRINTS: packages/server/test/retention-registry.test.ts 2
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
