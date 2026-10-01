@@ -1211,6 +1211,24 @@ describe("labels counted only from when they became available", () => {
     expect(out.precision.sessions).toBe(1);
   });
 
+  test("the noisy-sessions floor still counts a 0.10 off_target mark — it predates the labels", async () => {
+    // Arrange — the floor was the first pilot's figure; the word its era
+    // stored is a noise mark for it, even though precision leaves it out
+    const world = await setup({ labelsSinceHoursAgo: 10 });
+    await session(world, "s_prior", 100);
+    await context(world, "wc_prior", "s_prior", "prior work");
+    await session(world, "s_old", 20);
+    await deliver(world, "hd_old", "s_old", "wc_prior", "prompt_hint", 19, null);
+    await label(world, "hd_old", "off_target", null, 18);
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.noisySessionsPer100).toEqual({ kind: "measured", value: 100 });
+    expect(out.precision.legacyNoise).toBe(1);
+  });
+
   test("a window that starts after labels did is not clipped", async () => {
     // Arrange
     const world = await setup({ labelsSinceHoursAgo: 100 });
