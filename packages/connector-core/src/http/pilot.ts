@@ -174,8 +174,10 @@ export const PilotReportSchema = z.looseObject({
     reasons: z.array(LabelReasonSchema),
     reasonsBeyondList: CountSchema,
   }),
-  // BOTH COHORTS, ALWAYS: a list that did not arrive is a report this client
-  // cannot read, for the same reason as a missing count.
+  // THE LIST MUST ARRIVE: a list that did not is a report this client cannot
+  // read, for the same reason as a missing count. Its ENTRIES are printed as
+  // the hub sent them — the hub sends both cohorts; this parse does not
+  // insist on two, so a newer hub's third would print rather than fail.
   cohorts: z.array(CohortFiguresSchema),
   integrity: z.array(
     z.looseObject({

@@ -15,8 +15,11 @@
  * flag and consent.
  *
  * EVERY COLUMN IS AN ID, AN ENUM, AN INTEGER OR A TIMESTAMP — non-negotiable
- * 6, checkable by reading this file: no prompt, no diff body, no transcript
- * and no free-text mark reaches disk through anything here.
+ * 6, checkable by reading this file: no prompt, no diff body and no
+ * transcript reaches disk through anything here. ONE EXCEPTION, by the
+ * owner's decision (07 §12): `pilot_marks.reason`, an optional sentence
+ * beside a label — bounded, secret-scanned (`writePilotMark`), and nothing
+ * asks for it.
  */
 import { randomUUID } from "node:crypto";
 
@@ -777,7 +780,8 @@ const SESSION_SET_COUNTERS: readonly string[] = Object.values(PILOT_SET_COUNTERS
  * measurement, and the report's widest window is this same number, so nothing
  * a report can read is removed: the boundary day is kept.
  *
- * `pilot_sessions` is NOT pruned: it is capped by count, and fifty rows ARE
+ * `pilot_sessions` is NOT pruned: it is capped by count — the two cohorts'
+ * two hundred slots, plus an upgraded hub's 0.10 rows — and those rows ARE
  * the measurement. `pilot_marks` are a person's word and are not listed for
  * retention by the spec; they are bounded by people typing.
  *

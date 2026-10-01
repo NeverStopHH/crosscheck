@@ -28,10 +28,12 @@
  * deliveries in eight weeks; pulling them into the process to count them would
  * make the cost of a report scale with the traffic it describes.
  *
- * THE REPORT NEVER READS THE CAUSAL SKELETON, and 01a's retention registry
- * rests on that (07 §11.8): the pilot's tables are declared NON-RETAINING
- * edges to their sessions, which lets the skeleton sweep retire a measured
- * session's events. That is only safe while nothing here reads them. The one
+ * THE REPORT NEVER READS THE CAUSAL SKELETON (07 §11.8). 07 DECLARES the
+ * pilot's two session relations non-retaining edges, which would let the
+ * skeleton sweep retire a measured session's events; until Nick confirms
+ * D-E, services/retention-registry.ts holds them as `root` / `while_exists`
+ * (the safe alternative 07 names), so today the sweep keeps those events.
+ * Either way the declaration is only safe while nothing here reads them. The one
  * pilot reader of `session_events` is `readSeqResidue` in services/pilot.ts,
  * which runs once, when the session ends or is reaped, and stores the residue
  * it needs so the report never goes back. Both halves are pinned — the first

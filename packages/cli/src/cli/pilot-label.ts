@@ -83,7 +83,8 @@ export const PILOT_LABEL_USAGE = [
   "  hours and that you have not labelled, newest first, one key each:",
   "    h helpful · n noise · u unclear · s skip · q stop",
   "  Shift (H, N, U) adds a one-sentence reason; nothing asks for one.",
-  "  A person at a terminal only — an agent cannot label for you.",
+  "  Refused without a terminal, so an agent does not label by accident; it",
+  "  is not a wall — the hub cannot tell a person's label from an agent's.",
   "",
 ].join("\n");
 
