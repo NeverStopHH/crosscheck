@@ -188,7 +188,7 @@ const lane = (name: GuaranteeLane, modules: readonly string[]): LaneProducers =>
 
 /** The kinds every host shares through connector-core's flows, MCP tools and workers. */
 const sharedKinds = {
-  // register-session.ts:160 sends `seq: { epoch, n: 0 }` — the origin, allocated by nobody.
+  // register-session.ts:170 sends `seq: { epoch, n: 0 }` — the origin, allocated by nobody.
   "session.started": row([lane("lifecycle", [REGISTER_FLOW])]),
   // end-session.ts:86 allocates the end BEFORE the state delete, so nothing can follow it.
   "session.ended": row([lane("lifecycle", [END_FLOW])]),
@@ -207,10 +207,10 @@ const CLAUDE_PRE_TOOL = `${CLAUDE}/hooks/pre-tool-use.ts`;
 const claudeTable: ConnectorTable = {
   ...sharedKinds,
   // A hook installed mid-session re-registers from PostToolUse
-  // (post-tool-use.ts:77) with `{ epoch: derived.seqEpoch, n: 0 }` — a second
+  // (post-tool-use.ts:78) with `{ epoch: derived.seqEpoch, n: 0 }` — a second
   // origin, still n = 0 by construction.
   "session.started": row([lane("lifecycle", [REGISTER_FLOW, `${CLAUDE}/hooks/post-tool-use.ts`])]),
-  // Edit-family calls are bracketed (pre-tool-use.ts:188 opens, post-tool-use.ts:280
+  // Edit-family calls are bracketed (pre-tool-use.ts:188 opens, post-tool-use.ts:284
   // closes); Bash is in POST_TOOL_USE_MATCHER and not PRE_TOOL_USE_MATCHER
   // (constants.ts:1630-1632), and the Stop git lane (stop.ts:186) observes.
   "file.modified": row([
@@ -225,7 +225,7 @@ const claudeTable: ConnectorTable = {
     lane("pre_tool_bracketed", [CLAUDE_PRE_TOOL, CLAUDE_POST_TOOL]),
     lane("post_tool_unbracketed", [CLAUDE_POST_TOOL, `${CLAUDE}/hooks/post-tool-use-failure.ts`]),
   ]),
-  // session-start.ts:361 positions the commit aggregate, and the hub stores it
+  // session-start.ts:363 positions the commit aggregate, and the hub stores it
   // observed unconditionally (server commit-evidence.ts:150).
   "commit.observed": row([lane("observing", [`${CLAUDE}/hooks/session-start.ts`])]),
 };
@@ -250,7 +250,7 @@ const ACP_ENGINE = `${ACP}/capture/engine.ts`;
 
 const acpTable: ConnectorTable = {
   ...sharedKinds,
-  // engine.ts:713 positions an edit off the first wire row that names its file
+  // engine.ts:718 positions an edit off the first wire row that names its file
   // — often the pending tool_call, before the edit — with no window: neither
   // bound holds, and the hub stores it observed.
   "file.modified": row([lane("post_tool_unbracketed", [ACP_ENGINE])]),

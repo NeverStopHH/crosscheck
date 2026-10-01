@@ -5115,8 +5115,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // The hub is the only one who can state its retention.
     label: "the hub stops declaring its retention",
     file: `${SERVER}/src/routes/sessions.ts`,
-    from: "    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION, skeleton });",
-    to: "    return ok(c, { sessions: orders, skeleton });",
+    // Re-pointed when the order route grew its `declarations` field (01a §5):
+    // the same omission, on the object's own line.
+    from: "      retention: SESSION_EVENT_RETENTION,\n",
+    to: "",
     test: `${CLI}/test/seq-doctor-hub.test.ts`,
     because:
       "SILENT: every doctor against the one hub that did decide reads `not " +
@@ -6421,8 +6423,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // ages cost 20 characters against a 160 bound.
     label: "an age is bought with somebody else's gap",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "  return fit(head, holdsEvery(head, aged) ? aged : fragmentsOf(record, now, false));",
-    to: "  return fit(head, aged);",
+    // Re-pointed when the order block joined the line (01a §3.7): the same
+    // defect — the aged build handed to `fit` whatever it costs.
+    from: "  return fit(head, holding ?? fragmentsOf(record, now, false, false));",
+    to: "  return fit(head, fragmentsOf(record, now, true, true));",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "`fit` drops a whole fragment rather than half a word, so the git gap " +
@@ -13416,6 +13420,103 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/coverage-wire.test.ts`,
     because: "an old hub's silence becomes the strongest statement on every surface (COV-3)",
   },
+  // 01a §5 — where the order block and the declaration table render.
+  {
+    label: "the coverage line drops the order block",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "    orderFragment(record, orderReason),\n",
+    to: "",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "a capped declaration is stored and read and shown on no surface a person reads (CSK-9)",
+  },
+  {
+    label: "the coverage line prints the order reason in place of its state",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "    ? `order: ${record.order.state} (${record.order.reason})`\n",
+    to: "    ? `order: ${record.order.reason}`\n",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the reader loses the one word the order block exists to carry",
+  },
+  {
+    label: "the order block outranks the rungs that decide judging",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),\n    gitFragment(rowOf(record, "git"), now, ages),\n    orderFragment(record, orderReason),\n',
+    to: '    orderFragment(record, orderReason),\n    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),\n    gitFragment(rowOf(record, "git"), now, ages),\n',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "on a full line `fit` drops the git rung to keep a comparability note — the caveat that gates judging goes first",
+  },
+  {
+    label: "a full line spends the ages before the order reason",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "    fragmentsOf(record, now, true, false),\n",
+    to: "",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "a caveat repeated every day reads the same every day and cannot be told from a recurring gap (COV-11)",
+  },
+  {
+    label: "doctor prints an unreported contradiction count as a number",
+    file: `${CORE}/src/guarantees/doctor.ts`,
+    from: "  if (contradicted === null) {\n",
+    to: "  if (false) {\n",
+    test: `${CORE}/test/guarantee-doctor.test.ts`,
+    because: "an old hub's silence reads as a measurement",
+  },
+  {
+    label: "an overruled declaration is a doctor pass",
+    file: `${CORE}/src/guarantees/doctor.ts`,
+    from: '    level: "WARN",\n    name,\n',
+    to: '    level: "PASS",\n    name,\n',
+    test: `${CORE}/test/guarantee-doctor.test.ts`,
+    because: "a session whose rows contradicted its connector's declaration passes the one check that counts it",
+  },
+  {
+    label: "the client reads an unreadable contradiction count as zero",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  return parsed.success ? parsed.data.contradicted : null;\n",
+    to: "  return parsed.success ? parsed.data.contradicted : 0;\n",
+    test: `${CORE}/test/register-guarantees.test.ts`,
+    because: "doctor says none was overruled on a hub that never said",
+  },
+  {
+    label: "the order route stops carrying the contradiction count",
+    file: `${SERVER}/src/routes/sessions.ts`,
+    from: "      declarations: { contradicted },\n",
+    to: "",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because: "doctor can never print the count the hub holds",
+  },
+  {
+    label: "the contradiction count covers other people's sessions",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "        eq(agentSessions.developerId, developerId),\n",
+    to: "        sql`true`,\n",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a count about somebody else's sessions reaches this person's terminal",
+  },
+  {
+    label: "Claude's doctor omits its declaration table and count",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...checkCausalGuarantees(contradictedDeclarations),\n",
+    to: "",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because: "the reference host says nothing about what its positions can support (01a §5)",
+  },
+  {
+    label: "Cursor's doctor omits its declaration table",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "    // 01a §5: what this connector's positions can support, per kind.\n    guaranteeCheck(),\n",
+    to: "",
+    test: `${CURSOR}/test/derive-transcript.test.ts`,
+    because: "a Cursor user cannot learn that its file.modified is never bracketed",
+  },
+  {
+    label: "ACP's doctor omits its declaration table",
+    file: `${ACP}/src/doctor.ts`,
+    from: "    // 01a §5: what this connector's positions can support, per kind.\n    guaranteeCheck(),\n",
+    to: "",
+    test: `${ACP}/test/derive-doctor.test.ts`,
+    because: "an ACP user cannot learn that its host emits no commit.observed",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13492,7 +13593,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
- * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 13
+ * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 15
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
@@ -13501,7 +13602,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
- * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 2
+ * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
  * PRINTS: packages/connector-acp/test/injector.test.ts 6
@@ -13572,7 +13673,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 12
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 16
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
@@ -13583,6 +13684,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 23
+ * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 2
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
@@ -13622,7 +13724,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
- * PRINTS: packages/connector-core/test/register-guarantees.test.ts 1
+ * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 5
@@ -13647,7 +13749,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
- * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 2
+ * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 2
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
@@ -13662,7 +13764,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 1
  * PRINTS: packages/server/test/calibration.test.ts 1
- * PRINTS: packages/server/test/causal-guarantees.test.ts 7
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 8
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1

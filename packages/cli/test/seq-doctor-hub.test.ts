@@ -267,6 +267,57 @@ describe("doctor prints the order failures only the hub can see", () => {
     expect(output).toContain("cannot be ordered");
   });
 
+  test("doctor prints this connector's declaration table and the caller's declaration_contradicted count", async () => {
+    // Arrange: a session that declared file.modified bracketed, and one
+    // unbracketed edit from it — the row that overrules the declaration.
+    const home = await makeHome("seq-doctor-hub-guarantees");
+    const repo = await makeRepo("seq-doctor-hub-guarantees", {
+      remote: "git@github.com:acme/api.git",
+    });
+    paths.push(home, repo);
+    const account = await newAccount("guaranteeowner");
+    await seedLocal(account, home, repo);
+    await post("/api/sessions", account.apiKey, {
+      id: "cc_overdeclared",
+      agentKind: "claude-code",
+      repo: REPO_ID,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "analyzing",
+      seq: { epoch: EPOCH, n: 0 },
+      guarantees: [{ kind: "file.modified", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" }],
+    });
+    await post("/api/records", account.apiKey, {
+      records: [
+        {
+          cx: "0.1",
+          id: `env_${crypto.randomUUID()}`,
+          ts: new Date().toISOString(),
+          producer: { developerId: account.developerId, agentKind: "claude-code", sessionId: "cc_overdeclared" },
+          kind: "work_context",
+          body: {
+            id: "wc_cc_overdeclared",
+            sessionId: "cc_overdeclared",
+            title: "Login 500s on staging",
+            status: "analyzing",
+            createdAt: new Date().toISOString(),
+          },
+        },
+      ],
+    });
+    await edit(account, "cc_overdeclared", "src/auth.ts", EPOCH, 1);
+
+    // Act
+    const output = await doctorOutput(account, home, repo);
+
+    // Assert
+    expect(output).toContain("PASS  causal guarantees (claude-code)");
+    expect(output).toContain("file.modified partial (unbracketed_lane)");
+    expect(output).toContain(
+      "WARN  declaration_contradicted  1 session-kind declaration of your sessions was overruled by a row of its own",
+    );
+  });
+
   test("the hub declares its sweep, and doctor says what it removes and what it keeps", async () => {
     // Arrange: 01a turned retention back on, in the interim mode. An operator
     // has to be able to read the decision, and the only one who can state it

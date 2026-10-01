@@ -181,7 +181,8 @@ describe("rows outrank declarations", () => {
     const reading = await effective(harness);
     // Assert
     expect(reading.get("file.modified")).toEqual({ state: "partial", reason: "declaration_contradicted" });
-    expect(await countContradictedDeclarations(harness.db, VALID_SESSION_BODY.repo)).toBe(1);
+    expect(await countContradictedDeclarations(harness.db, developer.developerId)).toBe(1);
+    expect(await countContradictedDeclarations(harness.db, "dev_somebody_else")).toBe(0);
   });
 
   test("a bracketed file.modified leaves a bracketed declaration standing", async () => {
@@ -192,7 +193,7 @@ describe("rows outrank declarations", () => {
     const reading = await effective(harness);
     // Assert
     expect(reading.get("file.modified")).toEqual({ state: "guaranteed", reason: "bracketed_by_pre_tool" });
-    expect(await countContradictedDeclarations(harness.db, VALID_SESSION_BODY.repo)).toBe(0);
+    expect(await countContradictedDeclarations(harness.db, developer.developerId)).toBe(0);
   });
 
   test("a declaration that was already partial keeps its own reason", async () => {

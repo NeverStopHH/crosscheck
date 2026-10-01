@@ -55,6 +55,8 @@ import {
   resolveDeriveBackend,
 } from "@crosscheck/connector-core/model/backend.ts";
 import { NO_SLICE_NO_TRANSCRIPT } from "./derive/transcript.ts";
+import { declarationDoctorLine } from "@crosscheck/connector-core/guarantees/doctor.ts";
+import { CURSOR_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { readContractDrift } from "./drift.ts";
 import { readInjectionLedger } from "./inject/ledger.ts";
 import { isOwnedCursorCommand } from "./init/hooks-merge.ts";
@@ -627,5 +629,12 @@ export const cursorDoctorChecks = async (
     ...capabilityChecks(cursorStates),
     ...transcriptRefusalCheck(cursorStates),
     ...refusalChecks(),
+    // 01a §5: what this connector's positions can support, per kind.
+    guaranteeCheck(),
   ];
+};
+
+const guaranteeCheck = (): CursorCheck => {
+  const line = declarationDoctorLine(CURSOR_AGENT_KIND);
+  return check(line.level, line.name, line.detail);
 };

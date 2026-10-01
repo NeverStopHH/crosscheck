@@ -164,10 +164,15 @@ export const readEffectiveGuarantees = async (
   );
 };
 
-/** How many (session, kind) declarations of this repo a row has overruled — doctor's count. */
+/**
+ * How many (session, kind) declarations of THIS DEVELOPER's sessions a row
+ * has overruled — doctor's count (01a §5). Scoped to the caller the way the
+ * route it rides is (`GET /api/sessions/order`: "the caller's own"), so a
+ * count about somebody else's sessions never reaches this person's terminal.
+ */
 export const countContradictedDeclarations = async (
   db: DbExecutor,
-  repo: string,
+  developerId: string,
 ): Promise<number> => {
   const result = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -175,7 +180,7 @@ export const countContradictedDeclarations = async (
     .innerJoin(agentSessions, eq(agentSessions.id, sessionCausalGuarantees.sessionId))
     .where(
       and(
-        eq(agentSessions.repo, repo),
+        eq(agentSessions.developerId, developerId),
         eq(sessionCausalGuarantees.reason, CONTRADICTED.reason),
       ),
     );

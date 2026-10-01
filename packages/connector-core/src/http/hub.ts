@@ -366,6 +366,13 @@ export interface SessionOrderReport {
    * that are not the hub's; the two facts that decide a WARN are still read.
    */
   readonly skeleton: SkeletonRetentionReport | UnreadableSkeletonReport | null;
+  /**
+   * How many of the caller's session-kind declarations a row of their own
+   * overruled (01a §3.6, §5). null: the hub sent none (one from before
+   * declared guarantees) or one this client cannot read — "not measured",
+   * which doctor must never print as zero.
+   */
+  readonly contradictedDeclarations: number | null;
 }
 
 /** A newer hub's report, reduced to what still has to reach the reader. */
@@ -423,11 +430,19 @@ const parseSkeleton = (
 const isRetentionMode = (value: unknown): value is SessionEventRetentionMode =>
   (SESSION_EVENT_RETENTION_MODES as readonly unknown[]).includes(value);
 
+const DeclarationCountsSchema = z.looseObject({ contradicted: COUNT });
+
+const parseContradicted = (value: unknown): number | null => {
+  const parsed = DeclarationCountsSchema.safeParse(value);
+  return parsed.success ? parsed.data.contradicted : null;
+};
+
 const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
   .looseObject({
     sessions: z.array(z.unknown()),
     retention: z.unknown().optional(),
     skeleton: z.unknown().optional(),
+    declarations: z.unknown().optional(),
   })
   .transform((value) => ({
     broken: value.sessions
@@ -441,6 +456,7 @@ const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
           ? value.retention
           : "unknown",
     skeleton: parseSkeleton(value.skeleton),
+    contradictedDeclarations: parseContradicted(value.declarations),
   }));
 
 /**
