@@ -30,8 +30,8 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import {
   hookBudget,
+  raceHookBudget,
   resolveHookBudget,
-  withBudget,
 } from "@crosscheck/connector-core/config/hook-budget.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import {
@@ -49,6 +49,10 @@ import {
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import {
+  recordCaptureLoss,
+  recordHookTimeout,
+} from "@crosscheck/connector-core/state/loss-ledger.ts";
 import {
   CURSOR_AGENT_KIND,
   CURSOR_BACKGROUND_AGENT_KIND,
@@ -171,6 +175,29 @@ const resolveCursorRepo = async (
 };
 
 /**
+ * ONE DRIFTED PAYLOAD, BOOKED TWICE (docs/1.0/loss-accounting.md §3 row 19).
+ * The drift ledger keeps the field names for doctor's "Cursor renamed
+ * something"; the capture-loss ledger keeps the fact that capture got nothing
+ * from this event, which is what reaches the hub's coverage. Unkeyed on
+ * purpose: drift is counted before repo resolution, so which repo lost the
+ * event is unknown, and an unknown repo is charged to every repo (§4.3).
+ */
+const recordDrift = async (
+  home: string,
+  event: CursorHookEvent,
+  missing: readonly string[],
+): Promise<void> => {
+  await recordContractDrift(home, event, missing);
+  await recordCaptureLoss(home, {
+    kind: "host_contract_drift",
+    count: 1,
+    key: null,
+    detail: event,
+    now: new Date(),
+  });
+};
+
+/**
  * Resolves everything a handler needs, or null when the connector must stay
  * silent. Drift-counting happens HERE — the one choke point every payload
  * passes — so no handler can forget the tripwire.
@@ -193,7 +220,7 @@ export const prepareCursorHook = async (
   const home = crosscheckHome(env);
   const payload = parseCursorPayload(stdin);
   if (payload === null) {
-    await recordContractDrift(home, event, [UNPARSEABLE_MARKER]);
+    await recordDrift(home, event, [UNPARSEABLE_MARKER]);
     return null;
   }
   const missing = [...missingMappedFields(event, payload)];
@@ -205,7 +232,7 @@ export const prepareCursorHook = async (
     missing.push("workspace_roots");
   }
   if (missing.length > 0 || workspaceRoot === undefined) {
-    await recordContractDrift(home, event, missing);
+    await recordDrift(home, event, missing);
     return null;
   }
   // The conversation id is host-minted, not charset-guaranteed: the shared
@@ -216,7 +243,7 @@ export const prepareCursorHook = async (
   // with nothing printable left cannot key anything: named drift, silence.
   const conversationId = safeHostSessionId(payload.conversation_id ?? "");
   if (conversationId === null) {
-    await recordContractDrift(home, event, ["conversation_id"]);
+    await recordDrift(home, event, ["conversation_id"]);
     return null;
   }
   const agentKind =
@@ -250,15 +277,25 @@ export const prepareCursorHook = async (
   };
 };
 
+/** Where an abandoned hook's loss is booked: its repo once prepare resolved one. */
+interface ResolvedLossKey {
+  value: { readonly home: string; readonly key: string } | null;
+}
+
 const prepareAndRun = async (
   event: CursorHookEvent,
   handler: CursorHookHandler,
   stdin: string,
   env: Env,
   budget: HookBudget,
+  resolved: ResolvedLossKey,
 ): Promise<string> => {
   const ctx = await prepareCursorHook(event, stdin, env);
-  return ctx === null ? "" : handler(ctx, budget);
+  if (ctx === null) {
+    return "";
+  }
+  resolved.value = { home: ctx.config.home, key: ctx.repoKey };
+  return handler(ctx, budget);
 };
 
 /**
@@ -289,11 +326,23 @@ export const runCursorHookWith = async (
     // Deadline taken a fraction BEFORE the race timer starts, so what the
     // handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;
-    const out = await withBudget(
-      prepareAndRun(event, handler, stdin, env, hookBudget(deadlineMs, timeoutMs)),
+    const resolved: ResolvedLossKey = { value: null };
+    const outcome = await raceHookBudget(
+      prepareAndRun(event, handler, stdin, env, hookBudget(deadlineMs, timeoutMs), resolved),
       budgetMs,
     );
-    return out.length === 0 ? CURSOR_NO_OP_OUTPUT : out;
+    // The Claude runner's rule, same race (docs/1.0/loss-accounting.md §3
+    // row 14): a handler the budget abandoned may not have captured, so it is
+    // booked after the race, keyed when prepare resolved the repo.
+    if (outcome.timedOut) {
+      await recordHookTimeout(
+        resolved.value?.home ?? crosscheckHome(env),
+        event,
+        resolved.value?.key ?? null,
+        new Date(),
+      );
+    }
+    return outcome.output.length === 0 ? CURSOR_NO_OP_OUTPUT : outcome.output;
   } catch {
     return CURSOR_NO_OP_OUTPUT;
   }

@@ -97,6 +97,22 @@ export const recordCaptureLoss = async (
   }
 };
 
+/**
+ * ONE HOOK THE BUDGET ABANDONED (docs/1.0/loss-accounting.md §3 row 14). The
+ * runners call this AFTER the race has resolved, so the append never
+ * competes with the handler for the deadline, and only on the timeout path,
+ * so a hook that finished pays nothing. `key` is null when the budget won
+ * before repo identity resolved — charged to every repo by the reader (§4.3).
+ * `hook` is the runner's own event name, screened like every detail.
+ */
+export const recordHookTimeout = (
+  home: string,
+  hook: string,
+  key: string | null,
+  now: Date,
+): Promise<void> =>
+  recordCaptureLoss(home, { kind: "hook_timed_out", count: 1, key, detail: hook, now });
+
 const EntrySchema = z.looseObject({
   at: z.string().min(1),
   kind: z.enum(CAPTURE_LOSS_KINDS),

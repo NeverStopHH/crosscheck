@@ -1501,8 +1501,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // decoration. The deterministic hung-work pin is the guard now.
     label: "the hook budget race stops abandoning hung work",
     file: `${CORE}/src/config/hook-budget.ts`,
-    from: "    return await Promise.race([work, budget]);",
-    to: "    return await work;",
+    // Loss accounting moved the race into `raceHookBudget`, which wraps the
+    // work so the runners can tell an abandoned hook from a silent one; the
+    // backstop is the same line, racing the wrapped work.
+    from: "    return await Promise.race([finished, budget]);",
+    to: "    return await finished;",
     test: `${CONNECTOR}/test/hook-budget.test.ts`,
     because:
       "a hook whose work wedges anywhere outside an HTTP call holds the " +
@@ -12556,6 +12559,55 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/pglite-exit-code.test.ts`,
     because: "a script that opened an in-memory database never ends: a VERIFY claim hangs the claims check",
   },
+  // Loss accounting (docs/1.0/loss-accounting.md §7): every LOSS-n guard,
+  // each named by the defect it re-opens.
+  {
+    // LOSS-12's named mutation: record nothing on timeout.
+    label: "a hook the budget abandoned leaves no loss behind",
+    file: `${CORE}/src/config/hook-budget.ts`,
+    from: 'const BUDGET_SPENT: BudgetOutcome = { output: "", timedOut: true };',
+    to: 'const BUDGET_SPENT: BudgetOutcome = { output: "", timedOut: false };',
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because:
+      "a PostToolUse the budget cut exits on an empty string with its targets unwritten, and the hub's coverage reads complete over the edit it never saw",
+  },
+  {
+    label: "a hook the budget cut before its repo resolved books no loss",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (outcome.timedOut) {\n      await recordHookTimeout(",
+    to: "    if (outcome.timedOut && resolved.value !== null) {\n      await recordHookTimeout(",
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because:
+      "a hook whose slow git spawns ate the budget loses its capture with no repo known, and no repo is told — the known loss with no coverage reason the contract forbids (decision 10.2)",
+  },
+  {
+    label: "an abandoned hook's loss is never keyed to its own repo",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "        resolved.value?.key ?? null,\n",
+    to: "        null,\n",
+    test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
+    because:
+      "every timed-out hook is charged to every repo on the machine, so one slow repo turns every other repo's coverage incomplete",
+  },
+  {
+    label: "a cursor-hook the budget abandoned leaves no loss behind",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "    if (outcome.timedOut) {\n",
+    to: "    if (false) {\n",
+    test: `${CURSOR}/test/drift-loss.test.ts`,
+    because:
+      "an afterFileEdit the budget cut captures nothing and the hub's coverage still reads complete — the Claude runner's loss, on the second host",
+  },
+  {
+    // LOSS-13's named mutation: drop the Cursor append.
+    label: "a drifted Cursor payload never reaches the loss ledger",
+    file: `${CURSOR}/src/runner.ts`,
+    from: '    kind: "host_contract_drift",\n    count: 1,\n',
+    to: '    kind: "host_contract_drift",\n    count: 0,\n',
+    test: `${CURSOR}/test/drift-loss.test.ts`,
+    because:
+      "a Cursor rename that kills every afterFileEdit capture is a doctor line and nothing else, and coverage reads complete over a repo whose edits all vanished",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12666,6 +12718,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
+ * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
@@ -12779,6 +12832,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
+ * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 2
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7

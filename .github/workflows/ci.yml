@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 991
+    # PRINTS: 996
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -159,7 +159,7 @@ jobs:
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 8
     # PRINTS: hooks/pre-tool-use.ts 18
-    # PRINTS: hooks/runner.ts 2
+    # PRINTS: hooks/runner.ts 4
     # PRINTS: hooks/session-start.ts 3
     # PRINTS: hooks/stop.ts 1
     # PRINTS: hooks/user-prompt-submit.ts 4
@@ -180,7 +180,7 @@ jobs:
     # PRINTS: conference/report.ts 1
     # PRINTS: config/config.ts 4
     # PRINTS: config/connected-repo.ts 2
-    # PRINTS: config/hook-budget.ts 1
+    # PRINTS: config/hook-budget.ts 2
     # PRINTS: constants.ts 8
     # PRINTS: coverage/exempt-surfaces.ts 2
     # PRINTS: coverage/render.ts 9
@@ -270,6 +270,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/inject/hint.ts 1
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
+    # PRINTS: packages/connector-cursor/src/runner.ts 2
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/enums.ts 2
@@ -416,7 +417,7 @@ jobs:
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 6
     # PRINTS: hints.ts 4
-    # PRINTS: hook-budget.ts 1
+    # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 6
     # PRINTS: injector.ts 5
     # PRINTS: intent-budget.test.ts 1
@@ -477,7 +478,7 @@ jobs:
     # PRINTS: retention.ts 24
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 1
-    # PRINTS: runner.ts 7
+    # PRINTS: runner.ts 11
     # PRINTS: sanitize.ts 10
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4

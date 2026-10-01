@@ -9,8 +9,8 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import {
   hookBudget,
+  raceHookBudget,
   resolveHookBudget,
-  withBudget,
 } from "@crosscheck/connector-core/config/hook-budget.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import {
@@ -26,6 +26,7 @@ import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identit
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { recordHookFired } from "@crosscheck/connector-core/state/fired-markers.ts";
+import { recordHookTimeout } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { extractFilePaths, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
@@ -281,7 +282,7 @@ export const runHookWith = async (
     const resolved: { value: { home: string; key: string } | null } = {
       value: null,
     };
-    const output = await withBudget(
+    const outcome = await raceHookBudget(
       prepareAndRun(
         handler,
         stdin,
@@ -293,6 +294,20 @@ export const runHookWith = async (
       ),
       budgetMs,
     );
+    // THE BUDGET WON, SO THE CAPTURE MAY NOT HAVE HAPPENED
+    // (docs/1.0/loss-accounting.md §3 row 14): the binary exits on the ""
+    // the race answered, abandoning whatever the handler had not yet
+    // written. Booked here, after the race, for the reason the fired marker
+    // below is — and keyed to the repo when prepare got that far, unkeyed
+    // (charged to every repo) when the budget beat repo identity.
+    if (outcome.timedOut) {
+      await recordHookTimeout(
+        resolved.value?.home ?? crosscheckHome(env),
+        name,
+        resolved.value?.key ?? null,
+        new Date(),
+      );
+    }
     // AFTER the race, on purpose (trial finding M2, and the one budget risk
     // this row carries). Inside the raced promise this write would compete
     // with the handler for the deadline and could cost a SessionStart its
@@ -309,7 +324,7 @@ export const runHookWith = async (
         new Date(),
       );
     }
-    return output;
+    return outcome.output;
   } catch {
     return "";
   }
