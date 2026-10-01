@@ -62,7 +62,7 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
         c,
         400,
         "validation_failed",
-        "name a pin (pin=<id>) or at least one file (path=…) — suspect intersects a surface with recorded work, so it needs the surface",
+        "name a pin (pin=<id>) or at least one file (path=…) — trace intersects a surface with recorded work, so it needs the surface",
       );
     }
     const scope = await resolveSuspectScope(deps, parsed.data.repo, {

@@ -2348,7 +2348,7 @@ const checkVerdictLegality = async (
     return check(
       "PASS",
       "verdict legality",
-      "not measured (this hub reports no verdict, so `suspect` answers a ranking without one)",
+      "not measured (this hub reports no verdict, so `trace` answers a ranking without one)",
     );
   }
   return verdict.basis === "legality_violation"

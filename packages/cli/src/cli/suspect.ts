@@ -21,8 +21,8 @@ import { renderSuspect } from "./suspect-render.ts";
 import type { CliResult } from "./login.ts";
 
 export const SUSPECT_USAGE = [
-  "usage: crosscheck suspect <pin-id>",
-  "   or: crosscheck suspect <path> [<path>…]",
+  "usage: crosscheck trace <pin-id>",
+  "   or: crosscheck trace <path> [<path>…]",
   "",
   "  Answers who was in there: the sessions whose recorded work touched this",
   "  surface in the last two weeks, ranked by how concentrated their work was",
@@ -35,7 +35,7 @@ export const SUSPECT_USAGE = [
 ].join("\n");
 
 const NOT_CONFIGURED = "not configured — run `crosscheck login <hubUrl>`\n";
-const NOT_A_REPO = "not a git repository — suspect is repo-scoped\n";
+const NOT_A_REPO = "not a git repository — trace is repo-scoped\n";
 
 /** A pin id, as `crosscheck pin` mints them; anything else is a path. */
 const PIN_ID_PREFIX = "pin_";

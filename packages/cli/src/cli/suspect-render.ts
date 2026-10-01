@@ -211,7 +211,7 @@ const outcomeLine = (view: SuspectView): string => {
     case "ranked":
       return `${touched}; one stands out.`;
     case "no_separation":
-      return `${touched}; NO SEPARATED SUSPECT — the top scores are too close to call.`;
+      return `${touched}; NO SESSION STANDS OUT — the top scores are too close to call.`;
     case "no_touch":
       return view.verdict !== null &&
         UNSUPPORTED_NO_TOUCH_BASES.includes(view.verdict.basis)
@@ -304,7 +304,7 @@ export const renderSuspect = (view: SuspectView, now: Date): string => {
       ? "the files you named"
       : quoted(view.scope.surface, MAX_PIN_SURFACE_CHARS);
   return [
-    `crosscheck suspect: ${surface}`,
+    `crosscheck trace: ${surface}`,
     QUOTED_DATA_NOTICE,
     // 04 §5: ABOVE the falsifier lines. The verdict is not a conclusion drawn
     // from the premise below it — it is the licence under which the whole

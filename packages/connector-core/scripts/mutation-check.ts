@@ -13167,6 +13167,23 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/passkeys.test.ts`,
     because: "a row no enrolment path writes is stored as if one had, and nothing reading it can tell",
   },
+  // ── `suspect` is now `trace` (Nick, 2026-09-30) ──
+  {
+    label: "the 0.10 command name runs without saying the new one",
+    file: `${CLI}/src/cli/index.ts`,
+    from: "      return { ...result, stdout: `${TRACE_RENAME_NOTICE}${result.stdout}` };",
+    to: "      return result;",
+    test: `${CLI}/test/trace-command.test.ts`,
+    because: "everybody keeps typing the name that reads as an accusation, because nothing ever told them it changed",
+  },
+  {
+    label: "crosscheck trace is not a command",
+    file: `${CLI}/src/cli/index.ts`,
+    from: '    case "trace":\n      return runSuspect(rest, env, cwd);\n',
+    to: "",
+    test: `${CLI}/test/trace-command.test.ts`,
+    because: "the name the help and every hint now print answers 'unknown command'",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13256,6 +13273,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
+ * PRINTS: packages/cli/test/trace-command.test.ts 2
  * PRINTS: packages/cli/test/verdict-render.test.ts 4
  * PRINTS: packages/cli/test/waiver-render.test.ts 7
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1

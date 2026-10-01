@@ -510,7 +510,7 @@ describe("ranking", () => {
     expect(view.totals.sessionsScored).toBe(SUSPECT_MAX_CANDIDATES);
   });
 
-  test("says NO SEPARATED SUSPECT when the top two score the same", async () => {
+  test("says no session stands out when the top two score the same", async () => {
     // Arrange: two sessions, identical overlap and identical denominators.
     const harness = await createTestHarness();
     const nick = await createTestDeveloper(harness, "Nick", "nick-tie@example.com");

@@ -79,7 +79,7 @@ const USAGE = [
   "  pin list | pin --broke <id> | pin --ok <id> | pin --sweep",
   "                            the registry and its coverage · retract a pin ·",
   "                            say its check passed · re-resolve pinned paths",
-  "  suspect <pin-id|path…>    which sessions touched a broken surface, and what",
+  "  trace <pin-id|path…>      which sessions touched a broken surface, and what",
   "                            they said they were doing",
   "  pilot [--days N] [--json] the five proofs for this repo, each measured",
   "                            or saying why not (per repo, never per person)",
@@ -122,6 +122,18 @@ const DOCTOR_USAGE = [
 ].join("\n");
 
 /**
+ * `suspect` IS NOW `trace` (Nick, 2026-09-30). The answer names SESSIONS that
+ * touched a surface, and "suspect" read as an accusation of a person — the one
+ * thing the command refuses to make. The 0.10 name still runs, so scripts and
+ * habits keep working, and says the new name first. Internally the module
+ * keeps its 0.10 name, and so do the wire path (`/api/suspect`) and the stored
+ * delivery channel: renaming those would break every 0.10 client and every
+ * stored row for a word nobody reads.
+ */
+export const TRACE_RENAME_NOTICE =
+  "note: `crosscheck suspect` is now `crosscheck trace`; the old name still works\n";
+
+/**
  * Every user-facing subcommand and what its argv may carry. The gate
  * (cli/help.ts) runs BEFORE dispatch: --help/-h answers with the usage here
  * and does nothing else, an unlisted flag is a usage error — `init --help`
@@ -158,6 +170,8 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
     ],
     booleanFlags: [PIN_FLAG_SWEEP],
   },
+  trace: { usage: SUSPECT_USAGE },
+  // The 0.10 name, kept as an alias (see TRACE_RENAME_NOTICE).
   suspect: { usage: SUSPECT_USAGE },
   noise: { usage: NOISE_USAGE },
   pilot: {
@@ -257,8 +271,12 @@ export const runCli = async (
       return options.isInteractive === undefined
         ? runPin(rest, env, cwd)
         : runPin(rest, env, cwd, options.isInteractive);
-    case "suspect":
+    case "trace":
       return runSuspect(rest, env, cwd);
+    case "suspect": {
+      const result = await runSuspect(rest, env, cwd);
+      return { ...result, stdout: `${TRACE_RENAME_NOTICE}${result.stdout}` };
+    }
     // 07 §5. A pull like the two above: one hub read, then the fix diffs run
     // on this clone, because the hub holds no repository.
     case "pilot":

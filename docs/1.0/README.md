@@ -15,6 +15,14 @@ post-#50 position always carries the `crosscheck-pins:` prefix (00 §9.4a). Wher
 rung cannot exist on a platform, or the honest answer is "not in 1.0", the spec
 writes the refusal — a spec that pretends is worse than no spec.
 
+**`suspect` is now `trace`** (Nick, 2026-09-30). The command names sessions
+that touched a surface, and "suspect" read as an accusation of a person. The
+specs below keep the old name where they were written. The command is
+`crosscheck trace`, and `crosscheck suspect` still runs and prints the new
+name first. The wire path `/api/suspect`, the stored delivery channel
+`suspect` and the `suspectAttribution` setting keep their 0.10 names, because
+renaming them would break every 0.10 client and every stored row.
+
 ## The six binding principles
 
 1. **"Only judge when you know you were watching."** `UNATTRIBUTED` is emitted

@@ -211,7 +211,7 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         c,
         400,
         "validation_failed",
-        `${formatIssues(parsed.error)} — retracting a pin is what lets crosscheck suspect name sessions, so it needs the repo and evidence a person ran the check at a terminal`,
+        `${formatIssues(parsed.error)} — retracting a pin is what lets crosscheck trace name sessions, so it needs the repo and evidence a person ran the check at a terminal`,
       );
     }
     const outcome = await markPinBroke(

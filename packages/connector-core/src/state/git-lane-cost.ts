@@ -89,7 +89,7 @@ export const summarizeGitLaneCost = (
  */
 export const gitLaneWarning = (cost: GitLaneCost): string | null =>
   cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.ran
-    ? "the lane is skipped more often than it runs, so suspect is largely blind to codemods and `sed -i`: give the hooks more room with CROSSCHECK_TIMEOUT_MS, or expect its answers to under-report"
+    ? "the lane is skipped more often than it runs, so trace is largely blind to codemods and `sed -i`: give the hooks more room with CROSSCHECK_TIMEOUT_MS, or expect its answers to under-report"
     : null;
 
 /**
