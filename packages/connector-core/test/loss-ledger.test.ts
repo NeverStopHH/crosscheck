@@ -5,7 +5,7 @@
  * read back per repo, with a null key charged to every repo on the machine.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { MAX_LOSS_LEDGER_BYTES } from "../src/constants.ts";
@@ -14,6 +14,7 @@ import {
   readCaptureLosses,
   recordCaptureLoss,
 } from "../src/state/loss-ledger.ts";
+import { lossRefusalsPath } from "../src/state/loss-refusals.ts";
 import { makeHome } from "./helpers.ts";
 
 const T0 = new Date("2026-09-05T08:13:00.000Z");
@@ -103,6 +104,21 @@ describe("readCaptureLosses", () => {
     expect(losses.refused).toBe(1);
     expect(losses.total).toBe(1);
     expect(losses.byKind["hook_timed_out"]).toBe(1);
+    expect(losses.newestAt).toBe(T2.toISOString());
+  });
+
+  test("a refusal marker that will not parse is one loss dated by its mtime, never no marker (review M1)", async () => {
+    // Arrange
+    const path = await home();
+    await mkdir(dirname(lossRefusalsPath(path)), { recursive: true });
+    await writeFile(lossRefusalsPath(path), '{"fullSince":', "utf8");
+    await utimes(lossRefusalsPath(path), T2, T2);
+
+    // Act
+    const losses = await readCaptureLosses(path, THIS_REPO);
+
+    // Assert
+    expect(losses.total).toBe(1);
     expect(losses.newestAt).toBe(T2.toISOString());
   });
 

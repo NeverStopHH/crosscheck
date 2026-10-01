@@ -32,7 +32,6 @@
  * in; an archive written before it kept them reports its count as
  * `unattributed`, which is the honest word for it.
  */
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -49,6 +48,7 @@ import {
   NO_UNDATED,
   ledgerInstant,
   ledgerMs,
+  listLedgerNames,
   mergeUndated,
   readLedgerText,
   undatedOf,
@@ -99,6 +99,15 @@ export type DropReason =
 /** The word a pre-reason archive's count is reported under. */
 export const UNATTRIBUTED_DROP_REASON = "unattributed";
 
+/**
+ * A ledger file that exists and cannot be read holds an unknown number of
+ * lost records: at least this many (review M1, §2 "unknown, never zero").
+ */
+const UNREADABLE_FLOOR = 1;
+
+/** The marker reason for an unrecorded marker that will not parse; not a DropReason, so it reads as unattributed. */
+const UNREADABLE_REASON = "unreadable";
+
 const KindsSchema = z.record(z.string(), z.number().int().min(0));
 
 const DropSchema = z.looseObject({
@@ -147,8 +156,14 @@ export const readUnrecordedDrop = async (
   home: string,
   key: string,
 ): Promise<UnrecordedDrop | null> => {
-  const { text, writtenBy } = await readLedgerText(spoolUnrecordedDropsPath(home, key));
+  const { text, writtenBy, unreadable } = await readLedgerText(spoolUnrecordedDropsPath(home, key));
+  if (text === null && !unreadable) {
+    return null;
+  }
   const parsed = UnrecordedSchema.safeParse(safeJson(text ?? ""));
+  // A marker that exists and will not parse still says a ledger append
+  // failed (review M1): one batch of unknown size, undated, bounded by the
+  // marker's mtime — never the absence of a marker.
   return parsed.success
     ? {
         at: parsed.data.at,
@@ -156,7 +171,7 @@ export const readUnrecordedDrop = async (
         reason: parsed.data.reason,
         writtenBy,
       }
-    : null;
+    : { at: "", count: UNREADABLE_FLOOR, reason: UNREADABLE_REASON, writtenBy };
 };
 
 /**
@@ -370,6 +385,8 @@ export interface DropDetail {
    * is later than the truth and lets the loss age out.
    */
   readonly undated: UndatedContent;
+  /** Ledger files, archives or directories that exist and could not be read (review M1). */
+  readonly unreadable: number;
 }
 
 const EMPTY_DETAIL: DropDetail = {
@@ -380,6 +397,23 @@ const EMPTY_DETAIL: DropDetail = {
   oldestAt: null,
   newestAt: null,
   undated: NO_UNDATED,
+  unreadable: 0,
+};
+
+/**
+ * WHAT AN UNREADABLE LEDGER IS WORTH (review M1): `records` lost under no
+ * reason — at least one, or the count an unparseable archive still names —
+ * undated and bounded by the file's mtime. It used to read as zero.
+ */
+const unreadableDetail = (records: number, writtenBy: string | null): DropDetail => {
+  const counted = Math.max(UNREADABLE_FLOOR, records);
+  return {
+    ...EMPTY_DETAIL,
+    summary: { records: counted, entries: 0, malformed: 0 },
+    byReason: { [UNATTRIBUTED_DROP_REASON]: counted },
+    undated: undatedOf(1, writtenBy),
+    unreadable: 1,
+  };
 };
 
 const isUndated = (at: string): boolean => ledgerMs(at) === null;
@@ -436,6 +470,7 @@ const addDetail = (left: DropDetail, right: DropDetail): DropDetail => ({
   oldestAt: isoOrNull(earliest(msOrNull(left.oldestAt), msOrNull(right.oldestAt))),
   newestAt: isoOrNull(latest(msOrNull(left.newestAt), msOrNull(right.newestAt))),
   undated: mergeUndated(left.undated, right.undated),
+  unreadable: left.unreadable + right.unreadable,
 });
 
 /**
@@ -465,11 +500,23 @@ const ArchiveSchema = z.looseObject({
   undated: z.number().int().min(0).optional(),
 });
 
+/** What an archive that fails ArchiveSchema may still say about its size. */
+const LooseCountSchema = z.looseObject({ count: z.number().int().min(0) });
+
 const readArchiveDetail = async (path: string): Promise<DropDetail> => {
-  const { text, writtenBy } = await readLedgerText(path);
-  const parsed = ArchiveSchema.safeParse(safeJson(toLines(text)[0] ?? ""));
-  if (!parsed.success) {
+  const { text, writtenBy, unreadable } = await readLedgerText(path);
+  if (unreadable) {
+    return unreadableDetail(UNREADABLE_FLOOR, writtenBy);
+  }
+  if (text === null) {
     return EMPTY_DETAIL;
+  }
+  const line = safeJson(toLines(text)[0] ?? "");
+  const parsed = ArchiveSchema.safeParse(line);
+  if (!parsed.success) {
+    // Review M1 (PROBE 3): a torn archive holding 382 records read as zero.
+    const loose = LooseCountSchema.safeParse(line);
+    return unreadableDetail(loose.success ? loose.data.count : UNREADABLE_FLOOR, writtenBy);
   }
   const byReason = parsed.data.byReason ?? {};
   const unattributed = parsed.data.count - sumOf(byReason);
@@ -498,6 +545,7 @@ const readArchiveDetail = async (path: string): Promise<DropDetail> => {
       (parsed.data.undatable ?? (parsed.data.undated ?? 0) + parsed.data.malformed) + undatedHere,
       ledgerInstant(parsed.data.undatableBy) ?? writtenBy,
     ),
+    unreadable: 0,
   };
 };
 
@@ -556,12 +604,12 @@ export const archiveLedger = async (
   );
 };
 
-const ledgerNames = async (dir: string): Promise<readonly string[]> => {
-  try {
-    return (await readdir(dir)).filter((name) => name.endsWith(DROPS_SUFFIX));
-  } catch {
-    return [];
-  }
+/** One ledger file: its detail, or — when it exists and cannot be read — an unknown loss. */
+const ledgerDetail = async (path: string): Promise<DropDetail> => {
+  const ledger = await readLedgerText(path);
+  return ledger.unreadable
+    ? unreadableDetail(UNREADABLE_FLOOR, ledger.writtenBy)
+    : detailOf(toLines(ledger.text), ledger.writtenBy);
 };
 
 /** Every drop this repo has recorded, counted from disk — aggregate included. */
@@ -576,12 +624,11 @@ export const readDropDetail = async (
   key: string,
 ): Promise<DropDetail> => {
   const dir = spoolDir(home, key);
-  const details = await Promise.all(
-    (await ledgerNames(dir)).map(async (name) => {
-      const ledger = await readLedgerText(join(dir, name));
-      return detailOf(toLines(ledger.text), ledger.writtenBy);
-    }),
-  );
+  const listing = await listLedgerNames(dir, DROPS_SUFFIX);
+  const details = await Promise.all(listing.names.map((name) => ledgerDetail(join(dir, name))));
+  // A spool directory that exists and cannot be listed hides every ledger in
+  // it: an unknown loss, never "no drops" (review M1).
+  const unlisted = listing.unreadable ? [unreadableDetail(UNREADABLE_FLOOR, listing.writtenBy)] : [];
   const archive = await readArchiveDetail(spoolDropsArchivePath(home, key));
-  return details.reduce(addDetail, archive);
+  return [...details, ...unlisted].reduce(addDetail, archive);
 };

@@ -170,6 +170,8 @@ export interface CaptureLossSummary {
   readonly fullSince: string | null;
   /** The newest refusal, from the marker; null when none. */
   readonly refusedNewestAt: string | null;
+  /** The ledger file exists and could not be read (review M1); counted in `malformed`. */
+  readonly unreadable: boolean;
   /**
    * The ledger's last write by ANY repo — its mtime or the newest refusal,
    * whichever is later. Fourteen days after it, nothing the file holds is
@@ -191,6 +193,7 @@ export const EMPTY_CAPTURE_LOSSES: CaptureLossSummary = {
   refused: 0,
   fullSince: null,
   refusedNewestAt: null,
+  unreadable: false,
   lastWriteAt: null,
 };
 
@@ -235,12 +238,29 @@ export const readCaptureLosses = async (
     readLossRefusals(home),
   ]);
   const raw = ledger.text;
-  const summary = withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy), refusals);
+  const lines = ledger.unreadable
+    ? unreadableLedger(ledger.writtenBy)
+    : raw === null
+      ? EMPTY_CAPTURE_LOSSES
+      : linesSummary(raw, key, ledger.writtenBy);
+  const summary = withRefusals(lines, refusals);
   return {
     ...summary,
     lastWriteAt: laterOrNull(ledger.writtenBy, refusals?.newestAt ?? null),
   };
 };
+
+/**
+ * A capture ledger that exists and cannot be read (review M1): one line of
+ * unknown content — the unreadable-line rule's floor, charged to every repo
+ * like any machine-wide unreadable line — bounded by the file's mtime.
+ */
+const unreadableLedger = (writtenBy: string | null): CaptureLossSummary => ({
+  ...EMPTY_CAPTURE_LOSSES,
+  malformed: 1,
+  undated: undatedOf(1, writtenBy),
+  unreadable: true,
+});
 
 const laterOrNull = (left: string | null, right: string | null): string | null =>
   left === null || right === null ? (left ?? right) : right > left ? right : left;

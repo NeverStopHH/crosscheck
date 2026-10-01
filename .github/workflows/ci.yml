@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1063
+    # PRINTS: 1070
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -248,9 +248,9 @@ jobs:
     # PRINTS: model/worker-env.ts 1
     # PRINTS: render-surfaces.ts 1
     # PRINTS: spool/counts.ts 1
-    # PRINTS: spool/drops.ts 5
+    # PRINTS: spool/drops.ts 9
     # PRINTS: spool/flush.ts 2
-    # PRINTS: spool/ledger-read.ts 1
+    # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 12
     # PRINTS: spool/reap.ts 1
@@ -258,7 +258,8 @@ jobs:
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
     # PRINTS: state/git-lane-cost.ts 2
-    # PRINTS: state/loss-ledger.ts 9
+    # PRINTS: state/loss-ledger.ts 10
+    # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 20
@@ -402,7 +403,7 @@ jobs:
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor.ts 50
-    # PRINTS: drops.ts 5
+    # PRINTS: drops.ts 9
     # PRINTS: end-session.ts 3
     # PRINTS: engine.ts 15
     # PRINTS: enums.ts 2
@@ -448,9 +449,10 @@ jobs:
     # PRINTS: landed.ts 3
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
-    # PRINTS: ledger-read.ts 1
+    # PRINTS: ledger-read.ts 2
     # PRINTS: lock.ts 2
-    # PRINTS: loss-ledger.ts 9
+    # PRINTS: loss-ledger.ts 10
+    # PRINTS: loss-refusals.ts 1
     # PRINTS: loss-report.ts 12
     # PRINTS: noise.ts 5
     # PRINTS: normalized-doc.ts 2

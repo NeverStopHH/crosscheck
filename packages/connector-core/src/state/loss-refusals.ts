@@ -23,10 +23,12 @@
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
-import { ensureDir, readJsonOrNull, writePrivateFile } from "../config/paths.ts";
+import { UNATTRIBUTED_LOSS_KIND } from "@crosscheck/schema";
+
+import { ensureDir, writePrivateFile } from "../config/paths.ts";
 import { addCount } from "../spool/counts.ts";
 import type { Counts } from "../spool/counts.ts";
-import { ledgerInstant } from "../spool/ledger-read.ts";
+import { ledgerInstant, readLedgerText } from "../spool/ledger-read.ts";
 
 const REFUSALS_FILE = "losses.refused.json";
 
@@ -48,16 +50,39 @@ export interface LossRefusals {
   readonly refused: Counts;
 }
 
+/**
+ * A marker that exists and cannot be read or parsed (review M1) still says
+ * the ledger refused something: one loss of unknown kind, dated by the
+ * marker's mtime. With no mtime either there is nothing to date it by, and
+ * the reader's full-ledger rule makes the newest unknown instead.
+ */
+const unreadableRefusals = (writtenBy: string | null): LossRefusals | null =>
+  writtenBy === null
+    ? null
+    : { fullSince: writtenBy, newestAt: writtenBy, refused: { [UNATTRIBUTED_LOSS_KIND]: 1 } };
+
 export const readLossRefusals = async (home: string): Promise<LossRefusals | null> => {
-  const parsed = RefusalsSchema.safeParse(await readJsonOrNull(lossRefusalsPath(home)));
-  if (!parsed.success) {
+  const { text, writtenBy, unreadable } = await readLedgerText(lossRefusalsPath(home));
+  if (text === null && !unreadable) {
     return null;
+  }
+  const parsed = RefusalsSchema.safeParse(safeJson(text ?? ""));
+  if (!parsed.success) {
+    return unreadableRefusals(writtenBy);
   }
   const fullSince = ledgerInstant(parsed.data.fullSince);
   const newestAt = ledgerInstant(parsed.data.newestAt);
   return fullSince === null || newestAt === null
-    ? null
+    ? unreadableRefusals(writtenBy)
     : { fullSince, newestAt, refused: parsed.data.refused };
+};
+
+const safeJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 };
 
 const writeRefusals = async (home: string, refusals: LossRefusals): Promise<void> => {

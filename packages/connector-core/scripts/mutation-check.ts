@@ -13133,8 +13133,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the refused capture losses are charged to no repo",
     file: `${CORE}/src/state/loss-ledger.ts`,
-    from: "  const summary = withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy), refusals);",
-    to: "  const summary = raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy);",
+    from: "  const summary = withRefusals(lines, refusals);",
+    to: "  const summary = lines;",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "the marker counts the refusal and no report ever carries it",
   },
@@ -13213,6 +13213,63 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "  if (true) {\n    return null;\n  }\n",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "a ledger refusing every new loss reads like a healthy one, and nobody learns when it can safely be removed",
+  },
+  // Review M1: only a missing file reads as zero.
+  {
+    label: "a ledger file that cannot be read reads as missing",
+    file: `${CORE}/src/spool/ledger-read.ts`,
+    from: "    return isAbsence(error) ? ABSENT : { text: null, writtenBy, unreadable: true };",
+    to: "    return ABSENT;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a .drops file at mode 000 holding the afternoon's expired records reports total 0, and the hub reads complete",
+  },
+  {
+    label: "an unreadable .drops file is counted as no drops",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "  return ledger.unreadable\n    ? unreadableDetail(UNREADABLE_FLOOR, ledger.writtenBy)\n",
+    to: "  return false\n    ? unreadableDetail(UNREADABLE_FLOOR, ledger.writtenBy)\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a directory where the ledger belongs, or a file nobody may read, adds nothing to the report",
+  },
+  {
+    label: "an archive that will not parse reads as zero",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "    const loose = LooseCountSchema.safeParse(line);\n    return unreadableDetail(loose.success ? loose.data.count : UNREADABLE_FLOOR, writtenBy);\n",
+    to: "    return EMPTY_DETAIL;\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a torn archive holding 382 records reports none of them, and archived losses can still be inside the hub's window (PROBE 3)",
+  },
+  {
+    label: "a spool directory nobody may list reads as no drops",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "  const unlisted = listing.unreadable ? [unreadableDetail(UNREADABLE_FLOOR, listing.writtenBy)] : [];",
+    to: "  const unlisted: DropDetail[] = [];",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "every ledger in the directory is hidden and the report says nothing was lost",
+  },
+  {
+    label: "an unrecorded marker that will not parse reads as no marker",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "    : { at: \"\", count: UNREADABLE_FLOOR, reason: UNREADABLE_REASON, writtenBy };",
+    to: "    : null;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the one file that says a ledger append failed is ignored the moment it is torn",
+  },
+  {
+    label: "an unreadable capture-loss ledger reads as zero",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "  const lines = ledger.unreadable\n    ? unreadableLedger(ledger.writtenBy)\n",
+    to: "  const lines = false\n    ? unreadableLedger(ledger.writtenBy)\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "every hook timeout, host drift and wire loss on the machine is hidden behind one permission bit",
+  },
+  {
+    label: "a refusal marker that will not parse reads as no refusals",
+    file: `${CORE}/src/state/loss-refusals.ts`,
+    from: "  if (!parsed.success) {\n    return unreadableRefusals(writtenBy);\n  }\n",
+    to: "  if (!parsed.success) {\n    return null;\n  }\n",
+    test: `${CORE}/test/loss-ledger.test.ts`,
+    because: "the losses a full ledger refused vanish with the marker that counted them",
   },
 ];
 
@@ -13401,8 +13458,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
- * PRINTS: packages/connector-core/test/loss-ledger.test.ts 4
- * PRINTS: packages/connector-core/test/loss-report.test.ts 24
+ * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 30
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

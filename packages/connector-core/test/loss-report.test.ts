@@ -5,7 +5,7 @@
  * spelling.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { EMPTY_LOSS_REPORT, MAX_LOSS_COUNT, TelemetryLossReportSchema } from "@crosscheck/schema";
@@ -303,6 +303,87 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
     expect(report.total).toBe(5);
     expect(report.oldestAt).toBeNull();
     expect(report.newestAt).toBe(T4.toISOString());
+  });
+});
+
+describe("review M1: a ledger that exists and cannot be read is a loss, never zero", () => {
+  test("PROBE 3: an archive that will not parse keeps the count it still names", async () => {
+    // Arrange: an archive line missing oldestAt — every field the reader needs but one
+    const path = await home();
+    await ensureDir(spoolDir(path, KEY));
+    await writePrivateFile(
+      spoolDropsArchivePath(path, KEY),
+      `${JSON.stringify({ at: T4.toISOString(), count: 382, entries: 343, malformed: 0, reason: "aggregated" })}\n`,
+    );
+
+    // Act
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(report.total).toBe(382);
+    expect(report.kinds).toEqual({ unattributed: 382 });
+  });
+
+  test("PROBE 3: a torn archive is at least one loss", async () => {
+    // Arrange
+    const path = await home();
+    await ensureDir(spoolDir(path, KEY));
+    await writePrivateFile(
+      spoolDropsArchivePath(path, KEY),
+      `{"at":"${T4.toISOString()}","oldestAt":"${T0.toISOString()}","count":382,"entr\n`,
+    );
+
+    // Act
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(report.total).toBeGreaterThanOrEqual(1);
+    expect(report.kinds["unattributed"]).toBe(report.total);
+  });
+
+  test.each([
+    ["a .drops file nobody may read (mode 000)", async (path: string) => {
+      await recordDrop(path, KEY, SLUG, 3, "expired", T1);
+      await chmod(spoolDropsPath(path, KEY, SLUG), 0o000);
+    }],
+    ["a .drops name that is a directory", async (path: string) => {
+      await ensureDir(spoolDropsPath(path, KEY, SLUG));
+    }],
+    ["an unrecorded marker that will not parse", async (path: string) => {
+      await ensureDir(spoolDir(path, KEY));
+      await writePrivateFile(spoolUnrecordedDropsPath(path, KEY), '{"count":\n');
+    }],
+    ["a capture-loss ledger that is a directory", async (path: string) => {
+      await ensureDir(lossLedgerPath(path));
+    }],
+  ] as const)("%s reads as at least one loss", async (_label, arrange) => {
+    // Arrange
+    const path = await home();
+    await arrange(path);
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+    await chmod(spoolDropsPath(path, KEY, SLUG), 0o644).catch(() => undefined);
+
+    // Assert: unknown is never zero (§2), and a line says so (H3)
+    expect(local.report.total).toBeGreaterThanOrEqual(1);
+    const lines = formatLossLines(local);
+    expect([lines.dropped, lines.ignored, lines.capture].some((line) => line !== null)).toBe(true);
+  });
+
+  test("a spool directory nobody may list reads as at least one loss", async () => {
+    // Arrange: 0o311 — files inside can be looked up, the directory cannot
+    // be listed, so the ledgers in it are hidden while the archive and the
+    // marker still read as plainly absent
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 3, "expired", T1);
+    await chmod(spoolDir(path, KEY), 0o311);
+
+    // Act
+    const local = await readLocalLosses(path, KEY).finally(() => chmod(spoolDir(path, KEY), 0o755));
+
+    // Assert
+    expect(local.report.total).toBeGreaterThanOrEqual(1);
   });
 });
 

@@ -983,8 +983,10 @@ describe("a drop the ledger itself could not record", () => {
     // Act: the count reap takes off an expired file, with nowhere to put it
     await recordDrop(path, KEY, SLUG, 7, "expired", NOW);
 
-    // Assert: not in the ledger, and not silently gone either
-    expect((await readDropSummary(path, KEY)).records).toBe(0);
+    // Assert: not in the ledger, and not silently gone either. The directory
+    // standing where the ledger belongs is itself read as ONE unknown loss
+    // (review M1: an unreadable ledger is never zero); the 7 are on the marker.
+    expect((await readDropSummary(path, KEY)).records).toBe(1);
     const dir = spoolDir(path, KEY);
     const marker = (await readdir(dir)).find((name) =>
       name.endsWith(".dropmarker"),

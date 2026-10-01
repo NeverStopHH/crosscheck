@@ -311,9 +311,15 @@ const droppedLine = (local: LocalLosses): string | null => {
     summary.malformed === 0
       ? ""
       : `, ${plural(summary.malformed, "ledger entry", "ledger entries")} unreadable`;
+  // Review M1: a ledger file, archive or directory that exists and cannot be
+  // read is counted (at least one record each) and said, never read as none.
+  const unreadable =
+    local.drops.unreadable === 0
+      ? ""
+      : `, ${plural(local.drops.unreadable, "ledger file")} could not be read — counted as at least one record each`;
   return (
     `${plural(summary.records, "record")} discarded in ${plural(summary.entries, "batch", "batches")}` +
-    `${parenthetical(breakdown(screenReasons(local.drops.byReason)))}${malformed}${markerClause(local.unrecorded)}`
+    `${parenthetical(breakdown(screenReasons(local.drops.byReason)))}${malformed}${unreadable}${markerClause(local.unrecorded)}`
   );
 };
 
@@ -347,7 +353,9 @@ const kindParts = (capture: CaptureLossSummary): readonly (string | null)[] => {
     // Review H3: these were counted into the report and printed nowhere.
     capture.malformed === 0
       ? null
-      : `${plural(capture.malformed, "capture-ledger line")} unreadable, counted as one loss each`,
+      : capture.unreadable
+        ? "the capture-loss ledger could not be read, counted as one loss"
+        : `${plural(capture.malformed, "capture-ledger line")} unreadable, counted as one loss each`,
   ];
 };
 
