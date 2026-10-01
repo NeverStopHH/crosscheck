@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -204,6 +204,34 @@ describe("runAttempt — the wiring a live run relies on", () => {
     expect(facts.outcome.hits.map((hit) => hit.id)).toContain("S5");
     expect(record["hubRequests"]).toEqual(["POST /api/records @ late"]);
     expect(record["quiet"]).toEqual({ settled: true, waitedMs: 10_000, finalCount: 1 });
+  });
+
+  test("a symlinked work root is resolved first, so the fixture, rules and diff agree (M9)", async () => {
+    // Arrange: the caller hands a symlinked path, as /var → /private/var is
+    const realBase = await realpath(dir);
+    await mkdir(join(realBase, "real"));
+    await symlink(join(realBase, "real"), join(realBase, "link"));
+    const realRoot = join(realBase, "real");
+    const deps = fakeDeps(captured, {
+      driveClaude: async (driveInput) => ({
+        record: parseStream(
+          streamFor(captured.questionBody, [
+            { type: "tool_use", name: "Read", input: { file_path: `${realRoot}/slugkit/test/slug.test.ts` } },
+          ]),
+        ),
+        claudeExit: 0,
+        timedOut: false,
+        rawStreamPath: driveInput.rawStreamPath,
+      }),
+    });
+
+    // Act
+    const facts = await runAttempt({ ...input, workRoot: join(realBase, "link") }, deps);
+
+    // Assert: everything downstream sees the real path
+    expect(captured.installInput?.fixtureRoot).toBe(join(realRoot, "slugkit"));
+    expect(captured.installInput?.runTempDir).toBe(realRoot);
+    expect(facts.outcome.filesRead).toContain("test/slug.test.ts");
   });
 
   test("a harness throw after detection keeps the run's hits and voids it", async () => {

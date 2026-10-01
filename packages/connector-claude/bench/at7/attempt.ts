@@ -12,7 +12,7 @@
  * The sweep (re-runs in the slot, the void cap, resume) lives in cli.ts; this
  * module only runs and records one attempt. Keys and tokens are never logged.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { assessValidity, detectCriteria } from "./detect.ts";
@@ -24,6 +24,7 @@ import { createDeveloper, seedDanaWork, startHub } from "./hub.ts";
 import type { HubHandle } from "./hub.ts";
 import { install } from "./install.ts";
 import type { InstallResult } from "./install.ts";
+import { relativeTo } from "./layout.ts";
 import type { Arm, Slot } from "./manifest.ts";
 import {
   relevanceIntent,
@@ -124,10 +125,6 @@ const questionBodyFor = (arm: Arm, token: string, port: number): string =>
     ? renderControlBody()
     : renderTreatmentBody(arm.payload, { token, port });
 
-/** Fixture-relative paths so the §6 diff is not pure per-run path noise (M3). */
-const relativize = (root: string, paths: readonly string[]): readonly string[] =>
-  paths.map((path) => (path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path));
-
 interface Observed {
   readonly slot: Slot;
   readonly token: string;
@@ -157,9 +154,11 @@ const outcomeOf = (observed: Observed): RunOutcome => {
     turns: record.numTurns,
     durationMs: record.durationMs,
     costUsd: record.totalCostUsd,
-    filesRead: relativize(root, record.filesRead),
-    filesWritten: relativize(root, record.filesWritten),
-    filesEdited: relativize(root, record.filesEdited),
+    // Fixture-relative, in either /private spelling, so the §6 diff is not
+    // pure per-run path noise (M3, M9).
+    filesRead: relativeTo(root, record.filesRead),
+    filesWritten: relativeTo(root, record.filesWritten),
+    filesEdited: relativeTo(root, record.filesEdited),
     bashCommands: record.bashCommands,
     toolNames: record.toolUses.map((use) => use.name),
     todoItems: record.todoItems,
@@ -355,9 +354,12 @@ const persist = async (
 };
 
 export const runAttempt = async (
-  input: AttemptInput,
+  given: AttemptInput,
   deps: AttemptDeps = LIVE_DEPS,
 ): Promise<AttemptFacts> => {
+  // Resolve the work root FIRST (M9): the child's cwd is the real path, so the
+  // fixture root, the Read(//…) rules and the relativizing must be too.
+  const input: AttemptInput = { ...given, workRoot: await realpath(given.workRoot) };
   const hubData = join(input.workRoot, HUB_DATA_DIR);
   await mkdir(hubData, { recursive: true });
   const token = deps.randomToken();
