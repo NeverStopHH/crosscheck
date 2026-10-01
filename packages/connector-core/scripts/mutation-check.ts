@@ -12650,8 +12650,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "an undatable loss narrows the span instead of making it unknown",
     file: `${CORE}/src/spool/loss-report.ts`,
-    from: "  if (drops.undated + capture.undated + unreadable > 0 || markerUndated) {",
-    to: "  if (false) {",
+    // Review H2: undatable content now bounds the newest; the oldest stays unknown.
+    from: "    oldestAt:\n      undated.count > 0\n        ? null\n        : earlierIso(earlierIso(drops.oldestAt, markerAt), capture.oldestAt),",
+    to: "    oldestAt: earlierIso(earlierIso(drops.oldestAt, markerAt), capture.oldestAt),",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
       "a recent loss with an unreadable date is left out of the span, the span says the newest loss is weeks old, and the hub reads the repo as complete",
@@ -12659,7 +12660,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "an undatable .drops line is never counted as undated",
     file: `${CORE}/src/spool/drops.ts`,
-    from: "        undated: detail.undated + (isUndated(at) ? 1 : 0),\n",
+    from: "        undated: isUndated(at) ? mergeUndated(detail.undated, undatedOf(1, writtenBy)) : detail.undated,\n",
     to: "        undated: detail.undated,\n",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
@@ -13038,8 +13039,8 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "a capture ledger at its cap freezes the newest loss it reports",
     file: `${CORE}/src/spool/loss-report.ts`,
     // Review H1 narrowed the rule to a full ledger with no readable marker.
-    from: "      capture.atCap && capture.fullSince === null\n        ? null\n        : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
-    to: "      laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
+    from: "      unboundedUndated || fullWithoutMarker\n",
+    to: "      unboundedUndated\n",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
       "a machine whose ledger filled a month ago keeps losing hooks, the report's newest stays a month old, and the hub reads the repo as complete",
@@ -13132,8 +13133,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the refused capture losses are charged to no repo",
     file: `${CORE}/src/state/loss-ledger.ts`,
-    from: "  return withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key), refusals);",
-    to: "  return raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key);",
+    from: "  return withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy), refusals);",
+    to: "  return raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy);",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "the marker counts the refusal and no report ever carries it",
   },
@@ -13152,6 +13153,48 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "",
     test: `${CORE}/test/loss-ledger.test.ts`,
     because: "a full ledger with no refusal yet has no marker, its newest reads unknown, and every repo with a line in it stays incomplete for good",
+  },
+  // Review H2: undatable content is bounded by its file's mtime and ages out.
+  {
+    label: "undatable ledger content is never bounded",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "        : laterIso(dated, undated.count > 0 ? undated.by : null),",
+    to: "        : dated,",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "one torn line in losses.jsonl reports every repo's loss as undated, the hub reads undated as current, and every repo on the machine is unjudgeable with no end date (PROBE 2)",
+  },
+  {
+    label: "a torn capture-ledger line takes no bound",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "          malformed: summary.malformed + 1,\n          undated: mergeUndated(summary.undated, undatedLine),\n",
+    to: "          malformed: summary.malformed + 1,\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the torn line is charged as a loss with no instant at all, and the span says nothing about when it can have happened",
+  },
+  {
+    label: "a marker whose instant will not parse narrows the span",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    marker !== null && markerAt === null ? undatedOf(1, marker.writtenBy) : NO_UNDATED;",
+    to: "    NO_UNDATED;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the batch the ledger could not take drops out of the span, and the newest reads as the last dated drop's, earlier than the truth",
+  },
+  {
+    label: "an archive forgets the bound of the undatable lines it folded",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      undatableBy: total.undated.by,\n",
+    to: "      undatableBy: null,\n",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a torn line folded at reap takes the archive's mtime, which every later fold moves forward, so it never ages out (PROBE 4)",
+  },
+  {
+    label: "a ledger with no datable line never ages out of reap",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "  return spanOf(lines).newestMs ?? (lines.length > 0 ? ledgerMs(writtenBy) : null);",
+    to: "  return spanOf(lines).newestMs;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "reap reads null and never folds the ledger, and the repo's span stays unknown for as long as the file exists (PROBE 4)",
   },
 ];
 
@@ -13341,7 +13384,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 4
- * PRINTS: packages/connector-core/test/loss-report.test.ts 17
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 22
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

@@ -37,8 +37,6 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import {
-  readTextOrNull,
-  readJsonOrNull,
   spoolDir,
   spoolDropsArchivePath,
   spoolDropsPath,
@@ -47,7 +45,15 @@ import {
 } from "../config/paths.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
-import { ledgerMs } from "./ledger-read.ts";
+import {
+  NO_UNDATED,
+  ledgerInstant,
+  ledgerMs,
+  mergeUndated,
+  readLedgerText,
+  undatedOf,
+} from "./ledger-read.ts";
+import type { UndatedContent } from "./ledger-read.ts";
 import { toLines } from "./lines.ts";
 import { appendOnce } from "./write.ts";
 
@@ -126,6 +132,8 @@ export interface UnrecordedDrop {
   /** Records in the batch it could not take. */
   readonly count: number;
   readonly reason: string;
+  /** The marker file's mtime — an upper bound on `at` when `at` will not parse (review H2). */
+  readonly writtenBy: string | null;
 }
 
 const UnrecordedSchema = z.looseObject({
@@ -139,14 +147,14 @@ export const readUnrecordedDrop = async (
   home: string,
   key: string,
 ): Promise<UnrecordedDrop | null> => {
-  const parsed = UnrecordedSchema.safeParse(
-    await readJsonOrNull(spoolUnrecordedDropsPath(home, key)),
-  );
+  const { text, writtenBy } = await readLedgerText(spoolUnrecordedDropsPath(home, key));
+  const parsed = UnrecordedSchema.safeParse(safeJson(text ?? ""));
   return parsed.success
     ? {
         at: parsed.data.at,
         count: parsed.data.count,
         reason: parsed.data.reason,
+        writtenBy,
       }
     : null;
 };
@@ -324,9 +332,17 @@ const spanOf = (lines: readonly string[]): DropSpan =>
  * its mtime. Retention has to survive `reap` writing an expiry drop and then
  * considering that same ledger for removal in the same pass, and a file's mtime
  * says nothing useful once an injected or skewed clock is involved.
+ *
+ * EXCEPT WHEN THE CONTENT NAMES NO INSTANT AT ALL (review H2, PROBE 4): a
+ * ledger of torn or undatable lines answered null here, so `reap` never
+ * folded it and its repo's span stayed unknown for good. Its mtime is the
+ * one bound on when those lines were written, and reap ages it by that.
  */
-export const newestDropMs = async (path: string): Promise<number | null> =>
-  spanOf(toLines(await readTextOrNull(path))).newestMs;
+export const newestDropMs = async (path: string): Promise<number | null> => {
+  const { text, writtenBy } = await readLedgerText(path);
+  const lines = toLines(text);
+  return spanOf(lines).newestMs ?? (lines.length > 0 ? ledgerMs(writtenBy) : null);
+};
 
 /**
  * The per-reason half of a ledger (docs/1.0/loss-accounting.md §4.3).
@@ -347,12 +363,13 @@ export interface DropDetail {
   readonly oldestAt: string | null;
   readonly newestAt: string | null;
   /**
-   * Counted entries whose `at` would not parse — a hand edit, a torn line.
-   * Their records are in every count above and in NO span, so a span read
-   * beside a non-zero `undated` is narrower than the truth and the loss
-   * report refuses to send it (spool/loss-report.ts toLossReport).
+   * Entries the span cannot date — lines whose `at` will not parse and lines
+   * that will not parse at all — with the latest instant they can have been
+   * written: their file's mtime (spool/ledger-read.ts, review H2). The
+   * report keeps the oldest unknown and takes the bound as a newest, which
+   * is later than the truth and lets the loss age out.
    */
-  readonly undated: number;
+  readonly undated: UndatedContent;
 }
 
 const EMPTY_DETAIL: DropDetail = {
@@ -362,7 +379,7 @@ const EMPTY_DETAIL: DropDetail = {
   ignoredRecordKinds: {},
   oldestAt: null,
   newestAt: null,
-  undated: 0,
+  undated: NO_UNDATED,
 };
 
 const isUndated = (at: string): boolean => ledgerMs(at) === null;
@@ -370,9 +387,11 @@ const isUndated = (at: string): boolean => ledgerMs(at) === null;
 const isoOrNull = (ms: number | null): string | null =>
   ms === null ? null : new Date(ms).toISOString();
 
-const detailOf = (lines: readonly string[]): DropDetail => {
+/** `writtenBy` is the ledger file's mtime: the bound its undatable lines take. */
+const detailOf = (lines: readonly string[], writtenBy: string | null): DropDetail => {
   const span = spanOf(lines);
-  return lines.reduce<DropDetail>(
+  const summary = summarize(lines);
+  const counted = lines.reduce<DropDetail>(
     (detail, line) => {
       const parsed = DropSchema.safeParse(safeJson(line));
       if (!parsed.success) {
@@ -381,7 +400,7 @@ const detailOf = (lines: readonly string[]): DropDetail => {
       const { at, reason, count, kinds } = parsed.data;
       return {
         ...detail,
-        undated: detail.undated + (isUndated(at) ? 1 : 0),
+        undated: isUndated(at) ? mergeUndated(detail.undated, undatedOf(1, writtenBy)) : detail.undated,
         byReason: addCounts(detail.byReason, { [reason]: count }),
         entriesByReason: addCounts(detail.entriesByReason, { [reason]: 1 }),
         ignoredRecordKinds:
@@ -392,11 +411,13 @@ const detailOf = (lines: readonly string[]): DropDetail => {
     },
     {
       ...EMPTY_DETAIL,
-      summary: summarize(lines),
+      summary,
       oldestAt: isoOrNull(span.oldestMs),
       newestAt: isoOrNull(span.newestMs),
     },
   );
+  // A line that will not parse names no instant either: same bound.
+  return { ...counted, undated: mergeUndated(counted.undated, undatedOf(summary.malformed, writtenBy)) };
 };
 
 const earliest = (left: number | null, right: number | null): number | null =>
@@ -414,7 +435,7 @@ const addDetail = (left: DropDetail, right: DropDetail): DropDetail => ({
   ignoredRecordKinds: addCounts(left.ignoredRecordKinds, right.ignoredRecordKinds),
   oldestAt: isoOrNull(earliest(msOrNull(left.oldestAt), msOrNull(right.oldestAt))),
   newestAt: isoOrNull(latest(msOrNull(left.newestAt), msOrNull(right.newestAt))),
-  undated: left.undated + right.undated,
+  undated: mergeUndated(left.undated, right.undated),
 });
 
 /**
@@ -437,13 +458,16 @@ const ArchiveSchema = z.looseObject({
   byReason: KindsSchema.optional(),
   entriesByReason: KindsSchema.optional(),
   ignoredKinds: KindsSchema.optional(),
+  /** Undatable entries folded in, and their bound (review H2). */
+  undatable: z.number().int().min(0).optional(),
+  undatableBy: z.string().nullable().optional(),
+  /** This branch's first spelling of `undatable`, before it kept a bound. */
   undated: z.number().int().min(0).optional(),
 });
 
 const readArchiveDetail = async (path: string): Promise<DropDetail> => {
-  const parsed = ArchiveSchema.safeParse(
-    safeJson(toLines(await readTextOrNull(path))[0] ?? ""),
-  );
+  const { text, writtenBy } = await readLedgerText(path);
+  const parsed = ArchiveSchema.safeParse(safeJson(toLines(text)[0] ?? ""));
   if (!parsed.success) {
     return EMPTY_DETAIL;
   }
@@ -468,7 +492,12 @@ const readArchiveDetail = async (path: string): Promise<DropDetail> => {
     ignoredRecordKinds: screenKinds(parsed.data.ignoredKinds ?? {}),
     oldestAt,
     newestAt,
-    undated: (parsed.data.undated ?? 0) + undatedHere,
+    // The bound the fold kept, else the archive's own mtime: it is rewritten
+    // at every fold, so it is no earlier than anything it holds.
+    undated: undatedOf(
+      (parsed.data.undatable ?? (parsed.data.undated ?? 0) + parsed.data.malformed) + undatedHere,
+      ledgerInstant(parsed.data.undatableBy) ?? writtenBy,
+    ),
   };
 };
 
@@ -493,7 +522,8 @@ export const archiveLedger = async (
   key: string,
   ledgerPath: string,
 ): Promise<void> => {
-  const folding = detailOf(toLines(await readTextOrNull(ledgerPath)));
+  const ledger = await readLedgerText(ledgerPath);
+  const folding = detailOf(toLines(ledger.text), ledger.writtenBy);
   if (isEmpty(folding.summary)) {
     return;
   }
@@ -518,8 +548,10 @@ export const archiveLedger = async (
       entriesByReason: total.entriesByReason,
       ignoredKinds: total.ignoredRecordKinds,
       // Carried, because `stamp` above writes a real instant even when every
-      // folded line was undatable, and the archive must not launder that.
-      undated: total.undated,
+      // folded line was undatable, and the archive must not launder that —
+      // with the bound those lines had, so they still age out (review H2).
+      undatable: total.undated.count,
+      undatableBy: total.undated.by,
     })}\n`,
   );
 };
@@ -545,9 +577,10 @@ export const readDropDetail = async (
 ): Promise<DropDetail> => {
   const dir = spoolDir(home, key);
   const details = await Promise.all(
-    (await ledgerNames(dir)).map(async (name) =>
-      detailOf(toLines(await readTextOrNull(join(dir, name)))),
-    ),
+    (await ledgerNames(dir)).map(async (name) => {
+      const ledger = await readLedgerText(join(dir, name));
+      return detailOf(toLines(ledger.text), ledger.writtenBy);
+    }),
   );
   const archive = await readArchiveDetail(spoolDropsArchivePath(home, key));
   return details.reduce(addDetail, archive);

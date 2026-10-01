@@ -27,7 +27,7 @@ import { readCaptureLosses } from "../state/loss-ledger.ts";
 import type { CaptureLossSummary } from "../state/loss-ledger.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
-import { ledgerInstant } from "./ledger-read.ts";
+import { NO_UNDATED, ledgerInstant, mergeUndated, undatedOf } from "./ledger-read.ts";
 import {
   UNATTRIBUTED_DROP_REASON,
   readDropDetail,
@@ -123,35 +123,40 @@ interface ReportSpan {
 }
 
 /**
- * The span the hub reads as "since when" and "still in the window". Any
- * counted entry without a readable instant makes it UNKNOWN (both null)
- * rather than the span of the entries that had one: the undated loss may be
- * older than the oldest, or newer than the newest, and a span that left it
- * out would claim a narrower gap than the truth. The hub reads a null
- * newest as current and a null oldest as "since unknown" (§4.5).
+ * The span the hub reads as "since when" and "still in the window".
+ *
+ * Content no instant dates — undated or unreadable lines, a marker whose
+ * `at` will not parse — makes the OLDEST unknown (it may be older than any
+ * dated entry) and bounds the NEWEST by the latest mtime of the files that
+ * hold it (review H2): later than the truth, the side a loss may err on, and
+ * finite, so the gap ages out instead of reading "current" for good.
+ *
+ * Two states leave the newest unknown, which the hub reads as current
+ * (§4.5): undatable content no bound could be read for, and a capture
+ * ledger at its cap whose refusal marker cannot be read — the one state in
+ * which a refusal could have gone undated (state/loss-refusals.ts).
  */
 const spanOf = (
   drops: DropDetail,
-  markerAt: string | null | undefined,
+  marker: UnrecordedDrop | null,
   capture: CaptureLossSummary,
-  unreadable: number,
 ): ReportSpan => {
-  const marker = markerAt === undefined || markerAt === null ? null : wireInstant(markerAt);
-  const markerUndated = markerAt !== undefined && markerAt !== null && marker === null;
-  if (drops.undated + capture.undated + unreadable > 0 || markerUndated) {
-    return { oldestAt: null, newestAt: null };
-  }
-  // A CAPTURE LEDGER AT ITS CAP REFUSES NEW LINES, and every refusal dates the
-  // marker beside it (state/loss-refusals.ts), so `capture.newestAt` already
-  // includes the newest refused loss. A full ledger WITHOUT a readable marker
-  // is the one state where a refusal could have gone undated — the marker
-  // write failing — so its newest is unknown, and unknown reads as current.
+  const markerAt = marker === null ? null : wireInstant(marker.at);
+  const markerUndated =
+    marker !== null && markerAt === null ? undatedOf(1, marker.writtenBy) : NO_UNDATED;
+  const undated = mergeUndated(mergeUndated(drops.undated, capture.undated), markerUndated);
+  const dated = laterIso(laterIso(drops.newestAt, markerAt), capture.newestAt);
+  const unboundedUndated = undated.count > 0 && undated.by === null;
+  const fullWithoutMarker = capture.atCap && capture.fullSince === null;
   return {
-    oldestAt: earlierIso(earlierIso(drops.oldestAt, marker), capture.oldestAt),
-    newestAt:
-      capture.atCap && capture.fullSince === null
+    oldestAt:
+      undated.count > 0
         ? null
-        : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),
+        : earlierIso(earlierIso(drops.oldestAt, markerAt), capture.oldestAt),
+    newestAt:
+      unboundedUndated || fullWithoutMarker
+        ? null
+        : laterIso(dated, undated.count > 0 ? undated.by : null),
   };
 };
 
@@ -184,7 +189,7 @@ export const toLossReport = (
   return {
     total: clampLossCount(total),
     kinds: saturated(kinds),
-    ...spanOf(drops, unrecorded?.at, capture, unreadable),
+    ...spanOf(drops, unrecorded, capture),
   };
 };
 

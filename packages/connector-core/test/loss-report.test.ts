@@ -5,7 +5,7 @@
  * spelling.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
+import { rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { EMPTY_LOSS_REPORT, MAX_LOSS_COUNT, TelemetryLossReportSchema } from "@crosscheck/schema";
@@ -21,7 +21,7 @@ import {
   spoolUnrecordedDropsPath,
   writePrivateFile,
 } from "../src/config/paths.ts";
-import { archiveLedger, readDropDetail, recordDrop } from "../src/spool/drops.ts";
+import { archiveLedger, newestDropMs, readDropDetail, recordDrop } from "../src/spool/drops.ts";
 import {
   formatLossLines,
   hasRecentLoss,
@@ -129,7 +129,17 @@ describe("LOSS-7: the report folds every ledger", () => {
 });
 
 describe("an instant a ledger cannot date never reaches the wire, and never narrows the span", () => {
-  test("a garbled capture-ledger instant still counts, the span is unknown, and the hub's schema accepts it", async () => {
+  /**
+   * Review H2: undatable content used to make the span unknown FOR GOOD. It
+   * now takes the one upper bound the filesystem holds — no line in a file
+   * was written after the file's last modification — so the newest is that
+   * mtime (later than the truth: the weakening side), the oldest stays
+   * unknown, and the loss leaves the hub's window like any other.
+   */
+  const pin = (path: string, at: Date): Promise<void> => utimes(path, at, at);
+  const MONTH_AFTER_T4 = new Date(T4.getTime() + 30 * DAY_MS);
+
+  test("a garbled capture-ledger instant still counts, is bounded by the file's mtime, and ages out", async () => {
     // Arrange: a dated drop, then a capture-ledger line a hand edit left undatable
     const path = await home();
     await recordDrop(path, KEY, SLUG, 3, "expired", T1);
@@ -138,18 +148,20 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
       lossLedgerPath(path),
       `${JSON.stringify({ at: "yesterday", kind: "hook_timed_out", count: 1, key: KEY, detail: "stop" })}\n`,
     );
+    await pin(lossLedgerPath(path), T4);
 
     // Act
     const { report } = await readLocalLosses(path, KEY);
 
-    // Assert: counted; "since when" unknown rather than the dated drop's day
+    // Assert: counted; since-when unknown; newest no earlier than the file says
     expect(report.total).toBe(4);
     expect(report.oldestAt).toBeNull();
-    expect(report.newestAt).toBeNull();
+    expect(report.newestAt).toBe(T4.toISOString());
+    expect(hasRecentLoss(report, MONTH_AFTER_T4)).toBe(false);
     expect(TelemetryLossReportSchema.safeParse(report).success).toBe(true);
   });
 
-  test("a garbled marker instant is the same unknown, never a string on the wire", async () => {
+  test("a garbled marker instant is bounded by the marker's mtime, never a string on the wire", async () => {
     // Arrange
     const path = await home();
     await recordDrop(path, KEY, SLUG, 3, "expired", T1);
@@ -157,23 +169,26 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
       spoolUnrecordedDropsPath(path, KEY),
       `${JSON.stringify({ at: "not-a-date", count: 4, reason: "write-failed" })}\n`,
     );
+    await pin(spoolUnrecordedDropsPath(path, KEY), T4);
 
     // Act
     const { report } = await readLocalLosses(path, KEY);
 
     // Assert
     expect(report.total).toBe(7);
-    expect(report.newestAt).toBeNull();
+    expect(report.newestAt).toBe(T4.toISOString());
     expect(TelemetryLossReportSchema.safeParse(report).success).toBe(true);
   });
 
-  test("an unreadable ledger line is at least one loss — unattributed and undated, never a report of zero", async () => {
+  test("an unreadable ledger line is at least one loss — unattributed, bounded, never a report of zero", async () => {
     // Arrange: a torn .drops line and a garbled capture-ledger line, nothing else
     const path = await home();
     await ensureDir(spoolDir(path, KEY));
     await writeFile(spoolDropsPath(path, KEY, SLUG), '{"at":"2026-09-0\n', "utf8");
+    await pin(spoolDropsPath(path, KEY, SLUG), T3);
     await ensureDir(join(path, "state"));
     await writeFile(lossLedgerPath(path), "garbage\n", "utf8");
+    await pin(lossLedgerPath(path), T4);
 
     // Act
     const local = await readLocalLosses(path, KEY);
@@ -181,8 +196,58 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
     // Assert: a line exists because a loss was written; its count is unknown, so at least one
     expect(local.report.total).toBe(2);
     expect(local.report.kinds).toEqual({ unattributed: 2 });
-    expect(local.report.newestAt).toBeNull();
+    expect(local.report.newestAt).toBe(T4.toISOString());
     expect(local.isFloor).toBe(true);
+  });
+
+  test("PROBE 2: one torn line in the machine-wide ledger charges every repo, and the charge ages out", async () => {
+    // Arrange: another repo's torn line, nothing else on the machine
+    const path = await home();
+    await ensureDir(join(path, "state"));
+    await writeFile(lossLedgerPath(path), '{"at":"2026-09-01T08:00:00.000Z","kind":"hook_timed_out","count":1,"key":"x","det\n', "utf8");
+    await pin(lossLedgerPath(path), T4);
+
+    // Act
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(report).toEqual({ total: 1, kinds: { unattributed: 1 }, oldestAt: null, newestAt: T4.toISOString() });
+    expect(hasRecentLoss(report, T4)).toBe(true);
+    expect(hasRecentLoss(report, MONTH_AFTER_T4)).toBe(false);
+  });
+
+  test("PROBE 4: a torn line folded into the archive keeps its bound, so the archive ages out too", async () => {
+    // Arrange: a dated drop plus a torn line, the ledger last written at T1, then folded
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 3, "expired", T0);
+    const ledger = spoolDropsPath(path, KEY, SLUG);
+    await writeFile(ledger, `${await Bun.file(ledger).text()}{"at":"2026\n`, "utf8");
+    await pin(ledger, T1);
+
+    // Act
+    await archiveLedger(path, KEY, ledger);
+    await rm(ledger);
+    const { report } = await readLocalLosses(path, KEY);
+
+    // Assert: the fold carried the bound, not "unknown for ever"
+    expect(report.total).toBe(4);
+    expect(report.newestAt).toBe(T1.toISOString());
+    expect(hasRecentLoss(report, MONTH_AFTER_T4)).toBe(false);
+  });
+
+  test("PROBE 4: a ledger with no datable line ages by its mtime, so reap can fold it", async () => {
+    // Arrange
+    const path = await home();
+    await ensureDir(spoolDir(path, KEY));
+    const ledger = spoolDropsPath(path, KEY, SLUG);
+    await writeFile(ledger, '{"at":"x\n', "utf8");
+    await pin(ledger, T2);
+
+    // Act
+    const newest = await newestDropMs(ledger);
+
+    // Assert
+    expect(newest).toBe(T2.getTime());
   });
 
   test("PROBE 1 (review H1): a ledger other repos filled still reports this repo's refused loss, dated", async () => {
@@ -220,7 +285,7 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
     expect(local.report.oldestAt).toBe(T0.toISOString());
   });
 
-  test("an undatable .drops line leaves the span unknown too", async () => {
+  test("an undatable .drops line is bounded by its ledger's mtime too", async () => {
     // Arrange
     const path = await home();
     await recordDrop(path, KEY, SLUG, 3, "expired", T1);
@@ -229,6 +294,7 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
       ledger,
       `${await Bun.file(ledger).text()}${JSON.stringify({ at: "soon", count: 2, reason: "rejected" })}\n`,
     );
+    await utimes(ledger, T4, T4);
 
     // Act
     const { report } = await readLocalLosses(path, KEY);
@@ -236,7 +302,7 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
     // Assert
     expect(report.total).toBe(5);
     expect(report.oldestAt).toBeNull();
-    expect(report.newestAt).toBeNull();
+    expect(report.newestAt).toBe(T4.toISOString());
   });
 });
 

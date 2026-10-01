@@ -32,7 +32,14 @@ import { MAX_LOSS_LEDGER_BYTES } from "../constants.ts";
 import { ensureDir, readTextOrNull } from "../config/paths.ts";
 import { addCount } from "../spool/counts.ts";
 import type { Counts } from "../spool/counts.ts";
-import { ledgerInstant } from "../spool/ledger-read.ts";
+import {
+  NO_UNDATED,
+  ledgerInstant,
+  mergeUndated,
+  readLedgerText,
+  undatedOf,
+} from "../spool/ledger-read.ts";
+import type { UndatedContent } from "../spool/ledger-read.ts";
 import { toLines } from "../spool/lines.ts";
 import { UNATTRIBUTED_LOSS_KIND } from "@crosscheck/schema";
 import {
@@ -149,11 +156,12 @@ export interface CaptureLossSummary {
   /** Lines that would not parse — counted, never silently skipped. */
   readonly malformed: number;
   /**
-   * Charged lines whose `at` would not parse: in `total`, in no span. A span
-   * read beside a non-zero `undated` is narrower than the truth, and the loss
-   * report refuses to send it (spool/loss-report.ts toLossReport).
+   * Lines the span cannot date — charged lines whose `at` will not parse and
+   * lines that will not parse at all — bounded by the ledger file's mtime
+   * (spool/ledger-read.ts, review H2): the report keeps the oldest unknown
+   * and takes the bound as a newest, so the loss ages out.
    */
-  readonly undated: number;
+  readonly undated: UndatedContent;
   /** True when the ledger refused further detail: every count above is a floor. */
   readonly atCap: boolean;
   /** Losses the full ledger refused (state/loss-refusals.ts), charged to every repo; in `total`. */
@@ -170,7 +178,7 @@ export const EMPTY_CAPTURE_LOSSES: CaptureLossSummary = {
   oldestAt: null,
   newestAt: null,
   malformed: 0,
-  undated: 0,
+  undated: NO_UNDATED,
   atCap: false,
   refused: 0,
   fullSince: null,
@@ -212,11 +220,12 @@ export const readCaptureLosses = async (
   home: string,
   key: string,
 ): Promise<CaptureLossSummary> => {
-  const [raw, refusals] = await Promise.all([
-    readTextOrNull(lossLedgerPath(home)),
+  const [ledger, refusals] = await Promise.all([
+    readLedgerText(lossLedgerPath(home)),
     readLossRefusals(home),
   ]);
-  return withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key), refusals);
+  const raw = ledger.text;
+  return withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key, ledger.writtenBy), refusals);
 };
 
 const CAPTURE_KIND_SET: ReadonlySet<string> = new Set(CAPTURE_LOSS_KINDS);
@@ -254,13 +263,23 @@ const withRefusals = (
   };
 };
 
-const linesSummary = (raw: string, key: string): CaptureLossSummary => {
+/**
+ * `writtenBy` is the ledger's mtime: every line in it was written no later,
+ * so it bounds the lines that name no instant (review H2). A line that will
+ * not parse is machine-wide — charged to every repo — and so is its bound.
+ */
+const linesSummary = (raw: string, key: string, writtenBy: string | null): CaptureLossSummary => {
   const atCap = raw.length >= MAX_LOSS_LEDGER_BYTES;
+  const undatedLine = undatedOf(1, writtenBy);
   return toLines(raw).reduce<CaptureLossSummary>(
     (summary, line) => {
       const parsed = EntrySchema.safeParse(safeJson(line));
       if (!parsed.success) {
-        return { ...summary, malformed: summary.malformed + 1 };
+        return {
+          ...summary,
+          malformed: summary.malformed + 1,
+          undated: mergeUndated(summary.undated, undatedLine),
+        };
       }
       const entry = parsed.data;
       if (entry.key !== null && entry.key !== key) {
@@ -276,7 +295,7 @@ const linesSummary = (raw: string, key: string): CaptureLossSummary => {
         unkeyed: summary.unkeyed + (entry.key === null ? entry.count : 0),
       };
       return at === null
-        ? { ...charged, undated: summary.undated + 1 }
+        ? { ...charged, undated: mergeUndated(summary.undated, undatedLine) }
         : {
             ...charged,
             oldestAt: earlierIso(summary.oldestAt, at),
