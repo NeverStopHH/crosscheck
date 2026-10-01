@@ -49,6 +49,24 @@ import { MAX_PIN_CHECK_CHARS, PIN_PRESENCE_TERMINAL } from "./pin.ts";
  */
 export const MAX_PILOT_LABEL_REASON_CHARS = MAX_PIN_CHECK_CHARS;
 
+/**
+ * ONE MEASURE: CODE POINTS (second review, L7). zod's `.max` and Postgres's
+ * `char_length` both count code points; the walk counted UTF-16 units and
+ * the renderer cut at 200 of them, so 150 emoji were refused at the terminal
+ * yet accepted by the hub, and printed cut off. Every reader of this bound
+ * counts with `reasonLength`.
+ */
+export const reasonLength = (text: string): number => [...text].length;
+
+/**
+ * The renderer's budget for a stored reason, in the UTF-16 units its cut
+ * counts: a code point is at most two of them, so a reason the hub accepted
+ * is never cut.
+ */
+const MAX_UTF16_UNITS_PER_CODE_POINT = 2;
+export const MAX_PILOT_LABEL_REASON_UTF16_UNITS =
+  MAX_PILOT_LABEL_REASON_CHARS * MAX_UTF16_UNITS_PER_CODE_POINT;
+
 const takesMark = (refKind: keyof typeof PILOT_MARKS_BY_REF_KIND, mark: string): boolean =>
   (PILOT_MARKS_BY_REF_KIND[refKind] as readonly string[]).includes(mark);
 

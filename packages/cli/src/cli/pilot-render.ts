@@ -27,7 +27,7 @@ import {
   MAX_HUB_MESSAGE_CHARS,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "@crosscheck/connector-core/constants.ts";
-import { MAX_PILOT_LABEL_REASON_CHARS } from "@crosscheck/schema";
+import { MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import {
   bareUntrusted,
@@ -276,7 +276,7 @@ const reasonLines = (proof: PilotReport["precision"]): readonly string[] =>
         `${INDENT}reasons people gave, newest first:`,
         ...proof.reasons.map(
           (said) =>
-            `${INDENT}  ${bareUntrusted(said.label)}: ${quoted(said.reason, MAX_PILOT_LABEL_REASON_CHARS)}`,
+            `${INDENT}  ${bareUntrusted(said.label)}: ${quoted(said.reason, MAX_PILOT_LABEL_REASON_UTF16_UNITS)}`,
         ),
         ...(proof.reasonsBeyondList > 0
           ? [`${INDENT}  (+${count(proof.reasonsBeyondList)} more, not listed)`]

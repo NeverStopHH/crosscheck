@@ -441,6 +441,21 @@ describe("crosscheck pilot label — a reason, only when asked for", () => {
     expect(JSON.stringify(figures)).not.toContain("ghp_");
   });
 
+  test("L7: a reason is measured in characters as the hub measures it, not in UTF-16 units", async () => {
+    // Arrange — 150 emoji: 150 characters (code points) and 300 UTF-16
+    // units. The hub and the database count the first; the walk counted the
+    // second and refused a sentence the hub would have taken.
+    const s = await scenario("emoji");
+    await deliver(s, "wc_emoji_a", 4);
+    const reason = "😀".repeat(150);
+
+    // Act
+    await walk(s, scripted(["N"], [reason]));
+
+    // Assert — stored whole
+    expect((await reportOf(s)).reasons).toEqual([{ label: "noise", reason }]);
+  });
+
   test("a reason past one sentence is refused at the terminal and asked again", async () => {
     // Arrange
     const s = await scenario("long");

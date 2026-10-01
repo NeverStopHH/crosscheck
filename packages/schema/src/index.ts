@@ -147,7 +147,12 @@ export {
   WaiverRevokeSchema,
 } from "./waiver.ts";
 export type { WaiverGrant, WaiverKind, WaiverRevoke } from "./waiver.ts";
-export { MAX_PILOT_LABEL_REASON_CHARS, PilotMarkSchema } from "./pilot-mark.ts";
+export {
+  MAX_PILOT_LABEL_REASON_CHARS,
+  MAX_PILOT_LABEL_REASON_UTF16_UNITS,
+  PilotMarkSchema,
+  reasonLength,
+} from "./pilot-mark.ts";
 export type { PilotMarkInput } from "./pilot-mark.ts";
 
 export {

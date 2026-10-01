@@ -44,7 +44,7 @@ import {
 } from "@crosscheck/connector-core/http/pilot.ts";
 import type { UnlabeledIntervention } from "@crosscheck/connector-core/http/pilot.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
-import { MAX_PILOT_LABEL_REASON_CHARS, containsSecret } from "@crosscheck/schema";
+import { MAX_PILOT_LABEL_REASON_CHARS, containsSecret, reasonLength } from "@crosscheck/schema";
 import type { PilotInterventionLabel } from "@crosscheck/schema";
 
 import { defaultInteractiveProbe } from "./pin.ts";
@@ -153,8 +153,10 @@ const readDecision = async (terminal: LabelTerminal): Promise<Decision> => {
 
 /** What is wrong with a typed reason, as the sentence to print — or null when it may be sent. */
 const reasonProblem = (text: string): string | null => {
-  if (text.length > MAX_PILOT_LABEL_REASON_CHARS) {
-    return reasonTooLongLine(text.length);
+  // Counted as the hub counts it: code points, not UTF-16 units (L7).
+  const length = reasonLength(text);
+  if (length > MAX_PILOT_LABEL_REASON_CHARS) {
+    return reasonTooLongLine(length);
   }
   return containsSecret(text) ? reasonSecretLine() : null;
 };

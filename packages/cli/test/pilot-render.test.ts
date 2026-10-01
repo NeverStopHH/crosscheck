@@ -546,6 +546,19 @@ describe("renderPilot", () => {
     );
   });
 
+  test("L7: a stored reason is never cut — the bound is characters, the render budget UTF-16", () => {
+    // Arrange — 150 emoji is within the 200-character bound the hub stores,
+    // and 300 UTF-16 units: the renderer cut it at 200 units with "…"
+    const base = report();
+    const reason = "😀".repeat(150);
+    const out = renderPilot(
+      view({ precision: { ...base.precision, reasons: [{ label: "noise", reason }] } }),
+    );
+
+    // Assert
+    expect(out).toContain(`noise: «${reason}»`);
+  });
+
   test("a reason is quoted as data, with the count beyond the list", () => {
     // Arrange & Act
     const out = renderPilot(view());
