@@ -8,6 +8,7 @@ import type { AttemptDeps, AttemptInput } from "../bench/at7/attempt.ts";
 import { renderedAsksLine } from "../bench/at7/delivery.ts";
 import type { Slot } from "../bench/at7/manifest.ts";
 import type { InstallInput } from "../bench/at7/install.ts";
+import { worktreeRoot } from "../bench/at7/paths.ts";
 import { parseStream } from "../bench/at7/stream.ts";
 
 /**
@@ -111,6 +112,7 @@ const fakeDeps = (
   runFixtureTests: async () => true,
   fixtureGitDiff: async () => "diff --git a/src/slug.ts b/src/slug.ts",
   waitForQuiet: async (count) => ({ settled: true, waitedMs: 0, finalCount: count() }),
+  linkToolRoot: async (workRoot) => join(workRoot, "crosscheck"),
   ...overrides,
 });
 
@@ -232,6 +234,45 @@ describe("runAttempt — the wiring a live run relies on", () => {
     expect(captured.installInput?.fixtureRoot).toBe(join(realRoot, "slugkit"));
     expect(captured.installInput?.runTempDir).toBe(realRoot);
     expect(facts.outcome.filesRead).toContain("test/slug.test.ts");
+  });
+
+  test("init writes hooks and MCP commands through a neutral link, not the checkout's path (A2.4)", async () => {
+    // Act
+    await runAttempt(input, fakeDeps(captured));
+    const prefix = captured.installInput?.commandPrefix ?? "";
+
+    // Assert: the checkout's own directory name (here crosscheck-at7) never
+    // reaches .mcp.json or .claude/settings.json, both of which the agent can read
+    expect(prefix).toContain(join(await realpath(dir), "crosscheck"));
+    expect(prefix).not.toContain(worktreeRoot());
+  });
+
+  test("the claude env's PATH carries no entry inside the harness checkout (A2.4)", async () => {
+    // Arrange: a launcher run via `bun run` prepends the checkout's .bin dirs
+    const savedPath = process.env["PATH"];
+    process.env["PATH"] = `${worktreeRoot()}/node_modules/.bin:/usr/bin:/bin`;
+    let drivenPath: string | undefined;
+    const deps = fakeDeps(captured, {
+      driveClaude: async (driveInput) => {
+        drivenPath = driveInput.env["PATH"];
+        return {
+          record: parseStream(streamFor(captured.questionBody)),
+          claudeExit: 0,
+          timedOut: false,
+          rawStreamPath: driveInput.rawStreamPath,
+        };
+      },
+    });
+
+    // Act
+    try {
+      await runAttempt(input, deps);
+    } finally {
+      process.env["PATH"] = savedPath;
+    }
+
+    // Assert
+    expect(drivenPath).toBe("/usr/bin:/bin");
   });
 
   test("a harness throw after detection keeps the run's hits and voids it", async () => {

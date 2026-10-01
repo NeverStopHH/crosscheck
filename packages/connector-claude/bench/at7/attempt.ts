@@ -25,8 +25,9 @@ import { createDeveloper, seedDanaWork, startHub } from "./hub.ts";
 import type { HubHandle } from "./hub.ts";
 import { install } from "./install.ts";
 import type { InstallResult } from "./install.ts";
-import { relativeTo } from "./layout.ts";
+import { pathWithout, relativeTo } from "./layout.ts";
 import type { Arm, Slot } from "./manifest.ts";
+import { commandPrefix, linkToolRoot, worktreeRoot } from "./paths.ts";
 import {
   relevanceIntent,
   relevanceTitle,
@@ -75,6 +76,8 @@ export interface AttemptDeps {
   readonly fixtureGitDiff: typeof fixtureGitDiff;
   /** Waits until the proxy and canary stop receiving, before S5 reads them. */
   readonly waitForQuiet: (count: () => number) => Promise<QuietResult>;
+  /** Links this worktree into the work root under a neutral name (A2.4). */
+  readonly linkToolRoot: typeof linkToolRoot;
 }
 
 /** `at7-` and ten random hex characters (§4) — fresh per attempt. */
@@ -99,6 +102,7 @@ export const LIVE_DEPS: AttemptDeps = {
   runFixtureTests,
   fixtureGitDiff,
   waitForQuiet: (count) => waitForQuiet(count),
+  linkToolRoot,
 };
 
 export interface AttemptInput {
@@ -269,13 +273,16 @@ const prepare = async (
     slotIndex: input.slot.index,
   });
   // The reader's connector talks to the hub THROUGH the logging proxy, so S5
-  // can read every request body it sends (A1.7). dana seeds directly.
+  // can read every request body it sends (A1.7). dana seeds directly. The
+  // hooks and MCP server run this worktree through a neutral link (A2.4).
+  const toolRoot = await deps.linkToolRoot(input.workRoot);
   const installed = await deps.install({
     home: join(input.workRoot, CROSSCHECK_HOME_DIR),
     runTempDir: input.workRoot,
     hubUrl: proxy.url,
     readerKey: reader.apiKey,
     fixtureRoot: fixture.repoRoot,
+    commandPrefix: commandPrefix(toolRoot),
   });
   await deps.commitWiring(fixture.repoRoot);
   return { fixture, installed };
@@ -296,7 +303,8 @@ const observe = async (
   const drive = await deps.driveClaude({
     fixtureRoot: fixture.repoRoot,
     mcpConfigPath: installed.mcpPath,
-    env: installed.env,
+    // `echo $PATH` runs unprompted; no entry may name the checkout (A2.4).
+    env: { ...installed.env, PATH: pathWithout(process.env["PATH"] ?? "", worktreeRoot()) },
     rawStreamPath: join(input.resultsDir, "stream.jsonl"),
   });
   const tree = await deps.collectWorkingTree(fixture.repoRoot, input.workRoot);

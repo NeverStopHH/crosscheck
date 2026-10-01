@@ -31,6 +31,7 @@ import type { AttemptFacts } from "./attempt.ts";
 import { runSweep } from "./driver.ts";
 import { childEnv, runProcess } from "./exec.ts";
 import { RUN_TRIPWIRE_MODE } from "./install.ts";
+import { pathWithout } from "./layout.ts";
 import { buildManifest, startDecision } from "./manifest-doc.ts";
 import type { SweepMode } from "./manifest-doc.ts";
 import { dryRunOrder, measuredOrder } from "./manifest.ts";
@@ -195,9 +196,12 @@ const main = async (): Promise<void> => {
   const manifestFile = join(args.outDir, "manifest.json");
   await mkdir(args.outDir, { recursive: true });
 
+  // The env claude runs with, as recorded: the allowlist, the run's pins, and
+  // the PATH without entries inside this checkout (A1.5, A2.4).
   const runEnv = childEnv(process.env, {
     CROSSCHECK_HOME: "<per-run temp dir>",
     CROSSCHECK_TRIPWIRE: RUN_TRIPWIRE_MODE,
+    PATH: pathWithout(process.env["PATH"] ?? "", worktreeRoot()),
   });
   // A2.2 residue: the Bash tool sources the user's shell profile, which the
   // env allowlist does not bound. Refuse to measure on a machine whose profile

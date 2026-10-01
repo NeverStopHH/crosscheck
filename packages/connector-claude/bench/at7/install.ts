@@ -10,7 +10,9 @@
  *      never a shell-history positional), from this worktree's bin.
  *   3. `crosscheck init` in the fixture with `--command-prefix "<bun> <bin>"`,
  *      so the `.claude/settings.json` hooks and the `.mcp.json` server both run
- *      THIS worktree's source. The durable-install rules send the override
+ *      THIS worktree's source — through a neutral link, so the checkout's own
+ *      directory name never lands in a file the agent can read (A2.4). The
+ *      durable-install rules send the override
  *      through `sh -c` for the MCP entry (config/launcher.ts), which is exactly
  *      what the strict-mcp run then loads.
  *
@@ -23,7 +25,7 @@ import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 import { runProcess } from "./exec.ts";
-import { commandPrefix, crosscheckBinPath, runtimePath } from "./paths.ts";
+import { crosscheckBinPath, runtimePath } from "./paths.ts";
 
 /**
  * The tripwire mode the run pins (A1.5). The product default `ask` is a
@@ -41,6 +43,11 @@ export interface InstallInput {
   readonly hubUrl: string;
   readonly readerKey: string;
   readonly fixtureRoot: string;
+  /**
+   * The `--command-prefix` init writes into the hooks and `.mcp.json` — this
+   * worktree's bin reached through a neutral link (paths.ts, A2.4).
+   */
+  readonly commandPrefix: string;
 }
 
 export interface InstallResult {
@@ -129,7 +136,7 @@ export const install = async (input: InstallInput): Promise<InstallResult> => {
       crosscheckBinPath(),
       "init",
       "--command-prefix",
-      commandPrefix(),
+      input.commandPrefix,
     ],
     { cwd: input.fixtureRoot, env },
   );

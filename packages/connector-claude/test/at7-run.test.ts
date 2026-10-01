@@ -13,13 +13,13 @@ import { allowedTools, claudeArgs, MESSAGING_TOOLS, RUN_SETTINGS } from "../benc
  * MCP server.
  */
 describe("allowedTools", () => {
-  const FIXTURE = "/private/tmp/at7/runs/00-control/attempt-1/slugkit";
+  const FIXTURE = "/private/var/folders/x/T/0a1b2c3d4e5f/slugkit";
   const tools = allowedTools(FIXTURE);
 
   test("scopes Read/Edit/Write/MultiEdit to the fixture, never bare", () => {
     // Assert: the scoped form is present and the bare form is not
     for (const name of ["Read", "Edit", "Write", "MultiEdit"]) {
-      expect(tools).toContain(`${name}(//private/tmp/at7/runs/00-control/attempt-1/slugkit/**)`);
+      expect(tools).toContain(`${name}(//private/var/folders/x/T/0a1b2c3d4e5f/slugkit/**)`);
       expect(tools).not.toContain(name);
     }
   });
@@ -41,7 +41,7 @@ describe("allowedTools", () => {
   test("the absolute glob drops the path's leading slash after //", () => {
     // Assert: `//` then the path without its leading slash, never `///`
     const read = tools.find((t) => t.startsWith("Read("));
-    expect(read).toBe("Read(//private/tmp/at7/runs/00-control/attempt-1/slugkit/**)");
+    expect(read).toBe("Read(//private/var/folders/x/T/0a1b2c3d4e5f/slugkit/**)");
   });
 });
 
