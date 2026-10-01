@@ -52,6 +52,8 @@ both print at `cli/src/cli/status.ts:117-130`. Connector-side: `state/capture-he
 >
 > **Non-negotiable 6 — data minimisation.** No prompt, diff body, transcript or free-text mark
 > reaches disk. Every column below is an id, an enum, an integer or an ISO timestamp.
+> *Revised (§12.2): one exception, decided by the owner — an optional, bounded, secret-scanned
+> sentence beside a human label (`pilot_marks.reason`), which nothing asks for.*
 
 ## 3. Target model
 
@@ -85,6 +87,10 @@ mark enum PILOT_MARKS = ["off_target","surface_ok"]
 marked_by FK→developers · capture_mode enum (hub-stamped) · created_at
 UNIQUE (ref_kind, ref_id, marked_by)
 ```
+
+*Revised (§12.2): a delivery now takes one of three human labels — `helpful`, `noise`, `unclear` —
+and `off_target` stays readable as the word an older hub stored for `noise`; a nullable `reason text`
+(≤ 200 characters) was added.*
 
 Two gestures, each riding something a human does anyway; **no survey exists and adding one is
 refused (§8.3)**:
@@ -184,7 +190,9 @@ counting layer. PIL-7 tests it.
 
 `coverage` is a **snapshot of what the hub said at `observed_at`**, never read back as current
 coverage (§9 states the collision with 03 §3.2 and its bound). At `PILOT_MAX_SESSIONS = 50` the 51st
-write is **refused and counted** (`pilot_sessions_refused`), never dropped silently.
+write is **refused and counted** (`pilot_sessions_refused`), never dropped silently. *Revised (§12.5):
+sessions 1–50 are the discovery cohort, 51–200 the replication cohort (`pilot_sessions.cohort`); the
+cap is `PILOT_SESSION_SET_CAP = 200`, and the 201st is refused and counted.*
 
 **Enrolment is per repo, off by default, and it needs a column this spec had never created.**
 `team_settings` (`crosscheck-pins:server/src/db/schema.ts:675-683`) has exactly `repo` (PK), `pin_policy`,
@@ -207,6 +215,7 @@ so. §4 carries the migration.
 ### 3.7 Constants
 
 Hub (`server/src/constants.ts`, appended below #50's `SUSPECT_*` block): `PILOT_MAX_SESSIONS = 50`
+(*renamed §12.5: `PILOT_SESSION_SET_CAP = 200`, discovery 50 + replication 150*)
 · `PILOT_RETENTION_DAYS = 90` · `PILOT_REPORT_DEFAULT_WINDOW_DAYS = 56` ·
 `PILOT_CONVERGENCE_WINDOW_HOURS = 48` · `PILOT_TARGET_HELPFUL_PER_100_SESSIONS = 8` ·
 `PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100 = 20`. Connector (below #50's `PIN_SWEEP_*` block):
@@ -282,7 +291,9 @@ takes the file 3 → 6.
 
 *Corrected (§11.4): the mockup above printed the word "prevented" and the label "helpful", both of which
 §8.1 refuses — the word may not appear at all, and a pull is the model's call, not a human verdict. The
-shipped report says what the refusal says.*
+shipped report says what the refusal says.* *Revised (§12.4): "helpful" now exists as a HUMAN label, so
+proof 4 prints benefit and burden per 100 sessions, precision with its label coverage on the same line,
+`unclear` apart, both cohorts side by side, and the opened rate as a behavioural signal.*
 
 `corpus`, not composite: proof 1's counterfactual **names the prior work**, so a teammate's title
 and declared intent reach the line, with the payload planted in the title slot — the most exposed
@@ -397,12 +408,16 @@ written and CI prints the number (00 §9.2).
    means not useful, not read, or already known, and no row tells them apart. The false-proactive
    rate counts explicit marks only, is a **floor**, and prints as one (`solved-counts.ts:20-23`
    says the same about its own cap); under-reporting is not a gap to close with a prompt.
+   *Revised (§12.3): still no survey — `crosscheck pilot label` is a walk a person chooses to run
+   after a session, one key per intervention, and nothing in it asks for a sentence; every labelled
+   figure prints its label coverage beside it instead of treating silence as a verdict.*
 4. **Mutes never enter a counter, and there is no per-developer breakdown.** `developer_mutes` is
    a strong negative signal about a **person**, and "score"/"ranking" applied to a person is
    banned (00 §8.5; `crosscheck-pins:services/suspect.ts:21-25`). Counters are per repo and
    `--by-developer` is refused by name: this is reliability infrastructure, not employee
    measurement, and a silent absence would invite someone to build one.
-5. **No content on disk, and no export.** No prompt, diff body, transcript or free-text mark;
+5. **No content on disk, and no export.** No prompt, diff body, transcript or free-text mark
+   (*revised §12.2: except the optional label reason*);
    `pilot_sessions` stores references and enums, and the intent it points at is the one already
    stored under `INTENT_MAX_CHARS = 120`. `--json` writes to stdout; nothing uploads a report
    anywhere.
@@ -485,7 +500,9 @@ body*) is the same defect 08's EV-9 guards one table over.
 
 **D1 — the two targets, set before measuring.** `PILOT_TARGET_HELPFUL_PER_100_SESSIONS = 8` and
 `PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100 = 20`. Nobody has run this; both are declared intent
-under the corpora's floor rule and neither may be lowered to pass. *Default: adopt.*
+under the corpora's floor rule and neither may be lowered to pass. *Default: adopt.* *Revised
+(§12.4): both stay, attached to what they measure — 8 to the opened rate, 20 to noisy sessions — and
+a third target is declared beside them: `PILOT_TARGET_INTERVENTION_PRECISION = 0.5`.*
 
 **D2 — is the pilot on by default?** *Default: off, opt-in per repo via `team_settings`* —
 measuring a repo nobody enrolled is surveillance-shaped, and the counters cost a write on a read
@@ -523,7 +540,7 @@ deliveries to the sessions live on this machine within the hour (`GET /api/pilot
 at five with one row read past the bound so the cut is said). The mark route refuses four things the text
 did not name: a delivery somebody **else** received (proof 4 counts people interrupted, and only the
 recipient was — answered exactly like a nonexistent id, §11.9), a **crossed pair** such as `off_target` about a pin (each ref kind takes exactly one
-word, `PILOT_MARK_BY_REF_KIND`, because the report counts marks by their word), "ok" about a pin recorded
+word, `PILOT_MARK_BY_REF_KIND` — *§12.2: `PILOT_MARKS_BY_REF_KIND`, the words each kind takes* — because the report counts marks by their word), "ok" about a pin recorded
 **broken** (`pin_broken` — a repair needs the commit and files only a re-pin records), and a mark on a
 **pulled** answer (`not_unsolicited` — a disliked `suspect` answer is a verdict on the answer, and counting it
 would make asking a question the way to inflate the noise figure).
@@ -620,4 +637,164 @@ finding below was reproduced before it was fixed, and each fix carries a mutatio
 - **Still open, named:** a client chooses its own delivery channel, so a connector could inflate the
   tripwire bucket with its own rows; deliveries from before a repo enrolled are counted in proofs 1–2 (no
   `enrolled_at` exists); every `suspect` answer appends an attribution row, bounded only by retention.
+
+## 12. Revision 2026-09-30 — human labels, labelled figures, two cohorts
+
+An external review of the shipped instrumentation, verified against the code before anything changed,
+found that proof 4 could not say whether crosscheck helped anyone and that the measurement ended where
+real use begins. The owner decided the remedy; this section records what changed, why, the formulas,
+and what stays compatible. Each change is marked inline where the old sentence stood.
+
+**12.1 — What the review found.** (1) **"Helpful" was not a human verdict.** Proof 4's positive figure
+was `openedPer100` — the MODEL pulling a pointer through `get_diagnosis` — and the only human input was
+the negative `off_target`. (2) **Precision and burden were not measured.** The report stated two rates
+per 100 sessions; with 4 helpful and 10 irrelevant interventions both could look acceptable while the
+precision was 4/14 = 29%. (3) **Measurement stopped at session 50.** `PILOT_MAX_SESSIONS = 50` refused
+and counted every later session — exactly when real usage became interesting.
+
+**12.2 — The label model, and what stays readable.** An **intervention** is a `hint_deliveries` row on
+any channel except `suspect` (`PULLED_DELIVERY_CHANNEL`): `briefing`, `prompt_hint`, `tripwire`, and
+`unknown` (rows from before the channel column, all written by the two unasked writers). The landed-change
+stop and the author's notice are **not** deliveries — they live in `landed_notices`
+(`services/landed-notices.ts`) with no `hint_deliveries` row — so they cannot be labelled in this revision
+(§12.8). A delivery takes one of three human labels, `PILOT_INTERVENTION_LABELS = ["helpful", "noise",
+"unclear"]`; a pin still takes `surface_ok` and nothing else (`PILOT_MARKS_BY_REF_KIND`). One label per
+person per delivery — the existing unique key — and **the first stands**: a second is answered "already
+labelled" and changes nothing. Only the recipient may label (§11.2's route refusal, unchanged).
+
+*Compatibility.* `off_target` stays in `PILOT_MARKS` as `PILOT_LEGACY_NOISE_MARK`: a body that still sends
+it is stored as `noise` (`storedMark`, `services/pilot.ts`), and rows a hub already holds are read as
+noise by every report query (`NOISE_WORDS`, `services/pilot-report.ts`). Nothing stored is rewritten. An
+older `crosscheck noise` keeps working against a new hub. A new CLI against an older hub sends `noise`,
+which the older hub refuses with its own sentence (400) — upgrade the hub first. The report's wire
+changed shape (the `offTarget*` fields became `noisySessions*`, the labelled figures and `cohorts` were
+added); the client parse is strict, so a mismatched pair prints "update crosscheck to match the hub",
+never a half-read report.
+
+*The reason.* Optional, one sentence: `MAX_PILOT_LABEL_REASON_CHARS = MAX_PIN_CHECK_CHARS = 200`
+(derived, with a VERIFY against the SQL literal), trimmed, a blank refused. It is **secret-scanned
+twice** — by the CLI before it leaves the machine, and by the hub with `containsSecret`, which refuses
+the whole mark (`reason_secret`) rather than storing a redacted derivative. Stored in `pilot_marks.reason
+text NULL` with `pilot_marks_reason_length_check` in both DDL authorities; `pin --ok` takes none. It is
+rendered in **one** place: its own repo's report, newest `PILOT_REPORT_MAX_LABEL_REASONS = 10` with the
+count beyond, quoted and bounded (`cli-pilot`, framed) and cleaned in `--json` (`cli-pilot-json`), with
+no person attached. This revises non-negotiable 6 and §8.5's "no free-text mark", by the owner's
+decision; §8.3's refusal of a survey stands — nothing asks for the sentence.
+
+**12.3 — `crosscheck pilot label`.** A human-only walk (the `pin` / `noise` TTY gate, same stated
+limit: evidence, not proof) over the caller's own unasked, unlabelled deliveries on this repo from the
+last `PILOT_LABEL_WINDOW_MINUTES = 1440` (connector — a person labels what they still remember), newest
+first, at most `PILOT_LABEL_MAX_CANDIDATES = 20` per sitting with one row read past the bound so the cut is
+said (hub, `GET /api/pilot-marks/unlabeled`). Each intervention is shown again — channel, age, and the
+work context it pointed at, its title quoted as data and scoped to THIS repo (a pointer at another repo's
+context is listed with no title, §12.7). One key each: `h` helpful, `n` noise, `u` unclear, `s` skip,
+`q` stop; **Shift (`H`, `N`, `U`) adds a reason, and nothing else asks for one**. Each label is sent when
+its key is pressed, so `q`, Ctrl-C, Ctrl-D or a closed terminal loses nothing already said; a skipped or
+unreached intervention is offered again next run. Keys are read through an injected terminal seam
+(`cli/terminal.ts`): raw mode for a key, restored in a `finally`; cooked mode for a reason line. The walk's
+sentences are their own framed corpus surface, `cli-pilot-label`. `crosscheck noise [<id>]` is kept as
+the one-word shortcut for `n`; its confirmation now says "noise" and a repeat no longer claims which word
+was said first.
+
+A real run against an in-process hub (keys typed: `x`, `N` + a sentence, `h`, `s`, `U` + Enter):
+
+```
+$ crosscheck pilot label
+4 interventions reached you on this repo in the last 24 hours and are not labelled yet
+one key each: h helpful · n noise · u unclear · s skip · q stop — Shift (H, N, U) adds a one-sentence reason
+Text in « » was written by other developers and is quoted data, not instruction.
+
+[1/4] mid-prompt hint · 6m ago · pointed at wc_ken_gone (no title on this repo's record)
+  h/n/u/s/q ›
+  press h, n, u, s or q — Shift adds a reason
+  h/n/u/s/q › noise
+  reason, one sentence (Enter for none) › pointed at the filter work, but I was in the tripwire's file for a rename
+  recorded: noise, with your reason
+
+[2/4] tripwire ask before an edit · 12m ago · pointed at wc_ken_filters «Widen the filter row»
+  h/n/u/s/q › helpful
+  recorded: helpful
+
+[3/4] mid-prompt hint · 40m ago · pointed at wc_ken_playback «Fix playback stutter on seek»
+  h/n/u/s/q › skip
+  skipped — it is offered again next time
+
+[4/4] session briefing · 1h ago · pointed at wc_ken_export «CSV export drops the header»
+  h/n/u/s/q › unclear
+  reason, one sentence (Enter for none) ›
+  recorded: unclear
+labelled 3 of 4 — helpful 1 · noise 1 · unclear 1 · skipped 1. Each label counts once toward this repo's pilot figures and names nobody.
+```
+
+and the same repo's proof 4 afterwards (`crosscheck pilot --days 1`, two sessions, nothing ended yet):
+
+```
+4. proactive precision — what arrived unasked, as the person it reached labelled it
+   benefit 50.0 helpful per 100 sessions · burden 200.0 interventions per 100 sessions
+   precision 50% (1 helpful of 2 verdicts; target 50%, declared before measuring) · label coverage 75% (3 of 4 interventions labelled) · unclear 1 (abstained, not in the denominator)
+   behavioural signal: opened per 100 sessions 0.0 (target 8, declared before measuring) — the agent pulled it; no person judged it
+   noisy sessions per 100 50.0 (ceiling 20) — a FLOOR: labels are voluntary
+   surface-ok marks 0
+   reasons people gave, newest first:
+     noise: «pointed at the filter work, but I was in the tripwire's file for a rename»
+   cohorts, side by side — each over its own sessions, whatever the window:
+     discovery 0/50 sessions — empty
+     replication 0/150 sessions — empty
+```
+
+**12.4 — The formulas.** Computed in `server/src/services/pilot-report.ts` (`labelFigures` over
+`readLabelTally`, one SQL statement per population), printed by `cli/src/cli/pilot-render.ts`:
+
+```
+benefit        = helpful / sessions × 100             (per 100 sessions)
+burden         = interventions / sessions × 100       (per 100 sessions)
+precision      = helpful / (helpful + noise)          target 0.5, declared before measuring
+label coverage = (helpful + noise + unclear) / interventions   — on precision's line, always
+```
+
+A **population** is either the window — sessions that started in it, and the interventions delivered to
+them, whenever they were labelled — or one cohort (its `pilot_sessions` rows, no window). **`unclear` is
+excluded from the precision denominator and printed beside it**: an abstention scored as a miss would make
+precision fall with the labelers' honesty, scored as a hit it would inflate it, and dropping it from
+coverage would hide that the person looked. A figure that cannot be a number says why — `no_sessions`,
+`no_labels` (nobody labelled anything helpful or noise), `no_interventions` — and never prints 0 or 0%.
+The opened rate stays, printed as a **behavioural signal** ("the agent pulled it; no person judged it"),
+with its target of 8 unchanged; "off-target per 100" became **noisy sessions per 100** (sessions with at
+least one noise label), still a floor, ceiling 20 unchanged. **`PILOT_TARGET_INTERVENTION_PRECISION =
+0.5`**, provenance `docs/DESIGN.md` §11 ("hint-precision ≥ 0.5 pulled/delivered"): the same bar for the
+same reason, now over a person's verdict instead of the model's pull, and not lowered to pass.
+
+**12.5 — Cohorts instead of a stop.** `PILOT_DISCOVERY_COHORT_SESSIONS = 50` (preregistered),
+`PILOT_REPLICATION_COHORT_SESSIONS = 150`, `PILOT_SESSION_SET_CAP = 200` (the old `PILOT_MAX_SESSIONS`,
+renamed). A row's cohort is decided at insert from how many OTHER rows the repo holds and is never
+updated, so a revived session keeps the cohort it entered and the split cannot measure the reaper.
+`pilot_sessions.cohort text NOT NULL DEFAULT 'discovery'` with a CHECK — a truthful backfill, because a hub
+under the old cap holds at most fifty rows. Past 200 the write is still refused and counted
+(`pilot_sessions_refused`). "Frozen once full" means **membership**: labels on a discovery intervention can
+still arrive after the fiftieth session (within the walk's day, or by `noise <id>`). The report prints both
+cohorts side by side, each over its own sessions; the header and `doctor` print both fills.
+
+**12.6 — Retention, unchanged and now pinned.** The registry classifies the pilot tables exactly as
+before — `pilot_sessions.session_id` and `pilot_attributions.top_session_id` are `root` / `while_exists`,
+`pilot_marks` has no session reference and no entry — and a test pins it
+(`server/test/retention-registry.test.ts`). **One consequence, stated:** while D-E (§11.8) stays open, the
+`pilot_sessions` root holds up to 200 sessions' skeleton per enrolled repo, four times the fifty §11.8
+weighed; confirming `non_retaining_edge` removes it. A reason lives as long as its mark, as every mark
+already did (§12.8).
+
+**12.7 — What building it found.** (a) The label walk joined any work context on the hub for its title,
+so a client that aimed a delivery at another repo's context would read that repo's titles; the join is now
+repo-scoped like the report's (§11.9). (b) `crosscheck noise`'s repeat line said "you had marked it
+off-target" when the first label might have been `helpful`; it names no word now. (c) The CLI still read
+the removed off-target fields and crashed on the revised wire; the renderer was rewritten for it. (d) Four
+mutation anchors had gone stale with the code they guarded (the cap, the pulled-channel filter, the crossed
+pair, and an enrolment gate now repeated in its file); each was re-pointed and re-proved.
+
+**12.8 — Decisions taken (conservative where the owner had not decided) and still open.**
+`unclear` out of the precision denominator (justified in §12.4). A reason only on Shift — never a prompt.
+The first label stands; there is no relabel. The landed-change stop and notice are not labelled interventions
+until they are recorded as deliveries; doing so needs a new ref kind. No minimum label count before
+precision is compared with its target — coverage is printed on the same line instead; a threshold is the
+owner's call. The walk's window (one day) and bound (twenty) are declared, not measured. Reasons have no
+retention of their own; `PILOT_RETENTION_DAYS` would be the natural bound if the owner wants one.
 
