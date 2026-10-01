@@ -274,9 +274,13 @@ const runnableModuleViolations = (
   facts: Facts,
 ): readonly string[] => {
   const mapped = new Set(Object.values(table).flatMap((row) => modulesOf(row)));
+  // An origin module takes no position and still produces one (n = 0), so it
+  // is held to the map like an allocator.
   const runnable = [...facts.values()].filter(
     (known) =>
-      takesPosition(known) && !WRAPPERS.has(known.path) && connector.reachable.has(known.path),
+      (takesPosition(known) || known.origin) &&
+      !WRAPPERS.has(known.path) &&
+      connector.reachable.has(known.path),
   );
   return [
     ...runnable

@@ -91,8 +91,14 @@ const EVIDENCE_ENVELOPES: Readonly<Record<string, string>> = {
   claim: "claim.created",
   claim_edge: "claim.invalidated",
 };
-/** The register flow's literal origin: `session.started` is n = 0 by construction. */
-const ORIGIN_PATTERN = /seq:\s*\{\s*epoch,\s*n:\s*0\s*\}/;
+/**
+ * A register body's literal origin — `session.started` is n = 0 by
+ * construction. Both spellings: the flow's `{ epoch, n: 0 }`
+ * (flows/register-session.ts) and Claude's mid-session recovery,
+ * `{ epoch: derived.seqEpoch, n: 0 }` (hooks/post-tool-use.ts), which the
+ * first version of this pattern missed.
+ */
+const ORIGIN_PATTERN = /\{\s*epoch(?::\s*[\w.]+)?,\s*n:\s*0\s*\}/;
 
 const IMPORT_PATTERN =
   /(?:import|export)\s+(type\s+)?([\s\S]*?)\s+from\s+["']([^"']+)["']/g;
@@ -179,11 +185,12 @@ const scan = async (): Promise<ReadonlyMap<string, ScannedModule>> => {
     paths.map(async (path): Promise<[string, ScannedModule]> => {
       const source = await Bun.file(join(REPO_ROOT, path)).text();
       const imports = parseImports(path, source);
+      const origin = ORIGIN_PATTERN.test(source);
       const facts: ModuleFacts = {
         path,
         allocators: [...new Set(allocatorsOf(imports))],
-        evidence: evidenceOf(source, imports),
-        origin: ORIGIN_PATTERN.test(source),
+        evidence: [...evidenceOf(source, imports), ...(origin ? ["session.started"] : [])],
+        origin,
       };
       const targets = imports.flatMap((entry) => (entry.target === null ? [] : [entry.target]));
       return [path, { facts, imports: targets }];
@@ -487,6 +494,17 @@ describe("a table built to break a rule fails the build", () => {
     // Assert
     expect(violations).toContain(
       "claude-code session.started: packages/connector-core/src/flows/end-session.ts holds no session.started position",
+    );
+  });
+
+  test("the register flow, which allocates nothing, is still held to the map as the origin", () => {
+    // Arrange: Cursor's session.started row with its producer removed.
+    const emptied: KindLanes = { ...DECLARATION_TABLE["cursor-ide"]["session.started"], lanes: [] };
+    // Act
+    const violations = check(withKind("cursor-ide", "session.started", emptied));
+    // Assert
+    expect(violations).toContain(
+      "cursor-ide: packages/connector-core/src/flows/register-session.ts builds session.started and is in none of its lanes",
     );
   });
 

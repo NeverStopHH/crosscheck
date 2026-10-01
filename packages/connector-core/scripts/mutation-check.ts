@@ -13210,6 +13210,14 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/guarantee-declarations.test.ts`,
     because: "a core module starts allocating and no host's table names it",
   },
+  {
+    label: "a module that sends the origin position without allocating escapes the map",
+    file: `${CORE}/src/guarantees/check.ts`,
+    from: "      (takesPosition(known) || known.origin) &&\n",
+    to: "      takesPosition(known) &&\n",
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "session.started's producer is the one module that allocates nothing, so a table can drop it unseen",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13376,7 +13384,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
- * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 21
+ * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 22
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
