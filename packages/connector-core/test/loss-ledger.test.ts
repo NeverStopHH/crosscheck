@@ -92,12 +92,37 @@ describe("readCaptureLosses", () => {
     await writeFile(ledger, other.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / other.length)), "utf8");
 
     // Act
-    await recordCaptureLoss(path, { kind: "hook_timed_out", count: 1, key: THIS_REPO, detail: "stop", now: T0 });
+    const before = (await Bun.file(ledger).text()).length;
+    await recordCaptureLoss(path, { kind: "hook_timed_out", count: 1, key: THIS_REPO, detail: "stop", now: T2 });
     const losses = await readCaptureLosses(path, THIS_REPO);
 
-    // Assert
-    expect(losses.total).toBe(0);
+    // Assert: no detail line past the cap — and the refused loss is still
+    // charged, to every repo, with its own instant (review H1)
+    expect((await Bun.file(ledger).text()).length).toBe(before);
     expect(losses.atCap).toBe(true);
+    expect(losses.refused).toBe(1);
+    expect(losses.total).toBe(1);
+    expect(losses.byKind["hook_timed_out"]).toBe(1);
+    expect(losses.newestAt).toBe(T2.toISOString());
+  });
+
+  test("the append that fills the ledger marks the instant it filled, so a full ledger can age out", async () => {
+    // Arrange: one line short of the cap
+    const path = await home();
+    const ledger = lossLedgerPath(path);
+    await mkdir(dirname(ledger), { recursive: true });
+    const other = `${JSON.stringify({ at: T0.toISOString(), kind: "hook_timed_out", count: 1, key: OTHER_REPO, detail: "stop" })}\n`;
+    await writeFile(ledger, other.repeat(Math.floor(MAX_LOSS_LEDGER_BYTES / other.length)), "utf8");
+
+    // Act: this line crosses the cap
+    await recordCaptureLoss(path, { kind: "hook_timed_out", count: 1, key: THIS_REPO, detail: "stop", now: T1 });
+    const losses = await readCaptureLosses(path, THIS_REPO);
+
+    // Assert: written, at the cap, and the newest instant is known
+    expect(losses.atCap).toBe(true);
+    expect(losses.total).toBe(1);
+    expect(losses.refused).toBe(0);
+    expect(losses.fullSince).toBe(T1.toISOString());
   });
 
   test("a detail outside the writer's own alphabet is stored as other, never as the string", async () => {

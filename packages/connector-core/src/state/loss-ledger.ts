@@ -34,6 +34,13 @@ import { addCount } from "../spool/counts.ts";
 import type { Counts } from "../spool/counts.ts";
 import { ledgerInstant } from "../spool/ledger-read.ts";
 import { toLines } from "../spool/lines.ts";
+import { UNATTRIBUTED_LOSS_KIND } from "@crosscheck/schema";
+import {
+  markLossLedgerFull,
+  readLossRefusals,
+  recordRefusedLoss,
+} from "./loss-refusals.ts";
+import type { LossRefusals } from "./loss-refusals.ts";
 
 /** The LOSS_KINDS (schema/telemetry-loss.ts) this ledger is the source of. */
 export const CAPTURE_LOSS_KINDS = [
@@ -84,17 +91,22 @@ export const recordCaptureLoss = async (
       () => 0,
     );
     if (size >= MAX_LOSS_LEDGER_BYTES) {
+      // Refused, never dropped (review H1): counted and dated in the marker.
+      await recordRefusedLoss(home, entry.kind, entry.count, entry.now);
       return;
     }
     await ensureDir(dirname(path));
-    const line = {
+    const line = `${JSON.stringify({
       at: entry.now.toISOString(),
       kind: entry.kind,
       count: entry.count,
       key: entry.key,
       detail: screenDetail(entry.detail),
-    };
-    await appendFile(path, `${JSON.stringify(line)}\n`, "utf8");
+    })}\n`;
+    await appendFile(path, line, "utf8");
+    if (size + Buffer.byteLength(line) >= MAX_LOSS_LEDGER_BYTES) {
+      await markLossLedgerFull(home, entry.now);
+    }
   } catch {
     // Fail open — the ledger is telemetry, never a failure source.
   }
@@ -144,6 +156,10 @@ export interface CaptureLossSummary {
   readonly undated: number;
   /** True when the ledger refused further detail: every count above is a floor. */
   readonly atCap: boolean;
+  /** Losses the full ledger refused (state/loss-refusals.ts), charged to every repo; in `total`. */
+  readonly refused: number;
+  /** When the ledger filled, from its marker; null when no readable marker exists. */
+  readonly fullSince: string | null;
 }
 
 export const EMPTY_CAPTURE_LOSSES: CaptureLossSummary = {
@@ -156,6 +172,8 @@ export const EMPTY_CAPTURE_LOSSES: CaptureLossSummary = {
   malformed: 0,
   undated: 0,
   atCap: false,
+  refused: 0,
+  fullSince: null,
 };
 
 const safeJson = (line: string): unknown => {
@@ -194,10 +212,49 @@ export const readCaptureLosses = async (
   home: string,
   key: string,
 ): Promise<CaptureLossSummary> => {
-  const raw = await readTextOrNull(lossLedgerPath(home));
-  if (raw === null) {
-    return EMPTY_CAPTURE_LOSSES;
+  const [raw, refusals] = await Promise.all([
+    readTextOrNull(lossLedgerPath(home)),
+    readLossRefusals(home),
+  ]);
+  return withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key), refusals);
+};
+
+const CAPTURE_KIND_SET: ReadonlySet<string> = new Set(CAPTURE_LOSS_KINDS);
+
+/**
+ * THE REFUSED LOSSES, CHARGED TO EVERY REPO (review H1): which repo lost them
+ * is exactly the detail the cap refused, and an over-charge only weakens.
+ * Dated by the marker, so the newest loss is the newest refusal — a full
+ * ledger leaves the hub's window fourteen days after it, never freezes in
+ * it and never vanishes from it. The oldest moves back to `fullSince`, a
+ * lower bound on every refusal.
+ */
+const withRefusals = (
+  summary: CaptureLossSummary,
+  refusals: LossRefusals | null,
+): CaptureLossSummary => {
+  if (refusals === null) {
+    return summary;
   }
+  const refused = Object.values(refusals.refused).reduce((sum, count) => sum + count, 0);
+  const byKind = Object.entries(refusals.refused).reduce<Counts>(
+    (kinds, [kind, count]) =>
+      bump(kinds, CAPTURE_KIND_SET.has(kind) ? kind : UNATTRIBUTED_LOSS_KIND, count),
+    summary.byKind,
+  );
+  return {
+    ...summary,
+    total: summary.total + refused,
+    byKind,
+    unkeyed: summary.unkeyed + refused,
+    refused,
+    fullSince: refusals.fullSince,
+    oldestAt: refused > 0 ? earlierIso(summary.oldestAt, refusals.fullSince) : summary.oldestAt,
+    newestAt: laterIso(summary.newestAt, refusals.newestAt),
+  };
+};
+
+const linesSummary = (raw: string, key: string): CaptureLossSummary => {
   const atCap = raw.length >= MAX_LOSS_LEDGER_BYTES;
   return toLines(raw).reduce<CaptureLossSummary>(
     (summary, line) => {

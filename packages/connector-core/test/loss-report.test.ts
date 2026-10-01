@@ -28,7 +28,7 @@ import {
   readLocalLosses,
   toWireReport,
 } from "../src/spool/loss-report.ts";
-import { lossLedgerPath, recordCaptureLoss } from "../src/state/loss-ledger.ts";
+import { lossLedgerPath, recordCaptureLoss, recordHookTimeout } from "../src/state/loss-ledger.ts";
 import { makeHome } from "./helpers.ts";
 
 const KEY = repoKey("http://127.0.0.1:9", "github.com/acme/api");
@@ -185,21 +185,39 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
     expect(local.isFloor).toBe(true);
   });
 
-  test("a capture ledger at its cap makes the newest loss unknown, so a loss it refused still reads as current", async () => {
-    // Arrange: the ledger filled with this repo's month-old losses, then one it refuses today
+  test("PROBE 1 (review H1): a ledger other repos filled still reports this repo's refused loss, dated", async () => {
+    // Arrange: the machine-wide ledger at its cap with ANOTHER repo's lines,
+    // then a hook in this repo times out and the ledger refuses the line
     const path = await home();
     await ensureDir(join(path, "state"));
-    const old = `${JSON.stringify({ at: T0.toISOString(), kind: "hook_timed_out", count: 1, key: KEY, detail: "stop" })}\n`;
-    await writeFile(lossLedgerPath(path), old.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / old.length)), "utf8");
-    await recordCaptureLoss(path, { kind: "hook_timed_out", count: 1, key: KEY, detail: "stop", now: T4 });
+    const other = `${JSON.stringify({ at: T0.toISOString(), kind: "hook_timed_out", count: 1, key: "another-repo", detail: "stop" })}\n`;
+    await writeFile(lossLedgerPath(path), other.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / other.length)), "utf8");
+    await recordHookTimeout(path, "post-tool-use", KEY, T4);
 
     // Act
     const local = await readLocalLosses(path, KEY);
 
-    // Assert: the refused loss is invisible to the span, so the span may not claim T0 is the newest
+    // Assert: a loss, recent, never the report of zero it used to be
+    expect(local.report.total).toBeGreaterThan(0);
+    expect(local.report.kinds["hook_timed_out"]).toBe(1);
+    expect(local.report.newestAt).toBe(T4.toISOString());
+    expect(hasRecentLoss(local.report, T4)).toBe(true);
+    expect(local.isFloor).toBe(true);
+  });
+
+  test("a capture ledger at its cap with no readable marker reads its newest as unknown", async () => {
+    // Arrange: full, with this repo's month-old lines, and no refusal marker
+    const path = await home();
+    await ensureDir(join(path, "state"));
+    const old = `${JSON.stringify({ at: T0.toISOString(), kind: "hook_timed_out", count: 1, key: KEY, detail: "stop" })}\n`;
+    await writeFile(lossLedgerPath(path), old.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / old.length)), "utf8");
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert: a refusal whose marker failed would be invisible, so the newest may not be T0
     expect(local.report.newestAt).toBeNull();
     expect(local.report.oldestAt).toBe(T0.toISOString());
-    expect(local.isFloor).toBe(true);
   });
 
   test("an undatable .drops line leaves the span unknown too", async () => {

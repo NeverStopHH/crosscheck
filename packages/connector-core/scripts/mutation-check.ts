@@ -13013,7 +13013,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the capture-loss ledger grows without bound",
     file: `${CORE}/src/state/loss-ledger.ts`,
-    from: "    if (size >= MAX_LOSS_LEDGER_BYTES) {\n      return;\n    }\n",
+    from: "    if (size >= MAX_LOSS_LEDGER_BYTES) {\n      // Refused, never dropped (review H1): counted and dated in the marker.\n      await recordRefusedLoss(home, entry.kind, entry.count, entry.now);\n      return;\n    }\n",
     to: "",
     test: `${CORE}/test/loss-ledger.test.ts`,
     because: "a machine whose hooks time out every call appends a line per hook for ever, and every report re-reads all of it",
@@ -13037,8 +13037,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a capture ledger at its cap freezes the newest loss it reports",
     file: `${CORE}/src/spool/loss-report.ts`,
-    from: "    newestAt: capture.atCap\n      ? null\n      : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
-    to: "    newestAt: laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
+    // Review H1 narrowed the rule to a full ledger with no readable marker.
+    from: "      capture.atCap && capture.fullSince === null\n        ? null\n        : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
+    to: "      laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
       "a machine whose ledger filled a month ago keeps losing hooks, the report's newest stays a month old, and the hub reads the repo as complete",
@@ -13117,6 +13118,40 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "  if (true) {\n    return report;\n  }\n",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "a report no rule above made valid reaches a hub that refuses the register it rides, and the session never registers",
+  },
+  {
+    // Review H1 (PROBE 1).
+    label: "a loss the full capture ledger refused leaves no trace",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "      await recordRefusedLoss(home, entry.kind, entry.count, entry.now);\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "other repos fill the machine-wide ledger, a hook in this repo times out, the repo reports total 0 and the hub reads complete",
+  },
+  {
+    label: "the refused capture losses are charged to no repo",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "  return withRefusals(raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key), refusals);",
+    to: "  return raw === null ? EMPTY_CAPTURE_LOSSES : linesSummary(raw, key);",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the marker counts the refusal and no report ever carries it",
+  },
+  {
+    label: "a refused capture loss carries no instant",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "    newestAt: laterIso(summary.newestAt, refusals.newestAt),",
+    to: "    newestAt: summary.newestAt,",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a refusal today reads as undated or as the ledger's month-old newest, and the hub places it outside the window",
+  },
+  {
+    label: "the append that fills the capture ledger leaves no marker",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "      await markLossLedgerFull(home, entry.now);\n",
+    to: "",
+    test: `${CORE}/test/loss-ledger.test.ts`,
+    because: "a full ledger with no refusal yet has no marker, its newest reads unknown, and every repo with a line in it stays incomplete for good",
   },
 ];
 
@@ -13305,8 +13340,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
- * PRINTS: packages/connector-core/test/loss-ledger.test.ts 3
- * PRINTS: packages/connector-core/test/loss-report.test.ts 14
+ * PRINTS: packages/connector-core/test/loss-ledger.test.ts 4
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 17
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

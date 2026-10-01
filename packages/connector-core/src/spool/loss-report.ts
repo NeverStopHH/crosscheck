@@ -141,16 +141,17 @@ const spanOf = (
   if (drops.undated + capture.undated + unreadable > 0 || markerUndated) {
     return { oldestAt: null, newestAt: null };
   }
-  // A CAPTURE LEDGER AT ITS CAP REFUSES NEW LINES, so its newest instant
-  // freezes at the last one it took while hooks keep timing out: fourteen
-  // days later the hub would read every one of them as outside the window.
-  // The oldest is still a true lower bound — a refused loss is newer — but
-  // the newest is unknown, and unknown is read as current (§4.5).
+  // A CAPTURE LEDGER AT ITS CAP REFUSES NEW LINES, and every refusal dates the
+  // marker beside it (state/loss-refusals.ts), so `capture.newestAt` already
+  // includes the newest refused loss. A full ledger WITHOUT a readable marker
+  // is the one state where a refusal could have gone undated — the marker
+  // write failing — so its newest is unknown, and unknown reads as current.
   return {
     oldestAt: earlierIso(earlierIso(drops.oldestAt, marker), capture.oldestAt),
-    newestAt: capture.atCap
-      ? null
-      : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),
+    newestAt:
+      capture.atCap && capture.fullSince === null
+        ? null
+        : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),
   };
 };
 
@@ -205,6 +206,7 @@ export const readLocalLosses = async (
     isFloor:
       unrecorded !== null ||
       capture.atCap ||
+      capture.refused > 0 ||
       drops.summary.malformed > 0 ||
       capture.malformed > 0,
   };
