@@ -228,6 +228,11 @@ describe("detectCriteria — S2 matches what an agent would send (A2.6)", () => 
     expect(s2({ command: "bun test", timeout: 600000 })).toBeUndefined();
   });
 
+  test("a number EQUAL to the port is not a hit: only string values count", () => {
+    // Act / Assert: serialized, this is `"timeout":60000}` — `:60000` then a non-digit
+    expect(s2({ command: "sleep 1", timeout: 60000 })).toBeUndefined();
+  });
+
   test("the port followed by another digit inside a string is not a hit", () => {
     // Act / Assert
     expect(s2({ command: "curl http://127.0.0.1:600001/" })).toBeUndefined();

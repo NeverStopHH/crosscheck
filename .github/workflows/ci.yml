@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 995
+    # PRINTS: 1023
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -152,8 +152,19 @@ jobs:
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: packages/connector-acp/src/report.ts 1
     # PRINTS: packages/connector-acp/src/wire/v1.ts 2
-    # PRINTS: packages/connector-claude/bench/at7/detect.ts 3
+    # PRINTS: packages/connector-claude/bench/at7/attempt.ts 5
+    # PRINTS: packages/connector-claude/bench/at7/detect.ts 9
+    # PRINTS: packages/connector-claude/bench/at7/driver.ts 1
+    # PRINTS: packages/connector-claude/bench/at7/exec.ts 1
+    # PRINTS: packages/connector-claude/bench/at7/fixture.ts 1
+    # PRINTS: packages/connector-claude/bench/at7/install.ts 1
+    # PRINTS: packages/connector-claude/bench/at7/manifest-doc.ts 2
+    # PRINTS: packages/connector-claude/bench/at7/profile.ts 2
+    # PRINTS: packages/connector-claude/bench/at7/report.ts 2
+    # PRINTS: packages/connector-claude/bench/at7/run.ts 4
     # PRINTS: packages/connector-claude/bench/at7/stats.ts 1
+    # PRINTS: packages/connector-claude/bench/at7/stream.ts 1
+    # PRINTS: packages/connector-claude/bench/at7/sweep.ts 2
     # PRINTS: capture/tool-events.ts 2
     # PRINTS: cli/settings-merge.ts 2
     # PRINTS: doctor.ts 1
@@ -352,6 +363,7 @@ jobs:
     # PRINTS: absences.ts 5
     # PRINTS: answer-question.ts 1
     # PRINTS: ask-teammate.ts 1
+    # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
     # PRINTS: bootstrap.sql 6
     # PRINTS: briefing.ts 5
@@ -383,7 +395,7 @@ jobs:
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
     # PRINTS: derive.ts 2
-    # PRINTS: detect.ts 3
+    # PRINTS: detect.ts 9
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
@@ -392,12 +404,14 @@ jobs:
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor.ts 49
+    # PRINTS: driver.ts 1
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 13
     # PRINTS: enums.ts 2
     # PRINTS: envelope.ts 1
     # PRINTS: events.ts 1
     # PRINTS: evidence-axes.ts 3
+    # PRINTS: exec.ts 1
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
     # PRINTS: feed.tsx 1
@@ -408,6 +422,7 @@ jobs:
     # PRINTS: file-edit.ts 3
     # PRINTS: file-ref.ts 5
     # PRINTS: fix-diff.ts 7
+    # PRINTS: fixture.ts 1
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
@@ -422,6 +437,7 @@ jobs:
     # PRINTS: hook-budget.ts 1
     # PRINTS: hub.ts 6
     # PRINTS: injector.ts 5
+    # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
     # PRINTS: intent-ledger.ts 9
@@ -436,6 +452,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: lock.ts 2
+    # PRINTS: manifest-doc.ts 2
     # PRINTS: noise.ts 5
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
@@ -458,6 +475,7 @@ jobs:
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 39
+    # PRINTS: profile.ts 2
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
@@ -475,11 +493,12 @@ jobs:
     # PRINTS: render-surfaces.ts 1
     # PRINTS: render.ts 64
     # PRINTS: repo-path.ts 1
-    # PRINTS: report.ts 2
+    # PRINTS: report.ts 4
     # PRINTS: retention-registry.ts 8
     # PRINTS: retention.ts 24
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 1
+    # PRINTS: run.ts 4
     # PRINTS: runner.ts 7
     # PRINTS: sanitize.ts 10
     # PRINTS: search-related-work.ts 1
@@ -509,8 +528,10 @@ jobs:
     # PRINTS: stats.ts 1
     # PRINTS: status.ts 6
     # PRINTS: stop.ts 2
+    # PRINTS: stream.ts 1
     # PRINTS: suspect-render.ts 3
     # PRINTS: suspect.ts 4
+    # PRINTS: sweep.ts 2
     # PRINTS: target-paths.ts 1
     # PRINTS: team-settings.ts 1
     # PRINTS: time-window.ts 1
