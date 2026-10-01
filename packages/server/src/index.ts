@@ -40,6 +40,9 @@ export type {
   SessionCausalOrder,
 } from "./services/session-order.ts";
 export { seqKindFor } from "./services/record-handlers.ts";
+// Exported so connector-core can pin its substance gate to the same terms
+// (test/claim-validity-parity.test.ts).
+export { isAssertableCause } from "./services/claim-validity.ts";
 export { createEmbedderFromEnv } from "./services/embedder.ts";
 export type { Embedder } from "./services/embedder.ts";
 // 03's ground, exported because 04's verdict layer and 07's instrumentation
