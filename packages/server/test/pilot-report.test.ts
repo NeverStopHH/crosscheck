@@ -1161,6 +1161,7 @@ describe("labels counted only from when they became available", () => {
     expect(out.precision.noise).toBe(0);
     expect(out.precision.legacyNoise).toBe(6);
     expect(out.sessionSet.legacy).toBe(30);
+    expect(out.sessionSet.used).toBe(0);
     expect(out.sessionSet.discovery).toBe(0);
     expect(out.cohorts[0]?.sessions).toBe(0);
     expect(out.cohorts[0]?.precision).toEqual({ kind: "unavailable", reason: "no_labels" });
@@ -1188,6 +1189,26 @@ describe("labels counted only from when they became available", () => {
     expect(out.precision.interventions).toBe(1);
     expect(out.precision.helpful).toBe(1);
     expect(out.precision.benefitPer100).toEqual({ kind: "measured", value: 100 });
+  });
+
+  test("the two behavioural rates keep the whole window and its own session count", async () => {
+    // Arrange — two sessions in a one-day window, one before labels existed
+    // and noise-marked; the noisy-sessions floor predates the labels, so it
+    // divides by both sessions, not by the one the labelled figures count
+    const world = await setup({ labelsSinceHoursAgo: 10 });
+    await session(world, "s_prior", 100);
+    await context(world, "wc_prior", "s_prior", "prior work");
+    await session(world, "s_before", 20);
+    await session(world, "s_after", 5);
+    await deliver(world, "hd_before", "s_before", "wc_prior", "prompt_hint", 19, null);
+    await label(world, "hd_before", "noise", null, 18);
+
+    // Act
+    const out = await report(world, 1);
+
+    // Assert
+    expect(out.precision.noisySessionsPer100).toEqual({ kind: "measured", value: 50 });
+    expect(out.precision.sessions).toBe(1);
   });
 
   test("a window that starts after labels did is not clipped", async () => {

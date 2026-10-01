@@ -501,6 +501,28 @@ describe("the session set's slots", () => {
     expect(await counter(harness, "pilot_sessions_before_labels")).toBe(1);
   });
 
+  test("a revived 0.10 session's second end updates its own row, and is not counted as before labels", async () => {
+    // Arrange — a legacy row whose session began before labels existed;
+    // a record revives it and it ends again. Its true end is the second one,
+    // as for any revived session — not a fresh "before labels" refusal.
+    const { harness, developer } = await setup();
+    await fill(harness, developer, 1, { prefix: "cc_old_", cohort: "legacy" });
+
+    // Act
+    await recordPilotSession(deps(harness), {
+      sessionId: "cc_old_0000",
+      repo: REPO,
+      developerId: developer.developerId,
+      endReason: "reaped",
+    });
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === "cc_old_0000");
+    expect(own?.endReason).toBe("reaped");
+    expect(own?.cohort).toBe("legacy");
+    expect(await counter(harness, "pilot_sessions_before_labels")).toBe(0);
+  });
+
   test("after a re-enrolment the slots continue past the earlier rows instead of restarting", async () => {
     // Arrange — two rows from an earlier enrolment, then the team left and
     // came back: labels became available again an hour ago
