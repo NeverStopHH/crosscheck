@@ -24,7 +24,11 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { PilotMarkSchema } from "@crosscheck/schema";
+import {
+  PilotMarkSchema,
+  describeUnstorableText,
+  unstorableTextPath,
+} from "@crosscheck/schema";
 
 import { NOISE_MARK_MAX_SESSIONS, PILOT_RETENTION_DAYS } from "../constants.ts";
 
@@ -160,6 +164,14 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
       // database: an absent or unknown value is a parse failure, never a
       // default.
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    // This route is its OWN boundary, as the pins route is: a mark reaches
+    // the table straight from here and never through parseRecord, so the
+    // storability check that path applies is repeated — a NUL in the reason
+    // was a 500 (second review, L1), and is a 400 that says why.
+    const unstorable = unstorableTextPath(parsed.data);
+    if (unstorable !== null) {
+      return fail(c, 400, "validation_failed", describeUnstorableText(unstorable));
     }
     const outcome = await writePilotMark(deps, {
       repo: parsed.data.repo,

@@ -409,6 +409,19 @@ describe("POST /api/pilot-marks — the three labels", () => {
     expect(await rows(harness)).toHaveLength(0);
   });
 
+  test("L1: a reason with a NUL in it is refused at the boundary, not a 500", async () => {
+    // Arrange — Postgres cannot store U+0000 in text; the pins route already
+    // refuses it by name, and the second review found this route did not
+    const { harness, developer } = await setup();
+
+    // Act
+    const response = await mark(harness, developer, { mark: "noise", reason: "before\u0000after" });
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(await rows(harness)).toHaveLength(0);
+  });
+
   test("a blank reason is no reason", async () => {
     // Arrange & Act — an accidental space must not be stored as prose.
     const { harness, developer } = await setup();
