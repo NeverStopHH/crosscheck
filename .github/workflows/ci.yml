@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1156
+    # PRINTS: 1227
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -176,12 +176,14 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 42
+    # PRINTS: packages/cli/src/cli/doctor.ts 43
     # PRINTS: packages/cli/src/cli/index.ts 2
     # PRINTS: packages/cli/src/cli/key.ts 6
-    # PRINTS: packages/cli/src/cli/noise.ts 5
+    # PRINTS: packages/cli/src/cli/noise.ts 7
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
-    # PRINTS: packages/cli/src/cli/pilot-render.ts 12
+    # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
+    # PRINTS: packages/cli/src/cli/pilot-label.ts 8
+    # PRINTS: packages/cli/src/cli/pilot-render.ts 22
     # PRINTS: packages/cli/src/cli/pilot.ts 3
     # PRINTS: packages/cli/src/cli/pin-observability.ts 2
     # PRINTS: packages/cli/src/cli/pin-render.ts 5
@@ -189,6 +191,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 7
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
+    # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 2
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
     # PRINTS: packages/connector-acp/src/capture/engine.ts 16
@@ -267,7 +270,7 @@ jobs:
     # PRINTS: http/coverage.ts 1
     # PRINTS: http/hub.ts 7
     # PRINTS: http/latency.ts 1
-    # PRINTS: http/pilot.ts 2
+    # PRINTS: http/pilot.ts 5
     # PRINTS: http/verdict.ts 2
     # PRINTS: kit.ts 1
     # PRINTS: landed-changes/fetch-state.ts 10
@@ -336,14 +339,14 @@ jobs:
     # PRINTS: packages/schema/src/file-ref.ts 5
     # PRINTS: packages/schema/src/landed-context.ts 3
     # PRINTS: packages/schema/src/landed-notice.ts 5
-    # PRINTS: packages/schema/src/pilot-mark.ts 1
+    # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/src/constants.ts 1
-    # PRINTS: packages/server/src/db/bootstrap.sql 8
+    # PRINTS: packages/server/src/db/bootstrap.sql 12
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/http/schemas.ts 1
     # PRINTS: packages/server/src/routes/absences.ts 1
@@ -352,6 +355,7 @@ jobs:
     # PRINTS: packages/server/src/routes/hints.ts 1
     # PRINTS: packages/server/src/routes/landed.ts 3
     # PRINTS: packages/server/src/routes/passkeys.ts 1
+    # PRINTS: packages/server/src/routes/pilot-marks.ts 2
     # PRINTS: packages/server/src/routes/pins.ts 3
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 1
@@ -381,9 +385,11 @@ jobs:
     # PRINTS: packages/server/src/services/landed-notices.ts 27
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/passkeys.ts 5
-    # PRINTS: packages/server/src/services/pilot-candidates.ts 7
+    # PRINTS: packages/server/src/services/pilot-candidates.ts 15
+    # PRINTS: packages/server/src/services/pilot-label-figures.ts 12
     # PRINTS: packages/server/src/services/pilot-report.ts 19
-    # PRINTS: packages/server/src/services/pilot.ts 23
+    # PRINTS: packages/server/src/services/pilot-session-set.ts 9
+    # PRINTS: packages/server/src/services/pilot.ts 26
     # PRINTS: packages/server/src/services/pins.ts 8
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
@@ -402,7 +408,7 @@ jobs:
     # PRINTS: packages/server/src/services/solved-matches.ts 9
     # PRINTS: packages/server/src/services/solved.ts 1
     # PRINTS: packages/server/src/services/suspect.ts 2
-    # PRINTS: packages/server/src/services/team-settings.ts 1
+    # PRINTS: packages/server/src/services/team-settings.ts 2
     # PRINTS: packages/server/src/services/time-window.ts 1
     # PRINTS: packages/server/src/services/verdict.ts 4
     # PRINTS: packages/server/src/services/waiver-requests.ts 4
@@ -421,7 +427,7 @@ jobs:
     # PRINTS: args.ts 2
     # PRINTS: ask-teammate.ts 1
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 8
+    # PRINTS: bootstrap.sql 12
     # PRINTS: briefing.ts 5
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 5
@@ -463,7 +469,7 @@ jobs:
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
-    # PRINTS: doctor.ts 50
+    # PRINTS: doctor.ts 51
     # PRINTS: drops.ts 10
     # PRINTS: end-session.ts 3
     # PRINTS: engine.ts 16
@@ -519,7 +525,7 @@ jobs:
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
     # PRINTS: loss-report.ts 14
-    # PRINTS: noise.ts 5
+    # PRINTS: noise.ts 7
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
@@ -527,11 +533,16 @@ jobs:
     # PRINTS: passkeys.ts 6
     # PRINTS: passkeys.tsx 1
     # PRINTS: payload.ts 1
-    # PRINTS: pilot-candidates.ts 7
-    # PRINTS: pilot-mark.ts 1
-    # PRINTS: pilot-render.ts 12
+    # PRINTS: pilot-candidates.ts 15
+    # PRINTS: pilot-label-figures.ts 12
+    # PRINTS: pilot-label-render.ts 1
+    # PRINTS: pilot-label.ts 8
+    # PRINTS: pilot-mark.ts 5
+    # PRINTS: pilot-marks.ts 2
+    # PRINTS: pilot-render.ts 22
     # PRINTS: pilot-report.ts 19
-    # PRINTS: pilot.ts 28
+    # PRINTS: pilot-session-set.ts 9
+    # PRINTS: pilot.ts 34
     # PRINTS: pin-observability.ts 2
     # PRINTS: pin-paths.ts 8
     # PRINTS: pin-render.ts 5
@@ -602,8 +613,9 @@ jobs:
     # PRINTS: suspect-render.ts 3
     # PRINTS: suspect.ts 4
     # PRINTS: target-paths.ts 1
-    # PRINTS: team-settings.ts 1
+    # PRINTS: team-settings.ts 2
     # PRINTS: telemetry-loss.ts 6
+    # PRINTS: terminal.ts 3
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 2
     # PRINTS: tool-failure.ts 3

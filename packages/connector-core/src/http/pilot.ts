@@ -24,8 +24,8 @@
  * renderer prints each as itself.
  */
 import { z } from "zod";
-import { PILOT_MARK_BY_REF_KIND, PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
-import type { PilotMarkRefKind } from "@crosscheck/schema";
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+import type { PilotInterventionLabel } from "@crosscheck/schema";
 
 import { hubRequest } from "./client.ts";
 import type { HubContext, HubResult } from "./client.ts";
@@ -68,9 +68,51 @@ const RepairSchema = z.looseObject({
 
 export type PilotRepair = z.infer<typeof RepairSchema>;
 
+/**
+ * THE FOUR LABELLED FIGURES over one population (07 §12) — the window, or
+ * one cohort. Every tally is a count with no default, for the header's
+ * reason: "helpful 0" beside a real "noise 10" is the lie this parse exists
+ * to refuse. The four ratios are figures, each measured or saying why not.
+ */
+const LabelFiguresSchema = z.looseObject({
+  sessions: CountSchema,
+  interventions: CountSchema,
+  helpful: CountSchema,
+  noise: CountSchema,
+  unclear: CountSchema,
+  labelled: CountSchema,
+  benefitPer100: PilotFigureSchema,
+  burdenPer100: PilotFigureSchema,
+  precision: PilotFigureSchema,
+  labelCoverage: PilotFigureSchema,
+});
+
+export type PilotLabelFigures = z.infer<typeof LabelFiguresSchema>;
+
+/**
+ * One sentence somebody typed beside a label. The LABEL is an open string:
+ * the vocabulary is `PILOT_INTERVENTION_LABELS`, and a word this client has
+ * no sentence for is printed as the word, cleaned, like a reason word.
+ */
+const LabelReasonSchema = z.looseObject({
+  label: z.string().min(1),
+  reason: z.string(),
+});
+
+export type PilotLabelReason = z.infer<typeof LabelReasonSchema>;
+
+const CohortFiguresSchema = LabelFiguresSchema.extend({
+  cohort: z.string().min(1),
+  cap: CountSchema,
+});
+
+export type PilotCohortFigures = z.infer<typeof CohortFiguresSchema>;
+
 export const PilotReportSchema = z.looseObject({
   repo: z.string().min(1),
   enrolled: z.boolean(),
+  /** When labels became available on this repo; null when it was never enrolled (07 §12). */
+  labelsSinceIso: z.string().nullable(),
   sinceIso: z.string().min(1),
   untilIso: z.string().min(1),
   days: z.number().int().min(1),
@@ -78,6 +120,16 @@ export const PilotReportSchema = z.looseObject({
     used: CountSchema,
     cap: CountSchema,
     refused: CountSchema,
+    /** A 0.10 hub's refusals under its old fifty-session cap — never "full" at this one (M2). */
+    legacyRefused: CountSchema,
+    /** Sessions that started before labels were available: outside the set (M4). */
+    beforeLabels: CountSchema,
+    discovery: CountSchema,
+    discoveryCap: CountSchema,
+    replication: CountSchema,
+    replicationCap: CountSchema,
+    /** Rows a 0.10 hub wrote, in neither cohort — strict, so "0" is never a guess. */
+    legacy: CountSchema,
     spanned: CountSchema,
     restarted: CountSchema,
     notRecorded: CountSchema,
@@ -108,15 +160,25 @@ export const PilotReportSchema = z.looseObject({
     supersededAnswers: CountSchema,
     answersAfterRepair: CountSchema,
   }),
-  precision: z.looseObject({
-    sessions: CountSchema,
+  precision: LabelFiguresSchema.extend({
+    /** Where the labelled figures start; null when nothing is measured. */
+    labelledSinceIso: z.string().nullable(),
+    /** 0.10 `off_target` marks, outside precision (second review, H1). */
+    legacyNoise: CountSchema,
+    precisionTarget: z.number().finite().min(0).max(1),
     openedPer100: PilotFigureSchema,
     openedTargetPer100: z.number().finite().min(0),
-    offTargetMarks: CountSchema,
-    offTargetPer100: PilotFigureSchema,
-    offTargetCeilingPer100: z.number().finite().min(0),
+    noisySessionsPer100: PilotFigureSchema,
+    noisySessionsCeilingPer100: z.number().finite().min(0),
     surfaceOkMarks: CountSchema,
+    reasons: z.array(LabelReasonSchema),
+    reasonsBeyondList: CountSchema,
   }),
+  // THE LIST MUST ARRIVE: a list that did not is a report this client cannot
+  // read, for the same reason as a missing count. Its ENTRIES are printed as
+  // the hub sent them — the hub sends both cohorts; this parse does not
+  // insist on two, so a newer hub's third would print rather than fail.
+  cohorts: z.array(CohortFiguresSchema),
   integrity: z.array(
     z.looseObject({
       surface: z.string().min(1),
@@ -158,25 +220,33 @@ const MarkResultSchema = z.looseObject({
 
 export type MarkResult = z.infer<typeof MarkResultSchema>;
 
-export interface PilotMarkRequest {
-  readonly repo: string;
-  readonly refKind: PilotMarkRefKind;
-  readonly refId: string;
-}
+/**
+ * WHAT A MARK IS ABOUT DECIDES WHAT IT MAY SAY. A pin takes one word,
+ * `surface_ok`, and no sentence; a delivery takes one of the three labels
+ * (07 §12) and, optionally, one bounded reason. The two shapes are two
+ * members of a union rather than optional fields, so a crossed pair — a
+ * label about a pin, a reason beside `pin --ok` — cannot be built.
+ */
+export type PilotMarkRequest =
+  | { readonly repo: string; readonly refKind: "pin"; readonly refId: string }
+  | {
+      readonly repo: string;
+      readonly refKind: "hint_delivery";
+      readonly refId: string;
+      readonly label: PilotInterventionLabel;
+      readonly reason?: string;
+    };
 
 /**
- * One person's one word about one thing. The WORD is derived from what the
- * mark is about, never chosen by the caller: a delivery takes `off_target`,
- * a pin takes `surface_ok` (PILOT_MARK_BY_REF_KIND), so a crossed pair has no
- * way to be sent. `presence` states what this process observed — a person at
- * a terminal — and the hub stamps what that is worth.
+ * One person's one word about one thing. `presence` states what this process
+ * observed — a person at a terminal — and the hub stamps what that is worth.
  *
  * NO AGENT PATH IN THIS PRODUCT'S CODE REACHES THIS (07 PIL-6, D3). An agent
  * marking the product's own interventions off-target would be the product
- * grading itself, so the only callers are the two human commands, each behind
- * the TTY gate — and the complete list of callers is pinned, so the day an MCP
- * tool gains one, CI goes red instead of the pilot quietly measuring the
- * model's taste.
+ * grading itself, so the only callers are the three human commands, each
+ * behind the TTY gate — and the complete list of callers is pinned, so the
+ * day an MCP tool gains one, CI goes red instead of the pilot quietly
+ * measuring the model's taste.
  *
  * WHAT THIS DOES NOT STOP, stated rather than implied (adversarial review):
  * an agent that wraps the command in a pty (`script -q /dev/null crosscheck
@@ -186,6 +256,7 @@ export interface PilotMarkRequest {
  *
  * VERIFY: grep -rl postPilotMark packages --include='*.ts' | grep /src/ | sort
  * PRINTS: packages/cli/src/cli/noise.ts
+ * PRINTS: packages/cli/src/cli/pilot-label.ts
  * PRINTS: packages/cli/src/cli/pin.ts
  * PRINTS: packages/connector-core/src/http/pilot.ts
  */
@@ -201,7 +272,12 @@ export const postPilotMark = (
       repo: request.repo,
       refKind: request.refKind,
       refId: request.refId,
-      mark: PILOT_MARK_BY_REF_KIND[request.refKind],
+      ...(request.refKind === "pin"
+        ? { mark: "surface_ok" }
+        : {
+            mark: request.label,
+            ...(request.reason === undefined ? {} : { reason: request.reason }),
+          }),
       presence: PIN_PRESENCE_TERMINAL,
     },
   });
@@ -233,6 +309,42 @@ export interface MarkCandidatesRequest {
   /** Omitted: the hub's widest window, which is retention. */
   readonly withinMinutes?: number;
 }
+
+const UnlabeledInterventionSchema = MarkCandidateSchema.extend({
+  /** What was shown — a teammate's title, framed by the renderer — or null. */
+  title: z.string().nullable(),
+});
+
+export type UnlabeledIntervention = z.infer<typeof UnlabeledInterventionSchema>;
+
+const UnlabeledInterventionsSchema = z.looseObject({
+  candidates: z.array(UnlabeledInterventionSchema),
+  more: z.boolean(),
+});
+
+export type UnlabeledInterventions = z.infer<typeof UnlabeledInterventionsSchema>;
+
+export interface UnlabeledInterventionsRequest {
+  readonly repo: string;
+  /** Omitted: the hub's widest window, which is retention. */
+  readonly withinMinutes?: number;
+}
+
+/** What `crosscheck pilot label` walks: the caller's own unasked, unlabelled deliveries (07 §12). */
+export const getUnlabeledInterventions = (
+  ctx: HubContext,
+  request: UnlabeledInterventionsRequest,
+): Promise<HubResult<UnlabeledInterventions>> => {
+  const window =
+    request.withinMinutes === undefined
+      ? ""
+      : `&withinMinutes=${String(request.withinMinutes)}`;
+  return hubRequest(ctx, {
+    method: "GET",
+    path: `/api/pilot-marks/unlabeled?repo=${encodeURIComponent(request.repo)}${window}`,
+    schema: UnlabeledInterventionsSchema,
+  });
+};
 
 /** Which of the caller's own unasked deliveries `crosscheck noise` could mean. */
 export const getMarkCandidates = (

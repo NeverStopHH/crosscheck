@@ -2202,7 +2202,7 @@ const pilotFigures = (
   ["both landed", report.collisions.bothLanded],
   ["ci regressed", report.collisions.ciRegressed],
   ["opened per 100", report.precision.openedPer100],
-  ["off-target per 100", report.precision.offTargetPer100],
+  ["noisy sessions per 100", report.precision.noisySessionsPer100],
 ];
 
 const isRungRefusal = (reason: string): boolean =>
@@ -2223,6 +2223,31 @@ const pilotQualifierCheck = (): Check =>
     "pilot qualifiers",
     "not counted on the hub — every answer the hub builds carries its coverage record, so a count here could only equal the number required; whether a surface printed it is held by the render registry and its corpus",
   );
+
+/**
+ * THE SESSION SET IN ONE LINE. "Full" ONLY WHEN EVERY SLOT HOLDS A ROW (second
+ * review, M2): it used to follow any refusal, and a hub that ran the 0.10
+ * pilot carries refusals booked under the old fifty-session cap, so a set of
+ * fifty out of two hundred read as full. Those old refusals, and sessions
+ * that started before labels were available, are said apart: neither is a
+ * fact about this cap.
+ */
+const pilotSetSentence = (set: PilotReport["sessionSet"]): string => {
+  const fill = `enrolled · session set ${String(set.used)} of ${String(set.cap)} (discovery ${String(set.discovery)} of ${String(set.discoveryCap)} · replication ${String(set.replication)} of ${String(set.replicationCap)})`;
+  const refusals =
+    set.refused === 0
+      ? ""
+      : set.used >= set.cap
+        ? ` — full: ${String(set.refused)} later session(s) refused at the cap and counted, never dropped`
+        : ` — ${String(set.refused)} later session(s) refused at the cap and counted`;
+  const legacy =
+    set.legacyRefused === 0
+      ? ""
+      : ` · ${String(set.legacyRefused)} refused under the 0.10 fifty-session cap, before labels`;
+  const before =
+    set.beforeLabels === 0 ? "" : ` · ${String(set.beforeLabels)} started before labels, not in the set`;
+  return `${fill}${refusals}${legacy}${before}`;
+};
 
 const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
   if (!result.ok) {
@@ -2263,17 +2288,8 @@ const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
       ),
     ];
   }
-  const set = report.sessionSet;
   return [
-    check(
-      "PASS",
-      "pilot",
-      `enrolled · session set ${String(set.used)} of ${String(set.cap)}${
-        set.refused > 0
-          ? ` — full: ${String(set.refused)} later session(s) refused at the cap and counted, never dropped`
-          : ""
-      }`,
-    ),
+    check("PASS", "pilot", pilotSetSentence(report.sessionSet)),
     pilotQualifierCheck(),
     ...pilotFigures(report).flatMap(([name, value]) =>
       value.kind === "unavailable" && isRungRefusal(value.reason)

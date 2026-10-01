@@ -138,44 +138,93 @@ export const TARGET_SOURCES = ["tool_edit", "git_diff"] as const;
  * tables. This package is the one place both sides already reach.
  */
 /**
- * THE ONLY HUMAN INPUT THE PILOT TAKES (1.0 spec 07 §3.2), and it is never a
- * question.
+ * THE HUMAN LABELS AN INTERVENTION TAKES (1.0 spec 07 §12, 2026-09-30).
  *
- * Two words, each riding a gesture somebody makes anyway. `off_target` is
- * typed beside a session that got a bad intervention; `surface_ok` is the
- * missing symmetric half of `crosscheck pin --broke` — whoever ran the recipe
- * and watched it PASS gets the same one-line gesture as whoever watched it
- * fail, which is what makes a pin falsifiable in both directions.
+ * An intervention is anything crosscheck put in front of a reader unasked —
+ * a briefing pointer, a mid-prompt hint, a tripwire ask — and the only
+ * verdict on it that means anything is the reader's. Three words, because
+ * two were not enough: the first pilot counted an OPENED pointer as the
+ * positive signal, and opening a hint is the model's call, not a person's.
+ * `unclear` is an abstention, kept apart so that "I could not tell" is never
+ * scored as "not helpful".
  *
- * NO SURVEY, NO FREE TEXT, NO PROMPT. §8.3 refuses to add one: a measurement
- * that interrupts somebody to ask how the measurement is going has changed
- * the thing it measures, and a free-text field would put a person's prose on
- * a surface data minimisation keeps to ids, enums and timestamps.
- *
- * MARKS ARE VOLUNTARY, so the proactive-precision figure has a FLOOR and not
- * a value: nobody is obliged to mark anything, so an absence of marks is an
- * absence of evidence and never evidence of no noise. The report says so on
- * the line itself.
+ * A PERSON'S BY RULE, NOT BY PROOF (07 §12.9). The CLI refuses a process with
+ * no terminal, but nothing at the hub tells a person's label from an agent's
+ * acting with the same developer key: the hub checks only a presence word
+ * any client can send.
  */
-export const PILOT_MARKS = ["off_target", "surface_ok"] as const;
+export const PILOT_INTERVENTION_LABELS = ["helpful", "noise", "unclear"] as const;
+
+/**
+ * THE WORD AN OLDER HUB STORED FOR `noise`. Rows carrying it are read as noise
+ * and a body that still sends it is stored as `noise`; nothing already on a
+ * hub is rewritten or lost.
+ */
+export const PILOT_LEGACY_NOISE_MARK = "off_target" as const;
+
+/**
+ * THE ONLY HUMAN INPUT THE PILOT TAKES (1.0 spec 07 §3.2, revised §12).
+ *
+ * The three intervention labels, the legacy spelling of one of them, and
+ * `surface_ok` — the missing symmetric half of `crosscheck pin --broke`:
+ * whoever ran the recipe and watched it PASS gets the same one-line gesture
+ * as whoever watched it fail, which is what makes a pin falsifiable in both
+ * directions.
+ *
+ * NO SURVEY AND NO PROMPT. §8.3 still refuses to interrupt anybody: a label
+ * is typed after a session, by a person who chose to. §12 admits ONE bounded
+ * sentence of free text beside a label, optional and never asked for twice.
+ *
+ * MARKS ARE VOLUNTARY, so every labelled figure carries its label coverage:
+ * an absence of labels is an absence of evidence and never evidence of no
+ * noise. The report says so on the line itself.
+ */
+export const PILOT_MARKS = [
+  ...PILOT_INTERVENTION_LABELS,
+  PILOT_LEGACY_NOISE_MARK,
+  "surface_ok",
+] as const;
 
 /** What a mark can be ABOUT — a delivery somebody received, or a pin. */
 export const PILOT_MARK_REF_KINDS = ["hint_delivery", "pin"] as const;
 
 /**
- * EACH REF KIND TAKES EXACTLY ONE WORD, because each has exactly one gesture:
- * `crosscheck noise` sends `off_target` about a delivery, `crosscheck pin --ok`
- * sends `surface_ok` about a pin. The report counts marks by their word, so a
- * crossed pair — noise about a pin, "ok" about a delivery — would land in the
- * wrong proof with nothing to show it had.
+ * WHICH WORDS EACH REF KIND TAKES. A delivery takes an intervention label
+ * (or the legacy spelling an older client still sends); a pin takes
+ * `surface_ok` and nothing else. The report counts marks by their word, so a
+ * crossed pair — a label about a pin, "ok" about a delivery — would land in
+ * the wrong proof with nothing to show it had.
  */
-export const PILOT_MARK_BY_REF_KIND = {
-  hint_delivery: "off_target",
-  pin: "surface_ok",
+export const PILOT_MARKS_BY_REF_KIND = {
+  hint_delivery: [...PILOT_INTERVENTION_LABELS, PILOT_LEGACY_NOISE_MARK],
+  pin: ["surface_ok"],
 } as const satisfies Record<
   (typeof PILOT_MARK_REF_KINDS)[number],
-  (typeof PILOT_MARKS)[number]
+  readonly (typeof PILOT_MARKS)[number][]
 >;
+
+/**
+ * THE TWO COHORTS OF THE SESSION SET (07 §12). Sessions 1–50 are the
+ * preregistered DISCOVERY cohort, frozen once full; 51–200 the REPLICATION
+ * cohort, measured with the discovery cohort's figures already on the table.
+ * A session's cohort is assigned when its row is written and never moves,
+ * or a revived session could migrate between the two and the split would
+ * measure the reaper.
+ */
+export const PILOT_COHORTS = ["discovery", "replication"] as const;
+
+/**
+ * A ROW FROM BEFORE LABELS EXISTED, in neither cohort (07 §12, second
+ * review, H1). A 0.10 hub could store only `off_target`, so nobody could
+ * label its interventions helpful; counting its rows into discovery printed a
+ * measured 0% precision that described the old vocabulary, not the product.
+ * Only the backfill writes this value — `pilot_sessions.cohort`'s DEFAULT on
+ * the hub start that adds the column.
+ */
+export const PILOT_LEGACY_COHORT = "legacy" as const;
+
+/** Every value `pilot_sessions.cohort` may hold: the two cohorts, and the rows from before them. */
+export const PILOT_SESSION_COHORTS = [...PILOT_COHORTS, PILOT_LEGACY_COHORT] as const;
 
 /**
  * HOW A SESSION ENDED, and the distinction is the whole reason the pilot
@@ -256,6 +305,13 @@ export const PILOT_UNAVAILABLE_REASONS = [
    * session that could have asked" (corrected by adversarial review).
    */
   "no_asking_host",
+  /**
+   * A precision over no verdict (07 §12): nobody labelled anything helpful
+   * or noise, so there is no ratio — a zero would read as "nothing helped".
+   */
+  "no_labels",
+  /** A label coverage over no intervention: nothing was shown, so nothing could be labelled. */
+  "no_interventions",
 ] as const;
 
 /**
@@ -400,6 +456,8 @@ export type SuspectFalsifierKind = (typeof SUSPECT_FALSIFIER_KINDS)[number];
 export type SuspectOutcome = (typeof SUSPECT_OUTCOMES)[number];
 
 export type PilotMark = (typeof PILOT_MARKS)[number];
+export type PilotInterventionLabel = (typeof PILOT_INTERVENTION_LABELS)[number];
+export type PilotCohort = (typeof PILOT_COHORTS)[number];
 export type PilotMarkRefKind = (typeof PILOT_MARK_REF_KINDS)[number];
 export type PilotEndReason = (typeof PILOT_END_REASONS)[number];
 export type PilotUnavailableReason =

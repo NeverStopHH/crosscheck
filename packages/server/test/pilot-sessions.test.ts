@@ -16,9 +16,13 @@
  * mostly the second and call it the first.
  */
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
-import { agentSessions, pilotCounters, pilotSessions } from "../src/db/schema.ts";
-import { PILOT_MAX_SESSIONS } from "../src/constants.ts";
+import { agentSessions, pilotCounters, pilotSessions, teamSettings } from "../src/db/schema.ts";
+import {
+  PILOT_DISCOVERY_COHORT_SESSIONS,
+  PILOT_SESSION_SET_CAP,
+} from "../src/constants.ts";
 import { recordPilotSession } from "../src/services/pilot.ts";
 import { recordSessionEvent } from "../src/services/session-events.ts";
 import {
@@ -53,6 +57,10 @@ const setup = async (
       "/api/team-settings",
       jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled: true }),
     );
+    await harness.db
+      .update(teamSettings)
+      .set({ pilotLabelsSince: LABELS_SINCE })
+      .where(eq(teamSettings.repo, REPO));
   }
   return { harness, developer };
 };
@@ -98,16 +106,111 @@ const store = async (
 
 const rows = (harness: TestHarness) => harness.db.select().from(pilotSessions);
 
+const MS_PER_MINUTE = 60_000;
+const minutesFromNow = (minutes: number): Date => new Date(NOW.getTime() + minutes * MS_PER_MINUTE);
+
+/** Labels became available a day before the harness clock: SESSION, registered at NOW, is after it. */
+const LABELS_SINCE = minutesFromNow(-24 * 60);
+
+interface FillOptions {
+  readonly prefix?: string;
+  /** `legacy` writes 0.10-era rows: started before labels, no slot. */
+  readonly cohort?: "discovery" | "replication" | "legacy";
+  /** When the fill's sessions started — by default an hour BEFORE `SESSION`. */
+  readonly startedAt?: Date;
+  /** The first slot the rows hold, in start order (07 §12, second review, M1/M4). */
+  readonly firstSlot?: number;
+}
+
+/**
+ * `count` finished sessions of this repo, written straight into the set: the
+ * cap and the cohort split are what is under test, not the registration
+ * path. They STARTED before `SESSION` unless told otherwise, and hold slots
+ * in their start order, because a slot is now a start position.
+ */
+const fill = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+  count: number,
+  options: FillOptions = {},
+): Promise<void> => {
+  const prefix = options.prefix ?? "cc_fill_";
+  const cohort = options.cohort ?? "discovery";
+  const startedAt = options.startedAt ?? minutesFromNow(cohort === "legacy" ? -48 * 60 : -60);
+  const filler = Array.from({ length: count }, (_unused, i) => ({
+    id: `${prefix}${String(i).padStart(4, "0")}`,
+    developerId: developer.developerId,
+    agentKind: "claude-code",
+    repo: REPO,
+    branch: "main",
+    baseCommit: "abc1234",
+    status: "done" as const,
+    startedAt,
+    lastHeartbeatAt: startedAt,
+  }));
+  await harness.db.insert(agentSessions).values(filler);
+  await harness.db.insert(pilotSessions).values(
+    filler.map((row, i) => ({
+      sessionId: row.id,
+      repo: REPO,
+      observedAt: NOW,
+      endReason: "reported" as const,
+      cohort,
+      slot: cohort === "legacy" ? null : (options.firstSlot ?? 0) + i,
+      coverage: [],
+      seqNullRecords: 0,
+      seqEpochs: 0,
+    })),
+  );
+};
+
+/** A session of this repo that started at `startedAt` and has no row yet. */
+const started = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+  id: string,
+  startedAt: Date,
+): Promise<void> => {
+  await harness.db.insert(agentSessions).values({
+    id,
+    developerId: developer.developerId,
+    agentKind: "claude-code",
+    repo: REPO,
+    branch: "main",
+    baseCommit: "abc1234",
+    status: "done",
+    startedAt,
+    lastHeartbeatAt: startedAt,
+  });
+};
+
+const end = (harness: TestHarness, developer: TestDeveloper, sessionId: string) =>
+  recordPilotSession(deps(harness), {
+    sessionId,
+    repo: REPO,
+    developerId: developer.developerId,
+    endReason: "reported",
+  });
+
+const counter = async (harness: TestHarness, name: string): Promise<number> => {
+  const found = (await harness.db.select().from(pilotCounters)).find((row) => row.counter === name);
+  return Number(found?.value ?? 0);
+};
+
 describe("one session's residue", () => {
-  test("a repo that never enrolled stores nothing", async () => {
+  test("a repo that never enrolled stores nothing — not a row, not a count", async () => {
     // Arrange
     const { harness, developer } = await setup({ enrolled: false });
 
     // Act
     await store(harness, developer);
 
-    // Assert
+    // Assert — the second review's anchor run found the count unchecked: with
+    // the enrolment gate gone, the session fell to "before labels" (no
+    // settings row) and a counter row was written for a team that never
+    // agreed to be measured
     expect(await rows(harness)).toHaveLength(0);
+    expect(await harness.db.select().from(pilotCounters)).toHaveLength(0);
   });
 
   test("a single-epoch session gets its span", async () => {
@@ -205,47 +308,92 @@ describe("one session's residue", () => {
     }
   });
 
-  test("the 51st is REFUSED and COUNTED, never dropped silently", async () => {
-    // Arrange — fill the set by hand rather than by registering fifty
+  test("the 201st is REFUSED and COUNTED, never dropped silently", async () => {
+    // Arrange — fill the set by hand rather than by registering two hundred
     // sessions: the cap is what is under test, not the registration path.
     // A measurement that hit its own ceiling and said nothing would report
-    // fifty sessions as though that were the population.
+    // the set as though it were the population.
     const { harness, developer } = await setup();
-    const filler = Array.from({ length: PILOT_MAX_SESSIONS }, (_unused, i) => ({
-      id: `cc_fill_${String(i)}`,
-      developerId: developer.developerId,
-      agentKind: "claude-code",
-      repo: REPO,
-      branch: "main",
-      baseCommit: "abc1234",
-      status: "done" as const,
-      startedAt: NOW,
-      lastHeartbeatAt: NOW,
-    }));
-    await harness.db.insert(agentSessions).values(filler);
-    await harness.db.insert(pilotSessions).values(
-      filler.map((row) => ({
-        sessionId: row.id,
-        repo: REPO,
-        observedAt: NOW,
-        endReason: "reported" as const,
-        coverage: [],
-        seqNullRecords: 0,
-        seqEpochs: 0,
-      })),
-    );
+    await fill(harness, developer, PILOT_SESSION_SET_CAP);
 
-    // Act — the fifty-first
+    // Act — the two-hundred-and-first
     await store(harness, developer);
 
     // Assert — not stored…
-    expect(await rows(harness)).toHaveLength(PILOT_MAX_SESSIONS);
+    expect(await rows(harness)).toHaveLength(PILOT_SESSION_SET_CAP);
     // …and the refusal is a number somebody can read.
     const counters = await harness.db.select().from(pilotCounters);
     const refused = counters.find(
-      (row) => row.counter === "pilot_sessions_refused",
+      (row) => row.counter === "pilot_set_refused",
     );
     expect(Number(refused?.value ?? 0)).toBe(1);
+  });
+
+  test("the first fifty are the discovery cohort; the fifty-first opens replication", async () => {
+    // Arrange — the first pilot refused the fifty-first session outright,
+    // which stopped measuring exactly when real usage began. It is now the
+    // replication cohort's first row, and the discovery cohort is frozen.
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_DISCOVERY_COHORT_SESSIONS);
+
+    // Act
+    await store(harness, developer);
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
+    expect(own?.cohort).toBe("replication");
+    const refused = (await harness.db.select().from(pilotCounters)).find(
+      (row) => row.counter === "pilot_set_refused",
+    );
+    expect(refused).toBeUndefined();
+  });
+
+  test("a 0.10 hub's fifty old rows take no slot: the first new session is discovery", async () => {
+    // Arrange — the upgrade backfills every old row as `legacy` (second
+    // review, H1); those sessions could never be labelled helpful, so they
+    // must not fill the preregistered cohort before it has begun
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_DISCOVERY_COHORT_SESSIONS, { prefix: "cc_old_", cohort: "legacy" });
+
+    // Act
+    await store(harness, developer);
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
+    expect(own?.cohort).toBe("discovery");
+  });
+
+  test("a fresh repo's first session is discovery", async () => {
+    // Arrange & Act
+    const { harness, developer } = await setup();
+    await store(harness, developer);
+
+    // Assert
+    expect((await rows(harness))[0]?.cohort).toBe("discovery");
+  });
+
+  test("a cohort is frozen: a revived discovery session that ends again stays discovery", async () => {
+    // Arrange — this session is the fiftieth to start (discovery); then one
+    // more started after it has its row, so a recount of rows would now
+    // place it fifty-first. A revived session that ends a second time must
+    // keep the cohort it entered, or the split would measure the reaper.
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_DISCOVERY_COHORT_SESSIONS - 1);
+    await store(harness, developer, "reaped");
+    await fill(harness, developer, 1, {
+      prefix: "cc_later_",
+      cohort: "replication",
+      startedAt: minutesFromNow(1),
+      firstSlot: PILOT_DISCOVERY_COHORT_SESSIONS,
+    });
+
+    // Act — revived, then ended for real
+    await store(harness, developer, "reported");
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
+    expect(own?.endReason).toBe("reported");
+    expect(own?.cohort).toBe("discovery");
   });
 
   test("a revived session's SECOND end is the one that stands", async () => {
@@ -265,32 +413,10 @@ describe("one session's residue", () => {
   });
 
   test("a revived session in a FULL set keeps its own slot — its second end is not a refusal", async () => {
-    // Arrange — 49 other sessions plus this one, reaped: the set is full, and
-    // this session already holds a slot (found by adversarial review)
+    // Arrange — 199 other sessions plus this one, reaped: the set is full,
+    // and this session already holds a slot (found by adversarial review)
     const { harness, developer } = await setup();
-    const filler = Array.from({ length: PILOT_MAX_SESSIONS - 1 }, (_unused, i) => ({
-      id: `cc_fill_${String(i)}`,
-      developerId: developer.developerId,
-      agentKind: "claude-code",
-      repo: REPO,
-      branch: "main",
-      baseCommit: "abc1234",
-      status: "done" as const,
-      startedAt: NOW,
-      lastHeartbeatAt: NOW,
-    }));
-    await harness.db.insert(agentSessions).values(filler);
-    await harness.db.insert(pilotSessions).values(
-      filler.map((row) => ({
-        sessionId: row.id,
-        repo: REPO,
-        observedAt: NOW,
-        endReason: "reported" as const,
-        coverage: [],
-        seqNullRecords: 0,
-        seqEpochs: 0,
-      })),
-    );
+    await fill(harness, developer, PILOT_SESSION_SET_CAP - 1);
     await store(harness, developer, "reaped");
 
     // Act — revived, then ended for real
@@ -300,9 +426,124 @@ describe("one session's residue", () => {
     const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
     expect(own?.endReason).toBe("reported");
     const refused = (await harness.db.select().from(pilotCounters)).find(
-      (row) => row.counter === "pilot_sessions_refused",
+      (row) => row.counter === "pilot_set_refused",
     );
     expect(refused).toBeUndefined();
+  });
+});
+
+/**
+ * A SLOT IS A START POSITION (07 §12, second review, M1 and M4). The first
+ * pilot counted the rows already stored and inserted the next one: two
+ * sessions ending at once both took the fiftieth slot, and a short session
+ * that started late took discovery from a long one that started early.
+ */
+describe("the session set's slots", () => {
+  test("M1: three sessions ending at once around the boundary leave discovery at exactly fifty", async () => {
+    // Arrange — forty-nine discovery rows; three more sessions started in turn
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_DISCOVERY_COHORT_SESSIONS - 1);
+    const racers = ["cc_race_a", "cc_race_b", "cc_race_c"];
+    for (const [index, id] of racers.entries()) {
+      await started(harness, developer, id, minutesFromNow(-30 + index));
+    }
+
+    // Act — all three end in the same instant
+    await Promise.all(racers.map((id) => end(harness, developer, id)));
+
+    // Assert
+    const stored = await rows(harness);
+    expect(stored.filter((row) => row.cohort === "discovery")).toHaveLength(PILOT_DISCOVERY_COHORT_SESSIONS);
+    expect(stored.find((row) => row.sessionId === "cc_race_a")?.cohort).toBe("discovery");
+    expect(stored.filter((row) => row.cohort === "replication")).toHaveLength(2);
+  });
+
+  test("M1: the set cannot pass its cap when sessions end at once, and the excess is counted", async () => {
+    // Arrange — 199 rows; three more sessions
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_SESSION_SET_CAP - 1);
+    const racers = ["cc_cap_a", "cc_cap_b", "cc_cap_c"];
+    for (const [index, id] of racers.entries()) {
+      await started(harness, developer, id, minutesFromNow(-30 + index));
+    }
+
+    // Act
+    await Promise.all(racers.map((id) => end(harness, developer, id)));
+
+    // Assert
+    expect(await rows(harness)).toHaveLength(PILOT_SESSION_SET_CAP);
+    expect(await counter(harness, "pilot_set_refused")).toBe(2);
+  });
+
+  test("M4: the cohort follows the order sessions STARTED, not the order they ended", async () => {
+    // Arrange — forty-nine rows; A starts, then B; B ends first
+    const { harness, developer } = await setup();
+    await fill(harness, developer, PILOT_DISCOVERY_COHORT_SESSIONS - 1);
+    await started(harness, developer, "cc_long_a", minutesFromNow(-30));
+    await started(harness, developer, "cc_short_b", minutesFromNow(-20));
+
+    // Act
+    await end(harness, developer, "cc_short_b");
+    await end(harness, developer, "cc_long_a");
+
+    // Assert — the long session that began during discovery is in it
+    const stored = await rows(harness);
+    expect(stored.find((row) => row.sessionId === "cc_long_a")?.cohort).toBe("discovery");
+    expect(stored.find((row) => row.sessionId === "cc_short_b")?.cohort).toBe("replication");
+  });
+
+  test("M4: a session that started before labels were available is not in the set, and is counted", async () => {
+    // Arrange — it began two days ago; labels arrived a day ago
+    const { harness, developer } = await setup();
+    await started(harness, developer, "cc_before", minutesFromNow(-48 * 60));
+
+    // Act
+    await end(harness, developer, "cc_before");
+
+    // Assert — no row, and not silently: the count says why the set is smaller
+    expect(await rows(harness)).toHaveLength(0);
+    expect(await counter(harness, "pilot_sessions_before_labels")).toBe(1);
+  });
+
+  test("a revived 0.10 session's second end updates its own row, and is not counted as before labels", async () => {
+    // Arrange — a legacy row whose session began before labels existed;
+    // a record revives it and it ends again. Its true end is the second one,
+    // as for any revived session — not a fresh "before labels" refusal.
+    const { harness, developer } = await setup();
+    await fill(harness, developer, 1, { prefix: "cc_old_", cohort: "legacy" });
+
+    // Act
+    await recordPilotSession(deps(harness), {
+      sessionId: "cc_old_0000",
+      repo: REPO,
+      developerId: developer.developerId,
+      endReason: "reaped",
+    });
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === "cc_old_0000");
+    expect(own?.endReason).toBe("reaped");
+    expect(own?.cohort).toBe("legacy");
+    expect(await counter(harness, "pilot_sessions_before_labels")).toBe(0);
+  });
+
+  test("after a re-enrolment the slots continue past the earlier rows instead of restarting", async () => {
+    // Arrange — two rows from an earlier enrolment, then the team left and
+    // came back: labels became available again an hour ago
+    const { harness, developer } = await setup();
+    await fill(harness, developer, 2, { startedAt: minutesFromNow(-10 * 60) });
+    await harness.db
+      .update(teamSettings)
+      .set({ pilotLabelsSince: minutesFromNow(-60) })
+      .where(eq(teamSettings.repo, REPO));
+
+    // Act
+    await store(harness, developer);
+
+    // Assert — the third slot, not a second "first"
+    const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
+    expect(own?.slot).toBe(2);
+    expect(own?.cohort).toBe("discovery");
   });
 });
 

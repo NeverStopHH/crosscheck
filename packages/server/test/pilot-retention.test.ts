@@ -126,25 +126,35 @@ describe("pilot retention", () => {
     expect(ids).toEqual(["pa_new"]);
   });
 
-  test("the refusal count outlives the window while the set it describes stands", async () => {
-    // Arrange — the fifty sessions are never pruned; aging their refusal
-    // count out made a full set read as the whole population again
+  test("the set's counts outlive the window while the set they describe stands", async () => {
+    // Arrange — the set's rows are never pruned; aging their counts out made
+    // a full set read as the whole population again. Three counts describe
+    // the set: refusals at the cap, the 0.10 hub's refusals under its old
+    // fifty-session cap (second review, M2), and sessions that started
+    // before labels were available (M4).
     const harness = await setup();
-    await harness.db.insert(pilotCounters).values({
-      repo: REPO,
-      day: utcDay(daysAgo(PILOT_RETENTION_DAYS + 30)),
-      surface: "pilot-sessions",
-      counter: "pilot_sessions_refused",
-      value: 3,
-      updatedAt: now,
-    });
+    const old = utcDay(daysAgo(PILOT_RETENTION_DAYS + 30));
+    await harness.db.insert(pilotCounters).values(
+      ["pilot_set_refused", "pilot_sessions_refused", "pilot_sessions_before_labels"].map((counter) => ({
+        repo: REPO,
+        day: old,
+        surface: "pilot-sessions",
+        counter,
+        value: 3,
+        updatedAt: now,
+      })),
+    );
 
     // Act
     await reap(harness);
 
     // Assert
-    const refused = await harness.db.select().from(pilotCounters);
-    expect(refused.map((row) => row.counter)).toEqual(["pilot_sessions_refused"]);
+    const kept = await harness.db.select().from(pilotCounters);
+    expect(kept.map((row) => row.counter).sort()).toEqual([
+      "pilot_sessions_before_labels",
+      "pilot_sessions_refused",
+      "pilot_set_refused",
+    ]);
   });
 });
 

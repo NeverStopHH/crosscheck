@@ -660,6 +660,9 @@ CREATE TABLE IF NOT EXISTS team_settings (
   -- and an absent row means the same thing: this table's rule is that a
   -- missing row is defaults, so the two paths into "not enrolled" agree.
   pilot_enrolled boolean NOT NULL DEFAULT false,
+  -- 07 12 (second review): when enrolment last turned on, so when a person
+  -- could first label this repo's interventions. NULL until it is enrolled.
+  pilot_labels_since timestamptz,
   updated_at timestamptz NOT NULL,
   updated_by text REFERENCES developers(id)
 );
@@ -1095,6 +1098,20 @@ ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAU
 -- section depends on had no way to reach an existing hub.
 ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NULL DEFAULT false;
 
+-- 07 12, second review (H1, M4, M5): WHEN LABELS BECAME AVAILABLE on a repo
+-- — the moment enrolment last turned on, set by services/team-settings.ts.
+-- The labelled figures and the cohorts count only sessions that started at
+-- or after it, because nothing earlier could be labelled helpful.
+ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_labels_since timestamptz;
+
+-- A repo enrolled before the column existed was enrolled under a hub that
+-- could store only off_target, so labels became available on it NOW: the
+-- first start of a hub that has them. Only those rows match, so every later
+-- start writes nothing (the full-table-write trap claim-binding-backfill
+-- names does not apply).
+UPDATE team_settings SET pilot_labels_since = now()
+  WHERE pilot_enrolled AND pilot_labels_since IS NULL;
+
 -- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
 
 -- WHICH BROKEN PIN THIS ONE REPAIRS (07 3.4), and at which version of that
@@ -1124,8 +1141,33 @@ CREATE TABLE IF NOT EXISTS pilot_marks (
   mark text NOT NULL,
   marked_by text NOT NULL REFERENCES developers(id),
   capture_mode text NOT NULL,
-  created_at timestamptz NOT NULL
+  created_at timestamptz NOT NULL,
+  -- 07 12: one optional bounded sentence beside a label. Null is the
+  -- ordinary case. Keep in sync with MAX_PILOT_LABEL_REASON_CHARS in
+  -- @crosscheck/schema; a hub that already has the table gets the column
+  -- from the ALTER below and the bound from the guarded block.
+  reason text,
+  CONSTRAINT pilot_marks_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200)
 );
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS reason text;
+
+-- The reason's bound on a hub whose pilot_marks predates the column. Guarded
+-- the way the body length constraints are guarded: an unconditional DROP +
+-- ADD takes ACCESS EXCLUSIVE on every hub start and revalidates the table.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'pilot_marks_reason_length_check'
+      AND conrelid = 'pilot_marks'::regclass
+  ) THEN
+    ALTER TABLE pilot_marks ADD CONSTRAINT pilot_marks_reason_length_check
+      CHECK (reason IS NULL OR char_length(reason) <= 200);
+  END IF;
+END
+$$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
   ON pilot_marks (ref_kind, ref_id, marked_by);
@@ -1202,8 +1244,43 @@ CREATE TABLE IF NOT EXISTS pilot_sessions (
   seq_last integer,
   seq_gaps integer,
   seq_null_records integer,
-  seq_epochs integer
+  seq_epochs integer,
+  -- 07 12: the first fifty sessions of a repo are 'discovery', the next
+  -- hundred and fifty 'replication'; set on insert, never updated. DEFAULT
+  -- 'legacy' is the truthful backfill (second review, H1): every row that
+  -- exists when this column is ADDED was written by a 0.10 hub, before
+  -- anybody could label an intervention helpful, so it is in neither cohort.
+  cohort text NOT NULL DEFAULT 'legacy',
+  slot integer,
+  CONSTRAINT pilot_sessions_cohort_check
+    CHECK (cohort IN ('discovery', 'replication', 'legacy'))
 );
+ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'legacy';
+
+-- 07 12, second review (M1, M4): a session's SLOT is its start position among
+-- the repo's sessions since labels became available — 0..49 discovery,
+-- 50..199 replication. NULL on a 0.10 row. UNIQUE, so two sessions can never
+-- hold one slot, whatever order or concurrency they end in.
+ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS slot integer;
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_sessions_repo_slot_idx
+  ON pilot_sessions (repo, slot);
+
+-- The cohort CHECK on a hub whose pilot_sessions predates the column (second
+-- review, L3: the CREATE's constraint never reaches an upgraded hub). Guarded
+-- like the reason bound, so no hub start takes ACCESS EXCLUSIVE twice.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'pilot_sessions_cohort_check'
+      AND conrelid = 'pilot_sessions'::regclass
+  ) THEN
+    ALTER TABLE pilot_sessions ADD CONSTRAINT pilot_sessions_cohort_check
+      CHECK (cohort IN ('discovery', 'replication', 'legacy'));
+  END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS pilot_sessions_repo_observed_idx
   ON pilot_sessions (repo, observed_at DESC);

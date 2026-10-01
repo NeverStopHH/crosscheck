@@ -24,7 +24,11 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { PilotMarkSchema } from "@crosscheck/schema";
+import {
+  PilotMarkSchema,
+  describeUnstorableText,
+  unstorableTextPath,
+} from "@crosscheck/schema";
 
 import { NOISE_MARK_MAX_SESSIONS, PILOT_RETENTION_DAYS } from "../constants.ts";
 
@@ -32,7 +36,10 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { writePilotMark } from "../services/pilot.ts";
-import { readMarkCandidates } from "../services/pilot-candidates.ts";
+import {
+  readMarkCandidates,
+  readUnlabeledInterventions,
+} from "../services/pilot-candidates.ts";
 import type { MarkRefusal } from "../services/pilot.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
@@ -49,16 +56,23 @@ const MINUTES_PER_DAY = 1440;
  */
 const MAX_WINDOW_MINUTES = PILOT_RETENTION_DAYS * MINUTES_PER_DAY;
 
+const WithinMinutesSchema = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_WINDOW_MINUTES)
+  .default(MAX_WINDOW_MINUTES);
+
 const CandidatesQuerySchema = z.object({
   repo: z.string().min(1),
   sessions: z.array(z.string().min(1)).max(NOISE_MARK_MAX_SESSIONS),
   ref: z.string().min(1).optional(),
-  withinMinutes: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_WINDOW_MINUTES)
-    .default(MAX_WINDOW_MINUTES),
+  withinMinutes: WithinMinutesSchema,
+});
+
+const UnlabeledQuerySchema = z.object({
+  repo: z.string().min(1),
+  withinMinutes: WithinMinutesSchema,
 });
 
 /**
@@ -81,6 +95,10 @@ const REFUSAL_SENTENCE: Record<MarkRefusal, string> = {
     "that was an answer somebody asked for; a noise mark is for what arrived without being asked",
   pin_broken:
     "that pin is recorded broken; if you fixed it, pin that surface again — a new pin on the same surface records the fix and links it to the break",
+  // The label AND the sentence are dropped together: a stored label with a
+  // redacted sentence would still be a derivative of the secret.
+  reason_secret:
+    "the reason looks like it holds a secret (a key, a token, a password), so nothing was recorded — say it again without it",
 };
 
 export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -115,6 +133,30 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
     return ok(c, outcome);
   });
 
+  /**
+   * WHAT `crosscheck pilot label` WALKS (07 §12) — the caller's own unasked
+   * deliveries the caller has not labelled, with what each pointed at. The
+   * same refusal on a repo nobody enrolled, for the same reason as above.
+   */
+  router.get("/unlabeled", developerAuth(deps), async (c) => {
+    const parsed = UnlabeledQuerySchema.safeParse({
+      repo: c.req.query("repo"),
+      withinMinutes: c.req.query("withinMinutes"),
+    });
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    const outcome = await readUnlabeledInterventions(deps, {
+      repo: parsed.data.repo,
+      developerId: c.get("developer").id,
+      withinMinutes: parsed.data.withinMinutes,
+    });
+    if ("refusal" in outcome) {
+      return fail(c, 422, outcome.refusal, REFUSAL_SENTENCE[outcome.refusal]);
+    }
+    return ok(c, outcome);
+  });
+
   router.post("/", developerAuth(deps), async (c) => {
     const parsed = PilotMarkSchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
@@ -123,12 +165,21 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
       // default.
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
+    // This route is its OWN boundary, as the pins route is: a mark reaches
+    // the table straight from here and never through parseRecord, so the
+    // storability check that path applies is repeated — a NUL in the reason
+    // was a 500 (second review, L1), and is a 400 that says why.
+    const unstorable = unstorableTextPath(parsed.data);
+    if (unstorable !== null) {
+      return fail(c, 400, "validation_failed", describeUnstorableText(unstorable));
+    }
     const outcome = await writePilotMark(deps, {
       repo: parsed.data.repo,
       refKind: parsed.data.refKind,
       refId: parsed.data.refId,
       mark: parsed.data.mark,
       markedBy: c.get("developer").id,
+      reason: parsed.data.reason ?? null,
     });
     if ("refusal" in outcome) {
       return fail(c, 422, outcome.refusal, REFUSAL_SENTENCE[outcome.refusal]);

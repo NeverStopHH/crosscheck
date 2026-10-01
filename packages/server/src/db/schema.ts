@@ -43,6 +43,9 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  MAX_PILOT_LABEL_REASON_CHARS,
+  PILOT_LEGACY_COHORT,
+  PILOT_SESSION_COHORTS,
   PILOT_END_REASONS,
   PILOT_MARKS,
   PILOT_MARK_REF_KINDS,
@@ -1067,6 +1070,14 @@ export const teamSettings = pgTable("team_settings", {
    * is one configured before this column existed.
    */
   pilotEnrolled: boolean("pilot_enrolled").notNull().default(false),
+  /**
+   * WHEN LABELS BECAME AVAILABLE ON THIS REPO (07 §12, second review): the
+   * moment enrolment last turned on — or, for a repo enrolled under a 0.10
+   * hub, the first start of a hub that has labels (bootstrap.sql backfills
+   * it). The labelled figures and the cohorts count only sessions that
+   * started at or after it. Null while the repo has never been enrolled.
+   */
+  pilotLabelsSince: timestamptz("pilot_labels_since"),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
@@ -1113,9 +1124,12 @@ export const teamSettings = pgTable("team_settings", {
  * thing twice rather than made two complaints — otherwise the noise figure
  * would count keystrokes.
  *
- * NO FREE TEXT ANYWHERE. Every column is an id, an enum or a timestamp
- * (non-negotiable 6), which is also why the mark carries no reason: the
- * gesture is the whole message.
+ * ONE BOUNDED SENTENCE, OPTIONAL (07 §12, 2026-09-30). Every other column is
+ * an id, an enum or a timestamp (non-negotiable 6). `reason` is the one
+ * exception, admitted because a label without a word beside it cannot say
+ * WHY a pointer was noise, and the pilot exists to learn that. It is bounded
+ * by the pin recipe's cap, secret-scanned before it is stored, and rendered
+ * to nobody but the per-repo report, quoted and cleaned.
  */
 export const pilotMarks = pgTable(
   "pilot_marks",
@@ -1130,8 +1144,14 @@ export const pilotMarks = pgTable(
       .references(() => developers.id),
     captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
     createdAt: timestamptz("created_at").notNull(),
+    /** Null is the ordinary case: a label needs no sentence. */
+    reason: text("reason"),
   },
   (table) => [
+    check(
+      "pilot_marks_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
+    ),
     uniqueIndex("pilot_marks_ref_marker_idx").on(
       table.refKind,
       table.refId,
@@ -1273,6 +1293,23 @@ export const pilotSessions = pgTable(
     repo: text("repo").notNull(),
     observedAt: timestamptz("observed_at").notNull(),
     endReason: text("end_reason", { enum: PILOT_END_REASONS }).notNull(),
+    /**
+     * WHICH COHORT THIS SESSION BELONGS TO (07 §12): the first fifty sessions
+     * of a repo are `discovery`, the next hundred and fifty `replication`.
+     * Set when the row is written and never updated — a revived session keeps
+     * the cohort it entered. DEFAULT `legacy` is the truthful backfill
+     * (second review, H1): a row that exists when the column is added was
+     * written by a 0.10 hub, before anybody could label an intervention
+     * helpful, and belongs to neither cohort.
+     */
+    cohort: text("cohort", { enum: PILOT_SESSION_COHORTS }).notNull().default(PILOT_LEGACY_COHORT),
+    /**
+     * THIS SESSION'S START POSITION among the repo's sessions since labels
+     * became available (second review, M1/M4): 0–49 discovery, 50–199
+     * replication. Null on a 0.10 row. Unique per repo, so two sessions
+     * ending at once can never share one.
+     */
+    slot: integer("slot"),
     /** FIVE {source,state,reason} triples, enums only — never free text. */
     coverage: jsonb("coverage").notNull(),
     seqEpoch: text("seq_epoch"),
@@ -1287,6 +1324,11 @@ export const pilotSessions = pgTable(
     index("pilot_sessions_repo_observed_idx").on(
       table.repo,
       table.observedAt.desc(),
+    ),
+    uniqueIndex("pilot_sessions_repo_slot_idx").on(table.repo, table.slot),
+    check(
+      "pilot_sessions_cohort_check",
+      sql`${table.cohort} IN (${sql.raw(PILOT_SESSION_COHORTS.map((cohort) => `'${cohort}'`).join(", "))})`,
     ),
   ],
 );

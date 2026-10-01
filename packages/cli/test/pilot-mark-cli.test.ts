@@ -223,10 +223,13 @@ describe("crosscheck noise", () => {
 
     // Assert
     expect(result.exitCode).toBe(EXIT_OK);
-    expect(result.stdout).toContain(`recorded: ${id} is off-target`);
-    // Saying it again is one mark, and the person is told so.
+    expect(result.stdout).toContain(`recorded: ${id} is noise`);
+    // Saying it again is one mark, and the person is told so — without the
+    // line claiming which word they said first: since 07 §12 that may have
+    // been `helpful`, from `crosscheck pilot label`.
     const again = await noise(home, [id]);
-    expect(again.stdout).toContain("already");
+    expect(again.stdout).toContain(`already recorded: you had labelled ${id}`);
+    expect(again.stdout).not.toContain("off-target");
   });
 
   test("several candidates are listed, and none is guessed", async () => {
@@ -277,7 +280,7 @@ describe("crosscheck noise", () => {
 
     // Assert — the newest delivery of that ref (to GONE, two minutes ago).
     expect(result.stdout).toContain(
-      `recorded: ${hintDeliveryId(GONE, KEN_CONTEXT)} is off-target`,
+      `recorded: ${hintDeliveryId(GONE, KEN_CONTEXT)} is noise`,
     );
   });
 

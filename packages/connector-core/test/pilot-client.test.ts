@@ -24,7 +24,11 @@ import { rm } from "node:fs/promises";
 import { createDb, createServer } from "@crosscheck/server";
 import { DELIVERY_CHANNELS } from "@crosscheck/schema";
 
-import { getPilotReport, PilotReportSchema } from "../src/http/pilot.ts";
+import {
+  getPilotReport,
+  getUnlabeledInterventions,
+  PilotReportSchema,
+} from "../src/http/pilot.ts";
 import type { HubContext } from "../src/http/client.ts";
 import { makeHome } from "./helpers.ts";
 
@@ -51,13 +55,21 @@ const measured = (value: number) => ({ kind: "measured", value });
 const wireReport = (): Record<string, unknown> => ({
   repo: REPO,
   enrolled: true,
+  labelsSinceIso: "2026-07-01T12:00:00.000Z",
   sinceIso: "2026-07-20T00:00:00.000Z",
   untilIso: "2026-09-14T00:00:00.000Z",
   days: 56,
   sessionSet: {
     used: 31,
-    cap: 50,
+    cap: 200,
     refused: 0,
+    legacyRefused: 0,
+    beforeLabels: 0,
+    discovery: 31,
+    discoveryCap: 50,
+    replication: 0,
+    replicationCap: 150,
+    legacy: 0,
     spanned: 29,
     restarted: 1,
     notRecorded: 1,
@@ -106,19 +118,43 @@ const wireReport = (): Record<string, unknown> => ({
     answersAfterRepair: 0,
   },
   precision: {
-    sessions: 1208,
+    ...labelFigures(),
+    labelledSinceIso: "2026-07-20T12:00:00.000Z",
+    legacyNoise: 0,
+    precisionTarget: 0.5,
     openedPer100: measured(6.1),
     openedTargetPer100: 8,
-    offTargetMarks: 11,
-    offTargetPer100: measured(0.9),
-    offTargetCeilingPer100: 20,
+    noisySessionsPer100: measured(0.9),
+    noisySessionsCeilingPer100: 20,
     surfaceOkMarks: 4,
+    reasons: [{ label: "noise", reason: "stale pointer" }],
+    reasonsBeyondList: 0,
   },
+  cohorts: [
+    { cohort: "discovery", cap: 50, ...labelFigures() },
+    { cohort: "replication", cap: 150, ...labelFigures() },
+  ],
   integrity: [
     { surface: "api-suspect", counters: { answers_emitted: 12 } },
     { surface: "api-search", counters: null },
   ],
 });
+
+/** The four labelled figures and their tallies (07 §12), as the hub sends them. */
+function labelFigures(): Record<string, unknown> {
+  return {
+    sessions: 1208,
+    interventions: 2416,
+    helpful: 4,
+    noise: 10,
+    unclear: 3,
+    labelled: 17,
+    benefitPer100: measured(0.3),
+    burdenPer100: measured(200),
+    precision: measured(4 / 14),
+    labelCoverage: measured(17 / 2416),
+  };
+}
 
 beforeAll(async () => {
   const db = await createDb();
@@ -204,6 +240,30 @@ describe("PilotReportSchema", () => {
     });
   });
 
+  test("a labelled tally that did not arrive is NOT read as zero (07 §12)", () => {
+    // Arrange — "helpful 0" beside a real "noise 10" is the same lie as a
+    // missing count anywhere else on this report.
+    const report = wireReport();
+    const { helpful: _dropped, ...rest } = report.precision as Record<string, unknown>;
+
+    // Act
+    const parsed = PilotReportSchema.safeParse({ ...report, precision: rest });
+
+    // Assert
+    expect(parsed.success).toBe(false);
+  });
+
+  test("cohorts that did not arrive are not read as none", () => {
+    // Arrange
+    const { cohorts: _dropped, ...rest } = wireReport();
+
+    // Act
+    const parsed = PilotReportSchema.safeParse(rest);
+
+    // Assert
+    expect(parsed.success).toBe(false);
+  });
+
   test("an uninstrumented surface keeps its null — it never becomes an empty record", () => {
     // Arrange & Act — PIL-4 at the client: `{}` would print as a surface that
     // answered nothing, `null` prints as one nobody counted.
@@ -247,5 +307,22 @@ describe("getPilotReport against a real hub", () => {
     // Assert
     expect(result.ok).toBe(true);
     expect(result.ok && result.data.enrolled).toBe(false);
+  });
+
+  test("the unlabelled interventions a real hub lists parse — the walk's wire agrees", async () => {
+    // Arrange — enrolled above; nothing was delivered, so the list is empty
+    // and says there is no more.
+
+    // Act
+    const result = await getUnlabeledInterventions(ctx(), {
+      repo: REPO,
+      withinMinutes: 60,
+    });
+
+    // Assert
+    if (!result.ok) {
+      throw new Error(`unlabelled did not parse: ${result.kind} ${result.message}`);
+    }
+    expect(result.data).toEqual({ candidates: [], more: false });
   });
 });

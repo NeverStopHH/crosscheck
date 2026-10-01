@@ -8014,8 +8014,8 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${SERVER}/src/services/pilot.ts`,
     from:
       "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
-      "  const now = deps.now();\n  // THIS SESSION IS NOT COUNTED",
-    to: "  const now = deps.now();\n  // THIS SESSION IS NOT COUNTED",
+      "  const placement = await placeSession(deps, input);",
+    to: "  const placement = await placeSession(deps, input);",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
     because:
       "every session on the hub leaves a stored residue — its coverage " +
@@ -8052,15 +8052,16 @@ export const MUTATIONS: readonly Mutation[] = [
       "everything",
   },
   {
-    // §3.6's cap. A measurement that hit its own ceiling and said nothing
-    // reports fifty sessions as though that were the population.
+    // §3.6's cap, revised §12: past the replication cohort the write is still
+    // refused and counted. A measurement that hit its own ceiling and said
+    // nothing reports the set as though it were the population.
     label: "a measurement hits its own cap and says nothing",
-    file: `${SERVER}/src/services/pilot.ts`,
-    from: "  if ((taken[0]?.n ?? 0) >= PILOT_MAX_SESSIONS) {",
-    to: "  if (false) {",
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
+    from: '  return slot < PILOT_SESSION_SET_CAP ? "replication" : null;',
+    to: '  return "replication";',
     test: `${SERVER}/test/pilot-sessions.test.ts`,
     because:
-      "the fifty-session set silently becomes unbounded, so the cost of " +
+      "the two-hundred-session set silently becomes unbounded, so the cost of " +
       "measuring scales with the thing measured — and the refusal count that " +
       "was the only way to know the ceiling had been reached never exists",
   },
@@ -8123,7 +8124,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §7. PIL-7. One epoch or the span is refused.
     label: "a restarted counter is reported as a readable sequence",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
     from: "    spanned: rows.filter((row) => row.epochs === 1).length,",
     to: "    spanned: rows.filter((row) => (row.epochs ?? 0) >= 1).length,",
     test: `${SERVER}/test/pilot-report.test.ts`,
@@ -8161,11 +8162,12 @@ export const MUTATIONS: readonly Mutation[] = [
       "proof 2 states that the briefing flagged no ghost collisions, when the truth is that the hub was never told about any — an absence of evidence printed as evidence of absence",
   },
   {
-    // 07 §7. Proof 4 is about what arrived UNASKED.
+    // 07 §7. Proof 4 is about what arrived UNASKED. (§12 spelled the channel
+    // through PULLED_DELIVERY_CHANNEL; the anchor follows the opened query.)
     label: "a pulled answer is counted as proactive precision",
     file: `${SERVER}/src/services/pilot-report.ts`,
-    from: "        AND hd.channel <> 'suspect'",
-    to: "",
+    from: "        AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}\n        AND ${OPENED_AT} IS NOT NULL",
+    to: "        AND ${OPENED_AT} IS NOT NULL",
     test: `${SERVER}/test/pilot-report.test.ts`,
     because:
       "a reader who ASKED `suspect` and opened the answer is counted as a proactive intervention that helped, so proof 4 grows with how often people ask rather than with what the product volunteered",
@@ -8772,8 +8774,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // 07 §3.6, D2. The read is refused where the mark would be.
     label: "noise lists deliveries on a repo nobody enrolled",
     file: `${SERVER}/src/services/pilot-candidates.ts`,
-    from: "  if (!settings.pilotEnrolled) {",
-    to: "  if (!settings.pilotEnrolled && input.repo === \"\") {",
+    // THE FOLLOWING LINES DISAMBIGUATE: §12's label walk carries the same
+    // gate in the same file, so the bare `if` matched twice.
+    from:
+      "  if (!settings.pilotEnrolled) {\n    return { refusal: \"not_enrolled\" };\n  }\n" +
+      "  const since = new Date(\n",
+    to:
+      "  if (!settings.pilotEnrolled && input.repo === \"\") {\n    return { refusal: \"not_enrolled\" };\n  }\n" +
+      "  const since = new Date(\n",
     test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
     because:
       "a person picks a delivery from a list and only then learns nothing is " +
@@ -8926,8 +8934,9 @@ export const MUTATIONS: readonly Mutation[] = [
     // 07 §3.6. The cap refuses and COUNTS; the line says so.
     label: "a full session set is reported as a healthy one",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "        set.refused > 0",
-    to: "        set.refused > 99",
+    // Second review (M2): the refusal clause is its own expression now.
+    from: "    set.refused === 0\n      ? \"\"",
+    to: "    set.refused >= 0\n      ? \"\"",
     test: `${CLI}/test/doctor-pilot.test.ts`,
     because:
       "the measurement silently stopped growing at fifty sessions and doctor says " +
@@ -9148,10 +9157,14 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     // 07 §3.6, corrected. A session that already holds a slot is not counted against itself.
+    // Second review (M1/M4): a slot is a start position, so a revived
+    // session's rank is unchanged by construction; the guard that remains is
+    // that a session WITH a row is updated, never placed again — which is
+    // what keeps a revived 0.10 session's true end.
     label: "a revived session's true end is refused at the cap",
-    file: `${SERVER}/src/services/pilot.ts`,
-    from: "        ne(pilotSessions.sessionId, input.sessionId),",
-    to: "        ne(pilotSessions.sessionId, \"never\"),",
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
+    from: "  if (row.kept) {\n    return { kind: \"kept\" };\n  }",
+    to: "  if (false) {\n    return { kind: \"kept\" };\n  }",
     test: `${SERVER}/test/pilot-sessions.test.ts`,
     because:
       "in a full set the second, true end of a revived session is booked as a " +
@@ -9161,8 +9174,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 07 §4, corrected. The refusal count lives as long as the set it describes.
     label: "the session set's refusal count ages out",
     file: `${SERVER}/src/services/pilot.ts`,
-    from: "        ne(pilotCounters.counter, PILOT_SESSIONS_REFUSED),",
-    to: "        ne(pilotCounters.counter, \"never\"),",
+    from: "        notInArray(pilotCounters.counter, [...SESSION_SET_COUNTERS]),",
+    to: "        notInArray(pilotCounters.counter, [\"never\"]),",
     test: `${SERVER}/test/pilot-retention.test.ts`,
     because:
       "after ninety days a full set reads `0 refused` while its fifty rows stay, " +
@@ -9172,8 +9185,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // 07 §8.4, corrected. Another person's delivery gets the same answer as none.
     label: "a refusal code reveals what a colleague was shown",
     file: `${SERVER}/src/services/pilot.ts`,
-    from: "    return \"unknown_ref\";\n  }\n  if (!target.unsolicited) {",
-    to: "    return \"wrong_repo\";\n  }\n  if (!target.unsolicited) {",
+    from: "    return \"unknown_ref\";\n  }\n  if (target.repo !== input.repo) {",
+    to: "    return \"wrong_repo\";\n  }\n  if (target.repo !== input.repo) {",
     test: `${SERVER}/test/pilot-marks.test.ts`,
     because:
       "anybody who computes a colleague's delivery id learns from the refusal " +
@@ -9240,16 +9253,17 @@ export const MUTATIONS: readonly Mutation[] = [
       "score the attribution that named the breaking session",
   },
   {
-    // 07 §3.2. Each ref kind has exactly one gesture, and the report counts
-    // marks by their word — the pairing is the only thing that routes a mark
-    // to the proof it belongs to.
+    // 07 §3.2, revised §12. Each ref kind takes its own words — a delivery
+    // the three labels (and the legacy spelling), a pin `surface_ok` — and
+    // the report counts marks by their word, so the pairing is the only
+    // thing that routes a mark to the proof it belongs to.
     label: "a mark may be crossed with the wrong ref kind",
     file: `${SCHEMA}/src/pilot-mark.ts`,
-    from: "PILOT_MARK_BY_REF_KIND[body.refKind] === body.mark",
-    to: "PILOT_MARK_BY_REF_KIND[body.refKind] !== undefined",
+    from: "  (PILOT_MARKS_BY_REF_KIND[refKind] as readonly string[]).includes(mark);",
+    to: "  (PILOT_MARKS as readonly string[]).includes(mark);",
     test: `${SERVER}/test/pilot-marks.test.ts`,
     because:
-      "an `off_target` about a pin is counted as a noisy delivery and a " +
+      "a `helpful` about a pin is stored beside the pin and a " +
       "`surface_ok` about a delivery as a verified surface, so each figure " +
       "silently absorbs marks that belong to the other",
   },
@@ -14026,6 +14040,775 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CONNECTOR}/test/recovery-losses.test.ts`,
     because: "a hook installed mid-session rebuilds its row as 'never reported' until a heartbeat lands, and a recovered session that ends first never reports at all",
   },
+  // ── 07 §12 (2026-09-30): human labels, labelled figures, two cohorts ──
+  {
+    // "One helper, every writer": a body posted straight at the route
+    // bypasses the CLI's own scan.
+    label: "a label's reason is stored with a secret in it",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (input.reason !== null && containsSecret(input.reason)) {",
+    to: "  if (input.reason !== null && input.reason === \"\") {",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "a token a person pasted beside a label is stored and then printed in " +
+      "the repo's report to everybody who runs `crosscheck pilot`",
+  },
+  {
+    // An older client still sends `off_target` for what is now `noise`.
+    label: "an older client's word is stored beside the new one",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  mark === PILOT_LEGACY_NOISE_MARK ? \"noise\" : mark;",
+    to: "  mark;",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "the table grows a fourth spelling for one label, and every reader of " +
+      "it has to know the history to count noise right",
+  },
+  {
+    // 07 §12. The fifty-first session opens the replication cohort.
+    label: "the replication cohort is never opened",
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
+    from: "  if (slot < PILOT_DISCOVERY_COHORT_SESSIONS) {",
+    to: "  if (slot < PILOT_SESSION_SET_CAP) {",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "all two hundred sessions land in the preregistered discovery cohort, " +
+      "so the result it was registered to test is fitted to the data that " +
+      "was meant to replicate it",
+  },
+  {
+    // 07 §12. A cohort is written once; the revival update leaves it alone.
+    label: "a revived session migrates between cohorts",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "      target: pilotSessions.sessionId,\n      set: {\n        observedAt: now,",
+    to:
+      "      target: pilotSessions.sessionId,\n      set: {\n" +
+      "        cohort: placement.kind === \"slot\" ? placement.cohort : PILOT_LEGACY_COHORT,\n" +
+      "        observedAt: now,",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "a discovery session the reaper ended and a record revived is " +
+      "recounted into replication, so the split between the cohorts " +
+      "measures the reaper instead of the product",
+  },
+  {
+    label: "a person's reason is dropped on the way in",
+    file: `${SERVER}/src/routes/pilot-marks.ts`,
+    from: "      reason: parsed.data.reason ?? null,",
+    to: "      reason: null,",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "every sentence typed after Shift is accepted and thrown away, so the " +
+      "report never learns WHY a pointer was noise, which is what it was " +
+      "added to learn",
+  },
+  {
+    // The pin recipe's one-sentence cap, at the boundary — the CHECK in
+    // bootstrap.sql is the second authority, not the first.
+    label: "a reason past one sentence reaches the hub's table",
+    file: `${SCHEMA}/src/pilot-mark.ts`,
+    from: "    reason: z.string().trim().min(1).max(MAX_PILOT_LABEL_REASON_CHARS).optional(),",
+    to: "    reason: z.string().trim().min(1).optional(),",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "a paragraph reaches the INSERT and the database's CHECK answers with " +
+      "a 500, so the person is told the hub failed instead of what to shorten",
+  },
+  {
+    label: "a blank reason is stored as prose",
+    file: `${SCHEMA}/src/pilot-mark.ts`,
+    from: "    reason: z.string().trim().min(1).max(MAX_PILOT_LABEL_REASON_CHARS).optional(),",
+    to: "    reason: z.string().max(MAX_PILOT_LABEL_REASON_CHARS).optional(),",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "an accidental space is stored as a person's reason and printed in the " +
+      "report as an empty quotation that says nothing",
+  },
+  {
+    label: "a sentence rides beside pin --ok",
+    file: `${SCHEMA}/src/pilot-mark.ts`,
+    from: "  .refine((body) => body.reason === undefined || body.refKind === \"hint_delivery\", {",
+    to: "  .refine((body) => body.reason === undefined || body.refKind.length > 0, {",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "a raw POST stores prose beside a pin's ok mark, a text slot nothing " +
+      "renders, scans for or bounds as a reason",
+  },
+  {
+    // 07 §12. `unclear` abstains from precision and counts toward coverage.
+    label: "an abstention is scored as a miss",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "  const verdicts = tally.helpful + tally.noise;",
+    to: "  const verdicts = tally.helpful + tally.noise + tally.unclear;",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "precision falls with the labelers' honesty: the more often people " +
+      "admit they cannot tell, the worse the product looks",
+  },
+  {
+    label: "a precision over no verdict reads as nothing helped",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "      verdicts === 0 ? unavailable(\"no_labels\") : measured(tally.helpful / verdicts),",
+    to: "      measured(verdicts === 0 ? 0 : tally.helpful / verdicts),",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a repo where nobody has labelled anything yet reports a precision of " +
+      "0%, against a target, as if every intervention had been judged noise",
+  },
+  {
+    label: "a coverage over no intervention reads as nobody labelling",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from:
+      "      tally.interventions === 0\n        ? unavailable(\"no_interventions\")\n" +
+      "        : measured(labelled / tally.interventions),",
+    to: "      measured(tally.interventions === 0 ? 0 : labelled / tally.interventions),",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a quiet repo that was shown nothing reads as a team that ignores the " +
+      "label walk, a fact about people drawn from an absence of interventions",
+  },
+  {
+    // Rows an older hub wrote as `off_target` are noise; nothing is rewritten.
+    label: "a label an older hub stored is lost from the noise count",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "const NOISE_WORDS = sql`('noise', ${PILOT_LEGACY_NOISE_MARK})`;",
+    to: "const NOISE_WORDS = sql`('noise')`;",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every noise mark a hub held before the upgrade vanishes from the " +
+      "precision denominator, and precision jumps on the day of the upgrade",
+  },
+  {
+    label: "an answer somebody asked for is counted as an intervention",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "      JOIN population p ON p.id = hd.session_id\n      WHERE hd.channel <> ${PULLED_DELIVERY_CHANNEL}",
+    to: "      JOIN population p ON p.id = hd.session_id\n      WHERE TRUE",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every `suspect` question raises the burden figure and dilutes label " +
+      "coverage, so asking the product something reads as being interrupted by it",
+  },
+  {
+    // 07 §12. A cohort is its own population, not the window's.
+    label: "the two cohorts are the same population",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "    WHERE ps.repo = ${repo} AND ps.cohort = ${cohort}`;",
+    to: "    WHERE ps.repo = ${repo}`;",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "discovery and replication print the same figures side by side, and a " +
+      "replication that merely re-reads the discovery data always succeeds",
+  },
+  {
+    label: "the reasons list grows with every sentence anybody typed",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "    ORDER BY m.created_at DESC, m.id ASC\n    LIMIT ${PILOT_REPORT_MAX_LABEL_REASONS}",
+    to: "    ORDER BY m.created_at DESC, m.id ASC",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a busy repo's report prints hundreds of quoted sentences, the cost of " +
+      "reading it scales with traffic, and the count beside the list is gone",
+  },
+  {
+    // The reason renders in ONE place: its own repo's report.
+    label: "a reason about another repo is printed in this repo's report",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    // Second review (L5): reasons come from the tally's population, so the
+    // population's repo is the guard that keeps another repo's sentence out.
+    from: "  sql`SELECT s.id FROM agent_sessions s\n    WHERE s.repo = ${repo}",
+    to: "  sql`SELECT s.id FROM agent_sessions s\n    WHERE TRUE",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a sentence a person wrote about one team's work is shown to every repo " +
+      "on the hub that runs `crosscheck pilot`",
+  },
+  {
+    // 07 §12. The walk is refused where the mark would be.
+    label: "the label walk lists interventions on a repo nobody enrolled",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from:
+      "  if (!settings.pilotEnrolled) {\n    return { refusal: \"not_enrolled\" };\n  }\n" +
+      "  const since = new Date(deps.now()",
+    to:
+      "  if (!settings.pilotEnrolled && input.repo === \"\") {\n    return { refusal: \"not_enrolled\" };\n  }\n" +
+      "  const since = new Date(deps.now()",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a person walks and labels a list only to have every key refused, on a " +
+      "repo whose team never agreed to be measured",
+  },
+  {
+    label: "the label walk offers a teammate's intervention",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "      AND s.developer_id = ${input.developerId}",
+    to: "      AND TRUE",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a person is shown what a colleague was shown — a per-person history — " +
+      "and every key they press about it is refused",
+  },
+  {
+    label: "the label walk offers an answer somebody asked for",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "      AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}",
+    to: "      AND TRUE",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a `suspect` answer is offered as an intervention, and the person's " +
+      "verdict on a question they asked is refused at the mark",
+  },
+  {
+    label: "the label walk reaches back past its window",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "      AND hd.delivered_at >= ${since.toISOString()}::timestamptz",
+    to: "      AND TRUE",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a pointer from weeks ago is offered for a label, and the verdict on " +
+      "something nobody can picture any more is a guess counted as a judgement",
+  },
+  {
+    label: "the label walk offers what was already labelled",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        WHERE m.ref_kind = 'hint_delivery' AND m.ref_id = hd.id",
+    to: "        WHERE m.ref_kind = 'never' AND m.ref_id = hd.id",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "every walk starts again with interventions the person already judged, " +
+      "each answered `already labelled`, until nobody runs it",
+  },
+  {
+    label: "the label walk's cut is silent",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "    LIMIT ${PILOT_LABEL_MAX_CANDIDATES + 1}`);",
+    to: "    LIMIT ${PILOT_LABEL_MAX_CANDIDATES}`);",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "twenty interventions read as all there were, and the rest are never " +
+      "labelled because nothing said they were waiting",
+  },
+  {
+    // A delivery's ref is the client's own word (07 §11.9).
+    label: "the label walk prints another repo's title",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from:
+      "\n      AND EXISTS (SELECT 1 FROM agent_sessions owner\n" +
+      "                  WHERE owner.id = wc.session_id AND owner.repo = ${input.repo})",
+    to: "",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a client that aims a delivery at another repo's work context reads " +
+      "that repo's titles through its own label walk",
+  },
+  {
+    // The client parse is strict for the header's reason.
+    label: "a labelled tally that did not arrive is read as zero",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "  helpful: CountSchema,\n  noise: CountSchema,",
+    to: "  helpful: CountSchema.default(0),\n  noise: CountSchema,",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because:
+      "a hub that sent no helpful count prints `helpful 0` beside a real " +
+      "noise count, and precision reads 0% from a figure nobody measured",
+  },
+  {
+    label: "cohorts that did not arrive are read as none",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "  cohorts: z.array(CohortFiguresSchema),",
+    to: "  cohorts: z.array(CohortFiguresSchema).default([]),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because:
+      "an older hub's report prints with no cohorts at all, as if the set had " +
+      "no sessions, instead of asking for an update",
+  },
+  {
+    // A pin takes one word; the union makes a crossed pair unbuildable.
+    label: "pin --ok sends a label instead of its own word",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "        ? { mark: \"surface_ok\" }",
+    to: "        ? { mark: \"helpful\" }",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because:
+      "every `pin --ok` is refused at the boundary, so a pin's notice is " +
+      "falsifiable in one direction only",
+  },
+  {
+    // 07 §12, PIL-6, D3. The same gate as `pin` and `noise`.
+    label: "an agent can label the product's own interventions",
+    file: `${CLI}/src/cli/pilot-label.ts`,
+    from: "  if (!isInteractive()) {",
+    to: "  if (!isInteractive() && cwd === \"\") {",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "the model a precision figure measures can write the verdicts it is " +
+      "measured by, and the figure reports the model's taste",
+  },
+  {
+    // Scanned before it leaves the machine; the hub scans again.
+    label: "a secret typed as a reason leaves this machine",
+    file: `${CLI}/src/cli/pilot-label.ts`,
+    from: "  return containsSecret(text) ? reasonSecretLine() : null;",
+    to: "  return null;",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "a pasted token crosses the network into the hub's request path, and " +
+      "the hub's refusal throws the person's label away with it",
+  },
+  {
+    label: "an over-long reason is sent instead of asked again",
+    file: `${CLI}/src/cli/pilot-label.ts`,
+    from: "  if (length > MAX_PILOT_LABEL_REASON_CHARS) {",
+    to: "  if (length > MAX_PILOT_LABEL_REASON_CHARS * 99) {",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "the hub refuses the sentence and the label with it, and the person " +
+      "learns only after the key that nothing was recorded",
+  },
+  {
+    // §8.3: nothing asks. Shift is how a person offers a sentence.
+    label: "every label asks for a sentence",
+    file: `${CLI}/src/cli/pilot-label.ts`,
+    from: "    : { kind: \"label\", label, wantsReason: key !== lower };",
+    to: "    : { kind: \"label\", label, wantsReason: true };",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "the one-key walk becomes a survey that waits on a sentence after every " +
+      "key, the shape §8.3 refuses and the reason people stop labelling",
+  },
+  {
+    label: "a stray key is taken as a decision",
+    file: `${CLI}/src/cli/pilot-label.ts`,
+    from: "  return label === undefined || key === null\n    ? null",
+    to: "  return key === null\n    ? null",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "a mistyped key is sent as a label the hub refuses, and the intervention " +
+      "is passed over without the person having decided anything",
+  },
+  {
+    label: "a stop is walked past",
+    file: `${CLI}/src/cli/pilot-label.ts`,
+    from: "    if (outcome.kind === \"stopped\" || outcome.kind === \"unreachable\") {",
+    to: "    if (outcome.kind === \"unreachable\") {",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "`q` stops nothing: the walk goes on asking, and keys typed after the " +
+      "person meant to leave are recorded as verdicts",
+  },
+  {
+    // A label is a memory, not a guess (PILOT_LABEL_WINDOW_MINUTES).
+    label: "the label walk asks for the hub's widest window",
+    file: `${CLI}/src/cli/pilot-label.ts`,
+    from: "    withinMinutes: PILOT_LABEL_WINDOW_MINUTES,\n  });",
+    to: "  });",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "the walk offers ninety days of pointers, and labels on interventions " +
+      "nobody remembers are counted as judgements",
+  },
+  {
+    label: "the walk's terminal is left in raw mode",
+    file: `${CLI}/src/cli/terminal.ts`,
+    from: "    input.setRawMode?.(false);",
+    to: "",
+    test: `${CLI}/test/terminal.test.ts`,
+    because:
+      "after the walk the person's shell echoes nothing and edits no line, " +
+      "and the tool that asked for a key looks like it broke the terminal",
+  },
+  {
+    label: "Ctrl-C is read as a key",
+    file: `${CLI}/src/cli/terminal.ts`,
+    from: "    return key === undefined || STOP_BYTES.includes(key) ? null : key;",
+    to: "    return key === undefined ? null : key;",
+    test: `${CLI}/test/terminal.test.ts`,
+    because:
+      "in raw mode Ctrl-C arrives as a byte, so the person's way out is " +
+      "answered with \"press h, n, u, s or q\" and the walk cannot be left",
+  },
+  {
+    label: "half a sentence is sent as a reason",
+    file: `${CLI}/src/cli/terminal.ts`,
+    from: "  if (chunk === null) {\n    return null;\n  }",
+    to: "  if (chunk === null) {\n    return sofar.length > 0 ? sofar : null;\n  }",
+    test: `${CLI}/test/terminal.test.ts`,
+    because:
+      "a reason cut off by Ctrl-D is stored as if the person had finished it",
+  },
+  {
+    // `noise` is `pilot label`'s `n` key as one word.
+    label: "the noise shortcut sends another word",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "const NOISE_LABEL: PilotInterventionLabel = \"noise\";",
+    to: "const NOISE_LABEL: PilotInterventionLabel = \"unclear\";",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "every `crosscheck noise` is counted as an abstention, and the noise " +
+      "figure misses exactly the people who complained the fastest way",
+  },
+  {
+    // 07 §12. Precision never prints without its coverage.
+    label: "a precision prints without the coverage that says how many labelled",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    `${INDENT}${precision} · ${coverage} · unclear",
+    to: "    `${INDENT}${precision} · unclear",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "a precision from three labels out of forty interventions reads as a " +
+      "result, which is the misreading the coverage figure exists to stop",
+  },
+  {
+    label: "a precision nobody measured prints as 0%",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    ? `${String(Math.round(value.value * PERCENT))}%`\n    : unavailableClause(value.reason);",
+    to: "    ? `${String(Math.round(value.value * PERCENT))}%`\n    : \"0%\";",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "a repo with no labels prints `precision 0%` against a 50% target, as " +
+      "if every intervention had been judged noise",
+  },
+  {
+    // A person's sentence is author-written text, framed like a title.
+    label: "a person's reason prints unquoted",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "quoted(said.reason, MAX_PILOT_LABEL_REASON_UTF16_UNITS)",
+    to: "bareUntrusted(said.reason)",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "a reason reads as the report's own words, and an agent that ran " +
+      "`crosscheck pilot` takes a teammate's sentence for an instruction",
+  },
+  {
+    // §8.1, §12: "helpful" is a person's label, never the model's pull.
+    label: "the model's pull is printed as a person's verdict",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "figure(\"opened per 100 sessions\", proof.openedPer100, RATE_DECIMALS)",
+    to: "figure(\"helpful per 100 sessions\", proof.openedPer100, RATE_DECIMALS)",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "the agent opening a pointer is reported as people finding it helpful, " +
+      "the calibration lie the human labels were added to replace",
+  },
+  {
+    // The walk shows a teammate's title again, framed as data.
+    label: "the walk prints a teammate's title as if it were ours",
+    file: `${CLI}/src/cli/pilot-label-render.ts`,
+    from: "quoted(candidate.title, MAX_WORK_CONTEXT_TITLE_CHARS)",
+    to: "bareUntrusted(candidate.title)",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "a title reads as the walk's own words, unframed, in a terminal an " +
+      "agent may be reading",
+  },
+  // ── 07 §12, second review (2026-10-01): H1, M1–M6, L1–L7 ──
+  {
+    // H1, M5. Nothing before labels existed could be labelled helpful.
+    label: "the labelled figures count sessions nobody could label",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "  const from = labelsSince.getTime() > window.since.getTime() ? labelsSince : window.since;",
+    to: "  const from = window.since;",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a hub that ran the 0.10 pilot prints precision 0% and benefit 0.0 as " +
+      "measured figures for eight weeks — artefacts of a vocabulary with no " +
+      "`helpful` in it",
+  },
+  {
+    label: "a 0.10 noise mark enters the precision denominator",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "           count(*) FILTER (WHERE mark = 'noise')::int AS noise,",
+    to: "           count(*) FILTER (WHERE mark IN ${NOISE_WORDS})::int AS noise,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "an off_target from an era that could not say helpful is scored against " +
+      "precision, which then falls for a reason that is not about the product",
+  },
+  {
+    label: "a 0.10 team's complaints vanish from the report",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "    WHERE m.ref_kind = 'hint_delivery' AND m.mark = ${PILOT_LEGACY_NOISE_MARK}",
+    to: "    WHERE m.ref_kind = 'hint_delivery' AND m.mark = 'never'",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the marks a team made before the upgrade are counted nowhere once " +
+      "precision leaves them out, as if nobody had ever complained",
+  },
+  {
+    // L5. The list and the tally are the same sessions.
+    label: "a reason is listed whose label is not counted",
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
+    from: "    JOIN population p ON p.id = s.id\n",
+    to: "",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a sentence sits under figures its label was never part of, and a " +
+      "reader takes it as an explanation of them",
+  },
+  {
+    // H1. The backfill decides what every 0.10 row is.
+    label: "a 0.10 hub's rows are backfilled into discovery",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'legacy';",
+    to: "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'discovery';",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "the preregistered discovery cohort is filled by sessions nobody could " +
+      "label helpful, before the pilot that labels them has begun",
+  },
+  {
+    label: "an enrolled 0.10 repo never learns when labels became available",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "UPDATE team_settings SET pilot_labels_since = now()\n  WHERE pilot_enrolled AND pilot_labels_since IS NULL;",
+    to: "",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "a repo enrolled before the upgrade has no labels-since instant, so its " +
+      "labelled figures count nothing at all, forever",
+  },
+  {
+    // L3. The CREATE's constraint never reaches an existing table.
+    label: "an upgraded hub never gets the cohort CHECK",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    ALTER TABLE pilot_sessions ADD CONSTRAINT pilot_sessions_cohort_check",
+    to: "    ALTER TABLE pilot_sessions ADD CONSTRAINT pilot_sessions_cohort_check_off",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "a hub that started on 0.10 accepts any cohort word while a fresh one " +
+      "refuses it — two deployments of one schema that disagree",
+  },
+  {
+    // M1. The database holds the slot too.
+    label: "two sessions may hold one slot",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE UNIQUE INDEX IF NOT EXISTS pilot_sessions_repo_slot_idx",
+    to: "CREATE INDEX IF NOT EXISTS pilot_sessions_repo_slot_idx",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "a placement bug can put fifty-one sessions in the preregistered " +
+      "cohort with nothing below the service to refuse it",
+  },
+  {
+    label: "enrolling never stamps when labels became available",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  if (nextEnrolled && !current.pilotEnrolled) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because:
+      "a newly enrolled repo's labelled figures and cohorts never begin, and " +
+      "a re-enrolment keeps counting from the old consent",
+  },
+  {
+    label: "0.10 rows fill the set's used count",
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
+    from: "    used: discovery + replication,",
+    to: "    used: rows.length,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a set holding only rows nobody could label reads as partly used, and " +
+      "a fifty-row 0.10 set looks a quarter full on its first day",
+  },
+  {
+    label: "the behavioural rates divide by the labelled sessions",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  const windowCount = sessions.rows[0]?.n ?? 0;",
+    to: "  const windowCount = labelled.figures.sessions;",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the opened and noisy-session rates count the whole window and divide " +
+      "by part of it, so both inflate right after an upgrade",
+  },
+  {
+    // M5 at the walk.
+    label: "the walk offers an intervention whose label cannot count",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "      AND s.started_at >= ts.pilot_labels_since\n",
+    to: "",
+    test: `${SERVER}/test/pilot-mark-candidates.test.ts`,
+    because:
+      "a person spends a key on a verdict the report then drops, and learns " +
+      "that labelling does not count",
+  },
+  {
+    // M4. A slot is a start position.
+    label: "a slot is given by the order sessions end",
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
+    from: "                AND (s2.started_at, s2.id) < (me.started_at, me.id)",
+    to: "                AND s2.id <> me.id",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "short sessions that began late take discovery from long ones that " +
+      "began early, and the cohort measures session length",
+  },
+  {
+    label: "a session from before labels joins the set",
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
+    from: "           (me.started_at < ts.pilot_labels_since) IS NOT FALSE AS before_labels,",
+    to: "           false AS before_labels,",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "sessions that ran before the team agreed to be measured, with their " +
+      "unlabellable interventions, fill the preregistered cohort",
+  },
+  {
+    label: "a re-enrolment starts a second discovery cohort",
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
+    from: "           (SELECT coalesce(max(ps.slot) + 1, 0) FROM pilot_sessions ps",
+    to: "           (SELECT coalesce(max(ps.slot) * 0, 0) FROM pilot_sessions ps",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "a team that leaves and returns hands out slot 0 again, and the first " +
+      "new session collides with the first old one",
+  },
+  {
+    label: "a session left out of the set is not counted",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    await countSessionSet(deps, input.repo, PILOT_SESSIONS_BEFORE_LABELS);\n",
+    to: "",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "the set is smaller than the repo's traffic with nothing to say why — " +
+      "a silent drop, which non-negotiable 4 refuses",
+  },
+  {
+    // M2. Each cap's refusals under their own name.
+    label: "a 0.10 refusal is counted as a refusal at this cap",
+    file: `${SERVER}/src/services/pilot-session-set.ts`,
+    from: '  refused: "pilot_set_refused",',
+    to: '  refused: "pilot_sessions_refused",',
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "thirty refusals under the old fifty-session cap make a set of fifty " +
+      "out of two hundred read as full",
+  },
+  {
+    // L2. The recipient first.
+    label: "the repo is checked before the recipient again",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (target === undefined) {\n    return \"unknown_ref\";\n  }\n  if (target.recipient !== null",
+    to:
+      "  if (target === undefined) {\n    return \"unknown_ref\";\n  }\n" +
+      "  if (target.repo !== input.repo) {\n    return \"wrong_repo\";\n  }\n  if (target.recipient !== null",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "anybody on a second enrolled repo learns from the refusal code which " +
+      "refs a colleague was shown",
+  },
+  {
+    // L1. The mark route is its own boundary.
+    label: "a NUL in a reason reaches the insert",
+    file: `${SERVER}/src/routes/pilot-marks.ts`,
+    from: "    const unstorable = unstorableTextPath(parsed.data);\n    if (unstorable !== null) {",
+    to: "    const unstorable = unstorableTextPath(parsed.data);\n    if (unstorable === \"never\") {",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "a reason Postgres cannot store answers 500, and the person is told " +
+      "the hub broke instead of what to change",
+  },
+  {
+    // M2 at doctor.
+    label: "a set with room reads as full",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      : set.used >= set.cap",
+    to: "      : true",
+    test: `${CLI}/test/doctor-pilot.test.ts`,
+    because:
+      "any refusal prints \"full\" beside a set with room, and a reader " +
+      "believes later sessions are no longer measured",
+  },
+  {
+    // M3. The side of the target is the raw value's.
+    label: "a precision just below its target reads as meeting it",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  const side = value >= target ? \"at or above\" : \"below\";",
+    to: "  const side = rounded >= Math.round(target * PERCENT) ? \"at or above\" : \"below\";",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "49.5% is reported as at the 50% target, a pass that did not happen",
+  },
+  {
+    label: "rounding hides which side of the target precision is on",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  const hidden = rounded === Math.round(target * PERCENT) && value !== target;",
+    to: "  const hidden = false;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "precision and target print as the same \"50%\" while one is below the " +
+      "other, and only the word beside them disagrees",
+  },
+  {
+    // L6.
+    label: "a cohort's coverage prints without its counts",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "      ? ` (${count(cohort.labelled)} of ${count(cohort.interventions)})`",
+    to: "      ? \"\"",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "1 label of 300 reads as \"coverage 0%\" and 199 of 200 as complete",
+  },
+  {
+    // The review's "Can an agent label?", said where the claim is made.
+    label: "the report calls labels a person's without its limit",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    ATTRIBUTION_LIMIT_LINE,\n",
+    to: "",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "proof 4 presents its figures as people's verdicts while nothing at the " +
+      "hub can tell a person's label from an agent's",
+  },
+  {
+    // H1, M5 at the renderer.
+    label: "the labelled figures hide where they start",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  return from === null || from === report.sinceIso\n    ? []",
+    to: "  return true\n    ? []",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "figures counted from yesterday read as eight weeks' worth, and a " +
+      "fresh enrolment looks like a long, quiet pilot",
+  },
+  {
+    label: "0.10 noise marks are not printed",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  proof.legacyNoise === 0\n    ? []",
+    to: "  true\n    ? []",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "the hub counts a team's earlier complaints and the report never shows " +
+      "them, so they are erased in the one place a person reads",
+  },
+  {
+    // M6.
+    label: "the helpful shortcut sends another word",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "const HELPFUL_LABEL: PilotInterventionLabel = \"helpful\";",
+    to: "const HELPFUL_LABEL: PilotInterventionLabel = \"noise\";",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "every `crosscheck helpful` is counted as noise, and the shortcut built " +
+      "to remove the bias against precision doubles it",
+  },
+  {
+    // L7.
+    label: "the walk counts a reason in UTF-16 units",
+    file: `${CLI}/src/cli/pilot-label.ts`,
+    from: "  const length = reasonLength(text);",
+    to: "  const length = text.length;",
+    test: `${CLI}/test/pilot-label-cli.test.ts`,
+    because:
+      "a sentence of emoji the hub would store is refused at the terminal, " +
+      "and the person cannot say why in their own words",
+  },
+  {
+    label: "a stored reason is cut in the report",
+    file: `${SCHEMA}/src/pilot-mark.ts`,
+    from: "export const MAX_PILOT_LABEL_REASON_UTF16_UNITS =\n  MAX_PILOT_LABEL_REASON_CHARS * MAX_UTF16_UNITS_PER_CODE_POINT;",
+    to: "export const MAX_PILOT_LABEL_REASON_UTF16_UNITS =\n  MAX_PILOT_LABEL_REASON_CHARS;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "a reason the hub accepted prints with \"…\" in the one report that " +
+      "shows it, and reads as if the person had been cut off",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14092,7 +14875,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 6
- * PRINTS: packages/cli/test/doctor-pilot.test.ts 5
+ * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
@@ -14104,8 +14887,9 @@ interface Outcome {
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
- * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
- * PRINTS: packages/cli/test/pilot-render.test.ts 8
+ * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
+ * PRINTS: packages/cli/test/pilot-render.test.ts 19
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
@@ -14116,6 +14900,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
+ * PRINTS: packages/cli/test/terminal.test.ts 3
  * PRINTS: packages/cli/test/trace-command.test.ts 2
  * PRINTS: packages/cli/test/verdict-render.test.ts 4
  * PRINTS: packages/cli/test/waiver-render.test.ts 7
@@ -14238,7 +15023,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
+ * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
@@ -14293,7 +15078,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
- * PRINTS: packages/server/test/ddl-sync.test.ts 7
+ * PRINTS: packages/server/test/ddl-sync.test.ts 11
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
@@ -14314,12 +15099,12 @@ interface Outcome {
  * PRINTS: packages/server/test/pglite-exit-code.test.ts 5
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
- * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
- * PRINTS: packages/server/test/pilot-marks.test.ts 8
+ * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
+ * PRINTS: packages/server/test/pilot-marks.test.ts 16
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
- * PRINTS: packages/server/test/pilot-report.test.ts 19
+ * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
- * PRINTS: packages/server/test/pilot-sessions.test.ts 5
+ * PRINTS: packages/server/test/pilot-sessions.test.ts 11
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
@@ -14346,7 +15131,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
- * PRINTS: packages/server/test/team-settings.test.ts 1
+ * PRINTS: packages/server/test/team-settings.test.ts 2
  * PRINTS: packages/server/test/ui-passkeys.test.ts 7
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1

@@ -15,12 +15,15 @@
  * flag and consent.
  *
  * EVERY COLUMN IS AN ID, AN ENUM, AN INTEGER OR A TIMESTAMP — non-negotiable
- * 6, checkable by reading this file: no prompt, no diff body, no transcript
- * and no free-text mark reaches disk through anything here.
+ * 6, checkable by reading this file: no prompt, no diff body and no
+ * transcript reaches disk through anything here. ONE EXCEPTION, by the
+ * owner's decision (07 §12): `pilot_marks.reason`, an optional sentence
+ * beside a label — bounded, secret-scanned (`writePilotMark`), and nothing
+ * asks for it.
  */
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, lt, ne, sql } from "drizzle-orm";
+import { and, asc, eq, lt, notInArray, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -32,14 +35,21 @@ import {
   pins,
   sessionEvents,
 } from "../db/schema.ts";
-import { PILOT_MAX_SESSIONS, PILOT_RETENTION_DAYS } from "../constants.ts";
+import { PILOT_RETENTION_DAYS } from "../constants.ts";
 import { COVERAGE_SOURCES, isJudgeable, readCoverage } from "./coverage.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { PILOT_SET_COUNTERS, placeSession } from "./pilot-session-set.ts";
+import type { Placement } from "./pilot-session-set.ts";
 import type { CoverageRecord } from "./coverage.ts";
 import type { SuspectView } from "./suspect.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
-import { PULLED_DELIVERY_CHANNEL } from "@crosscheck/schema";
+import {
+  PILOT_LEGACY_COHORT,
+  PILOT_LEGACY_NOISE_MARK,
+  PULLED_DELIVERY_CHANNEL,
+  containsSecret,
+} from "@crosscheck/schema";
 import type { PilotMark, PilotMarkRefKind } from "@crosscheck/schema";
 
 interface Deps {
@@ -318,6 +328,25 @@ export interface RecordPilotSessionInput {
   readonly endReason: "reported" | "reaped";
 }
 
+/** One more of a session-set counter, today; UPSERT, so the table stays bounded. */
+const countSessionSet = async (deps: Deps, repo: string, counter: string): Promise<void> => {
+  const now = deps.now();
+  await deps.db
+    .insert(pilotCounters)
+    .values({
+      repo,
+      day: utcDay(now),
+      surface: "pilot-sessions",
+      counter,
+      value: 1,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [pilotCounters.repo, pilotCounters.day, pilotCounters.surface, pilotCounters.counter],
+      set: { value: sql`${pilotCounters.value} + 1`, updatedAt: now },
+    });
+};
+
 /**
  * ONE SESSION'S RESIDUE, at the moment it ended (§3.6).
  *
@@ -328,15 +357,24 @@ export interface RecordPilotSessionInput {
  * `coverage` IS A SNAPSHOT AND SAYS SO. 03 §3.2 refuses a coverage TABLE
  * because a stored verdict outlives its evidence — `reaped_at` is revocable,
  * so the same question answered tomorrow can answer differently. This stores
- * five triples anyway, bounded exactly as §9 promises: at most fifty sessions
- * on an enrolled repo, never read by an answer surface, never a fallback for
+ * five triples anyway, bounded as §9 promises: at most two hundred sessions
+ * on an enrolled repo (PILOT_SESSION_SET_CAP, plus the 0.10 rows of an
+ * upgraded hub), never read by an answer surface, never a fallback for
  * `readCoverage`. It is what the hub SAID at this instant, which is the only
  * proof-5 input that cannot be recomputed.
  *
- * THE 51st IS REFUSED AND COUNTED, never dropped silently. A measurement that
- * hit its own cap and said nothing would report fifty sessions as though that
+ * THE 201st IS REFUSED AND COUNTED, never dropped silently. A measurement
+ * that hit its own cap and said nothing would report the set as though it
  * were the population — non-negotiable 4 applied to this project's own
- * instrumentation.
+ * instrumentation. A session that started BEFORE labels became available
+ * is outside the set for the same honesty, and counted the same way.
+ *
+ * THE COHORT IS THE SLOT'S (`placeSession`): the first fifty sessions to
+ * start are `discovery`, the next hundred and fifty `replication`. It is
+ * written once and never updated — see the conflict clause below — so a
+ * revived session keeps the cohort it entered. Otherwise the split between
+ * the two cohorts would move with the reaper, and a comparison between them
+ * would measure that.
  */
 export const recordPilotSession = async (
   deps: Deps,
@@ -346,42 +384,31 @@ export const recordPilotSession = async (
   if (!settings.pilotEnrolled) {
     return;
   }
-  const now = deps.now();
-  // THIS SESSION IS NOT COUNTED AGAINST ITSELF (corrected by adversarial
-  // review): a revived session that ends again already HOLDS a slot, and
-  // counting that slot made a full set refuse its true second end — booked
-  // as a refusal, with its row left saying `reaped`.
-  const taken = await deps.db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(pilotSessions)
-    .where(
-      and(
-        eq(pilotSessions.repo, input.repo),
-        ne(pilotSessions.sessionId, input.sessionId),
-      ),
-    );
-  if ((taken[0]?.n ?? 0) >= PILOT_MAX_SESSIONS) {
-    await deps.db
-      .insert(pilotCounters)
-      .values({
-        repo: input.repo,
-        day: utcDay(now),
-        surface: "pilot-sessions",
-        counter: PILOT_SESSIONS_REFUSED,
-        value: 1,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [
-          pilotCounters.repo,
-          pilotCounters.day,
-          pilotCounters.surface,
-          pilotCounters.counter,
-        ],
-        set: { value: sql`${pilotCounters.value} + 1`, updatedAt: now },
-      });
+  const placement = await placeSession(deps, input);
+  if (placement.kind === "unknown_session") {
     return;
   }
+  if (placement.kind === "before_labels") {
+    await countSessionSet(deps, input.repo, PILOT_SESSIONS_BEFORE_LABELS);
+    return;
+  }
+  if (placement.kind === "refused") {
+    await countSessionSet(deps, input.repo, PILOT_SESSIONS_REFUSED);
+    return;
+  }
+  await writeSessionResidue(deps, input, placement);
+};
+
+/**
+ * The row itself: a new one at its slot, or — for a session that already
+ * has one — the residue of its true, second end, slot and cohort untouched.
+ */
+const writeSessionResidue = async (
+  deps: Deps,
+  input: RecordPilotSessionInput,
+  placement: Extract<Placement, { kind: "kept" | "slot" }>,
+): Promise<void> => {
+  const now = deps.now();
   const [coverage, seq] = await Promise.all([
     readCoverage(deps, input.developerId, input.repo),
     readSeqResidue(deps, input.sessionId),
@@ -393,6 +420,10 @@ export const recordPilotSession = async (
       repo: input.repo,
       observedAt: now,
       endReason: input.endReason,
+      // A "kept" placement only reaches the conflict clause below, which
+      // leaves both columns as they were; the values here are never stored.
+      cohort: placement.kind === "slot" ? placement.cohort : PILOT_LEGACY_COHORT,
+      slot: placement.kind === "slot" ? placement.slot : null,
       // ENUMS ONLY. The record carries no instants and no free text — the
       // reason and the state are words this hub chose, and `gapSince` would
       // be an instant about a session that has ended.
@@ -411,6 +442,7 @@ export const recordPilotSession = async (
     // A REVIVED SESSION CAN END TWICE. `reviveReapedSession` undoes an
     // inferred end when a record arrives from that session, so the same id
     // reaches this function again — and the SECOND end is the true one.
+    // `cohort` AND `slot` ARE NOT IN THIS SET: the row keeps what it entered.
     .onConflictDoUpdate({
       target: pilotSessions.sessionId,
       set: {
@@ -438,7 +470,8 @@ export type MarkRefusal =
   | "unknown_ref"
   | "wrong_repo"
   | "not_unsolicited"
-  | "pin_broken";
+  | "pin_broken"
+  | "reason_secret";
 
 /** What a mark is about, reduced to what decides whether it may be made. */
 interface MarkTarget {
@@ -514,15 +547,18 @@ const refuseMark = (
   if (target === undefined) {
     return "unknown_ref";
   }
-  if (target.repo !== input.repo) {
-    return "wrong_repo";
-  }
   if (target.recipient !== null && target.recipient !== input.markedBy) {
     // THE SAME ANSWER AS "NO SUCH DELIVERY" (corrected by adversarial review).
     // A distinct refusal told anybody who computed `hd(your session, ref)`
     // whether you had been shown that ref — a per-person history from a
-    // refusal code, which §8.4 refuses.
+    // refusal code, which §8.4 refuses. CHECKED BEFORE THE REPO (second
+    // review, L2): the repo check ran first, so naming a colleague's
+    // delivery under another enrolled repo answered `wrong_repo` while a
+    // missing id answered `unknown_ref` — the same leak by another door.
     return "unknown_ref";
+  }
+  if (target.repo !== input.repo) {
+    return "wrong_repo";
   }
   if (!target.unsolicited) {
     return "not_unsolicited";
@@ -539,11 +575,22 @@ export interface WriteMarkInput {
   readonly refId: string;
   readonly mark: PilotMark;
   readonly markedBy: string;
+  /** One bounded sentence, or null — the ordinary case. */
+  readonly reason: string | null;
 }
 
 export type WriteMarkOutcome =
   | { readonly id: string; readonly repeated: boolean }
   | { readonly refusal: MarkRefusal };
+
+/**
+ * THE WORD THAT IS STORED (07 §12). An older client still sends `off_target`
+ * for what is now `noise`; one spelling goes forward so the table's
+ * vocabulary is three labels and the report's compatibility read of the old
+ * word is for rows that already exist, not for rows written today.
+ */
+const storedMark = (mark: PilotMark): PilotMark =>
+  mark === PILOT_LEGACY_NOISE_MARK ? "noise" : mark;
 
 /**
  * ONE PERSON'S ONE MARK ABOUT ONE THING (§3.2).
@@ -562,6 +609,12 @@ export type WriteMarkOutcome =
  *
  * REPO-SCOPED, like every other answer in this product. A mark on another
  * repo's delivery would count somebody else's noise against this team.
+ *
+ * THE REASON IS SCANNED AT THE HUB, whatever the client did (07 §12): "one
+ * helper, every writer" — a body posted straight at the route bypasses the
+ * CLI's own scan. A hit drops the whole mark and says so, never "store the
+ * label and redact the sentence": the person can say it again in a moment,
+ * and a stored derivative of a secret still leaks its shape.
  */
 export const writePilotMark = async (
   deps: Deps,
@@ -572,6 +625,9 @@ export const writePilotMark = async (
     // NOT silence: a person typed this, and "nothing happened" is the one
     // answer a gesture must never get.
     return { refusal: "not_enrolled" };
+  }
+  if (input.reason !== null && containsSecret(input.reason)) {
+    return { refusal: "reason_secret" };
   }
   const refusal = refuseMark(
     await readMarkTarget(deps, input.refKind, input.refId),
@@ -588,12 +644,13 @@ export const writePilotMark = async (
       repo: input.repo,
       refKind: input.refKind,
       refId: input.refId,
-      mark: input.mark,
+      mark: storedMark(input.mark),
       markedBy: input.markedBy,
       // STAMPED BY THE HUB. The body said what it OBSERVED; only the hub says
       // what that observation is worth.
       captureMode: HUMAN_CAPTURE_MODE,
       createdAt: deps.now(),
+      reason: input.reason,
     })
     .onConflictDoNothing()
     .returning({ id: pilotMarks.id });
@@ -604,8 +661,9 @@ export const writePilotMark = async (
 
 const MS_PER_RETENTION_DAY = 86_400_000;
 
-/** The one counter that describes the session set rather than a day's traffic. */
-const PILOT_SESSIONS_REFUSED = "pilot_sessions_refused";
+const PILOT_SESSIONS_REFUSED = PILOT_SET_COUNTERS.refused;
+const PILOT_SESSIONS_BEFORE_LABELS = PILOT_SET_COUNTERS.beforeLabels;
+const SESSION_SET_COUNTERS: readonly string[] = Object.values(PILOT_SET_COUNTERS);
 
 /**
  * THE MEASUREMENT AGES OUT (07 §4) — `pilot_counters` and
@@ -619,7 +677,8 @@ const PILOT_SESSIONS_REFUSED = "pilot_sessions_refused";
  * measurement, and the report's widest window is this same number, so nothing
  * a report can read is removed: the boundary day is kept.
  *
- * `pilot_sessions` is NOT pruned: it is capped by count, and fifty rows ARE
+ * `pilot_sessions` is NOT pruned: it is capped by count — the two cohorts'
+ * two hundred slots, plus an upgraded hub's 0.10 rows — and those rows ARE
  * the measurement. `pilot_marks` are a person's word and are not listed for
  * retention by the spec; they are bounded by people typing.
  *
@@ -643,10 +702,10 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
     .where(
       and(
         lt(pilotCounters.day, utcDay(cutoff)),
-        // THE REFUSAL COUNT LIVES AS LONG AS THE SET IT DESCRIBES (corrected
+        // THE SET'S COUNTS LIVE AS LONG AS THE SET THEY DESCRIBE (corrected
         // by adversarial review): `pilot_sessions` is never pruned, so aging
-        // this out made a full set read as the whole population again.
-        ne(pilotCounters.counter, PILOT_SESSIONS_REFUSED),
+        // these out made a full set read as the whole population again.
+        notInArray(pilotCounters.counter, [...SESSION_SET_COUNTERS]),
       ),
     );
   await deps.db

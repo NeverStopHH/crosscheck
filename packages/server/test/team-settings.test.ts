@@ -43,6 +43,8 @@ interface SettingsView {
   readonly suspectAttribution: string;
   /** 07 §3.6 — the third team decision. */
   readonly pilotEnrolled: boolean;
+  /** 07 §12 — when enrolment last turned on, so labels became available. */
+  readonly pilotLabelsSince: string | null;
   readonly updatedAt: string | null;
 }
 
@@ -273,6 +275,35 @@ describe("pilot enrolment", () => {
 
     // Assert
     expect((await readSettings(harness, nick.apiKey)).pilotEnrolled).toBe(false);
+  });
+
+  test("enrolling stamps when labels became available; other writes keep it; re-enrolling restamps", async () => {
+    // Arrange — 07 §12, second review (H1, M4, M5): the labelled figures and
+    // the cohorts count only sessions that started once a person could label
+    // them, so the hub needs that instant. It is the moment enrolment last
+    // turned ON — a re-enrolment is a new consent, and the sessions of the
+    // gap between were never measured.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-pe6@example.com");
+    const unset = await readSettings(harness, nick.apiKey);
+    await writeSettings(harness, TEST_ADMIN_TOKEN, { pilotEnrolled: true });
+    const enrolledAt = harness.clock.now().toISOString();
+
+    // Act
+    harness.clock.advanceSeconds(60);
+    await writeSettings(harness, TEST_ADMIN_TOKEN, { pinPolicy: "touched_files" });
+    const afterOtherWrite = await readSettings(harness, nick.apiKey);
+    await writeSettings(harness, TEST_ADMIN_TOKEN, { pilotEnrolled: false });
+    const afterLeaving = await readSettings(harness, nick.apiKey);
+    harness.clock.advanceSeconds(60);
+    await writeSettings(harness, TEST_ADMIN_TOKEN, { pilotEnrolled: true });
+    const afterRejoining = await readSettings(harness, nick.apiKey);
+
+    // Assert
+    expect(unset.pilotLabelsSince).toBeNull();
+    expect(afterOtherWrite.pilotLabelsSince).toBe(enrolledAt);
+    expect(afterLeaving.pilotLabelsSince).toBe(enrolledAt);
+    expect(afterRejoining.pilotLabelsSince).toBe(harness.clock.now().toISOString());
   });
 });
 

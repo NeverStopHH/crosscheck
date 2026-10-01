@@ -37,6 +37,22 @@ import {
   ciReportNotReportedLine,
   ciReportRunLine,
 } from "./ci-report/render.ts";
+import {
+  interventionLine,
+  labelRecordedLine,
+  labelRefusedLine,
+  nothingToLabelLine,
+  reasonSecretLine,
+  reasonTooLongLine,
+  skippedLine,
+  unknownKeyLine,
+  walkHeaderLines,
+  walkSummaryLines,
+  walkUnreachableLine,
+  decisionEchoLine,
+  keyPromptLine,
+  reasonPromptLine,
+} from "./cli/pilot-label-render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
@@ -237,15 +253,30 @@ const suspectWith = (payload: string): SuspectView => ({
 });
 
 /**
- * A pilot report with the payload in EVERY slot the wire can fill: the title
- * (the one author-written span), and also the repo, a channel key, every
- * reason word, a surface name, a counter key and the ids. Every figure is
+ * A pilot report with the payload in EVERY slot the wire can fill: the two
+ * author-written spans — a title and, since 07 §12, a label's reason — and
+ * also the repo, a channel key, every reason word, a label word, a cohort
+ * name, a surface name, a counter key and the ids. Every figure is
  * `unavailable` with the payload as its reason, so the "printed as the word"
  * branch — the one a newer hub reaches — is in the corpus rather than only
- * written.
+ * written. The second cohort is MEASURED, so the cohort line's figure branch
+ * is attacked too, not only its empty one.
  */
 const pilotWith = (payload: string): PilotView => {
   const unavailable = { kind: "unavailable" as const, reason: payload };
+  const labels = {
+    sessions: 1,
+    interventions: 1,
+    helpful: 1,
+    noise: 1,
+    unclear: 1,
+    labelled: 1,
+    benefitPer100: unavailable,
+    burdenPer100: unavailable,
+    precision: unavailable,
+    labelCoverage: unavailable,
+  };
+  const measured = { kind: "measured" as const, value: 0.5 };
   const repair = {
     pinId: payload,
     repairPinId: payload,
@@ -258,10 +289,25 @@ const pilotWith = (payload: string): PilotView => {
     report: {
       repo: payload,
       enrolled: true,
+      labelsSinceIso: payload,
       sinceIso: payload,
       untilIso: payload,
       days: 56,
-      sessionSet: { used: 1, cap: 50, refused: 1, spanned: 1, restarted: 1, notRecorded: 1 },
+      sessionSet: {
+        used: 1,
+        cap: 200,
+        refused: 1,
+        legacyRefused: 1,
+        beforeLabels: 1,
+        discovery: 1,
+        discoveryCap: 50,
+        replication: 0,
+        replicationCap: 150,
+        legacy: 1,
+        spanned: 1,
+        restarted: 1,
+        notRecorded: 1,
+      },
       duplicateWork: {
         surfaced: 3,
         opened: 1,
@@ -289,14 +335,32 @@ const pilotWith = (payload: string): PilotView => {
         answersAfterRepair: 1,
       },
       precision: {
-        sessions: 1,
+        ...labels,
+        // A real instant, unlike sinceIso's payload, so the "labelled
+        // figures count sessions from" line is in the corpus document.
+        labelledSinceIso: ISO,
+        legacyNoise: 1,
+        precisionTarget: 0.5,
         openedPer100: unavailable,
         openedTargetPer100: 8,
-        offTargetMarks: 1,
-        offTargetPer100: unavailable,
-        offTargetCeilingPer100: 20,
+        noisySessionsPer100: unavailable,
+        noisySessionsCeilingPer100: 20,
         surfaceOkMarks: 1,
+        reasons: [{ label: payload, reason: payload }],
+        reasonsBeyondList: 1,
       },
+      cohorts: [
+        { cohort: payload, cap: 50, ...labels },
+        {
+          cohort: payload,
+          cap: 150,
+          ...labels,
+          benefitPer100: measured,
+          burdenPer100: measured,
+          precision: measured,
+          labelCoverage: measured,
+        },
+      ],
       integrity: [
         { surface: payload, counters: { answers_emitted: 1, [payload]: 1 } },
         { surface: payload, counters: null },
@@ -503,9 +567,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // names the prior work each opened pointer pointed at, and that is a
     // teammate's title — planted here in the title slot, the most exposed
     // one, and in every other slot the wire can fill: repo, channel key,
-    // reason word, surface name, counter key and ids. The document carries
-    // the not-enrolled form and all three failure lines too, so no sentence
-    // this module writes goes unattacked.
+    // reason word, surface name, counter key and ids. 07 §12 added a second
+    // author-written span, the sentence a person typed beside a label, and
+    // the label word and cohort name beside it; all three are planted. The
+    // document carries the not-enrolled form and all three failure lines
+    // too, so no sentence this module writes goes unattacked.
     render: (payload) => {
       const view = pilotWith(payload);
       return [
@@ -552,6 +618,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       return [
         markRecordedLine("hint_delivery", payload, false),
         markRecordedLine("hint_delivery", payload, true),
+        // `crosscheck helpful` (second review, M6): the same lines, its word.
+        markRecordedLine("hint_delivery", payload, false, "helpful"),
+        candidateListLines([candidate], true, 60, NOW, "helpful"),
+        noLiveSessionLine("helpful"),
+        nothingRecentLine(60, "helpful"),
         markRecordedLine("pin", payload, false),
         markRecordedLine("pin", payload, true),
         candidateListLines([candidate, candidate], true, 60, NOW),
@@ -618,6 +689,59 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         }),
         ciReportNotReportedLine("0123456789abcdef", "no_token"),
       ].join(""),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot-label",
+    delivery: "pulled",
+    module: "src/cli/pilot-label-render.ts",
+    // 07 §12, THE ARRAY TAIL. `crosscheck pilot label` shows each
+    // intervention again AFTER the session, so it prints what was shown — a
+    // teammate's work-context title — and is FRAMED, with the notice in the
+    // walk's header. The payload is planted in the title (the exposed slot),
+    // the channel word, the ref id, the delivery time and the hub's refusal
+    // sentence; a title-less candidate and every line the walk can write are
+    // in the document, so no sentence of the walk goes unattacked.
+    framing: "framed",
+    render: (payload) => {
+      const candidate = {
+        id: payload,
+        sessionId: payload,
+        channel: payload,
+        refKind: payload,
+        refId: payload,
+        deliveredAt: payload,
+        title: payload,
+      };
+      const tally = {
+        total: 3,
+        helpful: 1,
+        noise: 1,
+        unclear: 1,
+        skipped: 1,
+        already: 1,
+        refused: 1,
+        notReached: 1,
+      };
+      return [
+        walkHeaderLines(3, true, 1440),
+        interventionLine(candidate, 0, 3, NOW),
+        interventionLine({ ...candidate, title: null }, 1, 3, NOW),
+        keyPromptLine(),
+        decisionEchoLine("noise"),
+        unknownKeyLine(),
+        reasonPromptLine(),
+        reasonTooLongLine(201),
+        reasonSecretLine(),
+        labelRecordedLine("helpful", true, false),
+        labelRecordedLine("noise", false, true),
+        skippedLine(),
+        labelRefusedLine(payload),
+        walkUnreachableLine(payload),
+        nothingToLabelLine(1440),
+        walkSummaryLines(tally, true),
+      ].join("\n");
+    },
   },
 ];
 
