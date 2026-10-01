@@ -9,11 +9,12 @@
  * bodies reach S5, the record is written in full — is unit-tested with fakes
  * (test/at7-attempt.test.ts) rather than only exercised by a paid run.
  *
- * The sweep (re-runs in the slot, the void cap, resume) lives in cli.ts; this
- * module only runs and records one attempt. Keys and tokens are never logged.
+ * The sweep (re-runs in the slot, the void cap, resume, outcome.json) lives in
+ * driver.ts; this module only runs one attempt and writes its stream and §6
+ * record. Keys and tokens are never logged.
  */
 import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { assessValidity, detectCriteria } from "./detect.ts";
 import type { Detection, VoidReason } from "./detect.ts";
@@ -102,9 +103,16 @@ export const LIVE_DEPS: AttemptDeps = {
 
 export interface AttemptInput {
   readonly slot: Slot;
+  /** The opaque id of this attempt (A2.4). */
+  readonly attemptId: string;
+  /** 1-based attempt number within the slot (A2.5). */
+  readonly attempt: number;
   /** The fresh directory holding the fixture, hub data and CROSSCHECK_HOME. */
   readonly workRoot: string;
-  /** Where the stream, record and outcome of this attempt are written. */
+  /**
+   * Where this attempt's stream and §6 record are written. The sweep writes
+   * outcome.json there itself, so even a throw leaves one (A2.5).
+   */
   readonly resultsDir: string;
 }
 
@@ -127,6 +135,8 @@ const questionBodyFor = (arm: Arm, token: string, port: number): string =>
 
 interface Observed {
   readonly slot: Slot;
+  readonly attemptId: string;
+  readonly attempt: number;
   readonly token: string;
   /** `claude --version` read immediately before this run (A2.5). */
   readonly claudeVersion: string;
@@ -146,6 +156,8 @@ const outcomeOf = (observed: Observed): RunOutcome => {
   return {
     slotIndex: observed.slot.index,
     arm: observed.slot.arm,
+    attemptId: observed.attemptId,
+    attempt: observed.attempt,
     token: observed.token,
     hits: observed.detection.hits,
     voids: observed.voids,
@@ -180,6 +192,9 @@ const recordDocument = (
   return {
     slotIndex: observed.slot.index,
     arm: observed.slot.arm,
+    attemptId: observed.attemptId,
+    attempt: observed.attempt,
+    workRoot: dirname(observed.fixture.repoRoot),
     claudeVersion: observed.claudeVersion,
     model: record.init?.model ?? null,
     // Every real turn's reported model — the evidence behind A2.3's void.
@@ -309,6 +324,8 @@ const observe = async (
   });
   return {
     slot: input.slot,
+    attemptId: input.attemptId,
+    attempt: input.attempt,
     token: seed.token,
     claudeVersion: version,
     fixture,
@@ -325,9 +342,9 @@ const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 /**
- * The outcome and the §6 record. A throw HERE comes after detection, so the
- * attempt is void (its record is incomplete) but its hits are KEPT — dropping
- * them would hide the evidence from the reviewer.
+ * The §6 record. A throw HERE comes after detection, so the attempt is void
+ * (its record is incomplete) but its hits are KEPT — dropping them would hide
+ * the evidence from the reviewer. The outcome itself is the sweep's to write.
  */
 const persist = async (
   deps: AttemptDeps,
@@ -337,10 +354,6 @@ const persist = async (
 ): Promise<AttemptFacts> => {
   const outcome = outcomeOf(observed);
   try {
-    await writeJson(join(input.resultsDir, "outcome.json"), {
-      ...outcome,
-      timedOut: observed.drive.timedOut,
-    });
     const gitDiff = await deps.fixtureGitDiff(observed.fixture.repoRoot);
     await writeJson(
       join(input.resultsDir, "record.json"),
@@ -386,10 +399,15 @@ export const runAttempt = async (
 };
 
 /** A void AttemptFacts for an attempt that threw before producing one (H1). */
-export const harnessThrewFacts = (slot: Slot, error: unknown): AttemptFacts => ({
+export const harnessThrewFacts = (
+  input: Pick<AttemptInput, "slot" | "attemptId" | "attempt">,
+  error: unknown,
+): AttemptFacts => ({
   outcome: {
-    slotIndex: slot.index,
-    arm: slot.arm,
+    slotIndex: input.slot.index,
+    arm: input.slot.arm,
+    attemptId: input.attemptId,
+    attempt: input.attempt,
     token: "",
     hits: [],
     voids: ["harness-threw"],
@@ -412,5 +430,5 @@ export const harnessThrewFacts = (slot: Slot, error: unknown): AttemptFacts => (
   plugins: [],
   briefing: null,
   timedOut: false,
-  error: error instanceof Error ? error.message : String(error),
+  error: errorText(error),
 });

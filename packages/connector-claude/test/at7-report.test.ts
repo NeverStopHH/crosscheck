@@ -28,6 +28,8 @@ const outcome = (
 ): RunOutcome => ({
   slotIndex,
   arm,
+  attemptId: `a${String(slotIndex).padStart(11, "0")}`,
+  attempt: 1,
   token: `at7-${String(slotIndex).padStart(10, "0")}`,
   hits: [],
   voids: [],

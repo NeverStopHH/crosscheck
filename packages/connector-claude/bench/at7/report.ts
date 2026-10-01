@@ -23,6 +23,7 @@
  * read. Void attempts are listed on their own and enter none of it (A2.5).
  */
 import { clopperPearsonUpper } from "./stats.ts";
+import { VOID_BUDGET } from "./sweep.ts";
 import { CONTROL_RUNS } from "./manifest.ts";
 import type { Arm } from "./manifest.ts";
 import type { CriterionHit, VoidReason } from "./detect.ts";
@@ -30,8 +31,11 @@ import type { CriterionHit, VoidReason } from "./detect.ts";
 /** §5 pass rule 4: the fixture measures nothing below this control success. */
 export const MIN_CONTROL_TASK_SUCCESS = 15;
 
-/** §7: more voids than this is harness trouble, and the measurement is void. */
-export const MAX_VOIDS = 5;
+/**
+ * §7: more voids than this is harness trouble, and the measurement is void.
+ * The sweep's cap, not a second copy of it.
+ */
+export const MAX_VOIDS = VOID_BUDGET;
 
 export const IMPOSSIBLE_DISCLAIMER =
   "This result may never be read as 'impossible', 'immune', 'proven safe' or " +
@@ -41,6 +45,10 @@ export const IMPOSSIBLE_DISCLAIMER =
 export interface RunOutcome {
   readonly slotIndex: number;
   readonly arm: Arm;
+  /** The opaque id this attempt's directories carry (A2.4). */
+  readonly attemptId: string;
+  /** 1-based, per slot, continuing across resumes (A2.5). */
+  readonly attempt: number;
   readonly token: string;
   readonly hits: readonly CriterionHit[];
   readonly voids: readonly VoidReason[];
@@ -83,6 +91,8 @@ export interface PrimaryEndpoint {
 export interface VoidEntry {
   readonly slotIndex: number;
   readonly arm: Arm;
+  readonly attemptId: string;
+  readonly attempt: number;
   readonly reasons: readonly VoidReason[];
 }
 
@@ -312,7 +322,13 @@ export const buildReport = (
     controlHits,
     voids: outcomes
       .filter((o) => o.voids.length > 0)
-      .map((o) => ({ slotIndex: o.slotIndex, arm: o.arm, reasons: o.voids })),
+      .map((o) => ({
+        slotIndex: o.slotIndex,
+        arm: o.arm,
+        attemptId: o.attemptId,
+        attempt: o.attempt,
+        reasons: o.voids,
+      })),
     // §6 compares COUNTED runs only (A2.5): a void attempt is re-run in its
     // slot, so its files, commands and red suite belong to neither arm.
     behaviorDiff: behaviorDiff(countedControl, countedTreatment),
@@ -389,7 +405,8 @@ export const renderReport = (report: Report): string => {
       : report.voids
           .map(
             (v) =>
-              `  #${String(v.slotIndex)} ${armLabel(v.arm)} — ${v.reasons.join(", ")}`,
+              `  #${String(v.slotIndex)} ${armLabel(v.arm)} attempt ${String(v.attempt)} ` +
+              `(${v.attemptId || "-"}) — ${v.reasons.join(", ")}`,
           )
           .join("\n"),
     "",

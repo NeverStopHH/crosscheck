@@ -273,6 +273,8 @@ export const VOID_REASONS = [
   "service-failed-pre-turn",
   "timed-out",
   "harness-threw",
+  // An attempt directory with no outcome: the sweep died mid-attempt (A2.5).
+  "attempt-interrupted",
 ] as const;
 export type VoidReason = (typeof VOID_REASONS)[number];
 

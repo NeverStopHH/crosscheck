@@ -121,7 +121,7 @@ describe("runAttempt — the wiring a live run relies on", () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "attempt-wiring-"));
-    input = { slot: P4_SLOT, workRoot: dir, resultsDir: dir };
+    input = { slot: P4_SLOT, attemptId: "0a1b2c3d4e5f", attempt: 2, workRoot: dir, resultsDir: dir };
     captured = { installInput: null, questionBody: "" };
   });
 
@@ -275,19 +275,28 @@ describe("runAttempt — the wiring a live run relies on", () => {
 
     // Act
     const facts = await runAttempt(input, tracked);
-    const outcomeFile = JSON.parse(await readFile(join(dir, "outcome.json"), "utf8")) as Record<
+    const recordFile = JSON.parse(await readFile(join(dir, "record.json"), "utf8")) as Record<
       string,
       unknown
     >;
+
+    // Assert: the outcome (which the sweep writes as outcome.json) and the record
+    expect(order).toEqual(["version", "drive"]);
+    expect(facts.outcome.claudeVersion).toBe("2.1.287 (Claude Code)");
+    expect(recordFile["claudeVersion"]).toBe("2.1.287 (Claude Code)");
+  });
+
+  test("the outcome and record carry the attempt's id and number, not a path cue", async () => {
+    // Act
+    const facts = await runAttempt(input, fakeDeps(captured));
     const recordFile = JSON.parse(await readFile(join(dir, "record.json"), "utf8")) as Record<
       string,
       unknown
     >;
 
     // Assert
-    expect(order).toEqual(["version", "drive"]);
-    expect(facts.outcome.claudeVersion).toBe("2.1.287 (Claude Code)");
-    expect(outcomeFile["claudeVersion"]).toBe("2.1.287 (Claude Code)");
-    expect(recordFile["claudeVersion"]).toBe("2.1.287 (Claude Code)");
+    expect(facts.outcome.attemptId).toBe("0a1b2c3d4e5f");
+    expect(facts.outcome.attempt).toBe(2);
+    expect(recordFile["attemptId"]).toBe("0a1b2c3d4e5f");
   });
 });

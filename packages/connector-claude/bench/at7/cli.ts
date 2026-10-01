@@ -1,51 +1,58 @@
 /**
- * The AT-7 harness entry point and sweep orchestrator (09 §3, §8).
+ * The AT-7 harness entry point (09 §3, §8).
  *
  *   bun packages/connector-claude/bench/at7/cli.ts --dry-run    --out <dir>
  *   bun packages/connector-claude/bench/at7/cli.ts --measured   --out <dir>
  *   bun packages/connector-claude/bench/at7/cli.ts --live-control [--out <dir>]
  *
  * Each run is fully isolated (§3): a fresh temp dir holding the fixture clone,
- * the hub's data dir and CROSSCHECK_HOME; a fresh hub; a fresh reader and dana
- * (attempt.ts runs and records one attempt). The order is drawn once from the
- * seeded manifest and written to the results dir BEFORE the first run.
- * Results live OUTSIDE the repo by default (a temp root) unless --out is given.
+ * the hub's data dir and CROSSCHECK_HOME, under an opaque per-attempt id
+ * (A2.4); a fresh hub; a fresh reader and dana (attempt.ts). The sweep —
+ * re-runs in the slot, the void cap, resume — is driver.ts. The order is
+ * drawn once from the seeded manifest and written to the results dir BEFORE
+ * the first run. Results live OUTSIDE the repo by default (a temp root)
+ * unless --out is given; the agent's working directories are never under the
+ * results dir.
  *
  * `--live-control` is a plumbing check, not part of the pre-registered run
  * order (§8 does not mention it): ONE control run to prove delivery, isolation
  * and detection end to end. It is never counted, never runs a treatment, and is
  * reported as a plumbing check.
  *
- * Keys and tokens are never printed — the per-run log names arms and verdicts,
- * not secrets.
+ * Exit codes: 0 when the sweep finished, 1 when it aborted on the void cap, 2
+ * when it refused to start. Keys and tokens are never printed.
  */
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { harnessThrewFacts, runAttempt } from "./attempt.ts";
+import { runAttempt } from "./attempt.ts";
 import type { AttemptFacts } from "./attempt.ts";
+import { runSweep } from "./driver.ts";
 import { childEnv, runProcess } from "./exec.ts";
 import { RUN_TRIPWIRE_MODE } from "./install.ts";
 import { buildManifest } from "./manifest-doc.ts";
+import type { SweepMode } from "./manifest-doc.ts";
 import { dryRunOrder, measuredOrder } from "./manifest.ts";
-import type { Arm, Slot } from "./manifest.ts";
+import type { Slot } from "./manifest.ts";
 import { worktreeRoot } from "./paths.ts";
 import { CONTROL_NOTE, PAYLOAD_TEMPLATES } from "./payloads.ts";
 import { checkShellProfiles, profilePaths } from "./profile.ts";
+import type { ProfileCheck } from "./profile.ts";
 import { buildReport, renderReport } from "./report.ts";
-import type { ReportMode, RunOutcome } from "./report.ts";
+import type { ReportMode } from "./report.ts";
 import { claudeVersion } from "./run.ts";
-import { INITIAL_PROGRESS, recordVoidAttempt, remainingSlots } from "./sweep.ts";
+import { VOID_BUDGET } from "./sweep.ts";
 
 /** A string the briefing must carry to prove dana's work was shown (§7). */
 const DANA_MARKER = "slug bug";
 
-type Mode = ReportMode | "live-control";
+const EXIT_ABORTED = 1;
+const EXIT_REFUSED = 2;
 
 interface CliArgs {
   /** null when no explicit mode was given — the harness then refuses (LOW). */
-  readonly mode: Mode | null;
+  readonly mode: SweepMode | null;
   readonly outDir: string;
   readonly resume: boolean;
 }
@@ -53,7 +60,7 @@ interface CliArgs {
 const parseArgs = (argv: readonly string[]): CliArgs => {
   // Explicit mode only: an unknown or typo'd flag must NOT default to a paid
   // dry run (LOW). null here makes main() refuse with usage.
-  const mode: Mode | null = argv.includes("--measured")
+  const mode: SweepMode | null = argv.includes("--measured")
     ? "measured"
     : argv.includes("--dry-run")
       ? "dry-run"
@@ -68,10 +75,7 @@ const parseArgs = (argv: readonly string[]): CliArgs => {
   return { mode, outDir, resume: argv.includes("--resume") };
 };
 
-const armLabel = (arm: Arm): string =>
-  arm.kind === "control" ? "control" : arm.payload;
-
-const orderFor = (mode: Mode): readonly Slot[] => {
+const orderFor = (mode: SweepMode): readonly Slot[] => {
   if (mode === "measured") {
     return measuredOrder();
   }
@@ -102,8 +106,14 @@ const danaBriefingLines = (briefing: string | null): string => {
 const USAGE =
   "usage: bun bench/at7/cli.ts (--dry-run | --measured | --live-control) [--out <dir>] [--resume]\n";
 
-const slotDirOf = (outDir: string, slot: Slot): string =>
-  join(outDir, "runs", `${String(slot.index).padStart(2, "0")}-${armLabel(slot.arm)}`);
+const say = (line: string): void => {
+  process.stdout.write(`${line}\n`);
+};
+
+const refuse = (reason: string): void => {
+  say(`refusing: ${reason}`);
+  process.exitCode = EXIT_REFUSED;
+};
 
 const readJson = async (path: string): Promise<unknown> => {
   try {
@@ -112,34 +122,6 @@ const readJson = async (path: string): Promise<unknown> => {
     return null;
   }
 };
-
-/** Valid winner outcomes already on disk, keyed by slot index (resume, H1). */
-const loadWinners = async (
-  outDir: string,
-  order: readonly Slot[],
-): Promise<Map<number, RunOutcome>> => {
-  const winners = new Map<number, RunOutcome>();
-  for (const slot of order) {
-    const outcome = (await readJson(join(slotDirOf(outDir, slot), "outcome.json"))) as
-      | RunOutcome
-      | null;
-    if (outcome !== null && Array.isArray(outcome.voids) && outcome.voids.length === 0) {
-      winners.set(slot.index, outcome);
-    }
-  }
-  return winners;
-};
-
-/** A minimal AttemptFacts for an outcome loaded from disk (resume / void log). */
-const factsFromOutcome = (outcome: RunOutcome): AttemptFacts => ({
-  outcome,
-  claudeVersion: "",
-  model: null,
-  mcpServers: [],
-  plugins: [],
-  briefing: null,
-  timedOut: false,
-});
 
 /** The identity of the harness at measurement time, for the manifest (M4, §3). */
 const harnessProvenance = async (): Promise<{
@@ -162,33 +144,36 @@ const harnessProvenance = async (): Promise<{
   };
 };
 
-const logLine = (facts: AttemptFacts): string => {
-  const { outcome } = facts;
-  return (
-    `  hits=${outcome.hits.map((h) => `${h.id}:${h.label}`).join(",") || "none"} ` +
-    `void=${outcome.voids.join(",") || "none"} ` +
-    `task=${outcome.taskSucceeded ? "ok" : "RED"} ` +
-    `mcp=[${facts.mcpServers.join(",")}] plugins=[${facts.plugins.join(",")}]` +
-    (facts.error === undefined ? "" : ` error=${facts.error}`)
-  );
-};
+/** The files that made the A2.2 profile check unclean, one per line. */
+const uncleanProfiles = (check: ProfileCheck): string =>
+  check.files
+    .filter((file) => file.present && (!file.readable || file.watched.length > 0))
+    .map((file) => `${file.path}${file.readable ? `: ${file.watched.join(", ")}` : " (unreadable)"}`)
+    .join("\n  ");
 
-/** One attempt in its own sub-dir, so a re-run never collides (A1.6, H1). */
-const runSlotAttempt = async (
-  slot: Slot,
-  outDir: string,
-  attempt: number,
-): Promise<AttemptFacts> => {
-  const runDir = join(slotDirOf(outDir, slot), `attempt-${String(attempt)}`);
-  await mkdir(runDir, { recursive: true });
-  return runAttempt({ slot, workRoot: runDir, resultsDir: runDir });
+const printLiveControl = (only: AttemptFacts | undefined): void => {
+  if (only === undefined) {
+    return;
+  }
+  say(
+    "\n--- live control facts ---\n" +
+      `claude: ${only.claudeVersion}\n` +
+      `model (init): ${only.model ?? "(none)"}\n` +
+      `mcp servers: [${only.mcpServers.join(", ")}]\n` +
+      `plugins: [${only.plugins.join(", ")}]\n` +
+      `task success: ${only.outcome.taskSucceeded ? "yes" : "no"}\n` +
+      `detector hits: ${only.outcome.hits.map((h) => h.id).join(",") || "none"}\n` +
+      `cost usd: ${String(only.outcome.costUsd ?? "?")}\n` +
+      `duration ms: ${String(only.outcome.durationMs ?? "?")}\n` +
+      `dana lines in briefing:\n${danaBriefingLines(only.briefing)}`,
+  );
 };
 
 const main = async (): Promise<void> => {
   const args = parseArgs(process.argv.slice(2));
   if (args.mode === null) {
     process.stdout.write(USAGE);
-    process.exitCode = 2;
+    process.exitCode = EXIT_REFUSED;
     return;
   }
   const mode = args.mode;
@@ -201,10 +186,7 @@ const main = async (): Promise<void> => {
   // must never silently re-run into another's results (H1).
   const existingManifest = await readJson(manifestFile);
   if (existingManifest !== null && !args.resume) {
-    process.stdout.write(
-      `refusing: ${manifestFile} already exists — use --resume, or a fresh --out\n`,
-    );
-    process.exitCode = 2;
+    refuse(`${manifestFile} already exists — use --resume, or a fresh --out`);
     return;
   }
 
@@ -219,21 +201,16 @@ const main = async (): Promise<void> => {
     profilePaths(homedir(), process.env["ZDOTDIR"]),
   );
   if (!shellProfileCheck.clean) {
-    const flagged = shellProfileCheck.files
-      .filter((file) => file.present && (!file.readable || file.watched.length > 0))
-      .map((file) => `${file.path}${file.readable ? `: ${file.watched.join(", ")}` : " (unreadable)"}`);
-    process.stdout.write(
-      `refusing: a shell profile sets a CROSSCHECK_/CLAUDE_/ANTHROPIC_ variable or cannot be read (A2.2):\n  ${flagged.join("\n  ")}\n`,
+    refuse(
+      `a shell profile sets a CROSSCHECK_/CLAUDE_/ANTHROPIC_ variable or cannot be read (A2.2):\n  ${uncleanProfiles(shellProfileCheck)}`,
     );
-    process.exitCode = 2;
     return;
   }
   if (!args.resume) {
-    const provenance = await harnessProvenance();
     const manifest = buildManifest({
       mode,
       order,
-      ...provenance,
+      ...(await harnessProvenance()),
       env: runEnv,
       shellProfileCheck,
       createdAt: new Date().toISOString(),
@@ -241,107 +218,29 @@ const main = async (): Promise<void> => {
     await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   }
 
-  // Resume: completed winners are kept, their void attempts replayed into the
-  // tally, and only the unfinished slots are run (H1).
-  const winners: Map<number, RunOutcome> = args.resume
-    ? await loadWinners(args.outDir, order)
-    : new Map();
-  const voidLogPath = join(args.outDir, "voids.jsonl");
-  const priorVoids = args.resume
-    ? (await readFile(voidLogPath, "utf8").catch(() => ""))
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-    : [];
-  const todo = remainingSlots(order, winners.keys());
-  process.stdout.write(
-    `AT-7 ${mode}: ${String(order.length)} run(s), ${String(todo.length)} to do; results in ${args.outDir}\n`,
-  );
-
-  const facts: AttemptFacts[] = [...winners.values()].map(factsFromOutcome);
-  // Prior void attempts are recorded outcomes too (A1.6) — fold them back in.
-  for (const line of priorVoids) {
-    try {
-      facts.push(factsFromOutcome(JSON.parse(line) as RunOutcome));
-    } catch {
-      // A torn void-log line contributes nothing.
-    }
-  }
-  // Prior voids seed the cap so a resume cannot exceed five across restarts.
-  let progress = { ...INITIAL_PROGRESS, voidAttempts: priorVoids.length };
-  let aborted = false;
-
-  for (const slot of todo) {
-    process.stdout.write(`· run #${String(slot.index)} ${armLabel(slot.arm)} …\n`);
-    let winner: AttemptFacts | null = null;
-    for (let attempt = 1; winner === null; attempt += 1) {
-      let candidate: AttemptFacts;
-      try {
-        candidate = await runSlotAttempt(slot, args.outDir, attempt);
-      } catch (error) {
-        candidate = harnessThrewFacts(slot, error);
-      }
-      process.stdout.write(`${logLine(candidate)}\n`);
-      if (candidate.outcome.voids.length === 0) {
-        winner = candidate;
-        break;
-      }
-      // A void attempt: record it, count it toward the cap, re-run in the slot.
-      facts.push(candidate);
-      await appendFile(voidLogPath, `${JSON.stringify(candidate.outcome)}\n`).catch(
-        () => undefined,
-      );
-      progress = recordVoidAttempt(progress);
-      if (progress.aborted) {
-        aborted = true;
-        break;
-      }
-    }
-    if (winner === null) {
-      break;
-    }
-    facts.push(winner);
-    await writeFile(
-      join(slotDirOf(args.outDir, slot), "outcome.json"),
-      `${JSON.stringify(winner.outcome, null, 2)}\n`,
-      "utf8",
+  say(`AT-7 ${mode}: ${String(order.length)} slot(s); results in ${args.outDir}`);
+  const sweep = await runSweep({
+    order,
+    outDir: args.outDir,
+    workBase: tmpdir(),
+    runAttempt: (input) => runAttempt(input),
+    log: say,
+  });
+  if (sweep.aborted) {
+    say(
+      `\nABORTED: ${String(sweep.voidAttempts)} void attempts, more than the ${String(VOID_BUDGET)} allowed — harness trouble, the measurement is void (§7/A1.6). No verdict.`,
     );
+    process.exitCode = EXIT_ABORTED;
   }
 
-  if (aborted) {
-    process.stdout.write(
-      `\nABORTED: more than ${String(progress.voidAttempts - 1)} void attempts — harness trouble, the measurement is void (§7/A1.6). No verdict.\n`,
-    );
-  }
-
-  const report = buildReport(
-    facts.map((f) => f.outcome),
-    { mode: reportMode },
-  );
+  const report = buildReport(sweep.outcomes, { mode: reportMode });
   const text = renderReport(report);
   await writeFile(join(args.outDir, "report.txt"), `${text}\n`, "utf8");
-  await writeFile(
-    join(args.outDir, "report.json"),
-    `${JSON.stringify(report, null, 2)}\n`,
-    "utf8",
-  );
-  process.stdout.write(`\n${text}\n`);
+  await writeFile(join(args.outDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  say(`\n${text}`);
 
-  if (args.mode === "live-control") {
-    const only = facts[0];
-    if (only !== undefined) {
-      process.stdout.write(
-        "\n--- live control facts ---\n" +
-          `claude: ${only.claudeVersion}\n` +
-          `model (init): ${only.model ?? "(none)"}\n` +
-          `mcp servers: [${only.mcpServers.join(", ")}]\n` +
-          `plugins: [${only.plugins.join(", ")}]\n` +
-          `task success: ${only.outcome.taskSucceeded ? "yes" : "no"}\n` +
-          `detector hits: ${only.outcome.hits.map((h) => h.id).join(",") || "none"}\n` +
-          `cost usd: ${String(only.outcome.costUsd ?? "?")}\n` +
-          `duration ms: ${String(only.outcome.durationMs ?? "?")}\n` +
-          `dana lines in briefing:\n${danaBriefingLines(only.briefing)}\n`,
-      );
-    }
+  if (mode === "live-control") {
+    printLiveControl(sweep.facts[0]);
   }
 };
 
