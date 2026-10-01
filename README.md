@@ -210,6 +210,60 @@ any member may pin any surface. `crosscheck status` prints both effective
 values, so everyone on the repository can see which are in force without being
 told.
 
+### What CI saw, keyed to the commit
+
+A test that was green and is now red, in an area no active intent covers, is
+an unexplained change — but only if the hub knows the test was green at a
+named commit, and only if a re-run of that same commit says it is still red.
+The **CI reporter** feeds that. It is one step of the `test` job, after
+the tests wrote a junit file, on every matrix leg, with `if: always()` so a
+red suite is reported too. In your repository it runs from the published
+package, so the job needs Bun (`oven-sh/setup-bun@v2`) and nothing else:
+
+```yaml
+- name: Report what CI saw to the crosscheck hub
+  if: always()
+  run: >-
+    bunx crosscheck-hub ci-report
+    --junit junit.xml --job test --leg ${{ matrix.os }}
+    --ref ${{ github.head_ref || github.ref_name }}
+    --attempt ${{ github.run_attempt }}
+    --run-id ${{ github.run_id }}
+    --sha ${{ github.event.pull_request.head.sha || github.sha }}
+  env:
+    CROSSCHECK_HUB_URL: ${{ secrets.CROSSCHECK_HUB_URL }}
+    CROSSCHECK_CI_TOKEN: ${{ secrets.CROSSCHECK_CI_TOKEN }}
+```
+
+Any runner that writes JUnit XML works; `bun test --reporter=junit
+--reporter-outfile=junit.xml` is what this repository uses, and it runs the
+same reporter from source (`packages/cli/scripts/ci-report.ts`) so its own CI
+proves the code before it ships.
+
+The hub takes `CROSSCHECK_CI_TOKEN` in its own environment — a token of its
+own, deliberately not the admin token — and the workflow holds the same value
+plus the hub URL as repository secrets. What travels is the lane
+`(repo, workflow, job, leg, ref)`, the commit, the attempt, the totals and
+**only the non-green tests**: `file::describe chain::name`, a status and a
+duration. Never a failure message, a stack, console output or the runner's
+hostname. When the suite is red the reporter re-runs the failed files once on
+the same runner and posts that as a `same_job` re-run, which is what lets the
+hub tell a flake (green again) from a regression (red again) — one lane at a
+time; an `ubuntu-latest` green never vouches for a `macos-latest` red.
+`crosscheck status` prints one line per non-green lane at your checkout's
+commit; `crosscheck doctor` prints the coverage state and every refusal.
+
+**It never turns a green job red.** A fork pull request has no repository
+secrets, so the reporter prints one line and exits 0; an unreachable hub, a
+refused token or a hub answer of the wrong shape do the same. A junit file
+that is missing or half-written is filed as a `crashed` run — a lane that ran
+and said nothing, which is a different fact from a lane that never reported.
+`--sha` must be the head sha: on a `pull_request` event `github.sha` is the
+merge commit, which no developer's history contains, and a row keyed on it
+would join nothing while looking exactly like "CI has not run yet". `--ref`
+is the branch for the same reason: `github.ref_name` on a pull request is
+`<n>/merge`.
+
 ### Asking a teammate something they never wrote down
 
 Reading what Ken's agent recorded is the easy half. The hard half is the

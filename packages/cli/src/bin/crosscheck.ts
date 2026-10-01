@@ -107,6 +107,24 @@ const main = async (): Promise<void> => {
     }
   }
 
+  // The CI reporter (src/ci-report/entry.ts), run by other repositories' CI as
+  // `bunx crosscheck-hub ci-report …`. DYNAMIC import: hooks and the
+  // statusline must not pay for zod and the junit parser. Its own catch, and
+  // UNLIKE `acp` it exits 0: a reporter that breaks must never turn a CI job
+  // red (spec 05 §8.3). ciReportMain already contains its own throws; this net
+  // is for the import itself failing, so the line is hardcoded, not imported.
+  if (command === "ci-report") {
+    try {
+      const { ciReportMain } = await import("../ci-report/entry.ts");
+      process.exit(await ciReportMain(rest, process.env, process.cwd()));
+    } catch (error) {
+      process.stdout.write(
+        `ci-report: internal failure (${error instanceof Error ? error.message : String(error)}) — this run is not recorded\n`,
+      );
+      process.exit(EXIT_OK);
+    }
+  }
+
   // The ACP transparent proxy (packages/connector-acp; fronted from
   // packages/cli since Block 8 ended design §1.2's named debt).
   // DYNAMIC import like `serve`: hooks and the statusline must not pay its

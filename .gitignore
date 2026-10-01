@@ -20,3 +20,8 @@ coverage/
 # never inside it, and a `git add -A` that swept it in once already cost a
 # history rewrite.
 .gate/
+# The test job's junit report and the reporter's re-run report (spec 05 D4):
+# runner output, written into the checkout by `bun test --reporter=junit`,
+# never source. Listed so the same command run locally leaves nothing to add.
+junit.xml
+junit-rerun.xml

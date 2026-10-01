@@ -776,3 +776,87 @@ more false confirmations from a test only recently green; higher means a new lan
 waits longer before it can say anything. Five is a deliberate non-tuning and, per
 the corpora floor rule (`precision-corpus.test.ts:8-15`), is never lowered to
 make a case pass.
+
+---
+
+## 11. What the build found — the reporter (2026-09-30)
+
+*Appended, never inserted (§Revision note): sections 1–10 are cited by number.*
+The hub half of this spec landed first (`packages/schema/src/ci-run.ts`,
+`packages/server/src/{routes,services}/ci-*.ts`, the `status`/`doctor` lines);
+this note is the **reporter** half — `packages/cli/scripts/ci-report.ts` and
+`packages/cli/src/ci-report/` — and records where the build took a default, and
+where it deviated and why. Every D1–D4 default was taken as written.
+
+**Measured again on bun 1.3.13** (probe file in a scratchpad, repo suite not run):
+§3.4's findings hold — `classname` double-escaped and innermost-first, the chain
+present structurally, `<failure type="…" />` self-closing, `hostname` on every
+suite. Two facts §3.4 did not record: **a thrown error is also `<failure>`**, never
+`<error>` (the reporter maps `<error>` to `errored` anyway, for any runner that
+emits it), and **bun writes no `timestamp`**, so `started_at` is the junit file's
+mtime minus the root `time`, the only clock the report carries (both are clamped
+on ingest, §3.2). `file` is cwd-relative when `bun test` runs from the repo root,
+which is what lets the re-run hand the same paths back.
+
+**Deviations, each with its reason:**
+
+1. **`cli-ci-report` is registered `corpus`/`bare`, not `composite`** (§5). The
+   composite premise — *"renders no untrusted text at all"* — did not survive the
+   build: the reporter prints the hub's failure sentence (the slot
+   `MAX_HUB_MESSAGE_CHARS` was minted for) and the workflow author's own `--job`
+   and `--leg`. A composite row for a module that imports nothing from the render
+   layer is exactly the "decorative row" `render-surface-registry.test.ts` refuses,
+   and a composite that does import it would need a `corpusCoveredBy` file running
+   the corpus by hand. So the three slots go through `bareUntrusted` and the shared
+   corpus attacks all of them at once — the stronger registration. It sits at the
+   array tail after `cli-pilot-mark`, which is where the tail is now that all eight
+   specs' surfaces have landed (§9.4 named the tail as it was when 05 was written).
+2. **A `test_id` over `MAX_CI_TEST_ID_CHARS` is cut at the bound, deterministically**,
+   rather than dropped or refused — the hub would otherwise reject the whole run for
+   one long name. Two ids that agree only after the cut are then the SAME id on the
+   hub, so the ambiguity rule (§3.4) is applied to the id *as sent* and drops both.
+3. **`ambiguousDropped` counts every duplicated triple, green ones included.** The
+   ambiguity is about identity, not status: a green copy beside a red copy leaves
+   the hub unable to say which one was green.
+4. **A missing or half-written junit file posts a `crashed` row** (tests 0, no rows)
+   rather than skipping the report, so the lane is seen to have run and said nothing
+   (§2, principle 4); the same for a re-run whose report never appeared. A
+   `crashed` primary is not re-run.
+5. **Exit codes.** Missing secrets, an unreachable/refusing hub, a hub answer of the
+   wrong shape: one line, exit 0, never a re-run (§8.3, #1). A wrong command line or
+   a run outside GitHub Actions (no `GITHUB_REPOSITORY`) is a usage error, exit 64:
+   deterministic, visible on the first run, and §8.2's refusal made executable. An
+   unexpected throw inside the reporter also exits 0, with its sentence.
+6. **The repo key and the workflow name come from the runner's environment**
+   (`GITHUB_SERVER_URL` + `GITHUB_REPOSITORY` through `normalizeRemoteUrl`;
+   `GITHUB_WORKFLOW`), not from flags — D4's command line names neither.
+7. **`--leg` is optional** (`""` when absent), because `${{ matrix.os }}` on a job
+   with no matrix expands to nothing; a value that is itself a flag is refused.
+
+8. **`--ref ${{ github.head_ref || github.ref_name }}`, not D4's
+   `${{ github.ref_name }}`** (decided 2026-09-30). On a `pull_request` event
+   `github.ref_name` is `<n>/merge`, not the branch §3.1 says `ref` *is* — the
+   ref-side twin of the merge-sha mistake CI-1 guards. The lane worked either way
+   (one ref per PR, default-ref fallback per §3.5 step 1), but a lane named
+   `2597/merge` matches no branch a developer's session names.
+   `ci-report-workflow.test.ts` asserts the expression over `ci.yml`, and a
+   mutation anchor reverts it.
+9. **The reporter is also a published command, `crosscheck ci-report`**
+   (`bunx crosscheck-hub ci-report …`), not only a script in this repository.
+   §3.7 placed it under `scripts/` because it is not a developer's command, which
+   still holds, but another repository's CI has no `packages/cli/scripts/` to run:
+   without the command, the reporter reached exactly one repository. Script and
+   command share `src/ci-report/entry.ts`, which holds the never-a-red-job rule;
+   `ci-report-entry.test.ts` spawns both and compares what a CI log shows, and
+   `npm-package.e2e.test.ts` runs the command from the packed tarball.
+
+**Doctor's CI-6 `WARN` naming the ambiguous count is not on any surface.** The
+hub stores `ambiguous_dropped` per run and `GET /api/ci-runs` returns it, but
+`readCiCoverage` (§3.6, frozen shape) does not carry it and `doctor` reads only the
+verdict route. Adding it means either a field on `CiCoverage` or a second read in
+`doctor`; both are the hub half's, and neither is taken here.
+
+**The two `VERIFY:` directives of §7:** the reporter-count one lives in
+`packages/cli/scripts/ci-report.ts` (`CI_PROVIDERS.length` beside the count of
+reporters, `1 1`); the `bootstrap.sql` CHECK one belongs to the hub half and was
+not found there.

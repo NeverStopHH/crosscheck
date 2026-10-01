@@ -20,8 +20,10 @@
  * container in which this script did exactly that.
  *
  * Every file is restored in a `finally`, so a run that dies half-way leaves the
- * tree as it found it. If one ever does not, `git checkout -- packages` is the
- * whole recovery: nothing here writes anywhere else.
+ * tree as it found it. If one ever does not, `git checkout -- packages .github`
+ * is the whole recovery: nothing here writes anywhere else. (`.github` since
+ * spec 05's CI-1: two anchors mutate the reporter step in the workflow itself,
+ * because the head-versus-merge-sha decision lives there and nowhere else.)
  *
  *   bun run packages/connector-core/scripts/mutation-check.ts
  */
@@ -12640,6 +12642,198 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CLI}/test/publish-workflow.test.ts`,
     because: "trusted publishing cannot authenticate, and the fix someone reaches for is a stored npm token",
   },
+  {
+    // Spec 05 §8.3 and non-negotiable #1: a fork pull request has no
+    // repository secrets, so the reporter has no token. Inform, never block.
+    label: "a fork pull request's missing token turns the job red",
+    file: `${CLI}/src/ci-report/run.ts`,
+    from: '    return done([ciReportNotReportedLine(sha, "no_token")]);',
+    to: '    return { stdout: ciReportNotReportedLine(sha, "no_token"), exitCode: 2 };',
+    test: `${CLI}/test/ci-report.test.ts`,
+    because:
+      "every pull request from a fork fails its test job for lacking a secret " +
+      "it can never have, and the reporter blocks instead of informing",
+  },
+  {
+    label: "an unreachable hub fails the job",
+    file: `${CLI}/src/ci-report/run.ts`,
+    from: '    return done([ciReportHubFailureLine(lane.commitSha, "primary", posted)]);',
+    to: '    return { stdout: ciReportHubFailureLine(lane.commitSha, "primary", posted), exitCode: 3 };',
+    test: `${CLI}/test/ci-report.test.ts`,
+    because:
+      "a hub outage turns every green job red, and a side channel becomes a merge gate",
+  },
+  {
+    label: "a same-job re-run is filed as a fresh attempt",
+    file: `${CLI}/src/ci-report/run.ts`,
+    from: '  const rerun: CiReportRerun = { kind: "same_job", of: primaryId };',
+    to: '  const rerun = { kind: "new_attempt", of: primaryId } as unknown as CiReportRerun;',
+    test: `${CLI}/test/ci-report.test.ts`,
+    because:
+      "a re-run that shared the runner's state is recorded as one that did not, " +
+      "and a host-level flake it cannot rule out reads as a fresh-runner confirmation (05 §10 D2)",
+  },
+  {
+    label: "a red suite is never re-run",
+    file: `${CLI}/src/ci-report/run.ts`,
+    from: "  if (primary.failedFiles.length === 0) {",
+    to: "  if (primary.failedFiles.length >= 0) {",
+    test: `${CLI}/test/ci-report.test.ts`,
+    because:
+      "no rerun_of row ever arrives, every red test stays unconfirmed / awaiting_rerun " +
+      "for good, and the flake filter can never say confirmed or flaky",
+  },
+  {
+    label: "a missing junit file is reported as a completed run",
+    file: `${CLI}/src/ci-report/report.ts`,
+    from: '  outcome: "crashed",',
+    to: '  outcome: "completed",',
+    test: `${CLI}/test/ci-report.test.ts`,
+    because:
+      "a runner that died before writing its report is stored as a green run of zero " +
+      "tests, enters every base window, and vouches for tests it never ran (CI-7 at the source)",
+  },
+  {
+    label: "a list that filled the row cap claims completed",
+    file: `${CLI}/src/ci-report/report.ts`,
+    from: "  const truncated = nonGreen.length >= CI_MAX_TEST_ROWS;",
+    to: "  const truncated = nonGreen.length > CI_MAX_TEST_ROWS;",
+    test: `${CLI}/test/ci-report-build.test.ts`,
+    because:
+      "a run with exactly CI_MAX_TEST_ROWS non-green tests is sent as completed, the hub " +
+      "refuses the whole body, and the reddest runs are the ones never recorded",
+  },
+  {
+    label: "an ambiguous test keeps every copy",
+    file: `${CLI}/src/ci-report/report.ts`,
+    from: "    (testCase) => (counts.get(testIdOf(testCase)) ?? 0) === 1,",
+    to: "    (testCase) => (counts.get(testIdOf(testCase)) ?? 0) >= 1,",
+    test: `${CLI}/test/ci-report-build.test.ts`,
+    because:
+      "two tests the hub cannot tell apart are sent under one id, one lands, and a " +
+      "verdict attaches to whichever copy the primary key happened to keep (CI-6)",
+  },
+  {
+    label: "a skipped test is dropped rather than stored",
+    file: `${CLI}/src/ci-report/report.ts`,
+    from: '  testCase.status !== "passed";',
+    to: '  testCase.status === "failed" || testCase.status === "errored";',
+    test: `${CLI}/test/ci-report-build.test.ts`,
+    because:
+      "a test that stopped running looks green to every rule built on absence, and a " +
+      "stably-green base window is assembled out of tests nobody ran",
+  },
+  {
+    label: "the describe chain is split on the separator it is joined with",
+    file: `${CLI}/src/ci-report/junit.ts`,
+    from: "    chain: walk.suites.slice(FILE_SUITE_DEPTH).map((suite) => suite.name),",
+    to: '    chain: walk.suites.slice(FILE_SUITE_DEPTH).flatMap((suite) => suite.name.split(" > ")),',
+    test: `${CLI}/test/ci-report-junit.test.ts`,
+    because:
+      "a describe legitimately named `a > b` becomes two segments — the corruption " +
+      "that reading the chain from `classname` would have caused (CI-6, second case)",
+  },
+  {
+    label: "a half-written junit file is read to its last complete case",
+    file: `${CLI}/src/ci-report/junit.ts`,
+    from: "  if (walk.open.length > 0) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/ci-report-junit.test.ts`,
+    because:
+      "a runner that died mid-write is reported as a completed run over the cases it " +
+      "managed to write, and every test after the cut reads as green",
+  },
+  {
+    label: "the repository key is sent as GitHub spells it",
+    file: `${CLI}/src/ci-report/args.ts`,
+    from: "    repo: slug === null ? null : normalizeRemoteUrl(`${server}/${slug}`),",
+    to: "    repo: slug === null ? null : `${server}/${slug}`,",
+    test: `${CLI}/test/ci-report-args.test.ts`,
+    because:
+      "a row keyed https://github.com/Acme/API joins no session's github.com/acme/api, " +
+      "and ci coverage reads unknown for a repo that reports on every push (05 §3.1)",
+  },
+  {
+    label: "a lane field may carry a control character",
+    file: `${CLI}/src/ci-report/args.ts`,
+    from: "  if (CONTROL_PATTERN.test(value)) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/ci-report-args.test.ts`,
+    because:
+      "a --job carrying a newline forges a second line of the reporter's own output in the job log",
+  },
+  {
+    label: "the hub's run id is trusted whatever its shape",
+    file: `${CLI}/src/ci-report/post.ts`,
+    from: "    !CI_RUN_ID_PATTERN.test(id) ||",
+    to: "    false ||",
+    test: `${CLI}/test/ci-report.test.ts`,
+    because:
+      "whatever a hub answers becomes the next row's rerunOf and is printed into the log unchecked",
+  },
+  {
+    label: "the hub's refusal sentence reaches the CI log unsanitized",
+    file: `${CLI}/src/ci-report/render.ts`,
+    from: "  bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);",
+    to: "  message;",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "a hostile hub's error message carries control characters and renderer " +
+      "structure into every reader of the job log",
+  },
+  {
+    // CI-1 (spec 05 §7): the one guard on §1.3's silent-zero-join defect. The
+    // hub holds no repository and cannot tell a merge sha from a head sha, so
+    // the guard is a string assertion over the workflow, stated as such.
+    label: "the reporter step sends the merge sha on a pull request",
+    file: ".github/workflows/ci.yml",
+    from: "--sha ${{ github.event.pull_request.head.sha || github.sha }}",
+    to: "--sha ${{ github.sha }}",
+    test: `${CLI}/test/ci-report-workflow.test.ts`,
+    because:
+      "every pull-request row is keyed on a merge commit no developer's history " +
+      "contains, joins zero sessions, and reads exactly like CI never ran",
+  },
+  {
+    label: "the reporter step runs only when the suite is green",
+    file: ".github/workflows/ci.yml",
+    from: "        if: always()",
+    to: "        if: success()",
+    test: `${CLI}/test/ci-report-workflow.test.ts`,
+    because:
+      "a regression is precisely the run that is never reported, and the hub " +
+      "holds only the green runs of every lane",
+  },
+  {
+    label: "the reporter step names a pull request's lane after its merge ref",
+    file: ".github/workflows/ci.yml",
+    from: "--ref ${{ github.head_ref || github.ref_name }}",
+    to: "--ref ${{ github.ref_name }}",
+    test: `${CLI}/test/ci-report-workflow.test.ts`,
+    because:
+      "every pull-request lane is filed under `<n>/merge`, a ref no developer's " +
+      "session names, instead of the branch spec 05 §3.1 says a ref is",
+  },
+  {
+    label: "the published CLI has no ci-report command",
+    file: `${CLI}/src/bin/crosscheck.ts`,
+    from: '  if (command === "ci-report") {',
+    to: '  if (command === "ci-report-unshipped") {',
+    test: `${CLI}/test/ci-report-entry.test.ts`,
+    because:
+      "another repository's CI has no packages/cli/scripts/ to run, so the " +
+      "reporter reaches exactly one repository and every other lane stays unknown",
+  },
+  {
+    label: "a throw inside the reporter turns the CI job red",
+    file: `${CLI}/src/ci-report/entry.ts`,
+    from: "      exitCode: EXIT_OK,",
+    to: "      exitCode: 1,",
+    test: `${CLI}/test/ci-report-entry.test.ts`,
+    because:
+      "a side channel that blocks merges when it breaks is the block-never-inform " +
+      "spec 05 §8.3 refuses, and a team switches the reporter off after the first one",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12686,6 +12880,12 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/ci-report-args.test.ts 2
+ * PRINTS: packages/cli/test/ci-report-build.test.ts 3
+ * PRINTS: packages/cli/test/ci-report-entry.test.ts 2
+ * PRINTS: packages/cli/test/ci-report-junit.test.ts 2
+ * PRINTS: packages/cli/test/ci-report-workflow.test.ts 3
+ * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
@@ -12844,7 +13044,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
- * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 5
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
