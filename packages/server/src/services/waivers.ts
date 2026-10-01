@@ -30,7 +30,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
 
 import type { WaiverAuthority } from "@crosscheck/schema";
 
@@ -299,6 +299,49 @@ export const readLiveWaivers = async (
     }
   }
   return live;
+};
+
+/** How many open fences the approval page lists; a team with more has a different problem. */
+const MAX_LIVE_WAIVERS_LISTED = 100;
+
+/** One open fence as the approval page shows it (04a §6). */
+export interface OpenFence extends LiveWaiver {
+  readonly repo: string;
+  readonly pinId: string;
+  readonly surface: string;
+}
+
+/**
+ * EVERY FENCE OPEN RIGHT NOW, across the hub — what a person may amend or
+ * close on /ui/waivers. Each pin once, answered by the same rule `pin list`
+ * uses (`readLiveWaivers`, current version only), so the page cannot show a
+ * fence as open that a verdict would read as closed.
+ */
+export const listOpenFences = async (input: {
+  readonly db: DbExecutor;
+  readonly now: Date;
+}): Promise<readonly OpenFence[]> => {
+  const granted = await input.db
+    .selectDistinct({ repo: pins.repo, id: pins.id, version: pins.version, surface: pins.surface })
+    .from(fenceWaivers)
+    .innerJoin(pins, eq(fenceWaivers.pinId, pins.id))
+    .where(and(eq(fenceWaivers.kind, "grant"), gt(fenceWaivers.expiresAt, input.now)))
+    .limit(MAX_LIVE_WAIVERS_LISTED);
+  const byRepo = new Map<string, (typeof granted)[number][]>();
+  for (const pin of granted) {
+    byRepo.set(pin.repo, [...(byRepo.get(pin.repo) ?? []), pin]);
+  }
+  const open: OpenFence[] = [];
+  for (const [repo, repoPins] of byRepo) {
+    const live = await readLiveWaivers({ db: input.db, repo, pins: repoPins, now: input.now });
+    for (const pin of repoPins) {
+      const waiver = live.get(pin.id);
+      if (waiver !== undefined) {
+        open.push({ ...waiver, repo, pinId: pin.id, surface: pin.surface });
+      }
+    }
+  }
+  return open;
 };
 
 /** Why a write was refused — an enum, so a route never invents prose. */

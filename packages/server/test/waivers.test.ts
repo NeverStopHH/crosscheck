@@ -17,6 +17,7 @@ import { describe, expect, test } from "bun:test";
 import { fenceWaivers, pins } from "../src/db/schema.ts";
 import {
   grantWaiver,
+  listOpenFences,
   readLiveWaiver,
   readLiveWaivers,
   revokeWaiver,
@@ -103,6 +104,45 @@ const setup = async (): Promise<{
   const { credentialId } = await seedPasskey(harness.db, nick.developerId);
   return { harness, developerId: nick.developerId, credentialId };
 };
+
+describe("listOpenFences — the approval page's list (04a §6)", () => {
+  test("a live grant is listed once with its pin; a revoked one is not", async () => {
+    // Arrange
+    const { harness, developerId, credentialId } = await setup();
+    const granted = await grantWaiver({
+      db: harness.db,
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      credentialId,
+      requestId: null,
+      reason: "Rollout is blocked; the fix lands Monday",
+      expiresAt: hourAfter,
+      now: NOW,
+    });
+    const grantId = "id" in granted ? granted.id : "";
+
+    // Act
+    const open = await listOpenFences({ db: harness.db, now: NOW });
+    await revokeWaiver({
+      db: harness.db,
+      repo: REPO,
+      waiverId: grantId,
+      grantedBy: developerId,
+      credentialId,
+      reason: "The fix landed early",
+      now: NOW,
+    });
+    const afterRevoke = await listOpenFences({ db: harness.db, now: NOW });
+
+    // Assert
+    expect(open).toEqual([
+      expect.objectContaining({ id: grantId, repo: REPO, pinId: PIN, authority: "passkey" }),
+    ]);
+    expect(afterRevoke).toEqual([]);
+  });
+});
 
 describe("readLiveWaiver", () => {
   test("no grant at all leaves the fence closed", async () => {
