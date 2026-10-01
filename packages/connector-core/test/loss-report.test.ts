@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { EMPTY_LOSS_REPORT, TelemetryLossReportSchema } from "@crosscheck/schema";
 
-import { HUB_COVERAGE_WINDOW_DAYS } from "../src/constants.ts";
+import { HUB_COVERAGE_WINDOW_DAYS, MAX_LOSS_LEDGER_BYTES } from "../src/constants.ts";
 import {
   ensureDir,
   repoKey,
@@ -184,6 +184,23 @@ describe("an instant a ledger cannot date never reaches the wire, and never narr
     expect(local.isFloor).toBe(true);
   });
 
+  test("a capture ledger at its cap makes the newest loss unknown, so a loss it refused still reads as current", async () => {
+    // Arrange: the ledger filled with this repo's month-old losses, then one it refuses today
+    const path = await home();
+    await ensureDir(join(path, "state"));
+    const old = `${JSON.stringify({ at: T0.toISOString(), kind: "hook_timed_out", count: 1, key: KEY, detail: "stop" })}\n`;
+    await writeFile(lossLedgerPath(path), old.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / old.length)), "utf8");
+    await recordCaptureLoss(path, { kind: "hook_timed_out", count: 1, key: KEY, detail: "stop", now: T4 });
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert: the refused loss is invisible to the span, so the span may not claim T0 is the newest
+    expect(local.report.newestAt).toBeNull();
+    expect(local.report.oldestAt).toBe(T0.toISOString());
+    expect(local.isFloor).toBe(true);
+  });
+
   test("an undatable .drops line leaves the span unknown too", async () => {
     // Arrange
     const path = await home();
@@ -246,6 +263,20 @@ describe("one spelling for doctor and status", () => {
     expect(dropped).toContain("(other 2)");
     expect(dropped).toContain("(4 records, other, undated)");
     expect(dropped).not.toContain("\u001b");
+  });
+
+  test("a record kind outside the connector's vocabulary is kept as other, in the ledger and on the line", async () => {
+    // Arrange
+    const path = await home();
+
+    // Act
+    await recordDrop(path, KEY, SLUG, 2, "ignored", T1, { "Bad\u001b[31mKind": 2 });
+    const { ignored } = formatLossLines(await readLocalLosses(path, KEY));
+
+    // Assert
+    const ledger = await Bun.file(spoolDropsPath(path, KEY, SLUG)).text();
+    expect(ledger).toContain('"kinds":{"other":2}');
+    expect(ignored).toContain("(other 2)");
   });
 
   test("a prototype member's name as a reason is no reason: unattributed on the wire, other on the line", async () => {

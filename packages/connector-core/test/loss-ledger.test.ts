@@ -83,11 +83,13 @@ describe("readCaptureLosses", () => {
   });
 
   test("past the byte cap the ledger takes no more detail and says the count is a floor", async () => {
-    // Arrange
+    // Arrange: WELL-FORMED lines of another repo up to the cap, so an append
+    // that slipped past the cap would land as a readable line of this one
     const path = await home();
     const ledger = lossLedgerPath(path);
     await mkdir(dirname(ledger), { recursive: true });
-    await writeFile(ledger, "x".repeat(MAX_LOSS_LEDGER_BYTES), "utf8");
+    const other = `${JSON.stringify({ at: T0.toISOString(), kind: "hook_timed_out", count: 1, key: OTHER_REPO, detail: "stop" })}\n`;
+    await writeFile(ledger, other.repeat(Math.ceil(MAX_LOSS_LEDGER_BYTES / other.length)), "utf8");
 
     // Act
     await recordCaptureLoss(path, { kind: "hook_timed_out", count: 1, key: THIS_REPO, detail: "stop", now: T0 });

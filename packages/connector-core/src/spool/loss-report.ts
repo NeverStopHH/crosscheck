@@ -117,9 +117,16 @@ const spanOf = (
   if (drops.undated + capture.undated + unreadable > 0 || markerUndated) {
     return { oldestAt: null, newestAt: null };
   }
+  // A CAPTURE LEDGER AT ITS CAP REFUSES NEW LINES, so its newest instant
+  // freezes at the last one it took while hooks keep timing out: fourteen
+  // days later the hub would read every one of them as outside the window.
+  // The oldest is still a true lower bound — a refused loss is newer — but
+  // the newest is unknown, and unknown is read as current (§4.5).
   return {
     oldestAt: earlierIso(earlierIso(drops.oldestAt, marker), capture.oldestAt),
-    newestAt: laterIso(laterIso(drops.newestAt, marker), capture.newestAt),
+    newestAt: capture.atCap
+      ? null
+      : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),
   };
 };
 
@@ -309,7 +316,7 @@ const captureLine = (local: LocalLosses): string | null => {
     return null;
   }
   const floor = capture.atCap
-    ? " — the ledger is at its cap, so these counts are floors"
+    ? " — the ledger is at its cap, so these counts are floors and the hub reads the newest of them as current"
     : "";
   return `${parts.join(" · ")}${floor}`;
 };

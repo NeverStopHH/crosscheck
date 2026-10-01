@@ -12753,6 +12753,294 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CLI}/test/doctor-losses.test.ts`,
     because: "doctor and status disagree about the same machine: one names the loss, the other says nothing",
   },
+  // The hub half (loss-accounting §4.4–§4.6), LOSS-1 to LOSS-5.
+  {
+    // LOSS-1's named mutation: drop the `lost > 0` branch.
+    label: "a reported loss leaves the agent rung complete",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  if (gaps === 0 && lost === 0) {",
+    to: "  if (gaps === 0) {",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "a connector that wrote 382 records discarded into its ledger and said so on every heartbeat is read as watching, and isJudgeable answers true over the gap",
+  },
+  {
+    // LOSS-2's named mutation: always answer telemetry_lost.
+    label: "an ignored record kind is answered as an ordinary loss",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: '  if (ignored > 0) {\n    return "record_kinds_ignored";\n  }\n',
+    to: "",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "the one loss whose remedy is specific — upgrade the hub — reads like every other, and nobody learns that the hub is what threw the records away",
+  },
+  {
+    label: "a reap outranks a reported loss in the reason word",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: '  if (lost > 0) {\n    return "telemetry_lost";\n  }\n',
+    to: "",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "a repo with a reap and a written loss reads session_reaped, a decision the hub can revoke, over the fact the connector wrote down and nobody can",
+  },
+  {
+    // LOSS-3's named mutation: remove the third membership.
+    label: "a lossy session leaves a scoped question",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: " or ${inArray(agentSessions.id, lossy)})`;",
+    to: ")`;",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "the lost record may be exactly the target on the pinned path, and the scoped answer the pin lane judges with reads complete without it",
+  },
+  {
+    // LOSS-4's named mutation: drop the `newest_at > since` term.
+    label: "a loss older than the window still gaps the window",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "(${table.lossNewestAt} is null or ${table.lossNewestAt} > ${since})",
+    to: "true",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "one expired batch two years ago keeps every window of every repo on the machine incomplete for ever, and UNATTRIBUTED becomes unreachable",
+  },
+  {
+    label: "a report of zero turns the rung incomplete",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "${table.lossTotal} > 0",
+    to: "true",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "every upgraded connector sends total 0 on every beat, and every repo it reports for reads incomplete on a statement of health",
+  },
+  {
+    label: "the loss instant never reaches gapSince",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      lost > 0 ? toIso(row?.lossSince) : null,",
+    to: "      null,",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "the qualifier says since when observation was unreliable from the reap alone, a later start than the loss — the narrower gap §4.5 refuses",
+  },
+  {
+    // LOSS-5's named mutation: store the keys as sent.
+    label: "a loss kind the hub does not know is stored under its own name",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "        lossKinds: foldLossKinds(report.kinds),",
+    to: "        lossKinds: report.kinds,",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "a connector-chosen string lands on a row coverage renders — an author-written slot on a record 03 §3.3 says carries none",
+  },
+  {
+    label: "an absent loss report is stored as a report of zero",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  report === undefined\n    ? {}\n",
+    to: "  report === undefined\n    ? { lossReportedAt: now, lossTotal: 0 }\n",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "a connector from before the field is recorded as having reported no losses — the silent \"never reported\" §4.7 and refusal 2 keep apart from zero",
+  },
+  {
+    label: "an existing hub never gains the loss columns",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;\n",
+    to: "",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "a hub upgraded in place fails every heartbeat that carries a report, because the column the UPDATE writes does not exist",
+  },
+  {
+    label: "the loss-kind fold keeps a key the hub does not know",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "    const kind: LossKind = isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
+    to: "    const kind = key as LossKind;",
+    test: `${SCHEMA}/test/telemetry-loss.test.ts`,
+    because: "the fold every hub write goes through passes a connector's free-text key straight onto the row",
+  },
+  // The connector half (loss-accounting §4.1–§4.3), LOSS-6 to LOSS-9 and LOSS-11.
+  {
+    // LOSS-6's named mutation: read `ignored` as 0.
+    label: "the flush reads the hub's ignored count as zero",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const ignored = summary.ignored;",
+    to: "  const ignored = 0;",
+    test: `${CORE}/test/spool-ignored.test.ts`,
+    because:
+      "a newer connector against an older hub loses whole record kinds with a 200 and a cursor move, while spool drops prints none — the hole B2-01 closed for rejected, left open beside it",
+  },
+  {
+    label: "an ignored drop forgets which record kinds the hub ignored",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '      kindsWithStatus(records, summary.results, "ignored"),',
+    to: "      {},",
+    test: `${CORE}/test/spool-ignored.test.ts`,
+    because: "doctor can say a hub ignored records but not which kinds, so nobody knows what an upgrade would recover",
+  },
+  {
+    // LOSS-7's named mutation: leave the marker's count out.
+    label: "the loss report leaves the unrecorded marker's count out",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    drops.summary.records + (unrecorded?.count ?? 0) + capture.total + unreadable;",
+    to: "    drops.summary.records + capture.total + unreadable;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "the batch the ledger itself could not take — the one loss doctor already calls a lower bound — vanishes from the total the hub reads",
+  },
+  {
+    label: "an archive from before reasons reports its count under no kind",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      unattributed > 0\n        ? addCounts(byReason, { [UNATTRIBUTED_DROP_REASON]: unattributed })\n        : byReason,",
+    to: "      byReason,",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the kinds of a pre-reason archive sum to less than its total, and the report's kinds understate the loss",
+  },
+  {
+    // LOSS-8's named mutation: drop `losses` from the heartbeat body.
+    label: "the heartbeat body leaves the loss report behind",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      ...(status === undefined ? {} : { status }),\n      ...(losses === undefined ? {} : { losses }),\n",
+    to: "      ...(status === undefined ? {} : { status }),\n",
+    test: `${CORE}/test/session-losses.test.ts`,
+    because:
+      "the most frequent carrier sends nothing, so a loss mid-session reaches the hub's coverage only when the session ends — or never, for the session the reaper closes",
+  },
+  {
+    label: "the heartbeat flow reads the report and never sends it",
+    file: `${CORE}/src/flows/heartbeat.ts`,
+    from: "  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);",
+    to: "  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status);",
+    test: `${CORE}/test/session-losses.test.ts`,
+    because: "every host's beat (Claude, Cursor, ACP) goes through this one flow, so all three stop reporting at once",
+  },
+  {
+    label: "registration never carries the post-mortem losses",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      losses,\n",
+    to: "",
+    test: `${CORE}/test/session-losses.test.ts`,
+    because:
+      "the call that runs right after reap — where a dead session's expired records are counted — tells the hub nothing about them",
+  },
+  {
+    label: "a session's end never carries its last report",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "endSession(input.hub, input.crosscheckSessionId, seq, losses)",
+    to: "endSession(input.hub, input.crosscheckSessionId, seq)",
+    test: `${CORE}/test/session-losses.test.ts`,
+    because: "a batch the final drain saw refused or ignored reaches the hub only with whichever session registers next",
+  },
+  {
+    // LOSS-9's named mutation: remove telemetry_lost from the label map.
+    label: "the telemetry_lost reason renders as a session that went quiet",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '    case "telemetry_lost":\n',
+    to: '    case "telemetry_lost_unmapped":\n',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "a reader is told the sessions went quiet when the connector wrote down that it lost what they captured — two facts, and the second one is lost in the wording",
+  },
+  {
+    label: "the record_kinds_ignored reason renders as a session that went quiet",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '    case "record_kinds_ignored":\n',
+    to: '    case "record_kinds_ignored_unmapped":\n',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the sentence whose remedy is the hub's version never names the hub",
+  },
+  {
+    label: "a loss sentence prints the hub's gapSince as sent",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "      const loss = lossOpening(row.reason, when);",
+    to: "      const loss = lossOpening(row.reason, row.gapSince);",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "the one line on every answer surface that §3.3 says carries no untrusted slot carries the hub's string verbatim on the two loss reasons",
+  },
+  {
+    // LOSS-11's named mutation: stop counting the cap.
+    label: "paths past the per-call cap are cut without a count",
+    file: `${CORE}/src/flows/capture-targets.ts`,
+    from: "    capped: input.paths.length - examined,",
+    to: "    capped: 0,",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because:
+      "a tool call that touched more files than MAX_TARGETS_PER_INVOCATION loses the rest to a `break`, and the hub's coverage never hears of it",
+  },
+  {
+    label: "a path the secret scan refuses is dropped without a count",
+    file: `${CORE}/src/flows/capture-targets.ts`,
+    from: "      secretPaths += 1;\n",
+    to: "",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because: "an edit to a file whose name holds a token is lost to a `continue`, and a pin can name exactly that path",
+  },
+  {
+    label: "an ACP read the cap cut is counted as a lost edit",
+    file: `${CORE}/src/flows/capture-targets.ts`,
+    from: "  if (input.editFired === false) {\n    return;\n  }\n",
+    to: "",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because: "every agent read with locations past the cap marks the repo incomplete for a loss of nothing",
+  },
+  {
+    label: "an edit outside every root of the repo is dropped without a count",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from: "    resolution.outsideDrops > 0\n",
+    to: "    false\n",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because:
+      "a linked worktree with no committed config is this repo's file, and its edits vanish into a session-state counter the hub never sees",
+  },
+  {
+    label: "a read outside every root is counted as a lost edit",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from: "    targets.editFired !== false &&\n",
+    to: "",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because: "an ACP read of a file in another directory turns this repo's coverage incomplete",
+  },
+  {
+    label: "a loss no repo could be named for is charged to no repo",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "      if (entry.key !== null && entry.key !== key) {",
+    to: "      if (entry.key !== key) {",
+    test: `${CORE}/test/loss-ledger.test.ts`,
+    because:
+      "a hook that timed out before repo identity resolved is a known loss with no coverage reason anywhere — the outcome decision 10.2 exists to refuse",
+  },
+  {
+    label: "the capture-loss ledger grows without bound",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "    if (size >= MAX_LOSS_LEDGER_BYTES) {\n      return;\n    }\n",
+    to: "",
+    test: `${CORE}/test/loss-ledger.test.ts`,
+    because: "a machine whose hooks time out every call appends a line per hook for ever, and every report re-reads all of it",
+  },
+  {
+    label: "a capture-loss detail is stored as the writer passed it",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "  detail === null ? null : DETAIL_PATTERN.test(detail) ? detail : OTHER_DETAIL;",
+    to: "  detail;",
+    test: `${CORE}/test/loss-ledger.test.ts`,
+    because: "a host event name outside the writer's alphabet lands in a file doctor prints",
+  },
+  {
+    label: "an ignored line keeps a record kind outside the connector's vocabulary",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "addCount(screened, RECORD_KIND_PATTERN.test(kind) ? kind : OTHER_KIND, count)",
+    to: "addCount(screened, kind, count)",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "a kind name the record carried is written to a ledger doctor prints, unscreened",
+  },
+  {
+    label: "a capture ledger at its cap freezes the newest loss it reports",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    newestAt: capture.atCap\n      ? null\n      : laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
+    to: "    newestAt: laterIso(laterIso(drops.newestAt, marker), capture.newestAt),",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because:
+      "a machine whose ledger filled a month ago keeps losing hooks, the report's newest stays a month old, and the hub reads the repo as complete",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12893,6 +13181,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
+ * PRINTS: packages/connector-core/test/capture-losses.test.ts 5
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
@@ -12908,7 +13197,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 9
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 12
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
@@ -12939,7 +13228,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
- * PRINTS: packages/connector-core/test/loss-report.test.ts 7
+ * PRINTS: packages/connector-core/test/loss-ledger.test.ts 3
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 11
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -12963,11 +13253,13 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
+ * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
+ * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
@@ -12990,6 +13282,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/schema/test/telemetry-loss.test.ts 1
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
@@ -12998,9 +13291,10 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
+ * PRINTS: packages/server/test/coverage-losses.test.ts 9
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
- * PRINTS: packages/server/test/ddl-sync.test.ts 6
+ * PRINTS: packages/server/test/ddl-sync.test.ts 7
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2

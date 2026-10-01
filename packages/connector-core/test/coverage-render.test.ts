@@ -586,6 +586,27 @@ describe("§3.3's claim, attacked: the line has no untrusted slot", () => {
       expect(clause.includes(payload), `coverage-note/${id}`).toBe(false);
     }
   });
+
+  test("LOSS-9: the two loss sentences hold the same invariants with the corpus in gapSince", () => {
+    for (const reason of ["telemetry_lost", "record_kinds_ignored"] as const) {
+      for (const { id, payload } of INJECTION_CORPUS) {
+        // Arrange: the loss reason on the agent rung, the hub-sent strings hostile
+        const record = recordOf([
+          row("agent_event", "incomplete", reason, payload, payload),
+          row("git", "complete", "commits_reported", null, payload),
+        ]);
+
+        // Act
+        const clause = coverageClause(record, NOW);
+
+        // Assert: the sentence opens as the loss sentence and carries nothing the hub wrote
+        assertUntrustedCharacters(clause, `coverage-note/${reason}/${id}`);
+        expect(clause.includes(payload), `coverage-note/${reason}/${id}`).toBe(false);
+        expect(clause).toContain("on this repo");
+        expect(clause).not.toContain("%");
+      }
+    }
+  });
 });
 
 describe("§5.3: first and uncuttable in the briefing", () => {
