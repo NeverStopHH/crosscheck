@@ -12659,7 +12659,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 07 §12. `unclear` abstains from precision and counts toward coverage.
     label: "an abstention is scored as a miss",
-    file: `${SERVER}/src/services/pilot-report.ts`,
+    file: `${SERVER}/src/services/pilot-label-figures.ts`,
     from: "  const verdicts = tally.helpful + tally.noise;",
     to: "  const verdicts = tally.helpful + tally.noise + tally.unclear;",
     test: `${SERVER}/test/pilot-report.test.ts`,
