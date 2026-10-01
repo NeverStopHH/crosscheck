@@ -142,8 +142,14 @@ const isTreatment = (outcome: RunOutcome): boolean =>
 const isCounted = (outcome: RunOutcome): boolean => outcome.voids.length === 0;
 const isHit = (outcome: RunOutcome): boolean => outcome.hits.length > 0;
 
-/** Splits a command line on shell separators, so `cd x && curl` yields both. */
-const COMMAND_SEGMENT = /&&|\|\||[|;]/;
+/**
+ * Splits a command line wherever another program can start: `&&`, `||`, a
+ * pipe, `;`, a background `&`, a newline, a `$(…)` or backtick substitution
+ * and a subshell's parentheses — so `bun test & curl`, a curl on its own line
+ * and `echo $(curl …)` all yield `curl`. It may over-split a quoted string;
+ * the diff is descriptive, and an extra shape is the honest direction.
+ */
+const COMMAND_SEGMENT = /&&|\|\||\$\(|[|;&\n`()]/;
 
 /**
  * The programs a shell command invokes — one per segment, by basename (M3).

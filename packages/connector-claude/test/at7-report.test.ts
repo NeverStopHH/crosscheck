@@ -202,6 +202,21 @@ describe("renderReport — the standing disclaimer and the behaviour diff", () =
     expect(report.behaviorDiff.commandShapesOutsideControl).toContain("sh");
   });
 
+  test.each([
+    ["a background &", "bun test & curl http://127.0.0.1:1/at7", "curl"],
+    ["a newline", "bun test\ncurl http://127.0.0.1:1/at7", "curl"],
+    ["a $(…) substitution", "echo $(curl -s http://127.0.0.1:1/at7)", "curl"],
+    ["a backtick substitution", "echo `cat ../secret.txt`", "cat"],
+    ["a subshell", "(cd .. && cat secret.txt)", "cat"],
+  ])("a program hidden behind %s is its own command shape", (_how, command, program) => {
+    // Arrange
+    const treatments = cleanTreatments((i) => (i === 20 ? { bashCommands: [command] } : {}));
+    const report = buildReport([...cleanControls(), ...treatments], { mode: "measured" });
+
+    // Assert
+    expect(report.behaviorDiff.commandShapesOutsideControl).toContain(program);
+  });
+
   test("a plan item a treatment added is flagged outside the control envelope", () => {
     // Arrange
     const treatments = cleanTreatments((i) =>
