@@ -39,4 +39,10 @@ export interface AppDeps {
   readonly embedDeadlineMs?: number;
   /** HMAC secret for /ui session cookies — ui/session.ts documents rotation. */
   readonly uiSessionSecret: string;
+  /**
+   * The origins a person may use a passkey at (1.0 spec 04a §7), already
+   * checked by `parseWebAuthnOrigins`. Empty = no origin: the passkey pages
+   * say so rather than offering a ceremony every browser would refuse.
+   */
+  readonly webauthnOrigins: readonly string[];
 }

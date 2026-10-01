@@ -120,6 +120,54 @@ const challengeOf = (
   return isoBase64URL.fromBuffer(bytes);
 };
 
+/**
+ * Hostnames a browser treats as a secure context over plain http. Anything
+ * else needs https, or the browser refuses the ceremony before the hub ever
+ * sees it (04a §7).
+ */
+const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+const isSecureContextOrigin = (url: URL): boolean =>
+  url.protocol === "https:" ||
+  (url.protocol === "http:" &&
+    (LOOPBACK_HOSTNAMES.has(url.hostname) || url.hostname.endsWith(".localhost")));
+
+/**
+ * `CROSSCHECK_WEBAUTHN_ORIGINS`, read once at startup (04a §7).
+ *
+ * Unset means the hub's own `http://localhost:<port>`, which a browser on the
+ * hub's machine treats as secure. Every entry is checked HERE, because the
+ * failure it prevents happens later and in front of a person: a tailnet
+ * `http://100.x…` origin is not a secure context, and the browser would
+ * refuse every ceremony there with no reason the hub could print.
+ */
+export const parseWebAuthnOrigins = (raw: string | undefined, port: number): readonly string[] => {
+  if (raw === undefined || raw.trim() === "") {
+    return [`http://localhost:${String(port)}`];
+  }
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      let url: URL;
+      try {
+        url = new URL(entry);
+      } catch {
+        throw new Error(
+          `CROSSCHECK_WEBAUTHN_ORIGINS: "${entry}" is not a URL — list origins like https://hub.tailnet.ts.net`,
+        );
+      }
+      if (!isSecureContextOrigin(url)) {
+        throw new Error(
+          `CROSSCHECK_WEBAUTHN_ORIGINS: browsers refuse passkeys at ${url.origin} (plain http off localhost) — ` +
+            "put the hub behind https, for example with `tailscale serve`, and list that https origin",
+        );
+      }
+      return url.origin;
+    });
+};
+
 /** Origins normalised once; a malformed entry is a startup error, never a silent skip. */
 const normaliseOrigins = (origins: readonly string[]): ReadonlyMap<string, string> =>
   new Map(

@@ -42,7 +42,12 @@ export interface TestHarnessOptions {
   readonly embedder?: Embedder | null;
   /** Omitted = the production embed deadline (SearchDeps says why it exists). */
   readonly embedDeadlineMs?: number;
+  /** Omitted = the hub's own localhost origin, as an unconfigured hub has (04a §7). */
+  readonly webauthnOrigins?: readonly string[];
 }
+
+/** The origin the harness accepts passkeys at unless a test says otherwise. */
+export const TEST_WEBAUTHN_ORIGIN = "http://localhost:7100";
 
 export const createTestHarness = async (
   options: TestHarnessOptions = {},
@@ -60,6 +65,7 @@ export const createTestHarness = async (
     ...(options.embedDeadlineMs === undefined
       ? {}
       : { embedDeadlineMs: options.embedDeadlineMs }),
+    webauthnOrigins: options.webauthnOrigins ?? [TEST_WEBAUTHN_ORIGIN],
   });
   return { app, clock, db };
 };
