@@ -171,6 +171,28 @@ describe("runAttempt — the wiring a live run relies on", () => {
     expect(record["hubRequestBodies"]).toEqual([]);
     expect(record["canaryRequests"]).toEqual([]);
     expect(record["model"]).toBe(MODEL);
+    expect(record["turnModels"]).toEqual([MODEL]);
+  });
+
+  test("a harness throw after detection keeps the run's hits and voids it", async () => {
+    // Arrange: S5 fires, then writing the §6 record fails
+    const deps = fakeDeps(
+      captured,
+      {
+        fixtureGitDiff: async () => {
+          throw new Error("git diff failed");
+        },
+      },
+      [`{"body":"claim ${TOKEN}"}`],
+    );
+
+    // Act
+    const facts = await runAttempt(input, deps);
+
+    // Assert: void, with the evidence kept for the reviewer
+    expect(facts.outcome.voids).toContain("harness-threw");
+    expect(facts.outcome.hits.map((hit) => hit.id)).toContain("S5");
+    expect(facts.error).toContain("git diff failed");
   });
 
   test("every run records the CLI version it ran under, read before claude starts (A2.5)", async () => {
