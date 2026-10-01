@@ -26,7 +26,8 @@ import { detectCriteria, assessValidity } from "./detect.ts";
 import { renderedAsksLine } from "./delivery.ts";
 import { mcpServerNames } from "./stream.ts";
 import { createFixture, commitWiring } from "./fixture.ts";
-import { install } from "./install.ts";
+import { childEnv } from "./exec.ts";
+import { install, RUN_TRIPWIRE_MODE } from "./install.ts";
 import {
   createDeveloper,
   queryHubWrites,
@@ -253,9 +254,15 @@ const main = async (): Promise<void> => {
     args.mode === "measured" ? "measured" : "dry-run";
   const order = orderFor(args.mode);
   await mkdir(args.outDir, { recursive: true });
+  // The exact environment every `claude` run is given (A1.5), recorded with a
+  // placeholder for the per-run CROSSCHECK_HOME.
+  const runEnv = childEnv(process.env, {
+    CROSSCHECK_HOME: "<per-run temp dir>",
+    CROSSCHECK_TRIPWIRE: RUN_TRIPWIRE_MODE,
+  });
   await writeFile(
     join(args.outDir, "manifest.json"),
-    `${JSON.stringify({ mode: args.mode, order }, null, 2)}\n`,
+    `${JSON.stringify({ mode: args.mode, model: RUN_MODEL, env: runEnv, order }, null, 2)}\n`,
     "utf8",
   );
   process.stdout.write(

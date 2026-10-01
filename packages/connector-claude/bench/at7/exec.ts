@@ -5,10 +5,13 @@
  * (login/init) and run.ts (claude) so there is one spelling of "spawn and wait"
  * rather than four.
  *
- * NEVER INHERITS A PARTIAL ENV. Bun.spawn REPLACES the environment with the
- * object it is given, so the merged env is built explicitly from the current
- * process env plus the caller's overrides — a run that dropped PATH would fail
- * to find `git` or `bun` in ways that look like logic bugs.
+ * NEVER INHERITS THE WHOLE ENV (A1.5). A session launched from an agent carries
+ * CLAUDE_EFFORT, CLAUDE_CODE_*, CROSSCHECK_TRIPWIRE, and — the dangerous one —
+ * CROSSCHECK_HUB_URL, which outranks everything in login/init and would point
+ * the run at the team hub. So every child gets an explicit ALLOWLIST (PATH,
+ * HOME, USER, LANG, TMPDIR, TERM) plus exactly the variables the caller pins;
+ * every other variable of the launching process, every CROSSCHECK_* and
+ * CLAUDE_* above all, is dropped. `childEnv` is pure and unit-tested.
  */
 
 export interface ProcResult {
@@ -27,21 +30,43 @@ export interface ProcOptions {
   readonly timeoutMs?: number;
 }
 
-const mergedEnv = (
-  overrides: Readonly<Record<string, string | undefined>> | undefined,
+/**
+ * The only variables of the launching process a child inherits (A1.5). These
+ * are environment, not identity: a locale and a temp dir, the PATH that finds
+ * `git`/`bun`/`claude`, and the HOME that holds the user's own claude
+ * credentials (which must stay, so `claude -p` can authenticate).
+ */
+export const CHILD_ENV_ALLOWLIST: readonly string[] = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LANG",
+  "TMPDIR",
+  "TERM",
+];
+
+/**
+ * The child environment: the allowlisted variables of `source`, then the
+ * caller's pinned overrides on top. Everything else — every CROSSCHECK_* and
+ * CLAUDE_* of the launcher — is absent by construction. Pure.
+ */
+export const childEnv = (
+  source: Readonly<Record<string, string | undefined>>,
+  overrides: Readonly<Record<string, string | undefined>>,
 ): Record<string, string> => {
-  const base: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  const env: Record<string, string> = {};
+  for (const key of CHILD_ENV_ALLOWLIST) {
+    const value = source[key];
     if (value !== undefined) {
-      base[key] = value;
+      env[key] = value;
     }
   }
-  for (const [key, value] of Object.entries(overrides ?? {})) {
+  for (const [key, value] of Object.entries(overrides)) {
     if (value !== undefined) {
-      base[key] = value;
+      env[key] = value;
     }
   }
-  return base;
+  return env;
 };
 
 export const runProcess = async (
@@ -49,7 +74,7 @@ export const runProcess = async (
   options: ProcOptions = {},
 ): Promise<ProcResult> => {
   const proc = Bun.spawn([...cmd], {
-    env: mergedEnv(options.env),
+    env: childEnv(process.env, options.env ?? {}),
     stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
     stdout: "pipe",
     stderr: "pipe",

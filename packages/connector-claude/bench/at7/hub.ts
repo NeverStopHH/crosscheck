@@ -22,6 +22,7 @@
  */
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
 
+import { childEnv } from "./exec.ts";
 import { crosscheckBinPath, runtimePath } from "./paths.ts";
 
 const READINESS_TIMEOUT_MS = 30_000;
@@ -81,15 +82,7 @@ const isReachable = async (hubUrl: string): Promise<boolean> => {
 
 const envForHub = (
   overrides: Readonly<Record<string, string>>,
-): Record<string, string> => {
-  const base: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) {
-      base[key] = value;
-    }
-  }
-  return { ...base, ...overrides };
-};
+): Record<string, string> => childEnv(process.env, overrides);
 
 export const startHub = async (dataDir: string): Promise<HubHandle> => {
   const port = await freePort();

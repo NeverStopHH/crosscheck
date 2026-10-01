@@ -18,12 +18,20 @@
  * left untouched so claude's own login still works) and the two paths init
  * wrote, which the caller checks and commits.
  */
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 import { runProcess } from "./exec.ts";
 import { commandPrefix, crosscheckBinPath, runtimePath } from "./paths.ts";
+
+/**
+ * The tripwire mode the run pins (A1.5). The product default `ask` is a
+ * one-shot DENY under `-p` with no person at the prompt — not what a developer
+ * experiences; the connector itself names `notice` for headless sessions. Same
+ * in both arms.
+ */
+export const RUN_TRIPWIRE_MODE = "notice";
 
 export interface InstallInput {
   /** The throwaway CROSSCHECK_HOME for this run — under `runTempDir`. */
@@ -75,10 +83,37 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 
+/**
+ * Throws unless the `.crosscheck.json` init wrote names the run's OWN hub
+ * (A1.5 "Wrong hub"). A launcher's `CROSSCHECK_HUB_URL` outranks everything in
+ * init, so a leak would wire the fixture's hooks to the team hub; this is the
+ * last line that refuses it. Pure, over the raw file contents.
+ */
+export const assertRepoConfigHub = (raw: string, expectedHubUrl: string): void => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`.crosscheck.json is unreadable: ${raw.slice(0, 80)}`);
+  }
+  const hubUrl =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)["hubUrl"]
+      : undefined;
+  if (hubUrl !== expectedHubUrl) {
+    throw new Error(
+      `.crosscheck.json names hub ${String(hubUrl)}, not the run's own ${expectedHubUrl} — refusing`,
+    );
+  }
+};
+
 export const install = async (input: InstallInput): Promise<InstallResult> => {
   assertHomeUnderRun(input.home, input.runTempDir);
   await mkdir(input.home, { recursive: true });
-  const env = { CROSSCHECK_HOME: input.home };
+  const env = {
+    CROSSCHECK_HOME: input.home,
+    CROSSCHECK_TRIPWIRE: RUN_TRIPWIRE_MODE,
+  };
 
   const login = await runProcess(
     [runtimePath(), crosscheckBinPath(), "login", input.hubUrl],
@@ -110,5 +145,8 @@ export const install = async (input: InstallInput): Promise<InstallResult> => {
   if (!(await exists(settingsPath)) || !(await exists(mcpPath))) {
     throw new Error("crosscheck init did not write settings.json and .mcp.json");
   }
+  // A1.5 "Wrong hub": the committed config must name the run's own hub, never a
+  // team hub a leaked CROSSCHECK_HUB_URL could have written.
+  assertRepoConfigHub(await readFile(repoConfigPath, "utf8"), input.hubUrl);
   return { env, settingsPath, mcpPath, repoConfigPath };
 };
