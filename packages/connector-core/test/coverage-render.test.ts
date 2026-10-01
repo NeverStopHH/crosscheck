@@ -13,6 +13,7 @@
  * briefing and MCP corpora use.
  */
 import { describe, expect, test } from "bun:test";
+import { stateOfOrderReason } from "@crosscheck/schema";
 
 import { MAX_BRIEFING_CHARS, MAX_COVERAGE_LINE_CHARS } from "../src/constants.ts";
 import { QUOTED_DATA_NOTICE, renderBriefing } from "../src/briefing/render.ts";
@@ -114,21 +115,61 @@ describe("01a §3.7: the order block on the coverage line", () => {
     expect(coverageClause(record, NOW)).toContain("order: undeclared (no_session_in_scope)");
   });
 
-  test("the order fragment follows both judging rungs, so a full line drops it before either", () => {
-    // Arrange: both rungs gapped, the longest order word.
-    const record = withOrder(
-      recordOf([
-        row("agent_event", "incomplete", "session_silent", GAP_ISO, GAP_ISO),
-        row("git", "incomplete", "commit_authors_unreported", GAP_ISO, GAP_ISO),
-      ]),
-      { state: "partial", reason: "ambiguous_session_possible" },
-    );
+  test("on the fullest line the git rung gives up its instant before the order block's state word", () => {
+    // Arrange: both rungs gapped with an instant each, asked about a file set,
+    // and the longest state word — 143+ characters before the order block.
+    const record: CoverageRecord = {
+      ...withOrder(
+        recordOf([
+          row("agent_event", "incomplete", "session_silent", GAP_ISO, GAP_ISO),
+          row("git", "incomplete", "commit_authors_unreported", GAP_ISO, GAP_ISO),
+        ]),
+        { state: "unavailable", reason: "no_emitter" },
+      ),
+      scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+    };
     // Act
     const clause = coverageClause(record, NOW);
     // Assert
-    const order = clause.indexOf("order:");
+    expect(clause).toBe(
+      `Coverage incomplete: agent sessions on these files went quiet ${GAP_SHOWN} (unclosed); commit authors with no reported session; order: unavailable.`,
+    );
     expect(clause.length).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
-    expect(order === -1 || order > clause.indexOf("commit")).toBe(true);
+  });
+
+  test("the order block's state word survives every shape the line can take", () => {
+    // Arrange: every rung state and reason for both judging rungs, every ci
+    // state, both scopes, and every order reason with its own state.
+    const ci = (state: CoverageState): CoverageSourceRecord =>
+      row("ci", state, state === "incomplete" ? "ci_lanes_missing" : "ci_not_reported_yet");
+    const missing: string[] = [];
+    for (const agentState of COVERAGE_STATES)
+      for (const agentReason of COVERAGE_REASONS)
+        for (const gitState of COVERAGE_STATES)
+          for (const gitReason of COVERAGE_REASONS)
+            for (const ciState of ["complete", "incomplete", "unknown"] as const)
+              for (const paths of [undefined, ["src/a.ts"]])
+                for (const reason of COVERAGE_ORDER_REASONS) {
+                  const state = stateOfOrderReason(reason);
+                  const record: CoverageRecord = {
+                    ...recordOf([
+                      row("agent_event", agentState, agentReason, GAP_ISO, GAP_ISO),
+                      row("git", gitState, gitReason, GAP_ISO, GAP_ISO),
+                      ci(ciState),
+                    ]),
+                    scope: paths === undefined ? { sinceIso: GAP_ISO } : { sinceIso: GAP_ISO, paths },
+                    order: { state, reason },
+                  };
+                  // Act
+                  const clause = coverageClause(record, NOW);
+                  // Assert (collected: one failure line, not 373k)
+                  const silent = clause.startsWith("Coverage unknown: no coverage report");
+                  const holds = clause.length <= MAX_COVERAGE_LINE_CHARS;
+                  if (!holds || (!silent && !clause.includes(`order: ${state}`))) {
+                    missing.push(clause);
+                  }
+                }
+    expect(missing.slice(0, 3)).toEqual([]);
   });
 
   test("every order state and reason fits the bound beside the commonest rungs", () => {

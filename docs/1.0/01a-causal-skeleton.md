@@ -1311,8 +1311,9 @@ The evidence for each row:
 
 - **The coverage line.** The fragment `order: <state> (<reason>)` sits after both judging rungs
   (`connector-core/src/coverage/render.ts:369`).
-- **What a full line spends first** (`render.ts:417`): the order block's reason first, then the ages. The
-  order block's state word is never spent.
+- **What a full line spends first** (`coverageClause` in `render.ts`): the order block's reason first, then
+  the ages, then the git rung's instant. The order block's state word is never spent: `plainestLine`
+  reserves its room before it chooses the rungs (§13.9, H1).
   - The ages outrank the reason because COV-11 rests on them: a caveat repeated every day is told apart
     from a recurring gap only by its age (`coverage-fire-rate.test.ts`).
   - So CSK-9's `order: partial (declaration_contradicted)` renders in full wherever the line has room. On
@@ -1363,3 +1364,14 @@ The evidence for each row:
     provider_undeclared`, so the failure falls toward the weakest reading. The caps for the kinds that
     can no longer be stored `guaranteed` stay, as a second guard for a row that reaches the table
     another way.
+- **H1 — the coverage line could cut the order block's state word.** §13.6 said it never did, and the
+  test beside the rule accepted the cut. `fit` stops at the first fragment that does not fit, and
+  with both rungs gapped and carrying an instant (up to 158 characters before the order block)
+  `; order: <state>` was that fragment. Under a path scope that showed `order: partial` and hid `undeclared`, the longer word.
+  - The plainest line now picks its rungs to leave the state word's room. The git rung keeps its words
+    and gives up its instant ("commit authors with no reported session"). The reserved rungs then get
+    what is left.
+  - The failure falls on the git rung's instant, never on a rung or on the state.
+  - `coverage-render.test.ts` checks every shape (373,248: every rung state and reason for both
+    judging rungs, every ci state, both scopes, every order reason). The state word is present and the
+    line is within 160 in all of them. The reviewer's probe now counts 0 drops.

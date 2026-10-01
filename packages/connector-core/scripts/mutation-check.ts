@@ -6374,10 +6374,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // SessionStart briefing, for as long as the gap lasted.
     label: "a gap on a lane the sentence cannot name reads as no gap",
     file: `${CORE}/src/coverage/render.ts`,
-    from: `  const reserved = record.sources
-    .filter((row) => row.source !== "agent_event" && row.source !== "git")
-    .map(reservedFragment);`,
-    to: "  const reserved: (string | null)[] = [];",
+    // Re-pointed by review H1, which moved the reserved rungs into their own
+    // function: the same defect — every reserved rung renders as nothing.
+    from: "    .map(reservedFragment)\n",
+    to: "    .map(() => null)\n",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "a CI lane mid-flight renders `Coverage incomplete: agent sessions " +
@@ -6423,9 +6423,9 @@ export const MUTATIONS: readonly Mutation[] = [
     // ages cost 20 characters against a 160 bound.
     label: "an age is bought with somebody else's gap",
     file: `${CORE}/src/coverage/render.ts`,
-    // Re-pointed when the order block joined the line (01a §3.7): the same
-    // defect — the aged build handed to `fit` whatever it costs.
-    from: "  return fit(head, holding ?? fragmentsOf(record, now, false, false));",
+    // Re-pointed when the order block joined the line (01a §3.7), and again by
+    // review H1: the same defect — the aged build handed to `fit` whatever it costs.
+    from: "  return holding === undefined ? plainestLine(head, record, now) : lineOf(head, holding);",
     to: "  return fit(head, fragmentsOf(record, now, true, true));",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
@@ -13430,7 +13430,7 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the coverage line drops the order block",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "    orderFragment(record, orderReason),\n",
+    from: "  orderFragment(record, orderReason),\n",
     to: "",
     test: `${CORE}/test/coverage-render.test.ts`,
     because: "a capped declaration is stored and read and shown on no surface a person reads (CSK-9)",
@@ -13446,8 +13446,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the order block outranks the rungs that decide judging",
     file: `${CORE}/src/coverage/render.ts`,
-    from: '    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),\n    gitFragment(rowOf(record, "git"), now, ages),\n    orderFragment(record, orderReason),\n',
-    to: '    orderFragment(record, orderReason),\n    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),\n    gitFragment(rowOf(record, "git"), now, ages),\n',
+    // Re-pointed by review H1: the rungs moved into `rungFragments`.
+    from: "  ...rungFragments(record, now, ages, true),\n  orderFragment(record, orderReason),\n",
+    to: "  orderFragment(record, orderReason),\n  ...rungFragments(record, now, ages, true),\n",
     test: `${CORE}/test/coverage-render.test.ts`,
     because: "on a full line `fit` drops the git rung to keep a comparability note — the caveat that gates judging goes first",
   },
@@ -13892,6 +13893,23 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SCHEMA}/test/causal-guarantees.test.ts`,
     because: "a commit row is stored observed unconditionally, so a bracketed commit declaration is a claim the hub can prove false and stores anyway",
   },
+  {
+    label: "the plainest coverage line spends the order block's room on the rungs",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  const room = MAX_COVERAGE_LINE_CHARS - `; ${order}`.length;",
+    to: "  const room = MAX_COVERAGE_LINE_CHARS;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "two gapped rungs with their instants fill the line, `fit` cuts the fragment after them, and `order: undeclared` vanishes where `order: partial` would have shown",
+  },
+  {
+    label: "the fullest coverage line drops both judging rungs to keep the order word",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "    [true, false]\n",
+    to: "    [true]\n",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the line keeps `order: <state>` and loses the commit-author gap the head word says is there",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14050,7 +14068,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 16
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 18
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2

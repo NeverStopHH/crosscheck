@@ -209,10 +209,16 @@ const agentEventFragment = (
   }
 };
 
+/**
+ * `withInstant` is false only on the plainest line (`plainestLine`): the rung
+ * keeps its words and gives up its instant so the order block's state word
+ * fits beside it.
+ */
 const gitFragment = (
   row: CoverageSourceRecord | undefined,
   now: Date,
   ages: boolean,
+  withInstant: boolean,
 ): string | null => {
   if (row === undefined) {
     return null;
@@ -230,7 +236,7 @@ const gitFragment = (
           ? "git evidence is stale"
           : `git evidence last collected ${age} ago`;
       }
-      const since = instant(row.gapSince);
+      const since = withInstant ? instant(row.gapSince) : null;
       // Same rule as the rung above it: the instant, and the age beside it,
       // so the two halves of one sentence can be compared without arithmetic.
       return since === null
@@ -363,33 +369,71 @@ const fit = (head: string, fragments: readonly string[]): string => {
  * sentence, no author text. Always rendered, `guaranteed` included: the line
  * is where a reader learns whether a timing answer beside it can be trusted,
  * and silence would read as the strong case. Placed AFTER the two judging
- * rungs; on a line too full for it the REASON goes first, then the ages, and
- * the state word never — so it is never the fragment `fit` drops.
+ * rungs; on a line too full for it the REASON goes first, then the ages, then
+ * the git rung's instant, and the state word never: `plainestLine` reserves
+ * its room before it chooses the rungs.
  */
 const orderFragment = (record: CoverageRecord, withReason: boolean): string =>
   withReason
     ? `order: ${record.order.state} (${record.order.reason})`
     : `order: ${record.order.state}`;
 
+const isPresent = (fragment: string | null): fragment is string => fragment !== null;
+
+/** The two rungs that decide judging, agent_event first. */
+const rungFragments = (
+  record: CoverageRecord,
+  now: Date,
+  ages: boolean,
+  gitInstant: boolean,
+): readonly string[] =>
+  [
+    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),
+    gitFragment(rowOf(record, "git"), now, ages, gitInstant),
+  ].filter(isPresent);
+
+const reservedFragments = (record: CoverageRecord): readonly string[] =>
+  record.sources
+    .filter((row) => row.source !== "agent_event" && row.source !== "git")
+    .map(reservedFragment)
+    .filter(isPresent);
+
 const fragmentsOf = (
   record: CoverageRecord,
   now: Date,
   ages: boolean,
   orderReason: boolean,
-): readonly string[] => {
-  const reserved = record.sources
-    .filter((row) => row.source !== "agent_event" && row.source !== "git")
-    .map(reservedFragment);
-  return [
-    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),
-    gitFragment(rowOf(record, "git"), now, ages),
-    orderFragment(record, orderReason),
-    ...reserved,
-  ].filter((fragment): fragment is string => fragment !== null);
-};
+): readonly string[] => [
+  ...rungFragments(record, now, ages, true),
+  orderFragment(record, orderReason),
+  ...reservedFragments(record),
+];
+
+const lineOf = (head: string, fragments: readonly string[]): string =>
+  fragments.length === 0 ? `${head}.` : `${head}: ${fragments.join("; ")}.`;
 
 const holdsEvery = (head: string, fragments: readonly string[]): boolean =>
-  `${head}: ${fragments.join("; ")}.`.length <= MAX_COVERAGE_LINE_CHARS;
+  lineOf(head, fragments).length <= MAX_COVERAGE_LINE_CHARS;
+
+/**
+ * THE LAST RESORT, AND THE PLACE THE ORDER BLOCK'S STATE WORD IS RESERVED
+ * (review H1). `fit` keeps fragments in order and stops at the first that
+ * does not fit, so on a line whose two gapped rungs already filled it the
+ * order block — placed after them — was the fragment cut, whatever its state.
+ * Here the rungs are chosen to leave its room first: with the git rung's
+ * instant when that fits, without it when it does not. Only then does `fit`
+ * spend what is left, on the reserved rungs; the rungs and the state word,
+ * chosen to fit together, are never what it cuts.
+ */
+const plainestLine = (head: string, record: CoverageRecord, now: Date): string => {
+  const order = orderFragment(record, false);
+  const room = MAX_COVERAGE_LINE_CHARS - `; ${order}`.length;
+  const rungs =
+    [true, false]
+      .map((gitInstant) => rungFragments(record, now, false, gitInstant))
+      .find((candidate) => lineOf(head, candidate).length <= room) ?? [];
+  return fit(head, [...rungs, order, ...reservedFragments(record)]);
+};
 
 /**
  * THE AGE IS DECORATION; THE RUNG IS THE CAVEAT. Both rungs gapped with an
@@ -408,19 +452,20 @@ export const coverageClause = (record: CoverageRecord, now: Date): string => {
     return HUB_SILENT;
   }
   const head = headOf(record);
-  // Spent in this order: the order block's REASON first, then the ages, and
-  // the order block's state word never (01a §3.7). The ages outrank the
-  // reason because COV-11 rests on them: a caveat repeated every day is told
-  // apart from a recurring gap only by its age (coverage-fire-rate.test.ts),
-  // while the reason is printed in full by doctor beside its count. `fit` cuts
-  // whole trailing fragments only if even the plainest line will not hold.
+  // Spent in this order: the order block's REASON first, then the ages, then
+  // the git rung's instant, and the order block's state word never (01a
+  // §3.7). The ages outrank the reason because COV-11 rests on them: a caveat
+  // repeated every day is told apart from a recurring gap only by its age
+  // (coverage-fire-rate.test.ts), while the reason is printed in full by
+  // doctor beside its count.
   const attempts = [
     fragmentsOf(record, now, true, true),
     fragmentsOf(record, now, true, false),
     fragmentsOf(record, now, false, true),
+    fragmentsOf(record, now, false, false),
   ];
   const holding = attempts.find((fragments) => holdsEvery(head, fragments));
-  return fit(head, holding ?? fragmentsOf(record, now, false, false));
+  return holding === undefined ? plainestLine(head, record, now) : lineOf(head, holding);
 };
 
 export const coverageNote = (
