@@ -12700,6 +12700,59 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "an escape sequence in a .drops reason or the unrecorded marker is printed by doctor verbatim, on a surface whose registration says it prints enum words only",
   },
+  {
+    // LOSS-10's named mutation: WARN on incomplete too.
+    label: "doctor calls a hub that recorded the loss an old hub",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: '  if (agent?.state === "complete") {',
+    to: '  if (agent?.state === "complete" || agent?.state === "incomplete") {',
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because:
+      "every repo whose hub DID turn the rung incomplete for the loss is told to upgrade its hub, and the one WARN that names a real old hub is noise nobody reads",
+  },
+  {
+    label: "doctor never names a hub that stripped the loss report",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: "    return contradiction(report);",
+    to: "    return null;",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because:
+      "an older hub answers 200 and drops `losses`, coverage reads complete over 382 known losses, and the one place the skew could be seen says nothing",
+  },
+  {
+    label: "doctor holds a loss older than the hub's window against the hub",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: "  if (!hasRecentLoss(report, now)) {",
+    to: "  if (report.total === 0) {",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because:
+      "a loss a month old — outside the window the hub's rung reads — WARNs for ever that the hub has not recorded it, and the remedy it names cannot clear it",
+  },
+  {
+    label: "doctor drops the coverage-reporting line on its way out",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(reporting === null ? [] : [reporting]),\n",
+    to: "",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the cross-check is computed and never printed",
+  },
+  {
+    label: "doctor never prints the record kinds an older hub ignored",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: '    lineCheck("hub ignored records", lines.ignored),\n',
+    to: "",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because:
+      "a newer connector against an older hub loses whole record kinds and doctor's only hint is a reason word inside the spool-drops parenthesis",
+  },
+  {
+    label: "status never prints the losses line",
+    file: `${CLI}/src/cli/status.ts`,
+    from: '  return parts.length === 0 ? [] : [`losses: ${parts.join(" · ")}`];',
+    to: "  return [];",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "doctor and status disagree about the same machine: one names the loss, the other says nothing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -12759,6 +12812,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
+ * PRINTS: packages/cli/test/doctor-losses.test.ts 6
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 5
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
