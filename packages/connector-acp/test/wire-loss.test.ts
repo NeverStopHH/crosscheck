@@ -32,9 +32,15 @@ import type { CaptureHub, Harness } from "./fixtures/capture-harness.ts";
 let hub: CaptureHub;
 const cleanups: string[] = [];
 
+/**
+ * Booting the in-process hub (PGlite) took longer than bun's 5 s hook default
+ * on a loaded machine (review LOW); the boot is not what this file measures.
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+
 beforeAll(async () => {
   hub = await bootCaptureHub("acp-wire-loss");
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   hub.server.stop(true);

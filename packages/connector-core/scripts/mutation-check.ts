@@ -13389,6 +13389,15 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${ACP}/test/wire-loss.test.ts`,
     because: "a session/new whose answer arrives after its eviction never registers, and the proxy's only record of it is pending-evictions in the exit log",
   },
+  {
+    // Review LOW: not every register carried the report.
+    label: "a recovered session registers without the loss report",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "    losses: await readTelemetryLossReport(ctx.config.home, ctx.repoKey),\n",
+    to: "",
+    test: `${CONNECTOR}/test/recovery-losses.test.ts`,
+    because: "a hook installed mid-session rebuilds its row as 'never reported' until a heartbeat lands, and a recovered session that ends first never reports at all",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13511,6 +13520,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
