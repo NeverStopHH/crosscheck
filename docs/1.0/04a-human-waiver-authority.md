@@ -255,3 +255,115 @@ all, every one `caught`).
 API and a curl line are documented in the README); a notification to the
 approver when a request arrives (requests show on `/ui/waivers` and in
 `crosscheck pin list`).
+
+## 12. What the security review found (2026-10-01)
+
+*Appended, never inserted.* An adversarial review of the branch, with probes
+against an in-memory hub. It found no path by which the api key alone, or the
+api key plus a UI session, writes a grant or revocation, enrols a passkey,
+shortens the cool-off, or gets a signature accepted under other terms. What it
+did find is below: first what was fixed, then what stays open and why.
+
+**Fixed:**
+
+1. **Two live grants on one fence** (5327f79). `requestWaiver` checked only for a
+   pending request, and `approveRequest` never checked for a live waiver. An
+   approval of one hour beside an earlier fourteen-day grant left the long one
+   running. Closing the visible grant then said "shut again" while the fence
+   read open. Now a request or an approval that meets an open fence is refused
+   with `fence_open`; its terms change by amending. The approval checks inside
+   its own transaction. Closing reads the fence back and says STILL OPEN when
+   another grant holds it, which covers a 0.10 terminal grant.
+2. **The api key could fill every prompt slot** (5d080d2). The agent and the
+   person are the same developer, and minting a revoke or `authorise_enrolment`
+   ceremony needs no gesture. Eight minted prompts locked the person out of
+   closing a fence. Ceremonies now belong to the browser session that minted
+   them (keyed by a digest of the session token). Neither cap refuses any more:
+   - a session at its cap of 4 evicts its own oldest prompt;
+   - a developer at its cap of 16 evicts the oldest prompt of the *other*
+     session that holds the most;
+   - only the hub-wide cap of 1024 refuses.
+
+   Another session can neither finish nor spend the person's prompt.
+3. **A refused verify left its ceremony standing** (5d080d2). The route refused
+   "credential cannot sign here" before `take()`. It now spends the ceremony
+   with `discard`, so §5's "single use, even on failure" holds there too. One
+   refinement: a caller that does not own the ceremony cannot spend it.
+4. **`crossOrigin: true` without `topOrigin` was accepted** by the library
+   (5d080d2). The hub now refuses it; a ceremony only ever runs on the hub's own
+   page.
+5. **IP-literal origins passed the startup check** (5d080d2), although browsers
+   refuse an IP address as an RP ID. They now stop the hub at startup, with what
+   to use instead.
+6. **A `localhost` origin was believed from any machine** (5d080d2). A localhost
+   passkey syncs to the person's other devices. An agent on one of them could
+   serve its own `http://localhost:<port>` page, collect the person's touch, and
+   post the assertion to the hub across the tailnet. A `localhost` origin is now
+   accepted only from a loopback peer (Bun's `requestIP`, `http/peer.ts`). An
+   unknown peer counts as not loopback.
+7. **Hub text reached the agent's terminal raw on `pin --waive`** (d392f33). The
+   failure sentence is now bounded the way doctor's `hubSaid` bounds it. Waiver
+   and request expiries on `pin list` and `status` are re-serialised by the CLI,
+   and an unreadable one prints as such.
+8. **The self-reported AAGUID was announced as fact** (8675882). It now reads
+   *says it is iCloud Keychain, unverified*. The sign counter is only ever
+   raised (`GREATEST`), and `enrolled_via`, `revoked_by_kind` and `sign_count`
+   are constrained in both DDL sources.
+9. **The announcement was a truncated page** (086aec6). The hub listed 20
+   enrolments, and doctor counted cooling-off ones within that page. The hub now
+   counts the whole window (`enrolmentsTotal`, `coolingOff`), and status prints
+   "and N more". A hub that does not answer is a WARN, not a PASS; a 404 reads
+   as a hub that predates passkeys.
+10. **§4.3's UI announcement was never built** (6cbc17b). It is built on
+    `/ui/passkeys` rather than the members page and feed: every member sees
+    every enrolment of the window there. The hub serves this page itself, so it
+    reaches the person's browser without passing through a CLI that runs beside
+    the agent and reads a hub URL the agent can rewrite.
+11. **Two pins with the same surface looked identical on the approval card**
+    (9c58753). The cards now name the pin id.
+
+**Open, stated rather than hidden** (this corrects §8.1 and §8.4, which
+understated it):
+
+1. **On the hub's own host, nothing in this spec holds.** The hub runs as the
+   developer's OS user. The PGlite data directory and `hub.env` are readable by
+   anything running as that user. An agent there can stop the hub and write
+   rows directly: the database accepts a passkey row with `usable_from =
+   created_at` and a grant whose `authority` defaults to `terminal`. Database
+   constraints are correctness, not a boundary, against whoever can write the
+   database. So AT-6 is a **prevention for members on other machines**, and on
+   the hub host it is no gate at all. The remedy is operational: run the hub
+   under its own OS user, in a container, or on its own machine.
+2. **On the hub host, `http://localhost` is not a unique origin.** In the
+   review's probe, a second process of the same user bound `[::1]:<port>` while
+   the hub listened on IPv4. A browser that tries `::1` first then reaches the
+   impostor page, which can hand the hub's challenge (minted for the agent's
+   own request) to `navigator.credentials.get`. The person's Touch ID prompt
+   says only "localhost". **A passkey gesture shows no terms**: whoever controls
+   a page at an accepted origin gets a signature over their own terms. Item 6
+   above closes the remote variant. The local one is a case of 1. Two things
+   help on the hub host:
+   - list only the `https` tailnet origin in `CROSSCHECK_WEBAUTHN_ORIGINS`
+     there, and drop `localhost`;
+   - rely on the fact that every approval is visible afterwards: an open fence
+     shows on every member's `status` (count and next expiry) and on `pin list`
+     (who approved, with which authority).
+3. **An agent with many UI sessions can still contend for prompt slots.** Item 2
+   above makes that slower, never a signature. It fails closed, and the admin
+   token can still act.
+4. **Enrolment lockout.** During the cool-off the api key may revoke a cooling
+   passkey (§4.4), so it can keep revoking every passkey the person enrols. It
+   fails closed and is by design; the admin then enrols the person.
+5. **Revoking a passkey leaves open the fences it opened.** They run out on their
+   own expiry (at most `MAX_WAIVER_DAYS`) or are closed on `/ui/waivers`. They
+   are not closed automatically because an admin revocation has no authority to
+   write a closure under: `fence_waivers` records `passkey` or `terminal` only.
+   That is a decision for Nick (D-PK-1 below).
+6. **`status` and `doctor` run beside the agent.** The `hubUrl` they read is in
+   an agent-writable config. Teammates' terminals and the hub's own
+   `/ui/passkeys` are the independent channels (item 10).
+
+**D-PK-1, for Nick:** should revoking a passkey close every live grant it
+signed? The safe direction is yes. It needs either a third authority value
+(`admin`) for closures written by the admin token, or closures by a passkey
+revocation only.

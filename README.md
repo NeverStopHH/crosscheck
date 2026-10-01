@@ -215,22 +215,29 @@ curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
 ```
 
 The person opens `/ui/passkeys`, enters the code, and enrols the passkey. A new
-passkey can approve only after 24 hours, and until then `crosscheck status` and
-`crosscheck doctor` announce it to everyone. A passkey nobody expected is seen
-before it can act, and its owner can revoke it with nothing more than a login.
+passkey can approve only after 24 hours. Until then `crosscheck status`,
+`crosscheck doctor` and every member's `/ui/passkeys` announce it. A passkey
+nobody expected is seen before it can act, and its owner can revoke it with
+nothing more than a login.
 
 Browsers allow passkeys only over https, or on `localhost`. On the hub's own
-machine `http://localhost:7100` works as it is. Teammates on a tailnet need the
-hub behind https, for example `tailscale serve --bg 7100`. List every address
-people open it at, then restart the hub:
+machine `http://localhost:7100` works, and it is accepted only from that
+machine. Teammates on a tailnet need the hub behind https, for example
+`tailscale serve --bg 7100`. List every address people open it at, then restart
+the hub:
 
 ```bash
 CROSSCHECK_WEBAUTHN_ORIGINS=http://localhost:7100,https://hub.example.ts.net
 ```
 
-A passkey works only at the address it was enrolled at. What this still leaves
-open, such as a software passkey enrolled with a stolen code, is stated in
-[spec 04a §8](docs/1.0/04a-human-waiver-authority.md).
+A passkey works only at the address it was enrolled at.
+
+**The hub's own machine is the exception.** An agent running there as the same
+OS user can read the hub's database and bypass all of this. It can also put its
+own page in front of `localhost`. If agents run on the hub's machine, run the
+hub under its own OS user or on another machine. There, list only the https
+address. Everything this still leaves open is stated in
+[spec 04a §8 and §12](docs/1.0/04a-human-waiver-authority.md).
 
 #### What this makes visible about people
 
