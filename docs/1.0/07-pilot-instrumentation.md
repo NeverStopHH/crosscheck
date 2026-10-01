@@ -664,7 +664,9 @@ labelled" and changes nothing. Only the recipient may label (§11.2's route refu
 
 *Compatibility.* `off_target` stays in `PILOT_MARKS` as `PILOT_LEGACY_NOISE_MARK`: a body that still sends
 it is stored as `noise` (`storedMark`, `services/pilot.ts`), and rows a hub already holds are read as
-noise by every report query (`NOISE_WORDS`, `services/pilot-report.ts`). Nothing stored is rewritten. An
+noise by every report query (`NOISE_WORDS`, `services/pilot-report.ts`). *Corrected (§12.9, H1): they are
+not — counting them inside precision printed a measured 0% on every upgraded hub. They are a count of
+their own beside precision, and only the noisy-sessions floor still reads them as noise.* Nothing stored is rewritten. An
 older `crosscheck noise` keeps working against a new hub. A new CLI against an older hub sends `noise`,
 which the older hub refuses with its own sentence (400) — upgrade the hub first. The report's wire
 changed shape (the `offTarget*` fields became `noisySessions*`, the labelled figures and `cohorts` were
@@ -694,9 +696,12 @@ unreached intervention is offered again next run. Keys are read through an injec
 (`cli/terminal.ts`): raw mode for a key, restored in a `finally`; cooked mode for a reason line. The walk's
 sentences are their own framed corpus surface, `cli-pilot-label`. `crosscheck noise [<id>]` is kept as
 the one-word shortcut for `n`; its confirmation now says "noise" and a repeat no longer claims which word
-was said first.
+was said first. *Revised (§12.9): `crosscheck helpful [<id>]` is the same shortcut for `h` (M6), and the
+walk offers only interventions to sessions that started once labels were available (M5). "Human-only" is
+the CLI's rule, not something the hub can check (§12.9, "Can an agent label?").*
 
-A real run against an in-process hub (keys typed: `x`, `N` + a sentence, `h`, `s`, `U` + Enter):
+A real run against an in-process hub (keys typed: `x`, `N` + a sentence, `h`, `s`, `U` + Enter; re-run
+after the second review, §12.9):
 
 ```
 $ crosscheck pilot label
@@ -730,8 +735,10 @@ and the same repo's proof 4 afterwards (`crosscheck pilot --days 1`, two session
 
 ```
 4. proactive precision — what arrived unasked, as the person it reached labelled it
+   labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key
+   labelled figures count sessions from 2026-10-01, when labels became available here — earlier ones could not be labelled
    benefit 50.0 helpful per 100 sessions · burden 200.0 interventions per 100 sessions
-   precision 50% (1 helpful of 2 verdicts; target 50%, declared before measuring) · label coverage 75% (3 of 4 interventions labelled) · unclear 1 (abstained, not in the denominator)
+   precision 50% (1 helpful of 2 verdicts; at or above the 50% target, declared before measuring) · label coverage 75% (3 of 4 interventions labelled) · unclear 1 (abstained, not in the denominator)
    behavioural signal: opened per 100 sessions 0.0 (target 8, declared before measuring) — the agent pulled it; no person judged it
    noisy sessions per 100 50.0 (ceiling 20) — a FLOOR: labels are voluntary
    surface-ok marks 0
@@ -753,7 +760,9 @@ label coverage = (helpful + noise + unclear) / interventions   — on precision'
 ```
 
 A **population** is either the window — sessions that started in it, and the interventions delivered to
-them, whenever they were labelled — or one cohort (its `pilot_sessions` rows, no window). **`unclear` is
+them, whenever they were labelled — or one cohort (its `pilot_sessions` rows, no window). *Revised
+(§12.9, H1/M5): the window's labelled population starts at the later of the window's start and
+`team_settings.pilot_labels_since`; the formulas now live in `services/pilot-label-figures.ts`.* **`unclear` is
 excluded from the precision denominator and printed beside it**: an abstention scored as a miss would make
 precision fall with the labelers' honesty, scored as a hit it would inflate it, and dropping it from
 coverage would hide that the person looked. A figure that cannot be a number says why — `no_sessions`,
@@ -770,7 +779,10 @@ renamed). A row's cohort is decided at insert from how many OTHER rows the repo 
 updated, so a revived session keeps the cohort it entered and the split cannot measure the reaper.
 `pilot_sessions.cohort text NOT NULL DEFAULT 'discovery'` with a CHECK — a truthful backfill, because a hub
 under the old cap holds at most fifty rows. Past 200 the write is still refused and counted
-(`pilot_sessions_refused`). "Frozen once full" means **membership**: labels on a discovery intervention can
+(`pilot_sessions_refused`). *Corrected (§12.9): counting rows raced (M1) and followed the order sessions
+ended (M4); a slot is now a session's start position. The backfill was truthful for membership and not
+for the labelled figures (H1): the default is `legacy`, a third value in neither cohort. The refusals at
+this cap have their own counter (`pilot_set_refused`, M2); the CHECK reaches upgraded hubs too (L3).* "Frozen once full" means **membership**: labels on a discovery intervention can
 still arrive after the fiftieth session (within the walk's day, or by `noise <id>`). The report prints both
 cohorts side by side, each over its own sessions; the header and `doctor` print both fills.
 
@@ -780,7 +792,8 @@ before — `pilot_sessions.session_id` and `pilot_attributions.top_session_id` a
 (`server/test/retention-registry.test.ts`). **One consequence, stated:** while D-E (§11.8) stays open, the
 `pilot_sessions` root holds up to 200 sessions' skeleton per enrolled repo, four times the fifty §11.8
 weighed; confirming `non_retaining_edge` removes it. A reason lives as long as its mark, as every mark
-already did (§12.8).
+already did (§12.8). *(§12.9: plus an upgraded hub's 0.10 rows, at most the old fifty; `slot` is an
+integer column, no new session reference, so the classification is still exactly as before.)*
 
 **12.7 — What building it found.** (a) The label walk joined any work context on the hub for its title,
 so a client that aimed a delivery at another repo's context would read that repo's titles; the join is now
@@ -797,4 +810,54 @@ until they are recorded as deliveries; doing so needs a new ref kind. No minimum
 precision is compared with its target — coverage is printed on the same line instead; a threshold is the
 owner's call. The walk's window (one day) and bound (twenty) are declared, not measured. Reasons have no
 retention of their own; `PILOT_RETENTION_DAYS` would be the natural bound if the owner wants one.
+
+**12.9 — What the second review changed (2026-10-01).** A read-only adversarial review of this revision,
+with probes against an in-process hub; every finding was reproduced by a failing test before it was
+fixed, and each fix carries a mutation anchor.
+
+*Can an agent label? — stated plainly.* **Nothing at the hub can tell a person's label from an agent's.**
+The hub's only check is the literal `presence: "controlling_terminal"`, which any client can send;
+`capture_mode` is stamped `human` for every mark; the API key is plaintext in `~/.crosscheck/config.json`;
+and a pty wrapper (`script`) — or a host that runs an agent's commands in a real terminal — passes the
+CLI's TTY check. A label is attributed to a developer's key, and an agent acting for that developer uses
+the same key, so attribution cannot detect agent labelling either. The TTY gate is a rule the CLI keeps so
+that an agent does not label **by accident or by default**; it is not a wall. Proof 4 says this on its own
+line, beside "as the person it reached labelled it", and the walk's usage no longer claims more. Every
+labelled figure is therefore "labels made with a developer's key", read in the knowledge that a team which
+lets its agents run `crosscheck pilot label` measures the agents' taste.
+
+- **HIGH (H1) — an upgraded 0.10 hub printed precision 0% and benefit 0.0 as measurements.** Old rows were
+  backfilled into discovery and old `off_target` marks counted as noise, while nothing from before the
+  upgrade could ever be labelled helpful. Now: `team_settings.pilot_labels_since` (stamped whenever
+  enrolment turns on; backfilled to the first start of a labels-capable hub for repos already enrolled);
+  the labelled figures and reasons count only sessions started at or after
+  `max(window start, pilot_labels_since)` (this is also **M5**); 0.10 rows get cohort `legacy`, in neither
+  cohort and outside `used`; 0.10 `off_target` marks print as their own count outside precision, and only
+  the noisy-sessions floor (which predates the labels) still reads them as noise. The walk offers only
+  interventions whose label can count. Commits `005aaec`, `ea1736f`.
+- **MEDIUM (M1, M4) — slots raced and followed end order.** A slot is now a session's **start position**
+  in `(started_at, id)` order among the repo's sessions since labels were available — hub-stamped and never
+  deleted, so concurrent ends compute different slots without a lock — held by `UNIQUE(repo, slot)`. A
+  session that started before labels is outside the set and counted (`pilot_sessions_before_labels`). A
+  re-enrolment restamps `pilot_labels_since` and slots continue past the earlier rows. Measured: three
+  concurrent ends after 49 rows gave 52 in discovery before, exactly 50 after. Commits `982d015`, `5ee43bd`.
+- **MEDIUM (M2) — 0.10 refusals made a set of fifty read as full.** Refusals at the 200 cap have their own
+  counter (`pilot_set_refused`); the 0.10 counter is read as `legacyRefused`; "full" prints only when
+  `used ≥ cap`. The doctor test that pinned the misleading line was rewritten. Commit `091d465`.
+- **MEDIUM (M3) — 49.5% printed as "50%" beside the 50% target.** The side of the target comes from the
+  raw value, and one decimal is shown where rounding would make the two read alike. Commit `18022c0`.
+- **MEDIUM (M6) — noise was easier to record than helpful.** `crosscheck helpful [<id>]` is the same
+  one-word gesture as `noise` (same resolution, gate and lines, its own word). Chosen over recording each
+  label's path, which would have measured the bias while leaving it in the figure. Commit `2dad044`.
+- **LOW:** a NUL in a reason was a 500 (L1, `2339653`); the recipient is checked before the repo, so a
+  colleague's delivery named under another enrolled repo answers like a missing id (L2, `59dae94`); the
+  cohort CHECK now reaches upgraded hubs (L3, in `005aaec`); five comments that claimed more than the code
+  were corrected (L4, `4d117a9`); reasons come from exactly the sessions the tally counts (L5, `8c621de` —
+  which also removed a millisecond flake in two walk tests); a cohort's coverage carries its counts (L6,
+  `794769f`); a reason is measured in code points everywhere, as zod and `char_length` already did, and the
+  report's render budget never cuts a stored one (L7, `d939b98`).
+- **Also:** `pilot-report.ts` had grown past the 800-line ceiling; proof 4's labelled figures moved to
+  `services/pilot-label-figures.ts` (`fecffdd`). Still open, named: re-enrolment counts sessions of the
+  un-enrolled gap as before-labels rather than restarting the cohorts (the conservative choice — a second
+  preregistered cohort would be a different study); and agent labelling, above, has no hub-side remedy.
 
