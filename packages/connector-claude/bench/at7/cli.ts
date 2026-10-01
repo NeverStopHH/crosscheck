@@ -1,15 +1,15 @@
 /**
- * The AT-7 harness entry point and per-run orchestrator (09 §3, §8).
+ * The AT-7 harness entry point and sweep orchestrator (09 §3, §8).
  *
  *   bun packages/connector-claude/bench/at7/cli.ts --dry-run    --out <dir>
  *   bun packages/connector-claude/bench/at7/cli.ts --measured   --out <dir>
  *   bun packages/connector-claude/bench/at7/cli.ts --live-control [--out <dir>]
  *
  * Each run is fully isolated (§3): a fresh temp dir holding the fixture clone,
- * the hub's data dir and CROSSCHECK_HOME; a fresh hub; a fresh reader and dana.
- * The order is drawn once from the seeded manifest and written to the results
- * dir BEFORE the first run. Results live OUTSIDE the repo by default (a temp
- * root) unless --out is given.
+ * the hub's data dir and CROSSCHECK_HOME; a fresh hub; a fresh reader and dana
+ * (attempt.ts runs and records one attempt). The order is drawn once from the
+ * seeded manifest and written to the results dir BEFORE the first run.
+ * Results live OUTSIDE the repo by default (a temp root) unless --out is given.
  *
  * `--live-control` is a plumbing check, not part of the pre-registered run
  * order (§8 does not mention it): ONE control run to prove delivery, isolation
@@ -23,39 +23,20 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildManifest } from "./manifest-doc.ts";
-import { checkShellProfiles, profilePaths } from "./profile.ts";
-import { detectCriteria, assessValidity } from "./detect.ts";
-import { renderedAsksLine } from "./delivery.ts";
-import { mcpServerNames } from "./stream.ts";
-import { createFixture, commitWiring } from "./fixture.ts";
+import { harnessThrewFacts, runAttempt } from "./attempt.ts";
+import type { AttemptFacts } from "./attempt.ts";
 import { childEnv, runProcess } from "./exec.ts";
-import { install, RUN_TRIPWIRE_MODE } from "./install.ts";
-import { worktreeRoot } from "./paths.ts";
-import { createDeveloper, seedDanaWork, startHub } from "./hub.ts";
-import { startHubProxy } from "./proxy.ts";
+import { RUN_TRIPWIRE_MODE } from "./install.ts";
+import { buildManifest } from "./manifest-doc.ts";
 import { dryRunOrder, measuredOrder } from "./manifest.ts";
 import type { Arm, Slot } from "./manifest.ts";
-import {
-  CONTROL_NOTE,
-  PAYLOAD_TEMPLATES,
-  relevanceIntent,
-  relevanceTitle,
-  renderControlBody,
-  renderTreatmentBody,
-} from "./payloads.ts";
+import { worktreeRoot } from "./paths.ts";
+import { CONTROL_NOTE, PAYLOAD_TEMPLATES } from "./payloads.ts";
+import { checkShellProfiles, profilePaths } from "./profile.ts";
 import { buildReport, renderReport } from "./report.ts";
 import type { ReportMode, RunOutcome } from "./report.ts";
+import { claudeVersion } from "./run.ts";
 import { INITIAL_PROGRESS, recordVoidAttempt, remainingSlots } from "./sweep.ts";
-import {
-  claudeVersion,
-  collectWorkingTree,
-  driveClaude,
-  fixtureGitDiff,
-  RUN_MODEL,
-  runFixtureTests,
-  startCanary,
-} from "./run.ts";
 
 /** A string the briefing must carry to prove dana's work was shown (§7). */
 const DANA_MARKER = "slug bug";
@@ -68,11 +49,6 @@ interface CliArgs {
   readonly outDir: string;
   readonly resume: boolean;
 }
-
-const randomToken = (): string =>
-  `at7-${Array.from(crypto.getRandomValues(new Uint8Array(5)))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")}`;
 
 const parseArgs = (argv: readonly string[]): CliArgs => {
   // Explicit mode only: an unknown or typo'd flag must NOT default to a paid
@@ -94,209 +70,6 @@ const parseArgs = (argv: readonly string[]): CliArgs => {
 
 const armLabel = (arm: Arm): string =>
   arm.kind === "control" ? "control" : arm.payload;
-
-interface SlotFacts {
-  readonly outcome: RunOutcome;
-  readonly claudeVersion: string;
-  readonly model: string | null;
-  readonly mcpServers: readonly string[];
-  readonly plugins: readonly string[];
-  readonly briefing: string | null;
-  readonly timedOut: boolean;
-  /** Set only when a harness throw produced this (void) SlotFacts (H1). */
-  readonly error?: string;
-}
-
-const questionBodyFor = (arm: Arm, token: string, port: number): string =>
-  arm.kind === "control"
-    ? renderControlBody()
-    : renderTreatmentBody(arm.payload, { token, port });
-
-const runOneSlot = async (
-  slot: Slot,
-  outDir: string,
-  attempt: number,
-): Promise<SlotFacts> => {
-  const label = armLabel(slot.arm);
-  const slotDir = join(
-    outDir,
-    "runs",
-    `${String(slot.index).padStart(2, "0")}-${label}`,
-  );
-  // A fresh sub-dir per attempt: a re-run in the same slot must not collide
-  // with the voided attempt's fixture clone, hub data or stream (A1.6, H1).
-  const runDir = join(slotDir, `attempt-${String(attempt)}`);
-  const home = join(runDir, "crosscheck-home");
-  const hubData = join(runDir, "hub-data");
-  const rawStreamPath = join(runDir, "stream.jsonl");
-  await mkdir(runDir, { recursive: true });
-  await mkdir(hubData, { recursive: true });
-
-  const token = randomToken();
-  const canary = startCanary();
-  const questionBody = questionBodyFor(slot.arm, token, canary.port);
-  let hub: Awaited<ReturnType<typeof startHub>> | null = null;
-  let proxy: ReturnType<typeof startHubProxy> | null = null;
-  try {
-    hub = await startHub(hubData);
-    // The reader's connector talks to the hub THROUGH this logging proxy, so
-    // S5 can read every request body it sends (A1.7). dana seeds directly.
-    proxy = startHubProxy(hub.hubUrl);
-    const fixture = await createFixture(runDir);
-    // Neutral, fixed identities (M7): nothing here tells the model it is in a
-    // benchmark. The hub is fresh per run, so fixed names collide with nothing.
-    // The reader's name is never shown to the model; dana's "Dana" is.
-    const reader = await createDeveloper(hub, "Robin Avery", "robin@example.invalid");
-    const dana = await createDeveloper(hub, "Dana", "dana@example.invalid");
-    await seedDanaWork({
-      hub,
-      dana,
-      readerName: reader.name,
-      repoId: fixture.repoId,
-      headSha: fixture.headSha,
-      title: relevanceTitle(),
-      intentSummary: relevanceIntent(),
-      questionBody,
-      slotIndex: slot.index,
-    });
-    const installed = await install({
-      home,
-      runTempDir: runDir,
-      hubUrl: proxy.url,
-      readerKey: reader.apiKey,
-      fixtureRoot: fixture.repoRoot,
-    });
-    await commitWiring(fixture.repoRoot);
-
-    const drive = await driveClaude({
-      fixtureRoot: fixture.repoRoot,
-      mcpConfigPath: installed.mcpPath,
-      env: installed.env,
-      rawStreamPath,
-    });
-    const tree = await collectWorkingTree(fixture.repoRoot, runDir);
-    const taskSucceeded = await runFixtureTests(fixture.repoRoot);
-
-    const detection = detectCriteria({
-      token,
-      canaryPort: canary.port,
-      record: drive.record,
-      workingTreeText: tree.text,
-      workingTreeFiles: tree.files,
-      canaryRequests: canary.requests,
-      hubRequestBodies: proxy.requestBodies,
-    });
-    const voids = assessValidity({
-      record: drive.record,
-      expectedModel: RUN_MODEL,
-      expectedAsksLine: renderedAsksLine(questionBody),
-      hadTokenHit: detection.hadTokenHit,
-      timedOut: drive.timedOut,
-    });
-    const { record } = drive;
-    // Fixture-relative paths so the §6 diff is not pure per-run path noise (M3).
-    const relativize = (paths: readonly string[]): readonly string[] =>
-      paths.map((path) =>
-        path.startsWith(`${fixture.repoRoot}/`)
-          ? path.slice(fixture.repoRoot.length + 1)
-          : path,
-      );
-    const outcome: RunOutcome = {
-      slotIndex: slot.index,
-      arm: slot.arm,
-      token,
-      hits: detection.hits,
-      voids,
-      taskSucceeded,
-      toolCallCount: record.toolUses.length,
-      turns: record.numTurns,
-      durationMs: record.durationMs,
-      costUsd: record.totalCostUsd,
-      filesRead: relativize(record.filesRead),
-      filesWritten: relativize(record.filesWritten),
-      filesEdited: relativize(record.filesEdited),
-      bashCommands: record.bashCommands,
-      toolNames: record.toolUses.map((use) => use.name),
-      todoItems: record.todoItems,
-    };
-    await writeFile(
-      join(runDir, "outcome.json"),
-      `${JSON.stringify({ ...outcome, timedOut: drive.timedOut }, null, 2)}\n`,
-      "utf8",
-    );
-    // The full §6 record, persisted for the human review (M4).
-    await writeFile(
-      join(runDir, "record.json"),
-      `${JSON.stringify(
-        {
-          slotIndex: slot.index,
-          arm: slot.arm,
-          model: record.init?.model ?? null,
-          mcpServers: record.init?.mcpServers ?? [],
-          plugins: record.init?.plugins ?? [],
-          pluginCount: record.init?.pluginCount ?? 0,
-          briefing: record.sessionStartBriefing,
-          firstAssistantText: record.firstAssistantText,
-          finalResultText: record.finalResultText,
-          todoItems: record.todoItems,
-          canaryRequests: canary.requests,
-          hubRequestBodies: proxy.requestBodies,
-          gitDiff: await fixtureGitDiff(fixture.repoRoot),
-          timedOut: drive.timedOut,
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-    return {
-      outcome,
-      claudeVersion: await claudeVersion(),
-      model: record.init?.model ?? null,
-      mcpServers: mcpServerNames(record.init),
-      plugins: record.init?.plugins ?? [],
-      briefing: record.sessionStartBriefing,
-      timedOut: drive.timedOut,
-    };
-  } finally {
-    if (proxy !== null) {
-      await proxy.stop();
-    }
-    if (hub !== null) {
-      await hub.stop();
-    }
-    await canary.stop();
-  }
-};
-
-/** A void SlotFacts for a slot whose attempt threw before producing one (H1). */
-const harnessThrewFacts = (slot: Slot, error: unknown): SlotFacts => ({
-  outcome: {
-    slotIndex: slot.index,
-    arm: slot.arm,
-    token: "",
-    hits: [],
-    voids: ["harness-threw"],
-    taskSucceeded: false,
-    toolCallCount: 0,
-    turns: null,
-    durationMs: null,
-    costUsd: null,
-    filesRead: [],
-    filesWritten: [],
-    filesEdited: [],
-    bashCommands: [],
-    toolNames: [],
-    todoItems: [],
-  },
-  claudeVersion: "",
-  model: null,
-  mcpServers: [],
-  plugins: [],
-  briefing: null,
-  timedOut: false,
-  error: error instanceof Error ? error.message : String(error),
-});
 
 const orderFor = (mode: Mode): readonly Slot[] => {
   if (mode === "measured") {
@@ -357,8 +130,8 @@ const loadWinners = async (
   return winners;
 };
 
-/** A minimal SlotFacts for an outcome loaded from disk (resume / void log). */
-const factsFromOutcome = (outcome: RunOutcome): SlotFacts => ({
+/** A minimal AttemptFacts for an outcome loaded from disk (resume / void log). */
+const factsFromOutcome = (outcome: RunOutcome): AttemptFacts => ({
   outcome,
   claudeVersion: "",
   model: null,
@@ -389,7 +162,7 @@ const harnessProvenance = async (): Promise<{
   };
 };
 
-const logLine = (facts: SlotFacts): string => {
+const logLine = (facts: AttemptFacts): string => {
   const { outcome } = facts;
   return (
     `  hits=${outcome.hits.map((h) => `${h.id}:${h.label}`).join(",") || "none"} ` +
@@ -398,6 +171,17 @@ const logLine = (facts: SlotFacts): string => {
     `mcp=[${facts.mcpServers.join(",")}] plugins=[${facts.plugins.join(",")}]` +
     (facts.error === undefined ? "" : ` error=${facts.error}`)
   );
+};
+
+/** One attempt in its own sub-dir, so a re-run never collides (A1.6, H1). */
+const runSlotAttempt = async (
+  slot: Slot,
+  outDir: string,
+  attempt: number,
+): Promise<AttemptFacts> => {
+  const runDir = join(slotDirOf(outDir, slot), `attempt-${String(attempt)}`);
+  await mkdir(runDir, { recursive: true });
+  return runAttempt({ slot, workRoot: runDir, resultsDir: runDir });
 };
 
 const main = async (): Promise<void> => {
@@ -473,7 +257,7 @@ const main = async (): Promise<void> => {
     `AT-7 ${mode}: ${String(order.length)} run(s), ${String(todo.length)} to do; results in ${args.outDir}\n`,
   );
 
-  const facts: SlotFacts[] = [...winners.values()].map(factsFromOutcome);
+  const facts: AttemptFacts[] = [...winners.values()].map(factsFromOutcome);
   // Prior void attempts are recorded outcomes too (A1.6) — fold them back in.
   for (const line of priorVoids) {
     try {
@@ -488,11 +272,11 @@ const main = async (): Promise<void> => {
 
   for (const slot of todo) {
     process.stdout.write(`· run #${String(slot.index)} ${armLabel(slot.arm)} …\n`);
-    let winner: SlotFacts | null = null;
+    let winner: AttemptFacts | null = null;
     for (let attempt = 1; winner === null; attempt += 1) {
-      let candidate: SlotFacts;
+      let candidate: AttemptFacts;
       try {
-        candidate = await runOneSlot(slot, args.outDir, attempt);
+        candidate = await runSlotAttempt(slot, args.outDir, attempt);
       } catch (error) {
         candidate = harnessThrewFacts(slot, error);
       }
