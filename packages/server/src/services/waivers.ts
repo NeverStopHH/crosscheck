@@ -32,6 +32,8 @@ import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 
+import type { WaiverAuthority } from "@crosscheck/schema";
+
 import { MAX_WAIVER_DAYS } from "../constants.ts";
 
 import { developers, fenceWaivers, pins } from "../db/schema.ts";
@@ -54,6 +56,14 @@ const MAX_WAIVERS_LISTED = 50;
  * assertion would be the permission itself.
  */
 const HUMAN_CAPTURE_MODE = "human" as const;
+
+/**
+ * The only authority a NEW row may carry (04a §6). `terminal` survives in the
+ * enum solely to name the rows written before 04a; nothing in this module can
+ * write it, and the insert type requires an authority, so forgetting is a
+ * compile error rather than a silent weaker grant.
+ */
+const PASSKEY_AUTHORITY = "passkey" as const;
 
 /**
  * What a granter's name reads as when the hub cannot resolve one.
@@ -83,6 +93,12 @@ export interface LiveWaiver {
   readonly expiresAt: string;
   readonly reason: string;
   readonly grantedByName: string;
+  /**
+   * Which authority opened it (04a §6). A `terminal` grant written before 04a
+   * still holds until its own expiry, and every surface says it was the
+   * weaker kind — one any agent holding the api key could have sent.
+   */
+  readonly authority: WaiverAuthority;
 }
 
 export interface LiveWaiverInput {
@@ -102,6 +118,7 @@ interface WaiverRow {
   readonly supersedes: string | null;
   readonly reason: string;
   readonly grantedByName: string | null;
+  readonly authority: WaiverAuthority;
 }
 
 /**
@@ -161,6 +178,7 @@ const pickLiveWaiver = (
       // The left join's null, spelled. A reader who cannot be given a name
       // must be told that rather than shown a blank where a person belongs.
       grantedByName: row.grantedByName ?? UNRESOLVED_GRANTER,
+      authority: row.authority,
     };
   }
   return null;
@@ -179,6 +197,7 @@ export const readLiveWaiver = async (
       supersedes: fenceWaivers.supersedes,
       reason: fenceWaivers.reason,
       grantedByName: developers.name,
+      authority: fenceWaivers.authority,
     })
     .from(fenceWaivers)
     // A LEFT JOIN, NOT THE INNER ONE THE LISTING USES, and the difference is
@@ -245,6 +264,7 @@ export const readLiveWaivers = async (
       supersedes: fenceWaivers.supersedes,
       reason: fenceWaivers.reason,
       grantedByName: developers.name,
+      authority: fenceWaivers.authority,
     })
     .from(fenceWaivers)
     // The left join, for `readLiveWaiver`'s reason: a revocation whose author
@@ -300,6 +320,15 @@ export interface GrantInput {
   readonly reason: string;
   readonly expiresAt: Date;
   readonly now: Date;
+  /**
+   * The passkey credential whose assertion authorised this grant (04a §6).
+   * REQUIRED: there is no other authority a new grant may carry, so the type
+   * leaves no way to write one without it. The caller verified the assertion;
+   * this module records which device said yes.
+   */
+  readonly credentialId: string;
+  /** The request this grant answers; null for the grant half of an amendment. */
+  readonly requestId: string | null;
 }
 
 /**
@@ -359,6 +388,9 @@ export const grantWaiver = async (
     expiresAt: input.expiresAt,
     supersedes: null,
     createdAt: input.now,
+    authority: PASSKEY_AUTHORITY,
+    credentialId: input.credentialId,
+    requestId: input.requestId,
   });
   return { id };
 };
@@ -370,6 +402,8 @@ export interface RevokeInput {
   readonly grantedBy: string;
   readonly reason: string;
   readonly now: Date;
+  /** The passkey credential whose assertion authorised this revocation (04a §6). */
+  readonly credentialId: string;
 }
 
 /**
@@ -429,6 +463,9 @@ export const revokeWaiver = async (
     expiresAt: null,
     supersedes: target.id,
     createdAt: input.now,
+    authority: PASSKEY_AUTHORITY,
+    credentialId: input.credentialId,
+    requestId: null,
   });
   return { id };
 };
@@ -446,6 +483,8 @@ export interface WaiverView {
   readonly createdAt: string;
   /** Derived, never stored: is THIS row the one holding a fence open now. */
   readonly live: boolean;
+  /** Which authority wrote the row (04a §6). */
+  readonly authority: WaiverAuthority;
 }
 
 export interface ListWaiversInput {
@@ -486,6 +525,7 @@ export const listWaivers = async (
       expiresAt: fenceWaivers.expiresAt,
       supersedes: fenceWaivers.supersedes,
       createdAt: fenceWaivers.createdAt,
+      authority: fenceWaivers.authority,
     })
     .from(fenceWaivers)
     .innerJoin(developers, eq(fenceWaivers.grantedBy, developers.id))
@@ -528,5 +568,6 @@ export const listWaivers = async (
     supersedes: row.supersedes,
     createdAt: row.createdAt.toISOString(),
     live: livePairs.get(`${row.pinId}@${String(row.pinVersion)}`) === row.id,
+    authority: row.authority,
   }));
 };
