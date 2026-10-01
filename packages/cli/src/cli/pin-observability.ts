@@ -187,7 +187,7 @@ export const shadowSentence = (
   return (
     `${String(shadows.length)} pinned file(s) are never captured — the hot-file denylist matches them: ` +
     `${named}${rest > 0 ? ` … and ${String(rest)} more` : ""} — ` +
-    'no session records touching them, so crosscheck suspect answers "no session touched this surface" no matter who did'
+    'no session records touching them, so crosscheck trace answers "no session touched this surface" no matter who did'
   );
 };
 
@@ -204,8 +204,8 @@ export const guardSettingsSentence = (settings: TeamSettings): string => {
       : `pinning limited to ${token(settings.pinPolicy)}`;
   const names =
     settings.suspectAttribution === "sessions"
-      ? "suspect names sessions and their declared intents"
-      : "suspect prints counts only, naming nobody";
+      ? "trace names sessions and their declared intents"
+      : "trace prints counts only, naming nobody";
   const origin =
     settings.updatedAt === null ? "shipped defaults" : "set for this repo";
   return `guard settings: ${who} · ${names} (${origin})`;

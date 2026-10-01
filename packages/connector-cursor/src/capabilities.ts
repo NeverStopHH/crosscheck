@@ -61,7 +61,7 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     {
       name: "second evidence lane",
       sentence:
-        "the Stop-time `git diff --name-only HEAD` lane is registered only by Claude Code's Stop hook, so a file this host changed through `sed -i`, a codemod or a generator raises no edit event and produces no file.modified to order or to attribute — `crosscheck suspect` will name the session that used an edit tool and never this one",
+        "the Stop-time `git diff --name-only HEAD` lane is registered only by Claude Code's Stop hook, so a file this host changed through `sed -i`, a codemod or a generator raises no edit event and produces no file.modified to order or to attribute — `crosscheck trace` will name the session that used an edit tool and never this one",
     },
     {
       name: "pre-edit ask",

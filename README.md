@@ -163,16 +163,17 @@ and must carry a check recipe; up to 30 files are allowed for briefing-only
 pins. `crosscheck pin --broke <id>` retracts one, and `crosscheck pin --sweep`
 asks git where the pinned paths went after a rename.
 
-When the surface stops working, `crosscheck suspect <pin-id>` intersects the
+When the surface stops working, `crosscheck trace <pin-id>` intersects the
 pin's files with every recorded touch across every person and connector in the
-last 14 days and prints the sessions that were in there. Ranking is by how
+last 14 days and prints the sessions that were in there. (Its 0.10 name,
+`crosscheck suspect`, still works and says the new one.) Ranking is by how
 concentrated a session's author's work was on those files, not by how much
-they commit, so the busiest person is not the default suspect. Nothing is
+they commit, so the busiest person is not the default answer. Nothing is
 named until somebody has run the pin's check and recorded it failing. It reads
 two labelled evidence lanes — the edits the host tool reported, and a bounded
 `git diff --name-only` at Stop, because `sed -i` and codemods produce no edit
 event at all. Three outcomes exist rather than two: a ranked answer, "no
-separated suspect" when the top scores are too close to call, and "no session
+session stands out" when the top scores are too close to call, and "no session
 touched these files". A session whose author you have muted is labelled as
 suppressed by your own mute, never as unanswered.
 
@@ -184,7 +185,7 @@ why they behave identically for Claude Code, Cursor and ACP sessions.
 (12 files, oldest verified 9d ago) — nothing else is watched" — plus any pin
 whose files a rename left behind, and a warning when your hot-file denylist
 matches a pinned path. That last one matters because a denied path is never
-captured at all, so `suspect` would otherwise answer "no session touched this
+captured at all, so `trace` would otherwise answer "no session touched this
 surface" about a file everybody touched.
 
 #### Opening a fence takes a person's passkey
@@ -241,7 +242,7 @@ address. Everything this still leaves open is stated in
 
 #### What this makes visible about people
 
-`crosscheck suspect` prints session identifiers, the agent that ran each
+`crosscheck trace` prints session identifiers, the agent that ran each
 session, its branch, its work-context title and its declared intent, together
 with a score and the two file counts the score was computed from. It does not
 print a developer's name or id; opening the work context it names is a
@@ -256,8 +257,8 @@ that is a formal matter: in Germany, technical systems from which individual
 performance or behaviour data can be derived fall under works-council
 co-determination (§ 87(1) no. 6 BetrVG), and the processing engages the GDPR.
 Whether sessions are named at all is therefore a per-repository setting.
-`suspectAttribution` is `sessions` by default; `counts_only` prints the counts
-and no rows. The second setting, `pinPolicy`, is `anyone` by default, meaning
+`suspectAttribution` (the setting keeps the command's 0.10 name) is `sessions`
+by default; `counts_only` prints the counts and no rows. The second setting, `pinPolicy`, is `anyone` by default, meaning
 any member may pin any surface. `crosscheck status` prints both effective
 values, so everyone on the repository can see which are in force without being
 told.

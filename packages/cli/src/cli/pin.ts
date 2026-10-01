@@ -104,7 +104,7 @@ const AGENT_REFUSAL = [
   "pinning needs a person at a terminal, and this process has none.",
   "",
   "A pin is a HUMAN's statement that a surface works — it carries your name",
-  "to everybody else on this repo, and `crosscheck suspect` can name sessions",
+  "to everybody else on this repo, and `crosscheck trace` can name sessions",
   "once somebody records its check failing. So an agent may not create one on",
   "your behalf, even at your request.",
   "",
@@ -572,7 +572,7 @@ export const runPin = async (
     return {
       stdout: [
         `retracted ${broken.data.id}: recorded as checked and failing, with your name and the time.`,
-        `crosscheck suspect ${broken.data.id} can now name the sessions that touched it.`,
+        `crosscheck trace ${broken.data.id} can now name the sessions that touched it.`,
         "",
       ].join("\n"),
       exitCode: EXIT_OK,

@@ -173,7 +173,7 @@ describe("crosscheck status: the coverage denominator", () => {
     // Assert: everybody the feature is ABOUT can read what it does.
     expect(result.stdout).toContain("guard settings: anyone may pin");
     expect(result.stdout).toContain(
-      "suspect names sessions and their declared intents",
+      "trace names sessions and their declared intents",
     );
     expect(result.stdout).toContain("shipped defaults");
   });
