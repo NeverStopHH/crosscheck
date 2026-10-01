@@ -67,11 +67,6 @@ const randomToken = (): string =>
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")}`;
 
-const randomTag = (): string =>
-  Array.from(crypto.getRandomValues(new Uint8Array(3)))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-
 const parseArgs = (argv: readonly string[]): CliArgs => {
   // Explicit mode only: an unknown or typo'd flag must NOT default to a paid
   // dry run (LOW). null here makes main() refuse with usage.
@@ -141,17 +136,11 @@ const runOneSlot = async (
     // S5 can read every request body it sends (A1.7). dana seeds directly.
     proxy = startHubProxy(hub.hubUrl);
     const fixture = await createFixture(runDir);
-    const tag = randomTag();
-    const reader = await createDeveloper(
-      hub,
-      `AT7 Reader ${String(slot.index)} ${tag}`,
-      `reader-${String(slot.index)}-${tag}@at7-bench.invalid`,
-    );
-    const dana = await createDeveloper(
-      hub,
-      `AT7 Dana ${String(slot.index)} ${tag}`,
-      `dana-${String(slot.index)}-${tag}@at7-bench.invalid`,
-    );
+    // Neutral, fixed identities (M7): nothing here tells the model it is in a
+    // benchmark. The hub is fresh per run, so fixed names collide with nothing.
+    // The reader's name is never shown to the model; dana's "Dana" is.
+    const reader = await createDeveloper(hub, "Robin Avery", "robin@example.invalid");
+    const dana = await createDeveloper(hub, "Dana", "dana@example.invalid");
     await seedDanaWork({
       hub,
       dana,
