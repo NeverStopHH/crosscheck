@@ -26,6 +26,7 @@ import {
   EXIT_USAGE,
 } from "@crosscheck/connector-core/constants.ts";
 import { MAX_PILOT_LABEL_REASON_CHARS, deliveryIdFor } from "@crosscheck/schema";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { runCli } from "../src/index.ts";
 import type { LabelTerminal } from "../src/cli/terminal.ts";
@@ -541,6 +542,94 @@ describe("crosscheck pilot label — who may walk, and what is said", () => {
     expect(result.exitCode).toBe(EXIT_USAGE);
     expect(result.stdout).toContain("crosscheck pilot label");
     expect(script.transcript()).toBe("");
+  });
+});
+
+/**
+ * `crosscheck helpful` — THE SAME GESTURE FOR THE OTHER VERDICT (second
+ * review, M6). Noise had a one-word, in-the-moment shortcut and helpful only
+ * the walk, so the easier word was the negative one and precision was pulled
+ * down by the asymmetry itself. The two shortcuts are now the same command
+ * with a different word.
+ */
+describe("crosscheck helpful — the one-word shortcut for the h key", () => {
+  const helpful = (s: Scenario, argv: readonly string[], interactive = true) =>
+    runCli(["helpful", ...argv], env(s), s.repoRoot, undefined, { isInteractive: () => interactive });
+
+  test("it labels helpful, the report counts it so, and the walk does not offer it again", async () => {
+    // Arrange
+    const s = await scenario("helpful");
+    const id = await deliver(s, "wc_helpful_a", 4);
+
+    // Act
+    const marked = await helpful(s, [id]);
+    const after = await walk(s, scripted([]));
+
+    // Assert
+    expect(marked.exitCode).toBe(EXIT_OK);
+    expect(marked.stdout).toContain(`recorded: ${id} is helpful`);
+    expect(await reportOf(s)).toMatchObject({ helpful: 1, noise: 0 });
+    expect(after.stdout).toContain("there is nothing to label");
+  });
+
+  test("with no id, the one recent delivery to the session live here is labelled helpful", async () => {
+    // Arrange — typed beside the session, exactly as `noise` is
+    const s = await scenario("helpful-live");
+    const id = await deliver(s, "wc_live_a", 3);
+    await writeSessionState(s.home, {
+      hostSessionKey: s.sessionId.replace("cc_", ""),
+      crosscheckSessionId: s.sessionId,
+      workContextId: `wc_${s.sessionId}`,
+      repoId: s.repoId,
+      repoRoot: s.repoRoot,
+      hubUrl,
+      startedAt: new Date().toISOString(),
+      lastHeartbeatAt: new Date().toISOString(),
+    });
+
+    // Act
+    const marked = await helpful(s, []);
+
+    // Assert
+    expect(marked.stdout).toContain(`recorded: ${id} is helpful`);
+  });
+
+  test("several recent deliveries are listed as `crosscheck helpful <id>`, and none is guessed", async () => {
+    // Arrange
+    const s = await scenario("helpful-many");
+    const first = await deliver(s, "wc_many_a", 3);
+    await deliver(s, "wc_many_b", 2);
+    await writeSessionState(s.home, {
+      hostSessionKey: s.sessionId.replace("cc_", ""),
+      crosscheckSessionId: s.sessionId,
+      workContextId: `wc_${s.sessionId}`,
+      repoId: s.repoId,
+      repoRoot: s.repoRoot,
+      hubUrl,
+      startedAt: new Date().toISOString(),
+      lastHeartbeatAt: new Date().toISOString(),
+    });
+
+    // Act
+    const listed = await helpful(s, []);
+
+    // Assert
+    expect(listed.stdout).toContain(`crosscheck helpful ${first}`);
+    expect(listed.stdout).not.toContain("recorded:");
+  });
+
+  test("an agent with no terminal cannot say helpful", async () => {
+    // Arrange
+    const s = await scenario("helpful-agent");
+    const id = await deliver(s, "wc_agent_h", 4);
+
+    // Act
+    const result = await helpful(s, [id], false);
+
+    // Assert
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stdout).toContain("needs a person at a terminal");
+    expect(await reportOf(s)).toMatchObject({ helpful: 0 });
   });
 });
 

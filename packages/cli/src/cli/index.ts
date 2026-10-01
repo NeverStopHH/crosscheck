@@ -32,7 +32,7 @@ import {
   runUnmute,
 } from "./privacy.ts";
 import { PIN_FLAG_BROKE, PIN_FLAG_CHECK, PIN_FLAG_FILES, PIN_FLAG_OK, PIN_FLAG_SWEEP, PIN_USAGE, runPin } from "./pin.ts";
-import { NOISE_USAGE, runNoise } from "./noise.ts";
+import { HELPFUL_USAGE, NOISE_USAGE, runHelpful, runNoise } from "./noise.ts";
 import { KEY_FLAG_PRINT, KEY_USAGE, runKey } from "./key.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { SUSPECT_USAGE, runSuspect } from "./suspect.ts";
@@ -78,6 +78,7 @@ const USAGE = [
   "                            helpful, noise or unclear (humans only)",
   "  noise [<id>]              one word: the intervention a session just got",
   "                            was noise (pilot label's n key, as a command)",
+  "  helpful [<id>]            one word: it helped (pilot label's h key)",
   "  revalidate                ask whether the code under this repo's recorded",
   "                            claims has moved, and record what this clone saw",
   "  presence [off|on]         hide/show your live presence to teammates",
@@ -142,6 +143,7 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   },
   suspect: { usage: SUSPECT_USAGE },
   noise: { usage: NOISE_USAGE },
+  helpful: { usage: HELPFUL_USAGE },
   pilot: {
     usage: PILOT_USAGE,
     valueFlags: [PILOT_FLAG_DAYS],
@@ -260,6 +262,12 @@ export const runCli = async (
       return options.isInteractive === undefined
         ? runNoise(rest, env, cwd)
         : runNoise(rest, env, cwd, options.isInteractive);
+    // Second review, M6: the same gesture for the other verdict, so the
+    // in-the-moment word is not only the negative one.
+    case "helpful":
+      return options.isInteractive === undefined
+        ? runHelpful(rest, env, cwd)
+        : runHelpful(rest, env, cwd, options.isInteractive);
     // D5's manual trigger: the same bounded check `get_diagnosis` runs, typed
     // by a person, so a repo nobody pulls a diagnosis from stops reading
     // `unknown` forever. A pull like the two above — no hook, no injection.

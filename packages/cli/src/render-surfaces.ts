@@ -538,6 +538,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       return [
         markRecordedLine("hint_delivery", payload, false),
         markRecordedLine("hint_delivery", payload, true),
+        // `crosscheck helpful` (second review, M6): the same lines, its word.
+        markRecordedLine("hint_delivery", payload, false, "helpful"),
+        candidateListLines([candidate], true, 60, NOW, "helpful"),
+        noLiveSessionLine("helpful"),
+        nothingRecentLine(60, "helpful"),
         markRecordedLine("pin", payload, false),
         markRecordedLine("pin", payload, true),
         candidateListLines([candidate, candidate], true, 60, NOW),

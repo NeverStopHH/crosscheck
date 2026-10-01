@@ -27,9 +27,12 @@ import type { PilotMarkRefKind } from "@crosscheck/schema";
 
 const INDENT = "  ";
 
+/** The two one-word label shortcuts (07 §12, second review M6), each printed as itself. */
+export type ShortcutCommand = "noise" | "helpful";
+
 /** What to type when this command cannot tell which delivery was meant. */
-const NAME_IT_INSTEAD =
-  "name what the hint printed instead, e.g. crosscheck noise wc_…";
+const nameItInstead = (command: ShortcutCommand): string =>
+  `name what the hint printed instead, e.g. crosscheck ${command} wc_…`;
 
 const ageOf = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
@@ -40,6 +43,7 @@ export const markRecordedLine = (
   refKind: PilotMarkRefKind,
   id: string,
   repeated: boolean,
+  word: ShortcutCommand = "noise",
 ): string => {
   const shown = safeId(id);
   if (refKind === "pin") {
@@ -52,7 +56,7 @@ export const markRecordedLine = (
   // stands — so "you had marked it noise" could be false.
   return repeated
     ? `already recorded: you had labelled ${shown} — a label counts once, and a second one changes nothing\n`
-    : `recorded: ${shown} is noise. It counts once toward this repo's pilot figures, and it names nobody\n`;
+    : `recorded: ${shown} is ${word}. It counts once toward this repo's pilot figures, and it names nobody\n`;
 };
 
 /**
@@ -64,22 +68,23 @@ export const candidateListLines = (
   more: boolean,
   windowMinutes: number,
   now: Date,
+  command: ShortcutCommand = "noise",
 ): string =>
   [
     `${String(candidates.length)}${more ? "+" : ""} interventions reached a live session here in the last ${String(windowMinutes)} minutes — name the one you mean`,
     ...candidates.map(
       (candidate) =>
-        `${INDENT}crosscheck noise ${safeId(candidate.id)} · ${bareUntrusted(candidate.channel)} · points at ${safeId(candidate.refId)} · ${ageOf(candidate.deliveredAt, now)}`,
+        `${INDENT}crosscheck ${command} ${safeId(candidate.id)} · ${bareUntrusted(candidate.channel)} · points at ${safeId(candidate.refId)} · ${ageOf(candidate.deliveredAt, now)}`,
     ),
-    ...(more ? [`${INDENT}(more were not listed — ${NAME_IT_INSTEAD})`] : []),
+    ...(more ? [`${INDENT}(more were not listed — ${nameItInstead(command)})`] : []),
     "",
   ].join("\n");
 
-export const noLiveSessionLine = (): string =>
-  `no live crosscheck session for this repo on this machine — ${NAME_IT_INSTEAD}\n`;
+export const noLiveSessionLine = (command: ShortcutCommand = "noise"): string =>
+  `no live crosscheck session for this repo on this machine — ${nameItInstead(command)}\n`;
 
-export const nothingRecentLine = (windowMinutes: number): string =>
-  `nothing reached a live session here in the last ${String(windowMinutes)} minutes — ${NAME_IT_INSTEAD}\n`;
+export const nothingRecentLine = (windowMinutes: number, command: ShortcutCommand = "noise"): string =>
+  `nothing reached a live session here in the last ${String(windowMinutes)} minutes — ${nameItInstead(command)}\n`;
 
 export const refNeverReachedLine = (ref: string): string =>
   `no pointer at ${safeId(ref)} reached you on this repo — check the id the hint printed\n`;
