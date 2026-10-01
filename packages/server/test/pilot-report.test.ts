@@ -825,6 +825,8 @@ describe("the session set", () => {
       used: 3,
       cap: PILOT_SESSION_SET_CAP,
       refused: 0,
+      legacyRefused: 0,
+      beforeLabels: 0,
       discovery: 3,
       discoveryCap: PILOT_DISCOVERY_COHORT_SESSIONS,
       replication: 0,
@@ -1196,6 +1198,37 @@ describe("labels counted only from when they became available", () => {
     expect(out.precision.precision).toEqual({ kind: "measured", value: 1 });
     expect(out.precision.noise).toBe(0);
     expect(out.precision.legacyNoise).toBe(1);
+  });
+});
+
+describe("the set's refusals, by which cap refused them (second review, M2)", () => {
+  test("refusals under the 0.10 fifty-session cap are counted apart from the set's own", async () => {
+    // Arrange — a 0.10 hub refused thirty sessions at its old cap of fifty;
+    // the set now holds two hundred, so those thirty say nothing about it
+    const world = await setup();
+    const day = at(500).toISOString().slice(0, 10);
+    await world.harness.db.insert(pilotCounters).values(
+      [
+        ["pilot_sessions_refused", 30],
+        ["pilot_set_refused", 2],
+        ["pilot_sessions_before_labels", 4],
+      ].map(([counter, value]) => ({
+        repo: REPO,
+        day,
+        surface: "pilot-sessions",
+        counter: String(counter),
+        value: Number(value),
+        updatedAt: at(500),
+      })),
+    );
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.sessionSet.refused).toBe(2);
+    expect(out.sessionSet.legacyRefused).toBe(30);
+    expect(out.sessionSet.beforeLabels).toBe(4);
   });
 });
 

@@ -75,7 +75,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { PILOT_ANSWER_SURFACES } from "./pilot.ts";
+import { PILOT_ANSWER_SURFACES, PILOT_SET_COUNTERS } from "./pilot.ts";
 import { POINTED_WORK_CONTEXT } from "./pilot-candidates.ts";
 import { PER_HUNDRED, measured, unavailable } from "./pilot-figure.ts";
 import type { Figure } from "./pilot-figure.ts";
@@ -206,7 +206,12 @@ export interface SurfaceIntegrity {
 export interface SessionSet {
   readonly used: number;
   readonly cap: number;
+  /** Start positions past the cap, refused and counted. */
   readonly refused: number;
+  /** What a 0.10 hub refused under its old fifty-session cap — never a refusal at THIS cap (M2). */
+  readonly legacyRefused: number;
+  /** Sessions that started before labels were available: outside the set, counted (M4). */
+  readonly beforeLabels: number;
   /** Rows in each cohort, and how many each holds when full (07 §12). */
   readonly discovery: number;
   readonly discoveryCap: number;
@@ -769,21 +774,26 @@ const readSessionSet = async (
   deps: Deps,
   repo: string,
 ): Promise<SessionSet> => {
-  const [rows, refused] = await Promise.all([
+  const [rows, counts] = await Promise.all([
     deps.db
       .select({ epochs: pilotSessions.seqEpochs, cohort: pilotSessions.cohort })
       .from(pilotSessions)
       .where(eq(pilotSessions.repo, repo)),
     deps.db
-      .select({ n: sql<number>`coalesce(sum(${pilotCounters.value}), 0)::int` })
+      .select({
+        counter: pilotCounters.counter,
+        n: sql<number>`coalesce(sum(${pilotCounters.value}), 0)::int`,
+      })
       .from(pilotCounters)
       .where(
         and(
           eq(pilotCounters.repo, repo),
-          eq(pilotCounters.counter, "pilot_sessions_refused"),
+          inArray(pilotCounters.counter, Object.values(PILOT_SET_COUNTERS)),
         ),
-      ),
+      )
+      .groupBy(pilotCounters.counter),
   ]);
+  const counted = (name: string): number => counts.find((row) => row.counter === name)?.n ?? 0;
   const discovery = rows.filter((row) => row.cohort === "discovery").length;
   const replication = rows.filter((row) => row.cohort === "replication").length;
   return {
@@ -792,7 +802,9 @@ const readSessionSet = async (
     // nobody could label (second review, H1).
     used: discovery + replication,
     cap: PILOT_SESSION_SET_CAP,
-    refused: refused[0]?.n ?? 0,
+    refused: counted(PILOT_SET_COUNTERS.refused),
+    legacyRefused: counted(PILOT_SET_COUNTERS.legacyRefused),
+    beforeLabels: counted(PILOT_SET_COUNTERS.beforeLabels),
     discovery,
     discoveryCap: COHORT_CAP.discovery,
     replication,
@@ -813,6 +825,8 @@ const notEnrolled = (): Omit<
     used: 0,
     cap: PILOT_SESSION_SET_CAP,
     refused: 0,
+    legacyRefused: 0,
+    beforeLabels: 0,
     discovery: 0,
     discoveryCap: COHORT_CAP.discovery,
     replication: 0,

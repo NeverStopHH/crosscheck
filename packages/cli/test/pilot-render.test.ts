@@ -71,6 +71,8 @@ const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
     used: 31,
     cap: 200,
     refused: 0,
+    legacyRefused: 0,
+    beforeLabels: 0,
     discovery: 31,
     discoveryCap: 50,
     replication: 0,
@@ -466,6 +468,19 @@ describe("renderPilot", () => {
 
     // Assert
     expect(out).toContain("· 30 recorded before labels, in neither cohort");
+  });
+
+  test("the header says 0.10's refusals and the pre-labels sessions apart from the set's own (M2, M4)", () => {
+    // Arrange
+    const base = report();
+    const out = renderPilot(
+      view({ sessionSet: { ...base.sessionSet, legacyRefused: 30, beforeLabels: 3 } }),
+    );
+
+    // Assert — the set's own refusals stay 0; the others are named for what they are
+    expect(out).toContain("0 refused at the cap");
+    expect(out).toContain("· 30 refused under the 0.10 fifty-session cap, before labels");
+    expect(out).toContain("· 3 started before labels, not in the set");
   });
 
   test("the header names the set and both cohorts' fill", () => {

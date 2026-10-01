@@ -740,15 +740,27 @@ export const writePilotMark = async (
 
 const MS_PER_RETENTION_DAY = 86_400_000;
 
-/** The counters that describe the session set rather than a day's traffic. */
-const PILOT_SESSIONS_REFUSED = "pilot_sessions_refused";
 /**
- * Sessions that ended on an enrolled repo but started before labels were
- * available there (second review, M4): outside the set, so the set's size
- * is smaller than the repo's traffic — and this says by how much.
+ * THE COUNTERS THAT DESCRIBE THE SESSION SET rather than a day's traffic —
+ * one definition, read by the report and kept from the prune.
+ *
+ *   refused       — a start position past PILOT_SESSION_SET_CAP (two hundred).
+ *   legacyRefused — what a 0.10 hub booked under its old fifty-session cap.
+ *                   Never written here. Its own name keeps it apart, because
+ *                   counting it as a refusal at THIS cap made a set of fifty
+ *                   read as full (second review, M2).
+ *   beforeLabels  — a session that started before labels were available on
+ *                   the repo: outside the set (M4), and this says how many.
  */
-const PILOT_SESSIONS_BEFORE_LABELS = "pilot_sessions_before_labels";
-const SESSION_SET_COUNTERS = [PILOT_SESSIONS_REFUSED, PILOT_SESSIONS_BEFORE_LABELS];
+export const PILOT_SET_COUNTERS = {
+  refused: "pilot_set_refused",
+  legacyRefused: "pilot_sessions_refused",
+  beforeLabels: "pilot_sessions_before_labels",
+} as const;
+
+const PILOT_SESSIONS_REFUSED = PILOT_SET_COUNTERS.refused;
+const PILOT_SESSIONS_BEFORE_LABELS = PILOT_SET_COUNTERS.beforeLabels;
+const SESSION_SET_COUNTERS: readonly string[] = Object.values(PILOT_SET_COUNTERS);
 
 /**
  * THE MEASUREMENT AGES OUT (07 §4) — `pilot_counters` and
@@ -789,7 +801,7 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
         // THE SET'S COUNTS LIVE AS LONG AS THE SET THEY DESCRIBE (corrected
         // by adversarial review): `pilot_sessions` is never pruned, so aging
         // these out made a full set read as the whole population again.
-        notInArray(pilotCounters.counter, SESSION_SET_COUNTERS),
+        notInArray(pilotCounters.counter, [...SESSION_SET_COUNTERS]),
       ),
     );
   await deps.db

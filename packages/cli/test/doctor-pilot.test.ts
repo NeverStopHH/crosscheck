@@ -36,7 +36,10 @@ type Counters = Readonly<Record<string, number>> | null;
 
 interface ReportShape {
   readonly enrolled?: boolean;
+  readonly used?: number;
   readonly refused?: number;
+  readonly legacyRefused?: number;
+  readonly beforeLabels?: number;
   readonly integrity?: readonly { surface: string; counters: Counters }[];
   readonly ciReason?: string;
 }
@@ -49,9 +52,11 @@ const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
   untilIso: "2026-09-24T00:00:00.000Z",
   days: 1,
   sessionSet: {
-    used: 31,
+    used: shape.used ?? 31,
     cap: 200,
     refused: shape.refused ?? 0,
+    legacyRefused: shape.legacyRefused ?? 0,
+    beforeLabels: shape.beforeLabels ?? 0,
     discovery: 31,
     discoveryCap: 50,
     replication: 0,
@@ -158,6 +163,10 @@ const doctor = async (answer: () => Response): Promise<string> => {
 const serving = (shape: ReportShape) => (): Response =>
   Response.json({ ok: true, data: pilotReport(shape) });
 
+/** The one doctor line about the session set. */
+const pilotLine = (stdout: string): string =>
+  stdout.split("\n").find((line) => line.includes("PASS  pilot  enrolled")) ?? "";
+
 describe("the pilot doctor lines", () => {
   test("a repo nobody enrolled is said to be unmeasured", async () => {
     // Arrange & Act
@@ -179,12 +188,33 @@ describe("the pilot doctor lines", () => {
     expect(stdout).not.toContain("refused at the cap");
   });
 
-  test("a full set says what happened to the sessions after it", async () => {
-    // Arrange & Act
-    const stdout = await doctor(serving({ refused: 4 }));
+  test("a full set says so, and what happened to the sessions after it", async () => {
+    // Arrange & Act — all two hundred slots hold a row
+    const stdout = await doctor(serving({ used: 200, refused: 4 }));
 
     // Assert — counted, never dropped
-    expect(stdout).toContain("4 later session(s) refused at the cap and counted");
+    expect(stdout).toContain("— full: 4 later session(s) refused at the cap and counted, never dropped");
+  });
+
+  test("a set with room never reads as full, even beside refusals (M2)", async () => {
+    // Arrange — the second review: refusals were read as "full" whatever the
+    // set held. Here 31 of 200 rows exist and four later sessions were
+    // refused (their slots past 200 — sessions still running hold the rest)
+    const stdout = await doctor(serving({ used: 31, refused: 4 }));
+
+    // Assert
+    expect(pilotLine(stdout)).not.toContain("full");
+    expect(pilotLine(stdout)).toContain("— 4 later session(s) refused at the cap and counted");
+  });
+
+  test("refusals under the 0.10 fifty-session cap are said apart and never make the set full (M2)", async () => {
+    // Arrange — a hub that ran the 0.10 pilot refused thirty under its old cap
+    const stdout = await doctor(serving({ used: 0, legacyRefused: 30, beforeLabels: 3 }));
+
+    // Assert
+    expect(pilotLine(stdout)).not.toContain("full");
+    expect(pilotLine(stdout)).toContain("30 refused under the 0.10 fifty-session cap, before labels");
+    expect(pilotLine(stdout)).toContain("3 started before labels, not in the set");
   });
 
   test("qualifier emission is NOT counted, and the line says why", async () => {

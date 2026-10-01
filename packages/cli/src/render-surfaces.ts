@@ -275,6 +275,8 @@ const pilotWith = (payload: string): PilotView => {
         used: 1,
         cap: 200,
         refused: 1,
+        legacyRefused: 1,
+        beforeLabels: 1,
         discovery: 1,
         discoveryCap: 50,
         replication: 0,

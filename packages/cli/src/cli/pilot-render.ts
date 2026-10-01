@@ -468,7 +468,11 @@ export const renderPilot = (view: PilotView): string => {
   return [
     `${headerLine(report)} · ${count(report.precision.sessions)} sessions · session set ${count(set.used)}/${count(set.cap)} (discovery ${count(set.discovery)}/${count(set.discoveryCap)} · replication ${count(set.replication)}/${count(set.replicationCap)}), ${count(set.refused)} refused at the cap${
       set.legacy > 0 ? ` · ${count(set.legacy)} recorded before labels, in neither cohort` : ""
-    }`,
+    }${
+      set.legacyRefused > 0
+        ? ` · ${count(set.legacyRefused)} refused under the 0.10 fifty-session cap, before labels`
+        : ""
+    }${set.beforeLabels > 0 ? ` · ${count(set.beforeLabels)} started before labels, not in the set` : ""}`,
     QUOTED_DATA_NOTICE,
     ...duplicateWorkLines(report),
     ...collisionLines(report),

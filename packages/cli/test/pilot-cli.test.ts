@@ -50,6 +50,8 @@ const report = (): Record<string, unknown> => ({
     used: 3,
     cap: 200,
     refused: 0,
+    legacyRefused: 0,
+    beforeLabels: 0,
     discovery: 3,
     discoveryCap: 50,
     replication: 0,

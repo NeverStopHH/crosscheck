@@ -63,6 +63,8 @@ const wireReport = (): Record<string, unknown> => ({
     used: 31,
     cap: 200,
     refused: 0,
+    legacyRefused: 0,
+    beforeLabels: 0,
     discovery: 31,
     discoveryCap: 50,
     replication: 0,

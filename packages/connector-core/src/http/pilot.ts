@@ -120,6 +120,10 @@ export const PilotReportSchema = z.looseObject({
     used: CountSchema,
     cap: CountSchema,
     refused: CountSchema,
+    /** A 0.10 hub's refusals under its old fifty-session cap — never "full" at this one (M2). */
+    legacyRefused: CountSchema,
+    /** Sessions that started before labels were available: outside the set (M4). */
+    beforeLabels: CountSchema,
     discovery: CountSchema,
     discoveryCap: CountSchema,
     replication: CountSchema,

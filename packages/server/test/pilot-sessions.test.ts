@@ -320,7 +320,7 @@ describe("one session's residue", () => {
     // …and the refusal is a number somebody can read.
     const counters = await harness.db.select().from(pilotCounters);
     const refused = counters.find(
-      (row) => row.counter === "pilot_sessions_refused",
+      (row) => row.counter === "pilot_set_refused",
     );
     expect(Number(refused?.value ?? 0)).toBe(1);
   });
@@ -339,7 +339,7 @@ describe("one session's residue", () => {
     const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
     expect(own?.cohort).toBe("replication");
     const refused = (await harness.db.select().from(pilotCounters)).find(
-      (row) => row.counter === "pilot_sessions_refused",
+      (row) => row.counter === "pilot_set_refused",
     );
     expect(refused).toBeUndefined();
   });
@@ -422,7 +422,7 @@ describe("one session's residue", () => {
     const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
     expect(own?.endReason).toBe("reported");
     const refused = (await harness.db.select().from(pilotCounters)).find(
-      (row) => row.counter === "pilot_sessions_refused",
+      (row) => row.counter === "pilot_set_refused",
     );
     expect(refused).toBeUndefined();
   });
@@ -468,7 +468,7 @@ describe("the session set's slots", () => {
 
     // Assert
     expect(await rows(harness)).toHaveLength(PILOT_SESSION_SET_CAP);
-    expect(await counter(harness, "pilot_sessions_refused")).toBe(2);
+    expect(await counter(harness, "pilot_set_refused")).toBe(2);
   });
 
   test("M4: the cohort follows the order sessions STARTED, not the order they ended", async () => {
