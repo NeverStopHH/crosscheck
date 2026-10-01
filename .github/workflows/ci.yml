@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1147
+    # PRINTS: 1149
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -310,7 +310,7 @@ jobs:
     # PRINTS: packages/server/src/routes/pins.ts 3
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 2
-    # PRINTS: packages/server/src/routes/suspect.ts 2
+    # PRINTS: packages/server/src/routes/suspect.ts 3
     # PRINTS: packages/server/src/routes/work-contexts.ts 1
     # PRINTS: packages/server/src/services/absences.ts 4
     # PRINTS: packages/server/src/services/calibration.ts 1
@@ -323,7 +323,7 @@ jobs:
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
-    # PRINTS: packages/server/src/services/coverage.ts 22
+    # PRINTS: packages/server/src/services/coverage.ts 23
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 10
     # PRINTS: packages/server/src/services/diagnosis.ts 3
@@ -401,7 +401,7 @@ jobs:
     # PRINTS: cost.ts 2
     # PRINTS: counts.ts 1
     # PRINTS: coverage-order.ts 5
-    # PRINTS: coverage.ts 25
+    # PRINTS: coverage.ts 26
     # PRINTS: declarations.ts 4
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
@@ -540,7 +540,7 @@ jobs:
     # PRINTS: status.ts 7
     # PRINTS: stop.ts 3
     # PRINTS: suspect-render.ts 3
-    # PRINTS: suspect.ts 4
+    # PRINTS: suspect.ts 5
     # PRINTS: target-paths.ts 1
     # PRINTS: team-settings.ts 1
     # PRINTS: telemetry-loss.ts 6

@@ -228,6 +228,60 @@ describe("the fold reads the agent_event rung's own scope", () => {
   });
 });
 
+describe("the fold reads the sessions the answer names (review H3)", () => {
+  const DAY_SECONDS = 24 * 3600;
+  /** Past the suspect window (14 days), so the heartbeat predicate leaves the session out. */
+  const OUTSIDE_WINDOW_SECONDS = 20 * DAY_SECONDS;
+
+  const touchAuth = (
+    harness: TestHarness,
+    developer: TestDeveloper,
+    sessionId: string,
+    workContextId: string,
+  ): Promise<unknown> =>
+    postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: workContextId, sessionId }), {
+          sessionId,
+        }),
+        recordEnvelope("target", { workContextId, kind: "file", value: "src/auth.ts" }, { sessionId }),
+      ],
+    });
+
+  test("a suspect candidate whose heartbeat left the window still enters the order fold", async () => {
+    // Arrange: an undeclared session touched the file 20 days ago; a successor
+    // updated its work context inside the window; a declared session touched
+    // the same file today.
+    const { harness, developer } = await seed();
+    await register(harness, developer, "ses_old");
+    await touchAuth(harness, developer, "ses_old", "wc_old");
+    harness.clock.advanceSeconds(OUTSIDE_WINDOW_SECONDS);
+    await register(harness, developer, "ses_new", ALL_GUARANTEED);
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({ id: "wc_old", sessionId: "ses_old", title: "Login 500s, again" }),
+          { sessionId: "ses_new" },
+        ),
+      ],
+    });
+    await register(harness, developer, "ses_c", ALL_GUARANTEED);
+    await touchAuth(harness, developer, "ses_c", "wc_c");
+    // Act
+    const response = await harness.app.request(
+      `/api/suspect?repo=${encodeURIComponent(REPO)}&path=src/auth.ts`,
+      jsonRequest("GET", developer.apiKey),
+    );
+    const body = (await response.json()) as {
+      data: { candidates: { sessionId: string }[]; coverage: CoverageRecord };
+    };
+    // Assert
+    expect(body.data.candidates.map((candidate) => candidate.sessionId)).toContain("ses_old");
+    expect(body.data.coverage.order).toEqual({ state: "undeclared", reason: "provider_undeclared" });
+  });
+});
+
 describe("the two gates stay orthogonal", () => {
   test("isJudgeable does not read order", async () => {
     // Arrange: a judgeable record, then the same record with the weakest order there is.

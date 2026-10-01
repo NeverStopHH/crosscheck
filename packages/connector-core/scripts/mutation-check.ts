@@ -13405,8 +13405,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the order fold ignores the path scope",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),\n  ) ?? sql`false`;",
-    to: "      : []),\n  ) ?? sql`false`;",
+    // Re-pointed by review H3, which wrapped the predicate in a union.
+    from: "        : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),\n    ) ?? sql`false`;",
+    to: "        : []),\n    ) ?? sql`false`;",
     test: `${SERVER}/test/coverage-order.test.ts`,
     because: "the order line describes sessions the agent_event rung beside it left out",
   },
@@ -13910,6 +13911,23 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/coverage-render.test.ts`,
     because: "the line keeps `order: <state>` and loses the commit-author gap the head word says is there",
   },
+  {
+    label: "the order block folds over the heartbeat window only",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      orderScope(deps, now, repo, since, paths, options.orderSessionIds ?? []),",
+    to: "      orderScope(deps, now, repo, since, paths, []),",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because:
+      "suspect names an undeclared session whose work context a successor kept in the window, and the order block reads the declared session beside it alone",
+  },
+  {
+    label: "suspect folds order without the sessions it names",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "      orderSessionIds: view.candidates.map((candidate) => candidate.sessionId),\n",
+    to: "",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "the candidate list and the order block beside it are about two different sets of sessions",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14169,7 +14187,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
- * PRINTS: packages/server/test/coverage-order.test.ts 7
+ * PRINTS: packages/server/test/coverage-order.test.ts 9
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync.test.ts 7
  * PRINTS: packages/server/test/developer-emails.test.ts 2

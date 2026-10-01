@@ -1285,8 +1285,9 @@ The evidence for each row:
 **13.5 — The `order` block (§3.7).**
 
 - **The fold** is `server/src/services/coverage-order.ts:71`. It runs over the agent_event rung's own
-  scope, restated in `coverage.ts:655` so the loss-reading code stays untouched; a test holds the two to
-  one scope.
+  scope, restated in `coverage.ts` (`orderScope`) so the loss-reading code stays untouched; a test holds
+  the two to one scope. Since the review (§13.9, H3) it also includes the sessions the answer itself
+  names, passed as `orderSessionIds`.
 - **Which kinds a question needs**, decided for the reads that exist (`coverage.ts:685` and the two
   routes):
   - `GET /api/suspect` computes 04's verdict, whose timing answer is `explanationTimingFor`, so it reads
@@ -1375,3 +1376,13 @@ The evidence for each row:
   - `coverage-render.test.ts` checks every shape (373,248: every rung state and reason for both
     judging rungs, every ci state, both scopes, every order reason). The state word is present and the
     line is within 160 in all of them. The reviewer's probe now counts 0 drops.
+- **H3 — the order block folded over other sessions than the ones the answer named.** Suspect picks
+  candidates by work-context activity, and an update from a successor session keeps an old work
+  context inside the window. The order scope reads heartbeats, so an undeclared candidate with a
+  20-day-old heartbeat was missing from the minimum. The answer named `ses_old` while `order` read the
+  declared session beside it (`partial`, or `guaranteed` when that session over-declared).
+  - `readCoverage` now takes `orderSessionIds` and folds over the rung's scope plus those sessions.
+    `GET /api/suspect` computes its candidates first and passes them.
+  - The failure falls toward the weaker minimum: a fold over more sessions can only be lower.
+  - Left as found: the agent_event rung itself still reads `complete / sessions_reported` for the same
+    scope. That is 03's predicate, and the order block no longer inherits it (§13.10).
