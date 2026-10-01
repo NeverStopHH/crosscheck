@@ -200,6 +200,13 @@ export const agentSessions = pgTable(
     lossKinds: jsonb("loss_kinds").$type<FoldedLossKinds>(),
     lossOldestAt: timestamptz("loss_oldest_at"),
     lossNewestAt: timestamptz("loss_newest_at"),
+    /**
+     * An upper bound on the newest loss of the ignored KIND, or NULL when the
+     * report named none (loss-accounting §4.5; review C1). Coverage compares
+     * this instant instead of casting `loss_kinds` JSON at read time, which a
+     * single count past int4 turned into a read that threw for the repo.
+     */
+    lossIgnoredAt: timestamptz("loss_ignored_at"),
   },
   (table) => [
     index("agent_sessions_repo_idx").on(table.repo),

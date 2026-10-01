@@ -313,10 +313,16 @@ const lossCondition = (
 ): SQL =>
   sql`(${table.lossReportedAt} is not null and ${table.lossTotal} > 0 and (${table.lossNewestAt} is null or ${table.lossNewestAt} > ${since}))`;
 
-/** The one kind whose remedy is "upgrade the hub", read off the folded map. */
+/**
+ * The one kind whose remedy is "upgrade the hub": an instant the write
+ * decided (services/sessions.ts ignoredUpperBound), never a cast of the
+ * folded JSON — one count past int4 made that cast throw for the repo
+ * (review C1).
+ */
 const ignoredKindCondition = (
   table: typeof agentSessions | typeof scopeSessions,
-): SQL => sql`coalesce((${table.lossKinds}->>'hub_ignored')::int, 0) > 0`;
+  since: Date,
+): SQL => sql`${table.lossIgnoredAt} > ${since}`;
 
 /**
  * §3.2a's `paths` half: count only the sessions that touched the surface the
@@ -453,7 +459,7 @@ const readAgentEventCoverage = async (
       gaps: sql`count(*) filter (where ${isGap})`,
       gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
       lost: sql`count(*) filter (where ${isLost})`,
-      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions)})`,
+      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,
       lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
       observedAt: sql`max(${agentSessions.lastHeartbeatAt})`,
     })

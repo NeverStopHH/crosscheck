@@ -450,7 +450,7 @@ describe("bootstrap.sql DDL sync", () => {
     }
   });
 
-  test("the five loss columns reach an EXISTING hub and really exist after a bootstrap", async () => {
+  test("the loss columns reach an EXISTING hub and really exist after a bootstrap", async () => {
     // Arrange — the same trap as the case below: a column only in the CREATE
     // never reaches a hub that already has the table. The loss columns are
     // ALTER-only on purpose (the reaped_at pattern), so the text check is
@@ -470,10 +470,12 @@ describe("bootstrap.sql DDL sync", () => {
       "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_kinds jsonb;",
       "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_oldest_at timestamptz;",
       "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;",
     ]) {
       expect(bootstrapSql, fragment).toContain(fragment);
     }
     expect(rows.rows.map((row) => String(row.c))).toEqual([
+      "loss_ignored_at",
       "loss_kinds",
       "loss_newest_at",
       "loss_oldest_at",

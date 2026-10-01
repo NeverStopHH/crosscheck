@@ -47,6 +47,10 @@ ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_total integer NOT NULL 
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_kinds jsonb;
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_oldest_at timestamptz;
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;
+-- What coverage needs about the ignored kind, decided on write (review C1):
+-- an upper bound on its newest loss, so the read compares an instant instead
+-- of casting loss_kinds JSON to int4, which one large count made throw.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);

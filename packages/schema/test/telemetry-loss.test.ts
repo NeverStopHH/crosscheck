@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 import {
   EMPTY_LOSS_REPORT,
   LOSS_KINDS,
+  MAX_LOSS_COUNT,
   MAX_LOSS_KIND_ENTRIES,
   TelemetryLossReportSchema,
   UNATTRIBUTED_LOSS_KIND,
@@ -105,6 +106,26 @@ describe("TelemetryLossReportSchema", () => {
     // Assert
     expect(negative.success).toBe(false);
     expect(prose.success).toBe(false);
+  });
+
+  test("bounds every count at the hub's int4 column (review C1)", () => {
+    // Act
+    const atMax = TelemetryLossReportSchema.safeParse({
+      ...EMPTY_LOSS_REPORT,
+      total: MAX_LOSS_COUNT,
+      kinds: { hub_ignored: MAX_LOSS_COUNT },
+    });
+    const totalPast = TelemetryLossReportSchema.safeParse({ ...EMPTY_LOSS_REPORT, total: MAX_LOSS_COUNT + 1 });
+    const kindPast = TelemetryLossReportSchema.safeParse({
+      ...EMPTY_LOSS_REPORT,
+      kinds: { hub_ignored: MAX_LOSS_COUNT + 1 },
+    });
+
+    // Assert
+    expect(MAX_LOSS_COUNT).toBe(2 ** 31 - 1);
+    expect(atMax.success).toBe(true);
+    expect(totalPast.success).toBe(false);
+    expect(kindPast.success).toBe(false);
   });
 
   test("bounds the kinds object so a hostile client cannot send an unbounded map", () => {

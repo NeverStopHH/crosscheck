@@ -1,8 +1,9 @@
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
-import { foldLossKinds } from "@crosscheck/schema";
+import { settleLossReport } from "@crosscheck/schema";
 import type {
   SeqField,
   SessionStatus,
+  SettledLossCounts,
   TelemetryLossReport,
 } from "@crosscheck/schema";
 
@@ -80,20 +81,55 @@ const requireWrittenRow = (rows: SessionRow[]): SessionRow => {
 
 type LossColumns = Pick<
   typeof agentSessions.$inferInsert,
-  "lossReportedAt" | "lossTotal" | "lossKinds" | "lossOldestAt" | "lossNewestAt"
+  | "lossReportedAt"
+  | "lossTotal"
+  | "lossKinds"
+  | "lossOldestAt"
+  | "lossNewestAt"
+  | "lossIgnoredAt"
 >;
 
 const toInstant = (iso: string | null): Date | null =>
   iso === null ? null : new Date(iso);
 
 /**
+ * WHAT COVERAGE NEEDS ABOUT THE IGNORED KIND, DECIDED ONCE, ON WRITE (review
+ * C1). The rung used to cast `loss_kinds->>'hub_ignored'` to int4 at read
+ * time, and one report carrying 3e9 made every read of the repo throw. The
+ * read now compares an instant: an UPPER BOUND on the newest ignored loss —
+ * the report's newest, which no single loss in it postdates, or `now` when
+ * the report could not date it, since nothing reported now happened later.
+ * An upper bound errs towards "still in the window", the weakening side.
+ */
+const ignoredUpperBound = (
+  settled: SettledLossCounts,
+  report: TelemetryLossReport,
+  now: Date,
+): Date | null =>
+  (settled.kinds.hub_ignored ?? 0) > 0 ? (toInstant(report.newestAt) ?? now) : null;
+
+const reportedColumns = (
+  report: TelemetryLossReport,
+  settled: SettledLossCounts,
+  now: Date,
+): LossColumns => ({
+  lossReportedAt: now,
+  lossTotal: settled.total,
+  lossKinds: settled.kinds,
+  lossOldestAt: toInstant(report.oldestAt),
+  lossNewestAt: toInstant(report.newestAt),
+  lossIgnoredAt: ignoredUpperBound(settled, report, now),
+});
+
+/**
  * THE CONNECTOR'S REPORT, FOLDED ONTO ITS ROW (docs/1.0/loss-accounting.md
  * §4.4). Absent = touch nothing: a connector from before the field is read as
  * "never reported", which is not zero and not a gap (§4.7). Present = last
- * report wins, all five columns at once, so a row never carries the total of
- * one report beside the span of another. `foldLossKinds` is what keeps a
- * connector-chosen key off the row: a kind this hub does not know is counted
- * under `unattributed`, never stored under its own name.
+ * report wins, all six columns at once, so a row never carries the total of
+ * one report beside the span of another. `settleLossReport` folds every key
+ * this hub does not know into `unattributed` — no connector-chosen string
+ * reaches the row — and stores the larger of the sent total and the folded
+ * kinds' sum, saturated at int4.
  */
 const lossColumns = (
   report: TelemetryLossReport | undefined,
@@ -101,13 +137,7 @@ const lossColumns = (
 ): Partial<LossColumns> =>
   report === undefined
     ? {}
-    : {
-        lossReportedAt: now,
-        lossTotal: report.total,
-        lossKinds: foldLossKinds(report.kinds),
-        lossOldestAt: toInstant(report.oldestAt),
-        lossNewestAt: toInstant(report.newestAt),
-      };
+    : reportedColumns(report, settleLossReport(report), now);
 
 export type RegisterSessionResult =
   | { readonly outcome: "created" | "updated"; readonly session: SessionView }

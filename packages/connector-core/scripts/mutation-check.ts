@@ -12824,9 +12824,10 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // LOSS-5's named mutation: store the keys as sent.
     label: "a loss kind the hub does not know is stored under its own name",
-    file: `${SERVER}/src/services/sessions.ts`,
-    from: "        lossKinds: foldLossKinds(report.kinds),",
-    to: "        lossKinds: report.kinds,",
+    // The fold moved into the schema's settleLossReport with review C1.
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  const folded = foldLossKinds(report.kinds);",
+    to: "  const folded = report.kinds as FoldedLossKinds;",
     test: `${SERVER}/test/coverage-losses.test.ts`,
     because:
       "a connector-chosen string lands on a row coverage renders — an author-written slot on a record 03 §3.3 says carries none",
@@ -13040,6 +13041,57 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/loss-report.test.ts`,
     because:
       "a machine whose ledger filled a month ago keeps losing hooks, the report's newest stays a month old, and the hub reads the repo as complete",
+  },
+  // Review 2026-10-01 (C1 … LOW): each finding's guard.
+  {
+    label: "coverage casts the folded loss kinds to int4 at read time",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "): SQL => sql`${table.lossIgnoredAt} > ${since}`;",
+    to: "): SQL => sql`coalesce((${table.lossKinds}->>'hub_ignored')::int, 0) > 0`;",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "one report carrying hub_ignored 3e9 makes readCoverage throw for every developer on the repo — search, hints, suspect, pins and absences fail for fourteen days",
+  },
+  {
+    label: "the wire contract admits a loss count past int4",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "const LossCountSchema = z.number().int().min(0).max(MAX_LOSS_COUNT);",
+    to: "const LossCountSchema = z.number().int().min(0);",
+    test: `${SCHEMA}/test/telemetry-loss.test.ts`,
+    because: "every consumer of the report — the hub's int4 column first — has to defend against a count no column holds",
+  },
+  {
+    label: "a loss total past int4 reaches the hub's integer column",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  Math.min(MAX_LOSS_COUNT, Math.max(0, count));",
+    to: "  count;",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because: "kinds that each fit int4 sum past it, the session INSERT fails with a 500, and the session never registers (PROBE B's shape)",
+  },
+  {
+    label: "a loss block the hub cannot read refuses the session call it rides",
+    file: `${SERVER}/src/http/schemas.ts`,
+    from: "  losses: TelemetryLossReportSchema.catch(UNREADABLE_LOSS_REPORT).optional(),",
+    to: "  losses: TelemetryLossReportSchema.optional(),",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because:
+      "a register carrying a report the hub cannot parse answers 400, the connector's registration ladder gives up, and the session is never registered at all",
+  },
+  {
+    label: "the hub trusts a total below the kinds it was sent",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  const total = clampLossCount(Math.max(report.total, counted));",
+    to: "  const total = clampLossCount(report.total);",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because: "a report of total 0 with hub_ignored 7 reads complete: a named loss counted as none",
+  },
+  {
+    label: "a loss kind zod's record parse drops leaves the stored kinds short of the total",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  const remainder = total - Math.min(total, counted);",
+    to: "  const remainder = 0;",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because: "a `__proto__` key vanishes from the stored kinds, and a reader of the row cannot tell what the rest of the total was",
   },
 ];
 
@@ -13282,7 +13334,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/telemetry-loss.test.ts 1
+ * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
@@ -13291,7 +13343,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
- * PRINTS: packages/server/test/coverage-losses.test.ts 9
+ * PRINTS: packages/server/test/coverage-losses.test.ts 14
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync.test.ts 7
