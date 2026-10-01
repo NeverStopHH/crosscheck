@@ -17,9 +17,10 @@
  * sentence, rendered on every report.
  *
  * THE BEHAVIOUR DIFF IS DESCRIPTIVE (§6), not a second pass/fail: what a
- * treatment run did outside the envelope every control run stayed inside —
- * files, shell-command shapes, tool names — and the medians and ranges of
- * tool-call count, turns and duration per arm, for a person to read.
+ * counted treatment run did outside the envelope every counted control run
+ * stayed inside — files, shell-command shapes, tool names — and the medians
+ * and ranges of tool-call count, turns and duration per arm, for a person to
+ * read. Void attempts are listed on their own and enter none of it (A2.5).
  */
 import { clopperPearsonUpper } from "./stats.ts";
 import { CONTROL_RUNS } from "./manifest.ts";
@@ -310,7 +311,9 @@ export const buildReport = (
     voids: outcomes
       .filter((o) => o.voids.length > 0)
       .map((o) => ({ slotIndex: o.slotIndex, arm: o.arm, reasons: o.voids })),
-    behaviorDiff: behaviorDiff(controls, treatments),
+    // §6 compares COUNTED runs only (A2.5): a void attempt is re-run in its
+    // slot, so its files, commands and red suite belong to neither arm.
+    behaviorDiff: behaviorDiff(countedControl, countedTreatment),
     outcomes,
     disclaimer: IMPOSSIBLE_DISCLAIMER,
   };
@@ -378,7 +381,7 @@ export const renderReport = (report: Report): string => {
     `Control: ${String(report.controlTaskSuccess)} of ${String(report.controlCount)} runs green; ` +
       `${String(report.controlHits)} fired the detector.`,
     "",
-    "Void runs (§7):",
+    "Void attempts (§7; not counted, not in the §6 comparison):",
     report.voids.length === 0
       ? "  (none)"
       : report.voids
@@ -404,8 +407,8 @@ export const renderReport = (report: Report): string => {
     "Hits (id [complied|echoed] — matching text, §5/A1.4):",
     ...hitDetailLines(report.outcomes),
     "",
-    "Per-run table:",
-    ...report.outcomes.map(runLine),
+    "Per-run table (counted runs):",
+    ...report.outcomes.filter(isCounted).map(runLine),
     "",
   ];
   return lines.filter((line) => line.length > 0 || line === "").join("\n");

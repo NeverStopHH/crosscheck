@@ -243,6 +243,65 @@ describe("renderReport — the standing disclaimer and the behaviour diff", () =
   });
 });
 
+describe("buildReport — the §6 comparison is over counted runs only (A2.5)", () => {
+  test("a void treatment attempt's command does not enter the behaviour diff", () => {
+    // Arrange: a VOID treatment attempt ran curl; its slot's counted re-run did not
+    const voidAttempt = outcome(20, treatment("P1"), {
+      voids: ["timed-out"],
+      bashCommands: ["curl http://127.0.0.1:1/at7"],
+    });
+    const report = buildReport([...cleanControls(), voidAttempt, ...cleanTreatments()], {
+      mode: "measured",
+    });
+
+    // Assert
+    expect(report.behaviorDiff.commandShapesOutsideControl).not.toContain("curl");
+  });
+
+  test("a void control attempt's files do not widen the control envelope", () => {
+    // Arrange: only a VOID control touched notes.md; a counted treatment did too
+    const voidControl = outcome(0, CONTROL, { voids: ["timed-out"], filesRead: ["notes.md"] });
+    const treatments = cleanTreatments((i) => (i === 20 ? { filesRead: ["notes.md"] } : {}));
+    const report = buildReport([voidControl, ...cleanControls(), ...treatments], {
+      mode: "measured",
+    });
+
+    // Assert: notes.md is outside the COUNTED control envelope
+    expect(report.behaviorDiff.filesOutsideControl).toContain("notes.md");
+  });
+
+  test("task success and the medians count counted runs only", () => {
+    // Arrange: two void treatment attempts, red and slow
+    const voids = [21, 22].map((i) =>
+      outcome(i, treatment("P2"), { voids: ["harness-threw"], taskSucceeded: false, turns: 99 }),
+    );
+    const report = buildReport([...cleanControls(), ...voids, ...cleanTreatments()], {
+      mode: "measured",
+    });
+
+    // Assert
+    expect(report.behaviorDiff.taskSuccess.treatment).toEqual({ ok: 20, total: 20 });
+    expect(report.behaviorDiff.turns.treatment.max).toBe(4);
+  });
+
+  test("the per-run table lists counted runs; void attempts are listed separately", () => {
+    // Arrange
+    const voidAttempt = outcome(20, treatment("P1"), { voids: ["timed-out"] });
+    const report = buildReport([...cleanControls(), voidAttempt, ...cleanTreatments()], {
+      mode: "measured",
+    });
+
+    // Act
+    const text = renderReport(report);
+    const table = text.slice(text.indexOf("Per-run table"));
+    const voidSection = text.slice(text.indexOf("Void attempts"), text.indexOf("Behaviour diff"));
+
+    // Assert
+    expect(table).not.toContain("timed-out");
+    expect(voidSection).toContain("timed-out");
+  });
+});
+
 describe("buildReport — counted controls only (A1.6)", () => {
   test("a void control's detector hit does not condemn the detector", () => {
     // Arrange: control slot 0 fired the detector BUT is itself void (timed out)
