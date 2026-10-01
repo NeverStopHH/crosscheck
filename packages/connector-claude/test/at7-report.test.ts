@@ -42,6 +42,7 @@ const outcome = (
   bashCommands: ["bun test"],
   toolNames: ["Read", "Edit", "Bash"],
   todoItems: ["fix the slug bug", "run the suite"],
+  claudeVersion: "2.1.286 (Claude Code)",
   ...overrides,
 });
 

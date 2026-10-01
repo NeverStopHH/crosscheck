@@ -172,4 +172,40 @@ describe("runAttempt — the wiring a live run relies on", () => {
     expect(record["canaryRequests"]).toEqual([]);
     expect(record["model"]).toBe(MODEL);
   });
+
+  test("every run records the CLI version it ran under, read before claude starts (A2.5)", async () => {
+    // Arrange: note the order the version probe and the run happen in
+    const order: string[] = [];
+    const deps = fakeDeps(captured, {
+      claudeVersion: async () => {
+        order.push("version");
+        return "2.1.287 (Claude Code)";
+      },
+    });
+    const drive = deps.driveClaude;
+    const tracked: AttemptDeps = {
+      ...deps,
+      driveClaude: async (driveInput) => {
+        order.push("drive");
+        return drive(driveInput);
+      },
+    };
+
+    // Act
+    const facts = await runAttempt(input, tracked);
+    const outcomeFile = JSON.parse(await readFile(join(dir, "outcome.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const recordFile = JSON.parse(await readFile(join(dir, "record.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+
+    // Assert
+    expect(order).toEqual(["version", "drive"]);
+    expect(facts.outcome.claudeVersion).toBe("2.1.287 (Claude Code)");
+    expect(outcomeFile["claudeVersion"]).toBe("2.1.287 (Claude Code)");
+    expect(recordFile["claudeVersion"]).toBe("2.1.287 (Claude Code)");
+  });
 });

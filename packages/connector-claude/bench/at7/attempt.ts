@@ -123,6 +123,8 @@ const relativize = (root: string, paths: readonly string[]): readonly string[] =
 interface Observed {
   readonly slot: Slot;
   readonly token: string;
+  /** `claude --version` read immediately before this run (A2.5). */
+  readonly claudeVersion: string;
   readonly fixture: FixtureInfo;
   readonly drive: DriveResult;
   readonly tree: WorkingTree;
@@ -151,6 +153,7 @@ const outcomeOf = (observed: Observed): RunOutcome => {
     bashCommands: record.bashCommands,
     toolNames: record.toolUses.map((use) => use.name),
     todoItems: record.todoItems,
+    claudeVersion: observed.claudeVersion,
   };
 };
 
@@ -169,6 +172,7 @@ const recordDocument = (
   return {
     slotIndex: observed.slot.index,
     arm: observed.slot.arm,
+    claudeVersion: observed.claudeVersion,
     model: record.init?.model ?? null,
     mcpServers: record.init?.mcpServers ?? [],
     plugins: record.init?.plugins ?? [],
@@ -184,11 +188,11 @@ const recordDocument = (
   };
 };
 
-const factsOf = (observed: Observed, outcome: RunOutcome, version: string): AttemptFacts => {
+const factsOf = (observed: Observed, outcome: RunOutcome): AttemptFacts => {
   const { record } = observed.drive;
   return {
     outcome,
-    claudeVersion: version,
+    claudeVersion: observed.claudeVersion,
     model: record.init?.model ?? null,
     mcpServers: mcpServerNames(record.init),
     plugins: record.init?.plugins ?? [],
@@ -237,6 +241,9 @@ export const runAttempt = async (
     });
     await deps.commitWiring(fixture.repoRoot);
 
+    // The version THIS run ran under (A2.5), read right before it starts — the
+    // manifest's start-of-sweep version cannot show a CLI updated mid-sweep.
+    const version = await deps.claudeVersion();
     const drive = await deps.driveClaude({
       fixtureRoot: fixture.repoRoot,
       mcpConfigPath: installed.mcpPath,
@@ -261,7 +268,17 @@ export const runAttempt = async (
       hadTokenHit: detection.hadTokenHit,
       timedOut: drive.timedOut,
     });
-    const observed: Observed = { slot, token, fixture, drive, tree, taskSucceeded, detection, voids };
+    const observed: Observed = {
+      slot,
+      token,
+      claudeVersion: version,
+      fixture,
+      drive,
+      tree,
+      taskSucceeded,
+      detection,
+      voids,
+    };
     const outcome = outcomeOf(observed);
     await writeJson(join(resultsDir, "outcome.json"), { ...outcome, timedOut: drive.timedOut });
     const gitDiff = await deps.fixtureGitDiff(fixture.repoRoot);
@@ -269,7 +286,7 @@ export const runAttempt = async (
       join(resultsDir, "record.json"),
       recordDocument(observed, canary.requests, proxy.requestBodies, gitDiff),
     );
-    return factsOf(observed, outcome, await deps.claudeVersion());
+    return factsOf(observed, outcome);
   } finally {
     if (proxy !== null) {
       await proxy.stop();
@@ -300,6 +317,7 @@ export const harnessThrewFacts = (slot: Slot, error: unknown): AttemptFacts => (
     bashCommands: [],
     toolNames: [],
     todoItems: [],
+    claudeVersion: "",
   },
   claudeVersion: "",
   model: null,

@@ -58,6 +58,8 @@ export interface RunOutcome {
   readonly toolNames: readonly string[];
   /** TodoWrite plan items, diffed across arms (§6, M3). */
   readonly todoItems: readonly string[];
+  /** `claude --version` this run ran under (A2.5); "" when it never started. */
+  readonly claudeVersion: string;
 }
 
 export type ReportMode = "dry-run" | "measured";
