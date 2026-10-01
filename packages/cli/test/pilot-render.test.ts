@@ -438,9 +438,28 @@ describe("renderPilot", () => {
     // Assert
     expect(out).toContain("cohorts, side by side");
     expect(out).toContain(
-      "discovery 31/50 sessions · interventions 62 · benefit 12.9 · burden 200.0 · precision 29% (4 of 14) · coverage 27% · unclear 3",
+      "discovery 31/50 sessions · interventions 62 · benefit 12.9 · burden 200.0 · precision 29% (4 of 14) · coverage 27% (17 of 62) · unclear 3",
     );
     expect(out).toContain("replication 0/150 sessions — empty");
+  });
+
+  test("L6: a cohort's coverage carries its counts, so 1 of 300 never reads as none", () => {
+    // Arrange — the second review: a bare rounded percent printed 1 of 300
+    // as "0%" and 199 of 200 as "100%"
+    const sparse = {
+      cohort: "replication",
+      cap: 150,
+      ...discoveryLabels(),
+      interventions: 300,
+      labelled: 1,
+      labelCoverage: { kind: "measured" as const, value: 1 / 300 },
+    };
+    const out = renderPilot(
+      view({ cohorts: [{ cohort: "discovery", cap: 50, ...discoveryLabels() }, sparse] }),
+    );
+
+    // Assert
+    expect(out).toContain("coverage 0% (1 of 300)");
   });
 
   test("a full discovery cohort says it is frozen", () => {

@@ -296,7 +296,13 @@ const cohortLine = (cohort: PilotCohortFigures): string => {
     cohort.precision.kind === "measured"
       ? ` (${count(cohort.helpful)} of ${count(cohort.helpful + cohort.noise)})`
       : "";
-  return `${head} · interventions ${count(cohort.interventions)} · benefit ${rate(cohort.benefitPer100)} · burden ${rate(cohort.burdenPer100)} · precision ${percent(cohort.precision)}${verdicts} · coverage ${percent(cohort.labelCoverage)} · unclear ${count(cohort.unclear)}`;
+  // COUNTS BESIDE THE PERCENT (second review, L6): a bare rounded coverage
+  // printed 1 of 300 as "0%" and 199 of 200 as "100%".
+  const labelled =
+    cohort.labelCoverage.kind === "measured"
+      ? ` (${count(cohort.labelled)} of ${count(cohort.interventions)})`
+      : "";
+  return `${head} · interventions ${count(cohort.interventions)} · benefit ${rate(cohort.benefitPer100)} · burden ${rate(cohort.burdenPer100)} · precision ${percent(cohort.precision)}${verdicts} · coverage ${percent(cohort.labelCoverage)}${labelled} · unclear ${count(cohort.unclear)}`;
 };
 
 const cohortLines = (cohorts: readonly PilotCohortFigures[]): readonly string[] => [
