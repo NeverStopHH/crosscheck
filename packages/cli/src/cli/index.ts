@@ -31,7 +31,18 @@ import {
   runPresence,
   runUnmute,
 } from "./privacy.ts";
-import { PIN_FLAG_BROKE, PIN_FLAG_CHECK, PIN_FLAG_FILES, PIN_FLAG_OK, PIN_FLAG_SWEEP, PIN_USAGE, runPin } from "./pin.ts";
+import {
+  PIN_FLAG_BROKE,
+  PIN_FLAG_CHECK,
+  PIN_FLAG_FILES,
+  PIN_FLAG_OK,
+  PIN_FLAG_REASON,
+  PIN_FLAG_SWEEP,
+  PIN_FLAG_EXPIRES,
+  PIN_FLAG_WAIVE,
+  PIN_USAGE,
+  runPin,
+} from "./pin.ts";
 import { NOISE_USAGE, runNoise } from "./noise.ts";
 import { KEY_FLAG_PRINT, KEY_USAGE, runKey } from "./key.ts";
 import type { InteractiveProbe } from "./pin.ts";
@@ -136,7 +147,15 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   },
   pin: {
     usage: PIN_USAGE,
-    valueFlags: [PIN_FLAG_CHECK, PIN_FLAG_BROKE, PIN_FLAG_OK, PIN_FLAG_FILES],
+    valueFlags: [
+      PIN_FLAG_CHECK,
+      PIN_FLAG_BROKE,
+      PIN_FLAG_OK,
+      PIN_FLAG_FILES,
+      PIN_FLAG_WAIVE,
+      PIN_FLAG_EXPIRES,
+      PIN_FLAG_REASON,
+    ],
     booleanFlags: [PIN_FLAG_SWEEP],
   },
   suspect: { usage: SUSPECT_USAGE },

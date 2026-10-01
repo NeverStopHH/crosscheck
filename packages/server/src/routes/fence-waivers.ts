@@ -1,46 +1,33 @@
 /**
- * /api/fence-waivers — who may open a human-verified fence, and on what terms
- * (1.0 spec 04 §3.6):
+ * /api/fence-waivers — the RECORD of who opened a human-verified fence
+ * (1.0 spec 04 §3.6), and no longer a way to open one (04a §2):
  *
- *   POST /api/fence-waivers            open one, for a bounded time
- *   POST /api/fence-waivers/:id/revoke close it again
- *   GET  /api/fence-waivers?repo=&pin= what the record says
+ *   POST /api/fence-waivers            refused: a person approves with a passkey
+ *   POST /api/fence-waivers/:id/revoke refused: same
+ *   GET  /api/fence-waivers?repo=&pin= what the record says, authority included
  *
- * A ROUTE OF ITS OWN rather than a record kind on `POST /api/records`, and the
- * reason pins already established: the spool is fire-and-forget, and a person
- * who typed the command needs the refusal — "that date is beyond the ceiling",
- * "that waiver is already revoked" — in their terminal, synchronously, not
- * silently dropped into a ledger. A waiver can also be typed by somebody with
- * no agent session at all, so there is no session to hang it on.
+ * WHY THE WRITES WERE TAKEN AWAY. Until 04a both writes took `developerAuth`
+ * plus a body that said it saw a controlling terminal. The bearer key behind
+ * `developerAuth` sits in plaintext in `~/.crosscheck/config.json`, readable
+ * by every agent on the developer's machine, and the presence field is just
+ * more bytes the same agent can send — so an agent could lift a protected
+ * conflict on a human-declared invariant, principle 4's exact failure. That
+ * gate was a DETECTION (04 §10 D8). Now an api key can only ASK
+ * (`/api/waiver-requests`), and a grant or revocation needs a WebAuthn
+ * assertion with user verification from the web UI, where the terms are
+ * shown and signed (services/waiver-requests.ts, services/webauthn.ts).
  *
- * NOT `requireAdmin`, deliberately. The admin token is the TEAM'S decision
- * surface — it flips whether `suspect` names sessions at all. A waiver is one
- * behaviour in one repo, decided by whoever is carrying that work, and routing
- * it through an admin would make the fence useless: nobody would ask.
- *
- * THE HUMAN GATE IS HUB-SIDE ON BOTH WRITES, and it is a gate on EVIDENCE
- * rather than on a verdict — #50's pin rule copied with its stated limit. The
- * body says what the client OBSERVED (`presence: controlling_terminal`); the
- * hub stamps `capture_mode` itself. A body that could say "human" would be a
- * caller asserting the permission into existence.
- *
- * WHAT THE GATE IS WORTH, stated rather than implied: a bearer key that reaches
- * these routes can send the field too, and that key sits in plaintext in
- * `~/.crosscheck/config.json`. This makes the claim explicit, required and
- * refusable AT THE HUB, where every other gate in this product lives. It does
- * not make it unforgeable by an attacker who already holds the key — which is
- * why every row names who granted it, so a forged permission is at least an
- * attributable one.
+ * The routes stay, refusing, rather than disappearing: a 404 would send a
+ * script written against the old recipe looking for another way in, and the
+ * refusal sentence tells it where requests go instead.
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { WaiverGrantSchema, WaiverRevokeSchema } from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
-import { formatIssues, readJsonBody } from "../http/request.ts";
+import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { grantWaiver, listWaivers, revokeWaiver } from "../services/waivers.ts";
-import type { WaiverRefusal } from "../services/waivers.ts";
+import { listWaivers } from "../services/waivers.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const ListQuerySchema = z.object({
@@ -49,69 +36,30 @@ const ListQuerySchema = z.object({
 });
 
 /**
- * ONE SENTENCE PER REFUSAL, chosen by an enum the service returns.
+ * WHAT AN API KEY HEARS WHEN IT TRIES TO OPEN OR CLOSE A FENCE (04a §6).
  *
- * The service never writes prose and this never invents a reason: a refusal a
- * person reads in their terminal is a sentence somebody wrote on purpose, and
- * the mapping is where it lives. Two are deliberately the same shape — a
- * waiver in another repo and a waiver that does not exist both answer
- * "unknown", because telling a caller that something EXISTS somewhere they
- * cannot see is itself a disclosure.
+ * One sentence that says where to go instead, because the caller is most
+ * likely a script or an agent following a pre-04a recipe, and a bare 403
+ * would send it looking for a different way in.
  */
-const REFUSAL_SENTENCE: Record<WaiverRefusal, string> = {
-  unknown_pin: "no pin with that id exists on this repo",
-  wrong_repo: "that pin belongs to another repo",
-  expiry_in_the_past:
-    "that expiry has already passed — the waiver would be closed on arrival",
-  expiry_beyond_ceiling:
-    "that expiry is further out than a waiver may reach; grant a shorter one, and grant again if it is still needed",
-  unknown_waiver: "no waiver with that id exists on this repo",
-  not_a_grant: "that row is a revocation, not a grant",
-  already_revoked: "that waiver has already been revoked",
-};
+const PASSKEY_REQUIRED_SENTENCE =
+  "a fence opens and closes only with a person's passkey — ask with POST /api/waiver-requests (crosscheck pin waive), and a person approves it at /ui/waivers";
 
 export const fenceWaiverRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
 
-  router.post("/", developerAuth(deps), async (c) => {
-    const parsed = WaiverGrantSchema.safeParse(await readJsonBody(c));
-    if (!parsed.success) {
-      // The presence literal fails HERE, before anything reaches the database:
-      // an absent or unknown value is a parse failure, never a default.
-      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
-    }
-    const outcome = await grantWaiver({
-      db: deps.db,
-      repo: parsed.data.repo,
-      pinId: parsed.data.pinId,
-      pinVersion: parsed.data.pinVersion,
-      grantedBy: c.get("developer").id,
-      reason: parsed.data.reason,
-      expiresAt: new Date(parsed.data.expiresAt),
-      now: deps.now(),
-    });
-    return "refusal" in outcome
-      ? fail(c, 422, outcome.refusal, REFUSAL_SENTENCE[outcome.refusal])
-      : ok(c, { id: outcome.id }, 201);
-  });
+  // THE WRITE HALF IS GONE FROM THE API KEY (04a §2). Authenticated first, so
+  // a stranger still gets the 401 every other route gives; then refused
+  // before the body is read, so nothing a body says — the old presence
+  // literal included — can reach a decision. The passkey path writes through
+  // services/waiver-requests.ts from the web UI, never through here.
+  router.post("/", developerAuth(deps), (c) =>
+    fail(c, 403, "passkey_required", PASSKEY_REQUIRED_SENTENCE),
+  );
 
-  router.post("/:id/revoke", developerAuth(deps), async (c) => {
-    const parsed = WaiverRevokeSchema.safeParse(await readJsonBody(c));
-    if (!parsed.success) {
-      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
-    }
-    const outcome = await revokeWaiver({
-      db: deps.db,
-      repo: parsed.data.repo,
-      waiverId: c.req.param("id"),
-      grantedBy: c.get("developer").id,
-      reason: parsed.data.reason,
-      now: deps.now(),
-    });
-    return "refusal" in outcome
-      ? fail(c, 422, outcome.refusal, REFUSAL_SENTENCE[outcome.refusal])
-      : ok(c, { id: outcome.id }, 201);
-  });
+  router.post("/:id/revoke", developerAuth(deps), (c) =>
+    fail(c, 403, "passkey_required", PASSKEY_REQUIRED_SENTENCE),
+  );
 
   router.get("/", developerAuth(deps), async (c) => {
     const parsed = ListQuerySchema.safeParse(

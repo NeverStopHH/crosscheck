@@ -1237,3 +1237,95 @@ BEGIN
   END IF;
 END
 $$;
+
+-- 1.0 spec 04a — the human waiver authority.
+--
+-- The public half of each enrolled passkey; the private key never leaves the
+-- person's device. Never deleted: a passkey grant names its credential.
+-- Created BEFORE the fence_waivers columns below, which reference it.
+CREATE TABLE IF NOT EXISTS passkeys (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  credential_id text NOT NULL,
+  public_key text NOT NULL,
+  sign_count bigint NOT NULL CONSTRAINT passkeys_sign_count_check CHECK (sign_count >= 0),
+  transports jsonb NOT NULL,
+  rp_id text NOT NULL,
+  aaguid text NOT NULL,
+  backed_up boolean NOT NULL,
+  -- keep in sync with MAX_PASSKEY_LABEL_CHARS in @crosscheck/schema
+  label text NOT NULL CONSTRAINT passkeys_label_length_check CHECK (char_length(label) <= 60),
+  -- keep in sync with ENROLMENT_SOURCES and PASSKEY_REVOKERS in @crosscheck/schema
+  enrolled_via text NOT NULL CONSTRAINT passkeys_enrolled_via_check CHECK (enrolled_via IN ('admin', 'passkey')),
+  created_at timestamptz NOT NULL,
+  -- created_at plus the cool-off, stored so a later constant change cannot
+  -- shorten the wait of a passkey enrolled under the old one.
+  usable_from timestamptz NOT NULL CONSTRAINT passkeys_cooloff_check CHECK (usable_from >= created_at),
+  revoked_at timestamptz,
+  revoked_by_kind text CONSTRAINT passkeys_revoked_by_kind_check
+    CHECK (revoked_by_kind IS NULL OR revoked_by_kind IN ('owner', 'admin', 'passkey')),
+  revoked_by text,
+  CONSTRAINT passkeys_revocation_shape_check
+    CHECK ((revoked_at IS NULL AND revoked_by_kind IS NULL)
+        OR (revoked_at IS NOT NULL AND revoked_by_kind IS NOT NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS passkeys_credential_id_idx ON passkeys (credential_id);
+CREATE INDEX IF NOT EXISTS passkeys_developer_idx ON passkeys (developer_id);
+
+-- Every fence_waivers row written before 04a was opened with an api key plus a
+-- presence literal any agent could send, so the DEFAULT labels exactly those
+-- rows 'terminal' (the weaker authority). The drizzle schema declares NO
+-- default: every new insert must name its authority.
+ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS authority text NOT NULL DEFAULT 'terminal';
+ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS credential_id text REFERENCES passkeys(credential_id);
+ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS request_id text;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'fence_waivers_authority_check'
+      AND conrelid = 'fence_waivers'::regclass
+  ) THEN
+    ALTER TABLE fence_waivers ADD CONSTRAINT fence_waivers_authority_check
+      CHECK (authority = 'terminal' OR (authority = 'passkey' AND credential_id IS NOT NULL));
+  END IF;
+END
+$$;
+
+-- One row per permission to enrol: an admin-minted code or the internal code
+-- an assertion by an existing passkey mints. Only the hash is kept.
+CREATE TABLE IF NOT EXISTS passkey_enrollments (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  code_hash text NOT NULL,
+  source text NOT NULL,
+  created_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  used_at timestamptz
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS passkey_enrollments_code_hash_idx ON passkey_enrollments (code_hash);
+CREATE INDEX IF NOT EXISTS passkey_enrollments_developer_idx ON passkey_enrollments (developer_id);
+
+-- What an api key may still do about a fence: ask. Pending until a passkey
+-- approval writes a grant, the requester withdraws it, or its expiry passes.
+CREATE TABLE IF NOT EXISTS waiver_requests (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  pin_id text NOT NULL REFERENCES pins(id),
+  pin_version integer NOT NULL,
+  requested_by text NOT NULL REFERENCES developers(id),
+  -- keep in sync with MAX_WAIVER_REASON_CHARS in @crosscheck/schema
+  reason text NOT NULL CONSTRAINT waiver_requests_reason_length_check CHECK (char_length(reason) <= 200),
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL,
+  withdrawn_at timestamptz,
+  approved_waiver_id text,
+  CONSTRAINT waiver_requests_resolution_check
+    CHECK (withdrawn_at IS NULL OR approved_waiver_id IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS waiver_requests_repo_idx ON waiver_requests (repo, created_at DESC);

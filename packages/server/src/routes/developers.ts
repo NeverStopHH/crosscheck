@@ -13,6 +13,7 @@ import {
   removeDeveloperEmail,
   rotateDeveloperKey,
 } from "../services/developers.ts";
+import { listPasskeys, mintEnrolmentCode, revokePasskey } from "../services/passkeys.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const AddEmailBodySchema = z.object({ email: z.email() });
@@ -107,6 +108,50 @@ export const developersRoutes = (deps: AppDeps): Hono<AppEnv> => {
           emails: result.emails,
         });
     }
+  });
+
+  // 04a §4.1 — THE CODE A PERSON ENROLS THEIR FIRST PASSKEY WITH. The admin
+  // token, not the developer's key: a code the api key could mint would let
+  // any agent holding that key enrol a passkey of its own, the one thing the
+  // code exists to prevent. Shown once; the hub keeps only its hash.
+  router.post("/:id/passkey-enrollments", async (c) => {
+    const developerId = c.req.param("id");
+    if ((await listDeveloperEmails(deps.db, developerId)).length === 0) {
+      return fail(c, 404, "not_found", "no developer with this id");
+    }
+    const minted = await mintEnrolmentCode({
+      db: deps.db,
+      developerId,
+      source: "admin",
+      now: deps.now(),
+    });
+    return ok(c, { code: minted.code, expiresAt: minted.expiresAt.toISOString() }, 201);
+  });
+
+  router.get("/:id/passkeys", async (c) => {
+    return ok(c, {
+      passkeys: await listPasskeys({ db: deps.db, developerId: c.req.param("id"), now: deps.now() }),
+    });
+  });
+
+  // 04a §4.5 — recovery: a lost device, or a passkey nobody expected. The
+  // admin may revoke at any time; the path names the developer so a typo in
+  // the passkey id cannot close somebody else's device.
+  router.post("/:id/passkeys/:passkeyId/revoke", async (c) => {
+    const passkeyId = c.req.param("passkeyId");
+    const owned = await listPasskeys({ db: deps.db, developerId: c.req.param("id"), now: deps.now() });
+    if (!owned.some((passkey) => passkey.id === passkeyId)) {
+      return fail(c, 404, "not_found", "this developer has no passkey with this id");
+    }
+    const outcome = await revokePasskey({
+      db: deps.db,
+      passkeyId,
+      by: { kind: "admin" },
+      now: deps.now(),
+    });
+    return "refusal" in outcome
+      ? fail(c, 409, outcome.refusal, "that passkey has already been revoked")
+      : ok(c, { revoked: true });
   });
 
   router.delete("/:id/emails/:email", async (c) => {

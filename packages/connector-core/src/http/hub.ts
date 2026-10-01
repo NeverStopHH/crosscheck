@@ -2413,6 +2413,13 @@ export const PinEntrySchema = z.looseObject({
    * the absent reading UNDERSTATES permission rather than inventing it.
    */
   liveWaiver: WaiverRefSchema.nullish().transform((value) => value ?? null),
+  /**
+   * Which version of the invariant the pin is at (04 §3.5) — what a waiver
+   * request names. Defaulted to 1, the version every pin had before sweeps
+   * could bump it; a wrong guess costs a `stale_version` refusal, never a
+   * waiver over paths nobody asked about.
+   */
+  version: z.number().int().min(1).default(1),
 });
 
 export type PinEntry = z.infer<typeof PinEntrySchema>;
@@ -2592,6 +2599,128 @@ export const sweepPins = async (
   }
   return { ok: true, data: { applied, ignored }, dateHeader };
 };
+
+export interface WaiverRequestBody {
+  readonly repo: string;
+  readonly pinId: string;
+  readonly pinVersion: number;
+  readonly reason: string;
+  readonly expiresAt: string;
+}
+
+const RequestedWaiverSchema = z.looseObject({
+  id: z.string().min(1),
+  approvePath: z.string().min(1),
+});
+
+/**
+ * ASK FOR A FENCE TO OPEN (1.0 spec 04a §6) — the only waiver write an api
+ * key has left. It opens nothing; the hub answers with the page where a
+ * person approves it with a passkey.
+ */
+export const requestWaiver = (
+  ctx: HubContext,
+  body: WaiverRequestBody,
+): Promise<HubResult<z.infer<typeof RequestedWaiverSchema>>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/waiver-requests",
+    schema: RequestedWaiverSchema,
+    body,
+  });
+
+/** One waiver request as `pin list` shows it. */
+export const WaiverRequestEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  pinId: z.string().min(1),
+  pinVersion: z.number().int().min(1),
+  requestedByName: z.string().default(""),
+  reason: z.string().default(""),
+  expiresAt: z.string().min(1),
+  status: z.string().min(1),
+});
+
+export type WaiverRequestEntry = z.infer<typeof WaiverRequestEntrySchema>;
+
+const WaiverRequestListSchema = z
+  .looseObject({ requests: z.array(z.unknown()).default([]) })
+  .transform((value): readonly WaiverRequestEntry[] =>
+    // The tolerant-row rule: one malformed request must not cost the listing.
+    value.requests
+      .map((row) => WaiverRequestEntrySchema.safeParse(row))
+      .filter((parsed) => parsed.success)
+      .map((parsed) => parsed.data),
+  );
+
+/**
+ * One passkey enrolment as the hub announces it (04a §4.3). Defaults lean
+ * toward ANNOUNCING: a row whose cool-off state is missing reads as cooling
+ * off (a warning a person can dismiss), and an unreadable instant reads as
+ * one rather than costing the row — hiding an enrolment is the unsafe way.
+ */
+export const PasskeyAnnouncementSchema = z.looseObject({
+  passkeyId: z.string().min(1),
+  developerName: z.string().default(""),
+  label: z.string().default(""),
+  authenticator: z.string().default("unknown authenticator"),
+  createdAt: z.iso.datetime().catch("an unreadable time"),
+  usableFrom: z.iso.datetime().catch("an unreadable time"),
+  coolingOff: z.boolean().default(true),
+  revoked: z.boolean().default(false),
+});
+
+export interface PasskeyAnnouncements {
+  /** The newest enrolments of the window — a page, bounded by the hub. */
+  readonly enrolments: readonly z.infer<typeof PasskeyAnnouncementSchema>[];
+  readonly usablePasskeys: number;
+  /**
+   * The WHOLE window, counted by the hub: every enrolment, and those still
+   * cooling off and unrevoked. Null when the hub did not say; a reader then
+   * counts the listed page and must call that a lower bound.
+   */
+  readonly enrolmentsTotal: number | null;
+  readonly coolingOff: number | null;
+}
+
+const PasskeyAnnouncementsSchema = z
+  .looseObject({
+    enrolments: z.array(z.unknown()).default([]),
+    usablePasskeys: z.number().int().min(0).default(0),
+    enrolmentsTotal: z.number().int().min(0).nullable().catch(null).default(null),
+    coolingOff: z.number().int().min(0).nullable().catch(null).default(null),
+  })
+  .transform(
+    (value): PasskeyAnnouncements => ({
+      enrolments: value.enrolments
+        .map((row) => PasskeyAnnouncementSchema.safeParse(row))
+        .filter((parsed) => parsed.success)
+        .map((parsed) => parsed.data),
+      usablePasskeys: value.usablePasskeys,
+      enrolmentsTotal: value.enrolmentsTotal,
+      coolingOff: value.coolingOff,
+    }),
+  );
+
+/** Recent enrolments and how many passkeys can approve — `status` and `doctor` read it. */
+export const getPasskeyAnnouncements = (
+  ctx: HubContext,
+): Promise<HubResult<PasskeyAnnouncements>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/passkeys/announcements",
+    schema: PasskeyAnnouncementsSchema,
+  });
+
+/** The repo's waiver requests, every status, newest first. */
+export const getWaiverRequests = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly WaiverRequestEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/waiver-requests${encodeRepo(repo)}`,
+    schema: WaiverRequestListSchema,
+  });
 
 /**
  * One candidate session. NO developer name and NO developer id — by design,

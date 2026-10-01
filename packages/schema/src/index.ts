@@ -135,11 +135,17 @@ export type {
 
 export {
   MAX_WAIVER_REASON_CHARS,
+  WAIVER_AUTHORITIES,
   WAIVER_KINDS,
-  WaiverGrantSchema,
-  WaiverRevokeSchema,
+  WaiverRequestSchema,
 } from "./waiver.ts";
-export type { WaiverGrant, WaiverKind, WaiverRevoke } from "./waiver.ts";
+export type { WaiverAuthority, WaiverKind, WaiverRequestInput } from "./waiver.ts";
+export {
+  ENROLMENT_SOURCES,
+  MAX_PASSKEY_LABEL_CHARS,
+  PASSKEY_REVOKERS,
+} from "./passkey.ts";
+export type { EnrolmentSource, PasskeyRevoker } from "./passkey.ts";
 export { PilotMarkSchema } from "./pilot-mark.ts";
 export type { PilotMarkInput } from "./pilot-mark.ts";
 

@@ -31,6 +31,7 @@ import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identit
 import {
   getAbsences,
   getHintStats,
+  getPasskeyAnnouncements,
   getPins,
   getPresence,
   getPrivacySettings,
@@ -42,6 +43,7 @@ import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts"
 import { readCaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import type { HintStats, HubResult } from "@crosscheck/connector-core/http/hub.ts";
+import { announcementAnswerOf, passkeyStatusLines } from "./passkey-status.ts";
 import { pinStatusLines } from "./pin-observability.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
@@ -378,6 +380,10 @@ export const runStatus = async (
     : [
         "pins: coverage UNKNOWN — the hub did not answer, so nothing here says what is watched",
       ];
+  // 04a §4.3: a passkey nobody expected is announced HERE, inside its
+  // cool-off, where a person already looks — the announcement is the control.
+  const announcements = await getPasskeyAnnouncements(hubCtx);
+  const passkeyLines = passkeyStatusLines(announcementAnswerOf(announcements), config.hubUrl, now);
   const privacy = await getPrivacySettings(hubCtx);
   const privacyLines = privacy.ok
     ? [
@@ -468,6 +474,7 @@ export const runStatus = async (
       ...questionLines,
       ...solvedLines,
       ...pinLines,
+      ...passkeyLines,
       ...ciStatusLines,
       targetsLine(captureHealth, now),
       hintsLine(captureHealth, hintStats),

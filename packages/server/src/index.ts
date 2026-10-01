@@ -1,11 +1,13 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 
 import { createApp } from "./app.ts";
+import { bunPeerAddress } from "./http/peer.ts";
 import { generateApiKey } from "./auth/keys.ts";
 import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
 import { createEmbedderFromEnv } from "./services/embedder.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
+import { parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
@@ -124,6 +126,13 @@ export interface CreateServerOptions {
    * to keep sessions across restarts.
    */
   readonly uiSessionSecret?: string;
+  /**
+   * Where passkeys may be used (04a §7), already validated. Omitted = none:
+   * `startServer` always passes the parsed `CROSSCHECK_WEBAUTHN_ORIGINS`.
+   */
+  readonly webauthnOrigins?: readonly string[];
+  /** Omitted = Bun's own `requestIP` (http/peer.ts); the test harness injects one. */
+  readonly peerAddress?: (c: Context<AppEnv>) => string | null;
 }
 
 /**
@@ -157,6 +166,8 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
       ? {}
       : { embedDeadlineMs: options.embedDeadlineMs }),
     uiSessionSecret: resolveUiSessionSecret(options.uiSessionSecret),
+    webauthnOrigins: options.webauthnOrigins ?? [],
+    peerAddress: options.peerAddress ?? bunPeerAddress,
   });
 
 const MIN_PORT = 1;
@@ -237,6 +248,9 @@ export const startServer = async (): Promise<void> => {
     ciToken: process.env["CROSSCHECK_CI_TOKEN"] ?? null,
     embedder,
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
+    // Throws on an origin no browser would run a ceremony at — refused here
+    // rather than in front of a person at the approval page (04a §7).
+    webauthnOrigins: parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port),
   });
   Bun.serve({ port, fetch: app.fetch });
   // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).

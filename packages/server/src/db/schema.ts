@@ -60,7 +60,11 @@ import {
   TEAM_PIN_POLICIES,
   MAX_WAIVER_REASON_CHARS,
   TEAM_SUSPECT_ATTRIBUTIONS,
+  WAIVER_AUTHORITIES,
   WAIVER_KINDS,
+  ENROLMENT_SOURCES,
+  MAX_PASSKEY_LABEL_CHARS,
+  PASSKEY_REVOKERS,
 } from "@crosscheck/schema";
 
 const timestamptz = (name: string) =>
@@ -1288,8 +1292,28 @@ export const fenceWaivers = pgTable(
     expiresAt: timestamptz("expires_at"),
     supersedes: text("supersedes"),
     createdAt: timestamptz("created_at").notNull(),
+    /**
+     * WHICH AUTHORITY WROTE THIS ROW (04a §6). NO DEFAULT HERE, on purpose:
+     * every insert must say which, so a service that forgot cannot write the
+     * weaker one by omission. The database DEFAULT 'terminal' in bootstrap.sql
+     * exists only to label the rows written before 04a.
+     */
+    authority: text("authority", { enum: WAIVER_AUTHORITIES }).notNull(),
+    /**
+     * The passkey credential that signed; the CHECK below makes it required
+     * for `passkey`, and the reference makes it a credential that exists.
+     */
+    credentialId: text("credential_id").references(() => passkeys.credentialId),
+    /** The request a passkey approval answered; null for an amendment and for a revoke. */
+    requestId: text("request_id"),
   },
   (table) => [
+    // A PASSKEY ROW NAMES ITS CREDENTIAL, as a database fact: "which device
+    // said yes" must survive a later revocation of that device.
+    check(
+      "fence_waivers_authority_check",
+      sql`${table.authority} = 'terminal' OR (${table.authority} = 'passkey' AND ${table.credentialId} IS NOT NULL)`,
+    ),
     check(
       "fence_waivers_reason_length_check",
       sql`char_length(${table.reason}) <= ${sql.raw(String(MAX_WAIVER_REASON_CHARS))}`,
@@ -1313,6 +1337,133 @@ export const fenceWaivers = pgTable(
       table.pinVersion,
       table.createdAt.desc(),
     ),
+  ],
+);
+
+/**
+ * ONE ROW PER ENROLLED PASSKEY (1.0 spec 04a §4).
+ *
+ * The public half only: the private key never leaves the person's device, and
+ * that is the whole property 04a rests on. `usable_from` is `created_at` plus
+ * the cool-off, STORED rather than derived so a later change of the cool-off
+ * constant cannot shorten the wait of a passkey enrolled under the old one.
+ *
+ * NEVER DELETED. A revoked passkey keeps its row, because every passkey grant
+ * names its credential and "which device said yes" must stay answerable.
+ */
+export const passkeys = pgTable(
+  "passkeys",
+  {
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    /** base64url, as the authenticator reports it. */
+    credentialId: text("credential_id").notNull(),
+    /** base64url of the COSE public key. */
+    publicKey: text("public_key").notNull(),
+    signCount: bigint("sign_count", { mode: "number" }).notNull(),
+    transports: jsonb("transports").$type<readonly string[]>().notNull(),
+    rpId: text("rp_id").notNull(),
+    aaguid: text("aaguid").notNull(),
+    backedUp: boolean("backed_up").notNull(),
+    label: text("label").notNull(),
+    enrolledVia: text("enrolled_via", { enum: ENROLMENT_SOURCES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+    usableFrom: timestamptz("usable_from").notNull(),
+    revokedAt: timestamptz("revoked_at"),
+    revokedByKind: text("revoked_by_kind", { enum: PASSKEY_REVOKERS }),
+    /** The developer who revoked it; null when the admin token did. */
+    revokedBy: text("revoked_by"),
+  },
+  (table) => [
+    uniqueIndex("passkeys_credential_id_idx").on(table.credentialId),
+    index("passkeys_developer_idx").on(table.developerId),
+    check(
+      "passkeys_label_length_check",
+      sql`char_length(${table.label}) <= ${sql.raw(String(MAX_PASSKEY_LABEL_CHARS))}`,
+    ),
+    // A revocation is a time AND a revoker, or neither.
+    check(
+      "passkeys_revocation_shape_check",
+      sql`(${table.revokedAt} IS NULL AND ${table.revokedByKind} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByKind} IS NOT NULL)`,
+    ),
+    check("passkeys_cooloff_check", sql`${table.usableFrom} >= ${table.createdAt}`),
+    check(
+      "passkeys_enrolled_via_check",
+      sql`${table.enrolledVia} IN (${sql.raw(ENROLMENT_SOURCES.map((value) => `'${value}'`).join(", "))})`,
+    ),
+    check(
+      "passkeys_revoked_by_kind_check",
+      sql`${table.revokedByKind} IS NULL OR ${table.revokedByKind} IN (${sql.raw(PASSKEY_REVOKERS.map((value) => `'${value}'`).join(", "))})`,
+    ),
+    check("passkeys_sign_count_check", sql`${table.signCount} >= 0`),
+  ],
+);
+
+/**
+ * ONE ROW PER PERMISSION TO ENROL (04a §4.1–4.2): an admin-minted code, or the
+ * internal code an assertion by an existing passkey mints. Only the HASH is
+ * kept; the code is shown once and never again. Single use: `used_at` is set
+ * in the same transaction that writes the passkey it enrolled.
+ */
+export const passkeyEnrollments = pgTable(
+  "passkey_enrollments",
+  {
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    codeHash: text("code_hash").notNull(),
+    source: text("source", { enum: ENROLMENT_SOURCES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+    usedAt: timestamptz("used_at"),
+  },
+  (table) => [
+    uniqueIndex("passkey_enrollments_code_hash_idx").on(table.codeHash),
+    index("passkey_enrollments_developer_idx").on(table.developerId),
+  ],
+);
+
+/**
+ * ONE ROW PER WAIVER REQUEST (04a §6) — what an api key may still do.
+ *
+ * A request opens nothing. It is pending until a passkey approval writes a
+ * grant (`approved_waiver_id`), its requester withdraws it (`withdrawn_at`),
+ * or the expiry it asked for passes. The terms are the REQUESTER's; the grant
+ * row carries the terms the approver signed, which may be shorter.
+ */
+export const waiverRequests = pgTable(
+  "waiver_requests",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    pinId: text("pin_id")
+      .notNull()
+      .references(() => pins.id),
+    pinVersion: integer("pin_version").notNull(),
+    requestedBy: text("requested_by")
+      .notNull()
+      .references(() => developers.id),
+    reason: text("reason").notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+    withdrawnAt: timestamptz("withdrawn_at"),
+    approvedWaiverId: text("approved_waiver_id"),
+  },
+  (table) => [
+    check(
+      "waiver_requests_reason_length_check",
+      sql`char_length(${table.reason}) <= ${sql.raw(String(MAX_WAIVER_REASON_CHARS))}`,
+    ),
+    // Withdrawn OR approved, never both: a request answered twice would leave
+    // a team unable to say which answer counted.
+    check(
+      "waiver_requests_resolution_check",
+      sql`${table.withdrawnAt} IS NULL OR ${table.approvedWaiverId} IS NULL`,
+    ),
+    index("waiver_requests_repo_idx").on(table.repo, table.createdAt.desc()),
   ],
 );
 
