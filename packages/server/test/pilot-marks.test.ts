@@ -409,6 +409,32 @@ describe("POST /api/pilot-marks — the three labels", () => {
     expect(await rows(harness)).toHaveLength(0);
   });
 
+  test("L2: a colleague's delivery named under another repo answers exactly as a missing id", async () => {
+    // Arrange — the repo check ran BEFORE the recipient check, so anybody on
+    // a second enrolled repo learned from `wrong_repo` that a computed
+    // delivery id exists — a colleague was shown that ref — while a missing
+    // id answered `unknown_ref`. §11.9 merged the codes; this path leaked.
+    const { harness } = await setup();
+    const ken = await createTestDeveloper(harness, "Ken", "ken-marks-l2@example.com");
+    await harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: OTHER_REPO, pilotEnrolled: true }),
+    );
+
+    // Act
+    const existing = await mark(harness, ken, { repo: OTHER_REPO });
+    const missing = await mark(harness, ken, {
+      repo: OTHER_REPO,
+      refId: hintDeliveryId(SESSION, "wc_nobody_was_shown"),
+    });
+    const codes = await Promise.all(
+      [existing, missing].map(async (response) => ((await response.json()) as { error: { code: string } }).error.code),
+    );
+
+    // Assert
+    expect(codes).toEqual(["unknown_ref", "unknown_ref"]);
+  });
+
   test("L1: a reason with a NUL in it is refused at the boundary, not a 500", async () => {
     // Arrange — Postgres cannot store U+0000 in text; the pins route already
     // refuses it by name, and the second review found this route did not

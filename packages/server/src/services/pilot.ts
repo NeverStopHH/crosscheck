@@ -629,15 +629,18 @@ const refuseMark = (
   if (target === undefined) {
     return "unknown_ref";
   }
-  if (target.repo !== input.repo) {
-    return "wrong_repo";
-  }
   if (target.recipient !== null && target.recipient !== input.markedBy) {
     // THE SAME ANSWER AS "NO SUCH DELIVERY" (corrected by adversarial review).
     // A distinct refusal told anybody who computed `hd(your session, ref)`
     // whether you had been shown that ref — a per-person history from a
-    // refusal code, which §8.4 refuses.
+    // refusal code, which §8.4 refuses. CHECKED BEFORE THE REPO (second
+    // review, L2): the repo check ran first, so naming a colleague's
+    // delivery under another enrolled repo answered `wrong_repo` while a
+    // missing id answered `unknown_ref` — the same leak by another door.
     return "unknown_ref";
+  }
+  if (target.repo !== input.repo) {
+    return "wrong_repo";
   }
   if (!target.unsolicited) {
     return "not_unsolicited";
