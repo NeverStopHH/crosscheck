@@ -363,6 +363,8 @@ understated it):
    are not closed automatically because an admin revocation has no authority to
    write a closure under: `fence_waivers` records `passkey` or `terminal` only.
    That is a decision for Nick (D-PK-1 below).
+   **Closed: decided by Nick 2026-10-02 and built** — revoking a passkey now
+   closes them at once (D-PK-1 below).
 6. **`status` and `doctor` run beside the agent.** The `hubUrl` they read is in
    an agent-writable config. Teammates' terminals and the hub's own
    `/ui/passkeys` are the independent channels (item 10).
@@ -371,3 +373,61 @@ understated it):
 signed? The safe direction is yes. It needs either a third authority value
 (`admin`) for closures written by the admin token, or closures by a passkey
 revocation only.
+
+**D-PK-1, decided by Nick 2026-10-02: yes, on every revocation path. Built.**
+Nick's record: *waiver terminated, reason: authorizing_credential_revoked,
+closed_by: admin/system*.
+
+- **The record.** A third authority, `system`, valid only on a closure the hub
+  writes (`@crosscheck/schema` `SYSTEM_WAIVER_AUTHORITY`). Each termination is a
+  new `revoke` row superseding the grant, with reason
+  `authorizing_credential_revoked`, the revoked credential in `credential_id`,
+  and `granted_by` null: no person wrote it. Who revoked the passkey (owner,
+  another passkey, the admin) stays on the passkey's own row
+  (`revoked_by_kind`), reachable through the credential, so the closure row does
+  not repeat it. The grant is never deleted or edited. `capture_mode` is `auto`.
+- **The CHECK.** `fence_waivers_authority_check` now reads: `terminal` with a
+  person; `passkey` with a credential and a person; `system` only as a `revoke`
+  with a credential, no person and that one reason. It is in drizzle
+  (`db/schema.ts`) and in `bootstrap.sql`, where a guarded block replaces an
+  existing hub's two-authority CHECK once (it looks for the reason in
+  `pg_get_constraintdef`) and leaves the constraint alone on every later
+  start. `granted_by` lost its `NOT NULL` (an `ALTER … DROP NOT NULL` for hubs
+  that have the table); the CHECK is what keeps a person's row from being
+  written without a person. `ddl-sync.test.ts` covers both sources, the upgrade
+  of an old hub, the restart and the refusals.
+- **The write.** `revokePasskey` (`services/passkeys.ts`) is the one writer of
+  a revocation for all three paths — the owner during the cool-off
+  (`/ui/passkeys/:id/revoke`), a passkey ceremony (`revoke_passkey`) and the
+  admin (`POST /api/developers/:id/passkeys/:passkeyId/revoke`). It now runs in
+  one transaction and, after marking the passkey revoked, calls
+  `terminateWaiversSignedBy` (`services/waiver-terminations.ts`): every grant
+  that credential signed which is unexpired and not yet superseded gets its
+  closure row, on any pin version. A closure the database refuses rolls the
+  revocation back. An owner's cool-off revocation normally finds no grant (a
+  cooling passkey cannot approve), and runs the same code.
+- **The surfaces.** The pin registry and the verdict carry `closedWaiver` (the
+  grant id, when it closed, when the grant would have run out, the reason word)
+  until the grant's own expiry; after that the closure changes nothing and
+  stays in the record only. `crosscheck pin list` and the verdict block print
+  *waiver … CLOSED by the hub … — the passkey that approved it was revoked; it
+  would have held until …*; `status` counts them; `/ui/waivers` lists them
+  under *Closed because the passkey that approved them was revoked*;
+  `GET /api/fence-waivers` lists the closure row with authority `system` and
+  `grantedByName` null. The admin's answer carries `terminatedWaivers`, and the
+  ceremony says how many open waivers closed with the passkey. The client never
+  prints the reason word: it maps the one it knows and prints a fixed sentence
+  for any other.
+- **The wire.** A live waiver accepts only `terminal` or `passkey`
+  (`WAIVER_GRANT_AUTHORITIES`); `system` or any unknown value reads as
+  `terminal`, the weaker kind, never as passkey. An unreadable closure is
+  dropped on its own; it never costs the pin or the verdict.
+- **Not built.** `doctor` prints no waivers and still does not. An old CLI
+  against this hub ignores `closedWaiver` and shows the fence as closed without
+  the reason, which is the pre-D-PK-1 reading, never an open fence.
+
+Tests: server `passkey-revocation-terminates`, `waiver-closure-surfaces`,
+`ui-passkeys` (D-PK-1), `ddl-sync` (three cases); cli `waiver-render` (D-PK-1),
+`verdict-render`, `passkey-revocation-cli`; core `verdict-wire`. Each guard has
+an anchor at the tail of `connector-core/scripts/mutation-check.ts`, every one
+`caught`.

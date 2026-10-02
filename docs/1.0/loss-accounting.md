@@ -622,6 +622,8 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
 3. **Rollout.** Every repo whose connector upgrades and whose ledgers hold a loss newer than fourteen days reads
    `incomplete` the moment its next heartbeat lands — on Nick's machine, on the first PostToolUse. That is the
    truth this note exists to state; whether the fleet is told first is a rollout note, not a code decision.
+   **Decided by Nick 2026-10-02:** Ken and Mike are told in the update message that the new `incomplete` is
+   correct — the losses were always there and are now counted — and not a new defect. No code change.
 4. **Pins on denylisted paths** (§4.8.2) are a permanent attribution blind spot that no coverage rule can see.
    *Recommendation:* 04's pin registration refuses a path the default denylist matches, by name in the refusal
    list. Not built here.
@@ -679,10 +681,15 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
    lane (window: the session's start) usually recovers the same touches. *Taken because the last turn's skip and
    a touch reverted before the next run are lost for good.* *Refinement:* book only an unrecovered skip — the
    session's last lane outcome, read at SessionEnd.
+   **Decided by Nick 2026-10-02: kept as is.** Every skip is a loss event; a later successful check must not
+   retroactively undo an earlier loss of observation. The refinement is not built. The noise this costs —
+   repos reading `incomplete` for a skip a later turn recovered — is measured in the pilot.
 
 Defaults taken in the build: 1 (all three carriers), 2 (null key charged to every repo — narrowed by review M4
 to hooks a connected repo could own), 5 (loss outranks reap), 6, 8 and 9 as stated. 3 and 4 are not code
-decisions.
+decisions. *Decided by Nick 2026-10-02:* 3 (the update message says the new `incomplete` is correct), 4 (built:
+the CLI refuses the pin, the hub does not), 8 (built: 2000 candidates, only the remainder booked) and 9 (kept as
+is).
 
 ## 12. Review 2026-10-01 — open list
 
