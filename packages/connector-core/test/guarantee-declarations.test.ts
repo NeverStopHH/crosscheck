@@ -42,6 +42,7 @@ import type {
   ProjectionFacts,
 } from "../src/guarantees/check.ts";
 import {
+  CONFERENCE_CONNECTOR,
   DECLARATION_TABLE,
   GUARANTEE_CONNECTORS,
   MCP_SERVER_MODULE,
@@ -57,7 +58,9 @@ import type {
 } from "../src/guarantees/declarations.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
-const PACKAGES = ["connector-core", "connector-claude", "connector-cursor", "connector-acp"];
+/** `cli` for `crosscheck conference`, the one register outside a host package (decided by Nick, 2026-10-02). */
+const PACKAGES = ["connector-core", "connector-claude", "connector-cursor", "connector-acp", "cli"];
+const CONFERENCE_MODULE = "packages/cli/src/cli/conference.ts";
 const SESSION_STATE = "packages/connector-core/src/state/session-state.ts";
 const MCP_SHARED = "packages/connector-core/src/mcp/tools/shared.ts";
 const CORE_ALLOCATORS = new Set(["allocateSeq", "allocateToolSeq", "openToolWindow"]);
@@ -67,6 +70,7 @@ const PACKAGE_OF: Readonly<Record<GuaranteeConnector, string>> = {
   "claude-code": "packages/connector-claude",
   "cursor-ide": "packages/connector-cursor",
   "acp:*": "packages/connector-acp",
+  [CONFERENCE_CONNECTOR]: "packages/cli",
 };
 
 /**
@@ -259,13 +263,22 @@ beforeAll(async () => {
   MODULES = [...scanned.values()].map((entry) => entry.facts);
   const mcpClosure = closureOf(scanned, [MCP_SERVER_MODULE]);
   CONNECTORS = GUARANTEE_CONNECTORS.map((connector) => {
-    const own = [...scanned.keys()].filter((path) =>
-      path.startsWith(`${PACKAGE_OF[connector]}/src/`),
-    );
+    // A host runs its whole package and the MCP server it installs; the
+    // conference runs one command, which launches no MCP server.
+    const reachable =
+      connector === CONFERENCE_CONNECTOR
+        ? closureOf(scanned, [CONFERENCE_MODULE])
+        : new Set([
+            ...closureOf(
+              scanned,
+              [...scanned.keys()].filter((path) => path.startsWith(`${PACKAGE_OF[connector]}/src/`)),
+            ),
+            ...mcpClosure,
+          ]);
     return {
       connector,
       packageDir: PACKAGE_OF[connector],
-      reachable: new Set([...closureOf(scanned, own), ...mcpClosure]),
+      reachable,
       toolsWithoutPreBracket: toolsWithoutPreBracket(connector),
     };
   });
@@ -386,6 +399,30 @@ describe("a table built to break a rule fails the build", () => {
     const violations = check(withKind("acp:*", "tool.failed", padded));
     // Assert
     expect(violations.some((line) => line.includes("takes no position"))).toBe(true);
+  });
+
+  test("the conference declaring its claims partial, as if it positioned them, fails the build", () => {
+    // Arrange: the summarizer's honest row, on a command that takes no position.
+    const claimed: KindLanes = { guarantee: "partial", reason: "derived_after_the_fact", lanes: [] };
+    // Act
+    const violations = check(withKind(CONFERENCE_CONNECTOR, "claim.created", claimed));
+    // Assert
+    expect(violations).toEqual([
+      `${CONFERENCE_CONNECTOR} claim.created: no producing module, yet declared partial / derived_after_the_fact`,
+    ]);
+  });
+
+  test("the conference mapped under a derived lane fails the build: it takes no position", () => {
+    // Arrange
+    const mapped: KindLanes = {
+      guarantee: "partial",
+      reason: "derived_after_the_fact",
+      lanes: [{ lane: "derived_worker", modules: [CONFERENCE_MODULE] }],
+    };
+    // Act
+    const violations = check(withKind(CONFERENCE_CONNECTOR, "claim.created", mapped));
+    // Assert
+    expect(violations).toContain(`${CONFERENCE_CONNECTOR}: ${CONFERENCE_MODULE} is mapped and takes no position`);
   });
 
   test("ordering declared for a kind the connector never emits (CSK-27)", () => {
@@ -601,14 +638,15 @@ const OWN_DECLARATION: Readonly<Record<GuaranteeConnector, RegExp>> = {
   "claude-code": /guaranteeDeclarationFor\((?:"claude-code"|DEFAULT_AGENT_KIND)\)/,
   "cursor-ide": /guaranteeDeclarationFor\((?:"cursor-ide"|CURSOR_AGENT_KIND)\)/,
   "acp:*": /guaranteeDeclarationFor\((?:"acp:\*"|ACP_CONNECTOR)\)/,
+  [CONFERENCE_CONNECTOR]: /guaranteeDeclarationFor\((?:"crosscheck-conference"|CONFERENCE_CONNECTOR)\)/,
 };
 const REGISTER_CALL = /\b(?:registerSessionFlow|registerSession)\(/;
 
 const HUB_CLIENT = "packages/connector-core/src/http/hub.ts";
 /** `endSession(ctx, crosscheckSessionId, seq, losses)`: the position is the third argument. */
 const SEQ_ARGUMENT = 2;
-/** flows/end-session.ts plus the Claude, Cursor and ACP deferred enders. */
-const DEFERRED_END_CALLERS = 4;
+/** flows/end-session.ts, the Claude, Cursor and ACP deferred enders, and `crosscheck conference`. */
+const DEFERRED_END_CALLERS = 5;
 const OPENERS = new Set(["(", "[", "{"]);
 const CLOSERS = new Set([")", "]", "}"]);
 

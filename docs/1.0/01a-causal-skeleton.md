@@ -1241,7 +1241,8 @@ The evidence for each row:
 `connector-core/test/guarantee-declarations.test.ts`, the scan).
 
 - **What the scan reads.** It covers the import graph of `connector-core`, `-claude`, `-cursor` and
-  `-acp` `src`, with comments stripped.
+  `-acp` `src`, with comments stripped, and since Nick's decision of 2026-10-02 (§13.11.4) `cli` as well,
+  for `crosscheck conference`.
 - **Allocator identity is resolved through the import specifier.** A name from `state/session-state.ts`
   is connector-core's allocator; a name from `mcp/tools/shared.ts` is the MCP helper.
 - **A connector can run** its own `src` import closure plus the closure of `mcp/server.ts`.
@@ -1485,3 +1486,27 @@ The evidence for each row:
    prints now opens with "counts your own sessions only, not your team's:". The scope comes before the
    number, so the number is never read as the team's (`connector-core/src/guarantees/doctor.ts`,
    `OWN_SESSIONS_ONLY`). The "not measured" line carries no count and is unchanged.
+4. **`crosscheck conference` declares an explicit profile.** `CONFERENCE_CONNECTOR`'s table sits in
+   `connector-core/src/guarantees/declarations.ts` beside the hosts'. The conference sends it on
+   register (`cli/src/cli/conference.ts`).
+   - **What the code shows it produces:** `session.started`, `claim.created` (the findings it publishes)
+     and `session.ended`. Nothing else: no targets, no edges, no commit aggregate, no intent.
+   - **What it positions: nothing.** It has no session state, so it has no counter. It registers with
+     the `allocation_failed` refusal, its claims carry no seq (`buildEnvelope` sets none), and it ended
+     with no seq at all. It now ends with the refusal too, so the hub records `allocation_failed`, not
+     `pre_seq_connector`.
+   - **So every row is `unavailable`.** That is the only statement the build check admits for a kind no
+     module positions, and the only one not stronger than the code. The three kinds it produces
+     unpositioned read `not_built` (their positions' producer does not exist). The six it never
+     produces read `no_emitter`.
+   - **Departure from Nick's example.** Nick named `claim.created` as `partial / derived_after_the_fact`.
+     That is the summarizer's row, and the summarizer positions its claims. The conference does not,
+     so `partial` would be stronger than the code, and the check refuses it (a test pins that refusal).
+     Making it true needs the conference to take positions (§13.10).
+   - **Held to the code by the same check:**
+     - its register call is pinned to its own table;
+     - its reachable set is `conference.ts`'s import closure;
+     - a table that claims a position, or maps it under a lane, fails the build;
+     - its `endSession` call is held to a seq by H4's rule.
+   - **Effect:** a scope containing a conference session now reads `unavailable (not_built)` rather than
+     `undeclared (provider_undeclared)`. That is still the weakest reading the sessions can support.

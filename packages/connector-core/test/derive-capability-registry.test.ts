@@ -31,7 +31,7 @@ import { join, relative } from "node:path";
 
 import { LEDGER_EVENT_KINDS, SESSION_EVENT_KINDS } from "@crosscheck/schema";
 
-import { DECLARATION_TABLE, GUARANTEE_CONNECTORS } from "../src/guarantees/declarations.ts";
+import { DECLARATION_TABLE, HOST_CONNECTORS } from "../src/guarantees/declarations.ts";
 
 import {
   DERIVE_CAPABILITIES,
@@ -369,7 +369,8 @@ describe("the derive rungs are declared, and the declaration is true", () => {
     // Arrange
     const { sentence } = UNPROJECTED_LEDGER_KINDS_REFUSAL;
     // Act + Assert: every host's row for both kinds, in the line's own words.
-    for (const connector of GUARANTEE_CONNECTORS) {
+    // Hosts only: `crosscheck conference` is a command, and the line is about hosts.
+    for (const connector of HOST_CONNECTORS) {
       for (const kind of LEDGER_EVENT_KINDS) {
         const row = DECLARATION_TABLE[connector][kind];
         expect(sentence, `${connector} ${kind}`).toContain(`${row.guarantee} / ${row.reason}`);

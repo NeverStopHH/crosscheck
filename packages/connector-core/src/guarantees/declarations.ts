@@ -136,7 +136,18 @@ export const foldLanes = (lanes: readonly LaneProducers[]): GuaranteeReading | n
 
 export const ACP_CONNECTOR = `${ACP_AGENT_KIND_PREFIX}*` as const;
 
-export const GUARANTEE_CONNECTORS = [DEFAULT_AGENT_KIND, CURSOR_AGENT_KIND, ACP_CONNECTOR] as const;
+/**
+ * `crosscheck conference` (cli/src/cli/conference.ts): a command a human runs,
+ * not a host, that registers a session of its own to file its findings under.
+ * Its profile is a table here like the hosts', so the same check holds it to
+ * the code (decided by Nick, 2026-10-02).
+ */
+export const CONFERENCE_CONNECTOR = "crosscheck-conference" as const;
+
+/** The three hosts an agent runs inside. */
+export const HOST_CONNECTORS = [DEFAULT_AGENT_KIND, CURSOR_AGENT_KIND, ACP_CONNECTOR] as const;
+
+export const GUARANTEE_CONNECTORS = [...HOST_CONNECTORS, CONFERENCE_CONNECTOR] as const;
 
 export type GuaranteeConnector = (typeof GUARANTEE_CONNECTORS)[number];
 
@@ -260,10 +271,36 @@ const acpTable: ConnectorTable = {
   "commit.observed": row([], "no_emitter"),
 };
 
+/**
+ * THE CONFERENCE TAKES NO POSITION AT ALL, so no lane produces any kind and
+ * every row is `unavailable` — the only statement the check admits for a kind
+ * no module positions, and nothing stronger than the code shows. It has no
+ * session state, so no counter: it registers with the `allocation_failed`
+ * refusal, files its derived claims with no seq, and ends with the refusal
+ * too. Two reasons tell the kinds apart:
+ *   - `not_built` for the three it produces with no position — the start, the
+ *     derived claims it publishes, the end: their positions' producer does
+ *     not exist;
+ *   - `no_emitter` for the six it never produces.
+ */
+const UNPOSITIONED_BY_CONFERENCE: readonly GuaranteeKind[] = [
+  "session.started",
+  "claim.created",
+  "session.ended",
+];
+
+const conferenceTable: ConnectorTable = Object.fromEntries(
+  GUARANTEE_KINDS.map((kind) => [
+    kind,
+    row([], UNPOSITIONED_BY_CONFERENCE.includes(kind) ? "not_built" : "no_emitter"),
+  ]),
+) as ConnectorTable;
+
 export const DECLARATION_TABLE: Readonly<Record<GuaranteeConnector, ConnectorTable>> = {
   "claude-code": claudeTable,
   "cursor-ide": cursorTable,
   "acp:*": acpTable,
+  [CONFERENCE_CONNECTOR]: conferenceTable,
 };
 
 export interface DeclarationRow extends KindLanes {

@@ -14128,6 +14128,54 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/guarantee-doctor.test.ts`,
     because: "a WARN with a bare count beside a check name sends a reader after teammates' sessions the hub never counted",
   },
+  {
+    label: "the conference registers with no declaration",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    guarantees: guaranteeDeclarationFor(CONFERENCE_CONNECTOR),\n",
+    to: "",
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "every conference session reads undeclared and pulls any scope containing it to undeclared for fourteen days",
+  },
+  {
+    label: "a conference session stores no profile on the hub",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    guarantees: guaranteeDeclarationFor(CONFERENCE_CONNECTOR),\n",
+    to: "",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because: "the declaration a conference sends is checked in the source and never reaches session_causal_guarantees",
+  },
+  {
+    label: "the conference sends a host's declaration",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    guarantees: guaranteeDeclarationFor(CONFERENCE_CONNECTOR),\n",
+    to: '    guarantees: guaranteeDeclarationFor("claude-code"),\n',
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "a command that takes no position claims Claude Code's lifecycle guarantees for its start and end",
+  },
+  {
+    label: "the conference's profile states a reason no absent producer has",
+    file: `${CORE}/src/guarantees/declarations.ts`,
+    from: '    row([], UNPOSITIONED_BY_CONFERENCE.includes(kind) ? "not_built" : "no_emitter"),',
+    to: '    row([], UNPOSITIONED_BY_CONFERENCE.includes(kind) ? "derived_after_the_fact" : "no_emitter"),',
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "the conference's claims read as positioned after the fact by a command that positions nothing",
+  },
+  {
+    label: "the conference ends its session with no position and no reason",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    await endSession(hub, sessionId, ALLOCATION_FAILED);",
+    to: "    await endSession(hub, sessionId);",
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "every conference end reads pre_seq_connector, a statement about an old install made by a current one",
+  },
+  {
+    label: "a conference end is recorded as a connector from before the seq field",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    await endSession(hub, sessionId, ALLOCATION_FAILED);",
+    to: "    await endSession(hub, sessionId);",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because: "the hub stores the conference's end as pre_seq_connector and doctor sends the reader to upgrade",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14175,7 +14223,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
- * PRINTS: packages/cli/test/conference-cli.test.ts 10
+ * PRINTS: packages/cli/test/conference-cli.test.ts 12
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
@@ -14297,7 +14345,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
- * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 24
+ * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
