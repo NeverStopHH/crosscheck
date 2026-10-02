@@ -151,6 +151,21 @@ describe("crosscheck pin list — the guard AND its exception", () => {
     expect(parsed.authority).toBe("terminal");
   });
 
+  test("D-PK-1: a live waiver claiming the hub's own closure authority reads as the weaker kind", () => {
+    // Arrange — `system` is valid only on a closure, which never holds a fence
+    // open; a live waiver that says it is one is a hub this client cannot
+    // believe, and the authority it gets is the weaker, never the passkey.
+    const raw = { id: "fw_1", pinVersion: 1, expiresAt: EXPIRY, reason: REASON, grantedByName: "Nick" };
+
+    // Act
+    const closure = WaiverRefSchema.parse({ ...raw, authority: "system" });
+    const unknown = WaiverRefSchema.parse({ ...raw, authority: "quorum" });
+
+    // Assert
+    expect(closure.authority).toBe("terminal");
+    expect(unknown.authority).toBe("terminal");
+  });
+
   test("a hub-chosen expiry is printed as this process writes it, on a waiver and on a request", () => {
     // Arrange — a parseable instant in a shape the hub chose, and one that
     // carries a line of its own.

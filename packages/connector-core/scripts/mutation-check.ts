@@ -12971,8 +12971,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a waiver of unstated authority reads as a passkey approval (PK-11)",
     file: `${CORE}/src/http/verdict.ts`,
-    from: '  authority: z.enum(WAIVER_AUTHORITIES).catch("terminal"),',
-    to: '  authority: z.enum(WAIVER_AUTHORITIES).catch("passkey"),',
+    from: '  authority: z.enum(WAIVER_GRANT_AUTHORITIES).catch("terminal"),',
+    to: '  authority: z.enum(WAIVER_GRANT_AUTHORITIES).catch("passkey"),',
     test: `${CLI}/test/waiver-render.test.ts`,
     because: "an older hub's unsigned waiver is rendered as signed, a claim nobody can show",
   },
@@ -15344,6 +15344,56 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "the pin turns BROKEN after a sweep and nothing names the rule that did it",
+  },
+  // 04a D-PK-1 (Nick, 2026-10-02), the data model: the hub's own closure is a
+  // third authority, valid only on a revoke, in both DDL sources.
+  {
+    label: "the hub's closure authority may be written for any reason",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "              AND granted_by IS NULL AND reason = 'authorizing_credential_revoked'));\n",
+    to: "              AND granted_by IS NULL));\n",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "a row reading closed-by-the-hub can be written with any sentence, and no longer says the passkey was revoked",
+  },
+  {
+    label: "the hub's closure authority can open a fence",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "          OR (authority = 'system' AND kind = 'revoke' AND credential_id IS NOT NULL\n",
+    to: "          OR (authority = 'system' AND credential_id IS NOT NULL\n",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "a grant nobody approved holds a fence open under an authority no person holds",
+  },
+  {
+    label: "a hub with the old authority CHECK never gets the third authority",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "      AND pg_get_constraintdef(oid) LIKE '%authorizing_credential_revoked%'\n",
+    to: "",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "every existing hub refuses the closure a passkey revocation writes, and the revocation fails with it",
+  },
+  {
+    label: "an existing hub keeps granted_by NOT NULL and refuses every hub closure",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE fence_waivers ALTER COLUMN granted_by DROP NOT NULL;\n",
+    to: "",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "the closure has no person to name, so on a hub that has the table the revocation cannot be written",
+  },
+  {
+    label: "drizzle's authority CHECK forgets the hub's closure",
+    file: `${SERVER}/src/db/schema.ts`,
+    from: "   OR (${table.authority} = '${sql.raw(SYSTEM_WAIVER_AUTHORITY)}' AND ${table.kind} = 'revoke'",
+    to: "   OR (${table.authority} = 'never' AND ${table.kind} = 'revoke'",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "a migration generated from drizzle drops the third authority, and the two DDL sources disagree",
+  },
+  {
+    label: "a live waiver claiming the hub's closure authority is believed",
+    file: `${CORE}/src/http/verdict.ts`,
+    from: '  authority: z.enum(WAIVER_GRANT_AUTHORITIES).catch("terminal"),',
+    to: '  authority: z.enum([...WAIVER_GRANT_AUTHORITIES, "system"]).catch("terminal"),',
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "a waiver no person approved reaches a renderer with no sentence for it, instead of reading as the weaker kind",
   },
 ];
 

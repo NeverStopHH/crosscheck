@@ -32,7 +32,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 
-import type { WaiverAuthority } from "@crosscheck/schema";
+import type { WaiverAuthority, WaiverGrantAuthority } from "@crosscheck/schema";
 
 import { MAX_WAIVER_DAYS } from "../constants.ts";
 
@@ -98,8 +98,16 @@ export interface LiveWaiver {
    * still holds until its own expiry, and every surface says it was the
    * weaker kind — one any agent holding the api key could have sent.
    */
-  readonly authority: WaiverAuthority;
+  readonly authority: WaiverGrantAuthority;
 }
+
+/**
+ * A grant row's authority as a live waiver may carry it. A grant is only ever
+ * `terminal` or `passkey` (the authority CHECK refuses a `system` grant), and
+ * anything else reads as the WEAKER kind, never as a passkey.
+ */
+const grantAuthorityOf = (authority: WaiverAuthority): WaiverGrantAuthority =>
+  authority === "passkey" ? "passkey" : "terminal";
 
 export interface LiveWaiverInput {
   readonly db: DbExecutor;
@@ -178,7 +186,7 @@ const pickLiveWaiver = (
       // The left join's null, spelled. A reader who cannot be given a name
       // must be told that rather than shown a blank where a person belongs.
       grantedByName: row.grantedByName ?? UNRESOLVED_GRANTER,
-      authority: row.authority,
+      authority: grantAuthorityOf(row.authority),
     };
   }
   return null;

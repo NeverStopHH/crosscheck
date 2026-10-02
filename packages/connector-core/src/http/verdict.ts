@@ -26,7 +26,7 @@
  * the arrangement http/coverage.ts already runs.
  */
 import { z } from "zod";
-import { WAIVER_AUTHORITIES } from "@crosscheck/schema";
+import { WAIVER_GRANT_AUTHORITIES } from "@crosscheck/schema";
 
 export const ATTRIBUTIONS = [
   "ATTRIBUTED",
@@ -143,9 +143,11 @@ export const WaiverRefSchema = z.looseObject({
    * Which authority opened it (04a §6). An absent or unknown value reads as
    * `terminal`, the WEAKER one: a hub from before 04a only ever wrote that
    * kind, and reading an unknown authority as a passkey would claim a person
-   * signed what nobody can show was signed.
+   * signed what nobody can show was signed. Only the GRANT authorities are
+   * accepted: `system` names a closure (04a D-PK-1), which never holds a
+   * fence open, so a live waiver that claims it reads as the weaker kind too.
    */
-  authority: z.enum(WAIVER_AUTHORITIES).catch("terminal"),
+  authority: z.enum(WAIVER_GRANT_AUTHORITIES).catch("terminal"),
 });
 
 const VerdictSchema = z

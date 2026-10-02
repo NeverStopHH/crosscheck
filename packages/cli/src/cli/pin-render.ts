@@ -36,7 +36,7 @@ import {
   MAX_PIN_SURFACE_CHARS,
   MAX_WAIVER_REASON_CHARS,
 } from "@crosscheck/schema";
-import type { WaiverAuthority } from "@crosscheck/schema";
+import type { WaiverGrantAuthority } from "@crosscheck/schema";
 import type {
   PinEntry,
   PinRegistry,
@@ -162,7 +162,7 @@ const waiverLines = (pin: PinEntry, now: Date): readonly string[] => {
  * holding the key could send — and is named as the weaker kind every time it
  * is printed, until it runs out on its own expiry.
  */
-const AUTHORITY_LINE: Readonly<Record<WaiverAuthority, string>> = {
+const AUTHORITY_LINE: Readonly<Record<WaiverGrantAuthority, string>> = {
   passkey: "approved with a person's passkey",
   terminal:
     "opened from a terminal before passkeys — the weaker kind, which any agent holding the api key could send",
