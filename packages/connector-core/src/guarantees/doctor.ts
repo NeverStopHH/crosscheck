@@ -32,6 +32,13 @@ export const declarationDoctorLine = (connector: GuaranteeConnector): GuaranteeD
 });
 
 /**
+ * The scope, said first and plainly (decided by Nick, 2026-10-02): the hub
+ * counts the CALLER'S OWN sessions (`GET /api/sessions/order`), and a bare
+ * number beside a check name reads as the team's.
+ */
+const OWN_SESSIONS_ONLY = "counts your own sessions only, not your team's";
+
+/**
  * The cap's count. NULL is a hub that did not report it (one from before
  * declared guarantees) — "not measured", never zero. Above zero is a WARN:
  * a row of the caller's own session overruled what its connector declared,
@@ -47,13 +54,17 @@ export const contradictionDoctorLine = (contradicted: number | null): GuaranteeD
     };
   }
   if (contradicted === 0) {
-    return { level: "PASS", name, detail: "no declaration of your sessions was overruled by a row of its own" };
+    return {
+      level: "PASS",
+      name,
+      detail: `${OWN_SESSIONS_ONLY}: no declaration of theirs was overruled by a row of its own`,
+    };
   }
   const one = contradicted === 1;
   const subject = one ? "1 session-kind declaration" : `${String(contradicted)} session-kind declarations`;
   return {
     level: "WARN",
     name,
-    detail: `${subject} of your sessions ${one ? "was" : "were"} overruled by ${one ? "a row" : "rows"} of ${one ? "its" : "their"} own — an upper bound or a withheld position where the connector declared guaranteed — and read partial (declaration_contradicted) on every surface`,
+    detail: `${OWN_SESSIONS_ONLY}: ${subject} ${one ? "was" : "were"} overruled by ${one ? "a row" : "rows"} of ${one ? "its" : "their"} own — an upper bound or a withheld position where the connector declared guaranteed — and read partial (declaration_contradicted) on every surface`,
   };
 };

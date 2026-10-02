@@ -14120,6 +14120,14 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/coverage-render.test.ts`,
     because: "a reaped rung beside a reported git rung splits over two lines in every briefing for want of six characters",
   },
+  {
+    label: "doctor's contradiction count reads as the team's",
+    file: `${CORE}/src/guarantees/doctor.ts`,
+    from: "const OWN_SESSIONS_ONLY = \"counts your own sessions only, not your team's\";",
+    to: 'const OWN_SESSIONS_ONLY = "declarations";',
+    test: `${CORE}/test/guarantee-doctor.test.ts`,
+    because: "a WARN with a bare count beside a check name sends a reader after teammates' sessions the hub never counted",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14290,7 +14298,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 24
- * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 2
+ * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4

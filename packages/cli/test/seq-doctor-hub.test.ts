@@ -313,8 +313,9 @@ describe("doctor prints the order failures only the hub can see", () => {
     // Assert
     expect(output).toContain("PASS  causal guarantees (claude-code)");
     expect(output).toContain("file.modified partial (unbracketed_lane)");
+    // The scope first, so the count is never read as the team's (decided by Nick, 2026-10-02).
     expect(output).toContain(
-      "WARN  declaration_contradicted  1 session-kind declaration of your sessions was overruled by a row of its own",
+      "WARN  declaration_contradicted  counts your own sessions only, not your team's: 1 session-kind declaration was overruled by a row of its own",
     );
   });
 

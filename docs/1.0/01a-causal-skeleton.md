@@ -1481,3 +1481,7 @@ The evidence for each row:
      lines, and each line within 160. The five-rung sweep (1,024 shapes) carries the longest order block.
    - 03 §5.3 still says the coverage line is "one line". This decision supersedes that for the order
      block's sake; 03's text is left for Nick to amend (§13.10).
+3. **The `declaration_contradicted` count stays per caller, and doctor says so.** Every count the line
+   prints now opens with "counts your own sessions only, not your team's:". The scope comes before the
+   number, so the number is never read as the team's (`connector-core/src/guarantees/doctor.ts`,
+   `OWN_SESSIONS_ONLY`). The "not measured" line carries no count and is unchanged.
