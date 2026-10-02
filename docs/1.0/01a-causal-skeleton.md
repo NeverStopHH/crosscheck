@@ -1183,8 +1183,10 @@ The evidence for each row:
   (`connector-core/src/flows/register-session.ts:170`). Claude has a second origin that the first scan
   missed: the mid-session recovery in PostToolUse, `{ epoch: derived.seqEpoch, n: 0 }`
   (`connector-claude/src/hooks/post-tool-use.ts:78`).
-- **`session.ended`**: `end-session.ts:86` allocates the end before the state file is deleted, so
-  nothing can allocate after it. The deferred ender carries that same position on its marker. Until
+- **`session.ended`**: `end-session.ts:86` allocates the end before the state file is deleted. A
+  detached worker can still allocate past it in that gap, so "nothing can allocate after it", as this
+  line first said, was false (review L5). The hub now caps the declaration when such a row lands
+  (§13.9, M1). The deferred ender carries that same position on its marker. Until
   review H4 that was true for Claude and Cursor only: ACP's shutdown ender dropped it (§13.9).
 - **Claude `file.modified`**:
   - Edit-family calls are bracketed: `pre-tool-use.ts:188` opens the window and `post-tool-use.ts:284`
@@ -1446,3 +1448,11 @@ The evidence for each row:
   cap test judges through, now derives the state from the reason the way the scope fold does. A reason
   this hub cannot name reads `undeclared`. `TOUCH_KINDS`, which no route used, moved into the test
   that does. The failure falls toward `undeclared`.
+- **L5 — three false claims.**
+  - §13.1's "the deferred ender carries that same position" was false for ACP. It is corrected there and
+    fixed (H4).
+  - §13.6 and `render.ts` said the state word was never spent while it could be cut. That is now true
+    by construction and checked over every shape (H1).
+  - "Nothing can allocate after" the end, in `declarations.ts` and §13.1, was false: a detached worker
+    can allocate between the end's allocation and the state delete. Both now say so, and M1 caps the
+    declaration when it happens.

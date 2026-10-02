@@ -190,7 +190,9 @@ const lane = (name: GuaranteeLane, modules: readonly string[]): LaneProducers =>
 const sharedKinds = {
   // register-session.ts:170 sends `seq: { epoch, n: 0 }` — the origin, allocated by nobody.
   "session.started": row([lane("lifecycle", [REGISTER_FLOW])]),
-  // end-session.ts:86 allocates the end BEFORE the state delete, so nothing can follow it.
+  // end-session.ts allocates the end, writes the marker, then deletes the state:
+  // a detached worker can still allocate past the end in that gap. The hub caps
+  // this kind when such a row lands (services/causal-guarantees.ts, review M1).
   "session.ended": row([lane("lifecycle", [END_FLOW])]),
   "claim.created": row([lane("mcp_tool", MCP_CLAIMS), lane("derived_worker", DERIVED_CLAIMS)]),
   // No worker writes an edge; only the two MCP tools do.
