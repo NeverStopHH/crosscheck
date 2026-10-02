@@ -162,8 +162,11 @@ const ResultEventSchema = z.looseObject({
   duration_ms: z.number().optional(),
   total_cost_usd: z.number().optional(),
   is_error: z.boolean().optional(),
-  terminal_reason: z.string().optional(),
-  api_error_status: z.number().optional(),
+  // NULLABLE: 2.1.286 sends `api_error_status: null` on every finished run. A
+  // field that refused null failed the WHOLE result event, and with it the
+  // final text S3 scans — found by live-control 3 (A4).
+  terminal_reason: z.string().nullable().optional(),
+  api_error_status: z.number().nullable().optional(),
 });
 
 const TodoItemSchema = z.looseObject({ content: z.string().min(1) });

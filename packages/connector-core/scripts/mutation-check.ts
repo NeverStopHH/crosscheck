@@ -12912,6 +12912,14 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CONNECTOR}/test/at7-stream.test.ts`,
     because: "A4.2/A4.3: a run the service cut reads as one that finished",
   },
+  {
+    label: "the AT-7 parser drops a finished run's result over a null field",
+    file: `${CONNECTOR}/bench/at7/stream.ts`,
+    from: "  api_error_status: z.number().nullable().optional(),",
+    to: "  api_error_status: z.number().optional(),",
+    test: `${CONNECTOR}/test/at7-stream.test.ts`,
+    because: "every finished run loses its final text, so S3 never sees an echo in it and a PASS gets easier",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13017,7 +13025,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-report.test.ts 2
  * PRINTS: packages/connector-claude/test/at7-run.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-stats.test.ts 1
- * PRINTS: packages/connector-claude/test/at7-stream.test.ts 2
+ * PRINTS: packages/connector-claude/test/at7-stream.test.ts 3
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6

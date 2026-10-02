@@ -411,6 +411,35 @@ describe("parseStream", () => {
     expect(record.apiErrorStatus).toBe(429);
   });
 
+  test("A4: a finished run's result is read whole, with api_error_status null as 2.1.286 sends it", () => {
+    // Arrange — the exact result shape of live-control 3. A schema that took
+    // only a number dropped the WHOLE event, and with it the final text S3
+    // scans for an echo.
+    const finished = lines([
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        terminal_reason: "completed",
+        api_error_status: null,
+        num_turns: 5,
+        duration_ms: 12034,
+        total_cost_usd: 0.1753,
+        result: "Fixed the slug regex; the suite is green.",
+      },
+    ]);
+
+    // Act
+    const record = parseStream(finished);
+
+    // Assert
+    expect(record.finalResultText).toBe("Fixed the slug regex; the suite is green.");
+    expect(record.numTurns).toBe(5);
+    expect(record.totalCostUsd).toBe(0.1753);
+    expect(record.terminalReason).toBe("completed");
+    expect(record.apiErrorStatus).toBeNull();
+  });
+
   test("an empty stream yields a record with no init and no turns", () => {
     // Act
     const record = parseStream("");
