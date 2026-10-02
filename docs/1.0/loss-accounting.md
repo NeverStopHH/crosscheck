@@ -382,6 +382,8 @@ report B's own losses. Stays on the machine-wide `foreign-repo drops` line, wher
 every session and every developer (`capture/denylist.ts:2-5`, DESIGN.md §4), so no session's absence on those
 paths is distinguishable from another's. What that leaves is not a capture gap but a *pin* question — a pin on a
 denylisted path can never be attributed — and it belongs to 04's pin registration, not to coverage (§10.4).
+Since 2026-10-02 the CLI's pin door refuses such a pin and the sweep refuses to move one there; §10 item 4 says
+what the hub does not refuse.
 
 **4.8.3 The seen-set (#13)** skips a path already captured in this session; the target row exists on the hub or
 in the spool, and if the earlier append was refused, #1 counted it. `MAX_SEEN_TARGETS` eviction
@@ -620,9 +622,35 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
 3. **Rollout.** Every repo whose connector upgrades and whose ledgers hold a loss newer than fourteen days reads
    `incomplete` the moment its next heartbeat lands — on Nick's machine, on the first PostToolUse. That is the
    truth this note exists to state; whether the fleet is told first is a rollout note, not a code decision.
+   **Decided by Nick 2026-10-02:** Ken and Mike are told in the update message that the new `incomplete` is
+   correct — the losses were always there and are now counted — and not a new defect. No code change.
 4. **Pins on denylisted paths** (§4.8.2) are a permanent attribution blind spot that no coverage rule can see.
    *Recommendation:* 04's pin registration refuses a path the default denylist matches, by name in the refusal
    list. Not built here.
+   **Decided by Nick 2026-10-02: refuse. Built, in the CLI.** `crosscheck pin "<surface>" --files …` refuses
+   the pin when the effective denylist excludes any of its files, and stores nothing. The list is the one capture
+   applies on this machine — `resolveDenylist(config.denylist)`, the shipped defaults extended or replaced by
+   `denylist` in the stored config — never a second copy of the rule (`cli/src/cli/pin.ts`, `Resolved.patterns`).
+   The refusal names each excluded file with the rule that excludes it and says why in one sentence: *no
+   session's touch of these files is ever recorded, so a guard over them could never say who broke them*
+   (`cli/src/cli/pin-observability.ts`, `deniedPinPaths` and `pinDenylistRefusal`; the status and doctor shadow
+   line ask the same `deniedPinPaths`). `crosscheck pin --sweep` never moves a pin onto such a path: a rename git
+   followed into an excluded path goes to the hub as `missing`, so the pin reads BROKEN, and the sweep names the
+   move and the rule. Those are the only two writers of pin paths (`createPin` and `sweepPins`, routes
+   `POST /api/pins` and `POST /api/pins/sweep`); `--broke`, `--ok` and `--waive` add no path.
+   *The hub does not refuse.* The list that decides capture is per machine: `denylist` lives in each
+   developer's `~/.crosscheck/config.json`, may extend or replace the defaults, and never reaches the hub, and
+   the server does not depend on connector-core, where the matcher lives. A hub-side check would be a second copy
+   judging a list it cannot see: it would refuse a pin a `replace` team captures, and pass one a teammate's
+   `extend` line blinds. *What still gets through:* a CLI older than this build, and a direct `POST /api/pins` or
+   `POST /api/pins/sweep` with an api key, can still register a pin on an excluded path or move one there; and a
+   pin made on one machine can be blind on a teammate's whose denylist differs. For all three the backstop is
+   unchanged: `status` and `doctor` WARN `pin denylist` on every machine whose effective denylist shadows a live
+   pinned path, naming the path and the pattern. Test: cli `pin-denylist-door`; anchors "a pin over a file the
+   denylist excludes is registered as a guard", "the pin door asks the shipped denylist instead of the one this
+   machine's capture applies", "the pin door names only the first file the denylist excludes", "the pin door
+   refuses without saying why an excluded file can never be guarded", "a sweep moves a pin onto a path no capture
+   observes", "a sweep records an excluded rename as missing without saying why".
 5. **Loss outranks reap in the reason word** (§4.5). *Default: yes.* The alternative keeps 03's word on repos
    that have both, and hides the one with the different remedy.
 6. **ACP wire lines are charged to every repo** (§4.3, the three writers). *Default taken: yes* — decision 2's
@@ -638,14 +666,30 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
    files dirty reads `incomplete` for as long as it does. *Taken because their freshness is unknown.*
    *Alternative:* stat more candidates (a stat is microseconds; the bound guards against thousands) and count only
    the remainder.
+   **Decided by Nick 2026-10-02: the alternative. Built.** `MAX_GIT_TOUCH_CANDIDATES` is now 2000
+   (`connector-core/src/constants.ts`, where the measurement is written down): the lane's own loop, one
+   sequential `stat` per path, took 21.7 ms median and 22.7 ms worst for 2000 paths on an Apple M4 Max under
+   Bun 1.3.13 (about 11 µs a stat; 5000 paths took 59 ms). The rule is that the stat pass at the bound costs at
+   most a tenth of the lane's own 250 ms git deadline, inside a Stop budget of 800 ms by default. A stale dirty
+   path within the bound is examined and books nothing; every path past it is still booked `capture-capped`,
+   so a worktree with thousands of dirty files stays on the weakening side. Downstream of the freshness filter
+   nothing is dropped silently: the per-call cap (`MAX_TARGETS_PER_INVOCATION`, 20) books what it cuts as
+   `capture-capped` (§3 row 8), the lane's seq block is the same 20, a refused spool append is §3 row 1, and an
+   oversized upload batch is retried (§3 row 22). Test: core `capture-losses` §10 item 8; anchor "the git lane
+   examines only sixty dirty paths and books the stale rest as lost".
 9. **A skipped or unanswered git lane is booked on every turn it happens** (review M5), though the next turn's
    lane (window: the session's start) usually recovers the same touches. *Taken because the last turn's skip and
    a touch reverted before the next run are lost for good.* *Refinement:* book only an unrecovered skip — the
    session's last lane outcome, read at SessionEnd.
+   **Decided by Nick 2026-10-02: kept as is.** Every skip is a loss event; a later successful check must not
+   retroactively undo an earlier loss of observation. The refinement is not built. The noise this costs —
+   repos reading `incomplete` for a skip a later turn recovered — is measured in the pilot.
 
 Defaults taken in the build: 1 (all three carriers), 2 (null key charged to every repo — narrowed by review M4
 to hooks a connected repo could own), 5 (loss outranks reap), 6, 8 and 9 as stated. 3 and 4 are not code
-decisions.
+decisions. *Decided by Nick 2026-10-02:* 3 (the update message says the new `incomplete` is correct), 4 (built:
+the CLI refuses the pin, the hub does not), 8 (built: 2000 candidates, only the remainder booked) and 9 (kept as
+is).
 
 ## 12. Review 2026-10-01 — open list
 

@@ -2215,12 +2215,27 @@ export const PILOT_LABEL_WINDOW_MINUTES = 1440;
 export const GIT_TOUCHES_TIMEOUT_MS = 250;
 
 /**
- * How many changed paths the git lane will even consider. Bounded BEFORE the
- * per-file mtime stat, because a rebase or a vendored drop can leave hundreds
- * of files dirty and the lane runs inside a hook budget. The tool lane's
- * per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies afterwards.
+ * How many changed paths the git lane stats for freshness. Bounded BEFORE the
+ * per-file mtime stat, because a rebase or a vendored drop can leave thousands
+ * of files dirty and the lane runs inside the Stop hook's budget
+ * (STOP_BUDGET_RATIO × HTTP_TIMEOUT_MS = 800 ms by default). Every path past
+ * the bound is booked `capture-capped`, since nobody looked at it; every path
+ * within it is examined, so a stale one books nothing (loss-accounting §10
+ * item 8, decided by Nick 2026-10-02 — it was 60, and a worktree that stayed
+ * more than 60 files dirty read `incomplete` for as long as it did).
+ *
+ * WHERE 2000 COMES FROM: measured 2026-10-02 on an Apple M4 Max, Bun 1.3.13,
+ * the lane's own loop (one sequential `await stat()` per path) over files in
+ * nested directories — 2000 paths took 21.7 ms median and 22.7 ms worst of
+ * five runs (about 11 µs a stat; 60 took 0.5 ms, 5000 took 59 ms). The rule:
+ * the stat pass at the bound costs at most a tenth of the lane's own git
+ * deadline (GIT_TOUCHES_TIMEOUT_MS, 250 ms), which leaves a disk ten times
+ * slower than the measuring machine inside one git deadline.
+ *
+ * The per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies to the
+ * fresh paths afterwards, and counts what it cuts the same way.
  */
-export const MAX_GIT_TOUCH_CANDIDATES = 60;
+export const MAX_GIT_TOUCH_CANDIDATES = 2000;
 
 /**
  * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────

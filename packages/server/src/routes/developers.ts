@@ -149,9 +149,11 @@ export const developersRoutes = (deps: AppDeps): Hono<AppEnv> => {
       by: { kind: "admin" },
       now: deps.now(),
     });
+    // How many open fences closed with it (04a D-PK-1), so the admin who
+    // revoked a lost device learns what that undid.
     return "refusal" in outcome
       ? fail(c, 409, outcome.refusal, "that passkey has already been revoked")
-      : ok(c, { revoked: true });
+      : ok(c, { revoked: true, terminatedWaivers: outcome.terminated });
   });
 
   router.delete("/:id/emails/:email", async (c) => {

@@ -159,11 +159,73 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
       now: NOW,
     });
 
-    // Assert: the 5 cut before the freshness check, plus the 40 the per-call
-    // cap (MAX_TARGETS_PER_INVOCATION) cut from the 60 it examined
+    // Assert: the 5 cut before the freshness check, plus the ones the per-call
+    // cap (MAX_TARGETS_PER_INVOCATION) cut from the fresh paths it examined
     const detail = await readDropDetail(fx.home, KEY);
     expect(detail.byReason["capture-capped"]).toBe(
       dirty - MAX_GIT_TOUCH_CANDIDATES + (MAX_GIT_TOUCH_CANDIDATES - MAX_TARGETS_PER_INVOCATION),
     );
+  }, GIT_LANE_BOUND_TEST_TIMEOUT_MS);
+});
+
+/**
+ * Two thousand tracked files written twice and committed once is a few
+ * seconds of git, not the 5 s bun allows a test by default.
+ */
+const GIT_LANE_BOUND_TEST_TIMEOUT_MS = 60_000;
+
+/** A worktree that stays this dirty used to read `incomplete` on every Stop (§10 item 8). */
+const LONG_DIRTY_FILES = 100;
+
+const dirtyWorktree = async (label: string, files: number): Promise<{ home: string; repo: string }> => {
+  const fx = await fixture(label);
+  for (let index = 0; index < files; index += 1) {
+    await writeRepoFile(fx.repo, `src/f${String(index)}.ts`, "export const a = 1;\n");
+  }
+  await git(fx.repo, ["add", "-A"]);
+  await git(fx.repo, ["commit", "-m", "files"]);
+  for (let index = 0; index < files; index += 1) {
+    await writeRepoFile(fx.repo, `src/f${String(index)}.ts`, "export const a = 2;\n");
+  }
+  return fx;
+};
+
+/** The lane over `fx`, for a session that began AFTER every file was last written. */
+const laneAfterTheDirt = (fx: { home: string; repo: string }) =>
+  captureGitTouches({
+    home: fx.home,
+    repoKey: KEY,
+    hostSessionKey: SESSION,
+    repoRoot: fx.repo,
+    workContextId: "wc_1",
+    producer: PRODUCER,
+    seenTargets: [],
+    denylist: null,
+    since: new Date(Date.now() + 60_000),
+    now: NOW,
   });
+
+describe("loss-accounting §10 item 8: the git lane books only the dirty paths it never examined", () => {
+  test("a worktree that stays 100 files dirty with stale files books no loss on Stop", async () => {
+    // Arrange: every dirty file was written before the session began
+    const fx = await dirtyWorktree("git-lane-stale", LONG_DIRTY_FILES);
+
+    // Act
+    const outcome = await laneAfterTheDirt(fx);
+
+    // Assert: each path was examined and found stale, so nothing is unknown
+    expect(outcome).toEqual({ paths: [], unavailable: false });
+    expect((await readDropDetail(fx.home, KEY)).byReason["capture-capped"]).toBeUndefined();
+  });
+
+  test("stale dirty paths past the bound are still booked, exactly the remainder", async () => {
+    // Arrange
+    const fx = await dirtyWorktree("git-lane-stale-cut", MAX_GIT_TOUCH_CANDIDATES + 5);
+
+    // Act
+    await laneAfterTheDirt(fx);
+
+    // Assert: only the 5 nobody looked at; the examined ones were all stale
+    expect((await readDropDetail(fx.home, KEY)).byReason["capture-capped"]).toBe(5);
+  }, GIT_LANE_BOUND_TEST_TIMEOUT_MS);
 });

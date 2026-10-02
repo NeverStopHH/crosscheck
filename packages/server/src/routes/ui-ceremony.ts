@@ -109,6 +109,12 @@ const refuse = (c: Context<AppEnv>, refusal: CeremonyRefusal) =>
 const refuseWaiver = (c: Context<AppEnv>, refusal: WaiverRequestRefusal) =>
   fail(c, 422, refusal, WAIVER_REQUEST_SENTENCE[refusal]);
 
+/** What a passkey revocation closed with it (04a D-PK-1); nothing when it had opened no fence. */
+const closedWithIt = (terminated: number): string =>
+  terminated === 0
+    ? ""
+    : ` ${String(terminated)} open waiver${terminated === 1 ? "" : "s"} it approved ${terminated === 1 ? "was" : "were"} closed with it.`;
+
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 interface Signed {
@@ -363,7 +369,9 @@ const perform = async (
         by: { kind: "passkey", developerId },
         now: deps.now(),
       });
-      return "refusal" in outcome ? refuse(c, outcome.refusal) : ok(c, { message: "Passkey revoked." });
+      return "refusal" in outcome
+        ? refuse(c, outcome.refusal)
+        : ok(c, { message: `Passkey revoked.${closedWithIt(outcome.terminated)}` });
     }
   }
 };

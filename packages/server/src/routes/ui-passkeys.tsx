@@ -27,6 +27,7 @@ import {
 } from "../services/passkeys.ts";
 import { listRequests } from "../services/waiver-requests.ts";
 import { listOpenFences } from "../services/waivers.ts";
+import { listClosedFences } from "../services/waiver-terminations.ts";
 import { createWebAuthn } from "../services/webauthn.ts";
 import { UI_PASSKEY_CSP } from "../ui/constants.ts";
 import { PasskeysPage } from "../ui/pages/passkeys.tsx";
@@ -99,9 +100,10 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.get("/waivers", async (c) => {
     c.header("Content-Security-Policy", UI_PASSKEY_CSP);
     const now = deps.now();
-    const [requests, fences, usable] = await Promise.all([
+    const [requests, fences, closed, usable] = await Promise.all([
       listRequests({ db: deps.db, repo: null, now }),
       listOpenFences({ db: deps.db, now }),
+      listClosedFences({ db: deps.db, now }),
       usableCredentials({ db: deps.db, developerId: c.get("developer").id, now }),
     ]);
     return c.html(
@@ -109,6 +111,7 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
         viewer={viewerChrome(c, deps)}
         requests={requests.filter((request) => request.status === "pending")}
         fences={fences}
+        closed={closed}
         hasOrigin={hasOrigin}
         hasUsablePasskey={usable.length > 0}
       />,

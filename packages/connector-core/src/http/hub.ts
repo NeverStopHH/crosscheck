@@ -24,7 +24,7 @@ import type {
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
 import { parseCoverage } from "./coverage.ts";
-import { parseVerdict, WaiverRefSchema } from "./verdict.ts";
+import { ClosedWaiverRefSchema, parseVerdict, WaiverRefSchema } from "./verdict.ts";
 import type { VerdictView } from "./verdict.ts";
 import type { HubContext, HubResult } from "./client.ts";
 import type { CoverageRecord } from "./coverage.ts";
@@ -2453,6 +2453,12 @@ export const PinEntrySchema = z.looseObject({
    * the absent reading UNDERSTATES permission rather than inventing it.
    */
   liveWaiver: WaiverRefSchema.nullish().transform((value) => value ?? null),
+  /**
+   * A fence the hub closed because the passkey that approved it was revoked
+   * (04a D-PK-1), while the grant would still have held. Absent from a hub
+   * that predates it; an unreadable one is dropped, never the pin.
+   */
+  closedWaiver: ClosedWaiverRefSchema.nullish().catch(null),
   /**
    * Which version of the invariant the pin is at (04 §3.5) — what a waiver
    * request names. Defaulted to 1, the version every pin had before sweeps

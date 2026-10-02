@@ -29,6 +29,7 @@ import { ENROLMENT_CODE_TTL_HOURS, PASSKEY_COOLOFF_HOURS } from "../constants.ts
 import { developers, passkeyEnrollments, passkeys } from "../db/schema.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { StoredCredential } from "./webauthn.ts";
+import { terminateWaiversSignedBy } from "./waiver-terminations.ts";
 
 const HOUR_MS = 3_600_000;
 
@@ -277,44 +278,52 @@ export type RevokePasskeyRefusal = "unknown_passkey" | "already_revoked" | "pass
  * a revoked one stays revoked; the api key alone may revoke only during the
  * cool-off — after it, an agent with the key could otherwise lock its human
  * out of the one authority the agent cannot use itself.
+ *
+ * AND EVERY FENCE IT OPENED CLOSES WITH IT (04a D-PK-1, Nick 2026-10-02): the
+ * live grants this credential signed get a hub-written closure row, in THIS
+ * transaction, so the revocation and the closures land together or not at
+ * all. Every revocation path comes through here; `terminated` says how many.
  */
 export const revokePasskey = async (input: {
-  readonly db: DbExecutor;
+  readonly db: Db;
   readonly passkeyId: string;
   readonly by: PasskeyRevocation;
   readonly now: Date;
-}): Promise<{ revoked: true } | { refusal: RevokePasskeyRefusal }> => {
-  const rows = await input.db
-    .select({
-      developerId: passkeys.developerId,
-      revokedAt: passkeys.revokedAt,
-      usableFrom: passkeys.usableFrom,
-    })
-    .from(passkeys)
-    .where(eq(passkeys.id, input.passkeyId))
-    .limit(1);
-  const row = rows[0];
-  const by = input.by;
-  if (row === undefined || (by.kind !== "admin" && row.developerId !== by.developerId)) {
-    return { refusal: "unknown_passkey" };
-  }
-  if (row.revokedAt !== null) {
-    return { refusal: "already_revoked" };
-  }
-  if (by.kind === "owner" && row.usableFrom.getTime() <= input.now.getTime()) {
-    return { refusal: "passkey_required" };
-  }
-  const revokedByKind: PasskeyRevoker = by.kind;
-  await input.db
-    .update(passkeys)
-    .set({
-      revokedAt: input.now,
-      revokedByKind,
-      revokedBy: by.kind === "admin" ? null : by.developerId,
-    })
-    .where(and(eq(passkeys.id, input.passkeyId), isNull(passkeys.revokedAt)));
-  return { revoked: true };
-};
+}): Promise<{ revoked: true; terminated: number } | { refusal: RevokePasskeyRefusal }> =>
+  input.db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        developerId: passkeys.developerId,
+        credentialId: passkeys.credentialId,
+        revokedAt: passkeys.revokedAt,
+        usableFrom: passkeys.usableFrom,
+      })
+      .from(passkeys)
+      .where(eq(passkeys.id, input.passkeyId))
+      .limit(1);
+    const row = rows[0];
+    const by = input.by;
+    if (row === undefined || (by.kind !== "admin" && row.developerId !== by.developerId)) {
+      return { refusal: "unknown_passkey" as const };
+    }
+    if (row.revokedAt !== null) {
+      return { refusal: "already_revoked" as const };
+    }
+    if (by.kind === "owner" && row.usableFrom.getTime() <= input.now.getTime()) {
+      return { refusal: "passkey_required" as const };
+    }
+    const revokedByKind: PasskeyRevoker = by.kind;
+    await tx
+      .update(passkeys)
+      .set({
+        revokedAt: input.now,
+        revokedByKind,
+        revokedBy: by.kind === "admin" ? null : by.developerId,
+      })
+      .where(and(eq(passkeys.id, input.passkeyId), isNull(passkeys.revokedAt)));
+    const terminated = await terminateWaiversSignedBy({ db: tx, credentialId: row.credentialId, now: input.now });
+    return { revoked: true as const, terminated };
+  });
 
 /** One passkey as its owner sees it on /ui/passkeys. */
 export interface PasskeyView {

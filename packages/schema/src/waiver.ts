@@ -61,10 +61,34 @@ export type WaiverKind = (typeof WAIVER_KINDS)[number];
  * `passkey` — a WebAuthn assertion with user verification, by a passkey of the
  * approving developer, over exactly the terms stored. The row names the
  * credential, so "which device said yes" survives a later revocation of it.
+ *
+ * These two are the only authorities a GRANT can carry, so they are what a
+ * live waiver on the wire may say; anything else reads as `terminal`.
  */
-export const WAIVER_AUTHORITIES = ["terminal", "passkey"] as const;
+export const WAIVER_GRANT_AUTHORITIES = ["terminal", "passkey"] as const;
+
+export type WaiverGrantAuthority = (typeof WAIVER_GRANT_AUTHORITIES)[number];
+
+/**
+ * `system` — the HUB closed the waiver, not a person's ceremony (04a D-PK-1,
+ * decided by Nick 2026-10-02): the passkey that authorised a live grant was
+ * revoked, so the grant stops holding its fence open. The hub writes a new
+ * `revoke` row superseding it, in the transaction that revokes the passkey;
+ * nothing is deleted or overwritten. Valid ONLY on a revoke row that names
+ * the revoked credential and carries AUTHORIZING_CREDENTIAL_REVOKED as its
+ * reason, and its `granted_by` is null — the CHECK
+ * `fence_waivers_authority_check` makes each of these a database fact.
+ * Whoever revoked the passkey (owner, admin or another passkey) stays on the
+ * passkey's own row, reachable through the credential.
+ */
+export const SYSTEM_WAIVER_AUTHORITY = "system" as const;
+
+export const WAIVER_AUTHORITIES = [...WAIVER_GRANT_AUTHORITIES, SYSTEM_WAIVER_AUTHORITY] as const;
 
 export type WaiverAuthority = (typeof WAIVER_AUTHORITIES)[number];
+
+/** The reason a `system` closure records, as Nick specified it (04a D-PK-1). */
+export const AUTHORIZING_CREDENTIAL_REVOKED = "authorizing_credential_revoked" as const;
 
 /**
  * WHAT AN AGENT — OR A PERSON AT A TERMINAL — SENDS TO ASK FOR A FENCE TO OPEN.

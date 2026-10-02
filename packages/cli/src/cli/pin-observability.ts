@@ -145,26 +145,81 @@ export interface PinShadow {
 export const shadowedPinPaths = (
   registry: PinRegistry,
   patterns: readonly string[],
-): readonly PinShadow[] => {
-  const shadows: PinShadow[] = [];
-  const seen = new Set<string>();
-  for (const pin of registry.pins) {
-    if (pin.brokeAt !== null) {
-      continue;
+): readonly PinShadow[] =>
+  deniedPinPaths(
+    [
+      ...new Set(
+        registry.pins
+          .filter((pin) => pin.brokeAt === null)
+          .flatMap((pin) => pin.files.map((file) => file.path)),
+      ),
+    ],
+    patterns,
+  );
+
+/**
+ * Each of `paths` the effective denylist excludes, with the FIRST rule that
+ * matches it. One question with three askers — the status/doctor shadow line
+ * over the registry, and the pin door and the sweep over paths about to be
+ * pinned (loss-accounting §10 item 4) — so the three cannot disagree about
+ * which file capture never records. `patterns` is the caller's
+ * `resolveDenylist` answer, the list capture itself applies.
+ */
+export const deniedPinPaths = (
+  paths: readonly string[],
+  patterns: readonly string[],
+): readonly PinShadow[] =>
+  paths.flatMap((path) => {
+    if (!isDenied(path, patterns)) {
+      return [];
     }
-    for (const file of pin.files) {
-      if (seen.has(file.path) || !isDenied(file.path, patterns)) {
-        continue;
-      }
-      seen.add(file.path);
-      const pattern = patterns.find((candidate) =>
-        matchesGlob(candidate, file.path),
-      );
-      shadows.push({ path: file.path, pattern: pattern ?? "(unknown)" });
-    }
-  }
-  return shadows;
-};
+    const pattern = patterns.find((candidate) => matchesGlob(candidate, path));
+    return [{ path, pattern: pattern ?? "(unknown)" }];
+  });
+
+/** Why a pin over an excluded file is refused, in one sentence (loss-accounting §10 item 4). */
+export const DENYLIST_REFUSAL_WHY =
+  "no session's touch of these files is ever recorded, so a guard over them could never say who broke them";
+
+/**
+ * WHAT THE PIN DOOR PRINTS when the denylist excludes a file (loss-accounting
+ * §10 item 4). EVERY excluded file is named with its rule — not the first
+ * three the status line names — because each one has to leave the command,
+ * or its rule the config, before this pin can exist. A pin carries at most
+ * MAX_PIN_FILES paths, which bounds the list.
+ */
+export const pinDenylistRefusal = (denied: readonly PinShadow[]): string =>
+  [
+    `nothing was pinned — the hot-file denylist excludes ${String(denied.length)} of these file(s) from capture:`,
+    ...denied.map((shadow) => `  ${token(shadow.path)} (excluded by ${token(shadow.pattern)})`),
+    `${DENYLIST_REFUSAL_WHY}.`,
+    "Pin the files they are made from instead, or change the denylist in the crosscheck config.",
+    "",
+  ].join("\n");
+
+/** A rename git followed into a path the denylist excludes. */
+export interface DeniedMove {
+  readonly path: string;
+  readonly newPath: string;
+  readonly pattern: string;
+}
+
+/**
+ * WHAT A SWEEP PRINTS for the renames it would not record (loss-accounting
+ * §10 item 4): git followed the file into an excluded path, and a pin there
+ * would watch a file whose touches are never recorded. The update went to the
+ * hub as `missing` instead, so the pin reads BROKEN rather than quietly blind.
+ */
+export const sweepDenylistLines = (moves: readonly DeniedMove[]): readonly string[] =>
+  moves.length === 0
+    ? []
+    : [
+        `${String(moves.length)} renamed path(s) recorded as missing — git followed each into a file the hot-file denylist excludes from capture:`,
+        ...moves.map(
+          (move) => `  ${token(move.path)} moved to ${token(move.newPath)} (excluded by ${token(move.pattern)})`,
+        ),
+        `${DENYLIST_REFUSAL_WHY}. Re-pin the surface on files capture records, or retire the pin: crosscheck pin --broke with the pin id.`,
+      ];
 
 /**
  * The shadowing sentence. It says what the suppression COSTS — no target
@@ -254,6 +309,19 @@ const waiverSentence = (registry: PinRegistry): string | null => {
   return `${String(expiries.length)} live waiver(s) — next expires ${next}; run crosscheck pin list to see who opened which, and why`;
 };
 
+/**
+ * HOW MANY FENCES THE HUB CLOSED on a passkey revocation (04a D-PK-1), as a
+ * count — this surface is bare, so the ids and instants stay on `pin list`.
+ * Without it, a repo whose waivers were just closed reads as one where nobody
+ * ever opened a fence.
+ */
+const closedFencesSentence = (registry: PinRegistry): string | null => {
+  const closed = registry.pins.filter((pin) => (pin.closedWaiver ?? null) !== null).length;
+  return closed === 0
+    ? null
+    : `${String(closed)} waiver(s) closed by the hub because the passkey that approved them was revoked — run crosscheck pin list to see which`;
+};
+
 export const pinStatusLines = (
   registry: PinRegistry,
   patterns: readonly string[],
@@ -263,6 +331,7 @@ export const pinStatusLines = (
   const orphans = orphanSentence(orphanedPins(registry));
   const shadows = shadowedPinPaths(registry, patterns);
   const waivers = waiverSentence(registry);
+  const closed = closedFencesSentence(registry);
   return [
     pinCoverageSentence(registry, now),
     ...(orphans === null ? [] : [`  ${orphans}`]),
@@ -270,6 +339,7 @@ export const pinStatusLines = (
       ? []
       : [`  ${shadowSentence(shadows, patterns.length)}`]),
     ...(waivers === null ? [] : [`  ${waivers}`]),
+    ...(closed === null ? [] : [`  ${closed}`]),
     ...(settings === null ? [] : [guardSettingsSentence(settings)]),
   ];
 };

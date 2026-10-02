@@ -23,6 +23,7 @@
  * NOTHING HERE INTERRUPTS ANYBODY. Every path is a command a person typed.
  */
 import { EXIT_FAIL, EXIT_OK, EXIT_UNREACHABLE, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
+import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -52,6 +53,9 @@ import {
 } from "@crosscheck/schema";
 import { postPilotMark } from "@crosscheck/connector-core/http/pilot.ts";
 import { hubSaid, noSuchPinLine, renderPinList, renderWaiverRequested } from "./pin-render.ts";
+import { deniedPinPaths, pinDenylistRefusal, sweepDenylistLines } from "./pin-observability.ts";
+import type { DeniedMove } from "./pin-observability.ts";
+import type { PinPathOutcome } from "@crosscheck/connector-core/git/pin-sweep.ts";
 import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
 import type { CliResult } from "./login.ts";
 
@@ -117,6 +121,13 @@ interface Resolved {
   readonly repoId: string;
   readonly repoRoot: string;
   readonly baseCommit: string;
+  /**
+   * The denylist THIS MACHINE'S CAPTURE applies (loss-accounting §10 item 4):
+   * the stored config's `denylist` through the same `resolveDenylist` every
+   * capture flow calls, so the door refuses exactly the files capture here
+   * never records — never a second copy of the rule.
+   */
+  readonly patterns: readonly string[];
 }
 
 const resolve = async (
@@ -143,6 +154,7 @@ const resolve = async (
     repoId: identity.repoId,
     repoRoot: identity.root,
     baseCommit: identity.baseCommit,
+    patterns: resolveDenylist(config.denylist ?? undefined),
   };
 };
 
@@ -342,6 +354,26 @@ const requestFenceWaiver = async (resolved: Resolved, args: PinArgs, pinId: stri
  * — it spawns git processes per missing path, which no hook budget should pay
  * for, and a rename that goes unrecorded for an hour costs nothing.
  */
+/**
+ * One pinned path's sweep update. A rename INTO a path the denylist excludes
+ * (loss-accounting §10 item 4) goes to the hub as `missing`, never as the new
+ * path: a pin there would watch a file whose touches are never recorded, and
+ * `trace` would answer "nobody touched it" however many sessions did. A
+ * missing path reads BROKEN on every surface, which is the weakening side.
+ */
+const sweepUpdateFor = (
+  pinId: string,
+  path: string,
+  outcome: PinPathOutcome,
+  patterns: readonly string[],
+): { readonly update: PinSweepUpdate; readonly denied: DeniedMove | null } => {
+  const moved = outcome.status === "renamed" ? outcome.resolved : null;
+  const rule = moved === null ? undefined : deniedPinPaths([moved], patterns)[0];
+  return rule === undefined
+    ? { update: { pinId, path, newPath: outcome.resolved }, denied: null }
+    : { update: { pinId, path, newPath: null }, denied: { path, newPath: rule.path, pattern: rule.pattern } };
+};
+
 const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   const registry = await getPins(resolved.ctx, resolved.repoId);
   if (!registry.ok) {
@@ -352,6 +384,7 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   const swept = await sweepPinPaths(resolved.repoRoot, paths);
   const byPath = new Map(swept.map((entry) => [entry.path, entry]));
   const updates: PinSweepUpdate[] = [];
+  const denied: DeniedMove[] = [];
   let unknown = 0;
   for (const pin of live) {
     for (const file of pin.files) {
@@ -362,11 +395,9 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
         unknown += 1;
         continue;
       }
-      updates.push({
-        pinId: pin.id,
-        path: file.path,
-        newPath: outcome.resolved,
-      });
+      const next = sweepUpdateFor(pin.id, file.path, outcome, resolved.patterns);
+      updates.push(next.update);
+      denied.push(...(next.denied === null ? [] : [next.denied]));
     }
   }
   if (updates.length === 0) {
@@ -379,32 +410,43 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   if (!reported.ok) {
     return failureResult(reported);
   }
-  const renamed = swept.filter((entry) => entry.status === "renamed").length;
-  const missing = swept.filter((entry) => entry.status === "missing").length;
-  return {
-    stdout: [
-      `pin sweep: ${String(reported.data.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} not answered, ${String(reported.data.ignored)} not recorded`,
-      // THE HUB'S REFUSALS ARE THE READER'S, TOO. git said one thing and the
-      // hub declined to write it — a sweep that printed only what git found
-      // would report the register as current while it is not, which is the
-      // fail-silent shape this whole command exists to remove.
-      ...(reported.data.ignored === 0
-        ? []
-        : [
-            "not recorded means the hub declined the update: the pin belongs to another repo, the path is not one the pin watches, or this team's pin policy covers the new path. Run crosscheck pin list to see what the register actually holds.",
-          ]),
-      ...(unknown === 0
-        ? []
-        : [
-            "not answered means nobody looked: git could not reply, or this sweep's call budget ran out before reaching the path. Neither is a verdict about the file.",
-          ]),
-      ...(missing === 0
-        ? []
-        : ["a pin with missing paths watches less than it says — `crosscheck pin list` shows which"]),
-      "",
-    ].join("\n"),
-    exitCode: EXIT_OK,
-  };
+  return { stdout: sweepReport(swept, reported.data, unknown, denied), exitCode: EXIT_OK };
+};
+
+/** What the sweep prints once the hub has answered. */
+const sweepReport = (
+  swept: readonly PinPathOutcome[],
+  answered: { readonly applied: number; readonly ignored: number },
+  unknown: number,
+  denied: readonly DeniedMove[],
+): string => {
+  // A rename into an excluded path was SENT as missing, so it is counted as
+  // missing here too — the summary says what the register now holds.
+  const deniedPaths = new Set(denied.map((move) => move.path));
+  const renamed = swept.filter((entry) => entry.status === "renamed" && !deniedPaths.has(entry.path)).length;
+  const missing = swept.filter((entry) => entry.status === "missing").length + deniedPaths.size;
+  return [
+    `pin sweep: ${String(answered.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} not answered, ${String(answered.ignored)} not recorded`,
+    ...sweepDenylistLines(denied),
+    // THE HUB'S REFUSALS ARE THE READER'S, TOO. git said one thing and the
+    // hub declined to write it — a sweep that printed only what git found
+    // would report the register as current while it is not, which is the
+    // fail-silent shape this whole command exists to remove.
+    ...(answered.ignored === 0
+      ? []
+      : [
+          "not recorded means the hub declined the update: the pin belongs to another repo, the path is not one the pin watches, or this team's pin policy covers the new path. Run crosscheck pin list to see what the register actually holds.",
+        ]),
+    ...(unknown === 0
+      ? []
+      : [
+          "not answered means nobody looked: git could not reply, or this sweep's call budget ran out before reaching the path. Neither is a verdict about the file.",
+        ]),
+    ...(missing === 0
+      ? []
+      : ["a pin with missing paths watches less than it says — `crosscheck pin list` shows which"]),
+    "",
+  ].join("\n");
 };
 
 /** Why the door refused a path, in the person's terms (01a §3.3d, CSK-28). */
@@ -452,6 +494,13 @@ const create = async (
   const door = await resolvePinPaths(resolved.repoRoot, cwd, args.files);
   if (!door.ok) {
     return refusedPaths(door.refused);
+  }
+  // THEN THE DENYLIST (loss-accounting §10 item 4): a file capture never
+  // records is a pin `trace` can never attribute — a permanent blind spot
+  // that reads as a guard. Asked on git's spelling, the one capture stores.
+  const denied = deniedPinPaths(door.paths, resolved.patterns);
+  if (denied.length > 0) {
+    return { stdout: pinDenylistRefusal(denied), exitCode: EXIT_USAGE };
   }
   // The SAME schema the hub applies, run locally first: a refusal a person
   // reads in their own terminal beats a 400 they have to decode.

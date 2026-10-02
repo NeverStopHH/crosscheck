@@ -1309,7 +1309,9 @@ CREATE TABLE IF NOT EXISTS fence_waivers (
   pin_id text NOT NULL REFERENCES pins(id),
   pin_version integer NOT NULL,
   kind text NOT NULL,
-  granted_by text NOT NULL REFERENCES developers(id),
+  -- Null only on the hub's own closure (04a D-PK-1); the authority CHECK
+  -- below holds it, and the ALTER below reaches a hub that has this table.
+  granted_by text REFERENCES developers(id),
   -- Hub-stamped "human", never taken from a body: here that assertion would
   -- be a permission.
   capture_mode text NOT NULL,
@@ -1386,6 +1388,18 @@ ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS authority text NOT NULL DEFAU
 ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS credential_id text REFERENCES passkeys(credential_id);
 ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS request_id text;
 
+-- 04a D-PK-1 (Nick, 2026-10-02): revoking a passkey closes every live grant it
+-- authorised, as a new revoke row the HUB writes. No person wrote that row, so
+-- granted_by may be null — and the CHECK below allows the null only there.
+ALTER TABLE fence_waivers ALTER COLUMN granted_by DROP NOT NULL;
+
+-- A person's row names the person; a passkey row names its credential; the
+-- hub's own closure ('system') is valid only as a revoke, for the one reason,
+-- naming the revoked credential and no person. Replaced ONCE: a hub whose
+-- CHECK predates the third authority gets this one, and a restart (which runs
+-- this file in full) finds the new definition and leaves it alone, so no start
+-- pays a full-table revalidation.
+-- keep in sync with SYSTEM_WAIVER_AUTHORITY and AUTHORIZING_CREDENTIAL_REVOKED in @crosscheck/schema
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -1393,9 +1407,14 @@ BEGIN
     FROM pg_constraint
     WHERE conname = 'fence_waivers_authority_check'
       AND conrelid = 'fence_waivers'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%authorizing_credential_revoked%'
   ) THEN
+    ALTER TABLE fence_waivers DROP CONSTRAINT IF EXISTS fence_waivers_authority_check;
     ALTER TABLE fence_waivers ADD CONSTRAINT fence_waivers_authority_check
-      CHECK (authority = 'terminal' OR (authority = 'passkey' AND credential_id IS NOT NULL));
+      CHECK ((authority = 'terminal' AND granted_by IS NOT NULL)
+          OR (authority = 'passkey' AND credential_id IS NOT NULL AND granted_by IS NOT NULL)
+          OR (authority = 'system' AND kind = 'revoke' AND credential_id IS NOT NULL
+              AND granted_by IS NULL AND reason = 'authorizing_credential_revoked'));
   END IF;
 END
 $$;

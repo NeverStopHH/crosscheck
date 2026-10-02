@@ -69,6 +69,8 @@ import {
   TEAM_SUSPECT_ATTRIBUTIONS,
   WAIVER_AUTHORITIES,
   WAIVER_KINDS,
+  AUTHORIZING_CREDENTIAL_REVOKED,
+  SYSTEM_WAIVER_AUTHORITY,
   ENROLMENT_SOURCES,
   MAX_PASSKEY_LABEL_CHARS,
   PASSKEY_REVOKERS,
@@ -1373,9 +1375,12 @@ export const fenceWaivers = pgTable(
       .references(() => pins.id),
     pinVersion: integer("pin_version").notNull(),
     kind: text("kind", { enum: WAIVER_KINDS }).notNull(),
-    grantedBy: text("granted_by")
-      .notNull()
-      .references(() => developers.id),
+    /**
+     * The person who wrote the row. NULL ONLY on a `system` closure (04a
+     * D-PK-1), which no person wrote: the hub closed the grant because the
+     * passkey that approved it was revoked. The CHECK below holds both halves.
+     */
+    grantedBy: text("granted_by").references(() => developers.id),
     /**
      * HUB-STAMPED, never on the body. The same rule #50 applied to pins, for
      * the same reason: a body that could say "human" is a caller asserting
@@ -1404,10 +1409,16 @@ export const fenceWaivers = pgTable(
   },
   (table) => [
     // A PASSKEY ROW NAMES ITS CREDENTIAL, as a database fact: "which device
-    // said yes" must survive a later revocation of that device.
+    // said yes" must survive a later revocation of that device. A person's
+    // row names the person. And the hub's own closure (04a D-PK-1) is valid
+    // only as a revoke, for the one reason, naming the revoked credential and
+    // no person — so `system` can never open a fence or pass for a ceremony.
     check(
       "fence_waivers_authority_check",
-      sql`${table.authority} = 'terminal' OR (${table.authority} = 'passkey' AND ${table.credentialId} IS NOT NULL)`,
+      sql`(${table.authority} = 'terminal' AND ${table.grantedBy} IS NOT NULL)
+   OR (${table.authority} = 'passkey' AND ${table.credentialId} IS NOT NULL AND ${table.grantedBy} IS NOT NULL)
+   OR (${table.authority} = '${sql.raw(SYSTEM_WAIVER_AUTHORITY)}' AND ${table.kind} = 'revoke' AND ${table.credentialId} IS NOT NULL
+       AND ${table.grantedBy} IS NULL AND ${table.reason} = '${sql.raw(AUTHORIZING_CREDENTIAL_REVOKED)}')`,
     ),
     check(
       "fence_waivers_reason_length_check",

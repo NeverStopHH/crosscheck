@@ -141,12 +141,20 @@ export type {
 } from "./pin.ts";
 
 export {
+  AUTHORIZING_CREDENTIAL_REVOKED,
   MAX_WAIVER_REASON_CHARS,
+  SYSTEM_WAIVER_AUTHORITY,
   WAIVER_AUTHORITIES,
+  WAIVER_GRANT_AUTHORITIES,
   WAIVER_KINDS,
   WaiverRequestSchema,
 } from "./waiver.ts";
-export type { WaiverAuthority, WaiverKind, WaiverRequestInput } from "./waiver.ts";
+export type {
+  WaiverAuthority,
+  WaiverGrantAuthority,
+  WaiverKind,
+  WaiverRequestInput,
+} from "./waiver.ts";
 export {
   ENROLMENT_SOURCES,
   MAX_PASSKEY_LABEL_CHARS,

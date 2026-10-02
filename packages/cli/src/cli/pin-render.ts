@@ -31,12 +31,14 @@ import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import { quoted, quotedBody, safeId } from "@crosscheck/connector-core/mcp/render.ts";
 import {
+  AUTHORIZING_CREDENTIAL_REVOKED,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_PATH_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_WAIVER_REASON_CHARS,
 } from "@crosscheck/schema";
-import type { WaiverAuthority } from "@crosscheck/schema";
+import type { WaiverGrantAuthority } from "@crosscheck/schema";
+import type { ClosedWaiverRef } from "@crosscheck/connector-core/http/verdict.ts";
 import type {
   PinEntry,
   PinRegistry,
@@ -157,12 +159,26 @@ const waiverLines = (pin: PinEntry, now: Date): readonly string[] => {
 };
 
 /**
+ * A FENCE THE HUB CLOSED, in one sentence (04a D-PK-1) — shared by `pin list`
+ * and the verdict block, so the two cannot tell the story two ways. The hub's
+ * reason WORD is mapped, never printed: the one this build knows becomes "the
+ * passkey that approved it was revoked", any other a fixed sentence. The id
+ * goes through `safeId` and both instants are re-serialised here.
+ */
+export const closedWaiverSentence = (closed: ClosedWaiverRef, now: Date): string =>
+  `waiver ${safeId(closed.id)} CLOSED by the hub ${ageOf(closed.closedAt, now)}${
+    closed.reason === AUTHORIZING_CREDENTIAL_REVOKED
+      ? " — the passkey that approved it was revoked"
+      : " for a reason this client has no sentence for"
+  }; it would have held until ${instantOf(closed.heldUntil)}`;
+
+/**
  * WHO SAID YES, as the hub recorded it (04a §6, PK-11). A `terminal` waiver
  * was opened the pre-04a way — an api key plus a presence field any agent
  * holding the key could send — and is named as the weaker kind every time it
  * is printed, until it runs out on its own expiry.
  */
-const AUTHORITY_LINE: Readonly<Record<WaiverAuthority, string>> = {
+const AUTHORITY_LINE: Readonly<Record<WaiverGrantAuthority, string>> = {
   passkey: "approved with a person's passkey",
   terminal:
     "opened from a terminal before passkeys — the weaker kind, which any agent holding the api key could send",
@@ -214,6 +230,9 @@ const pinLines = (
       : [`  check: ${quotedBody(pin.check, MAX_PIN_CHECK_CHARS)}`]),
     fileLine(pin),
     ...waiverLines(pin, now),
+    ...(pin.closedWaiver === undefined || pin.closedWaiver === null
+      ? []
+      : [`  ${closedWaiverSentence(pin.closedWaiver, now)}`]),
     ...requests
       .filter((request) => request.pinId === pin.id && request.status === "pending")
       .flatMap(requestLines),

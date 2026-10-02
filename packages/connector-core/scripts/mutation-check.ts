@@ -12974,8 +12974,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a waiver of unstated authority reads as a passkey approval (PK-11)",
     file: `${CORE}/src/http/verdict.ts`,
-    from: '  authority: z.enum(WAIVER_AUTHORITIES).catch("terminal"),',
-    to: '  authority: z.enum(WAIVER_AUTHORITIES).catch("passkey"),',
+    from: '  authority: z.enum(WAIVER_GRANT_AUTHORITIES).catch("terminal"),',
+    to: '  authority: z.enum(WAIVER_GRANT_AUTHORITIES).catch("passkey"),',
     test: `${CLI}/test/waiver-render.test.ts`,
     because: "an older hub's unsigned waiver is rendered as signed, a claim nobody can show",
   },
@@ -14020,7 +14020,7 @@ export const MUTATIONS: readonly Mutation[
     from: "    changed.length - candidates.length,\n",
     to: "    0,\n",
     test: `${CORE}/test/capture-losses.test.ts`,
-    because: "a turn that touched the 61st dirty path loses it to a slice the freshness check never reaches, and nothing counts it",
+    because: "a turn that touched a dirty path past the bound loses it to a slice the freshness check never reaches, and nothing counts it",
   },
   {
     label: "a skipped git lane is a session-state number and nothing else",
@@ -15583,6 +15583,266 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/conference-cli.test.ts`,
     because: "the hub stores the conference's end as pre_seq_connector and doctor sends the reader to upgrade",
   },
+  // loss-accounting §10 item 8 (Nick, 2026-10-02): the git lane examines far
+  // more dirty paths and books only the ones it never looked at.
+  {
+    label: "the git lane examines only sixty dirty paths and books the stale rest as lost",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const MAX_GIT_TOUCH_CANDIDATES = 2000;\n",
+    to: "export const MAX_GIT_TOUCH_CANDIDATES = 60;\n",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because: "a worktree that stays more than sixty files dirty reads incomplete on every Stop, though every one of them is stale",
+  },
+  // loss-accounting §10 item 4 (Nick, 2026-10-02): the pin door refuses a file
+  // no capture can observe, and a sweep never moves a pin onto one.
+  {
+    label: "a pin over a file the denylist excludes is registered as a guard",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  if (denied.length > 0) {\n    return { stdout: pinDenylistRefusal(denied), exitCode: EXIT_USAGE };",
+    to: "  if (false) {\n    return { stdout: pinDenylistRefusal(denied), exitCode: EXIT_USAGE };",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a pin over generated output reads as protection while trace can never name who touched it",
+  },
+  {
+    label: "the pin door asks the shipped denylist instead of the one this machine's capture applies",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "    patterns: resolveDenylist(config.denylist ?? undefined),\n",
+    to: "    patterns: resolveDenylist(undefined),\n",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a rule the developer's config adds stops capture on that machine and the door lets a pin over it through",
+  },
+  {
+    label: "the pin door names only the first file the denylist excludes",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "    ...denied.map((shadow) => `  ${token(shadow.path)} (excluded by ${token(shadow.pattern)})`),\n",
+    to: "    ...denied.slice(0, 1).map((shadow) => `  ${token(shadow.path)} (excluded by ${token(shadow.pattern)})`),\n",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the person fixes the one file named and is refused again for the next",
+  },
+  {
+    label: "the pin door refuses without saying why an excluded file can never be guarded",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "    `${DENYLIST_REFUSAL_WHY}.`,\n",
+    to: "",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a refusal with no reason reads as a bug to route around, not as a blind spot",
+  },
+  {
+    label: "a sweep moves a pin onto a path no capture observes",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "    : { update: { pinId, path, newPath: null }, denied:",
+    to: "    : { update: { pinId, path, newPath: outcome.resolved }, denied:",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a rename into generated output leaves the pin reading as watching while every touch of the file goes unrecorded",
+  },
+  {
+    label: "a sweep records an excluded rename as missing without saying why",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "    ...sweepDenylistLines(denied),\n",
+    to: "",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the pin turns BROKEN after a sweep and nothing names the rule that did it",
+  },
+  // 04a D-PK-1 (Nick, 2026-10-02), the data model: the hub's own closure is a
+  // third authority, valid only on a revoke, in both DDL sources.
+  {
+    label: "the hub's closure authority may be written for any reason",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "              AND granted_by IS NULL AND reason = 'authorizing_credential_revoked'));\n",
+    to: "              AND granted_by IS NULL));\n",
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
+    because: "a row reading closed-by-the-hub can be written with any sentence, and no longer says the passkey was revoked",
+  },
+  {
+    label: "the hub's closure authority can open a fence",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "          OR (authority = 'system' AND kind = 'revoke' AND credential_id IS NOT NULL\n",
+    to: "          OR (authority = 'system' AND credential_id IS NOT NULL\n",
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
+    because: "a grant nobody approved holds a fence open under an authority no person holds",
+  },
+  {
+    label: "a hub with the old authority CHECK never gets the third authority",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "      AND pg_get_constraintdef(oid) LIKE '%authorizing_credential_revoked%'\n",
+    to: "",
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
+    because: "every existing hub refuses the closure a passkey revocation writes, and the revocation fails with it",
+  },
+  {
+    label: "an existing hub keeps granted_by NOT NULL and refuses every hub closure",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE fence_waivers ALTER COLUMN granted_by DROP NOT NULL;\n",
+    to: "",
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
+    because: "the closure has no person to name, so on a hub that has the table the revocation cannot be written",
+  },
+  {
+    label: "drizzle's authority CHECK forgets the hub's closure",
+    file: `${SERVER}/src/db/schema.ts`,
+    from: "   OR (${table.authority} = '${sql.raw(SYSTEM_WAIVER_AUTHORITY)}' AND ${table.kind} = 'revoke'",
+    to: "   OR (${table.authority} = 'never' AND ${table.kind} = 'revoke'",
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
+    because: "a migration generated from drizzle drops the third authority, and the two DDL sources disagree",
+  },
+  {
+    label: "a live waiver claiming the hub's closure authority is believed",
+    file: `${CORE}/src/http/verdict.ts`,
+    from: '  authority: z.enum(WAIVER_GRANT_AUTHORITIES).catch("terminal"),',
+    to: '  authority: z.enum([...WAIVER_GRANT_AUTHORITIES, "system"]).catch("terminal"),',
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "a waiver no person approved reaches a renderer with no sentence for it, instead of reading as the weaker kind",
+  },
+  // 04a D-PK-1 (Nick, 2026-10-02), the termination: revoking a passkey closes
+  // the live grants it signed, in the revocation's own transaction.
+  {
+    label: "a revoked passkey's live waivers keep their fences open",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: "    const terminated = await terminateWaiversSignedBy({ db: tx, credentialId: row.credentialId, now: input.now });\n",
+    to: "    const terminated = 0;\n",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "a fence a lost or stolen device opened stays open for up to fourteen days after the device is revoked",
+  },
+  {
+    label: "a passkey's revocation lands without the closures it owes",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: "  input.db.transaction(async (tx) => {\n    const rows = await tx\n      .select({\n        developerId: passkeys.developerId,\n        credentialId: passkeys.credentialId,",
+    to: "  ((run: (tx: Db) => Promise<unknown>) => run(input.db))(async (tx) => {\n    const rows = await tx\n      .select({\n        developerId: passkeys.developerId,\n        credentialId: passkeys.credentialId,",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "a closure the database refuses leaves the device revoked and its fences open, two halves of one decision split",
+  },
+  {
+    label: "the hub writes a closure for a grant that already expired",
+    file: `${SERVER}/src/services/waiver-terminations.ts`,
+    from: "        gt(fenceWaivers.expiresAt, now),\n",
+    to: "",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "the record says the hub closed a fence that had closed itself, and the count overstates what the revocation did",
+  },
+  {
+    label: "a grant a person already closed gets a second closure from the hub",
+    file: `${SERVER}/src/services/waiver-terminations.ts`,
+    from: "  return signed.filter((grant) => !closedIds.has(grant.id));\n",
+    to: "  return signed;\n",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "one grant carries two closures and the record no longer says which decision closed it",
+  },
+  {
+    label: "a revoked passkey's closure reaches waivers another passkey signed",
+    file: `${SERVER}/src/services/waiver-terminations.ts`,
+    from: "        eq(fenceWaivers.credentialId, credentialId),\n",
+    to: "",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "revoking one lost phone closes every open fence on the hub, approvals by working devices included",
+  },
+  // 04a D-PK-1 (Nick, 2026-10-02), the surfaces: every place a waiver shows
+  // says the hub closed it because the passkey that approved it was revoked.
+  {
+    label: "pin list stops saying a fence closed when its passkey was revoked",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "        { liveWaiver: waivers.get(row.id) ?? null, closedWaiver: closed.get(row.id) ?? null },\n",
+    to: "        { liveWaiver: waivers.get(row.id) ?? null, closedWaiver: null },\n",
+    test: `${SERVER}/test/waiver-closure-surfaces.test.ts`,
+    because: "a fence that was open simply reads as one nobody opened, and nobody learns the device was revoked",
+  },
+  {
+    label: "a closure outlives the grant it closed on every surface",
+    file: `${SERVER}/src/services/waiver-terminations.ts`,
+    from: "    .where(and(eq(fenceWaivers.authority, SYSTEM_WAIVER_AUTHORITY), gt(closedGrants.expiresAt, now), scope))\n",
+    to: "    .where(and(eq(fenceWaivers.authority, SYSTEM_WAIVER_AUTHORITY), scope))\n",
+    test: `${SERVER}/test/waiver-closure-surfaces.test.ts`,
+    because: "a closure that changes nothing any more stays on pin list and status for ever",
+  },
+  {
+    label: "the verdict drops the closure of the fence it reports closed",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "      closedWaiver: fence.closedWaiver,\n",
+    to: "      closedWaiver: null,\n",
+    test: `${SERVER}/test/waiver-closure-surfaces.test.ts`,
+    because: "trace reports a protected conflict on a fence that was open an hour ago, and nothing says why it closed",
+  },
+  {
+    label: "the waiver record hides the hub's closures",
+    file: `${SERVER}/src/services/waivers.ts`,
+    from: "    .leftJoin(developers, eq(fenceWaivers.grantedBy, developers.id))\n    .where(\n      input.pinId === null",
+    to: "    .innerJoin(developers, eq(fenceWaivers.grantedBy, developers.id))\n    .where(\n      input.pinId === null",
+    test: `${SERVER}/test/waiver-closure-surfaces.test.ts`,
+    because: "the record lists a grant with no closure while the fence reads closed, an account with the decisive row missing",
+  },
+  {
+    label: "the approval page never says a fence closed with its passkey",
+    file: `${SERVER}/src/ui/pages/waivers.tsx`,
+    from: "    {closed.length === 0 ? null : (\n",
+    to: "    {true ? null : (\n",
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "the person who approved it sees the fence vanish from the page with no account of why",
+  },
+  {
+    label: "a passkey ceremony revokes a device without saying which fences closed with it",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "        : ok(c, { message: `Passkey revoked.${closedWithIt(outcome.terminated)}` });\n",
+    to: "        : ok(c, { message: \"Passkey revoked.\" });\n",
+    test: `${SERVER}/test/ui-passkeys.test.ts`,
+    because: "the person revoking a lost device does not learn it also closed the fences it had opened",
+  },
+  {
+    label: "pin list reads a fence the hub closed as one nobody opened",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "    ...(pin.closedWaiver === undefined || pin.closedWaiver === null\n      ? []\n",
+    to: "    ...(true\n      ? []\n",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "the hub carries the closure and the terminal never prints it",
+  },
+  {
+    label: "a closure's reason word reaches the terminal as the hub sent it",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "      : \" for a reason this client has no sentence for\"\n",
+    to: "      : ` for ${closed.reason}`\n",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "hub-chosen prose lands on a framed surface agents read, outside any frame",
+  },
+  {
+    label: "the verdict block calls a revoked passkey's fence one no waiver ever covered",
+    file: `${CLI}/src/cli/verdict-render.ts`,
+    from: "    ...(closed === null ? [] : [`  ${closedWaiverSentence(closed, now)}`]),\n",
+    to: "",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because: "trace prints no waiver covers it and stops, though one did until its passkey was revoked",
+  },
+  {
+    label: "status counts open fences but not the ones the hub closed",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "    ...(closed === null ? [] : [`  ${closed}`]),\n",
+    to: "",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "a repo whose waivers were just closed reads on status as one where nobody opened a fence",
+  },
+  {
+    label: "an unreadable closure costs the reader the whole pin",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  closedWaiver: ClosedWaiverRefSchema.nullish().catch(null),\n",
+    to: "  closedWaiver: ClosedWaiverRefSchema.nullish(),\n",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because: "one malformed field from a newer hub takes the pin, its open fence included, off the listing",
+  },
+  {
+    label: "an unreadable closure costs the reader the whole verdict",
+    file: `${CORE}/src/http/verdict.ts`,
+    from: "    closedWaiver: ClosedWaiverRefSchema.nullish().catch(null),\n",
+    to: "    closedWaiver: ClosedWaiverRefSchema.nullish(),\n",
+    test: `${CORE}/test/verdict-wire.test.ts`,
+    because: "trace prints no verdict at all over a field it only needed to explain a closed fence",
+  },
+  // loss-accounting §10 item 4, the sweep's summary: what it counts must be
+  // what it recorded.
+  {
+    label: "a sweep's summary counts an excluded rename as a rename it never recorded",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: '  const missing = swept.filter((entry) => entry.status === "missing").length + deniedPaths.size;\n',
+    to: '  const missing = swept.filter((entry) => entry.status === "missing").length;\n',
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the summary says the register holds a rename the hub was told is a missing path",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -15664,6 +15924,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
  * PRINTS: packages/cli/test/pilot-render.test.ts 19
+ * PRINTS: packages/cli/test/pin-denylist-door.test.ts 7
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
@@ -15676,8 +15937,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/terminal.test.ts 3
  * PRINTS: packages/cli/test/trace-command.test.ts 2
- * PRINTS: packages/cli/test/verdict-render.test.ts 4
- * PRINTS: packages/cli/test/waiver-render.test.ts 7
+ * PRINTS: packages/cli/test/verdict-render.test.ts 5
+ * PRINTS: packages/cli/test/waiver-render.test.ts 12
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-engine.test.ts 1
@@ -15739,7 +16000,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
- * PRINTS: packages/connector-core/test/capture-losses.test.ts 6
+ * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
@@ -15827,7 +16088,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
- * PRINTS: packages/connector-core/test/verdict-wire.test.ts 1
+ * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
@@ -15859,6 +16120,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 10
  * PRINTS: packages/server/test/coverage.test.ts 12
+ * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
@@ -15876,6 +16138,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
+ * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
  * PRINTS: packages/server/test/passkeys.test.ts 6
  * PRINTS: packages/server/test/pglite-exit-code.test.ts 5
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
@@ -15913,11 +16176,12 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
- * PRINTS: packages/server/test/ui-passkeys.test.ts 7
+ * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
+ * PRINTS: packages/server/test/waiver-closure-surfaces.test.ts 4
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11

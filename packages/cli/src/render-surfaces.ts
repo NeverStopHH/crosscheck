@@ -8,6 +8,7 @@
  * connector-claude's registry when Block 8 extracted `packages/cli`.
  */
 import type { RenderSurface } from "@crosscheck/connector-core/render-surfaces.ts";
+import { AUTHORIZING_CREDENTIAL_REVOKED } from "@crosscheck/schema";
 import type {
   PinEntry,
   PinRegistry,
@@ -18,7 +19,7 @@ import type {
 
 import { noSuchPinLine, renderPinList, renderWaiverRequested } from "./cli/pin-render.ts";
 import { passkeyStatusLines } from "./cli/passkey-status.ts";
-import { pinStatusLines } from "./cli/pin-observability.ts";
+import { pinDenylistRefusal, pinStatusLines, sweepDenylistLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
 import { verdictLines } from "./cli/verdict-render.ts";
 import { hubFailureLine } from "./cli/revalidate.ts";
@@ -94,6 +95,10 @@ const pinWith = (payload: string): PinEntry => ({
     // says a waiver was opened from a terminal before passkeys.
     authority: "terminal",
   },
+  // 04a D-PK-1: a fence the hub closed, every slot planted — the id, both
+  // instants and the reason word, which takes the unknown-word branch here
+  // (verdictWith takes the known one).
+  closedWaiver: { id: payload, closedAt: payload, heldUntil: payload, reason: payload },
   version: 1,
 });
 
@@ -196,6 +201,9 @@ const verdictWith = (payload: string): VerdictView => ({
     reason: payload,
     grantedByName: payload,
   },
+  // 04a D-PK-1: the KNOWN reason word, so the corpus renders the revoked-
+  // passkey sentence with the payload in the id and both instants.
+  closedWaiver: { id: payload, closedAt: payload, heldUntil: payload, reason: AUTHORIZING_CREDENTIAL_REVOKED },
   computedAt: ISO,
 });
 
@@ -743,6 +751,24 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         walkSummaryLines(tally, true),
       ].join("\n");
     },
+  },
+  {
+    kind: "corpus",
+    name: "cli-pin-denylist-door",
+    delivery: "pulled",
+    module: "src/cli/pin-observability.ts",
+    // loss-accounting §10 item 4, THE ARRAY TAIL. `crosscheck pin` and
+    // `crosscheck pin --sweep` name each file the denylist excludes and the
+    // rule that excludes it. BARE, for cli-pin-observability's reason: a
+    // repo-relative path and a glob pattern are bare tokens, never another
+    // person's prose. Every slot both sentences fill is planted — the path,
+    // the new path git followed it to, and the pattern.
+    framing: "bare",
+    render: (payload) =>
+      [
+        pinDenylistRefusal([{ path: payload, pattern: payload }]),
+        ...sweepDenylistLines([{ path: payload, newPath: payload, pattern: payload }]),
+      ].join("\n"),
   },
 ];
 
