@@ -1349,7 +1349,7 @@ The evidence for each row:
   containing them, until they leave the window, along with sessions from older connectors and
   `crosscheck conference`'s.
 
-**13.8 — For Nick.**
+**13.8 — For Nick.** (All four decided by Nick on 2026-10-02: §13.11.)
 
 1. `UNPROJECTED_LEDGER_KINDS_REFUSAL` is stale, and doctor now prints it beside a table that contradicts
    it. Retiring it is 06's change to make.
@@ -1460,6 +1460,28 @@ The evidence for each row:
   - "Nothing can allocate after" the end, in `declarations.ts` and §13.1, was false: a detached worker
     can allocate between the end's allocation and the state delete. Both now say so, and M1 caps the
     declaration when it happens.
+
+**13.10 — For Nick, after the review.**
+
+1. **Two concurrent first registers (L2, not fixed).** The fix is a transaction around the session
+   insert and `storeDeclaredGuarantees`. No in-process test can force the stall between them, and both
+   registers of one session send one connector's table.
+2. **INT-7 has a new reader caller.** `services/sessions.ts` calls `hasIntentPositionPast`, positions
+   only, to cap `session.ended` (M1). The registry entry states the reason. Your call whether the end
+   route may read the ledger's clock.
+3. **A cap is never lifted.** A reaped session that revives and ends with a position keeps `partial /
+   declaration_contradicted` on `session.ended` (M1). Lifting a cap on later evidence would need the
+   cap to remember what it replaced.
+4. **The agent_event rung's scope (H3).** The order block now folds over suspect's candidates. The
+   agent_event rung beside it still reads `complete / sessions_reported` over the heartbeat window,
+   which is 03's predicate.
+5. **03 §5.3 still says "one line"** (§13.11.2). The renderer and its tests now allow two. A longer
+   note also makes it more likely that a hint near `MAX_HINT_TEXT_LENGTH` drops the note. That
+   behaviour predates this round.
+6. **The conference's claims (§13.11.4).** `partial / derived_after_the_fact` becomes true only once
+   the conference positions its records, for example with a counter of its own minted with an epoch at
+   register. Also: the vocabulary has no reason for "produced, never positioned". `not_built` is the
+   nearest, and `no_emitter` is kept for what it literally says.
 
 **13.11 — Decided by Nick, 2026-10-02** (the four questions of §13.8).
 
