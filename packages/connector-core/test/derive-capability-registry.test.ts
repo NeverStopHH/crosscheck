@@ -31,6 +31,8 @@ import { join, relative } from "node:path";
 
 import { LEDGER_EVENT_KINDS, SESSION_EVENT_KINDS } from "@crosscheck/schema";
 
+import { DECLARATION_TABLE, GUARANTEE_CONNECTORS } from "../src/guarantees/declarations.ts";
+
 import {
   DERIVE_CAPABILITIES,
   UNPROJECTED_LEDGER_KINDS_REFUSAL,
@@ -355,10 +357,25 @@ describe("the derive rungs are declared, and the declaration is true", () => {
     for (const kind of LEDGER_EVENT_KINDS) {
       expect(UNPROJECTED_LEDGER_KINDS_REFUSAL.sentence).toContain(kind);
     }
-    // ...and they really are absent from what the hub can store, which is
-    // what makes the refusal true rather than merely present.
+    // ...and they really are absent from the session's event projection —
+    // they live on the intent ledger's own rows — which is what makes the
+    // line's "not projected" true rather than merely present.
     for (const kind of LEDGER_EVENT_KINDS) {
       expect(SESSION_EVENT_KINDS as readonly string[]).not.toContain(kind);
     }
+  });
+
+  test("the intent-kinds line says what the declaration table says (decided by Nick, 2026-10-02)", () => {
+    // Arrange
+    const { sentence } = UNPROJECTED_LEDGER_KINDS_REFUSAL;
+    // Act + Assert: every host's row for both kinds, in the line's own words.
+    for (const connector of GUARANTEE_CONNECTORS) {
+      for (const kind of LEDGER_EVENT_KINDS) {
+        const row = DECLARATION_TABLE[connector][kind];
+        expect(sentence, `${connector} ${kind}`).toContain(`${row.guarantee} / ${row.reason}`);
+      }
+    }
+    // The ledger landed: no host is without a producer of either kind.
+    expect(sentence).not.toContain("no host emits");
   });
 });

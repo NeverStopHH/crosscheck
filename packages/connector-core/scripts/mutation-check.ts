@@ -14087,6 +14087,15 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a row whose columns disagree reads guaranteed in every test that judges a cap through this reader",
   },
+  // Decided by Nick, 2026-10-02.
+  {
+    label: "the intent-kinds line drifts from the declaration table",
+    file: `${CORE}/src/derive/capabilities.ts`,
+    from: "and on every host they are partial / derived_after_the_fact:",
+    to: "and on every host they are unavailable / not_built:",
+    test: `${CORE}/test/derive-capability-registry.test.ts`,
+    because: "doctor prints a limit for the two intent kinds beside a declaration table that states the opposite",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14248,7 +14257,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 18
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
- * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
+ * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

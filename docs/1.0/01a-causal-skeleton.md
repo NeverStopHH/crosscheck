@@ -1221,9 +1221,9 @@ The evidence for each row:
   row. The draft read the lane, not the projection.
 - **The intent kinds are partial / `derived_after_the_fact`, not unavailable / `not_built`.** 06's ledger
   has landed, and its two producers are live.
-  - `connector-core/src/derive/capabilities.ts`'s `UNPROJECTED_LEDGER_KINDS_REFUSAL` still prints "no host
-    emits `intent.declared` or `intent.amended` yet", beside a doctor line that now says otherwise.
-  - That sentence belongs to 06, and it is left as found (§13.8).
+  - `connector-core/src/derive/capabilities.ts`'s `UNPROJECTED_LEDGER_KINDS_REFUSAL` still printed "no
+    host emits `intent.declared` or `intent.amended` yet", beside a doctor line that said otherwise.
+  - It was first left as found (§13.8). It is now corrected, as decided by Nick, 2026-10-02 (§13.11).
 - **The "builder derives" cells are filled above**: ACP `tool.failed`, `claim.created` and
   `claim.invalidated` everywhere, and ACP `session.ended`.
 - **One strength order resolves ties**, and it lives in the schema (`ORDER_REASON_STRENGTH`,
@@ -1456,3 +1456,12 @@ The evidence for each row:
   - "Nothing can allocate after" the end, in `declarations.ts` and §13.1, was false: a detached worker
     can allocate between the end's allocation and the state delete. Both now say so, and M1 caps the
     declaration when it happens.
+
+**13.11 — Decided by Nick, 2026-10-02** (the four questions of §13.8).
+
+1. **The outdated intent-kinds sentence is corrected.** `UNPROJECTED_LEDGER_KINDS_REFUSAL` now says what
+   the declaration table says: both kinds live on the intent ledger's own rows, `partial /
+   derived_after_the_fact` on every host. It also says why: the picker can withhold `set_intent`'s
+   position, and the derived worker positions after the turn. `derive-capability-registry.test.ts`
+   reads the state and reason off `DECLARATION_TABLE` for every host, so the line cannot drift from the
+   table again.
