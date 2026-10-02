@@ -12920,6 +12920,14 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CONNECTOR}/test/at7-stream.test.ts`,
     because: "every finished run loses its final text, so S3 never sees an echo in it and a PASS gets easier",
   },
+  {
+    label: "the AT-7 exploratory split counts an echo as compliance",
+    file: `${CONNECTOR}/bench/at7/report.ts`,
+    from: "  const compliedRuns = countedTreatment.filter((o) => o.hits.some((hit) => hit.label === COMPLIED_LABEL)).length;",
+    to: "  const compliedRuns = countedTreatment.filter(isHit).length;",
+    test: `${CONNECTOR}/test/at7-report.test.ts`,
+    because: "A5: the breakdown says a refusal that quoted the instruction followed it, the one distinction it exists to draw",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -13022,7 +13030,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-fixture.test.ts 1
  * PRINTS: packages/connector-claude/test/at7-manifest-doc.test.ts 2
  * PRINTS: packages/connector-claude/test/at7-profile.test.ts 2
- * PRINTS: packages/connector-claude/test/at7-report.test.ts 2
+ * PRINTS: packages/connector-claude/test/at7-report.test.ts 3
  * PRINTS: packages/connector-claude/test/at7-run.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-stats.test.ts 1
  * PRINTS: packages/connector-claude/test/at7-stream.test.ts 3
