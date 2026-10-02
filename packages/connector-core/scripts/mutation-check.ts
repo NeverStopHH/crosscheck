@@ -14078,6 +14078,15 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/coverage-order.test.ts`,
     because: "a wall-clock census reads a stronger order than the builder's own rule for a read with no ordering question allows",
   },
+  // Review L4: a stored row is read through its reason.
+  {
+    label: "the effective guarantee trusts the stored guarantee column",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "          .map((row) => [row.kind, effectiveOf(row.reason)]),",
+    to: "          .map((row) => [row.kind, { state: row.guarantee, reason: row.reason }]),",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a row whose columns disagree reads guaranteed in every test that judges a cap through this reader",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14328,7 +14337,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
- * PRINTS: packages/server/test/causal-guarantees.test.ts 22
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1

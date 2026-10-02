@@ -32,8 +32,6 @@ import type { CoverageOrder, GuaranteeKind } from "@crosscheck/schema";
 import type { DbExecutor } from "../db/client.ts";
 
 export const ALL_ORDER_KINDS: readonly GuaranteeKind[] = GUARANTEE_KINDS;
-/** "Who touched this file" — the touch itself. */
-export const TOUCH_KINDS: readonly GuaranteeKind[] = ["file.modified"];
 /** 04's explanation timing: an edit against the intent versions it is compared with. */
 export const EXPLANATION_TIMING_KINDS: readonly GuaranteeKind[] = [
   "file.modified",

@@ -249,6 +249,21 @@ describe("the declaration a session registers with", () => {
     });
   });
 
+  test("a stored row is read through its reason, never through its guarantee column (review L4)", async () => {
+    // Arrange: one row whose two columns disagree, one whose reason this hub cannot name.
+    const { harness } = await seed();
+    await harness.db.execute(
+      sql`INSERT INTO session_causal_guarantees (session_id, kind, guarantee, reason) VALUES
+            (${SESSION}, 'file.modified', 'guaranteed', 'unbracketed_lane'),
+            (${SESSION}, 'tool.failed', 'guaranteed', 'vendor_magic')`,
+    );
+    // Act
+    const reading = await effective(harness);
+    // Assert
+    expect(reading.get("file.modified")).toEqual({ state: "partial", reason: "unbracketed_lane" });
+    expect(reading.get("tool.failed")).toEqual({ state: "undeclared", reason: "provider_undeclared" });
+  });
+
   test("a re-register that sends no block leaves every kind undeclared", async () => {
     // Arrange
     const { harness, developer } = await seed([BRACKETED_EDIT]);

@@ -14,10 +14,11 @@ import { sql } from "drizzle-orm";
 
 import { isJudgeable, readCoverage } from "../src/services/coverage.ts";
 import type { CoverageRecord } from "../src/services/coverage.ts";
-import {
-  EXPLANATION_TIMING_KINDS,
-  TOUCH_KINDS,
-} from "../src/services/coverage-order.ts";
+import { EXPLANATION_TIMING_KINDS } from "../src/services/coverage-order.ts";
+import type { GuaranteeKind } from "@crosscheck/schema";
+
+/** "Who touched this file": a one-kind question no route asks yet (review L4 moved it here). */
+const TOUCH_KINDS: readonly GuaranteeKind[] = ["file.modified"];
 import {
   VALID_SESSION_BODY,
   createTestDeveloper,

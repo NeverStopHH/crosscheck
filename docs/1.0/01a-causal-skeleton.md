@@ -1442,3 +1442,7 @@ The evidence for each row:
   asks no ordering question, and the build's own rule for such a read is all nine kinds. The route now
   passes no `orderKinds`, and the unused `COMMIT_KINDS` is gone. The failure falls toward the lower
   minimum. For an honest Claude session the state was already `partial`; only the reason changes.
+- **L4 — the test reader trusted the stored `guarantee` column.** `readEffectiveGuarantees`, which every
+  cap test judges through, now derives the state from the reason the way the scope fold does. A reason
+  this hub cannot name reads `undeclared`. `TOUCH_KINDS`, which no route used, moved into the test
+  that does. The failure falls toward `undeclared`.

@@ -23,7 +23,13 @@
  * never call this module (01a §3.7, 01 §3.7 (1)).
  */
 import { and, eq, gt, inArray, isNotNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
-import { GUARANTEE_KINDS, ORDER_REASON_STRENGTH, foldGuaranteeDeclaration } from "@crosscheck/schema";
+import {
+  GUARANTEE_KINDS,
+  ORDER_REASON_STRENGTH,
+  STORED_GUARANTEE_REASONS,
+  foldGuaranteeDeclaration,
+  stateOfOrderReason,
+} from "@crosscheck/schema";
 import type {
   CausalGuarantee,
   GuaranteeKind,
@@ -216,6 +222,16 @@ export const capLifecycleContradictions = async (
 };
 
 /**
+ * A stored row read through its REASON (review L4), the way the scope fold
+ * reads it: the state is the reason's own, and a reason this hub cannot name
+ * reads `undeclared`. The `guarantee` column is never trusted on its own.
+ */
+const effectiveOf = (reason: string): EffectiveGuarantee =>
+  (STORED_GUARANTEE_REASONS as readonly string[]).includes(reason)
+    ? { state: stateOfOrderReason(reason as StoredGuaranteeReason), reason: reason as StoredGuaranteeReason }
+    : UNDECLARED;
+
+/**
  * Each session's effective guarantee for every one of the nine kinds — its
  * stored row, capped already, or `undeclared` where there is none. A session
  * id with no rows at all is still answered, all nine `undeclared`.
@@ -236,7 +252,7 @@ export const readEffectiveGuarantees = async (
       const own = new Map(
         rows
           .filter((row) => row.sessionId === sessionId)
-          .map((row) => [row.kind, { state: row.guarantee, reason: row.reason }]),
+          .map((row) => [row.kind, effectiveOf(row.reason)]),
       );
       return [
         sessionId,
