@@ -420,8 +420,11 @@ const sweepReport = (
   unknown: number,
   denied: readonly DeniedMove[],
 ): string => {
-  const renamed = swept.filter((entry) => entry.status === "renamed").length;
-  const missing = swept.filter((entry) => entry.status === "missing").length;
+  // A rename into an excluded path was SENT as missing, so it is counted as
+  // missing here too — the summary says what the register now holds.
+  const deniedPaths = new Set(denied.map((move) => move.path));
+  const renamed = swept.filter((entry) => entry.status === "renamed" && !deniedPaths.has(entry.path)).length;
+  const missing = swept.filter((entry) => entry.status === "missing").length + deniedPaths.size;
   return [
     `pin sweep: ${String(answered.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} not answered, ${String(answered.ignored)} not recorded`,
     ...sweepDenylistLines(denied),

@@ -179,9 +179,11 @@ describe("a sweep never moves a pin onto a path no capture observes", () => {
     const swept = await run(home, ["pin", "--sweep"]);
     const listed = await run(home, ["pin", "list"]);
 
-    // Assert: the pin reads BROKEN instead of watching a file nobody records
+    // Assert: the pin reads BROKEN instead of watching a file nobody records,
+    // and the summary counts the move the way it was recorded
     expect(swept.stdout).toContain(`${MOVED_FROM} moved to ${MOVED_TO} (excluded by ${GENERATED_RULE})`);
     expect(swept.stdout).toContain("recorded as missing");
+    expect(swept.stdout).toContain("0 renamed, 1 missing");
     expect(listed.stdout).not.toContain(MOVED_TO);
     expect(listed.stdout).toContain("BROKEN — 1 of 1 paths missing");
   });
