@@ -15395,6 +15395,48 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CLI}/test/waiver-render.test.ts`,
     because: "a waiver no person approved reaches a renderer with no sentence for it, instead of reading as the weaker kind",
   },
+  // 04a D-PK-1 (Nick, 2026-10-02), the termination: revoking a passkey closes
+  // the live grants it signed, in the revocation's own transaction.
+  {
+    label: "a revoked passkey's live waivers keep their fences open",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: "    const terminated = await terminateWaiversSignedBy({ db: tx, credentialId: row.credentialId, now: input.now });\n",
+    to: "    const terminated = 0;\n",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "a fence a lost or stolen device opened stays open for up to fourteen days after the device is revoked",
+  },
+  {
+    label: "a passkey's revocation lands without the closures it owes",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: "  input.db.transaction(async (tx) => {\n    const rows = await tx\n      .select({\n        developerId: passkeys.developerId,\n        credentialId: passkeys.credentialId,",
+    to: "  ((run: (tx: Db) => Promise<unknown>) => run(input.db))(async (tx) => {\n    const rows = await tx\n      .select({\n        developerId: passkeys.developerId,\n        credentialId: passkeys.credentialId,",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "a closure the database refuses leaves the device revoked and its fences open, two halves of one decision split",
+  },
+  {
+    label: "the hub writes a closure for a grant that already expired",
+    file: `${SERVER}/src/services/waiver-terminations.ts`,
+    from: "        gt(fenceWaivers.expiresAt, now),\n",
+    to: "",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "the record says the hub closed a fence that had closed itself, and the count overstates what the revocation did",
+  },
+  {
+    label: "a grant a person already closed gets a second closure from the hub",
+    file: `${SERVER}/src/services/waiver-terminations.ts`,
+    from: "  return signed.filter((grant) => !closedIds.has(grant.id));\n",
+    to: "  return signed;\n",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "one grant carries two closures and the record no longer says which decision closed it",
+  },
+  {
+    label: "a revoked passkey's closure reaches waivers another passkey signed",
+    file: `${SERVER}/src/services/waiver-terminations.ts`,
+    from: "        eq(fenceWaivers.credentialId, credentialId),\n",
+    to: "",
+    test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
+    because: "revoking one lost phone closes every open fence on the hub, approvals by working devices included",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
