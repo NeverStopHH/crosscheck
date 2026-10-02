@@ -15295,6 +15295,56 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/capture-losses.test.ts`,
     because: "a worktree that stays more than sixty files dirty reads incomplete on every Stop, though every one of them is stale",
   },
+  // loss-accounting §10 item 4 (Nick, 2026-10-02): the pin door refuses a file
+  // no capture can observe, and a sweep never moves a pin onto one.
+  {
+    label: "a pin over a file the denylist excludes is registered as a guard",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  if (denied.length > 0) {\n    return { stdout: pinDenylistRefusal(denied), exitCode: EXIT_USAGE };",
+    to: "  if (false) {\n    return { stdout: pinDenylistRefusal(denied), exitCode: EXIT_USAGE };",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a pin over generated output reads as protection while trace can never name who touched it",
+  },
+  {
+    label: "the pin door asks the shipped denylist instead of the one this machine's capture applies",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "    patterns: resolveDenylist(config.denylist ?? undefined),\n",
+    to: "    patterns: resolveDenylist(undefined),\n",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a rule the developer's config adds stops capture on that machine and the door lets a pin over it through",
+  },
+  {
+    label: "the pin door names only the first file the denylist excludes",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "    ...denied.map((shadow) => `  ${token(shadow.path)} (excluded by ${token(shadow.pattern)})`),\n",
+    to: "    ...denied.slice(0, 1).map((shadow) => `  ${token(shadow.path)} (excluded by ${token(shadow.pattern)})`),\n",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the person fixes the one file named and is refused again for the next",
+  },
+  {
+    label: "the pin door refuses without saying why an excluded file can never be guarded",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "    `${DENYLIST_REFUSAL_WHY}.`,\n",
+    to: "",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a refusal with no reason reads as a bug to route around, not as a blind spot",
+  },
+  {
+    label: "a sweep moves a pin onto a path no capture observes",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "    : { update: { pinId, path, newPath: null }, denied:",
+    to: "    : { update: { pinId, path, newPath: outcome.resolved }, denied:",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a rename into generated output leaves the pin reading as watching while every touch of the file goes unrecorded",
+  },
+  {
+    label: "a sweep records an excluded rename as missing without saying why",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "    ...sweepDenylistLines(denied),\n",
+    to: "",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the pin turns BROKEN after a sweep and nothing names the rule that did it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

@@ -18,7 +18,7 @@ import type {
 
 import { noSuchPinLine, renderPinList, renderWaiverRequested } from "./cli/pin-render.ts";
 import { passkeyStatusLines } from "./cli/passkey-status.ts";
-import { pinStatusLines } from "./cli/pin-observability.ts";
+import { pinDenylistRefusal, pinStatusLines, sweepDenylistLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
 import { verdictLines } from "./cli/verdict-render.ts";
 import { hubFailureLine } from "./cli/revalidate.ts";
@@ -743,6 +743,24 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         walkSummaryLines(tally, true),
       ].join("\n");
     },
+  },
+  {
+    kind: "corpus",
+    name: "cli-pin-denylist-door",
+    delivery: "pulled",
+    module: "src/cli/pin-observability.ts",
+    // loss-accounting §10 item 4, THE ARRAY TAIL. `crosscheck pin` and
+    // `crosscheck pin --sweep` name each file the denylist excludes and the
+    // rule that excludes it. BARE, for cli-pin-observability's reason: a
+    // repo-relative path and a glob pattern are bare tokens, never another
+    // person's prose. Every slot both sentences fill is planted — the path,
+    // the new path git followed it to, and the pattern.
+    framing: "bare",
+    render: (payload) =>
+      [
+        pinDenylistRefusal([{ path: payload, pattern: payload }]),
+        ...sweepDenylistLines([{ path: payload, newPath: payload, pattern: payload }]),
+      ].join("\n"),
   },
 ];
 

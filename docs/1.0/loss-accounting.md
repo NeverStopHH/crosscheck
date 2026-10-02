@@ -382,6 +382,8 @@ report B's own losses. Stays on the machine-wide `foreign-repo drops` line, wher
 every session and every developer (`capture/denylist.ts:2-5`, DESIGN.md §4), so no session's absence on those
 paths is distinguishable from another's. What that leaves is not a capture gap but a *pin* question — a pin on a
 denylisted path can never be attributed — and it belongs to 04's pin registration, not to coverage (§10.4).
+Since 2026-10-02 the CLI's pin door refuses such a pin and the sweep refuses to move one there; §10 item 4 says
+what the hub does not refuse.
 
 **4.8.3 The seen-set (#13)** skips a path already captured in this session; the target row exists on the hub or
 in the spool, and if the earlier append was refused, #1 counted it. `MAX_SEEN_TARGETS` eviction
@@ -623,6 +625,30 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
 4. **Pins on denylisted paths** (§4.8.2) are a permanent attribution blind spot that no coverage rule can see.
    *Recommendation:* 04's pin registration refuses a path the default denylist matches, by name in the refusal
    list. Not built here.
+   **Decided by Nick 2026-10-02: refuse. Built, in the CLI.** `crosscheck pin "<surface>" --files …` refuses
+   the pin when the effective denylist excludes any of its files, and stores nothing. The list is the one capture
+   applies on this machine — `resolveDenylist(config.denylist)`, the shipped defaults extended or replaced by
+   `denylist` in the stored config — never a second copy of the rule (`cli/src/cli/pin.ts`, `Resolved.patterns`).
+   The refusal names each excluded file with the rule that excludes it and says why in one sentence: *no
+   session's touch of these files is ever recorded, so a guard over them could never say who broke them*
+   (`cli/src/cli/pin-observability.ts`, `deniedPinPaths` and `pinDenylistRefusal`; the status and doctor shadow
+   line ask the same `deniedPinPaths`). `crosscheck pin --sweep` never moves a pin onto such a path: a rename git
+   followed into an excluded path goes to the hub as `missing`, so the pin reads BROKEN, and the sweep names the
+   move and the rule. Those are the only two writers of pin paths (`createPin` and `sweepPins`, routes
+   `POST /api/pins` and `POST /api/pins/sweep`); `--broke`, `--ok` and `--waive` add no path.
+   *The hub does not refuse.* The list that decides capture is per machine: `denylist` lives in each
+   developer's `~/.crosscheck/config.json`, may extend or replace the defaults, and never reaches the hub, and
+   the server does not depend on connector-core, where the matcher lives. A hub-side check would be a second copy
+   judging a list it cannot see: it would refuse a pin a `replace` team captures, and pass one a teammate's
+   `extend` line blinds. *What still gets through:* a CLI older than this build, and a direct `POST /api/pins` or
+   `POST /api/pins/sweep` with an api key, can still register a pin on an excluded path or move one there; and a
+   pin made on one machine can be blind on a teammate's whose denylist differs. For all three the backstop is
+   unchanged: `status` and `doctor` WARN `pin denylist` on every machine whose effective denylist shadows a live
+   pinned path, naming the path and the pattern. Test: cli `pin-denylist-door`; anchors "a pin over a file the
+   denylist excludes is registered as a guard", "the pin door asks the shipped denylist instead of the one this
+   machine's capture applies", "the pin door names only the first file the denylist excludes", "the pin door
+   refuses without saying why an excluded file can never be guarded", "a sweep moves a pin onto a path no capture
+   observes", "a sweep records an excluded rename as missing without saying why".
 5. **Loss outranks reap in the reason word** (§4.5). *Default: yes.* The alternative keeps 03's word on repos
    that have both, and hides the one with the different remedy.
 6. **ACP wire lines are charged to every repo** (§4.3, the three writers). *Default taken: yes* — decision 2's
