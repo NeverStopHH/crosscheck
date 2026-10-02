@@ -167,6 +167,18 @@ describe("parseVerdict fails to null, never to a fabricated verdict", () => {
     expect(parsed?.waiver?.id).toBe("fw_1");
     expect(parsed?.waiver?.reason).toBe("");
   });
+
+  test("D-PK-1: an unreadable closure drops the closure, never the verdict", () => {
+    // Arrange — a closure with no id; the verdict around it is whole
+    const raw = { ...A_VERDICT, closedWaiver: { closedAt: "2026-07-25T09:00:00.000Z" } };
+
+    // Act
+    const parsed = parseVerdict(raw);
+
+    // Assert
+    expect(parsed?.attribution).toBe(A_VERDICT.attribution);
+    expect(parsed?.closedWaiver ?? null).toBeNull();
+  });
 });
 
 /**

@@ -18,6 +18,7 @@ import { Layout } from "../layout.tsx";
 import type { ViewerChrome } from "../layout.tsx";
 import type { WaiverRequestView } from "../../services/waiver-requests.ts";
 import type { OpenFence } from "../../services/waivers.ts";
+import type { ClosedFence } from "../../services/waiver-terminations.ts";
 import { CeremonyChrome, NoOriginNotice } from "./ceremony-chrome.tsx";
 
 /** What a pre-04a grant is called wherever it is shown (PK-11). */
@@ -84,10 +85,26 @@ const FenceCard: FC<{ readonly fence: OpenFence }> = ({ fence }) => (
   </li>
 );
 
+/**
+ * A fence the hub closed because the passkey that approved it was revoked
+ * (04a D-PK-1). No form: nothing here is a person's to amend — a new waiver
+ * starts again as a request. Listed until the grant would have run out.
+ */
+const ClosedFenceCard: FC<{ readonly fence: ClosedFence }> = ({ fence }) => (
+  <li class="artifact">
+    <span class="label">{capped(fence.surface, UI_MAX_LABEL_CHARS)}</span>{" "}
+    <span class="meta">
+      pin {capped(fence.pinId, UI_MAX_LABEL_CHARS)} · {capped(fence.repo, UI_MAX_LABEL_CHARS)} · closed by the hub at{" "}
+      {fence.closedAt} · it would have held until {fence.heldUntil}
+    </span>
+  </li>
+);
+
 interface WaiversPageProps {
   readonly viewer: ViewerChrome;
   readonly requests: readonly WaiverRequestView[];
   readonly fences: readonly OpenFence[];
+  readonly closed: readonly ClosedFence[];
   readonly hasOrigin: boolean;
   readonly hasUsablePasskey: boolean;
 }
@@ -96,6 +113,7 @@ export const WaiversPage: FC<WaiversPageProps> = ({
   viewer,
   requests,
   fences,
+  closed,
   hasOrigin,
   hasUsablePasskey,
 }) => (
@@ -124,6 +142,12 @@ export const WaiversPage: FC<WaiversPageProps> = ({
       <p>No fence is open.</p>
     ) : (
       <ul class="artifacts">{fences.map((fence) => <FenceCard fence={fence} />)}</ul>
+    )}
+    {closed.length === 0 ? null : (
+      <>
+        <h2>Closed because the passkey that approved them was revoked</h2>
+        <ul class="artifacts">{closed.map((fence) => <ClosedFenceCard fence={fence} />)}</ul>
+      </>
     )}
     {hasOrigin ? <CeremonyChrome csrfToken={viewer.csrfToken} /> : null}
   </Layout>

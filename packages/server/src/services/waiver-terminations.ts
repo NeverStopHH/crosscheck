@@ -25,11 +25,15 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 import { AUTHORIZING_CREDENTIAL_REVOKED, SYSTEM_WAIVER_AUTHORITY } from "@crosscheck/schema";
 
-import { fenceWaivers } from "../db/schema.ts";
+import { fenceWaivers, pins } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
+import { readLiveWaiver } from "./waivers.ts";
+import type { LiveWaiver, LiveWaiverInput, LiveWaiversInput } from "./waivers.ts";
 
 /**
  * What a closure's `capture_mode` records: the hub wrote it on its own, from
@@ -118,4 +122,132 @@ export const terminateWaiversSignedBy = async (input: {
     })),
   );
   return open.length;
+};
+
+/**
+ * A FENCE THE HUB CLOSED because the passkey that approved it was revoked, as
+ * every waiver surface shows it (D-PK-1): `pin list`, the verdict, `status`
+ * and /ui/waivers say the fence closed and why, rather than letting a fence
+ * that was open simply read as one nobody opened.
+ *
+ * SHOWN UNTIL THE GRANT WOULD HAVE RUN OUT (`heldUntil`): up to then the
+ * closure is why the fence reads closed; after it the grant would be closed
+ * anyway, and the closure stays in the record (GET /api/fence-waivers) only.
+ */
+export interface ClosedWaiver {
+  /** The GRANT's id — the waiver a reader knew as open. */
+  readonly id: string;
+  readonly closedAt: string;
+  readonly heldUntil: string;
+  readonly reason: typeof AUTHORIZING_CREDENTIAL_REVOKED;
+}
+
+/** A pin's fence in both directions: what holds it open, and what the hub closed. */
+export interface PinFence {
+  readonly liveWaiver: LiveWaiver | null;
+  readonly closedWaiver: ClosedWaiver | null;
+}
+
+/** How many hub-closed fences /ui/waivers lists; bounded like the open ones. */
+const MAX_CLOSED_FENCES_LISTED = 100;
+
+/** The superseded grant, joined to the closure that names it. */
+const closedGrants = alias(fenceWaivers, "closed_grants");
+
+/** Hub closures whose grant would still hold now, newest first, narrowed by `scope`. */
+const closureRows = (db: DbExecutor, now: Date, scope: SQL | undefined) =>
+  db
+    .select({
+      repo: fenceWaivers.repo,
+      pinId: fenceWaivers.pinId,
+      pinVersion: fenceWaivers.pinVersion,
+      closedAt: fenceWaivers.createdAt,
+      grantId: closedGrants.id,
+      heldUntil: closedGrants.expiresAt,
+    })
+    .from(fenceWaivers)
+    .innerJoin(closedGrants, eq(closedGrants.id, fenceWaivers.supersedes))
+    .where(and(eq(fenceWaivers.authority, SYSTEM_WAIVER_AUTHORITY), gt(closedGrants.expiresAt, now), scope))
+    .orderBy(desc(fenceWaivers.createdAt));
+
+const closedWaiverOf = (row: {
+  readonly closedAt: Date;
+  readonly grantId: string;
+  readonly heldUntil: Date | null;
+}): ClosedWaiver => ({
+  id: row.grantId,
+  closedAt: row.closedAt.toISOString(),
+  // Never null: the join keeps only grants whose expiry is ahead of now.
+  heldUntil: (row.heldUntil ?? row.closedAt).toISOString(),
+  reason: AUTHORIZING_CREDENTIAL_REVOKED,
+});
+
+/**
+ * The newest hub closure for MANY pins, each at the version it is at now —
+ * `pin list`'s reader, one query, scoped the way `readLiveWaivers` is.
+ */
+export const readClosedWaivers = async (
+  input: LiveWaiversInput,
+): Promise<ReadonlyMap<string, ClosedWaiver>> => {
+  if (input.pins.length === 0) {
+    return new Map();
+  }
+  const versions = new Map(input.pins.map((pin) => [pin.id, pin.version]));
+  const rows = await closureRows(
+    input.db,
+    input.now,
+    and(eq(fenceWaivers.repo, input.repo), inArray(fenceWaivers.pinId, [...versions.keys()])),
+  );
+  const closed = new Map<string, ClosedWaiver>();
+  for (const row of rows) {
+    if (!closed.has(row.pinId) && versions.get(row.pinId) === row.pinVersion) {
+      closed.set(row.pinId, closedWaiverOf(row));
+    }
+  }
+  return closed;
+};
+
+/** One pin's fence, both halves — the verdict's and `readPin`'s reader. */
+export const readPinFence = async (input: LiveWaiverInput): Promise<PinFence> => {
+  const closed = await readClosedWaivers({
+    db: input.db,
+    repo: input.repo,
+    pins: [{ id: input.pinId, version: input.pinVersion }],
+    now: input.now,
+  });
+  return { liveWaiver: await readLiveWaiver(input), closedWaiver: closed.get(input.pinId) ?? null };
+};
+
+/** One hub-closed fence as /ui/waivers lists it. */
+export interface ClosedFence extends ClosedWaiver {
+  readonly repo: string;
+  readonly pinId: string;
+  readonly surface: string;
+}
+
+/** Every fence the hub closed whose grant would still hold, across the hub, at each pin's current version. */
+export const listClosedFences = async (input: {
+  readonly db: DbExecutor;
+  readonly now: Date;
+}): Promise<readonly ClosedFence[]> => {
+  const rows = await closureRows(input.db, input.now, undefined);
+  if (rows.length === 0) {
+    return [];
+  }
+  const current = await input.db
+    .select({ id: pins.id, version: pins.version, surface: pins.surface })
+    .from(pins)
+    .where(inArray(pins.id, [...new Set(rows.map((row) => row.pinId))]));
+  const byId = new Map(current.map((pin) => [pin.id, pin]));
+  const seen = new Set<string>();
+  const fences: ClosedFence[] = [];
+  for (const row of rows) {
+    const pin = byId.get(row.pinId);
+    if (pin === undefined || pin.version !== row.pinVersion || seen.has(row.pinId)) {
+      continue;
+    }
+    seen.add(row.pinId);
+    fences.push({ ...closedWaiverOf(row), repo: row.repo, pinId: row.pinId, surface: pin.surface });
+  }
+  return fences.slice(0, MAX_CLOSED_FENCES_LISTED);
 };

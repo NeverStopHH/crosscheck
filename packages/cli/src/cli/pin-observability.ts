@@ -309,6 +309,19 @@ const waiverSentence = (registry: PinRegistry): string | null => {
   return `${String(expiries.length)} live waiver(s) — next expires ${next}; run crosscheck pin list to see who opened which, and why`;
 };
 
+/**
+ * HOW MANY FENCES THE HUB CLOSED on a passkey revocation (04a D-PK-1), as a
+ * count — this surface is bare, so the ids and instants stay on `pin list`.
+ * Without it, a repo whose waivers were just closed reads as one where nobody
+ * ever opened a fence.
+ */
+const closedWaiverSentence = (registry: PinRegistry): string | null => {
+  const closed = registry.pins.filter((pin) => (pin.closedWaiver ?? null) !== null).length;
+  return closed === 0
+    ? null
+    : `${String(closed)} waiver(s) closed by the hub because the passkey that approved them was revoked — run crosscheck pin list to see which`;
+};
+
 export const pinStatusLines = (
   registry: PinRegistry,
   patterns: readonly string[],
@@ -318,6 +331,7 @@ export const pinStatusLines = (
   const orphans = orphanSentence(orphanedPins(registry));
   const shadows = shadowedPinPaths(registry, patterns);
   const waivers = waiverSentence(registry);
+  const closed = closedWaiverSentence(registry);
   return [
     pinCoverageSentence(registry, now),
     ...(orphans === null ? [] : [`  ${orphans}`]),
@@ -325,6 +339,7 @@ export const pinStatusLines = (
       ? []
       : [`  ${shadowSentence(shadows, patterns.length)}`]),
     ...(waivers === null ? [] : [`  ${waivers}`]),
+    ...(closed === null ? [] : [`  ${closed}`]),
     ...(settings === null ? [] : [guardSettingsSentence(settings)]),
   ];
 };

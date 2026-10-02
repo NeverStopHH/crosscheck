@@ -27,7 +27,7 @@ import { resolveSuspectScope, suspectSessions } from "../services/suspect.ts";
 import { readTeamSettings } from "../services/team-settings.ts";
 import { computeVerdict } from "../services/verdict.ts";
 import { countCoverageAnswer, recordAttribution } from "../services/pilot.ts";
-import { readLiveWaiver } from "../services/waivers.ts";
+import { readPinFence } from "../services/waiver-terminations.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -111,10 +111,12 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
       scope.scope.pinId === null || scope.scope.pinVersion === null
         ? null
         : { pinId: scope.scope.pinId, version: scope.scope.pinVersion };
-    const liveWaiver =
+    // Both halves of the fence: what holds it open, and a closure the hub
+    // wrote when the passkey that approved it was revoked (04a D-PK-1).
+    const fence =
       invariant === null
-        ? null
-        : await readLiveWaiver({
+        ? { liveWaiver: null, closedWaiver: null }
+        : await readPinFence({
             db: deps.db,
             repo: parsed.data.repo,
             pinId: invariant.pinId,
@@ -153,7 +155,8 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
         verifiedAtCommit: null,
       },
       invariant,
-      liveWaiver,
+      liveWaiver: fence.liveWaiver,
+      closedWaiver: fence.closedWaiver,
       now: deps.now(),
     });
     // 07 §3.3: the answer, kept as it was given. AWAITED, not detached — a

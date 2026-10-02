@@ -322,6 +322,84 @@ describe("closing a fence through the page", () => {
   });
 });
 
+describe("revoking a passkey through the page closes the fences it opened (04a D-PK-1)", () => {
+  /** Ken with two usable passkeys, and a live grant his laptop's signed. */
+  const kenWithAGrant = async () => {
+    const fx = await setup();
+    const laptop = createSoftCredential();
+    const phone = createSoftCredential();
+    await enrolViaUi(fx.harness, await viewerOf(fx.harness, fx.ken), laptop);
+    await enrolViaUi(fx.harness, await viewerOf(fx.harness, fx.ken), phone);
+    const kenViewer = await pastCoolOff(fx.harness, fx.ken);
+    const now = fx.harness.clock.now();
+    await fx.harness.db.insert(fenceWaivers).values({
+      id: "fw_laptop",
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      kind: "grant",
+      grantedBy: fx.ken.developerId,
+      captureMode: "human",
+      reason: "approved on the laptop",
+      expiresAt: new Date(now.getTime() + 24 * HOUR),
+      supersedes: null,
+      createdAt: now,
+      authority: "passkey",
+      credentialId: laptop.id,
+      requestId: null,
+    });
+    const rows = await fx.harness.db.select().from(passkeys);
+    const laptopRow = rows.find((row) => row.credentialId === laptop.id);
+    return { ...fx, phone, kenViewer, laptopPasskeyId: laptopRow?.id ?? "" };
+  };
+
+  test("a ceremony by the phone revokes the laptop and says the fence it opened closed", async () => {
+    // Arrange
+    const fx = await kenWithAGrant();
+    const fields = { action: "revoke_passkey", subjectId: fx.laptopPasskeyId };
+    const options = await dataOf<{ ceremonyId: string; publicKey: { challenge: string } }>(
+      await ceremony(fx.harness, fx.kenViewer, "options", fields),
+    );
+
+    // Act
+    const response = await ceremony(fx.harness, fx.kenViewer, "verify", {
+      ...fields,
+      ceremonyId: options.ceremonyId,
+      response: softAuthenticationResponse({
+        credential: fx.phone,
+        challenge: options.publicKey.challenge,
+        origin: TEST_WEBAUTHN_ORIGIN,
+        rpId: RP_ID,
+        signCount: 1,
+      }),
+    });
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect((await dataOf<{ message: string }>(response)).message).toBe(
+      "Passkey revoked. 1 open waiver it approved was closed with it.",
+    );
+    expect(await live(fx.harness)).toBeNull();
+  });
+
+  test("the approval page lists the fence as closed because the passkey that approved it was revoked", async () => {
+    // Arrange
+    const fx = await kenWithAGrant();
+    await fx.harness.app.request(`/api/developers/${fx.ken.developerId}/passkeys/${fx.laptopPasskeyId}/revoke`, {
+      method: "POST",
+      headers: { Authorization: "Bearer test-admin-token" },
+    });
+
+    // Act
+    const html = await (await uiGet(fx.harness, "/ui/waivers", fx.kenViewer.cookie)).text();
+
+    // Assert
+    expect(html).toContain("Closed because the passkey that approved them was revoked");
+    expect(html).toContain(`pin ${PIN}`);
+    expect(html).toContain("No fence is open.");
+  });
+});
+
 describe("approving through the page", () => {
   test("a verify refused before the signature check spends its ceremony", async () => {
     // Arrange — a key that cannot sign here is refused before verifyAssertion;

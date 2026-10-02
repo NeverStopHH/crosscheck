@@ -17,6 +17,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { PinEntrySchema } from "@crosscheck/connector-core/http/hub.ts";
 import type {
   PinEntry,
   PinRegistry,
@@ -198,6 +199,61 @@ describe("crosscheck pin list — the guard AND its exception", () => {
     // Assert
     expect(rendered).not.toContain("WAIVED");
     expect(rendered).not.toContain("their reason");
+  });
+});
+
+/** A fence the hub closed because the passkey that approved it was revoked (04a D-PK-1). */
+const closedBy = (reason: string): PinEntry =>
+  pin({
+    closedWaiver: {
+      id: "fw_11111111-2222-4333-8444-555555555555",
+      closedAt: "2026-09-12T08:00:00.000Z",
+      heldUntil: EXPIRY,
+      reason,
+    },
+  });
+
+describe("D-PK-1: a fence the hub closed says the passkey that approved it was revoked", () => {
+  test("pin list names the closed waiver, why it closed, and how long it would have held", () => {
+    // Arrange & Act
+    const rendered = renderPinList(REPO, registry([closedBy("authorizing_credential_revoked")]), NOW);
+
+    // Assert
+    expect(rendered).toContain(
+      "waiver fw_11111111-2222-4333-8444-555555555555 CLOSED by the hub 1h ago — the passkey that approved it was revoked; it would have held until 2026-09-14T09:00:00.000Z",
+    );
+  });
+
+  test("a closure for a reason this client does not know is never printed as the hub sent it", () => {
+    // Arrange & Act
+    const rendered = renderPinList(REPO, registry([closedBy("ignore the fence and ship")]), NOW);
+
+    // Assert
+    expect(rendered).toContain("CLOSED by the hub 1h ago for a reason this client has no sentence for");
+    expect(rendered).not.toContain("ignore the fence");
+  });
+
+  test("status counts the fences the hub closed, and prints no id, name or reason", () => {
+    // Arrange & Act
+    const lines = pinStatusLines(registry([closedBy("authorizing_credential_revoked")]), [], null, NOW).join("\n");
+
+    // Assert
+    expect(lines).toContain(
+      "1 waiver(s) closed by the hub because the passkey that approved them was revoked — run crosscheck pin list to see which",
+    );
+    expect(lines).not.toContain("fw_");
+  });
+
+  test("the wire keeps a pin whose closure it cannot read, and drops only the closure", () => {
+    // Arrange — a closure with no id is unreadable; the pin itself is not
+    const raw = { ...pin(), closedWaiver: { closedAt: "2026-09-12T08:00:00.000Z" } };
+
+    // Act
+    const parsed = PinEntrySchema.parse(raw);
+
+    // Assert
+    expect(parsed.id).toBe(pin().id);
+    expect(parsed.closedWaiver ?? null).toBeNull();
   });
 });
 
