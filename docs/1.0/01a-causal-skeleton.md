@@ -1297,9 +1297,9 @@ The evidence for each row:
   routes):
   - `GET /api/suspect` computes 04's verdict, whose timing answer is `explanationTimingFor`, so it reads
     `file.modified`, `intent.declared` and `intent.amended` (`routes/suspect.ts:103`).
-  - `GET /api/absences` reads `commit.observed` (`routes/absences.ts:46`).
-  - Search, hints, work contexts and the pilot snapshot ask no ordering question of their own, so they
-    read all nine. That is the weakest reading.
+  - Search, hints, work contexts, the pilot snapshot and `GET /api/absences` ask no ordering question of
+    their own, so they read all nine. That is the weakest reading. Absences read `commit.observed` alone
+    until review L3 (§13.9).
 - **The edge cases:**
   - An empty scope is `undeclared / no_session_in_scope`.
   - A session missing any needed row makes the scope `undeclared / provider_undeclared`.
@@ -1438,3 +1438,7 @@ The evidence for each row:
     one's store, which loses its weaker block. The fix is a transaction around the session insert and
     the store. No in-process test can force a stall between those two statements, and both registers of
     one session send one connector's table, which the review calls benign. Left for Nick (§13.10).
+- **L3 — the absence census folded order over `commit.observed` alone.** The census is wall-clock and
+  asks no ordering question, and the build's own rule for such a read is all nine kinds. The route now
+  passes no `orderKinds`, and the unused `COMMIT_KINDS` is gone. The failure falls toward the lower
+  minimum. For an honest Claude session the state was already `partial`; only the reason changes.

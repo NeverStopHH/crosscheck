@@ -14069,6 +14069,15 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "two concurrent re-registers read guaranteed, and the later write of partial lifts the other's unavailable",
   },
+  // Review L3: a read with no ordering question reads all nine kinds.
+  {
+    label: "the absence census folds order over commit.observed alone",
+    file: `${SERVER}/src/routes/absences.ts`,
+    from: "    const coverage = await readCoverage(deps, c.get(\"developer\").id, parsed.data.repo);",
+    to: "    const coverage = await readCoverage(deps, c.get(\"developer\").id, parsed.data.repo, {\n      orderKinds: [\"commit.observed\"],\n    });",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "a wall-clock census reads a stronger order than the builder's own rule for a read with no ordering question allows",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14329,7 +14338,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
- * PRINTS: packages/server/test/coverage-order.test.ts 9
+ * PRINTS: packages/server/test/coverage-order.test.ts 10
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync.test.ts 7
  * PRINTS: packages/server/test/developer-emails.test.ts 2

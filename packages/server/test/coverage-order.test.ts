@@ -139,6 +139,25 @@ describe("the fold is the minimum", () => {
     expect(everything.order).toEqual({ state: "unavailable", reason: "no_emitter" });
   });
 
+  test("the absence census asks no ordering question, so it reads all nine kinds (review L3)", async () => {
+    // Arrange: commits are partial, and a kind the census never asks about is unavailable.
+    const { harness, developer } = await seed();
+    const declared = ALL_GUARANTEED.map((triple) =>
+      triple.kind === "claim.invalidated"
+        ? { kind: triple.kind, guarantee: "unavailable", reason: "no_emitter" }
+        : triple,
+    );
+    await register(harness, developer, VALID_SESSION_BODY.id, declared);
+    // Act
+    const response = await harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", developer.apiKey),
+    );
+    const body = (await response.json()) as { data: { coverage: CoverageRecord } };
+    // Assert: the minimum over all nine, not over commit.observed alone.
+    expect(body.data.coverage.order).toEqual({ state: "unavailable", reason: "no_emitter" });
+  });
+
   test("an explanation-timing question reads the intent kinds as well as the edits", async () => {
     // Arrange
     const { harness, developer } = await seed();

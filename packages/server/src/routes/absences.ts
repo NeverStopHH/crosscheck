@@ -6,7 +6,6 @@ import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { listAbsences } from "../services/absences.ts";
 import { readCoverage } from "../services/coverage.ts";
-import { COMMIT_KINDS } from "../services/coverage-order.ts";
 import { countCoverageAnswer } from "../services/pilot.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
@@ -38,13 +37,10 @@ export const absencesRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // twice and ordered so the rows it drops are the stalest committers, so
     // reading it as coverage would read a cut as a census. The git rung asks
     // the same predicate unbounded instead (services/absences.ts).
-    const coverage = await readCoverage(
-      deps,
-      c.get("developer").id,
-      parsed.data.repo,
-      // The census is about commits (services/coverage-order.ts).
-      { orderKinds: COMMIT_KINDS },
-    );
+    // The census is wall-clock and asks no ordering question of its own, so
+    // its order block reads all nine kinds, the weakest reading (review L3,
+    // services/coverage-order.ts).
+    const coverage = await readCoverage(deps, c.get("developer").id, parsed.data.repo);
     // 07 §3.5, proof 5: this answer carried a coverage record, and
     // whether it did is what 03 made mandatory and nobody counted.
     await countCoverageAnswer(deps, {

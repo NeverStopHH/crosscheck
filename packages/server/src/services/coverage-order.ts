@@ -19,10 +19,10 @@
  *   - GET /api/suspect computes 04's verdict, whose `predeclared` / `post_hoc`
  *     answer is `explanationTimingFor` — an edit against intent versions:
  *     EXPLANATION_TIMING_KINDS.
- *   - GET /api/absences reads the commit census: COMMIT_KINDS.
- *   - every other read (search, hints, work contexts, the pilot snapshot) asks
- *     no ordering question of its own: ALL nine — the weakest reading, because
- *     a minimum over more kinds can only be lower.
+ *   - every other read (search, hints, work contexts, the pilot snapshot, and
+ *     GET /api/absences, whose census is wall-clock — review L3) asks no
+ *     ordering question of its own: ALL nine — the weakest reading, because a
+ *     minimum over more kinds can only be lower.
  */
 import { sql } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
@@ -40,8 +40,6 @@ export const EXPLANATION_TIMING_KINDS: readonly GuaranteeKind[] = [
   "intent.declared",
   "intent.amended",
 ];
-/** The commit census the absence finding reads. */
-export const COMMIT_KINDS: readonly GuaranteeKind[] = ["commit.observed"];
 
 const NO_SESSION: CoverageOrder = { state: "undeclared", reason: "no_session_in_scope" };
 const UNDECLARED: CoverageOrder = { state: "undeclared", reason: "provider_undeclared" };
