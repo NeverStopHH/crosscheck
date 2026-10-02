@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1151
+    # PRINTS: 1158
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -314,7 +314,7 @@ jobs:
     # PRINTS: packages/server/src/routes/work-contexts.ts 1
     # PRINTS: packages/server/src/services/absences.ts 4
     # PRINTS: packages/server/src/services/calibration.ts 1
-    # PRINTS: packages/server/src/services/causal-guarantees.ts 6
+    # PRINTS: packages/server/src/services/causal-guarantees.ts 9
     # PRINTS: packages/server/src/services/ci-coverage.ts 3
     # PRINTS: packages/server/src/services/ci-delta.ts 4
     # PRINTS: packages/server/src/services/claim-revalidations.ts 7
@@ -331,7 +331,7 @@ jobs:
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
     # PRINTS: packages/server/src/services/hints.ts 3
-    # PRINTS: packages/server/src/services/intent-ledger.ts 10
+    # PRINTS: packages/server/src/services/intent-ledger.ts 11
     # PRINTS: packages/server/src/services/landed-context.ts 17
     # PRINTS: packages/server/src/services/landed-notices.ts 27
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
@@ -348,9 +348,9 @@ jobs:
     # PRINTS: packages/server/src/services/retention.ts 24
     # PRINTS: packages/server/src/services/search-tokens.ts 4
     # PRINTS: packages/server/src/services/search.ts 10
-    # PRINTS: packages/server/src/services/session-events.ts 6
+    # PRINTS: packages/server/src/services/session-events.ts 8
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 12
+    # PRINTS: packages/server/src/services/sessions.ts 13
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
@@ -380,7 +380,7 @@ jobs:
     # PRINTS: capture-latency.test.ts 1
     # PRINTS: capture-targets.ts 5
     # PRINTS: capture-touched-files.ts 3
-    # PRINTS: causal-guarantees.ts 14
+    # PRINTS: causal-guarantees.ts 17
     # PRINTS: check.ts 17
     # PRINTS: ci-coverage.ts 3
     # PRINTS: ci-delta.ts 4
@@ -450,7 +450,7 @@ jobs:
     # PRINTS: injector.ts 5
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
-    # PRINTS: intent-ledger.ts 10
+    # PRINTS: intent-ledger.ts 11
     # PRINTS: intent.ts 1
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
@@ -519,13 +519,13 @@ jobs:
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 10
     # PRINTS: seq-cost.ts 8
-    # PRINTS: session-events.ts 6
+    # PRINTS: session-events.ts 8
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 6
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 14
+    # PRINTS: sessions.ts 15
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2

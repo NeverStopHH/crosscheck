@@ -1278,8 +1278,8 @@ The evidence for each row:
   removes the row.
 - **Deviation: the cap is written, not derived on read.**
   - A row with `seq_kind = observed`, or one with no position, rewrites a `guaranteed` declaration of its
-    kind to `partial / declaration_contradicted` in place. The exception is `reaped_end`, which is the
-    hub's own inference.
+    kind to `partial / declaration_contradicted` in place. A reap is no longer an exception (§13.9, M1),
+    and positioned rows are now held to what `lifecycle` itself promises.
   - This happens for `session_events` (`services/session-events.ts:222`) and for the ledger's two kinds
     (`services/intent-ledger.ts:506`).
   - So the `reason` column holds `STORED_GUARANTEE_REASONS` (§3.6's nine plus `declaration_contradicted`).
@@ -1400,3 +1400,17 @@ The evidence for each row:
     positioned at the marker's n.
   - The scan rule in §13.3 refuses any `endSession(` call without a seq. The failure falls toward a
     red build.
+- **M1 — nothing checked what `lifecycle` itself promises.** Only `observed` or unpositioned rows capped,
+  so an end below a stored row, a start at n = 7, an end in another epoch, and a reaped session all
+  stayed `guaranteed / lifecycle`. `capLifecycleContradictions` (`server/src/services/causal-guarantees.ts`)
+  now runs on every positioned row:
+  - `session.started` away from n = 0 caps `session.started`;
+  - a positioned row above the end, or in another epoch, caps `session.ended`. This is checked in both
+    orders, because a successor can flush a record the ended session stamped past its end. A producer
+    cannot write into its own ended session, so that is the late path that exists.
+  - A reap caps `session.ended`: the end was never observed.
+  - The intent ledger shares the session's counter. INT-7 lets only `services/intent-ledger.ts` read
+    it, so the end route asks the new reader `hasIntentPositionPast` (positions only). INT-7's registry
+    lists that reader and its one caller, `services/sessions.ts`, with the reason (§13.10).
+  - The failure falls toward `partial / declaration_contradicted`. A cap is never lifted, so a reaped
+    session that later revives and ends with a position keeps its cap.

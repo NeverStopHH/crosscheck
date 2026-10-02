@@ -28,7 +28,11 @@ import type {
 
 import { agentSessions, sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
-import { capContradictedGuarantee, contradictsGuaranteed } from "./causal-guarantees.ts";
+import {
+  capContradictedGuarantee,
+  capLifecycleContradictions,
+  contradictsGuaranteed,
+} from "./causal-guarantees.ts";
 import type { OrderedEvent } from "./session-order.ts";
 import type { Clock } from "../types.ts";
 
@@ -219,8 +223,14 @@ export const recordSessionEvent = async (
     // position caps a `guaranteed` declaration of this kind — in the same
     // call, so no surface reads the declaration past the row that overruled
     // it, and stored, so a sweep of the row cannot lift the cap.
-    if (contradictsGuaranteed(input.seqKind, seqN !== null, seqReason)) {
+    if (contradictsGuaranteed(input.seqKind, seqN !== null)) {
       await capContradictedGuarantee(deps.db, input.sessionId, input.kind);
+    }
+    if (seqEpoch !== null && seqN !== null) {
+      await capLifecycleContradictions(deps.db, input.sessionId, input.kind, {
+        epoch: seqEpoch,
+        n: seqN,
+      });
     }
     return id;
   };

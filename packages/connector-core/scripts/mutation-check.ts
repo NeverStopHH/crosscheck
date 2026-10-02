@@ -13292,19 +13292,14 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a withheld position does not overrule a lifecycle declaration",
     file: `${SERVER}/src/services/causal-guarantees.ts`,
-    from: '): boolean => seqKind === "observed" || (!positioned && seqReason !== "reaped_end");',
-    to: '): boolean => seqKind === "observed";',
+    // Re-pointed by review M1, which dropped the reap exemption beside it.
+    from: '  seqKind === "observed" || !positioned;',
+    to: '  seqKind === "observed";',
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a session.ended with no position still reads lifecycle-guaranteed",
   },
-  {
-    label: "a reap overrules a lifecycle declaration",
-    file: `${SERVER}/src/services/causal-guarantees.ts`,
-    from: '): boolean => seqKind === "observed" || (!positioned && seqReason !== "reaped_end");',
-    to: '): boolean => seqKind === "observed" || !positioned;',
-    test: `${SERVER}/test/causal-guarantees.test.ts`,
-    because: "the hub's own inference from silence is counted as the connector contradicting itself",
-  },
+  // "a reap overrules a lifecycle declaration" stood here and pinned the
+  // exemption review M1 removed; its reversed guard is at the tail.
   {
     label: "a contradicting row rewrites declarations that were never guaranteed",
     file: `${SERVER}/src/services/causal-guarantees.ts`,
@@ -13316,15 +13311,17 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a contradicting session_events row is counted nowhere and caps nothing",
     file: `${SERVER}/src/services/session-events.ts`,
-    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null, seqReason)) {",
-    to: "    if (false) {",
+    // Re-pointed by review M1: the reap exemption, and its argument, are gone.
+    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null)) {\n      await capContradictedGuarantee(",
+    to: "    if (false) {\n      await capContradictedGuarantee(",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "an unbracketed edit from a session that declared bracketed leaves every surface reading guaranteed (CSK-9)",
   },
   {
     label: "a contradicting intent version caps nothing",
     file: `${SERVER}/src/services/intent-ledger.ts`,
-    from: "  if (contradictsGuaranteed(intentSeqKind(provenance), stamp !== null, seqReasonOf(input.seq))) {",
+    // Re-pointed by review M1: the reap exemption, and its argument, are gone.
+    from: "  if (contradictsGuaranteed(intentSeqKind(provenance), stamp !== null)) {",
     to: "  if (false) {",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "the two intent kinds live outside session_events, so a cap written only there misses them",
@@ -13945,6 +13942,71 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/guarantee-declarations.test.ts`,
     because: "session.ended has no evidence pattern and a forwarding ender allocates nothing, so no other check sees the dropped seq",
   },
+  // Review M1: what `lifecycle` itself promises.
+  {
+    label: "a reap leaves a lifecycle end standing",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null)) {",
+    to: '    if (contradictsGuaranteed(input.seqKind, seqN !== null || seqReason === "reaped_end")) {',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a session whose end nobody observed reads session.ended guaranteed / lifecycle for as long as its row lives",
+  },
+  {
+    label: "a positioned skeleton row is never held to lifecycle",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "    if (seqEpoch !== null && seqN !== null) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an end below a row the session already wrote stays lifecycle-guaranteed",
+  },
+  {
+    label: "a session.started past n = 0 keeps its lifecycle",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: '  if (kind === "session.started" && position.n !== ORIGIN_N) {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a recovery that registered at n = 7 still reads as the session's origin",
+  },
+  {
+    label: "an end below a stored row keeps its lifecycle",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "  return events.length > 0;",
+    to: "  return false;",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an end at n = 5 under a claim at n = 9 reads as the terminal position",
+  },
+  {
+    label: "a row past the end, arriving after it, keeps the end's lifecycle",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "  return ends.length > 0;",
+    to: "  return false;",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a successor's flush of a record stamped past the end leaves the end reading guaranteed",
+  },
+  {
+    label: "an end in another epoch keeps its lifecycle",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "        or(ne(sessionEvents.seqEpoch, end.epoch), gt(sessionEvents.seqN, end.n)),",
+    to: "        gt(sessionEvents.seqN, end.n),",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a state-loss recovery's second epoch ends the session while the first epoch's rows stand beside it",
+  },
+  {
+    label: "a reported end never asks the ledger what lies past it",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  if (isSeqStamp(seq) && (await hasIntentPositionPast(deps.db, row.id, seq))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an intent version at n = 9 stands past an end at n = 5 and the end reads guaranteed",
+  },
+  {
+    label: "a ledger version is never held to the session's end",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  if (stamp !== null) {\n    await capLifecycleContradictions(",
+    to: "  if (false) {\n    await capLifecycleContradictions(",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a successor flushes a version stamped past the end, and the end keeps reading as the session's last position",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14195,7 +14257,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
- * PRINTS: packages/server/test/causal-guarantees.test.ts 9
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 16
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1

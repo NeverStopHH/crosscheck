@@ -22,17 +22,16 @@
  * Nothing here reads a guarantee into a verdict: `isJudgeable` and attribution
  * never call this module (01a §3.7, 01 §3.7 (1)).
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import { CAUSAL_GUARANTEES, GUARANTEE_KINDS, foldGuaranteeDeclaration } from "@crosscheck/schema";
 import type {
   CausalGuarantee,
   GuaranteeKind,
   SeqKind,
-  SeqReason,
   StoredGuaranteeReason,
 } from "@crosscheck/schema";
 
-import { agentSessions, sessionCausalGuarantees } from "../db/schema.ts";
+import { agentSessions, sessionCausalGuarantees, sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
 
 export interface EffectiveGuarantee {
@@ -105,15 +104,12 @@ export const weakenDeclaredGuarantees = async (
 /**
  * Does this row overrule a `guaranteed` declaration of its kind? An `observed`
  * row is an upper bound the declaration said would not occur; a row with no
- * position is one the declaration said would have one. A reap is the hub's
- * own inference from silence, not a row the connector sent, so it overrules
- * nothing.
+ * position is one the declaration said would have one. A reap counts too
+ * (review M1): it is the hub's inference that the end was NEVER OBSERVED, and
+ * a terminal position nobody observed cannot be the one `lifecycle` promised.
  */
-export const contradictsGuaranteed = (
-  seqKind: SeqKind,
-  positioned: boolean,
-  seqReason: SeqReason,
-): boolean => seqKind === "observed" || (!positioned && seqReason !== "reaped_end");
+export const contradictsGuaranteed = (seqKind: SeqKind, positioned: boolean): boolean =>
+  seqKind === "observed" || !positioned;
 
 /** The cap: a `guaranteed` declaration of this kind becomes `partial / declaration_contradicted`. */
 export const capContradictedGuarantee = async (
@@ -131,6 +127,86 @@ export const capContradictedGuarantee = async (
         eq(sessionCausalGuarantees.guarantee, "guaranteed"),
       ),
     );
+};
+
+/** The origin's position: `session.started` is minted at n = 0, never allocated. */
+const ORIGIN_N = 0;
+
+export interface SessionPosition {
+  readonly epoch: string;
+  readonly n: number;
+}
+
+/**
+ * Does any positioned skeleton row of this session lie past `end`, or in
+ * another epoch? The intent ledger's versions take positions from the same
+ * counter; that half is asked by the end route (sessions.ts), because only
+ * services/intent-ledger.ts may read the ledger (INT-7).
+ */
+const outrunsEnd = async (
+  db: DbExecutor,
+  sessionId: string,
+  end: SessionPosition,
+): Promise<boolean> => {
+  const events = await db
+    .select({ id: sessionEvents.id })
+    .from(sessionEvents)
+    .where(
+      and(
+        eq(sessionEvents.sessionId, sessionId),
+        isNotNull(sessionEvents.seqN),
+        or(ne(sessionEvents.seqEpoch, end.epoch), gt(sessionEvents.seqN, end.n)),
+      ),
+    )
+    .limit(1);
+  return events.length > 0;
+};
+
+/** Does a positioned end of this session lie below `row`, or in another epoch? */
+const endBelow = async (
+  db: DbExecutor,
+  sessionId: string,
+  row: SessionPosition,
+): Promise<boolean> => {
+  const ends = await db
+    .select({ id: sessionEvents.id })
+    .from(sessionEvents)
+    .where(
+      and(
+        eq(sessionEvents.sessionId, sessionId),
+        eq(sessionEvents.kind, "session.ended"),
+        isNotNull(sessionEvents.seqN),
+        or(ne(sessionEvents.seqEpoch, row.epoch), lt(sessionEvents.seqN, row.n)),
+      ),
+    )
+    .limit(1);
+  return ends.length > 0;
+};
+
+/**
+ * WHAT `lifecycle` ITSELF PROMISES (review M1), checked on every positioned
+ * row: the start at n = 0, and the end at the terminal position of the
+ * session's one epoch. A positioned row is enough to contradict either; it
+ * need not be `observed`. Both orders are checked, because the end can arrive
+ * before or after the row that outruns it — end-session.ts allocates the end
+ * before it deletes the state a detached worker may still allocate from.
+ */
+export const capLifecycleContradictions = async (
+  db: DbExecutor,
+  sessionId: string,
+  kind: GuaranteeKind,
+  position: SessionPosition,
+): Promise<void> => {
+  if (kind === "session.started" && position.n !== ORIGIN_N) {
+    await capContradictedGuarantee(db, sessionId, "session.started");
+  }
+  const contradicted =
+    kind === "session.ended"
+      ? await outrunsEnd(db, sessionId, position)
+      : await endBelow(db, sessionId, position);
+  if (contradicted) {
+    await capContradictedGuarantee(db, sessionId, "session.ended");
+  }
 };
 
 /**

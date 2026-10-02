@@ -47,6 +47,7 @@ const BRACKETED_EDIT = {
   reason: "bracketed_by_pre_tool",
 } as const;
 const LIFECYCLE_END = { kind: "session.ended", guarantee: "guaranteed", reason: "lifecycle" } as const;
+const CAPPED = { state: "partial", reason: "declaration_contradicted" } as const;
 
 const seed = async (
   guarantees?: unknown,
@@ -211,6 +212,125 @@ describe("the declaration a session registers with", () => {
   });
 });
 
+describe("what lifecycle itself promises (review M1)", () => {
+  const OTHER_EPOCH = "11111111-2222-4333-8444-555555555555";
+
+  const endAt = async (
+    harness: TestHarness,
+    developer: TestDeveloper,
+    seq: { readonly epoch: string; readonly n: number },
+  ): Promise<void> => {
+    const response = await harness.app.request(
+      `/api/sessions/${SESSION}/end`,
+      jsonRequest("POST", developer.apiKey, { status: "done", seq }),
+    );
+    expect(response.status).toBeLessThan(300);
+  };
+
+  test("an end positioned below a row already stored caps session.ended", async () => {
+    // Arrange: something in the session allocated n = 9.
+    const { harness, developer } = await seed([LIFECYCLE_END]);
+    await postEdit(harness, developer, 9, 8);
+    // Act
+    await endAt(harness, developer, { epoch: EPOCH, n: 5 });
+    // Assert
+    expect((await effective(harness)).get("session.ended")).toEqual(CAPPED);
+  });
+
+  test("a row positioned above the end, arriving after it, caps session.ended", async () => {
+    // Arrange: the session's work context exists, and the session ends at n = 5.
+    const { harness, developer } = await seed([LIFECYCLE_END]);
+    await postRecords(harness, developer, recordEnvelope("work_context", validWorkContextBody()));
+    await endAt(harness, developer, { epoch: EPOCH, n: 5 });
+    await registerTestSession(harness, developer.apiKey, { id: "ses_successor" });
+    const late = recordEnvelope(
+      "target",
+      { workContextId: WORK_CONTEXT_ID, kind: "file", value: "src/late.ts" },
+      { sessionId: "ses_successor" },
+    );
+    // Act: a live successor flushes a record the ended session stamped at n = 9
+    // — a producer may not write into its own ended session, a successor may.
+    await postRecords(harness, developer, { ...late, seq: { epoch: EPOCH, n: 9, after: 8 } });
+    // Assert
+    expect((await effective(harness)).get("session.ended")).toEqual(CAPPED);
+  });
+
+  const postIntentAt = (
+    harness: TestHarness,
+    developer: TestDeveloper,
+    n: number,
+    producer: string = SESSION,
+  ): Promise<unknown> =>
+    postRecords(harness, developer, {
+      ...recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: {
+            summary: "A model's guess at the first prompt.",
+            provenance: "derived",
+            confidence: 0.4,
+            capturedAt: "2026-07-24T09:00:00.000Z",
+          },
+        }),
+        { sessionId: producer },
+      ),
+      seq: { epoch: EPOCH, n },
+    });
+
+  test("an intent version stored past the end caps session.ended when the end arrives", async () => {
+    // Arrange: the ledger holds a version of this session's at n = 9.
+    const { harness, developer } = await seed([LIFECYCLE_END]);
+    await postIntentAt(harness, developer, 9);
+    // Act
+    await endAt(harness, developer, { epoch: EPOCH, n: 5 });
+    // Assert
+    expect((await effective(harness)).get("session.ended")).toEqual(CAPPED);
+  });
+
+  test("an intent version arriving after the end, positioned past it, caps session.ended", async () => {
+    // Arrange
+    const { harness, developer } = await seed([LIFECYCLE_END]);
+    await endAt(harness, developer, { epoch: EPOCH, n: 5 });
+    await registerTestSession(harness, developer.apiKey, { id: "ses_successor" });
+    // Act: a successor flushes the ended session's version, stamped n = 9.
+    await postIntentAt(harness, developer, 9, "ses_successor");
+    // Assert
+    expect((await effective(harness)).get("session.ended")).toEqual(CAPPED);
+  });
+
+  test("an end in another epoch than the session's start caps session.ended", async () => {
+    // Arrange
+    const { harness, developer } = await seed([LIFECYCLE_END]);
+    // Act
+    await endAt(harness, developer, { epoch: OTHER_EPOCH, n: 1 });
+    // Assert
+    expect((await effective(harness)).get("session.ended")).toEqual(CAPPED);
+  });
+
+  test("an end above every row in the session's one epoch keeps its lifecycle declaration", async () => {
+    // Arrange
+    const { harness, developer } = await seed([LIFECYCLE_END]);
+    await postEdit(harness, developer, 3, 2);
+    // Act
+    await endAt(harness, developer, { epoch: EPOCH, n: 4 });
+    // Assert
+    expect((await effective(harness)).get("session.ended")).toEqual({ state: "guaranteed", reason: "lifecycle" });
+  });
+
+  test("a session.started positioned anywhere but n = 0 caps session.started", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const developer = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    // Act
+    await registerTestSession(harness, developer.apiKey, {
+      seq: { epoch: EPOCH, n: 7 },
+      guarantees: [{ kind: "session.started", guarantee: "guaranteed", reason: "lifecycle" }],
+    });
+    // Assert
+    expect((await effective(harness)).get("session.started")).toEqual(CAPPED);
+  });
+});
+
 describe("rows outrank declarations", () => {
   test("an unbracketed file.modified from a session that declared it bracketed caps the kind", async () => {
     // Arrange
@@ -284,7 +404,7 @@ describe("rows outrank declarations", () => {
     expect(reading.get("intent.declared")).toEqual({ state: "partial", reason: "declaration_contradicted" });
   });
 
-  test("a reap is the hub's inference, and overrules no lifecycle declaration", async () => {
+  test("a reap caps a lifecycle end: the session's end was never observed", async () => {
     // Arrange
     const { harness } = await seed([LIFECYCLE_END]);
     harness.clock.advanceSeconds(REAP_AFTER_SECONDS);
@@ -293,7 +413,7 @@ describe("rows outrank declarations", () => {
     const reading = await effective(harness);
     // Assert
     expect(reaped.ended.length).toBe(1);
-    expect(reading.get("session.ended")).toEqual({ state: "guaranteed", reason: "lifecycle" });
+    expect(reading.get("session.ended")).toEqual(CAPPED);
   });
 
   test("the cap outlives the row that caused it", async () => {

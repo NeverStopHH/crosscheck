@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
-import { settleLossReport } from "@crosscheck/schema";
+import { isSeqStamp, settleLossReport } from "@crosscheck/schema";
 import type {
   SeqField,
   SessionStatus,
@@ -17,7 +17,12 @@ import { pruneLandedNotices } from "./landed-notices.ts";
 import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
 import { agentSessions, sessionEvents } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
-import { storeDeclaredGuarantees, weakenDeclaredGuarantees } from "./causal-guarantees.ts";
+import {
+  capContradictedGuarantee,
+  storeDeclaredGuarantees,
+  weakenDeclaredGuarantees,
+} from "./causal-guarantees.ts";
+import { hasIntentPositionPast } from "./intent-ledger.ts";
 import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -385,6 +390,12 @@ export const endSession = async (
     refKind: "session",
     refId: row.id,
   });
+  // The ledger half of "the end is the terminal position" (review M1): an
+  // intent version positioned past this end overrules its `lifecycle`.
+  // recordSessionEvent asked the skeleton; only the ledger may ask the ledger.
+  if (isSeqStamp(seq) && (await hasIntentPositionPast(deps.db, row.id, seq))) {
+    await capContradictedGuarantee(deps.db, row.id, "session.ended");
+  }
   // 07 §3.6: this session's residue, at the moment it ended. HUB-SIDE and
   // AFTER the ledger write, so the sequence statistic includes the position
   // this end just allocated — reading it first would report every session as
