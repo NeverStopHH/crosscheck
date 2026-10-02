@@ -15,7 +15,11 @@
 import { describe, expect, test } from "bun:test";
 import { stateOfOrderReason } from "@crosscheck/schema";
 
-import { MAX_BRIEFING_CHARS, MAX_COVERAGE_LINE_CHARS } from "../src/constants.ts";
+import {
+  MAX_BRIEFING_CHARS,
+  MAX_COVERAGE_LINE_CHARS,
+  MAX_COVERAGE_LINES,
+} from "../src/constants.ts";
 import { QUOTED_DATA_NOTICE, renderBriefing } from "../src/briefing/render.ts";
 import {
   coverageClause,
@@ -69,6 +73,25 @@ const recordOf = (
   ],
 });
 
+/**
+ * THE SEAT THE LINE MUST FIT (decided by Nick, 2026-10-02): at most
+ * MAX_COVERAGE_LINES lines, each within MAX_COVERAGE_LINE_CHARS. The second
+ * line is the last resort, taken only when no shortening fits one.
+ */
+const fitsTheSeat = (clause: string): boolean => {
+  const lines = clause.split("\n");
+  return (
+    lines.length <= MAX_COVERAGE_LINES &&
+    lines.every((line) => line.length > 0 && line.length <= MAX_COVERAGE_LINE_CHARS)
+  );
+};
+
+/** The longest order fragment the vocabulary admits: `order: partial (ambiguous_session_possible)`. */
+const LONGEST_ORDER: CoverageRecord["order"] = {
+  state: "partial",
+  reason: "ambiguous_session_possible",
+};
+
 const REAPED = recordOf([
   row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
   row("git", "complete", "commits_reported", null, "2026-09-15T09:00:00.000Z"),
@@ -97,15 +120,16 @@ describe("01a §3.7: the order block on the coverage line", () => {
     );
   });
 
-  test("on the fullest line the order block keeps its state word, after both rungs and the ages", () => {
+  test("a full line keeps the order block's reason and the age, and gives up the reaped label (decided by Nick, 2026-10-02)", () => {
     // Arrange: a reaped rung with its age, and the cap's reason with it.
     const record = withOrder(REAPED, { state: "partial", reason: "declaration_contradicted" });
     // Act
     const clause = coverageClause(record, NOW);
     // Assert
-    expect(clause).toContain("10d ago");
-    expect(clause).toContain("order: partial");
-    expect(clause.length).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
+    expect(clause).toBe(
+      `Coverage incomplete: agent sessions on this repo went quiet ${GAP_SHOWN} (10d ago); git evidence reported; order: partial (declaration_contradicted).`,
+    );
+    expect(fitsTheSeat(clause)).toBe(true);
   });
 
   test("an empty scope renders as undeclared, the word a reader cannot mistake for a pass", () => {
@@ -115,16 +139,17 @@ describe("01a §3.7: the order block on the coverage line", () => {
     expect(coverageClause(record, NOW)).toContain("order: undeclared (no_session_in_scope)");
   });
 
-  test("on the fullest line the git rung gives up its instant before the order block's state word", () => {
+  test("a shape no shortening fits takes a second line, and nothing is dropped (decided by Nick, 2026-10-02)", () => {
     // Arrange: both rungs gapped with an instant each, asked about a file set,
-    // and the longest state word — 143+ characters before the order block.
+    // and the longest order reason — 176 characters even with the git instant
+    // and the label gone.
     const record: CoverageRecord = {
       ...withOrder(
         recordOf([
           row("agent_event", "incomplete", "session_silent", GAP_ISO, GAP_ISO),
           row("git", "incomplete", "commit_authors_unreported", GAP_ISO, GAP_ISO),
         ]),
-        { state: "unavailable", reason: "no_emitter" },
+        { state: "partial", reason: "ambiguous_session_possible" },
       ),
       scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
     };
@@ -132,12 +157,30 @@ describe("01a §3.7: the order block on the coverage line", () => {
     const clause = coverageClause(record, NOW);
     // Assert
     expect(clause).toBe(
-      `Coverage incomplete: agent sessions on these files went quiet ${GAP_SHOWN} (unclosed); commit authors with no reported session; order: unavailable.`,
+      `Coverage incomplete: agent sessions on these files went quiet ${GAP_SHOWN} (10d ago, unclosed);\n` +
+        `commit authors with no reported session since ${GAP_SHOWN} (10d ago); order: partial (ambiguous_session_possible).`,
     );
-    expect(clause.length).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
+    expect(fitsTheSeat(clause)).toBe(true);
   });
 
-  test("the order block's state word survives every shape the line can take", () => {
+  test("the git rung's instant is shortened to its day before anything is dropped", () => {
+    // Arrange: 165 characters with the git rung's minute, the longest reason.
+    const record = withOrder(
+      recordOf([
+        row("agent_event", "complete", "sessions_reported", null, GAP_ISO),
+        row("git", "incomplete", "commit_authors_unreported", GAP_ISO, GAP_ISO),
+      ]),
+      { state: "partial", reason: "ambiguous_session_possible" },
+    );
+    // Act
+    const clause = coverageClause(record, NOW);
+    // Assert: the timestamp format goes first; the age and the reason stay.
+    expect(clause).toBe(
+      "Coverage incomplete: agent sessions reported; commit authors with no reported session since 2026-09-05 (10d ago); order: partial (ambiguous_session_possible).",
+    );
+  });
+
+  test("the order block's state AND reason survive every shape the line can take (decided by Nick, 2026-10-02)", () => {
     // Arrange: every rung state and reason for both judging rungs, every ci
     // state, both scopes, and every order reason with its own state.
     const ci = (state: CoverageState): CoverageSourceRecord =>
@@ -164,8 +207,7 @@ describe("01a §3.7: the order block on the coverage line", () => {
                   const clause = coverageClause(record, NOW);
                   // Assert (collected: one failure line, not 373k)
                   const silent = clause.startsWith("Coverage unknown: no coverage report");
-                  const holds = clause.length <= MAX_COVERAGE_LINE_CHARS;
-                  if (!holds || (!silent && !clause.includes(`order: ${state}`))) {
+                  if (!fitsTheSeat(clause) || (!silent && !clause.includes(`order: ${state} (${reason})`))) {
                     missing.push(clause);
                   }
                 }
@@ -180,7 +222,8 @@ describe("01a §3.7: the order block on the coverage line", () => {
         // Act
         const clause = coverageClause(record, NOW);
         // Assert
-        expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
+        expect(fitsTheSeat(clause), clause).toBe(true);
+        expect(clause, clause).toContain(`order: ${state} (${reason})`);
       }
     }
   });
@@ -213,10 +256,10 @@ describe("LOSS-9: the two loss reasons render, without a count and without a pat
     const clause = coverageClause(IGNORED, NOW);
 
     // Assert
-    // The order block's reason is the first thing a full line spends
-    // (coverage/render.ts): its state word stays, and so does the age.
+    // 166 characters on one line, and nothing here is shortenable: the
+    // order block moves to a second line whole (decided by Nick, 2026-10-02).
     expect(clause).toBe(
-      `Coverage incomplete: the hub ignored agent record kinds on this repo since ${GAP_SHOWN} (10d ago); git evidence reported; order: undeclared.`,
+      `Coverage incomplete: the hub ignored agent record kinds on this repo since ${GAP_SHOWN} (10d ago); git evidence reported;\norder: undeclared (hub_did_not_report).`,
     );
     expect(clause).not.toContain("%");
   });
@@ -309,9 +352,7 @@ describe("COV-1's instant reaches the line", () => {
       const clause = coverageClause(record, NOW);
       expect(clause, clause).toContain("agent sessions");
       expect(clause, clause).toContain("commit authors");
-      expect(clause.length, clause).toBeLessThanOrEqual(
-        MAX_COVERAGE_LINE_CHARS,
-      );
+      expect(fitsTheSeat(clause), clause).toBe(true);
     }
   });
 
@@ -570,7 +611,7 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
     }
   });
 
-  test("every clause fits MAX_COVERAGE_LINE_CHARS", () => {
+  test("every clause fits the seat: at most two lines, each within MAX_COVERAGE_LINE_CHARS", () => {
     // Arrange: 4 states x 18 reasons, squared — every shape the enum admits
     // (16 reasons before loss-accounting added `telemetry_lost` and
     // `record_kinds_ignored`; the literal moves with the enum on purpose, so
@@ -582,8 +623,7 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
     expect(shapes.length).toBe(5184);
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
-      expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
-      expect(clause.includes("\n"), clause).toBe(false);
+      expect(fitsTheSeat(clause), clause).toBe(true);
     }
   });
 
@@ -621,9 +661,7 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
     let dropped = 0;
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
-      expect(clause.length, clause).toBeLessThanOrEqual(
-        MAX_COVERAGE_LINE_CHARS,
-      );
+      expect(fitsTheSeat(clause), clause).toBe(true);
       const agentState = coverageStateOf(record, "agent_event");
       const gitState = coverageStateOf(record, "git");
       if (agentState === "incomplete" && !clause.includes("agent sessions")) {
@@ -650,15 +688,17 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
       COVERAGE_STATES.flatMap((git) =>
         COVERAGE_STATES.flatMap((ci) =>
           COVERAGE_STATES.flatMap((runtime) =>
-            COVERAGE_STATES.map((human) =>
-              recordOf([
+            COVERAGE_STATES.map((human) => ({
+              ...recordOf([
                 row("agent_event", agent, "session_reaped", GAP_ISO, GAP_ISO),
                 row("git", git, "commit_authors_unreported", GAP_ISO, GAP_ISO),
                 row("ci", ci, "ci_awaiting_rerun", GAP_ISO, GAP_ISO),
                 row("runtime", runtime, "out_of_scope_1_0", GAP_ISO, GAP_ISO),
                 row("human_edit", human, "no_platform_rung", GAP_ISO, GAP_ISO),
               ]),
-            ),
+              // The longest order block there is, so the second line's worst case is in the sweep.
+              order: LONGEST_ORDER,
+            })),
           ),
         ),
       ),
@@ -670,9 +710,11 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
     let contradictions = 0;
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
-      expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
+      expect(fitsTheSeat(clause), clause).toBe(true);
       expect(clause.includes("%"), clause).toBe(false);
-      expect(clause.includes("\n"), clause).toBe(false);
+      if (!clause.startsWith("Coverage unknown: no coverage report")) {
+        expect(clause, clause).toContain("order: partial (ambiguous_session_possible)");
+      }
       const readable = record.sources.filter(
         (entry) => entry.state !== "unavailable",
       );

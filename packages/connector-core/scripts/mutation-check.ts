@@ -6409,7 +6409,8 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${CORE}/src/coverage/render.ts`,
     // Loss accounting hoisted the age into one binding both the loss
     // sentence and the quiet sentence read; nulling it is the same defect.
-    from: "      const age = ages ? agedSince(row.gapSince, now) : null;",
+    // Re-pointed by Nick's 2026-10-02 decision: the age is never shed now.
+    from: "      const age = agedSince(row.gapSince, now);",
     to: "      const age = null;",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
@@ -6423,10 +6424,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // ages cost 20 characters against a 160 bound.
     label: "an age is bought with somebody else's gap",
     file: `${CORE}/src/coverage/render.ts`,
-    // Re-pointed when the order block joined the line (01a §3.7), and again by
-    // review H1: the same defect — the aged build handed to `fit` whatever it costs.
-    from: "  return holding === undefined ? plainestLine(head, record, now) : lineOf(head, holding);",
-    to: "  return fit(head, fragmentsOf(record, now, true, true));",
+    // Re-pointed when the order block joined the line (01a §3.7), by review H1,
+    // and by Nick's 2026-10-02 decision: the same defect — a full line cut to
+    // its first fragment rather than shortened or split.
+    from: "  return single === undefined ? twoLines(head, forms) : lineOf(head, single);",
+    to: "  return single === undefined ? lineOf(head, (forms[0] ?? []).slice(0, 1)) : lineOf(head, single);",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "`fit` drops a whole fragment rather than half a word, so the git gap " +
@@ -13431,7 +13433,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the coverage line drops the order block",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "  orderFragment(record, orderReason),\n",
+    // Re-pointed by Nick's 2026-10-02 decision: the fragment has no variants now.
+    from: "  orderFragment(record),\n",
     to: "",
     test: `${CORE}/test/coverage-render.test.ts`,
     because: "a capped declaration is stored and read and shown on no surface a person reads (CSK-9)",
@@ -13439,28 +13442,23 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the coverage line prints the order reason in place of its state",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "    ? `order: ${record.order.state} (${record.order.reason})`\n",
-    to: "    ? `order: ${record.order.reason}`\n",
+    from: "  `order: ${record.order.state} (${record.order.reason})`;",
+    to: "  `order: ${record.order.reason}`;",
     test: `${CORE}/test/coverage-render.test.ts`,
     because: "the reader loses the one word the order block exists to carry",
   },
   {
     label: "the order block outranks the rungs that decide judging",
     file: `${CORE}/src/coverage/render.ts`,
-    // Re-pointed by review H1: the rungs moved into `rungFragments`.
-    from: "  ...rungFragments(record, now, ages, true),\n  orderFragment(record, orderReason),\n",
-    to: "  orderFragment(record, orderReason),\n  ...rungFragments(record, now, ages, true),\n",
+    // Re-pointed by review H1, then by Nick's 2026-10-02 decision.
+    from: "  ].filter(isPresent),\n  orderFragment(record),\n",
+    to: "  ].filter(isPresent).slice(0, 0),\n  orderFragment(record),\n  ...[agentEventFragment(record, rowOf(record, \"agent_event\"), now, form), gitFragment(rowOf(record, \"git\"), now, form)].filter(isPresent),\n",
     test: `${CORE}/test/coverage-render.test.ts`,
-    because: "on a full line `fit` drops the git rung to keep a comparability note — the caveat that gates judging goes first",
+    because: "the comparability note leads the sentence and the caveats that gate judging trail it, on the line a reader acts on",
   },
-  {
-    label: "a full line spends the ages before the order reason",
-    file: `${CORE}/src/coverage/render.ts`,
-    from: "    fragmentsOf(record, now, true, false),\n",
-    to: "",
-    test: `${CORE}/test/coverage-render.test.ts`,
-    because: "a caveat repeated every day reads the same every day and cannot be told from a recurring gap (COV-11)",
-  },
+  // "a full line spends the ages before the order reason" stood here: Nick
+  // decided on 2026-10-02 that the reason is never spent, and its reversed
+  // guard is at the tail ("a full line drops the order block's reason").
   {
     label: "doctor prints an unreported contradiction count as a number",
     file: `${CORE}/src/guarantees/doctor.ts`,
@@ -13894,22 +13892,24 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SCHEMA}/test/causal-guarantees.test.ts`,
     because: "a commit row is stored observed unconditionally, so a bracketed commit declaration is a claim the hub can prove false and stores anyway",
   },
+  // Review H1's two guards, re-pointed by Nick's 2026-10-02 decision: the
+  // reserve-the-room mechanism they guarded gave way to the second line.
   {
-    label: "the plainest coverage line spends the order block's room on the rungs",
+    label: "a split coverage line cuts its second line, order block and all",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "  const room = MAX_COVERAGE_LINE_CHARS - `; ${order}`.length;",
-    to: "  const room = MAX_COVERAGE_LINE_CHARS;",
+    from: "  return holds(second) ? `${head}: ${fragments.slice(0, firstCount).join(\"; \")};\\n${second}` : null;",
+    to: "  return holds(second) ? `${head}: ${fragments.slice(0, firstCount).join(\"; \")}.` : null;",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
-      "two gapped rungs with their instants fill the line, `fit` cuts the fragment after them, and `order: undeclared` vanishes where `order: partial` would have shown",
+      "two gapped rungs with their instants fill the line, and the order block after them vanishes, whatever its state",
   },
   {
-    label: "the fullest coverage line drops both judging rungs to keep the order word",
+    label: "a two-line clause takes the leanest form, not the fullest",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "    [true, false]\n",
-    to: "    [true]\n",
+    from: "  return splits.find(isPresent) ?? lineOf(",
+    to: "  return [...splits].reverse().find(isPresent) ?? lineOf(",
     test: `${CORE}/test/coverage-render.test.ts`,
-    because: "the line keeps `order: <state>` and loses the commit-author gap the head word says is there",
+    because: "a line that already took a second line still sheds the git instant and the label it had room for",
   },
   {
     label: "the order block folds over the heartbeat window only",
@@ -14096,6 +14096,30 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/derive-capability-registry.test.ts`,
     because: "doctor prints a limit for the two intent kinds beside a declaration table that states the opposite",
   },
+  {
+    label: "a full line drops the order block's reason",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  `order: ${record.order.state} (${record.order.reason})`;",
+    to: "  `order: ${record.order.state}`;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the line says THAT order is weak and not WHAT made it so — declaration_contradicted reads the same as an honest partial",
+  },
+  {
+    label: "a full line drops the git instant before shortening it",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '  { labels: true, gitInstant: "day" },\n',
+    to: '  { labels: true, gitInstant: "none" },\n',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the commit-author gap loses its date where the day would have fit",
+  },
+  {
+    label: "a full line takes a second line before it sheds the label",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '  { labels: false, gitInstant: "day" },\n  { labels: false, gitInstant: "none" },\n',
+    to: "",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "a reaped rung beside a reported git rung splits over two lines in every briefing for want of six characters",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14255,7 +14279,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 18
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2

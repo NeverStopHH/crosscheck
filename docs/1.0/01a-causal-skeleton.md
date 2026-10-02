@@ -1318,16 +1318,18 @@ The evidence for each row:
 **13.6 — Rendering.**
 
 - **The coverage line.** The fragment `order: <state> (<reason>)` sits after both judging rungs
-  (`connector-core/src/coverage/render.ts:369`).
-- **What a full line spends first** (`coverageClause` in `render.ts`): the order block's reason first, then
-  the ages, then the git rung's instant. The order block's state word is never spent: `plainestLine`
-  reserves its room before it chooses the rungs (§13.9, H1).
-  - The ages outrank the reason because COV-11 rests on them: a caveat repeated every day is told apart
-    from a recurring gap only by its age (`coverage-fire-rate.test.ts`).
-  - So CSK-9's `order: partial (declaration_contradicted)` renders in full wherever the line has room. On
-    the fullest shapes, such as a reaped rung with its age, it reads `order: partial`.
-  - loss-accounting §4.6's ignored-kinds sentence now ends `; order: <state>.` when its reason does not
-    fit.
+  (`orderFragment` in `connector-core/src/coverage/render.ts`).
+- **What a full line spends** (`coverageClause`, `LINE_FORMS`), as decided by Nick on 2026-10-02
+  (§13.11). The first build spent the order block's reason first, and H1 then reserved the state word.
+  Both rules are replaced: the reason is never spent, and neither is the state.
+  - The timestamp format goes first: the git rung's minute becomes its day.
+  - Then the less important metadata: the `reaped`/`unclosed` label, then the git rung's instant and
+    its age.
+  - As a last resort the clause takes a second line, each line within 160 (`MAX_COVERAGE_LINES = 2`).
+  - Never shed: any rung, the agent rung's minute (COV-1 pins it), its age (COV-11 rests on it), and
+    the order block's state and reason.
+  - So CSK-9's `order: partial (declaration_contradicted)` renders in full on every shape. COV-11's own
+    shape (a reaped rung, no commit evidence, the order block) takes two lines.
 - **Doctor.**
   - `causal guarantees (<connector>)` is printed on every host: the CLI doctor's Claude section
     (`cli/src/cli/doctor.ts:3833`) and Cursor's and ACP's own sections.
@@ -1378,7 +1380,8 @@ The evidence for each row:
   `; order: <state>` was that fragment. Under a path scope that showed `order: partial` and hid `undeclared`, the longer word.
   - The plainest line now picks its rungs to leave the state word's room. The git rung keeps its words
     and gives up its instant ("commit authors with no reported session"). The reserved rungs then get
-    what is left.
+    what is left. (Superseded the same day by Nick's decision §13.11.2: the reason is kept as well, and
+    a second line is the last resort.)
   - The failure falls on the git rung's instant, never on a rung or on the state.
   - `coverage-render.test.ts` checks every shape (373,248: every rung state and reason for both
     judging rungs, every ci state, both scopes, every order reason). The state word is present and the
@@ -1465,3 +1468,16 @@ The evidence for each row:
    position, and the derived worker positions after the turn. `derive-capability-registry.test.ts`
    reads the state and reason off `DECLARATION_TABLE` for every host, so the line cannot drift from the
    table again.
+2. **The order reason is never dropped for line length.** This changes the build's choice in §13.8.2.
+   In Nick's words, the state says THAT something is missing, the reason says WHAT, and for doctor the
+   reason is more diagnostic than a fresh timestamp. The shortening order is in §13.6.
+   - How I read "timestamp format first, then less important metadata" against COV-1 and COV-11:
+     - COV-1 pins the agent rung's minute, so only the git rung's instant is shortened.
+     - COV-11 needs the age to tell an ageing caveat from a recurring one, so the age is not metadata to
+       shed. Its own shape is 162+ characters with the reason, so it takes the second line, and its
+       fourteen daily sentences stay distinct.
+   - Once a second line is taken there is room again, so the fullest form whose split fits is used.
+   - The exhaustive render test now asserts the state AND the reason in all 373,248 shapes, at most two
+     lines, and each line within 160. The five-rung sweep (1,024 shapes) carries the longest order block.
+   - 03 §5.3 still says the coverage line is "one line". This decision supersedes that for the order
+     block's sake; 03's text is left for Nick to amend (§13.10).
