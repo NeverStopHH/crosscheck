@@ -14,10 +14,11 @@ import { sql } from "drizzle-orm";
 
 import { isJudgeable, readCoverage } from "../src/services/coverage.ts";
 import type { CoverageRecord } from "../src/services/coverage.ts";
-import {
-  EXPLANATION_TIMING_KINDS,
-  TOUCH_KINDS,
-} from "../src/services/coverage-order.ts";
+import { EXPLANATION_TIMING_KINDS } from "../src/services/coverage-order.ts";
+import type { GuaranteeKind } from "@crosscheck/schema";
+
+/** "Who touched this file": a one-kind question no route asks yet (review L4 moved it here). */
+const TOUCH_KINDS: readonly GuaranteeKind[] = ["file.modified"];
 import {
   VALID_SESSION_BODY,
   createTestDeveloper,
@@ -36,17 +37,21 @@ const EPOCH = "0d9c8b7a-6f5e-4d4c-8b3a-2f1e0d9c8b7a";
 /** One day back: inside every window this file asks about. */
 const SCOPE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Every kind declared at its strongest — a connector that over-declares. */
+/**
+ * Every kind declared at the strongest the hub admits for it (schema
+ * `isAdmissibleReason`): `guaranteed` where the kind can carry it, the
+ * strongest `partial` reason where it cannot.
+ */
 const ALL_GUARANTEED = [
   { kind: "session.started", guarantee: "guaranteed", reason: "lifecycle" },
   { kind: "session.ended", guarantee: "guaranteed", reason: "lifecycle" },
   { kind: "file.modified", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
   { kind: "tool.failed", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-  { kind: "claim.created", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-  { kind: "claim.invalidated", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-  { kind: "commit.observed", guarantee: "guaranteed", reason: "lifecycle" },
-  { kind: "intent.declared", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
-  { kind: "intent.amended", guarantee: "guaranteed", reason: "bracketed_by_pre_tool" },
+  { kind: "claim.created", guarantee: "partial", reason: "ambiguous_session_possible" },
+  { kind: "claim.invalidated", guarantee: "partial", reason: "ambiguous_session_possible" },
+  { kind: "commit.observed", guarantee: "partial", reason: "ambiguous_session_possible" },
+  { kind: "intent.declared", guarantee: "partial", reason: "ambiguous_session_possible" },
+  { kind: "intent.amended", guarantee: "partial", reason: "ambiguous_session_possible" },
 ] as const;
 
 const withKind = (kind: string, guarantee: string, reason: string): readonly unknown[] =>
@@ -135,6 +140,25 @@ describe("the fold is the minimum", () => {
     expect(everything.order).toEqual({ state: "unavailable", reason: "no_emitter" });
   });
 
+  test("the absence census asks no ordering question, so it reads all nine kinds (review L3)", async () => {
+    // Arrange: commits are partial, and a kind the census never asks about is unavailable.
+    const { harness, developer } = await seed();
+    const declared = ALL_GUARANTEED.map((triple) =>
+      triple.kind === "claim.invalidated"
+        ? { kind: triple.kind, guarantee: "unavailable", reason: "no_emitter" }
+        : triple,
+    );
+    await register(harness, developer, VALID_SESSION_BODY.id, declared);
+    // Act
+    const response = await harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", developer.apiKey),
+    );
+    const body = (await response.json()) as { data: { coverage: CoverageRecord } };
+    // Assert: the minimum over all nine, not over commit.observed alone.
+    expect(body.data.coverage.order).toEqual({ state: "unavailable", reason: "no_emitter" });
+  });
+
   test("an explanation-timing question reads the intent kinds as well as the edits", async () => {
     // Arrange
     const { harness, developer } = await seed();
@@ -221,6 +245,60 @@ describe("the fold reads the agent_event rung's own scope", () => {
     // Assert
     expect(pinned.order).toEqual({ state: "guaranteed", reason: "bracketed_by_pre_tool" });
     expect(repoWide.order).toEqual({ state: "undeclared", reason: "provider_undeclared" });
+  });
+});
+
+describe("the fold reads the sessions the answer names (review H3)", () => {
+  const DAY_SECONDS = 24 * 3600;
+  /** Past the suspect window (14 days), so the heartbeat predicate leaves the session out. */
+  const OUTSIDE_WINDOW_SECONDS = 20 * DAY_SECONDS;
+
+  const touchAuth = (
+    harness: TestHarness,
+    developer: TestDeveloper,
+    sessionId: string,
+    workContextId: string,
+  ): Promise<unknown> =>
+    postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: workContextId, sessionId }), {
+          sessionId,
+        }),
+        recordEnvelope("target", { workContextId, kind: "file", value: "src/auth.ts" }, { sessionId }),
+      ],
+    });
+
+  test("a suspect candidate whose heartbeat left the window still enters the order fold", async () => {
+    // Arrange: an undeclared session touched the file 20 days ago; a successor
+    // updated its work context inside the window; a declared session touched
+    // the same file today.
+    const { harness, developer } = await seed();
+    await register(harness, developer, "ses_old");
+    await touchAuth(harness, developer, "ses_old", "wc_old");
+    harness.clock.advanceSeconds(OUTSIDE_WINDOW_SECONDS);
+    await register(harness, developer, "ses_new", ALL_GUARANTEED);
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({ id: "wc_old", sessionId: "ses_old", title: "Login 500s, again" }),
+          { sessionId: "ses_new" },
+        ),
+      ],
+    });
+    await register(harness, developer, "ses_c", ALL_GUARANTEED);
+    await touchAuth(harness, developer, "ses_c", "wc_c");
+    // Act
+    const response = await harness.app.request(
+      `/api/suspect?repo=${encodeURIComponent(REPO)}&path=src/auth.ts`,
+      jsonRequest("GET", developer.apiKey),
+    );
+    const body = (await response.json()) as {
+      data: { candidates: { sessionId: string }[]; coverage: CoverageRecord };
+    };
+    // Assert
+    expect(body.data.candidates.map((candidate) => candidate.sessionId)).toContain("ses_old");
+    expect(body.data.coverage.order).toEqual({ state: "undeclared", reason: "provider_undeclared" });
   });
 });
 

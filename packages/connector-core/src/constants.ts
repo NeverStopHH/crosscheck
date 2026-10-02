@@ -2239,3 +2239,13 @@ export const MAX_GIT_TOUCH_CANDIDATES = 60;
  * PRINTS: true 160
  */
 export const MAX_COVERAGE_LINE_CHARS = 160;
+
+/**
+ * At most this many lines (decided by Nick, 2026-10-02). The order block's
+ * reason is never dropped for length: a line too long is shortened first —
+ * the git rung's instant to its day, then the reaped/unclosed label, then the
+ * git rung's instant — and only as a last resort does the clause take a
+ * second line, each line within MAX_COVERAGE_LINE_CHARS. The agent rung's
+ * minute (COV-1) and the age beside it (COV-11) are never shed.
+ */
+export const MAX_COVERAGE_LINES = 2;

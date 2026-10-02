@@ -50,7 +50,8 @@ interface Mutation {
 }
 
 /** Exported so the guard-count claim below can be re-derived from the data. */
-export const MUTATIONS: readonly Mutation[] = [
+export const MUTATIONS: readonly Mutation[
+] = [
   {
     // Found by review: two of the four tasks behind one override want PROSE,
     // and both took the first non-empty line of raw stdout whatever it was.
@@ -6376,10 +6377,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // SessionStart briefing, for as long as the gap lasted.
     label: "a gap on a lane the sentence cannot name reads as no gap",
     file: `${CORE}/src/coverage/render.ts`,
-    from: `  const reserved = record.sources
-    .filter((row) => row.source !== "agent_event" && row.source !== "git")
-    .map(reservedFragment);`,
-    to: "  const reserved: (string | null)[] = [];",
+    // Re-pointed by review H1, which moved the reserved rungs into their own
+    // function: the same defect — every reserved rung renders as nothing.
+    from: "    .map(reservedFragment)\n",
+    to: "    .map(() => null)\n",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "a CI lane mid-flight renders `Coverage incomplete: agent sessions " +
@@ -6411,7 +6412,8 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${CORE}/src/coverage/render.ts`,
     // Loss accounting hoisted the age into one binding both the loss
     // sentence and the quiet sentence read; nulling it is the same defect.
-    from: "      const age = ages ? agedSince(row.gapSince, now) : null;",
+    // Re-pointed by Nick's 2026-10-02 decision: the age is never shed now.
+    from: "      const age = agedSince(row.gapSince, now);",
     to: "      const age = null;",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
@@ -6425,10 +6427,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // ages cost 20 characters against a 160 bound.
     label: "an age is bought with somebody else's gap",
     file: `${CORE}/src/coverage/render.ts`,
-    // Re-pointed when the order block joined the line (01a §3.7): the same
-    // defect — the aged build handed to `fit` whatever it costs.
-    from: "  return fit(head, holding ?? fragmentsOf(record, now, false, false));",
-    to: "  return fit(head, fragmentsOf(record, now, true, true));",
+    // Re-pointed when the order block joined the line (01a §3.7), by review H1,
+    // and by Nick's 2026-10-02 decision: the same defect — a full line cut to
+    // its first fragment rather than shortened or split.
+    from: "  return single === undefined ? twoLines(head, forms) : lineOf(head, single);",
+    to: "  return single === undefined ? lineOf(head, (forms[0] ?? []).slice(0, 1)) : lineOf(head, single);",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "`fit` drops a whole fragment rather than half a word, so the git gap " +
@@ -15002,8 +15005,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a kind declared twice keeps the stronger triple",
     file: `${SCHEMA}/src/causal-guarantees.ts`,
-    from: "held !== undefined && rankOf(held.guarantee) <= rankOf(triple.guarantee) ? held : triple;",
-    to: "held !== undefined && rankOf(held.guarantee) >= rankOf(triple.guarantee) ? held : triple;",
+    // Re-pointed by review L1: ties are broken by reason strength.
+    from: "held !== undefined && !isWeakerReason(triple.reason, held.reason) ? held : triple;",
+    to: "held !== undefined && isWeakerReason(triple.reason, held.reason) ? held : triple;",
     test: `${SCHEMA}/test/causal-guarantees.test.ts`,
     because: "a block that says partial and guaranteed for one kind is read as guaranteed",
   },
@@ -15038,34 +15042,29 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a re-register strengthens a session's declaration",
     file: `${SERVER}/src/services/causal-guarantees.ts`,
-    from: "    } else if (rankOf(next.guarantee) < rankOf(row.guarantee)) {",
-    to: "    } else if (rankOf(next.guarantee) !== rankOf(row.guarantee)) {",
+    // Re-pointed by review L1, then L2: the comparison is in SQL, by reason strength.
+    from: "          sql`${reasonRankSql(sessionCausalGuarantees.reason)} > ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`,\n",
+    to: "",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "rows produced under a partial declaration are re-described as guaranteed after the fact",
   },
   {
     label: "a re-register that declares nothing keeps the old declaration",
     file: `${SERVER}/src/services/causal-guarantees.ts`,
-    from: '    if (next === undefined || next.guarantee === "undeclared") {',
-    to: "    if (false) {",
+    // Re-pointed by review L2: the removal is one DELETE now.
+    from: "  await db\n    .delete(sessionCausalGuarantees)\n    .where(\n      sent.length === 0\n",
+    to: "  await db\n    .select()\n    .from(sessionCausalGuarantees)\n    .where(\n      sent.length === 0\n",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "an older connector on the same session goes on reading as the newer one's statement",
   },
   {
     label: "a withheld position does not overrule a lifecycle declaration",
     file: `${SERVER}/src/services/causal-guarantees.ts`,
-    from: '): boolean => seqKind === "observed" || (!positioned && seqReason !== "reaped_end");',
-    to: '): boolean => seqKind === "observed";',
+    // Re-pointed by review M1, which dropped the reap exemption beside it.
+    from: '  seqKind === "observed" || !positioned;',
+    to: '  seqKind === "observed";',
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a session.ended with no position still reads lifecycle-guaranteed",
-  },
-  {
-    label: "a reap overrules a lifecycle declaration",
-    file: `${SERVER}/src/services/causal-guarantees.ts`,
-    from: '): boolean => seqKind === "observed" || (!positioned && seqReason !== "reaped_end");',
-    to: '): boolean => seqKind === "observed" || !positioned;',
-    test: `${SERVER}/test/causal-guarantees.test.ts`,
-    because: "the hub's own inference from silence is counted as the connector contradicting itself",
   },
   {
     label: "a contradicting row rewrites declarations that were never guaranteed",
@@ -15078,15 +15077,17 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a contradicting session_events row is counted nowhere and caps nothing",
     file: `${SERVER}/src/services/session-events.ts`,
-    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null, seqReason)) {",
-    to: "    if (false) {",
+    // Re-pointed by review M1: the reap exemption, and its argument, are gone.
+    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null)) {\n      await capContradictedGuarantee(",
+    to: "    if (false) {\n      await capContradictedGuarantee(",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "an unbracketed edit from a session that declared bracketed leaves every surface reading guaranteed (CSK-9)",
   },
   {
     label: "a contradicting intent version caps nothing",
     file: `${SERVER}/src/services/intent-ledger.ts`,
-    from: "  if (contradictsGuaranteed(intentSeqKind(provenance), stamp !== null, seqReasonOf(input.seq))) {",
+    // Re-pointed by review M1: the reap exemption, and its argument, are gone.
+    from: "  if (contradictsGuaranteed(intentSeqKind(provenance), stamp !== null)) {",
     to: "  if (false) {",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "the two intent kinds live outside session_events, so a cap written only there misses them",
@@ -15167,8 +15168,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the order fold ignores the path scope",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),\n  ) ?? sql`false`;",
-    to: "      : []),\n  ) ?? sql`false`;",
+    // Re-pointed by review H3, which wrapped the predicate in a union.
+    from: "        : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),\n    ) ?? sql`false`;",
+    to: "        : []),\n    ) ?? sql`false`;",
     test: `${SERVER}/test/coverage-order.test.ts`,
     because: "the order line describes sessions the agent_event rung beside it left out",
   },
@@ -15192,7 +15194,8 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the coverage line drops the order block",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "    orderFragment(record, orderReason),\n",
+    // Re-pointed by Nick's 2026-10-02 decision: the fragment has no variants now.
+    from: "  orderFragment(record),\n",
     to: "",
     test: `${CORE}/test/coverage-render.test.ts`,
     because: "a capped declaration is stored and read and shown on no surface a person reads (CSK-9)",
@@ -15200,26 +15203,19 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the coverage line prints the order reason in place of its state",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "    ? `order: ${record.order.state} (${record.order.reason})`\n",
-    to: "    ? `order: ${record.order.reason}`\n",
+    from: "  `order: ${record.order.state} (${record.order.reason})`;",
+    to: "  `order: ${record.order.reason}`;",
     test: `${CORE}/test/coverage-render.test.ts`,
     because: "the reader loses the one word the order block exists to carry",
   },
   {
     label: "the order block outranks the rungs that decide judging",
     file: `${CORE}/src/coverage/render.ts`,
-    from: '    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),\n    gitFragment(rowOf(record, "git"), now, ages),\n    orderFragment(record, orderReason),\n',
-    to: '    orderFragment(record, orderReason),\n    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),\n    gitFragment(rowOf(record, "git"), now, ages),\n',
+    // Re-pointed by review H1, then by Nick's 2026-10-02 decision.
+    from: "  ].filter(isPresent),\n  orderFragment(record),\n",
+    to: "  ].filter(isPresent).slice(0, 0),\n  orderFragment(record),\n  ...[agentEventFragment(record, rowOf(record, \"agent_event\"), now, form), gitFragment(rowOf(record, \"git\"), now, form)].filter(isPresent),\n",
     test: `${CORE}/test/coverage-render.test.ts`,
-    because: "on a full line `fit` drops the git rung to keep a comparability note — the caveat that gates judging goes first",
-  },
-  {
-    label: "a full line spends the ages before the order reason",
-    file: `${CORE}/src/coverage/render.ts`,
-    from: "    fragmentsOf(record, now, true, false),\n",
-    to: "",
-    test: `${CORE}/test/coverage-render.test.ts`,
-    because: "a caveat repeated every day reads the same every day and cannot be told from a recurring gap (COV-11)",
+    because: "the comparability note leads the sentence and the caveats that gate judging trail it, on the line a reader acts on",
   },
   {
     label: "doctor prints an unreported contradiction count as a number",
@@ -15285,6 +15281,308 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${ACP}/test/derive-doctor.test.ts`,
     because: "an ACP user cannot learn that its host emits no commit.observed",
   },
+  // Review 2026-10-02 of provider guarantees (H1 … L5): each finding's guard.
+  {
+    label: "the hub stores a guarantee its kind cannot carry",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "    isAdmissibleReason(kind, reason);",
+    to: "    true;",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because:
+      "any client registers commit.observed guaranteed / bracketed_by_pre_tool, and GET /api/absences reads order: guaranteed for a kind the hub itself stores observed",
+  },
+  {
+    label: "commit.observed admits a pre-tool bracket",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: '  "commit.observed": [],',
+    to: '  "commit.observed": ["bracketed_by_pre_tool"],',
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "a commit row is stored observed unconditionally, so a bracketed commit declaration is a claim the hub can prove false and stores anyway",
+  },
+  // Review H1's two guards, re-pointed by Nick's 2026-10-02 decision: the
+  // reserve-the-room mechanism they guarded gave way to the second line.
+  {
+    label: "a split coverage line cuts its second line, order block and all",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  return holds(second) ? `${head}: ${fragments.slice(0, firstCount).join(\"; \")};\\n${second}` : null;",
+    to: "  return holds(second) ? `${head}: ${fragments.slice(0, firstCount).join(\"; \")}.` : null;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "two gapped rungs with their instants fill the line, and the order block after them vanishes, whatever its state",
+  },
+  {
+    label: "a two-line clause takes the leanest form, not the fullest",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  return splits.find(isPresent) ?? lineOf(",
+    to: "  return [...splits].reverse().find(isPresent) ?? lineOf(",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "a line that already took a second line still sheds the git instant and the label it had room for",
+  },
+  {
+    label: "the order block folds over the heartbeat window only",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      orderScope(deps, now, repo, since, paths, options.orderSessionIds ?? []),",
+    to: "      orderScope(deps, now, repo, since, paths, []),",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because:
+      "suspect names an undeclared session whose work context a successor kept in the window, and the order block reads the declared session beside it alone",
+  },
+  {
+    label: "suspect folds order without the sessions it names",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "      orderSessionIds: view.candidates.map((candidate) => candidate.sessionId),\n",
+    to: "",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "the candidate list and the order block beside it are about two different sets of sessions",
+  },
+  {
+    label: "ACP's deferred end drops the position its marker carries",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "it kept.\n                seq,\n",
+    to: "it kept.\n",
+    test: `${ACP}/test/capture-engine.test.ts`,
+    because:
+      "every deferred ACP end arrives pre_seq_connector, caps a lifecycle declaration the connector kept, and doctor blames a row of the session's own",
+  },
+  {
+    label: "the build check misses a deferred ender that drops the position",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "it kept.\n                seq,\n",
+    to: "it kept.\n",
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "session.ended has no evidence pattern and a forwarding ender allocates nothing, so no other check sees the dropped seq",
+  },
+  // Review M1: what `lifecycle` itself promises.
+  {
+    label: "a reap leaves a lifecycle end standing",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null)) {",
+    to: '    if (contradictsGuaranteed(input.seqKind, seqN !== null || seqReason === "reaped_end")) {',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a session whose end nobody observed reads session.ended guaranteed / lifecycle for as long as its row lives",
+  },
+  {
+    label: "a positioned skeleton row is never held to lifecycle",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "    if (seqEpoch !== null && seqN !== null) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an end below a row the session already wrote stays lifecycle-guaranteed",
+  },
+  {
+    label: "a session.started past n = 0 keeps its lifecycle",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: '  if (kind === "session.started" && position.n !== ORIGIN_N) {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a recovery that registered at n = 7 still reads as the session's origin",
+  },
+  {
+    label: "an end below a stored row keeps its lifecycle",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "  return events.length > 0;",
+    to: "  return false;",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an end at n = 5 under a claim at n = 9 reads as the terminal position",
+  },
+  {
+    label: "a row past the end, arriving after it, keeps the end's lifecycle",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "  return ends.length > 0;",
+    to: "  return false;",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a successor's flush of a record stamped past the end leaves the end reading guaranteed",
+  },
+  {
+    label: "an end in another epoch keeps its lifecycle",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "        or(ne(sessionEvents.seqEpoch, end.epoch), gt(sessionEvents.seqN, end.n)),",
+    to: "        gt(sessionEvents.seqN, end.n),",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a state-loss recovery's second epoch ends the session while the first epoch's rows stand beside it",
+  },
+  {
+    label: "a reported end never asks the ledger what lies past it",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  if (isSeqStamp(seq) && (await hasIntentPositionPast(deps.db, row.id, seq))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "an intent version at n = 9 stands past an end at n = 5 and the end reads guaranteed",
+  },
+  {
+    label: "a ledger version is never held to the session's end",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  if (stamp !== null) {\n    await capLifecycleContradictions(",
+    to: "  if (false) {\n    await capLifecycleContradictions(",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a successor flushes a version stamped past the end, and the end keeps reading as the session's last position",
+  },
+  // Review M2: the cap paths that had no test.
+  {
+    label: "an amending intent version caps intent.declared instead",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: '  const ledgerKind = head === null ? "intent.declared" : "intent.amended";',
+    to: '  const ledgerKind = "intent.declared";',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a worker's amendment overrules an intent.amended declaration and every surface keeps reading it guaranteed",
+  },
+  {
+    label: "an event that loses its position to another caps nothing",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: '    id: await write(null, null, "epoch_conflict"),',
+    to: '    id: await write(stamp.epoch, stamp.n, "epoch_conflict"),',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "two events claiming one slot leave the kind reading guaranteed, and the second event's row is dropped",
+  },
+  {
+    label: "a derived claim caps no claim.created guarantee",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '    seqKind: body.provenance === "derived" ? "observed" : "emitted",',
+    to: '    seqKind: "emitted",',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a claim.created guarantee that reached the table survives the summarizer's claims, which are positioned after the fact",
+  },
+  {
+    label: "a commit aggregate caps no commit.observed guarantee",
+    file: `${SERVER}/src/services/commit-evidence.ts`,
+    from: '          seqKind: "observed",',
+    to: '          seqKind: "emitted",',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a commit.observed guarantee that reached the table survives every commit row, all of which are upper bounds",
+  },
+  // Review L1: ties inside one state.
+  {
+    label: "a reason tie keeps whichever reason came first",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    to: "  stateOfOrderReason(candidate) !== stateOfOrderReason(held) &&\n  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "a block that sends the MCP reason before the summarizer's reads ambiguous_session_possible, the stronger of two partial reasons",
+  },
+  {
+    label: "a re-register keeps the stronger reason of one state",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    to: "  stateOfOrderReason(candidate) !== stateOfOrderReason(held) &&\n  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a session that re-registers with derived_after_the_fact keeps reading ambiguous_session_possible",
+  },
+  // Review L2: no read decides a write.
+  {
+    label: "a re-register's weaken compares against what it read, not what is stored",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "sql`${reasonRankSql(sessionCausalGuarantees.reason)} > ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`",
+    to: "sql`${ORDER_REASON_STRENGTH.indexOf(triple.reason)} >= 0`",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "two concurrent re-registers read guaranteed, and the later write of partial lifts the other's unavailable",
+  },
+  // Review L3: a read with no ordering question reads all nine kinds.
+  {
+    label: "the absence census folds order over commit.observed alone",
+    file: `${SERVER}/src/routes/absences.ts`,
+    from: "    const coverage = await readCoverage(deps, c.get(\"developer\").id, parsed.data.repo);",
+    to: "    const coverage = await readCoverage(deps, c.get(\"developer\").id, parsed.data.repo, {\n      orderKinds: [\"commit.observed\"],\n    });",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "a wall-clock census reads a stronger order than the builder's own rule for a read with no ordering question allows",
+  },
+  // Review L4: a stored row is read through its reason.
+  {
+    label: "the effective guarantee trusts the stored guarantee column",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "          .map((row) => [row.kind, effectiveOf(row.reason)]),",
+    to: "          .map((row) => [row.kind, { state: row.guarantee, reason: row.reason }]),",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a row whose columns disagree reads guaranteed in every test that judges a cap through this reader",
+  },
+  // Decided by Nick, 2026-10-02.
+  {
+    label: "the intent-kinds line drifts from the declaration table",
+    file: `${CORE}/src/derive/capabilities.ts`,
+    from: "and on every host they are partial / derived_after_the_fact:",
+    to: "and on every host they are unavailable / not_built:",
+    test: `${CORE}/test/derive-capability-registry.test.ts`,
+    because: "doctor prints a limit for the two intent kinds beside a declaration table that states the opposite",
+  },
+  {
+    label: "a full line drops the order block's reason",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  `order: ${record.order.state} (${record.order.reason})`;",
+    to: "  `order: ${record.order.state}`;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the line says THAT order is weak and not WHAT made it so — declaration_contradicted reads the same as an honest partial",
+  },
+  {
+    label: "a full line drops the git instant before shortening it",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '  { labels: true, gitInstant: "day" },\n',
+    to: '  { labels: true, gitInstant: "none" },\n',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the commit-author gap loses its date where the day would have fit",
+  },
+  {
+    label: "a full line takes a second line before it sheds the label",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '  { labels: false, gitInstant: "day" },\n  { labels: false, gitInstant: "none" },\n',
+    to: "",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "a reaped rung beside a reported git rung splits over two lines in every briefing for want of six characters",
+  },
+  {
+    label: "doctor's contradiction count reads as the team's",
+    file: `${CORE}/src/guarantees/doctor.ts`,
+    from: "const OWN_SESSIONS_ONLY = \"counts your own sessions only, not your team's\";",
+    to: 'const OWN_SESSIONS_ONLY = "declarations";',
+    test: `${CORE}/test/guarantee-doctor.test.ts`,
+    because: "a WARN with a bare count beside a check name sends a reader after teammates' sessions the hub never counted",
+  },
+  {
+    label: "the conference registers with no declaration",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    guarantees: guaranteeDeclarationFor(CONFERENCE_CONNECTOR),\n",
+    to: "",
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "every conference session reads undeclared and pulls any scope containing it to undeclared for fourteen days",
+  },
+  {
+    label: "a conference session stores no profile on the hub",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    guarantees: guaranteeDeclarationFor(CONFERENCE_CONNECTOR),\n",
+    to: "",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because: "the declaration a conference sends is checked in the source and never reaches session_causal_guarantees",
+  },
+  {
+    label: "the conference sends a host's declaration",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    guarantees: guaranteeDeclarationFor(CONFERENCE_CONNECTOR),\n",
+    to: '    guarantees: guaranteeDeclarationFor("claude-code"),\n',
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "a command that takes no position claims Claude Code's lifecycle guarantees for its start and end",
+  },
+  {
+    label: "the conference's profile states a reason no absent producer has",
+    file: `${CORE}/src/guarantees/declarations.ts`,
+    from: '    row([], UNPOSITIONED_BY_CONFERENCE.includes(kind) ? "not_built" : "no_emitter"),',
+    to: '    row([], UNPOSITIONED_BY_CONFERENCE.includes(kind) ? "derived_after_the_fact" : "no_emitter"),',
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "the conference's claims read as positioned after the fact by a command that positions nothing",
+  },
+  {
+    label: "the conference ends its session with no position and no reason",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    await endSession(hub, sessionId, ALLOCATION_FAILED);",
+    to: "    await endSession(hub, sessionId);",
+    test: `${CORE}/test/guarantee-declarations.test.ts`,
+    because: "every conference end reads pre_seq_connector, a statement about an old install made by a current one",
+  },
+  {
+    label: "a conference end is recorded as a connector from before the seq field",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "    await endSession(hub, sessionId, ALLOCATION_FAILED);",
+    to: "    await endSession(hub, sessionId);",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because: "the hub stores the conference's end as pre_seq_connector and doctor sends the reader to upgrade",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -15338,7 +15636,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-report-workflow.test.ts 3
  * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
- * PRINTS: packages/cli/test/conference-cli.test.ts 10
+ * PRINTS: packages/cli/test/conference-cli.test.ts 12
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
@@ -15382,6 +15680,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/waiver-render.test.ts 7
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
+ * PRINTS: packages/connector-acp/test/capture-engine.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
@@ -15457,9 +15756,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 16
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
- * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
+ * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
@@ -15467,8 +15766,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
- * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 23
- * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 2
+ * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
+ * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
@@ -15539,7 +15838,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
- * PRINTS: packages/schema/test/causal-guarantees.test.ts 5
+ * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
@@ -15548,7 +15847,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
- * PRINTS: packages/server/test/causal-guarantees.test.ts 8
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
@@ -15558,7 +15857,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
- * PRINTS: packages/server/test/coverage-order.test.ts 7
+ * PRINTS: packages/server/test/coverage-order.test.ts 10
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
  * PRINTS: packages/server/test/developer-emails.test.ts 2

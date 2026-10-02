@@ -1323,7 +1323,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
             session.config.home,
             session.repoKey ?? "",
             now(),
-            async (crosscheckSessionId) => {
+            async (crosscheckSessionId, seq) => {
               const roomMs = remaining();
               if (roomMs <= 0) {
                 return "retry";
@@ -1331,6 +1331,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
               const result = await endSession(
                 { ...hub, timeoutMs: Math.min(hub.timeoutMs, roomMs) },
                 crosscheckSessionId,
+                // The position the ENDING session allocated, carried through
+                // its marker (spool/reap.ts). Without it every deferred ACP end
+                // arrives unsequenced and caps a lifecycle declaration it kept.
+                seq,
               );
               if (result.ok) {
                 return "ended";

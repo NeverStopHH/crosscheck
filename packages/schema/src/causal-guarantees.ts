@@ -79,6 +79,43 @@ export const GUARANTEE_KINDS = [...SESSION_EVENT_KINDS, ...LEDGER_EVENT_KINDS] a
 export type GuaranteeKind = (typeof GUARANTEE_KINDS)[number];
 
 /**
+ * THE KINDS A PRE-TOOL BRACKET CAN POSITION: the two a `target` record
+ * projects to (server record-handlers.ts `TARGET_EVENT_KINDS`; a server test
+ * holds the two lists equal). The hub stores a target row `emitted` only when
+ * it carries the bracket's floor (`seqKindFor`), so no other kind has one.
+ */
+export const BRACKETABLE_KINDS = ["file.modified", "tool.failed"] as const satisfies readonly GuaranteeKind[];
+
+/**
+ * THE `guaranteed` REASONS EACH KIND CAN BE TRUE OF (review H2). A connector is
+ * untrusted, and coherence alone (reason ↔ state) let any client store a claim
+ * the hub can itself prove false:
+ *   - `lifecycle` is n = 0 or the terminal position: only the two session kinds;
+ *   - `bracketed_by_pre_tool` needs a tool window: only BRACKETABLE_KINDS;
+ *   - `commit.observed` never: the hub stores every commit row `observed`
+ *     (server commit-evidence.ts);
+ *   - `claim.*` and `intent.*` never: the MCP tools withhold the position when
+ *     the session picker is ambiguous (connector-core mcp/tools/shared.ts
+ *     `allocateToolSeq`), and a derived one is stored `observed`.
+ * Every weaker reason is admissible on every kind: it can only lower the fold.
+ */
+const STRONG_REASONS_OF_KIND: Readonly<Record<GuaranteeKind, readonly CausalGuaranteeReason[]>> = {
+  "session.started": ["lifecycle"],
+  "tool.failed": ["bracketed_by_pre_tool"],
+  "file.modified": ["bracketed_by_pre_tool"],
+  "claim.created": [],
+  "claim.invalidated": [],
+  "commit.observed": [],
+  "session.ended": ["lifecycle"],
+  "intent.declared": [],
+  "intent.amended": [],
+};
+
+/** Can this kind carry this reason? Only a `guaranteed` reason is ever refused. */
+export const isAdmissibleReason = (kind: GuaranteeKind, reason: CausalGuaranteeReason): boolean =>
+  GUARANTEE_OF_REASON[reason] !== "guaranteed" || STRONG_REASONS_OF_KIND[kind].includes(reason);
+
+/**
  * THE COVERAGE RECORD'S `order` REASONS (01a §3.7): a declared reason, or one
  * of three only the reading side can know. `declaration_contradicted` — a row
  * of the session rules the declaration out (the hub's cap); `no_session_in_scope`
@@ -119,6 +156,15 @@ export const ORDER_REASON_STRENGTH: readonly OrderReason[] = [
   "bracketed_by_pre_tool",
   "lifecycle",
 ];
+
+/**
+ * The weaker of two reasons by ORDER_REASON_STRENGTH (review L1): ranking by
+ * the reason ranks by state first, and breaks a tie inside one state the way
+ * the hub's fold over a scope does, so a kind sent twice, or re-registered,
+ * keeps the weaker of two `partial` reasons rather than whichever came first.
+ */
+export const isWeakerReason = (candidate: OrderReason, held: OrderReason): boolean =>
+  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);
 
 /** The state an order reason belongs to: a declared reason's own, the reader's three below. */
 export const stateOfOrderReason = (reason: OrderReason): CausalGuarantee => {
@@ -189,7 +235,11 @@ const WireTripleSchema = z.object({
   reason: z.string().min(1).max(MAX_GUARANTEE_FIELD_CHARS),
 });
 
-/** One entry, read: null for an entry nothing can be said about. */
+/**
+ * One entry, read: null for an entry nothing can be said about. A pair is kept
+ * only when the reason is its state's own AND the kind can carry it; anything
+ * else reads `undeclared`, never the state it arrived with.
+ */
 const foldTriple = (raw: unknown): CausalGuaranteeTriple | null => {
   const parsed = WireTripleSchema.safeParse(raw);
   if (!parsed.success || !isMember(GUARANTEE_KINDS, parsed.data.kind)) {
@@ -197,14 +247,16 @@ const foldTriple = (raw: unknown): CausalGuaranteeTriple | null => {
   }
   const { kind, guarantee, reason } = parsed.data;
   const coherent =
-    isMember(CAUSAL_GUARANTEE_REASONS, reason) && GUARANTEE_OF_REASON[reason] === guarantee;
+    isMember(CAUSAL_GUARANTEE_REASONS, reason) &&
+    GUARANTEE_OF_REASON[reason] === guarantee &&
+    isAdmissibleReason(kind, reason);
   return coherent ? { kind, guarantee: GUARANTEE_OF_REASON[reason], reason } : { kind, ...UNDECLARED };
 };
 
 /**
  * The declaration a hub stores for a register body's `guarantees` value.
  * Unknown kinds drop (no question asks about them); unknown or incoherent
- * values become `undeclared`; a kind sent twice keeps the weaker; an
+ * values become `undeclared`; a kind sent twice keeps the weaker reason; an
  * unreadable or oversized block is stored as nothing. Ordered by
  * GUARANTEE_KINDS, so two equal declarations are equal values.
  */
@@ -218,8 +270,7 @@ export const foldGuaranteeDeclaration = (raw: unknown): readonly CausalGuarantee
       return kept;
     }
     const held = kept.get(triple.kind);
-    const weaker =
-      held !== undefined && rankOf(held.guarantee) <= rankOf(triple.guarantee) ? held : triple;
+    const weaker = held !== undefined && !isWeakerReason(triple.reason, held.reason) ? held : triple;
     return new Map([...kept, [triple.kind, weaker]]);
   }, new Map());
   return GUARANTEE_KINDS.flatMap((kind) => {

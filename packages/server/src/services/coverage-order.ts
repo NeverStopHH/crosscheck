@@ -19,29 +19,25 @@
  *   - GET /api/suspect computes 04's verdict, whose `predeclared` / `post_hoc`
  *     answer is `explanationTimingFor` — an edit against intent versions:
  *     EXPLANATION_TIMING_KINDS.
- *   - GET /api/absences reads the commit census: COMMIT_KINDS.
- *   - every other read (search, hints, work contexts, the pilot snapshot) asks
- *     no ordering question of its own: ALL nine — the weakest reading, because
- *     a minimum over more kinds can only be lower.
+ *   - every other read (search, hints, work contexts, the pilot snapshot, and
+ *     GET /api/absences, whose census is wall-clock — review L3) asks no
+ *     ordering question of its own: ALL nine — the weakest reading, because a
+ *     minimum over more kinds can only be lower.
  */
 import { sql } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
+import type { AnyColumn, SQL } from "drizzle-orm";
 import { GUARANTEE_KINDS, ORDER_REASON_STRENGTH, stateOfOrderReason } from "@crosscheck/schema";
 import type { CoverageOrder, GuaranteeKind } from "@crosscheck/schema";
 
 import type { DbExecutor } from "../db/client.ts";
 
 export const ALL_ORDER_KINDS: readonly GuaranteeKind[] = GUARANTEE_KINDS;
-/** "Who touched this file" — the touch itself. */
-export const TOUCH_KINDS: readonly GuaranteeKind[] = ["file.modified"];
 /** 04's explanation timing: an edit against the intent versions it is compared with. */
 export const EXPLANATION_TIMING_KINDS: readonly GuaranteeKind[] = [
   "file.modified",
   "intent.declared",
   "intent.amended",
 ];
-/** The commit census the absence finding reads. */
-export const COMMIT_KINDS: readonly GuaranteeKind[] = ["commit.observed"];
 
 const NO_SESSION: CoverageOrder = { state: "undeclared", reason: "no_session_in_scope" };
 const UNDECLARED: CoverageOrder = { state: "undeclared", reason: "provider_undeclared" };
@@ -53,11 +49,20 @@ const UNDECLARED: CoverageOrder = { state: "undeclared", reason: "provider_undec
  * reader's own words. Built from the schema's constant: no author text.
  */
 const UNKNOWN_STORED_RANK = ORDER_REASON_STRENGTH.indexOf("provider_undeclared");
-const STRENGTH_RANK = sql.raw(
-  `CASE g.reason ${ORDER_REASON_STRENGTH.map(
-    (reason, rank) => `WHEN '${reason}' THEN ${String(rank)}`,
-  ).join(" ")} ELSE ${String(UNKNOWN_STORED_RANK)} END`,
+const RANK_ARMS = sql.raw(
+  `${ORDER_REASON_STRENGTH.map((reason, rank) => `WHEN '${reason}' THEN ${String(rank)}`).join(
+    " ",
+  )} ELSE ${String(UNKNOWN_STORED_RANK)} END`,
 );
+
+/**
+ * The strength rank of a stored reason column, in SQL — the one CASE both the
+ * scope fold here and the re-register's conditional weaken
+ * (services/causal-guarantees.ts) compare by.
+ */
+export const reasonRankSql = (column: SQL | AnyColumn): SQL => sql`CASE ${column} ${RANK_ARMS}`;
+
+const STRENGTH_RANK = reasonRankSql(sql.raw("g.reason"));
 
 const toCount = (value: unknown): number => {
   const parsed = Number(value);

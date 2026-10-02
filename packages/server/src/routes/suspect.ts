@@ -85,24 +85,25 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // SCOPED TO THE FILES THE QUESTION IS ABOUT: "were we watching this
     // surface" is the question principle 1 actually asks, and a repo-wide
     // gap would make every answer here INDETERMINATE for ever.
-    const [view, coverage] = await Promise.all([
-      suspectSessions(deps, c.get("developer").id, {
-        repo: parsed.data.repo,
-        scope: scope.scope,
-        attribution: settings.suspectAttribution,
-      }),
-      readCoverage(deps, c.get("developer").id, parsed.data.repo, {
-        scope: {
-          sinceIso: new Date(
-            deps.now().getTime() - SUSPECT_WINDOW_DAYS * MS_PER_DAY,
-          ).toISOString(),
-          paths: scope.scope.files,
-        },
-        // 04's verdict carries explanationTimingFor's answer: an edit against
-        // intent versions (services/coverage-order.ts).
-        orderKinds: EXPLANATION_TIMING_KINDS,
-      }),
-    ]);
+    // In sequence, not in parallel: the order block folds over the sessions
+    // this answer names (review H3), so the candidates come first.
+    const view = await suspectSessions(deps, c.get("developer").id, {
+      repo: parsed.data.repo,
+      scope: scope.scope,
+      attribution: settings.suspectAttribution,
+    });
+    const coverage = await readCoverage(deps, c.get("developer").id, parsed.data.repo, {
+      scope: {
+        sinceIso: new Date(
+          deps.now().getTime() - SUSPECT_WINDOW_DAYS * MS_PER_DAY,
+        ).toISOString(),
+        paths: scope.scope.files,
+      },
+      // 04's verdict carries explanationTimingFor's answer: an edit against
+      // intent versions (services/coverage-order.ts).
+      orderKinds: EXPLANATION_TIMING_KINDS,
+      orderSessionIds: view.candidates.map((candidate) => candidate.sessionId),
+    });
     // THE VERDICT RIDES AS A SIBLING FIELD (04 §5), the shape 03 §3.5 uses for
     // coverage — never folded into the suspect view, because the five
     // dimensions are separate on purpose and a nested one invites a renderer

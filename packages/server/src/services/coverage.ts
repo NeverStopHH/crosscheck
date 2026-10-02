@@ -176,6 +176,15 @@ export interface ReadCoverageOptions {
   readonly scope?: CoverageScope;
   /** The kinds this question's order depends on; all nine when omitted (coverage-order.ts). */
   readonly orderKinds?: readonly GuaranteeKind[];
+  /**
+   * THE SESSIONS THE ANSWER ITSELF NAMES (review H3), folded into `order`
+   * beside the rung's scope. An answer picks its sessions by its own predicate
+   * — suspect's by work-context activity, which an update from a successor
+   * session keeps inside the window — while the rung reads heartbeats. A
+   * named session the rung left out could only be missing from the minimum,
+   * and a minimum over fewer sessions can only be stronger.
+   */
+  readonly orderSessionIds?: readonly string[];
 }
 
 const sourceRecord = (
@@ -664,14 +673,20 @@ const orderScope = (
   repo: string,
   since: Date,
   paths: readonly string[],
-): SQL =>
-  and(
-    eq(agentSessions.repo, repo),
-    gt(agentSessions.lastHeartbeatAt, since),
-    ...(paths.length === 0
-      ? []
-      : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),
-  ) ?? sql`false`;
+  answerSessionIds: readonly string[],
+): SQL => {
+  const rung =
+    and(
+      eq(agentSessions.repo, repo),
+      gt(agentSessions.lastHeartbeatAt, since),
+      ...(paths.length === 0
+        ? []
+        : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),
+    ) ?? sql`false`;
+  return answerSessionIds.length === 0
+    ? rung
+    : sql`(${rung} or ${inArray(agentSessions.id, [...answerSessionIds])})`;
+};
 
 export const readCoverage = async (
   deps: Deps,
@@ -687,7 +702,7 @@ export const readCoverage = async (
     readGitCoverage(deps, now, viewerDeveloperId, repo),
     readCoverageOrder(
       deps.db,
-      orderScope(deps, now, repo, since, paths),
+      orderScope(deps, now, repo, since, paths, options.orderSessionIds ?? []),
       options.orderKinds ?? ALL_ORDER_KINDS,
     ),
   ]);

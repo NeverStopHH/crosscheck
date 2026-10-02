@@ -45,22 +45,43 @@ import type {
   CoverageSourceRecord,
 } from "../http/coverage.ts";
 
+/** How an instant is printed: to the minute, to the day, or not at all. */
+type InstantForm = "minute" | "day" | "none";
+
+/** `2026-09-05T08:13` and `2026-09-05`: the prefixes of an ISO instant each form keeps. */
+const MINUTE_PREFIX_CHARS = 16;
+const DAY_PREFIX_CHARS = 10;
+
 /**
  * Minute precision, and the seconds are dropped on purpose: AT-1's own
  * sentence names "Friday 08:13", nobody acts on the second a heartbeat
- * stopped, and every character here is spent against a 160-char bound that
- * makes this line uncuttable in the briefing.
+ * stopped, and every character here is spent against the 160-char bound of
+ * a line in the briefing's uncuttable seat. The day form is the shorter
+ * instant a full line spends first (decided by Nick, 2026-10-02) — on the git
+ * rung only: the agent rung's minute is COV-1's.
  */
-const instant = (iso: string | null): string | null => {
-  if (iso === null) {
+const instant = (iso: string | null, form: InstantForm): string | null => {
+  if (iso === null || form === "none") {
     return null;
   }
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) {
     return null;
   }
-  return `${new Date(ms).toISOString().slice(0, 16)}Z`;
+  const stamp = new Date(ms).toISOString();
+  return form === "day" ? stamp.slice(0, DAY_PREFIX_CHARS) : `${stamp.slice(0, MINUTE_PREFIX_CHARS)}Z`;
 };
+
+/**
+ * ONE WAY TO WRITE THE SENTENCE. What a full line may shed, and nothing else:
+ * the reaped/unclosed label and the git rung's instant (and its age with it).
+ * The agent rung's minute (COV-1), its age (COV-11), every rung and the order
+ * block's state and reason are in every form.
+ */
+interface LineForm {
+  readonly labels: boolean;
+  readonly gitInstant: InstantForm;
+}
 
 /**
  * Trailing qualifiers, joined once: `(10d ago, reaped)` rather than one
@@ -165,12 +186,12 @@ const agentEventFragment = (
   record: CoverageRecord,
   row: CoverageSourceRecord | undefined,
   now: Date,
-  ages: boolean,
+  form: LineForm,
 ): string | null => {
   if (row === undefined) {
     return null;
   }
-  const when = instant(row.gapSince);
+  const when = instant(row.gapSince, "minute");
   const subject = scopeSubject(record);
   const quiet =
     when === null
@@ -180,7 +201,7 @@ const agentEventFragment = (
     case "complete":
       return "agent sessions reported";
     case "incomplete": {
-      const age = ages ? agedSince(row.gapSince, now) : null;
+      const age = agedSince(row.gapSince, now);
       const loss = lossOpening(row.reason, when);
       if (loss !== null) {
         return `${loss}${parenthetical([age])}`;
@@ -190,7 +211,7 @@ const agentEventFragment = (
       // and only the age says the fact is ageing rather than recurring.
       return `${quiet}${parenthetical([
         age,
-        INCOMPLETE_LABELS[row.reason] ?? null,
+        form.labels ? (INCOMPLETE_LABELS[row.reason] ?? null) : null,
       ])}`;
     }
     case "unknown": {
@@ -209,10 +230,15 @@ const agentEventFragment = (
   }
 };
 
+/**
+ * The git rung. Its instant is the first thing a full line shortens (to the
+ * day), and the last thing it sheds before a second line: the rung keeps its
+ * words either way.
+ */
 const gitFragment = (
   row: CoverageSourceRecord | undefined,
   now: Date,
-  ages: boolean,
+  form: LineForm,
 ): string | null => {
   if (row === undefined) {
     return null;
@@ -222,20 +248,18 @@ const gitFragment = (
       return "git evidence reported";
     case "incomplete": {
       if (row.reason === "evidence_stale") {
-        // An age with no instant to pair with. It is still an age, so the
-        // reduced sentence drops it too: either every time in this sentence
-        // is a relative age, or none is — never one of each.
-        const age = ages ? ageSince(row.observedAt, now) : null;
+        // An age with no instant to pair with.
+        const age = ageSince(row.observedAt, now);
         return age === null
           ? "git evidence is stale"
           : `git evidence last collected ${age} ago`;
       }
-      const since = instant(row.gapSince);
+      const since = instant(row.gapSince, form.gitInstant);
       // Same rule as the rung above it: the instant, and the age beside it,
       // so the two halves of one sentence can be compared without arithmetic.
       return since === null
         ? "commit authors with no reported session"
-        : `commit authors with no reported session since ${since}${parenthetical([ages ? agedSince(row.gapSince, now) : null])}`;
+        : `commit authors with no reported session since ${since}${parenthetical([agedSince(row.gapSince, now)])}`;
     }
     case "unknown":
       return row.reason === "hub_did_not_report"
@@ -336,69 +360,90 @@ export const COVERAGE_HUB_UNREACHABLE =
 export const HUB_UNREACHABLE_CLAUSE = `Coverage unknown: ${COVERAGE_HUB_UNREACHABLE}.`;
 
 /**
- * The bound the briefing's uncuttable seat rests on, spent in PRIORITY ORDER.
- * Fragments are added while they fit and dropped whole once they do not, so a
- * long sentence loses a trailing clause rather than half a word — and the two
- * rungs that decide judging are first in the list, so they are the last to go.
- * The head word survives every cut, because it is the part a reader acts on.
- */
-const fit = (head: string, fragments: readonly string[]): string => {
-  const kept: string[] = [];
-  for (const fragment of fragments) {
-    const candidate = `${head}: ${[...kept, fragment].join("; ")}.`;
-    if (candidate.length > MAX_COVERAGE_LINE_CHARS) {
-      break;
-    }
-    kept.push(fragment);
-  }
-  const line = kept.length === 0 ? `${head}.` : `${head}: ${kept.join("; ")}.`;
-  return line.length <= MAX_COVERAGE_LINE_CHARS
-    ? line
-    : `${line.slice(0, MAX_COVERAGE_LINE_CHARS - 1)}.`;
-};
-
-/**
  * WHAT THE SESSIONS IN SCOPE COULD SAY ABOUT ORDER (01a §3.7, §5): the state
  * and its reason, both enum values the parser admitted — no count, no
  * sentence, no author text. Always rendered, `guaranteed` included: the line
  * is where a reader learns whether a timing answer beside it can be trusted,
- * and silence would read as the strong case. Placed AFTER the two judging
- * rungs; on a line too full for it the REASON goes first, then the ages, and
- * the state word never — so it is never the fragment `fit` drops.
+ * and silence would read as the strong case. The REASON is never dropped for
+ * length either (decided by Nick, 2026-10-02): the state says THAT something
+ * is missing, the reason says WHAT.
  */
-const orderFragment = (record: CoverageRecord, withReason: boolean): string =>
-  withReason
-    ? `order: ${record.order.state} (${record.order.reason})`
-    : `order: ${record.order.state}`;
+const orderFragment = (record: CoverageRecord): string =>
+  `order: ${record.order.state} (${record.order.reason})`;
 
-const fragmentsOf = (
-  record: CoverageRecord,
-  now: Date,
-  ages: boolean,
-  orderReason: boolean,
-): readonly string[] => {
-  const reserved = record.sources
+const isPresent = (fragment: string | null): fragment is string => fragment !== null;
+
+const reservedFragments = (record: CoverageRecord): readonly string[] =>
+  record.sources
     .filter((row) => row.source !== "agent_event" && row.source !== "git")
-    .map(reservedFragment);
-  return [
-    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),
-    gitFragment(rowOf(record, "git"), now, ages),
-    orderFragment(record, orderReason),
-    ...reserved,
-  ].filter((fragment): fragment is string => fragment !== null);
-};
+    .map(reservedFragment)
+    .filter(isPresent);
 
-const holdsEvery = (head: string, fragments: readonly string[]): boolean =>
-  `${head}: ${fragments.join("; ")}.`.length <= MAX_COVERAGE_LINE_CHARS;
+/** The two judging rungs first, then the order block, then the reserved rungs. */
+const fragmentsOf = (record: CoverageRecord, now: Date, form: LineForm): readonly string[] => [
+  ...[
+    agentEventFragment(record, rowOf(record, "agent_event"), now, form),
+    gitFragment(rowOf(record, "git"), now, form),
+  ].filter(isPresent),
+  orderFragment(record),
+  ...reservedFragments(record),
+];
 
 /**
- * THE AGE IS DECORATION; THE RUNG IS THE CAVEAT. Both rungs gapped with an
- * instant each is the longest shape this sentence carries, and two ages cost
- * 20 characters against the 160 the briefing seat rests on — one over, in the
- * shape that matters most. `fit` drops a whole fragment rather than half a
- * word, so the age would have bought its own readability with somebody else's
- * gap. It is therefore spent last: the sentence is built with ages, and if
- * that will not hold every fragment it is rebuilt without them.
+ * THE ORDER A FULL LINE IS SHORTENED IN (decided by Nick, 2026-10-02): the
+ * timestamp format first — the git rung's minute becomes its day — then the
+ * less important metadata, the reaped/unclosed label and then the git rung's
+ * instant. Nothing past the last form is shed: a shape it cannot fit takes a
+ * second line (`twoLines`).
+ */
+const LINE_FORMS: readonly LineForm[] = [
+  { labels: true, gitInstant: "minute" },
+  { labels: true, gitInstant: "day" },
+  { labels: false, gitInstant: "day" },
+  { labels: false, gitInstant: "none" },
+];
+
+const lineOf = (head: string, fragments: readonly string[]): string =>
+  fragments.length === 0 ? `${head}.` : `${head}: ${fragments.join("; ")}.`;
+
+const holds = (line: string): boolean => line.length <= MAX_COVERAGE_LINE_CHARS;
+
+/**
+ * One form as two lines: as many fragments after the head as fit the first
+ * line, which ends `;`, and the rest — order block included — on the second.
+ * Null when the form needs no split or the second line does not hold.
+ */
+const splitOf = (head: string, fragments: readonly string[]): string | null => {
+  const firstCount = fragments.findIndex(
+    (_fragment, index) => !holds(`${head}: ${fragments.slice(0, index + 1).join("; ")};`),
+  );
+  if (firstCount < 1) {
+    return null;
+  }
+  const second = `${fragments.slice(firstCount).join("; ")}.`;
+  return holds(second) ? `${head}: ${fragments.slice(0, firstCount).join("; ")};\n${second}` : null;
+};
+
+/**
+ * THE LAST RESORT (decided by Nick, 2026-10-02). Every one-line form failed,
+ * so the clause takes a second line rather than drop a rung, the age, the
+ * agent rung's minute or the order block's reason — and with a second line
+ * there is room again, so the fullest form whose split holds is the one used.
+ * That some split holds is checked, not argued: coverage-render.test.ts
+ * sweeps every shape of all five rungs beside the longest order block.
+ */
+const twoLines = (head: string, forms: readonly (readonly string[])[]): string => {
+  const splits = forms.map((fragments) => splitOf(head, fragments));
+  return splits.find(isPresent) ?? lineOf(head, forms[forms.length - 1] ?? []);
+};
+
+/**
+ * THE AGE IS NOT DECORATION ANY MORE, AND NEITHER IS THE REASON. Both rungs
+ * gapped with an instant each, beside the longest order block, is 220
+ * characters against the 160 a line of the briefing seat rests on. The old
+ * answer was `fit`, which drops a whole fragment — so it cut the order block,
+ * then its reason (review H1, decided by Nick, 2026-10-02). Now the sentence
+ * is shortened in LINE_FORMS' order and, past the last form, split.
  */
 export const coverageClause = (record: CoverageRecord, now: Date): string => {
   if (
@@ -408,19 +453,9 @@ export const coverageClause = (record: CoverageRecord, now: Date): string => {
     return HUB_SILENT;
   }
   const head = headOf(record);
-  // Spent in this order: the order block's REASON first, then the ages, and
-  // the order block's state word never (01a §3.7). The ages outrank the
-  // reason because COV-11 rests on them: a caveat repeated every day is told
-  // apart from a recurring gap only by its age (coverage-fire-rate.test.ts),
-  // while the reason is printed in full by doctor beside its count. `fit` cuts
-  // whole trailing fragments only if even the plainest line will not hold.
-  const attempts = [
-    fragmentsOf(record, now, true, true),
-    fragmentsOf(record, now, true, false),
-    fragmentsOf(record, now, false, true),
-  ];
-  const holding = attempts.find((fragments) => holdsEvery(head, fragments));
-  return fit(head, holding ?? fragmentsOf(record, now, false, false));
+  const forms = LINE_FORMS.map((form) => fragmentsOf(record, now, form));
+  const single = forms.find((fragments) => holds(lineOf(head, fragments)));
+  return single === undefined ? twoLines(head, forms) : lineOf(head, single);
 };
 
 export const coverageNote = (

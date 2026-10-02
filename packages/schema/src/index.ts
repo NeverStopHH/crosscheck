@@ -365,6 +365,7 @@ export type {
   TelemetryLossReport,
 } from "./telemetry-loss.ts";
 export {
+  BRACKETABLE_KINDS,
   CAUSAL_GUARANTEES,
   CAUSAL_GUARANTEE_REASONS,
   GUARANTEE_KINDS,
@@ -375,6 +376,8 @@ export {
   ORDER_REASON_STRENGTH,
   STORED_GUARANTEE_REASONS,
   foldGuaranteeDeclaration,
+  isAdmissibleReason,
+  isWeakerReason,
   stateOfOrderReason,
   weakerGuarantee,
 } from "./causal-guarantees.ts";

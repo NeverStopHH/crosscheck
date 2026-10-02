@@ -76,6 +76,10 @@ import type {
 } from "@crosscheck/connector-core/http/hub.ts";
 import { buildEnvelope } from "@crosscheck/connector-core/capture/records.ts";
 import { ALLOCATION_FAILED } from "@crosscheck/connector-core/capture/seq.ts";
+import {
+  CONFERENCE_CONNECTOR,
+  guaranteeDeclarationFor,
+} from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { mintClaimId } from "@crosscheck/connector-core/mcp/tools/shared.ts";
 import { recordConferenceRun } from "@crosscheck/connector-core/state/conference-cost.ts";
 // Straight from core since the relocation: a conference is a command a
@@ -477,6 +481,10 @@ const publishFindings = async (
     // field" instead, which is a statement about the install rather than
     // about this one state-less session.
     seq: ALLOCATION_FAILED,
+    // Its own profile, never a host's (decided by Nick, 2026-10-02): every
+    // kind `unavailable`, because nothing here takes a position
+    // (connector-core guarantees/declarations.ts).
+    guarantees: guaranteeDeclarationFor(CONFERENCE_CONNECTOR),
   });
   if (!registered.ok) {
     return {
@@ -561,8 +569,10 @@ const publishFindings = async (
     };
   } finally {
     // ALWAYS: a conference must not leave a session in a teammate's presence
-    // list because publishing threw.
-    await endSession(hub, sessionId);
+    // list because publishing threw. With the refusal, like the register: an
+    // omitted seq would read "a connector from before this field" (review H4's
+    // scan holds every endSession call to a seq).
+    await endSession(hub, sessionId, ALLOCATION_FAILED);
   }
 };
 

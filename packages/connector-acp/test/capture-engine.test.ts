@@ -6,13 +6,15 @@
  * the pipe above this layer is Block 3's untouched proof.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { sessionEvents } from "@crosscheck/server";
 
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
-import { getDiagnosis, getPresence } from "@crosscheck/connector-core/http/hub.ts";
+import { spoolPendingEndPath } from "@crosscheck/connector-core/config/paths.ts";
+import { getDiagnosis, getPresence, registerSession } from "@crosscheck/connector-core/http/hub.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import * as claudeToolEvents from "../../connector-claude/src/capture/tool-events.ts";
 
@@ -402,6 +404,42 @@ describe("the §2.4 mapping against a live hub", () => {
       presence.data.some((entry) => entry.sessionId === "cc_acp-fake-agent--sess_close_b"),
     ).toBe(false);
     expect(await readSessionState(h.home, "acp-fake-agent--sess_close_b")).toBeNull();
+  });
+
+  test("a deferred end the shutdown reap spends carries the position its marker holds", async () => {
+    // Arrange: a live session gives the reap its (home, repo); a second session
+    // ended earlier and left the marker SessionEnd writes, with its position.
+    const h = await harness("deferred-seq");
+    handshake(h, "sess_live", h.repo);
+    await h.capture.settle();
+    const deferredId = "cc_acp-fake-agent--sess_deferred";
+    const epoch = crypto.randomUUID();
+    const registered = await registerSession(h.hub, {
+      id: deferredId,
+      agentKind: "acp:fake-agent",
+      repo: REPO_ID,
+      branch: "main",
+      baseCommit: "0".repeat(40),
+      status: "implementing",
+      seq: { epoch, n: 0 },
+    });
+    expect(registered.ok).toBe(true);
+    const marker = spoolPendingEndPath(h.home, h.hub.repoKey, "acp-fake-agent--sess_deferred");
+    await mkdir(dirname(marker), { recursive: true });
+    await writeFile(
+      marker,
+      JSON.stringify({ crosscheckSessionId: deferredId, at: h.clock.value.toISOString(), seq: { epoch, n: 7 } }),
+    );
+
+    // Act
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert: the end is positioned where SessionEnd put it, not pre_seq_connector.
+    const rows = await hub.db.select().from(sessionEvents);
+    const ended = rows
+      .filter((row) => row.sessionId === deferredId && row.kind === "session.ended")
+      .map((row) => ({ seqN: row.seqN, seqReason: row.seqReason }));
+    expect(ended).toEqual([{ seqN: 7, seqReason: "sequenced" }]);
   });
 });
 

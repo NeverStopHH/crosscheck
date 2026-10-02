@@ -47,8 +47,18 @@ describe("the declaration_contradicted line", () => {
     expect(contradictionDoctorLine(0)).toEqual({
       level: "PASS",
       name: "declaration_contradicted",
-      detail: "no declaration of your sessions was overruled by a row of its own",
+      detail:
+        "counts your own sessions only, not your team's: no declaration of theirs was overruled by a row of its own",
     });
+  });
+
+  test("every count says plainly that it is your own sessions, not the team's (decided by Nick, 2026-10-02)", () => {
+    for (const count of [0, 1, 3]) {
+      // Act
+      const { detail } = contradictionDoctorLine(count);
+      // Assert: the scope comes first, before the number a reader might read as the team's.
+      expect(detail.startsWith("counts your own sessions only, not your team's:"), detail).toBe(true);
+    }
   });
 
   test("any overruled declaration is a warning that names the count and the cap", () => {

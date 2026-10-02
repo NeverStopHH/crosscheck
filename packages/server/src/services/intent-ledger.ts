@@ -21,7 +21,7 @@
  * file, and the unique `(work_context_id, version)` index is what makes that a
  * statement about the TABLE rather than about this module's discipline.
  */
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import {
   MAX_COMMIT_CLOCK_SKEW_MS,
   MAX_INTENT_CHAIN_VERSIONS,
@@ -39,7 +39,11 @@ import type {
 import { intentScope, workContextIntents } from "../db/schema.ts";
 import { causalComparisonOf, compareEvents } from "./session-order.ts";
 import { seqReasonOf, windowFloorOf } from "./session-events.ts";
-import { capContradictedGuarantee, contradictsGuaranteed } from "./causal-guarantees.ts";
+import {
+  capContradictedGuarantee,
+  capLifecycleContradictions,
+  contradictsGuaranteed,
+} from "./causal-guarantees.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type {
   CausalIndeterminacy,
@@ -503,12 +507,17 @@ export const appendIntentVersion = async (
   // ROWS OUTRANK DECLARATIONS (01a §3.6), for the two kinds that live here
   // rather than in `session_events`: a worker's version (observed) or one with
   // no position caps a `guaranteed` declaration of its kind.
-  if (contradictsGuaranteed(intentSeqKind(provenance), stamp !== null, seqReasonOf(input.seq))) {
-    await capContradictedGuarantee(
-      deps.db,
-      input.authorSessionId,
-      head === null ? "intent.declared" : "intent.amended",
-    );
+  const ledgerKind = head === null ? "intent.declared" : "intent.amended";
+  if (contradictsGuaranteed(intentSeqKind(provenance), stamp !== null)) {
+    await capContradictedGuarantee(deps.db, input.authorSessionId, ledgerKind);
+  }
+  // A version is positioned in its author session's counter, so one past the
+  // session's end contradicts the end's `lifecycle` (review M1).
+  if (stamp !== null) {
+    await capLifecycleContradictions(deps.db, input.authorSessionId, ledgerKind, {
+      epoch: stamp.epoch,
+      n: stamp.n,
+    });
   }
   if (scope.length > 0) {
     await deps.db
@@ -585,6 +594,31 @@ export const countIntentPositions = async (
     })
     .from(workContextIntents);
   return rows[0] ?? { total: 0, unpositioned: 0 };
+};
+
+/**
+ * Is any version this session authored positioned past `end`, or in another
+ * epoch (review M1)? POSITIONS ONLY — no summary, no scope, no reason — so it
+ * reads the ledger's clock, which is what INT-7 permits it to be read for.
+ * Its one caller lowers a `session.ended` declaration; it gates nothing.
+ */
+export const hasIntentPositionPast = async (
+  db: DbExecutor,
+  sessionId: string,
+  end: { readonly epoch: string; readonly n: number },
+): Promise<boolean> => {
+  const rows = await db
+    .select({ id: workContextIntents.id })
+    .from(workContextIntents)
+    .where(
+      and(
+        eq(workContextIntents.authorSessionId, sessionId),
+        isNotNull(workContextIntents.seq),
+        or(ne(workContextIntents.seqEpoch, end.epoch), gt(workContextIntents.seq, end.n)),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 };
 
 /** A ledger row as the order gate is asked about it. */
