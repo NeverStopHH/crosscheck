@@ -15616,6 +15616,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
  * PRINTS: packages/cli/test/pilot-render.test.ts 19
+ * PRINTS: packages/cli/test/pin-denylist-door.test.ts 6
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
@@ -15628,8 +15629,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/terminal.test.ts 3
  * PRINTS: packages/cli/test/trace-command.test.ts 2
- * PRINTS: packages/cli/test/verdict-render.test.ts 4
- * PRINTS: packages/cli/test/waiver-render.test.ts 7
+ * PRINTS: packages/cli/test/verdict-render.test.ts 5
+ * PRINTS: packages/cli/test/waiver-render.test.ts 12
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
@@ -15690,7 +15691,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
- * PRINTS: packages/connector-core/test/capture-losses.test.ts 6
+ * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
@@ -15778,7 +15779,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
- * PRINTS: packages/connector-core/test/verdict-wire.test.ts 1
+ * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
@@ -15810,7 +15811,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 7
  * PRINTS: packages/server/test/coverage.test.ts 12
- * PRINTS: packages/server/test/ddl-sync.test.ts 11
+ * PRINTS: packages/server/test/ddl-sync.test.ts 16
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
@@ -15827,6 +15828,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 32
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
+ * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
  * PRINTS: packages/server/test/passkeys.test.ts 6
  * PRINTS: packages/server/test/pglite-exit-code.test.ts 5
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
@@ -15864,11 +15866,12 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
- * PRINTS: packages/server/test/ui-passkeys.test.ts 7
+ * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
+ * PRINTS: packages/server/test/waiver-closure-surfaces.test.ts 4
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
