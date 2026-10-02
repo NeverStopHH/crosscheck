@@ -13240,8 +13240,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a kind declared twice keeps the stronger triple",
     file: `${SCHEMA}/src/causal-guarantees.ts`,
-    from: "held !== undefined && rankOf(held.guarantee) <= rankOf(triple.guarantee) ? held : triple;",
-    to: "held !== undefined && rankOf(held.guarantee) >= rankOf(triple.guarantee) ? held : triple;",
+    // Re-pointed by review L1: ties are broken by reason strength.
+    from: "held !== undefined && !isWeakerReason(triple.reason, held.reason) ? held : triple;",
+    to: "held !== undefined && isWeakerReason(triple.reason, held.reason) ? held : triple;",
     test: `${SCHEMA}/test/causal-guarantees.test.ts`,
     because: "a block that says partial and guaranteed for one kind is read as guaranteed",
   },
@@ -13276,8 +13277,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a re-register strengthens a session's declaration",
     file: `${SERVER}/src/services/causal-guarantees.ts`,
-    from: "    } else if (rankOf(next.guarantee) < rankOf(row.guarantee)) {",
-    to: "    } else if (rankOf(next.guarantee) !== rankOf(row.guarantee)) {",
+    // Re-pointed by review L1: the comparison is by reason strength.
+    from: "    } else if (isWeakerReason(next.reason, row.reason)) {",
+    to: "    } else if (next.reason !== row.reason) {",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "rows produced under a partial declaration are re-described as guaranteed after the fact",
   },
@@ -14040,6 +14042,23 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a commit.observed guarantee that reached the table survives every commit row, all of which are upper bounds",
   },
+  // Review L1: ties inside one state.
+  {
+    label: "a reason tie keeps whichever reason came first",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    to: "  stateOfOrderReason(candidate) !== stateOfOrderReason(held) &&\n  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    test: `${SCHEMA}/test/causal-guarantees.test.ts`,
+    because: "a block that sends the MCP reason before the summarizer's reads ambiguous_session_possible, the stronger of two partial reasons",
+  },
+  {
+    label: "a re-register keeps the stronger reason of one state",
+    file: `${SCHEMA}/src/causal-guarantees.ts`,
+    from: "  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    to: "  stateOfOrderReason(candidate) !== stateOfOrderReason(held) &&\n  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a session that re-registers with derived_after_the_fact keeps reading ambiguous_session_possible",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14281,7 +14300,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
- * PRINTS: packages/schema/test/causal-guarantees.test.ts 6
+ * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
@@ -14290,7 +14309,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
- * PRINTS: packages/server/test/causal-guarantees.test.ts 20
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 21
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1

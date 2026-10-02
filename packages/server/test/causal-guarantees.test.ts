@@ -203,6 +203,34 @@ describe("the declaration a session registers with", () => {
     expect([...BRACKETABLE_KINDS].sort()).toEqual(Object.values(TARGET_EVENT_KINDS).sort());
   });
 
+  test("a re-register with a weaker reason in the same state lowers the reason (review L1)", async () => {
+    // Arrange
+    const { harness, developer } = await seed([
+      { kind: "claim.created", guarantee: "partial", reason: "ambiguous_session_possible" },
+    ]);
+    // Act
+    await registerTestSession(harness, developer.apiKey, {
+      guarantees: [{ kind: "claim.created", guarantee: "partial", reason: "derived_after_the_fact" }],
+    });
+    // Assert
+    expect((await effective(harness)).get("claim.created")).toEqual({
+      state: "partial",
+      reason: "derived_after_the_fact",
+    });
+  });
+
+  test("a re-register never lifts a cap to a declared partial reason (review L1)", async () => {
+    // Arrange: a bracketed declaration, capped by an unbracketed edit.
+    const { harness, developer } = await seed([BRACKETED_EDIT]);
+    await postEdit(harness, developer, 1);
+    // Act: the same session re-registers with an honest partial reason.
+    await registerTestSession(harness, developer.apiKey, {
+      guarantees: [{ kind: "file.modified", guarantee: "partial", reason: "unbracketed_lane" }],
+    });
+    // Assert: the cap is the weakest partial, and stays.
+    expect((await effective(harness)).get("file.modified")).toEqual(CAPPED);
+  });
+
   test("a re-register that sends no block leaves every kind undeclared", async () => {
     // Arrange
     const { harness, developer } = await seed([BRACKETED_EDIT]);

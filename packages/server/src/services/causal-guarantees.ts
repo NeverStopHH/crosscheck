@@ -23,7 +23,7 @@
  * never call this module (01a §3.7, 01 §3.7 (1)).
  */
 import { and, eq, gt, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
-import { CAUSAL_GUARANTEES, GUARANTEE_KINDS, foldGuaranteeDeclaration } from "@crosscheck/schema";
+import { GUARANTEE_KINDS, foldGuaranteeDeclaration, isWeakerReason } from "@crosscheck/schema";
 import type {
   CausalGuarantee,
   GuaranteeKind,
@@ -49,7 +49,6 @@ const CONTRADICTED: EffectiveGuarantee = {
   reason: "declaration_contradicted",
 };
 
-const rankOf = (state: CausalGuarantee): number => CAUSAL_GUARANTEES.indexOf(state);
 
 /** At creation: the folded block, minus the triples that read undeclared anyway. */
 export const storeDeclaredGuarantees = async (
@@ -92,7 +91,7 @@ export const weakenDeclaredGuarantees = async (
     );
     if (next === undefined || next.guarantee === "undeclared") {
       await db.delete(sessionCausalGuarantees).where(where);
-    } else if (rankOf(next.guarantee) < rankOf(row.guarantee)) {
+    } else if (isWeakerReason(next.reason, row.reason)) {
       await db
         .update(sessionCausalGuarantees)
         .set({ guarantee: next.guarantee, reason: next.reason })

@@ -358,6 +358,7 @@ export {
   STORED_GUARANTEE_REASONS,
   foldGuaranteeDeclaration,
   isAdmissibleReason,
+  isWeakerReason,
   stateOfOrderReason,
   weakerGuarantee,
 } from "./causal-guarantees.ts";

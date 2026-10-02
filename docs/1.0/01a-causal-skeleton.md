@@ -1422,3 +1422,9 @@ The evidence for each row:
     can be stored `guaranteed` from the wire, so the tests write the row directly: the cap is the second
     guard.
   - ACP's seq forwarding and the render rule were covered under H4 and H1.
+- **L1 — a tie inside one state kept the stronger reason.** The wire fold kept the first triple of a
+  kind sent twice, and a re-register compared states only. Both now break the tie by
+  `ORDER_REASON_STRENGTH` (`isWeakerReason` in the schema), the order the hub's fold over a scope
+  already used. A kind sent as `ambiguous_session_possible` and `derived_after_the_fact` keeps the
+  latter in either order, and a re-register can lower the reason inside `partial`. A cap is the
+  weakest `partial` reason, so a re-register never lifts one. The failure falls on the weaker reason.

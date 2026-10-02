@@ -157,6 +157,15 @@ export const ORDER_REASON_STRENGTH: readonly OrderReason[] = [
   "lifecycle",
 ];
 
+/**
+ * The weaker of two reasons by ORDER_REASON_STRENGTH (review L1): ranking by
+ * the reason ranks by state first, and breaks a tie inside one state the way
+ * the hub's fold over a scope does, so a kind sent twice, or re-registered,
+ * keeps the weaker of two `partial` reasons rather than whichever came first.
+ */
+export const isWeakerReason = (candidate: OrderReason, held: OrderReason): boolean =>
+  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);
+
 /** The state an order reason belongs to: a declared reason's own, the reader's three below. */
 export const stateOfOrderReason = (reason: OrderReason): CausalGuarantee => {
   if (isMember(CAUSAL_GUARANTEE_REASONS, reason)) {
@@ -247,7 +256,7 @@ const foldTriple = (raw: unknown): CausalGuaranteeTriple | null => {
 /**
  * The declaration a hub stores for a register body's `guarantees` value.
  * Unknown kinds drop (no question asks about them); unknown or incoherent
- * values become `undeclared`; a kind sent twice keeps the weaker; an
+ * values become `undeclared`; a kind sent twice keeps the weaker reason; an
  * unreadable or oversized block is stored as nothing. Ordered by
  * GUARANTEE_KINDS, so two equal declarations are equal values.
  */
@@ -261,8 +270,7 @@ export const foldGuaranteeDeclaration = (raw: unknown): readonly CausalGuarantee
       return kept;
     }
     const held = kept.get(triple.kind);
-    const weaker =
-      held !== undefined && rankOf(held.guarantee) <= rankOf(triple.guarantee) ? held : triple;
+    const weaker = held !== undefined && !isWeakerReason(triple.reason, held.reason) ? held : triple;
     return new Map([...kept, [triple.kind, weaker]]);
   }, new Map());
   return GUARANTEE_KINDS.flatMap((kind) => {

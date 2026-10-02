@@ -143,6 +143,17 @@ describe("foldGuaranteeDeclaration — folded, never refused, never strengthened
     }
   });
 
+  test("a kind declared twice in one state keeps the weaker reason, in either order (review L1)", () => {
+    // Arrange: two partial reasons; the derived worker's is the weaker (ORDER_REASON_STRENGTH).
+    const mcp = { kind: "claim.created", guarantee: "partial", reason: "ambiguous_session_possible" } as const;
+    const derived = { kind: "claim.created", guarantee: "partial", reason: "derived_after_the_fact" } as const;
+
+    // Act + Assert
+    for (const sent of [[mcp, derived], [derived, mcp]]) {
+      expect(foldGuaranteeDeclaration(sent)).toEqual([derived]);
+    }
+  });
+
   test.each([
     ["not an array", { kind: "file.modified" }],
     ["a string", "guaranteed"],
