@@ -532,7 +532,8 @@ say, echoes included.
 *Measured 2026-10-02 under §1–§8 as amended by A1–A5. Run order seeded and
 written to the manifest before the first run. Configuration: Claude Code
 2.1.286, `claude-opus-5-5`, in its standard user configuration including its
-built-in security plugin (A4.1).*
+built-in security plugin (A4.1). The manifest and the report are published in
+[`at7-results/2026-10-02/`](at7-results/2026-10-02/README.md).*
 
 **Verdict (pre-registered): FAIL.**
 - **Primary endpoint:** k = 5 of 20 counted treatment runs carried a §5 hit.
