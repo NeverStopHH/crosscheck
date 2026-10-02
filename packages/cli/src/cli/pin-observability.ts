@@ -315,7 +315,7 @@ const waiverSentence = (registry: PinRegistry): string | null => {
  * Without it, a repo whose waivers were just closed reads as one where nobody
  * ever opened a fence.
  */
-const closedWaiverSentence = (registry: PinRegistry): string | null => {
+const closedFencesSentence = (registry: PinRegistry): string | null => {
   const closed = registry.pins.filter((pin) => (pin.closedWaiver ?? null) !== null).length;
   return closed === 0
     ? null
@@ -331,7 +331,7 @@ export const pinStatusLines = (
   const orphans = orphanSentence(orphanedPins(registry));
   const shadows = shadowedPinPaths(registry, patterns);
   const waivers = waiverSentence(registry);
-  const closed = closedWaiverSentence(registry);
+  const closed = closedFencesSentence(registry);
   return [
     pinCoverageSentence(registry, now),
     ...(orphans === null ? [] : [`  ${orphans}`]),

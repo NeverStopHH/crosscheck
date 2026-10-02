@@ -18,9 +18,9 @@ import {
 import { getTableConfig } from "drizzle-orm/pg-core";
 
 import { sessionCausalGuarantees } from "../src/db/schema.ts";
+import { BOOTSTRAP_SQL_URL, guardedBlockNamed } from "./fixtures/bootstrap-sql.ts";
 import { createTestHarness } from "./helpers.ts";
 
-const BOOTSTRAP_SQL_URL = new URL("../src/db/bootstrap.sql", import.meta.url);
 const CLAIMS_BODY_CHECK_PATTERN =
   /claims_body_length_check CHECK \(char_length\(body\) <= (\d+)\)/;
 const QUESTIONS_BODY_CHECK_PATTERN =
@@ -29,23 +29,6 @@ const PINS_SURFACE_CHECK_PATTERN =
   /pins_surface_length_check CHECK \(char_length\(surface\) <= (\d+)\)/;
 const PINS_CHECK_RECIPE_PATTERN =
   /pins_check_length_check\s+CHECK \(check_recipe IS NULL OR char_length\(check_recipe\) <= (\d+)\)/;
-/**
- * The one guarded `DO $$ … $$;` block that mentions a given constraint.
- *
- * bootstrap.sql holds several, and it runs top to bottom on every hub start;
- * picking one by its own name is the only extraction that stays correct as
- * blocks are appended below it.
- */
-const guardedBlockNamed = (sql: string, constraintName: string): string => {
-  const blocks = sql.match(/DO \$\$[\s\S]*?END\s*\n\$\$;/g) ?? [];
-  const matching = blocks.filter((block) => block.includes(constraintName));
-  if (matching.length !== 1) {
-    throw new Error(
-      `expected exactly 1 guarded block naming ${constraintName}, found ${String(matching.length)}`,
-    );
-  }
-  return matching[0] ?? "";
-};
 
 const WAIVER_REASON_CHECK_PATTERN =
   /fence_waivers_reason_length_check CHECK \(char_length\(reason\) <= (\d+)\)/;

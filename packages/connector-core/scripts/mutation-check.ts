@@ -15352,7 +15352,7 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${SERVER}/src/db/bootstrap.sql`,
     from: "              AND granted_by IS NULL AND reason = 'authorizing_credential_revoked'));\n",
     to: "              AND granted_by IS NULL));\n",
-    test: `${SERVER}/test/ddl-sync.test.ts`,
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
     because: "a row reading closed-by-the-hub can be written with any sentence, and no longer says the passkey was revoked",
   },
   {
@@ -15360,7 +15360,7 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${SERVER}/src/db/bootstrap.sql`,
     from: "          OR (authority = 'system' AND kind = 'revoke' AND credential_id IS NOT NULL\n",
     to: "          OR (authority = 'system' AND credential_id IS NOT NULL\n",
-    test: `${SERVER}/test/ddl-sync.test.ts`,
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
     because: "a grant nobody approved holds a fence open under an authority no person holds",
   },
   {
@@ -15368,7 +15368,7 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${SERVER}/src/db/bootstrap.sql`,
     from: "      AND pg_get_constraintdef(oid) LIKE '%authorizing_credential_revoked%'\n",
     to: "",
-    test: `${SERVER}/test/ddl-sync.test.ts`,
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
     because: "every existing hub refuses the closure a passkey revocation writes, and the revocation fails with it",
   },
   {
@@ -15376,7 +15376,7 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${SERVER}/src/db/bootstrap.sql`,
     from: "ALTER TABLE fence_waivers ALTER COLUMN granted_by DROP NOT NULL;\n",
     to: "",
-    test: `${SERVER}/test/ddl-sync.test.ts`,
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
     because: "the closure has no person to name, so on a hub that has the table the revocation cannot be written",
   },
   {
@@ -15384,7 +15384,7 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${SERVER}/src/db/schema.ts`,
     from: "   OR (${table.authority} = '${sql.raw(SYSTEM_WAIVER_AUTHORITY)}' AND ${table.kind} = 'revoke'",
     to: "   OR (${table.authority} = 'never' AND ${table.kind} = 'revoke'",
-    test: `${SERVER}/test/ddl-sync.test.ts`,
+    test: `${SERVER}/test/ddl-sync-waiver-authority.test.ts`,
     because: "a migration generated from drizzle drops the third authority, and the two DDL sources disagree",
   },
   {
@@ -15535,6 +15535,16 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${CORE}/test/verdict-wire.test.ts`,
     because: "trace prints no verdict at all over a field it only needed to explain a closed fence",
   },
+  // loss-accounting §10 item 4, the sweep's summary: what it counts must be
+  // what it recorded.
+  {
+    label: "a sweep's summary counts an excluded rename as a rename it never recorded",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: '  const missing = swept.filter((entry) => entry.status === "missing").length + deniedPaths.size;\n',
+    to: '  const missing = swept.filter((entry) => entry.status === "missing").length;\n',
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the summary says the register holds a rename the hub was told is a missing path",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -15616,7 +15626,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
  * PRINTS: packages/cli/test/pilot-render.test.ts 19
- * PRINTS: packages/cli/test/pin-denylist-door.test.ts 6
+ * PRINTS: packages/cli/test/pin-denylist-door.test.ts 7
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
@@ -15811,7 +15821,8 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 7
  * PRINTS: packages/server/test/coverage.test.ts 12
- * PRINTS: packages/server/test/ddl-sync.test.ts 16
+ * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
+ * PRINTS: packages/server/test/ddl-sync.test.ts 11
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2

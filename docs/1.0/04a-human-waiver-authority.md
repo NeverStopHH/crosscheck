@@ -394,8 +394,8 @@ closed_by: admin/system*.
   `pg_get_constraintdef`) and leaves the constraint alone on every later
   start. `granted_by` lost its `NOT NULL` (an `ALTER … DROP NOT NULL` for hubs
   that have the table); the CHECK is what keeps a person's row from being
-  written without a person. `ddl-sync.test.ts` covers both sources, the upgrade
-  of an old hub, the restart and the refusals.
+  written without a person. `ddl-sync-waiver-authority.test.ts` covers both
+  sources, the upgrade of an old hub, the restart and the refusals.
 - **The write.** `revokePasskey` (`services/passkeys.ts`) is the one writer of
   a revocation for all three paths — the owner during the cool-off
   (`/ui/passkeys/:id/revoke`), a passkey ceremony (`revoke_passkey`) and the
@@ -427,7 +427,7 @@ closed_by: admin/system*.
   the reason, which is the pre-D-PK-1 reading, never an open fence.
 
 Tests: server `passkey-revocation-terminates`, `waiver-closure-surfaces`,
-`ui-passkeys` (D-PK-1), `ddl-sync` (three cases); cli `waiver-render` (D-PK-1),
+`ui-passkeys` (D-PK-1), `ddl-sync-waiver-authority`; cli `waiver-render` (D-PK-1),
 `verdict-render`, `passkey-revocation-cli`; core `verdict-wire`. Each guard has
 an anchor at the tail of `connector-core/scripts/mutation-check.ts`, every one
 `caught`.

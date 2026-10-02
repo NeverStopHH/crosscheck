@@ -230,7 +230,9 @@ export const listClosedFences = async (input: {
   readonly db: DbExecutor;
   readonly now: Date;
 }): Promise<readonly ClosedFence[]> => {
-  const rows = await closureRows(input.db, input.now, undefined);
+  // Bounded in the query, not only after it: a hub-wide read must not grow
+  // with every closure ever written whose grant is still ahead.
+  const rows = await closureRows(input.db, input.now, undefined).limit(MAX_CLOSED_FENCES_LISTED);
   if (rows.length === 0) {
     return [];
   }
