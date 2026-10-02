@@ -1414,3 +1414,11 @@ The evidence for each row:
     lists that reader and its one caller, `services/sessions.ts`, with the reason (§13.10).
   - The failure falls toward `partial / declaration_contradicted`. A cap is never lifted, so a reaped
     session that later revives and ends with a position keeps its cap.
+- **M2 — guards with no test that would fail if weakened.** Each now has a test and a proven anchor in
+  `server/test/causal-guarantees.test.ts`:
+  - the `intent.amended` branch of the ledger's cap (a second, amending version);
+  - the `epoch_conflict` path (a second event on a taken position);
+  - the cap from a derived `claim.created` row and from a `commit.observed` row. After H2 neither kind
+    can be stored `guaranteed` from the wire, so the tests write the row directly: the cap is the second
+    guard.
+  - ACP's seq forwarding and the render rule were covered under H4 and H1.

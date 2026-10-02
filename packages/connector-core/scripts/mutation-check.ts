@@ -14007,6 +14007,39 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a successor flushes a version stamped past the end, and the end keeps reading as the session's last position",
   },
+  // Review M2: the cap paths that had no test.
+  {
+    label: "an amending intent version caps intent.declared instead",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: '  const ledgerKind = head === null ? "intent.declared" : "intent.amended";',
+    to: '  const ledgerKind = "intent.declared";',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a worker's amendment overrules an intent.amended declaration and every surface keeps reading it guaranteed",
+  },
+  {
+    label: "an event that loses its position to another caps nothing",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: '    id: await write(null, null, "epoch_conflict"),',
+    to: '    id: await write(stamp.epoch, stamp.n, "epoch_conflict"),',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "two events claiming one slot leave the kind reading guaranteed, and the second event's row is dropped",
+  },
+  {
+    label: "a derived claim caps no claim.created guarantee",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '    seqKind: body.provenance === "derived" ? "observed" : "emitted",',
+    to: '    seqKind: "emitted",',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a claim.created guarantee that reached the table survives the summarizer's claims, which are positioned after the fact",
+  },
+  {
+    label: "a commit aggregate caps no commit.observed guarantee",
+    file: `${SERVER}/src/services/commit-evidence.ts`,
+    from: '          seqKind: "observed",',
+    to: '          seqKind: "emitted",',
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "a commit.observed guarantee that reached the table survives every commit row, all of which are upper bounds",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14257,7 +14290,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
- * PRINTS: packages/server/test/causal-guarantees.test.ts 16
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 20
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1

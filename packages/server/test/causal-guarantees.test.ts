@@ -23,6 +23,7 @@ import {
 } from "../src/services/causal-guarantees.ts";
 import type { EffectiveGuarantee } from "../src/services/causal-guarantees.ts";
 import {
+  TEST_START_ISO,
   VALID_SESSION_BODY,
   createTestDeveloper,
   createTestHarness,
@@ -30,6 +31,7 @@ import {
   postRecords,
   recordEnvelope,
   registerTestSession,
+  validClaimBody,
   validWorkContextBody,
   WORK_CONTEXT_ID,
 } from "./helpers.ts";
@@ -99,11 +101,12 @@ const postEdit = async (
   developer: TestDeveloper,
   n: number,
   after?: number,
+  path: string = `src/file-${String(n)}.ts`,
 ): Promise<void> => {
   const target = recordEnvelope("target", {
     workContextId: WORK_CONTEXT_ID,
     kind: "file",
-    value: `src/file-${String(n)}.ts`,
+    value: path,
   });
   await postRecords(harness, developer, {
     records: [
@@ -414,6 +417,75 @@ describe("rows outrank declarations", () => {
     // Assert
     expect(reaped.ended.length).toBe(1);
     expect(reading.get("session.ended")).toEqual(CAPPED);
+  });
+
+  test("an amending intent version caps intent.amended, not only intent.declared (review M2)", async () => {
+    // Arrange: two derived versions of one intent — the second amends the first.
+    const { harness, developer } = await seed();
+    await holdGuaranteed(harness, "intent.amended");
+    const derivedIntent = (summary: string) =>
+      validWorkContextBody({
+        intent: { summary, provenance: "derived", confidence: 0.4, capturedAt: "2026-07-24T09:00:00.000Z" },
+      });
+    await postRecords(harness, developer, {
+      ...recordEnvelope("work_context", derivedIntent("A model's first guess.")),
+      seq: { epoch: EPOCH, n: 1 },
+    });
+    // Act
+    await postRecords(harness, developer, {
+      ...recordEnvelope("work_context", derivedIntent("A model's second guess, narrower.")),
+      seq: { epoch: EPOCH, n: 2 },
+    });
+    // Assert
+    expect((await effective(harness)).get("intent.amended")).toEqual(CAPPED);
+  });
+
+  test("a second event claiming a taken position caps its kind (review M2)", async () => {
+    // Arrange: one bracketed edit holds n = 2.
+    const { harness, developer } = await seed([BRACKETED_EDIT]);
+    await postEdit(harness, developer, 2, 1);
+    // Act: a different edit claims the same slot, and is stored epoch_conflict.
+    await postEdit(harness, developer, 2, 1, "src/other.ts");
+    // Assert
+    expect((await effective(harness)).get("file.modified")).toEqual(CAPPED);
+  });
+
+  test("a derived claim caps a claim.created guarantee stored past the wire fold (review M2)", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+    await holdGuaranteed(harness, "claim.created");
+    // Act: a summarizer's claim, stored observed.
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        {
+          ...recordEnvelope("claim", validClaimBody({ provenance: "derived", confidence: 0.4 })),
+          seq: { epoch: EPOCH, n: 3 },
+        },
+      ],
+    });
+    // Assert
+    expect((await effective(harness)).get("claim.created")).toEqual(CAPPED);
+  });
+
+  test("a commit aggregate caps a commit.observed guarantee stored past the wire fold (review M2)", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+    await holdGuaranteed(harness, "commit.observed");
+    // Act: SessionStart's aggregate, positioned, which the hub stores observed.
+    await postRecords(harness, developer, {
+      ...recordEnvelope("commit_evidence", {
+        repo: VALID_SESSION_BODY.repo,
+        collectedAt: TEST_START_ISO,
+        windowDays: 14,
+        authors: [
+          { name: "Robin", email: "robin@example.com", latestCommitAt: TEST_START_ISO, commitCount: 5 },
+        ],
+      }),
+      seq: { epoch: EPOCH, n: 4 },
+    });
+    // Assert
+    expect((await effective(harness)).get("commit.observed")).toEqual(CAPPED);
   });
 
   test("the cap outlives the row that caused it", async () => {
