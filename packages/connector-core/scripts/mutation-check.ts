@@ -14017,7 +14017,7 @@ export const MUTATIONS: readonly Mutation[] = [
     from: "    changed.length - candidates.length,\n",
     to: "    0,\n",
     test: `${CORE}/test/capture-losses.test.ts`,
-    because: "a turn that touched the 61st dirty path loses it to a slice the freshness check never reaches, and nothing counts it",
+    because: "a turn that touched a dirty path past the bound loses it to a slice the freshness check never reaches, and nothing counts it",
   },
   {
     label: "a skipped git lane is a session-state number and nothing else",
@@ -15284,6 +15284,16 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "",
     test: `${ACP}/test/derive-doctor.test.ts`,
     because: "an ACP user cannot learn that its host emits no commit.observed",
+  },
+  // loss-accounting §10 item 8 (Nick, 2026-10-02): the git lane examines far
+  // more dirty paths and books only the ones it never looked at.
+  {
+    label: "the git lane examines only sixty dirty paths and books the stale rest as lost",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const MAX_GIT_TOUCH_CANDIDATES = 2000;\n",
+    to: "export const MAX_GIT_TOUCH_CANDIDATES = 60;\n",
+    test: `${CORE}/test/capture-losses.test.ts`,
+    because: "a worktree that stays more than sixty files dirty reads incomplete on every Stop, though every one of them is stale",
   },
 ];
 
