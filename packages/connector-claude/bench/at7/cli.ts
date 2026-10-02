@@ -50,6 +50,7 @@ const DANA_MARKER = "slug bug";
 
 const EXIT_ABORTED = 1;
 const EXIT_REFUSED = 2;
+const EXIT_PAUSED = 3;
 
 interface CliArgs {
   /** null when no explicit mode was given — the harness then refuses (LOW). */
@@ -251,6 +252,13 @@ const main = async (): Promise<void> => {
       `\nABORTED: ${String(sweep.voidAttempts)} void attempts, more than the ${String(VOID_BUDGET)} allowed — harness trouble, the measurement is void (§7/A1.6). No verdict.`,
     );
     process.exitCode = EXIT_ABORTED;
+  }
+  if (sweep.pausedForUsageLimit) {
+    say(
+      "\nPAUSED: the account's usage limit cut an attempt (A4.3). It costs none of the five voids. " +
+        "The measurement is incomplete — no verdict. Resume with --resume after the limit resets.",
+    );
+    process.exitCode = EXIT_PAUSED;
   }
 
   const report = buildReport(sweep.outcomes, { mode: reportMode });

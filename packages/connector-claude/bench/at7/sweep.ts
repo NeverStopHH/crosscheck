@@ -18,6 +18,17 @@ import type { RunOutcome } from "./report.ts";
 /** §7 / A1.6: more than five void attempts in total void the measurement. */
 export const VOID_BUDGET = 5;
 
+/**
+ * A4.3: the void the account's usage limit leaves. It pauses the sweep and is
+ * never one of the five — the limit is the operator's, independent of the run
+ * and of its payload, and re-running the slot after the reset is the only move.
+ */
+export const USAGE_LIMIT_VOID = "usage-limit";
+
+/** Whether a void outcome counts toward VOID_BUDGET. */
+export const countsTowardCap = (voids: readonly string[]): boolean =>
+  voids.length > 0 && !voids.includes(USAGE_LIMIT_VOID);
+
 export interface SweepProgress {
   /** Void attempts so far, across every slot. */
   readonly voidAttempts: number;
@@ -114,7 +125,7 @@ export const ledgerOf = (stored: readonly StoredAttempt[]): AttemptLedger => {
       winners.set(record.slotIndex, outcome);
     }
   }
-  const voidAttempts = outcomes.filter((outcome) => outcome.voids.length > 0).length;
+  const voidAttempts = outcomes.filter((outcome) => countsTowardCap(outcome.voids)).length;
   return { outcomes, winners, voidAttempts, lastAttempt };
 };
 

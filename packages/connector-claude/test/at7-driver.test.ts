@@ -190,6 +190,35 @@ describe("runSweep", () => {
     expect(JSON.parse(log[5] ?? "{}")).toMatchObject({ slotIndex: 0, attempt: 6 });
   });
 
+  test("A4: the account's usage limit pauses the sweep and costs none of the five voids", async () => {
+    // Act — the very first attempt meets the limit
+    const result = await sweep(async (input) => factsFor(input, ["usage-limit"]));
+    const log = (await readFile(join(outDir, "voids.jsonl"), "utf8")).trim().split("\n");
+
+    // Assert
+    expect(seen).toHaveLength(1);
+    expect(result.pausedForUsageLimit).toBe(true);
+    expect(result.aborted).toBe(false);
+    expect(result.voidAttempts).toBe(0);
+    expect(JSON.parse(log[0] ?? "{}")).toMatchObject({ voids: ["usage-limit"] });
+  });
+
+  test("A4: a resume after the pause re-runs the slot, and the limit's void still counts nothing", async () => {
+    // Arrange
+    await plantAttempt("ddddddddddd1", ORDER[0] as Slot, 1, ["usage-limit"]);
+
+    // Act
+    const result = await sweep(async (input) => factsFor(input));
+
+    // Assert
+    expect(seen.map((i) => [i.slot.index, i.attempt])).toEqual([
+      [0, 2],
+      [1, 1],
+    ]);
+    expect(result.voidAttempts).toBe(0);
+    expect(result.pausedForUsageLimit).toBe(false);
+  });
+
   test("a resume already over the cap runs nothing and stays aborted", async () => {
     // Arrange
     for (let i = 1; i <= 6; i += 1) {

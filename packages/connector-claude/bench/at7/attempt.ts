@@ -206,6 +206,11 @@ const recordDocument = (
     mcpServers: record.init?.mcpServers ?? [],
     plugins: record.init?.plugins ?? [],
     pluginCount: record.init?.pluginCount ?? 0,
+    // A4.1: every run records the configuration it ran under.
+    pluginSources: record.init?.pluginSources ?? [],
+    // A4.2/A4.3: why the service broke off, when it did.
+    apiErrorTurns: record.apiErrorTurns ?? [],
+    terminalReason: record.terminalReason ?? null,
     briefing: record.sessionStartBriefing,
     firstAssistantText: record.firstAssistantText,
     finalResultText: record.finalResultText,

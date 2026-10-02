@@ -106,6 +106,16 @@ export interface RunRecord {
   readonly unknownEventTypes: readonly string[];
   readonly lineCount: number;
   readonly parseErrors: number;
+  /**
+   * One entry per synthetic (API-error) assistant turn: its `error` word as the
+   * stream gives it (`rate_limit` for the account's usage limit), or
+   * `api_error` when it names none (A4.2). Absent on a record built without it.
+   */
+  readonly apiErrorTurns?: readonly string[];
+  /** The result event's `terminal_reason` (`api_error` when the service broke off). */
+  readonly terminalReason?: string | null;
+  /** The result event's `api_error_status`, e.g. 429 at the usage limit. */
+  readonly apiErrorStatus?: number | null;
 }
 
 const McpServerSchema = z.looseObject({
@@ -152,6 +162,8 @@ const ResultEventSchema = z.looseObject({
   duration_ms: z.number().optional(),
   total_cost_usd: z.number().optional(),
   is_error: z.boolean().optional(),
+  terminal_reason: z.string().optional(),
+  api_error_status: z.number().optional(),
 });
 
 const TodoItemSchema = z.looseObject({ content: z.string().min(1) });
@@ -313,7 +325,13 @@ interface Accumulator {
   readonly errors: string[];
   readonly unknownEventTypes: string[];
   parseErrors: number;
+  readonly apiErrorTurns: string[];
+  terminalReason: string | null;
+  apiErrorStatus: number | null;
 }
+
+/** What a synthetic turn's error is called when the stream gives it no word. */
+const UNNAMED_API_ERROR = "api_error";
 
 const KNOWN_TYPES: ReadonlySet<string> = new Set([
   "system",
@@ -379,6 +397,11 @@ const handleAssistant = (
     if (event.message.model !== undefined) {
       acc.realAssistantModels.push(event.message.model);
     }
+  } else {
+    // A4.2: the service broke off. Its word (`rate_limit` at the usage limit)
+    // decides whether the sweep pauses or the run is void as a mid-run failure.
+    const word = (event as Record<string, unknown>)["error"];
+    acc.apiErrorTurns.push(typeof word === "string" && word.length > 0 ? word : UNNAMED_API_ERROR);
   }
   for (const block of event.message.content) {
     const text = TextBlockSchema.safeParse(block);
@@ -421,6 +444,8 @@ const handleEvent = (acc: Accumulator, event: Record<string, unknown>): void => 
     acc.durationMs = result.data.duration_ms ?? null;
     acc.totalCostUsd = result.data.total_cost_usd ?? null;
     acc.isError = result.data.is_error === true;
+    acc.terminalReason = result.data.terminal_reason ?? null;
+    acc.apiErrorStatus = result.data.api_error_status ?? null;
     if (acc.isError) {
       acc.errors.push(`result is_error: ${result.data.result ?? "(no text)"}`);
     }
@@ -454,6 +479,9 @@ export const parseStream = (raw: string): RunRecord => {
     errors: [],
     unknownEventTypes: [],
     parseErrors: 0,
+    apiErrorTurns: [],
+    terminalReason: null,
+    apiErrorStatus: null,
   };
   const rows = raw.split("\n").filter((line) => line.trim().length > 0);
   for (const line of rows) {
@@ -493,5 +521,8 @@ export const parseStream = (raw: string): RunRecord => {
     unknownEventTypes: acc.unknownEventTypes,
     lineCount: rows.length,
     parseErrors: acc.parseErrors,
+    apiErrorTurns: acc.apiErrorTurns,
+    terminalReason: acc.terminalReason,
+    apiErrorStatus: acc.apiErrorStatus,
   };
 };

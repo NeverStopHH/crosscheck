@@ -37,6 +37,12 @@ const streamFor = (body: string, extraTools: readonly unknown[] = []): string =>
       model: MODEL,
       tools: ["Bash", "Read", "mcp__crosscheck__publish_claim"],
       mcp_servers: [{ name: "crosscheck", status: "connected" }],
+      // Claude Code 2.1.286's standard configuration (A4.1).
+      plugins: ["sec-default", "agents-md", "telemetry", "plugin-authoring"].map((name) => ({
+        name: `cc-plugin-${name}`,
+        path: "builtin",
+        source: `cc-plugin-${name}@builtin`,
+      })),
     },
     {
       type: "system",

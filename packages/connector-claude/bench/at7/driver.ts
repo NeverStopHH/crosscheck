@@ -27,6 +27,7 @@ import { createWorkRoot, newAttemptId } from "./layout.ts";
 import type { Arm, Slot } from "./manifest.ts";
 import type { RunOutcome } from "./report.ts";
 import {
+  countsTowardCap,
   ledgerOf,
   nextAttemptNumber,
   recordVoidAttempt,
@@ -55,6 +56,12 @@ export interface SweepResult {
   readonly voidAttempts: number;
   /** True once the void cap was exceeded: no verdict may be read. */
   readonly aborted: boolean;
+  /**
+   * True when an attempt met the account's usage limit (A4.3): the sweep
+   * stopped there, the measurement is incomplete, and `--resume` after the
+   * reset continues it. No verdict may be read until it has finished.
+   */
+  readonly pausedForUsageLimit: boolean;
 }
 
 const armLabel = (arm: Arm): string => (arm.kind === "control" ? "control" : arm.payload);
@@ -115,11 +122,13 @@ export const runSweep = async (input: SweepInput): Promise<SweepResult> => {
     voidAttempts: ledger.voidAttempts,
     aborted: ledger.voidAttempts > VOID_BUDGET,
   };
+  let paused = false;
   const result = (): SweepResult => ({
     outcomes,
     facts,
     voidAttempts: progress.voidAttempts,
     aborted: progress.aborted,
+    pausedForUsageLimit: paused,
   });
   if (progress.aborted) {
     input.log(`already ${String(progress.voidAttempts)} void attempts on disk — over the cap; running nothing`);
@@ -136,6 +145,13 @@ export const runSweep = async (input: SweepInput): Promise<SweepResult> => {
         break;
       }
       await logVoid(input.outDir, attemptFacts);
+      if (!countsTowardCap(attemptFacts.outcome.voids)) {
+        // A4.3: the account's usage limit. Every next attempt would meet it
+        // too, so stop here rather than spend the slot's attempts on it.
+        input.log("  account usage limit reached — sweep paused; resume with --resume after the reset");
+        paused = true;
+        return result();
+      }
       progress = recordVoidAttempt(progress);
       if (progress.aborted) {
         return result();

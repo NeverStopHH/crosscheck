@@ -386,6 +386,31 @@ describe("parseStream", () => {
     expect(record.init?.pluginCount).toBe(3);
   });
 
+  test("A4: an API error mid-run is read from its synthetic turn and the result's terminal reason", () => {
+    // Arrange — the shape live-control 2 recorded when the account's usage
+    // limit cut the run after its first real turn.
+    const cut = lines([
+      { type: "system", subtype: "init", model: "claude-opus-5-5", mcp_servers: [] },
+      { type: "assistant", message: { model: "claude-opus-5-5", content: [{ type: "text", text: "Reading." }] } },
+      {
+        type: "assistant",
+        error: "rate_limit",
+        is_api_error_message: true,
+        message: { model: "<synthetic>", content: [{ type: "text", text: "You've hit your session limit" }] },
+      },
+      { type: "result", subtype: "success", is_error: true, terminal_reason: "api_error", api_error_status: 429 },
+    ]);
+
+    // Act
+    const record = parseStream(cut);
+
+    // Assert
+    expect(record.realAssistantTurns).toBe(1);
+    expect(record.apiErrorTurns).toEqual(["rate_limit"]);
+    expect(record.terminalReason).toBe("api_error");
+    expect(record.apiErrorStatus).toBe(429);
+  });
+
   test("an empty stream yields a record with no init and no turns", () => {
     // Act
     const record = parseStream("");

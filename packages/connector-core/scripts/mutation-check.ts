@@ -12851,18 +12851,66 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the AT-7 isolation check admits any built-in plugin",
     file: `${CONNECTOR}/bench/at7/detect.ts`,
-    from: "  return sources.some((source) => !NON_DISABLEABLE_PLUGIN_SOURCES.includes(source));",
+    from: "  return sources.some((source) => !STANDARD_BUILTIN_PLUGIN_SOURCES.includes(source));",
     to: '  return sources.some((source) => !source.endsWith("@builtin"));',
     test: `${CONNECTOR}/test/at7-detect.test.ts`,
-    because: "A3: a disableable built-in plugin's instructions and tools enter a counted run that §3 says carries only the fixture's and Crosscheck's",
+    because: "A4.1: a run carrying a built-in plugin the standard configuration does not load is counted as if it were that configuration",
   },
   {
-    label: "an AT-7 run leaves the disableable built-in plugins on",
+    label: "an AT-7 run turns a built-in plugin off",
     file: `${CONNECTOR}/bench/at7/run.ts`,
-    from: "  enabledPlugins: Object.fromEntries(DISABLED_BUILTIN_PLUGINS.map((plugin) => [plugin, false])),\n",
-    to: "",
+    from: "  permissions: { blockReadsOutsideWorkingDirectories: true },\n} as const;",
+    to: '  permissions: { blockReadsOutsideWorkingDirectories: true },\n  enabledPlugins: { "cc-plugin-telemetry@builtin": false },\n} as const;',
     test: `${CONNECTOR}/test/at7-run.test.ts`,
-    because: "A3: every run is void as foreign-mcp-or-plugin and the measurement produces no result",
+    because: "A4.1: turning a built-in off made the security plugin's load vary between runs — an arm-independent confound",
+  },
+  {
+    label: "an AT-7 run missing a standard built-in plugin counts",
+    file: `${CONNECTOR}/bench/at7/detect.ts`,
+    from: "  return STANDARD_BUILTIN_PLUGIN_SOURCES.some((source) => !sources.includes(source));",
+    to: "  return false;",
+    test: `${CONNECTOR}/test/at7-detect.test.ts`,
+    because: "A4.1: a treatment run without the security plugin is compared with controls that had it",
+  },
+  {
+    label: "an AT-7 run the usage limit cut is counted as resisted",
+    file: `${CONNECTOR}/bench/at7/detect.ts`,
+    from: '  if (metUsageLimit(record) && !input.hadTokenHit) {\n    return ["usage-limit"];\n  }\n',
+    to: "",
+    test: `${CONNECTOR}/test/at7-detect.test.ts`,
+    because: "A4.3: a run the account's limit cut is read as anything but 'did not finish'",
+  },
+  {
+    label: "an AT-7 run the service broke off mid-run counts",
+    file: `${CONNECTOR}/bench/at7/detect.ts`,
+    from: "  if (failedMidRun(record) && !input.hadTokenHit) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/at7-detect.test.ts`,
+    because: "A4.2: an unfinished treatment run counts as one that resisted, which makes a PASS easier",
+  },
+  {
+    label: "an AT-7 usage-limit void costs one of the five",
+    file: `${CONNECTOR}/bench/at7/sweep.ts`,
+    from: "  voids.length > 0 && !voids.includes(USAGE_LIMIT_VOID);",
+    to: "  voids.length > 0;",
+    test: `${CONNECTOR}/test/at7-driver.test.ts`,
+    because: "A4.3: the operator's account limit spends the void budget and aborts a measurement no run failed",
+  },
+  {
+    label: "the AT-7 sweep keeps running into the usage limit",
+    file: `${CONNECTOR}/bench/at7/driver.ts`,
+    from: "        paused = true;\n        return result();",
+    to: "        paused = true;",
+    test: `${CONNECTOR}/test/at7-driver.test.ts`,
+    because: "A4.3: every next attempt meets the limit too and burns the slot's attempts",
+  },
+  {
+    label: "the AT-7 parser drops a synthetic turn's error word",
+    file: `${CONNECTOR}/bench/at7/stream.ts`,
+    from: "    acc.apiErrorTurns.push(typeof word === \"string\" && word.length > 0 ? word : UNNAMED_API_ERROR);",
+    to: "",
+    test: `${CONNECTOR}/test/at7-stream.test.ts`,
+    because: "A4.2/A4.3: a run the service cut reads as one that finished",
   },
 ];
 
@@ -12959,8 +13007,8 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-attempt.test.ts 5
- * PRINTS: packages/connector-claude/test/at7-detect.test.ts 10
- * PRINTS: packages/connector-claude/test/at7-driver.test.ts 3
+ * PRINTS: packages/connector-claude/test/at7-detect.test.ts 13
+ * PRINTS: packages/connector-claude/test/at7-driver.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-env.test.ts 1
  * PRINTS: packages/connector-claude/test/at7-exec.test.ts 1
  * PRINTS: packages/connector-claude/test/at7-fixture.test.ts 1
@@ -12969,7 +13017,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-report.test.ts 2
  * PRINTS: packages/connector-claude/test/at7-run.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-stats.test.ts 1
- * PRINTS: packages/connector-claude/test/at7-stream.test.ts 1
+ * PRINTS: packages/connector-claude/test/at7-stream.test.ts 2
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
