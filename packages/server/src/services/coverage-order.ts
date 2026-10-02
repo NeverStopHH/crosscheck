@@ -25,7 +25,7 @@
  *     a minimum over more kinds can only be lower.
  */
 import { sql } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
+import type { AnyColumn, SQL } from "drizzle-orm";
 import { GUARANTEE_KINDS, ORDER_REASON_STRENGTH, stateOfOrderReason } from "@crosscheck/schema";
 import type { CoverageOrder, GuaranteeKind } from "@crosscheck/schema";
 
@@ -53,11 +53,20 @@ const UNDECLARED: CoverageOrder = { state: "undeclared", reason: "provider_undec
  * reader's own words. Built from the schema's constant: no author text.
  */
 const UNKNOWN_STORED_RANK = ORDER_REASON_STRENGTH.indexOf("provider_undeclared");
-const STRENGTH_RANK = sql.raw(
-  `CASE g.reason ${ORDER_REASON_STRENGTH.map(
-    (reason, rank) => `WHEN '${reason}' THEN ${String(rank)}`,
-  ).join(" ")} ELSE ${String(UNKNOWN_STORED_RANK)} END`,
+const RANK_ARMS = sql.raw(
+  `${ORDER_REASON_STRENGTH.map((reason, rank) => `WHEN '${reason}' THEN ${String(rank)}`).join(
+    " ",
+  )} ELSE ${String(UNKNOWN_STORED_RANK)} END`,
 );
+
+/**
+ * The strength rank of a stored reason column, in SQL — the one CASE both the
+ * scope fold here and the re-register's conditional weaken
+ * (services/causal-guarantees.ts) compare by.
+ */
+export const reasonRankSql = (column: SQL | AnyColumn): SQL => sql`CASE ${column} ${RANK_ARMS}`;
+
+const STRENGTH_RANK = reasonRankSql(sql.raw("g.reason"));
 
 const toCount = (value: unknown): number => {
   const parsed = Number(value);

@@ -22,8 +22,8 @@
  * Nothing here reads a guarantee into a verdict: `isJudgeable` and attribution
  * never call this module (01a §3.7, 01 §3.7 (1)).
  */
-import { and, eq, gt, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
-import { GUARANTEE_KINDS, foldGuaranteeDeclaration, isWeakerReason } from "@crosscheck/schema";
+import { and, eq, gt, inArray, isNotNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
+import { GUARANTEE_KINDS, ORDER_REASON_STRENGTH, foldGuaranteeDeclaration } from "@crosscheck/schema";
 import type {
   CausalGuarantee,
   GuaranteeKind,
@@ -33,6 +33,7 @@ import type {
 
 import { agentSessions, sessionCausalGuarantees, sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
+import { reasonRankSql } from "./coverage-order.ts";
 
 export interface EffectiveGuarantee {
   readonly state: CausalGuarantee;
@@ -72,31 +73,37 @@ export const storeDeclaredGuarantees = async (
  * A re-register: each stored kind becomes the weaker of what is stored and
  * what was sent, and a kind the new block does not declare (or a block that
  * is absent) is removed — absent reads `undeclared`, the weakest there is.
+ *
+ * NO READ DECIDES A WRITE (review L2). Each kind is one conditional UPDATE
+ * that compares the sent reason against the STORED row's rank in SQL, so two
+ * concurrent re-registers, or a cap landing beside one, can only ever leave
+ * the minimum. A read-then-write let the later write of the stronger value win.
  */
 export const weakenDeclaredGuarantees = async (
   db: DbExecutor,
   sessionId: string,
   raw: unknown,
 ): Promise<void> => {
-  const sent = new Map(foldGuaranteeDeclaration(raw).map((triple) => [triple.kind, triple]));
-  const stored = await db
-    .select()
-    .from(sessionCausalGuarantees)
-    .where(eq(sessionCausalGuarantees.sessionId, sessionId));
-  for (const row of stored) {
-    const next = sent.get(row.kind);
-    const where = and(
-      eq(sessionCausalGuarantees.sessionId, sessionId),
-      eq(sessionCausalGuarantees.kind, row.kind),
+  const sent = foldGuaranteeDeclaration(raw).filter((triple) => triple.guarantee !== "undeclared");
+  const ofSession = eq(sessionCausalGuarantees.sessionId, sessionId);
+  await db
+    .delete(sessionCausalGuarantees)
+    .where(
+      sent.length === 0
+        ? ofSession
+        : and(ofSession, notInArray(sessionCausalGuarantees.kind, sent.map((triple) => triple.kind))),
     );
-    if (next === undefined || next.guarantee === "undeclared") {
-      await db.delete(sessionCausalGuarantees).where(where);
-    } else if (isWeakerReason(next.reason, row.reason)) {
-      await db
-        .update(sessionCausalGuarantees)
-        .set({ guarantee: next.guarantee, reason: next.reason })
-        .where(where);
-    }
+  for (const triple of sent) {
+    await db
+      .update(sessionCausalGuarantees)
+      .set({ guarantee: triple.guarantee, reason: triple.reason })
+      .where(
+        and(
+          ofSession,
+          eq(sessionCausalGuarantees.kind, triple.kind),
+          sql`${reasonRankSql(sessionCausalGuarantees.reason)} > ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`,
+        ),
+      );
   }
 };
 

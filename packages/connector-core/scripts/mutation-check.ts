@@ -13277,17 +13277,18 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a re-register strengthens a session's declaration",
     file: `${SERVER}/src/services/causal-guarantees.ts`,
-    // Re-pointed by review L1: the comparison is by reason strength.
-    from: "    } else if (isWeakerReason(next.reason, row.reason)) {",
-    to: "    } else if (next.reason !== row.reason) {",
+    // Re-pointed by review L1, then L2: the comparison is in SQL, by reason strength.
+    from: "          sql`${reasonRankSql(sessionCausalGuarantees.reason)} > ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`,\n",
+    to: "",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "rows produced under a partial declaration are re-described as guaranteed after the fact",
   },
   {
     label: "a re-register that declares nothing keeps the old declaration",
     file: `${SERVER}/src/services/causal-guarantees.ts`,
-    from: '    if (next === undefined || next.guarantee === "undeclared") {',
-    to: "    if (false) {",
+    // Re-pointed by review L2: the removal is one DELETE now.
+    from: "  await db\n    .delete(sessionCausalGuarantees)\n    .where(\n      sent.length === 0\n",
+    to: "  await db\n    .select()\n    .from(sessionCausalGuarantees)\n    .where(\n      sent.length === 0\n",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "an older connector on the same session goes on reading as the newer one's statement",
   },
@@ -14059,6 +14060,15 @@ export const MUTATIONS: readonly Mutation[] = [
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a session that re-registers with derived_after_the_fact keeps reading ambiguous_session_possible",
   },
+  // Review L2: no read decides a write.
+  {
+    label: "a re-register's weaken compares against what it read, not what is stored",
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "sql`${reasonRankSql(sessionCausalGuarantees.reason)} > ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`",
+    to: "sql`${ORDER_REASON_STRENGTH.indexOf(triple.reason)} >= 0`",
+    test: `${SERVER}/test/causal-guarantees.test.ts`,
+    because: "two concurrent re-registers read guaranteed, and the later write of partial lifts the other's unavailable",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -14309,7 +14319,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
- * PRINTS: packages/server/test/causal-guarantees.test.ts 21
+ * PRINTS: packages/server/test/causal-guarantees.test.ts 22
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1

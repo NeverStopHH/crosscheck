@@ -20,6 +20,7 @@ import { reapStaleSessions } from "../src/services/sessions.ts";
 import {
   countContradictedDeclarations,
   readEffectiveGuarantees,
+  weakenDeclaredGuarantees,
 } from "../src/services/causal-guarantees.ts";
 import type { EffectiveGuarantee } from "../src/services/causal-guarantees.ts";
 import {
@@ -229,6 +230,23 @@ describe("the declaration a session registers with", () => {
     });
     // Assert: the cap is the weakest partial, and stays.
     expect((await effective(harness)).get("file.modified")).toEqual(CAPPED);
+  });
+
+  test("two concurrent re-registers leave the weaker of the two, never the later write (review L2)", async () => {
+    // Arrange
+    const { harness } = await seed([BRACKETED_EDIT]);
+    const unavailable = [{ kind: "file.modified", guarantee: "unavailable", reason: "no_emitter" }];
+    const partial = [{ kind: "file.modified", guarantee: "partial", reason: "unbracketed_lane" }];
+    // Act: both read guaranteed before either writes, when a read decides the write.
+    await Promise.all([
+      weakenDeclaredGuarantees(harness.db, SESSION, unavailable),
+      weakenDeclaredGuarantees(harness.db, SESSION, partial),
+    ]);
+    // Assert
+    expect((await effective(harness)).get("file.modified")).toEqual({
+      state: "unavailable",
+      reason: "no_emitter",
+    });
   });
 
   test("a re-register that sends no block leaves every kind undeclared", async () => {

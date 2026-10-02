@@ -1428,3 +1428,13 @@ The evidence for each row:
   already used. A kind sent as `ambiguous_session_possible` and `derived_after_the_fact` keeps the
   latter in either order, and a re-register can lower the reason inside `partial`. A cap is the
   weakest `partial` reason, so a re-register never lifts one. The failure falls on the weaker reason.
+- **L2 — a re-register's read decided its write.** `weakenDeclaredGuarantees` read the stored rows and
+  then wrote. Two concurrent re-registers both read `guaranteed`, and the later write of `partial`
+  lifted the other's `unavailable`, a state no serial order produces.
+  - Each kind is now one conditional UPDATE that compares the sent reason with the stored row's rank in
+    SQL (`reasonRankSql`, the CASE the scope fold uses). Kinds the block omits go in one DELETE.
+  - A cap that lands beside a re-register now leaves a serial outcome too.
+  - **Not fixed: two concurrent FIRST registers.** The second one's weaken can run before the first
+    one's store, which loses its weaker block. The fix is a transaction around the session insert and
+    the store. No in-process test can force a stall between those two statements, and both registers of
+    one session send one connector's table, which the review calls benign. Left for Nick (§13.10).
