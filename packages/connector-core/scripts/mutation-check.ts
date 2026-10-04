@@ -16224,6 +16224,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "init --remove strips a tracked .mcp.json without saying it is a team change, and doctor calls a committed .crosscheck.json untracked",
   },
+  {
+    label: "init --global --remove aborts on a corrupt file it never wrote",
+    file: `${CLI}/src/cli/init-global.ts`,
+    from: "    if (!read.ok || read.raw === null) {",
+    to: "    if (read.raw === null) {",
+    test: `${CLI}/test/init-global.test.ts`,
+    because: "one editor's broken ~/.cursor/mcp.json makes the whole user-level wiring un-uninstallable",
+  },
+  {
+    label: "init --global --remove rewrites a user file that held no crosscheck entries",
+    file: `${CLI}/src/cli/init-global.ts`,
+    from: "    if (!stripped.changed) {\n      removals.push",
+    to: "    if (false) {\n      removals.push",
+    test: `${CLI}/test/init-global.test.ts`,
+    because: "the user's own files are reformatted and littered with backups by an uninstall that had nothing to take from them",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16297,6 +16313,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 1
+ * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
