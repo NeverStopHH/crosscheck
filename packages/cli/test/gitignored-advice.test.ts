@@ -19,7 +19,10 @@ import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
 import { runDoctor } from "../src/cli/doctor.ts";
-import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
+import {
+  isPathIgnored,
+  isPathTracked,
+} from "@crosscheck/connector-core/git/check-ignore.ts";
 import { git, makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** Unreachable on purpose: none of these lines needs a hub. */
@@ -122,6 +125,25 @@ describe("isPathIgnored", () => {
     // git cannot answer outside a work tree — and null must never be read as
     // "not ignored", which is why it is its own value.
     expect(await isPathIgnored(notARepo, ".mcp.json")).toBeNull();
+  });
+});
+
+describe("isPathTracked", () => {
+  test("answers true for a committed file, false for an ignored one and null outside a repo", async () => {
+    // Arrange: one repo commits .mcp.json, the other ignores it
+    const ignored = await fixture(true);
+    const committed = await fixture(false);
+    await git(committed.repo, ["add", ".mcp.json"]);
+    await git(committed.repo, ["commit", "-m", "share the mcp server"]);
+    const notARepo = await makeHome("gitignored-advice-tracked-not-a-repo");
+    paths.push(notARepo);
+
+    // Act + Assert
+    expect(await isPathTracked(committed.repo, ".mcp.json")).toBe(true);
+    expect(await isPathTracked(ignored.repo, ".mcp.json")).toBe(false);
+    // An untracked file that is NOT ignored is still not shared with anybody.
+    expect(await isPathTracked(committed.repo, ".claude/settings.json")).toBe(false);
+    expect(await isPathTracked(notARepo, ".mcp.json")).toBeNull();
   });
 });
 

@@ -16215,6 +16215,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/at7-report.test.ts`,
     because: "A5: the breakdown says a refusal that quoted the instruction followed it, the one distinction it exists to draw",
   },
+  // ── `crosscheck init --remove`: the project-side uninstall (pilot, 2026-10) ──
+  {
+    label: "a committed file reads as one no teammate shares",
+    file: `${CORE}/src/git/check-ignore.ts`,
+    from: "  if (listed !== null) {\n    return true;\n  }\n",
+    to: "",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "init --remove strips a tracked .mcp.json without saying it is a team change, and doctor calls a committed .crosscheck.json untracked",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16287,6 +16296,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 1
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3

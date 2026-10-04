@@ -82,7 +82,10 @@ import {
   formatForeignDropLine,
   readForeignRepoDrops,
 } from "@crosscheck/connector-core/state/foreign-drops.ts";
-import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
+import {
+  isPathIgnored,
+  isPathTracked,
+} from "@crosscheck/connector-core/git/check-ignore.ts";
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
@@ -3317,39 +3320,15 @@ export const repoConnectedCheck = (
     : check("PASS", name, `${REPO_CONFIG_FILE} present and tracked`);
 };
 
-/**
- * `git ls-files --error-unmatch` exits non-zero for an untracked path, which
- * `runBoundedCommand` reports as null — the same null a missing git gives. So
- * the tracked answer is taken from the STDOUT of the plain listing instead:
- * the path echoed back means tracked, silence means either untracked or no
- * git, and the second `rev-parse` tells those apart (the check-ignore shape).
- */
-const isRepoConfigTracked = async (
-  repoRoot: string,
-): Promise<boolean | null> => {
-  const listed = await runBoundedCommand(
-    ["git", "ls-files", "--", REPO_CONFIG_FILE],
-    repoRoot,
-    GIT_TIMEOUT_MS,
-  );
-  if (listed !== null) {
-    return true;
-  }
-  const inWorkTree = await runBoundedCommand(
-    ["git", "rev-parse", "--is-inside-work-tree"],
-    repoRoot,
-    GIT_TIMEOUT_MS,
-  );
-  return inWorkTree === "true" ? false : null;
-};
-
+// The tracked answer (and why it reads STDOUT, not an exit code) lives in
+// core's git/check-ignore.ts since `crosscheck init --remove` asks it too.
 const checkRepoConnected = async (
   repoRoot: string,
   present: boolean,
 ): Promise<Check> =>
   repoConnectedCheck(
     present,
-    present ? await isRepoConfigTracked(repoRoot) : null,
+    present ? await isPathTracked(repoRoot, REPO_CONFIG_FILE) : null,
   );
 
 /**
