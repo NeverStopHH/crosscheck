@@ -16368,6 +16368,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove.test.ts`,
     because: "a broken ~/.claude/settings.json is reported as absent instead of named",
   },
+  {
+    label: "doctor's ignored-copy remedy names no command that removes it",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "remove the gitignored project copy with `crosscheck init --remove`",
+    to: "delete the gitignored project copy instead",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "the pilot's 'how to fix?' again: the WARN says what to delete and no command does it",
+  },
+  {
+    label: "doctor's ignored-copy remedy points at removing the global install",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "remove the gitignored project copy with `crosscheck init --remove`",
+    to: "remove one side with `crosscheck init --global --remove`",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "M11: the only wiring covering worktrees is removed, and a project copy nobody else receives is kept",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16440,7 +16456,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/gitignored-advice.test.ts 1
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 3
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6

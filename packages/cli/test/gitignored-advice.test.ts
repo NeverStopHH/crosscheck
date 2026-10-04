@@ -148,16 +148,19 @@ describe("isPathTracked", () => {
 });
 
 describe("doctor's advice under a .gitignore", () => {
-  test("the double-wiring remedy never says --remove when the project copy is ignored", async () => {
+  test("the double-wiring remedy names crosscheck init --remove, never --global --remove, when the project copy is ignored", async () => {
     // Arrange
     const { repo, env } = await fixture(true);
 
     // Act
     const result = await runDoctor(env, repo, async () => null);
 
-    // Assert
+    // Assert: the command that removes the ignored project copy (pilot,
+    // 2026-10: "how to fix?" had no answer) — and still never the one that
+    // removes the user-level install, the only side covering worktrees here
     expect(result.stdout).toContain("WARN  global install");
     expect(result.stdout).toContain("keep the global install");
+    expect(result.stdout).toContain("`crosscheck init --remove`");
     expect(result.stdout).not.toContain("crosscheck init --global --remove");
   });
 
