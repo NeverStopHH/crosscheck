@@ -312,10 +312,8 @@ describe("crosscheck init --global", () => {
     expect(result.stdout).toContain("--hub does not apply to --global");
   });
 
-  test("--remove without --global points at the global spelling", async () => {
-    const { env } = await fixture();
-    const result = await runCli(["init", "--remove"], env, "/");
-    expect(result.exitCode).toBe(64);
-    expect(result.stdout).toContain("crosscheck init --global --remove");
-  });
+  // `init --remove` WITHOUT --global used to be refused here with a pointer
+  // to this spelling. It is now the project-side uninstall, and the promise
+  // that it never touches these user-level files lives with it, in
+  // init-remove.test.ts ("leaves the user-level install byte-identical").
 });

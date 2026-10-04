@@ -16240,6 +16240,134 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-global.test.ts`,
     because: "the user's own files are reformatted and littered with backups by an uninstall that had nothing to take from them",
   },
+  {
+    label: "crosscheck init --remove runs a full init instead of removing",
+    file: `${CLI}/src/cli/index.ts`,
+    from: "        return runProjectRemove({ cursor: rest.includes(INIT_CURSOR_FLAG) }, env, cwd);\n",
+    to: "",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "the pilot's 'how to fix?' gets the opposite answer: the project copy is rewritten, not removed",
+  },
+  {
+    label: "init --remove outside a repository crashes instead of saying so",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (identity === null) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "a stack trace instead of 'not a git repository' for a command run one directory too high",
+  },
+  {
+    label: "init --remove strips the other files when one is not valid json",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (refused !== undefined && !refused.read.ok) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "the repo is left half-unwired (hooks gone, tools not) and the broken file is silently passed over",
+  },
+  {
+    label: "init --remove rewrites or deletes a file that held no crosscheck entries",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (!stripped.changed) {\n    return { kind: \"untouched\"",
+    to: "  if (false) {\n    return { kind: \"untouched\"",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "a teammate's own settings file is reformatted, and an empty one deleted, by an uninstall that had nothing to take",
+  },
+  {
+    label: "init --remove leaves an emptied file behind",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "kind: stripped.leftover ? \"delete\" : \"strip\"",
+    to: "kind: \"strip\"",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "an empty {} settings or .mcp.json stays in the checkout, and a tracked one becomes a pointless diff",
+  },
+  {
+    label: "init --remove deletes a file that still holds the user's own entries",
+    file: `${CLI}/src/cli/wiring-removal.ts`,
+    from: "  Object.keys(value).length === 0;",
+    to: "  true;",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "a teammate's own hooks, permissions and mcp servers are deleted with crosscheck's",
+  },
+  {
+    label: "init --remove deletes a cursor hooks.json that still holds the team's own hook",
+    file: `${CLI}/src/cli/wiring-removal.ts`,
+    from: "  isEmpty(asRecord(file[\"hooks\"]));",
+    to: "  true;",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "the team's own Cursor hooks vanish with crosscheck's",
+  },
+  {
+    label: "init --remove deletes a cursor hooks.json that still holds a key of the user's",
+    file: `${CLI}/src/cli/wiring-removal.ts`,
+    from: "  Object.keys(file).every((key) => key === \"version\" || key === \"hooks\") &&\n",
+    to: "",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "a hooks.json is deleted although something besides crosscheck's skeleton was in it",
+  },
+  {
+    label: "init --remove reports removing a statusline it left in place",
+    file: `${CLI}/src/cli/wiring-removal.ts`,
+    from: "    ...(\"statusLine\" in before && !(\"statusLine\" in after) ? [\"the statusline\"] : []),",
+    to: "    ...[\"the statusline\"],",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "the output says a teammate's own statusline went when it is still there",
+  },
+  {
+    label: "init --remove claims hook entries it did not remove",
+    file: `${CLI}/src/cli/wiring-removal.ts`,
+    from: "    ...(hooks > 0 ? [entries(hooks, \"hook\")] : []),",
+    to: "    ...[entries(hooks, \"hook\")],",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "'removed 0 hook entries' for a file that only carried the statusline",
+  },
+  {
+    label: "init --remove strips the cursor files without --cursor",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "    cursorDir: options.cursor ? await projectCursorDir(root) : null,",
+    to: "    cursorDir: await projectCursorDir(root),",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "the committed .cursor pair changes for a command that was asked only about the Claude files",
+  },
+  {
+    label: "init --remove changes a committed file without calling it a team change",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if ((await isPathTracked(root, path)) !== true) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "a developer cleaning up locally commits a diff that unwires the repo for the whole team",
+  },
+  {
+    label: "init --remove tells the owner of an ignored copy to commit or restore it",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if ((await isPathTracked(root, path)) !== true) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "the pilot's ignored-copy cleanup ends with advice about a commit nobody can make",
+  },
+  {
+    label: "init --remove does not say the team's repo connection stays",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "      ? [`left ${connection} in place — the team's repo connection; init --remove never touches it`]",
+    to: "      ? []",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "a developer who wanted only the local copy gone deletes .crosscheck.json by hand to be sure, and disconnects the repo",
+  },
+  {
+    label: "init --remove claims a user-level install that is not there",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (wiring.hooksInstalled) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "the repo is left deaf while the output promises something still wires it",
+  },
+  {
+    label: "init --remove calls an unreadable user settings file no install",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (wiring.unreadable) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "a broken ~/.claude/settings.json is reported as absent instead of named",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16314,6 +16442,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 1
  * PRINTS: packages/cli/test/init-global.test.ts 2
+ * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3

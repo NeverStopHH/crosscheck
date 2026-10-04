@@ -60,10 +60,16 @@ export const RESTART_HINT_LINE =
 
 export const INIT_USAGE = [
   `usage: crosscheck init [${INIT_COMMAND_PREFIX_FLAG} <prefix>] [${INIT_HUB_FLAG} <url>] [${INIT_FORCE_STATUSLINE_FLAG}] [${INIT_CURSOR_FLAG}]`,
+  `       crosscheck init --remove [${INIT_CURSOR_FLAG}]`,
   "       crosscheck init --global [--remove] [--force-statusline] [--cursor]",
   "",
   "  wires this repo: hooks and statusline into .claude/settings.json, the",
   "  mcp server into .mcp.json, and the hub url into .crosscheck.json",
+  "",
+  "  --remove (without --global) unwires THIS repo's project copy: crosscheck's",
+  "  entries leave .claude/settings.json and .mcp.json (with --cursor, the",
+  "  .cursor pair too); .crosscheck.json, everything else in those files and",
+  "  the user-level install stay",
   "",
   "  --global wires the MACHINE instead — once per machine, into",
   "  ~/.claude/settings.json + user-scope mcp (~/.claude.json) — covering",
