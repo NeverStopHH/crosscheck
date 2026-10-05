@@ -341,7 +341,9 @@ left to re-send. Every later walk wrote the same lines again — one torn line a
 `{unparsable: 3, withheld: 3}` after three cooldowns, up to the spool's seven-day bound, all of it in the hub's
 `loss_total`. The flush now notes on the cursor which lines' losses are in the ledger (`spool/batch-losses.ts`,
 by each line's end offset in that data file; the cursor write that moves past the batch drops the note), and
-writes only lines not on it — one line, one loss, whatever it was first counted as.
+writes only lines not on it — one line, one loss, whatever it was first counted as. The note is written right
+after the ledger appends, inside the same step (review-2 LOW-3): written once the heal came back, it was missing
+after a hook killed mid-walk, and the next flush counted the batch again.
 
 **`withheld` travels as its own kind, `spool_withheld`** (review-2 honesty residual). The ledger kept `withheld`
 apart from `rejected` from the start, but the loss report mapped both to `hub_rejected` — *"the hub answered 200

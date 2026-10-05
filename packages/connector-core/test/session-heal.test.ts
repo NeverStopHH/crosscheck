@@ -42,6 +42,7 @@ import { readDropDetail } from "../src/spool/drops.ts";
 import { writeCursorOffset } from "../src/spool/cursor.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import { flushSpool } from "../src/spool/flush.ts";
+import type { SessionHealer } from "../src/spool/flush.ts";
 import { recordRefusedLife } from "../src/spool/refused-lives.ts";
 import { readSessionState, updateSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -674,6 +675,43 @@ describe("a batch a walk leaves on disk", () => {
     const after = (await readDropDetail(fx.home, fx.key)).byReason;
     expect(after["unparsable"]).toBe(1);
     expect(after["withheld"]).toBe(1);
+  });
+});
+
+/**
+ * A HOOK KILLED MID-WALK (review-2 LOW-3). The walk's losses reach the ledger
+ * in `beforeWalk`, and the note that says so was written only once the heal
+ * came back: a hook that died in between left the counts with nothing to say
+ * they were counted, and the next flush wrote them again.
+ */
+describe("a flush whose hook dies inside the walk", () => {
+  test("leaves the next flush nothing to count again", async () => {
+    // Arrange: an ended life with a refused edit and a torn line on disk
+    const fx = await fixture("dies-mid-walk");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/after-end.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await appendFile(spoolDataPath(fx.home, fx.key, sessionSlug(fx.hostSessionKey)), "{torn\n");
+    const dying: SessionHealer = async (_refusal, _deadlineMs, beforeWalk) => {
+      await beforeWalk?.();
+      throw new Error("killed mid-walk");
+    };
+
+    // Act: the hook that dies after the ledger write, then the next hook's flush
+    await flushSpool(fx.hub, { sessionId: life.crosscheckSessionId, developerId, heal: dying }, GENEROUS_BUDGET_MS).catch(
+      () => undefined,
+    );
+    const afterCrash = await readDropDetail(fx.home, fx.key);
+    await flushAsHook(fx);
+    const after = await readDropDetail(fx.home, fx.key);
+
+    // Assert
+    expect(afterCrash.byReason).toEqual({ unparsable: 1, rejected: 1 });
+    expect(after.byReason).toEqual(afterCrash.byReason);
+    expect(after.rejectedCauses).toEqual({ session_ended: 1 });
   });
 });
 

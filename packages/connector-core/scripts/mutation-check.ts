@@ -17745,11 +17745,11 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a batch a walk leaves on disk never notes what the walk wrote down",
-    file: `${CORE}/src/spool/flush.ts`,
-    from: "    await losses.keep();\n    return null;",
-    to: "    return null;",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      await writeCountedLines(spool.dataPath, spool.cursorPath, spool.offset, withEnds(earlier, counted), spool);\n",
+    to: "",
     test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 finding 4: the next walk meets the same lines with nothing to say they were counted, and counts them again",
+    because: "review-2 finding 4 and LOW-3: the next walk — or the flush after a hook killed mid-walk — meets the same lines with nothing to say they were counted, and counts them again",
   },
   {
     label: "withheld records reach the hub as records it refused",

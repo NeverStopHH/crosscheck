@@ -67,12 +67,11 @@ const withEnds = (ends: ReadonlySet<number>, lines: readonly BatchLine[]): Reado
 
 export interface BatchLosses {
   /**
-   * Writes what this batch has certainly lost and no earlier walk wrote down.
-   * Runs once, however many paths ask; `sealed` indexes the sendable lines.
+   * Writes what this batch has certainly lost and no earlier walk wrote down,
+   * and notes it on the cursor. Runs once, however many paths ask; `sealed`
+   * indexes the sendable lines.
    */
   readonly write: (sealed: readonly number[]) => Promise<void>;
-  /** Notes what was written on the cursor, for a batch that stays on disk. */
-  readonly keep: () => Promise<void>;
 }
 
 export const batchLosses = (
@@ -83,7 +82,6 @@ export const batchLosses = (
   isWithheld: (record: Record<string, unknown>) => boolean,
   earlier: ReadonlySet<number>,
 ): BatchLosses => {
-  let written = earlier;
   let running: Promise<void> | null = null;
   const isNew = (line: BatchLine): boolean => !earlier.has(line.end);
   const run = async (sealed: readonly number[]): Promise<void> => {
@@ -97,18 +95,20 @@ export const batchLosses = (
     await recordDrop(ctx.home, ctx.repoKey, spool.slug, torn.length, "unparsable", ctx.now());
     await recordWithheld(ctx, spool, withheld.map((line) => line.record));
     await recordSealed(ctx, spool, refused.map((line) => line.record));
-    written = withEnds(earlier, [...torn, ...withheld, ...refused]);
+    // RIGHT AFTER THE LEDGER, not once the heal comes back (review-2 LOW-3):
+    // a hook killed inside the walk left these counts with nothing to say
+    // they were written, and the next flush wrote them again. A batch that
+    // goes on to be delivered drops the note with the cursor write that
+    // passes it; one that stays on disk keeps it for the next flush.
+    const counted = [...torn, ...withheld, ...refused];
+    if (counted.length > 0) {
+      await writeCountedLines(spool.dataPath, spool.cursorPath, spool.offset, withEnds(earlier, counted), spool);
+    }
   };
   return {
     write: (sealed) => {
       running ??= run(sealed);
       return running;
-    },
-    keep: async () => {
-      if (running !== null) {
-        await running;
-        await writeCountedLines(spool.dataPath, spool.cursorPath, spool.offset, written, spool);
-      }
     },
   };
 };

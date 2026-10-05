@@ -212,7 +212,6 @@ const flushOneBatch = async (
     beforeWalk: losses.write,
   });
   if (healed === null) {
-    await losses.keep();
     return null;
   }
   const summary = healed.summary;
