@@ -16528,6 +16528,94 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/absence-render.test.ts`,
     because: "hub text in a bare slot can mint the renderer's own framing on doctor's and status's lines",
   },
+  {
+    label: "a held cloud agent link names a developer in the absence listing",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  eq(developerEmails.email, commitEvidence.authorEmail),\n  resolvesToDeveloper(developerEmails.email),\n);",
+    to: "  eq(developerEmails.email, commitEvidence.authorEmail),\n);",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "the listing names whoever holds noreply@anthropic.com for every cloud session's commits, and a session of theirs hides the line",
+  },
+  {
+    label: "a held cloud agent link lets a developer's session close the census gap",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  eq(developerEmails.email, commitEvidence.authorEmail),\n  resolvesToDeveloper(developerEmails.email),\n);",
+    to: "  eq(developerEmails.email, commitEvidence.authorEmail),\n);",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because: "the git rung reads complete over commits nobody reported, on the strength of a session that was not theirs",
+  },
+  {
+    label: "a held cloud agent link names a teammate's work behind a Claude commit",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        eq(developerEmails.email, lowered(commit.authorEmail)),\n        resolvesToDeveloper(developerEmails.email),\n",
+    to: "        eq(developerEmails.email, lowered(commit.authorEmail)),\n",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "the landed-change stop tells the reader a teammate's work is the why of a commit a cloud session made",
+  },
+  {
+    label: "a held cloud agent link tells a teammate about a Claude commit's stop",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "      and(eq(developers.id, developerEmails.developerId), resolvesToDeveloper(developerEmails.email)),",
+    to: "      eq(developers.id, developerEmails.developerId),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the stop prints that the link holder is told, naming a person git never named",
+  },
+  {
+    label: "a held cloud agent link makes Claude's commit address somebody's",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        inArray(developerEmails.email, [...firstSpelling.keys()]),\n        resolvesToDeveloper(developerEmails.email),\n",
+    to: "        inArray(developerEmails.email, [...firstSpelling.keys()]),\n",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "the hub answers that the address belongs to a developer, the one answer every other site now refuses to give",
+  },
+  {
+    label: "a held cloud agent link files a landed-change notice for a Claude commit",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: ".where(and(inArray(developerEmails.email, emails), resolvesToDeveloper(developerEmails.email)));",
+    to: ".where(inArray(developerEmails.email, emails));",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the link holder's briefing announces a stop at work that was never theirs",
+  },
+  {
+    label: "a held cloud agent link resolves a reference to the developer holding it",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "        // (services/cloud-agent-identity.ts).\n        resolvesToDeveloper(developerEmails.email),\n",
+    to: "        // (services/cloud-agent-identity.ts).\n",
+    test: `${SERVER}/test/developer-settings.test.ts`,
+    because: "muting or filtering by noreply@anthropic.com silently mutes or filters the link holder",
+  },
+  {
+    label: "doctor offers a .mailmap line mapping Claude's commit address to a person",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "    if (!isSkipped && !isCloudAgent) {",
+    to: "    if (!isSkipped) {",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the advice launders every cloud session's landed commits into one developer's through git itself, where the hub cannot see it",
+  },
+  {
+    label: "the cloud agent predicate matches no address",
+    file: `${SERVER}/src/services/cloud-agent-identity.ts`,
+    from: "  inArray(sql`lower(${email})`, CLOUD_AGENT_EMAILS);",
+    to: "  sql`false`;",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "every held link resolves again at once, and the link report says none is held",
+  },
+  {
+    label: "the held-link WARN claims the link still attributes commits",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: '  "is linked to a developer on this hub; crosscheck ignores that link, so " +\n  "its commits stay an unconnected gap attributed to nobody";',
+    to: '  "is linked to a developer on this hub, so every commit under it is attributed to that one person";',
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "doctor and status state an attribution the hub refuses to make, and an admin chases a misattribution that is not there",
+  },
+  {
+    label: "the held-link WARN drops the admin's way to remove the row",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: '    "an admin should still remove it: find the developer in GET /api/developers, then " +\n',
+    to: "",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the stale row is ignored but never removed, and nobody is told how",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16572,7 +16660,7 @@ interface Outcome {
  * other.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: packages/cli/test/absence-cli.test.ts 5
+ * PRINTS: packages/cli/test/absence-cli.test.ts 6
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
@@ -16605,7 +16693,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
- * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
+ * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 4
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
@@ -16695,7 +16783,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/absence-render.test.ts 6
+ * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
@@ -16809,7 +16897,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
- * PRINTS: packages/server/test/absences.test.ts 3
+ * PRINTS: packages/server/test/absences.test.ts 5
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -16822,11 +16910,12 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 10
- * PRINTS: packages/server/test/coverage.test.ts 12
+ * PRINTS: packages/server/test/coverage.test.ts 13
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
  * PRINTS: packages/server/test/developer-emails.test.ts 4
  * PRINTS: packages/server/test/developer-listing.test.ts 5
+ * PRINTS: packages/server/test/developer-settings.test.ts 1
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
@@ -16837,8 +16926,8 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
- * PRINTS: packages/server/test/landed-context.test.ts 20
- * PRINTS: packages/server/test/landed-notices.test.ts 32
+ * PRINTS: packages/server/test/landed-context.test.ts 22
+ * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
