@@ -44,7 +44,7 @@ import { readCaptureHealth } from "@crosscheck/connector-core/state/capture-heal
 import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import type { HintStats, HubResult } from "@crosscheck/connector-core/http/hub.ts";
 import { announcementAnswerOf, passkeyStatusLines } from "./passkey-status.ts";
-import { pinStatusLines } from "./pin-observability.ts";
+import { pinDenylistPatterns, pinStatusLines } from "./pin-observability.ts";
 import { presenceStateLine } from "./privacy.ts";
 import {
   formatLossLines,
@@ -393,8 +393,9 @@ export const runStatus = async (
         pins.data,
         // The EFFECTIVE list, defaults included — the shadowing question is
         // about what actually suppresses capture, not about what this
-        // developer added to it.
-        resolveDenylist(config.denylist ?? undefined),
+        // developer added to it — plus the shipped defaults a teammate who
+        // kept them applies, the same list the pin door refuses on.
+        pinDenylistPatterns(resolveDenylist(config.denylist ?? undefined)),
         teamSettings.ok ? teamSettings.data : null,
         now,
       )
