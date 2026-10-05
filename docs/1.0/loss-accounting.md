@@ -320,6 +320,15 @@ from this machine (left to the hub's reaper), its `session.ended` position was l
 `@` (`<slug>@r<n>.pending-end`; the base life keeps the old name), reap reads the slug back from the part before
 it, and each life's end waits for the conversation's backlog and lands — or ages out and is counted — on its own.
 
+**SessionEnd compares before it deletes** (review-2 finding 2). SessionEnd reads the life it ends at its start and
+deleted the state unconditionally at its end; a mid-life heal landing in between (`K → K~r1`) left the healed life
+open on the hub with no state naming it, and the next resume landed on it under a fresh epoch — `epoch_split`.
+ACP's proxy reaches the same window from its exit, which races the dispatch chain against a timer while its
+in-memory session still names the old life. The delete now runs under the state lock and reads what the state
+names (`closeSessionState`): the state goes either way, and a life other than the one being ended is ended with
+it — its own position past the counter, its own marker, written to the lineage — so the next resume starts above
+it. The backlog is counted after the state goes, so a work context the heal spooled meanwhile holds both ends back.
+
 ### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a

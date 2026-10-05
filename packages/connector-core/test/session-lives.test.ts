@@ -657,3 +657,47 @@ describe("a resumed life's end beside a deferred end before it", () => {
     expect(await pendingEnds(fx)).toEqual([]);
   });
 });
+
+/**
+ * A HEAL THAT LANDS INSIDE SessionEnd's WINDOW (review-2 finding 2).
+ * SessionEnd read life K at its start and deleted the state unconditionally
+ * at its end; a heal that moved the state to K's next life in between was
+ * left open on the hub with no state file naming it, so the next resume
+ * landed on it under a fresh epoch and split its order.
+ */
+describe("a heal that moves the state while SessionEnd runs", () => {
+  test("SessionEnd ends the healed life too, and the next resume starts above it", async () => {
+    // Arrange: SessionEnd has read life K; a heal then moves the state on
+    const fx = await fixture("heal-in-end");
+    const k = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, k.crosscheckSessionId);
+    const healed = await healerFor(fx)({ sessionId: k.crosscheckSessionId, cause: "session_ended" }, Date.now() + BUDGET_MS);
+
+    // Act: the end of the life SessionEnd read, then a resume
+    await endSessionFlow({
+      home: fx.home,
+      repoKey: fx.key,
+      hub: fx.hub,
+      hostSessionKey: fx.hostSessionKey,
+      crosscheckSessionId: k.crosscheckSessionId,
+      developerId,
+      flushBudgetMs: BUDGET_MS,
+      now: () => new Date(),
+    });
+    const resumed = await register(fx);
+    await captureTarget(fx, "src/after-resume.ts");
+    await flushAsHook(fx);
+
+    // Assert: the healed life closed, the resume a fresh one, both orders whole
+    const healedLife = `${k.crosscheckSessionId}~r1`;
+    expect(healed).toEqual({ outcome: "healed", refusedSessionId: k.crosscheckSessionId, sessionId: healedLife });
+    expect(await isEnded(healedLife)).toBe(true);
+    expect(resumed.crosscheckSessionId).toBe(`${k.crosscheckSessionId}~r2`);
+    for (const id of [healedLife, resumed.crosscheckSessionId]) {
+      expect(await readSessionCausalOrder(db, id)).toMatchObject({ state: "usable", epochs: 1 });
+    }
+    expect(await targetsOf(resumed.workContextId)).toEqual(["src/after-resume.ts"]);
+    expect(await pendingEnds(fx)).toEqual([]);
+  });
+});

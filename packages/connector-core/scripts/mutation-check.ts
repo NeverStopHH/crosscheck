@@ -5578,8 +5578,8 @@ export const MUTATIONS: readonly Mutation[
     // allocates in the same window.
     label: "the end reads a position something else already owns",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0);",
-    to: "  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 0), 0);",
+    from: "    seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0),",
+    to: "    seqAt(await allocateSeq(input.home, input.hostSessionKey, 0), 0),",
     test: `${CORE}/test/end-session-seq.test.ts`,
     because:
       "`session.ended` lands on a position the session already issued, so the " +
@@ -5591,7 +5591,7 @@ export const MUTATIONS: readonly Mutation[
     // deleted, and reap's DeferredEnder runs in a later process.
     label: "a deferred end is silently unsequenced",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "      seq,\n    })}\\n`,",
+    from: "      seq: end.seq,\n    })}\\n`,",
     to: "    })}\\n`,",
     test: `${CORE}/test/end-session-seq.test.ts`,
     because:
@@ -13573,8 +13573,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a session's end never carries its last report",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "endSession(input.hub, input.crosscheckSessionId, seq, losses)",
-    to: "endSession(input.hub, input.crosscheckSessionId, seq)",
+    from: "endSession(input.hub, end.sessionId, end.seq, losses)",
+    to: "endSession(input.hub, end.sessionId, end.seq)",
     test: `${CORE}/test/session-losses.test.ts`,
     because: "a batch the final drain saw refused or ignored reaches the hub only with whichever session registers next",
   },
@@ -17274,7 +17274,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an end no longer writes down the life it closed",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  await recordEndedLife(input.home, input.hostSessionKey, input.crosscheckSessionId, input.now());\n",
+    from: "  await recordEndedLife(input.home, input.hostSessionKey, end.sessionId, input.now());\n",
     to: "",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "every resume walks every ended life again from the base id, one register call each, on the hook whose latency the developer feels",
@@ -17711,6 +17711,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "a resumed life's deferred end is published while its records are still on disk, under a spool nobody writes",
   },
+  {
+    label: "SessionEnd deletes a state a heal moved on and leaves that life open",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  const healed = moved === null ? null : lifeEnd(input, moved.crosscheckSessionId, seqAt(moved.seq, 0));\n",
+    to: "  const healed = null as LifeEnd | null;\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 finding 2: the healed life stays open with no state naming it, the next resume lands on it under a fresh epoch, and its order splits",
+  },
+  {
+    label: "SessionEnd's state delete never looks at which life the state names",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  if (fresh === null || fresh.crosscheckSessionId === crosscheckSessionId) {\n    return null;\n  }\n",
+    to: "  if (true) {\n    return null;\n  }\n",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 finding 2: an ACP proxy that exits while its in-memory session still names the life a heal moved off leaves the healed life open for the next session/load",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17826,7 +17842,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
- * PRINTS: packages/connector-acp/test/resumed-session.test.ts 3
+ * PRINTS: packages/connector-acp/test/resumed-session.test.ts 4
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -17970,7 +17986,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 13
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 17
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 18
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

@@ -10,8 +10,12 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
+import { readSessionCausalOrder } from "@crosscheck/server";
+
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "@crosscheck/connector-core/constants.ts";
 import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
+import { sessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
+import { ACP_CONNECTOR, guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import {
   sessionHealPathForSlug,
   sessionLineagePathForSlug,
@@ -22,6 +26,7 @@ import { readDropDetail } from "@crosscheck/connector-core/spool/drops.ts";
 import { developers, workContextTargets, workContexts } from "../../server/src/db/schema.ts";
 
 import {
+  REPO_ID,
   SHUTDOWN_BUDGET_MS,
   bootCaptureHub,
   createHarness,
@@ -49,7 +54,7 @@ afterAll(async () => {
 });
 
 /** A proxy life that first sees the session through `session/load`. */
-const loadSession = (h: Harness, id: number): void => {
+const loadSession = (h: Harness, id: number, sessionId: string = SESSION_ID): void => {
   h.capture.offer(
     "c2a",
     wireLine({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } }),
@@ -68,17 +73,17 @@ const loadSession = (h: Harness, id: number): void => {
       jsonrpc: "2.0",
       id,
       method: "session/load",
-      params: { sessionId: SESSION_ID, cwd: h.repo, mcpServers: [] },
+      params: { sessionId, cwd: h.repo, mcpServers: [] },
     }),
   );
   h.capture.offer("a2c", wireLine({ jsonrpc: "2.0", id, result: {} }));
 };
 
-const editIn = async (h: Harness, file: string): Promise<void> => {
+const editIn = async (h: Harness, file: string, sessionId: string = SESSION_ID): Promise<void> => {
   await writeRepoFile(h.repo, file, "export const a = 1;\n");
   h.capture.offer(
     "a2c",
-    toolCallUpdate(SESSION_ID, {
+    toolCallUpdate(sessionId, {
       sessionUpdate: "tool_call",
       toolCallId: `call_${file}`,
       kind: "edit",
@@ -255,5 +260,61 @@ describe("an ACP-only machine sweeps the side files of lives that never came bac
     for (const path of sideFiles) {
       expect(await Bun.file(path).exists()).toBe(false);
     }
+  });
+});
+
+/**
+ * A PROXY THAT EXITS AFTER A HEAL MOVED ITS SESSION (review-2 finding 2). The
+ * proxy's shutdown races its dispatch chain against a timer, so it can end a
+ * session whose in-memory twin still names the life a heal just moved the
+ * state file off. The end deleted that state unconditionally: the healed life
+ * stayed open with nothing naming it, and the next `session/load` landed on
+ * it under a fresh epoch.
+ */
+describe("an ACP proxy that exits while a heal has moved its session on", () => {
+  test("its shutdown ends the healed life too, and the next load starts above it", async () => {
+    // Arrange: a live session the hub ended, healed by a walk the proxy's
+    // in-memory session has not heard of yet
+    const h = await createHarness(hub, cleanups, "acp-heal-exit");
+    const sessionId = "sess_heal_exit";
+    const hostKey = `acp-fake-agent--${sessionId}`;
+    const base = `cc_${hostKey}`;
+    handshake(h, sessionId, h.repo);
+    await h.capture.settle();
+    await fetch(`${hub.hubUrl}/api/sessions/${encodeURIComponent(base)}/end`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${hub.apiKey}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const healed = await sessionHealer({
+      home: h.home,
+      repoKey: h.hub.repoKey,
+      hub: h.hub,
+      agentKind: "acp:fake-agent",
+      hostSessionKey: hostKey,
+      repoId: REPO_ID,
+      branch: "main",
+      baseCommit: "0".repeat(40),
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+      now: () => h.clock.value,
+    })({ sessionId: base, cause: "session_ended" }, Date.now() + SHUTDOWN_BUDGET_MS);
+
+    // Act: the proxy exits; a later proxy loads the session and edits
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+    const next = await createHarness(hub, cleanups, "acp-heal-exit-2", { home: h.home, repo: h.repo });
+    loadSession(next, 30, sessionId);
+    await editIn(next, "src/heal-exit/after.ts", sessionId);
+    await next.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert: the healed life was ended by the exit, the load took a fresh one
+    const healedLife = `${base}~r1`;
+    expect(healed).toEqual({ outcome: "healed", refusedSessionId: base, sessionId: healedLife });
+    const rows = await hub.db
+      .select({ workContextId: workContextTargets.workContextId, value: workContextTargets.value })
+      .from(workContextTargets);
+    expect(rows.filter((row) => row.value.startsWith("src/heal-exit/"))).toEqual([
+      { workContextId: `wc_${base}~r2`, value: "src/heal-exit/after.ts" },
+    ]);
+    expect(await readSessionCausalOrder(hub.db, healedLife)).toMatchObject({ state: "usable", epochs: 1 });
   });
 });

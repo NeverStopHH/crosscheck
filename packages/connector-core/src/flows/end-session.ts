@@ -2,10 +2,10 @@
  * `endSessionFlow` (DESIGN-agent-agnostic.md §1.3) — the session-end recipe
  * as an extracted function:
  *
- *   flush (budgeted) → count undelivered → pending-end marker → ended-life
- *   lineage → delete state
- *   → `end` only when nothing is left on disk (else the marker defers it to
- *   `reap`'s DeferredEnder).
+ *   flush (budgeted) → pending-end marker → ended-life lineage → delete
+ *   state (compared: a life a heal moved it to is ended too) → count
+ *   undelivered → `end` only when nothing is left on disk (else the marker
+ *   defers it to `reap`'s DeferredEnder).
  *
  * EXTRACTED FROM `connector-claude/src/hooks/session-end.ts`, not invented —
  * the hook calls this now. The ordering arguments travel with the code:
@@ -15,9 +15,9 @@
  *   - the marker is written BEFORE the `end` call, not instead of it: a
  *     marker left by a call that DID land costs one idempotent retry; a lost
  *     call costs a session that stays open with nobody left to close it;
- *   - state is deleted BEFORE the hub call, unconditionally: a state file
- *     that outlives its session makes a spool permanently unreapable, and
- *     reap reads the marker only once the state is gone.
+ *   - state is deleted BEFORE the hub call, whatever life it names: a state
+ *     file that outlives its session makes a spool permanently unreapable,
+ *     and reap reads the marker only once the state is gone.
  */
 import {
   intentPromptPathForSlug,
@@ -34,7 +34,7 @@ import { flushSpool } from "../spool/flush.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { seqAt } from "../capture/seq.ts";
 import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
-import { allocateSeq, crosscheckSessionIdFor, deleteSessionState } from "../state/session-state.ts";
+import { allocateSeq, closeSessionState, crosscheckSessionIdFor } from "../state/session-state.ts";
 import type { SeqField } from "@crosscheck/schema";
 
 export interface EndSessionFlowInput {
@@ -72,11 +72,56 @@ const pendingEndPathOf = (input: EndSessionFlowInput, lifeId: string): string =>
     lifeRungOf(crosscheckSessionIdFor(input.hostSessionKey), lifeId) ?? 0,
   );
 
+/** One life's end as SessionEnd writes it down: the life, its position, its marker. */
+interface LifeEnd {
+  readonly sessionId: string;
+  readonly seq: SeqField;
+  readonly markerPath: string;
+}
+
+const lifeEnd = (input: EndSessionFlowInput, sessionId: string, seq: SeqField): LifeEnd => ({
+  sessionId,
+  seq,
+  markerPath: pendingEndPathOf(input, sessionId),
+});
+
+/** The marker, then the lineage — both before the state goes. */
+const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd): Promise<void> => {
+  await writePrivateFile(
+    end.markerPath,
+    `${JSON.stringify({
+      crosscheckSessionId: end.sessionId,
+      at: input.now().toISOString(),
+      // THE MARKER IS THE ONLY CARRIER LEFT. reap's DeferredEnder runs in a
+      // later process with no state file to consult — so a deferred end
+      // without this is permanently unsequenced, and nothing would say why.
+      seq: end.seq,
+    })}\n`,
+  );
+  // The life this end closes, written down BEFORE its state goes: the state
+  // file is what named it, and a host that resumes this conversation under
+  // the same id must start its next life one rung up, not on this one — an
+  // end reported here is final on the hub (state/session-lineage.ts).
+  await recordEndedLife(input.home, input.hostSessionKey, end.sessionId, input.now());
+};
+
+/** Tells the hub one life is over; its marker goes once the hub took it. */
+const endOnHub = async (
+  input: EndSessionFlowInput,
+  end: LifeEnd,
+  losses: Awaited<ReturnType<typeof readTelemetryLossReport>>,
+): Promise<boolean> => {
+  const result = await endSession(input.hub, end.sessionId, end.seq, losses);
+  if (result.ok) {
+    await removeFile(end.markerPath);
+  }
+  return result.ok;
+};
+
 export const endSessionFlow = async (
   input: EndSessionFlowInput,
 ): Promise<EndSessionFlowResult> => {
   const slug = sessionSlug(input.hostSessionKey);
-  const pendingEndPath = pendingEndPathOf(input, input.crosscheckSessionId);
 
   await flushSpool(
     input.hub,
@@ -87,11 +132,6 @@ export const endSessionFlow = async (
     input.flushBudgetMs,
   );
 
-  // Per SESSION, not per repo: another session's backlog says nothing about
-  // whether this one's work has arrived.
-  const undelivered = (
-    await readSessionSpool(input.home, input.repoKey, slug)
-  ).lines.length;
   // ALLOCATED, NEVER READ, and taken BEFORE the state file is deleted. The
   // counter this session has been handing out lives only in that file, and a
   // Stop-time git lane or a detached worker can allocate inside this very
@@ -101,25 +141,21 @@ export const endSessionFlow = async (
   // its position has to mean. A null block (no state file, or a state file
   // from before this field) becomes `allocation_failed`: no position, and a
   // reason rather than a silence.
-  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0);
-  await writePrivateFile(
-    pendingEndPath,
-    `${JSON.stringify({
-      crosscheckSessionId: input.crosscheckSessionId,
-      at: input.now().toISOString(),
-      // THE MARKER IS THE ONLY CARRIER LEFT. It is written after the state
-      // delete below, and reap's DeferredEnder runs in a later process with
-      // no state file to consult — so a deferred end without this is
-      // permanently unsequenced, and nothing would say why.
-      seq,
-    })}\n`,
+  const own = lifeEnd(
+    input,
+    input.crosscheckSessionId,
+    seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0),
   );
-  // The life this end closes, written down BEFORE its state goes: the state
-  // file is what named it, and a host that resumes this conversation under
-  // the same id must start its next life one rung up, not on this one — an
-  // end reported here is final on the hub (state/session-lineage.ts).
-  await recordEndedLife(input.home, input.hostSessionKey, input.crosscheckSessionId, input.now());
-  await deleteSessionState(input.home, input.hostSessionKey);
+  await writeDownEnd(input, own);
+  // COMPARED, NOT BLIND (review-2 finding 2): a heal that moved the state
+  // after this SessionEnd read it registered a life that ends with this host
+  // session too. Left open with no state naming it, the next resume would
+  // land on it under a fresh epoch and split its order.
+  const moved = await closeSessionState(input.home, input.hostSessionKey, input.crosscheckSessionId);
+  const healed = moved === null ? null : lifeEnd(input, moved.crosscheckSessionId, seqAt(moved.seq, 0));
+  if (healed !== null) {
+    await writeDownEnd(input, healed);
+  }
   // A first prompt parked for the derived-intent worker that never ran (a
   // spawn that failed, a session ending inside the worker's deadline) must
   // not outlive the session: best-effort, like the state delete above.
@@ -128,11 +164,18 @@ export const endSessionFlow = async (
   // on its own clock, not on the one this life left running.
   await removeFile(sessionHealPathForSlug(input.home, slug));
 
+  // Per SESSION, not per repo: another session's backlog says nothing about
+  // whether this one's work has arrived. Counted once the state is gone, so
+  // a record a sibling spooled in between — a healed life's work context —
+  // holds the end back too.
+  const undelivered = (
+    await readSessionSpool(input.home, input.repoKey, slug)
+  ).lines.length;
   if (undelivered > 0) {
     // Telling the hub "done" now would publish a finished session while
     // records it produced are still on disk. The marker hands the end to
     // reap's DeferredEnder; the records stay deliverable either way.
-    return { undelivered, ended: false, seq };
+    return { undelivered, ended: false, seq: own.seq };
   }
   // The session's last word about its own ledgers (docs/1.0/loss-accounting.md
   // §4.2), read AFTER the drain above so a batch that drain had refused or
@@ -140,9 +183,7 @@ export const endSessionFlow = async (
   // this line and carries no report: the SessionStart that spends its marker
   // registered with the same snapshot a moment earlier.
   const losses = await readTelemetryLossReport(input.home, input.repoKey);
-  const result = await endSession(input.hub, input.crosscheckSessionId, seq, losses);
-  if (result.ok) {
-    await removeFile(pendingEndPath);
-  }
-  return { undelivered, ended: result.ok, seq };
+  const ownEnded = await endOnHub(input, own, losses);
+  const healedEnded = healed === null || (await endOnHub(input, healed, losses));
+  return { undelivered, ended: ownEnded && healedEnded, seq: own.seq };
 };

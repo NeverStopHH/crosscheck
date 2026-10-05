@@ -905,6 +905,54 @@ export const allocateSeq = async (
     },
   );
 
+/** A life SessionEnd found the state on that is not the one it ends, and that life's end position. */
+export interface MovedLife {
+  readonly crosscheckSessionId: string;
+  readonly seq: SeqRange | null;
+}
+
+const closeState = async (
+  home: string,
+  hostSessionKey: string,
+  crosscheckSessionId: string,
+): Promise<MovedLife | null> => {
+  const fresh = await readSessionState(home, hostSessionKey);
+  await deleteSessionState(home, hostSessionKey);
+  if (fresh === null || fresh.crosscheckSessionId === crosscheckSessionId) {
+    return null;
+  }
+  return {
+    crosscheckSessionId: fresh.crosscheckSessionId,
+    seq: fresh.seqEpoch === null ? null : { epoch: fresh.seqEpoch, from: fresh.eventSeq + 1, count: 1 },
+  };
+};
+
+/**
+ * SessionEnd's delete, COMPARED under the state lock (review-2 finding 2).
+ * SessionEnd reads the life it ends at its start; a mid-life heal can move
+ * the state to the next life before this delete, and a delete that did not
+ * look left that life open on the hub with nothing naming it — the next
+ * resume landed on it under a fresh epoch and split its order.
+ *
+ * The state goes either way: this SessionEnd closes the host session. When it
+ * named ANOTHER life, that life is returned with the position its end takes —
+ * past everything the counter handed out, in the same acquisition — and the
+ * caller ends it too. A lock that stays busy falls back to the same read and
+ * delete without it: a state file that outlives its session pins its spool.
+ */
+export const closeSessionState = async (
+  home: string,
+  hostSessionKey: string,
+  crosscheckSessionId: string,
+): Promise<MovedLife | null> => {
+  const closed = await withSessionStateLock<{ readonly moved: MovedLife | null } | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => ({ moved: await closeState(home, hostSessionKey, crosscheckSessionId) }),
+  );
+  return closed === null ? closeState(home, hostSessionKey, crosscheckSessionId) : closed.moved;
+};
+
 /**
  * OPENS THE WINDOW A TOOL IS ABOUT TO RUN IN, in the SAME acquisition that
  * takes the position — a separate read-then-write would let a sibling hook
