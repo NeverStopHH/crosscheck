@@ -17383,6 +17383,166 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-backups.test.ts`,
     because: "the team's files are merged over with no copy of what they held",
   },
+  {
+    label: "a content-free prompt matches teammate work on one stray word",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      candidate.workContext.tier === \"exact\" || sharedTerms >= HINT_MIN_SHARED_TERMS,",
+    to: "      true,",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "\"mache weiter\" and \"limit ist zurückgesetzt\" point the agent at a teammate's tree again, the pilot's 5 of 5",
+  },
+  {
+    label: "a content-free prompt ignores the session's intent",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const intent = input.intent?.trim() ?? \"\";",
+    to: "  const intent = \"\";",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "a session that stated what it is doing hears nothing about the teammate work on the same thing whenever it types \"weiter\"",
+  },
+  {
+    label: "two spellings of one word count as two agreeing words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "count(DISTINCT term.lexeme::text)::int",
+    to: "count(term.lexeme)::int",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "\"limit limits limiting\" carries a task and a claim's relevance doubles with every inflection the prompt repeats",
+  },
+  {
+    label: "words from two different claims count as agreeing on one statement",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "sharedTerms: Math.max(ownTerms, ...contextClaims.map((claim) => claim.matchedTerms)),",
+    to: "sharedTerms: ownTerms + contextClaims.reduce((total, claim) => total + claim.matchedTerms, 0),",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "\"weiter\" in a German claim plus \"limit\" in another make a limit note look like a task",
+  },
+  {
+    label: "the tree's own shared words never reach the selector",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "          matchedTerms: ownTerms,",
+    to: "          matchedTerms: 0,",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "a finding in a tree clearly about the prompt, sharing one word itself, falls back to a pointer nobody opens",
+  },
+  {
+    label: "the session's intent never reaches the hub",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    ...(intent === undefined ? {} : { intent }),",
+    to: "",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "the hub cannot match the session's work in place of \"ja\", so the fallback is dead code",
+  },
+  {
+    label: "a prompt with no searchable word goes on the wire",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const promptQuery = hasSearchableWord(input.prompt)\n    ? input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS)\n    : \"\";",
+    to: "  const promptQuery = input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
+  },
+  {
+    label: "a credential-shaped intent is sent to the hub",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "intent === null || !hasSearchableWord(intent) || containsSecret(intent)",
+    to: "intent === null || !hasSearchableWord(intent)",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "an intent carrying an AKIA key lands in the hub's request path and access logs as a GET string",
+  },
+  {
+    label: "an intent-matched hint claims to relate to the prompt",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const header = input.matchedOn === \"intent\" ? CLAIM_INTENT_HEADER : CLAIM_HEADER;",
+    to: "  const header = CLAIM_HEADER;",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "the agent reads a finding as related to \"weiter\" when it was matched on the session's stated intent",
+  },
+  {
+    label: "a weak match delivers a teammate's finding as substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "        isInjectable(claim) && isStrongMatch(claim, context) && !seen.has(claim.id),",
+    to: "        isInjectable(claim) && !seen.has(claim.id),",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "one shared word puts a teammate's sentence in the agent's context unasked — the single-token path the pilot condemned",
+  },
+  {
+    label: "an evidence-backed decision on a strong match stays a pointer",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedFinding(claim));",
+    to: "  (isNegativeKnowledge(claim) || isSettled(claim));",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a decision can never reach a settled status, so it stays behind a get_diagnosis no agent makes",
+  },
+  {
+    label: "a rejected decision is injected as substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  STATED_KINDS.has(claim.kind) && claim.status === \"proposed\";",
+    to: "  STATED_KINDS.has(claim.kind);",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a decision its own tree turned down reaches the reader as a recorded finding",
+  },
+  {
+    label: "a strongly matched tree lends substance to a claim about something else",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    (claimTerms > 0 && treeTerms >= HINT_MIN_SHARED_TERMS) ||",
+    to: "    (treeTerms >= HINT_MIN_SHARED_TERMS) ||",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a backed claim sharing no word of the prompt is injected because its tree's title matched",
+  },
+  {
+    label: "the least relevant claim of a tree is delivered first",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "      (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0) ||\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "the hint carries the newest backed claim rather than the one the prompt is about",
+  },
+  {
+    label: "a substance hint hides how many claims stay behind",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "restCount: foreign.length - 1 }",
+    to: "restCount: 0 }",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "the pointer to the rest says nothing remains, so nobody reads the tree",
+  },
+  {
+    label: "a substance hint carries the whole body instead of one sentence",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "quotedBody(firstSentence(claim.body), HINT_SUBSTANCE_MAX_CHARS)",
+    to: "quotedBody(claim.body, HINT_SUBSTANCE_MAX_CHARS)",
+    test: `${CORE}/test/hint-substance-render.test.ts`,
+    because: "a forged second line rides into the unsolicited hint up to the cap",
+  },
+  {
+    label: "the echo mark misses the sentence the hint showed",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "      bodyHash: hintBodyHash(firstSentence(selection.claim.body)),",
+    to: "      bodyHash: hintBodyHash(selection.claim.body),",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the one sentence an agent was shown comes back as its own observation and is published under the reader's name",
+  },
+  {
+    label: "a substance hint is booked as a pointer",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "      channel: SUBSTANCE_DELIVERY_CHANNEL,",
+    to: "      channel: \"prompt_hint\",",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "every later read of an inlined finding's tree counts as an opened pointer and inflates the pilot's precision",
+  },
+  {
+    label: "an inline finding's later read counts as an opened pointer",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  AND hd.channel <> ${SUBSTANCE_DELIVERY_CHANNEL}\n  THEN hd.pulled_at END",
+    to: "  THEN hd.pulled_at END",
+    test: `${SERVER}/test/pilot-substance-channel.test.ts`,
+    because: "opened and opened-per-100 rise by construction the day hints carry their answer",
+  },
+  {
+    label: "an inline finding counts as a pointer opened anyway",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "      WHERE ${windowed} AND ${POINTER_DELIVERY}",
+    to: "      WHERE ${windowed}",
+    test: `${SERVER}/test/pilot-substance-channel.test.ts`,
+    because: "work done after a finding was handed over is credited to a pointer nobody needed to open",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17594,8 +17754,12 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
+ * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 1
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 6
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -17697,6 +17861,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
+ * PRINTS: packages/server/test/hint-content-floor.test.ts 5
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
@@ -17719,6 +17884,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
  * PRINTS: packages/server/test/pilot-sessions.test.ts 11
+ * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
