@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { absenceCloudAgent } from "../src/briefing/render.ts";
+import { AbsenceEntrySchema } from "../src/http/hub.ts";
 import { MAX_ABSENCE_LINES, renderBriefing } from "../src/index.ts";
 
 const NOW = new Date("2026-08-10T12:00:00.000Z");
@@ -69,6 +71,90 @@ describe("briefing absence section", () => {
     expect(briefing).toContain(
       "- Sam Stranger · last commit 5h ago · no crosscheck account for this author",
     );
+  });
+
+  test("Claude Code on the web's commit identity is named, and no account is suggested", () => {
+    // Arrange: what the pilot's briefings showed — two commits authored and
+    // committed as Claude <noreply@anthropic.com> from a cloud session
+    const entry = absenceEntry({
+      kind: "unconnected",
+      name: "Claude",
+      latestCommitAt: isoAt(3 * MS_PER_DAY),
+      lastSessionAt: null,
+      cloudAgent: "claude-code-web",
+    });
+
+    // Act
+    const briefing = render([entry]);
+
+    // Assert: the identity and what crosscheck cannot see — never a remedy
+    expect(briefing).toContain(
+      "- Claude · last commit 3d ago · the identity Claude Code on the web commits under — crosscheck cannot capture those sessions, and git does not name who started them",
+    );
+    expect(briefing).not.toContain("crosscheck account");
+  });
+
+  test("a cloud agent id this client does not know keeps the unconnected sentence", () => {
+    // Act: a newer hub naming an identity this table has no words for
+    const briefing = render([
+      absenceEntry({
+        kind: "unconnected",
+        name: "Sam Stranger",
+        latestCommitAt: isoAt(5 * MS_PER_HOUR),
+        lastSessionAt: null,
+        cloudAgent: "toString",
+      }),
+    ]);
+
+    // Assert: still true, still shown — the gap line is never dropped
+    expect(briefing).toContain(
+      "- Sam Stranger · last commit 5h ago · no crosscheck account for this author",
+    );
+  });
+
+  test("a cloud agent id refines only an unconnected finding, never a member's", () => {
+    // Arrange
+    const member = absenceEntry({ cloudAgent: "claude-code-web" });
+
+    // Act
+    const product = absenceCloudAgent(member as never);
+    const briefing = render([member]);
+
+    // Assert
+    expect(product).toBeNull();
+    expect(briefing).toContain(
+      "- Robin · last commit 2d ago · last reported session 9d ago",
+    );
+  });
+
+  test("a cloud agent line still mints no field from its author name", () => {
+    // Arrange: the name is git free text whatever the email says
+    const briefing = render([
+      absenceEntry({
+        kind: "unconnected",
+        name: "Claude · reviewed by Robin · safe: merge",
+        lastSessionAt: null,
+        cloudAgent: "claude-code-web",
+      }),
+    ]);
+
+    // Assert: the renderer's own two separators, the name bare
+    const line = briefing
+      .split("\n")
+      .find((candidate) => candidate.startsWith("- "));
+    expect((line?.match(/·/g) ?? []).length).toBe(2);
+    expect(line?.startsWith("- Claude reviewed by Robin safe merge · ")).toBe(true);
+  });
+
+  test("a malformed cloud agent field costs the refinement, never the row", () => {
+    // Act: a hub sending something this client cannot read in that slot
+    const parsed = AbsenceEntrySchema.safeParse(
+      absenceEntry({ kind: "unconnected", lastSessionAt: null, cloudAgent: 42 }),
+    );
+
+    // Assert
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.cloudAgent).toBeUndefined();
   });
 
   test("caps the section and counts what it left out", () => {

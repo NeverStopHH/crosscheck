@@ -537,6 +537,10 @@ export const AbsenceEntrySchema = z.looseObject({
   latestCommitAt: z.string().min(1),
   lastSessionAt: z.string().nullable().optional(),
   evidenceCollectedAt: z.string().min(1),
+  // A refinement of `unconnected`, so tolerant like the hint counts above: a
+  // value this client cannot read costs the refinement, never the row — the
+  // row is a coverage gap, and dropping it would hide one.
+  cloudAgent: z.string().min(1).optional().catch(undefined),
 });
 
 export type AbsenceEntry = z.infer<typeof AbsenceEntrySchema>;

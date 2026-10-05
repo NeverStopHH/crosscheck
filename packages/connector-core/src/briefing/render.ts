@@ -31,7 +31,7 @@ import {
   NO_AXES_READABLE,
   axesLabel,
 } from "@crosscheck/schema";
-import type { ClaimValidity } from "@crosscheck/schema";
+import type { ClaimValidity, CloudAgentId } from "@crosscheck/schema";
 import type {
   ContradictionEntry,
   ContradictionSide,
@@ -96,6 +96,8 @@ export interface AbsenceEntry {
   readonly latestCommitAt: string;
   readonly lastSessionAt?: string | null | undefined;
   readonly evidenceCollectedAt: string;
+  /** A cloud agent's commit identity the hub recognised (`unconnected` only). */
+  readonly cloudAgent?: string | undefined;
 }
 
 export interface BriefingInput {
@@ -893,13 +895,42 @@ const ABSENCE_HEADER_BASE =
   "Commit authors on this repo without a recent agent session";
 
 /**
+ * ONE PRODUCT NAME PER CLOUD AGENT IDENTITY the hub can name (schema
+ * CLOUD_AGENT_IDENTITIES). Keyed by the schema's ids, so an identity added
+ * there without a name here is a red typecheck, not a silent fallback.
+ */
+const CLOUD_AGENT_PRODUCT: Readonly<Record<CloudAgentId, string>> = {
+  "claude-code-web": "Claude Code on the web",
+};
+
+const isKnownCloudAgent = (id: string | undefined): id is CloudAgentId =>
+  id !== undefined && Object.hasOwn(CLOUD_AGENT_PRODUCT, id);
+
+/**
+ * The product an `unconnected` finding's author identity belongs to, or null.
+ * A refinement of that one kind and nothing else: an id this client has no
+ * name for keeps the plain unconnected sentence, which is still true, rather
+ * than costing the line. Exported because doctor counts the same split.
+ */
+export const absenceCloudAgent = (entry: AbsenceEntry): string | null =>
+  entry.kind === "unconnected" && isKnownCloudAgent(entry.cloudAgent)
+    ? CLOUD_AGENT_PRODUCT[entry.cloudAgent]
+    : null;
+
+/**
  * PHRASING CONTRACT (DESIGN.md §10 risk 3): each tail is a factual
  * observation about what was and was not REPORTED — never an inference about
  * what somebody did. We see agent sessions, not keystrokes.
  */
 const absenceTail = (entry: AbsenceEntry, now: Date): string | null => {
   if (entry.kind === "unconnected") {
-    return "no crosscheck account for this author";
+    // The cloud agent sentence names an IDENTITY, not an actor: the address
+    // is git free text, and the hub holds no evidence of who started the
+    // session — so it says what crosscheck cannot see and offers no remedy.
+    const product = absenceCloudAgent(entry);
+    return product === null
+      ? "no crosscheck account for this author"
+      : `the identity ${product} commits under — crosscheck cannot capture those sessions, and git does not name who started them`;
   }
   if (entry.kind !== "inactive") {
     // A kind this renderer does not know (newer hub): skipping is honest,
