@@ -4,7 +4,7 @@
  * tree, and never claim a change it did not make (review 2026-10-05).
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { lstat, mkdir, symlink } from "node:fs/promises";
+import { lstat, mkdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
@@ -12,6 +12,7 @@ import { git } from "../../connector-core/test/helpers.ts";
 import {
   INIT_ARGS,
   OWNED_HOOKS,
+  OWNED_MCP_SERVER,
   OWNED_STATUSLINE,
   exists,
   fixture,
@@ -22,6 +23,23 @@ import {
 } from "./fixtures/init-remove.ts";
 
 afterEach(removeFixtures);
+
+/**
+ * Backup or temp copies anywhere in the work tree, as git sees them — new or
+ * ignored (with -uall, git lists the files inside ignored directories too).
+ */
+const strayCopies = (repo: string): readonly string[] =>
+  new TextDecoder()
+    .decode(
+      Bun.spawnSync({
+        cmd: ["git", "status", "--porcelain", "--untracked-files=all", "--ignored"],
+        cwd: repo,
+      }).stdout,
+    )
+    .split("\n")
+    .filter((line) => line.startsWith("?? ") || line.startsWith("!! "))
+    .map((line) => line.slice(3))
+    .filter((path) => path.includes(".bak-") || path.includes(".tmp-"));
 
 describe("a project copy that is really the user-level install", () => {
   test("init --remove refuses and changes nothing when $HOME itself is the git work tree", async () => {
@@ -89,6 +107,35 @@ describe("a project copy that is really the user-level install", () => {
     expect(result.stdout).toContain("`crosscheck init --global`");
     expect(await exists(join(home, ".claude", "settings.json"))).toBe(false);
     expect(await exists(join(home, ".crosscheck.json"))).toBe(false);
+  });
+});
+
+describe("the backup of a rewritten file", () => {
+  test("never lands in the work tree; the original is saved privately under CROSSCHECK_HOME and named", async () => {
+    // Arrange: the pilot shape — ignored project files, one holding a
+    // teammate's server with an API key in its env
+    const { repo, env, mcpPath } = await fixture("backup-secret");
+    await writeFile(join(repo, ".gitignore"), ".mcp.json\n.claude/\n", "utf8");
+    await git(repo, ["add", ".gitignore"]);
+    await git(repo, ["commit", "-m", "ignore local tooling"]);
+    const mcpBefore = await writeJson(mcpPath, {
+      mcpServers: {
+        crosscheck: OWNED_MCP_SERVER,
+        linear: { command: "linear-mcp", env: { LINEAR_API_KEY: "lin_SECRET_123" } },
+      },
+    });
+
+    // Act
+    const result = await runCli(["init", "--remove"], env, repo);
+
+    // Assert: nothing new for `git status` to show, nothing holding the secret
+    expect(result.exitCode).toBe(0);
+    expect(strayCopies(repo)).toEqual([]);
+    const saved = /original saved to (\S+)\)/.exec(result.stdout)?.[1] ?? "";
+    expect(saved.startsWith(join(env["CROSSCHECK_HOME"] ?? "", "backups"))).toBe(true);
+    expect(await read(saved)).toBe(mcpBefore);
+    expect((await stat(saved)).mode & 0o777).toBe(0o600);
+    expect(result.stdout).toContain(`${mcpPath}: removed the crosscheck mcp server; everything else in it is kept (original saved to ${saved})`);
   });
 });
 

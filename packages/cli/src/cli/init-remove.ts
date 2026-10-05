@@ -19,8 +19,8 @@
  * one REFUSES and writes nothing — the project install's rule: these files
  * belong to a repo, and a half-removed repo is the state doctor explains
  * worst. A file the strip leaves holding nothing but install-created
- * structure is deleted; any other changed file is rewritten through the
- * same backup + atomic write the installs use.
+ * structure is deleted; any other changed file is rewritten atomically, its
+ * original saved OUTSIDE the work tree and named (init-remove-plan.ts).
  */
 import { join, relative } from "node:path";
 
@@ -34,7 +34,13 @@ import { repoConfigPath } from "@crosscheck/connector-core/config/repo-config.ts
 import { isPathTracked } from "@crosscheck/connector-core/git/check-ignore.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { readGlobalWiring } from "./doctor-global.ts";
-import { applyPlan, planAll, planLine } from "./init-remove-plan.ts";
+import {
+  applyPlan,
+  planAll,
+  planLine,
+  removalBackupDir,
+  saveOriginals,
+} from "./init-remove-plan.ts";
 import type { FilePlan } from "./init-remove-plan.ts";
 import { REMOVE_RESTART_LINE, removalTargets } from "./wiring-removal.ts";
 import {
@@ -141,13 +147,14 @@ export const runProjectRemove = async (
   if (!planned.ok) {
     return { stdout: `${planned.refusal}\n`, exitCode: EXIT_ABORTED };
   }
-  for (const plan of planned.plans) {
+  const plans = await saveOriginals(planned.plans, root, removalBackupDir(env, root));
+  for (const plan of plans) {
     await applyPlan(plan);
   }
-  const notes = await Promise.all(planned.plans.map((plan) => teamChangeNote(root, plan)));
+  const notes = await Promise.all(plans.map((plan) => teamChangeNote(root, plan)));
   return {
     stdout: [
-      ...planned.plans.map(planLine),
+      ...plans.map(planLine),
       ...notes.flat(),
       ...(await leftInPlaceLines(root, env, options.cursor)),
       REMOVE_RESTART_LINE,

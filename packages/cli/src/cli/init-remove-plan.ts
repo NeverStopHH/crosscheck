@@ -5,22 +5,36 @@
  * changes anything, and the one sentence per file the output prints.
  */
 import { lstat, realpath, rm } from "node:fs/promises";
+import { basename, join, relative } from "node:path";
 
+import { crosscheckHome, writePrivateFile } from "@crosscheck/connector-core/config/paths.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   readJsonConfig,
   refusalMessage,
   renderJsonFile,
-  writeIfChanged,
+  writeConfigAtomically,
 } from "./init-io.ts";
 import type { RemovalTarget, Stripped } from "./wiring-removal.ts";
+
+/** Under CROSSCHECK_HOME: where a removal's originals are kept. */
+const BACKUP_DIR = "backups";
 
 export type FilePlan =
   | { readonly kind: "absent" | "untouched"; readonly path: string }
   | {
-      readonly kind: "strip" | "delete";
+      readonly kind: "delete";
       readonly path: string;
       readonly raw: string;
       readonly stripped: Stripped;
+    }
+  | {
+      readonly kind: "strip";
+      readonly path: string;
+      readonly raw: string;
+      readonly stripped: Stripped;
+      /** Where the original was saved; null until `saveOriginals` ran. */
+      readonly backup: string | null;
     };
 
 type PlanResult =
@@ -39,7 +53,9 @@ const planFile = (
   if (!stripped.changed) {
     return { kind: "untouched", path: target.path };
   }
-  return { kind: stripped.leftover ? "delete" : "strip", path: target.path, raw, stripped };
+  return stripped.leftover
+    ? { kind: "delete", path: target.path, raw, stripped }
+    : { kind: "strip", path: target.path, raw, stripped, backup: null };
 };
 
 /** EVERY file is read and validated before ANY is written. */
@@ -79,15 +95,41 @@ const linkRefusal = async (plans: readonly FilePlan[]): Promise<string | null> =
   return null;
 };
 
+/** One private directory per run, named for the repo it came from. */
+export const removalBackupDir = (env: Env, root: string): string =>
+  join(crosscheckHome(env), BACKUP_DIR, `init-remove-${String(Date.now())}-${basename(root)}`);
+
+/**
+ * Every file the run will REWRITE has its original saved first — OUT of the
+ * work tree (review 2026-10-05). A `.mcp.json.bak-…` beside an ignored
+ * `.mcp.json` is a new file `git status` offers to commit, holding whatever a
+ * teammate's server keeps in its env, API keys included. Originals go to a
+ * private directory (0700, files 0600) under CROSSCHECK_HOME, at their path
+ * relative to the repo, and the output names each one. A DELETED file gets
+ * none: it held nothing but crosscheck's entries, which `crosscheck init`
+ * writes again.
+ */
+export const saveOriginals = async (
+  plans: readonly FilePlan[],
+  root: string,
+  backupDir: string,
+): Promise<readonly FilePlan[]> =>
+  Promise.all(
+    plans.map(async (plan) => {
+      if (plan.kind !== "strip") {
+        return plan;
+      }
+      const backup = join(backupDir, relative(root, plan.path));
+      await writePrivateFile(backup, plan.raw);
+      return { ...plan, backup };
+    }),
+  );
+
 export const applyPlan = async (plan: FilePlan): Promise<void> => {
   if (plan.kind === "strip") {
-    await writeIfChanged(plan.path, plan.raw, renderJsonFile(plan.stripped.value));
+    await writeConfigAtomically(plan.path, renderJsonFile(plan.stripped.value));
   }
   if (plan.kind === "delete") {
-    // No backup, unlike every rewrite: the file held nothing of the user's,
-    // `crosscheck init` writes the same content again, and a fresh
-    // `.mcp.json.bak-…` would be the one new file an ignored-copy cleanup
-    // leaves in `git status`.
     await rm(plan.path);
   }
 };
@@ -99,7 +141,9 @@ export const planLine = (plan: FilePlan): string => {
     case "untouched":
       return `${plan.path}: no crosscheck entries — left as is`;
     case "strip":
-      return `${plan.path}: removed ${plan.stripped.removed}; everything else in it is kept`;
+      return `${plan.path}: removed ${plan.stripped.removed}; everything else in it is kept${
+        plan.backup === null ? "" : ` (original saved to ${plan.backup})`
+      }`;
     case "delete":
       return `${plan.path}: removed ${plan.stripped.removed} and deleted the file — nothing else was in it`;
   }

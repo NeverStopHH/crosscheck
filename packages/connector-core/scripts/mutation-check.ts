@@ -16275,8 +16275,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "init --remove leaves an emptied file behind",
     file: `${CLI}/src/cli/init-remove-plan.ts`,
-    from: "kind: stripped.leftover ? \"delete\" : \"strip\"",
-    to: "kind: \"strip\"",
+    from: "  return stripped.leftover\n    ? { kind: \"delete\"",
+    to: "  return false\n    ? { kind: \"delete\"",
     test: `${CLI}/test/init-remove.test.ts`,
     because: "an empty {} settings or .mcp.json stays in the checkout, and a tracked one becomes a pointless diff",
   },
@@ -16433,6 +16433,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "the link becomes a stripped copy while its target stays wired, or only the link is deleted, and the output claims the file is gone",
   },
+  {
+    label: "init --remove saves a rewritten file's original inside the work tree",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "saveOriginals(planned.plans, root, removalBackupDir(env, root))",
+    to: "saveOriginals(planned.plans, root, root)",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "the ignored-copy cleanup leaves a new file git offers to commit, holding a teammate's server env and its API key",
+  },
+  {
+    label: "init --remove saves an original without saying where",
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
+    from: "plan.backup === null ? \"\" :",
+    to: "true ? \"\" :",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "a copy of the user's settings, secrets included, sits somewhere nobody was told about",
+  },
+  {
+    label: "init --remove saves an original holding secrets readable by everyone",
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
+    from: "      await writePrivateFile(backup, plan.raw);",
+    to: "      await Bun.write(backup, plan.raw);",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "the backup of a .mcp.json with an API key in a server's env is world-readable on a shared machine",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16507,7 +16531,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 2
- * PRINTS: packages/cli/test/init-remove-safety.test.ts 4
+ * PRINTS: packages/cli/test/init-remove-safety.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
