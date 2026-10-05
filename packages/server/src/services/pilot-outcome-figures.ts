@@ -23,7 +23,7 @@
 import { sql } from "drizzle-orm";
 import type { HintOutcomeWithholding } from "@crosscheck/schema";
 
-import { lastWholeMonth, outcomePopulationStart, readPeriodAggregate, withholdingOf } from "./outcome-population.ts";
+import { lastWholeMonth, readPeriodAggregate, recordableFrom, withholdingOf } from "./outcome-population.ts";
 import type { Db } from "../db/client.ts";
 
 interface Deps {
@@ -74,10 +74,10 @@ export const readOutcomeFigures = async (
   input: { readonly repo: string; readonly now: Date; readonly outcomesSinceIso: string | null },
 ): Promise<OutcomeFigures> => {
   const period = lastWholeMonth(input.now);
-  if (input.outcomesSinceIso === null || new Date(input.outcomesSinceIso).getTime() >= period.end.getTime()) {
+  const from = recordableFrom(period, input.outcomesSinceIso, input.now);
+  if (from === null) {
     return notRecordable(period, input.outcomesSinceIso);
   }
-  const from = outcomePopulationStart(period.start, input.outcomesSinceIso, input.now);
   const aggregate = await readPeriodAggregate(deps.db, {
     repo: input.repo,
     from,

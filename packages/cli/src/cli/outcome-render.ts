@@ -23,6 +23,14 @@ const OUTCOME_WORDS: Readonly<Record<string, string>> = {
 
 export const outcomeWord = (outcome: string): string => OUTCOME_WORDS[outcome] ?? bareUntrusted(outcome);
 
+/** A closed month by name — "July 2026" — or "an unknown month" for a start this client cannot read. */
+export const monthOf = (iso: string): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms)
+    ? "an unknown month"
+    : new Date(ms).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+};
+
 export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): string => {
   const shown = safeId(ref);
   const word = outcomeWord(recorded.outcome);
@@ -36,7 +44,7 @@ export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): str
   return (
     `recorded: ${shown} — ${word}${replaced}. It shows in full only in your own crosscheck pilot --mine; ` +
     "others see it only inside the team's totals for a whole past month, once at least 3 people recorded outcomes; " +
-    "the teammate whose work it was sees how often their work was followed\n"
+    "the teammate whose work it was sees how often it was followed in a whole past month, once at least 3 people recorded outcomes about it\n"
   );
 };
 

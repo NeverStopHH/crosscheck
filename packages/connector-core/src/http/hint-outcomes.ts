@@ -104,7 +104,20 @@ export const MyHintOutcomesSchema = z.looseObject({
   bySourceBeyondList: CountSchema,
   reasons: z.array(OutcomeReasonSchema),
   reasonsBeyondList: CountSchema,
-  yourWork: z.looseObject({ followed: CountSchema }),
+  /**
+   * The source credit (review #10): one closed month's follows of the
+   * caller's work, or the reason there is no number — never both.
+   */
+  yourWork: z
+    .looseObject({
+      periodStartIso: z.string().min(1),
+      periodEndIso: z.string().min(1),
+      followed: CountSchema.nullable(),
+      withheld: z.string().min(1).nullable(),
+    })
+    .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {
+      message: "a source credit is either withheld or counted",
+    }),
 });
 
 export type MyHintOutcomes = z.infer<typeof MyHintOutcomesSchema>;

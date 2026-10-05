@@ -282,16 +282,17 @@ describe("crosscheck pilot --mine", () => {
     expect(result.stdout).toContain(`overrode, from Ken: «${OVERRIDE_REASON}»`);
   });
 
-  test("the teammate whose work it was sees one count, and nobody's name or reason", async () => {
-    // Arrange
+  test("the teammate whose work it was sees no count from one recipient, and nobody's name or reason", async () => {
+    // Arrange — only Nick received Ken's work, and no whole month has passed
     const home = await homeWithLive(KEN_SESSION);
 
     // Act
     const result = await cli(home, ["pilot", "--mine"], { as: ken });
 
-    // Assert
+    // Assert — review #10: a count from one recipient would be that recipient's words
     expect(result.exitCode).toBe(EXIT_OK);
-    expect(result.stdout).toContain("your own work, in teammates' hints: followed 1 time");
+    expect(result.stdout).toMatch(/your own work, in teammates' hints, \w+ \d{4}: nothing to count — outcomes became recordable here after it ended/);
+    expect(result.stdout).not.toContain("followed 1 time");
     expect(result.stdout).not.toContain("Nick");
     expect(result.stdout).not.toContain(OVERRIDE_REASON);
   });

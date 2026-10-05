@@ -11,7 +11,10 @@
  * WHAT A TEAMMATE LEARNS is one count about their OWN work: how often the
  * hints that pointed at it were followed. No recipient, no reason, no
  * override and no noise rides beside it — those are other people's words
- * about their own sessions.
+ * about their own sessions. And not even that count while it could single
+ * somebody out (review #10): it covers the last whole month, frozen at its
+ * end, and is shown only once at least three people recorded something about
+ * that work — otherwise the answer says why there is no number.
  *
  * NO RANKING. Teammates are listed in name order, never by count: a list of
  * people sorted by how often their work was taken is a score, and 00 §8.5
@@ -21,10 +24,19 @@
  */
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import type { HintOutcome } from "@crosscheck/schema";
+import type { HintOutcome, HintOutcomeWithholding } from "@crosscheck/schema";
 
 import { HINT_OUTCOME_MAX_REASONS, HINT_OUTCOME_MAX_SOURCES } from "../constants.ts";
-import { EMPTY_TALLY, addToTally, deliveryStates, outcomePopulationStart } from "./outcome-population.ts";
+import {
+  EMPTY_TALLY,
+  addToTally,
+  deliveryStates,
+  lastWholeMonth,
+  outcomePopulationStart,
+  readPeriodAggregate,
+  recordableFrom,
+  withholdingOf,
+} from "./outcome-population.ts";
 import type { DeliveryState, HintOutcomeTally } from "./outcome-population.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { Db } from "../db/client.ts";
@@ -60,7 +72,15 @@ export interface MyHintOutcomes extends HintOutcomeTally {
   readonly reasons: readonly OutcomeReason[];
   readonly reasonsBeyondList: number;
   /** Hints that pointed at the CALLER's work and that the teammate they reached followed. */
-  readonly yourWork: { readonly followed: number };
+  readonly yourWork: YourWork;
+}
+
+/** The source credit: one closed month's follows of the caller's work, or why there is no number. */
+export interface YourWork {
+  readonly periodStartIso: string;
+  readonly periodEndIso: string;
+  readonly followed: number | null;
+  readonly withheld: HintOutcomeWithholding | null;
 }
 
 export interface ReadMyHintOutcomesInput {
@@ -131,17 +151,32 @@ const readReasons = async (
   return rows.rows;
 };
 
-/** How often teammates followed hints that pointed at the caller's work — one count, nothing else. */
-const readFollowedWork = async (
+/**
+ * How often teammates followed hints that pointed at the caller's work — one
+ * count over the last whole month as it stood at its end, and only once at
+ * least three people recorded something about that work (review #10).
+ */
+const readYourWork = async (
   deps: Deps,
   input: ReadMyHintOutcomesInput,
-  since: Date,
-): Promise<number> => {
-  const rows = await deps.db.execute<{ n: number }>(sql`
-    ${deliveryStates(input.repo, since, sql`s.developer_id <> ${input.developerId}`)}
-    SELECT count(*)::int AS n FROM states st
-    WHERE st.source_id = ${input.developerId} AND st.state = 'followed'`);
-  return Number(rows.rows[0]?.n ?? 0);
+  now: Date,
+  outcomesSinceIso: string | null,
+): Promise<YourWork> => {
+  const period = lastWholeMonth(now);
+  const stamps = { periodStartIso: period.start.toISOString(), periodEndIso: period.end.toISOString() };
+  const from = recordableFrom(period, outcomesSinceIso, now);
+  if (from === null) {
+    return { ...stamps, followed: null, withheld: "not_recordable" };
+  }
+  const aggregate = await readPeriodAggregate(deps.db, {
+    repo: input.repo,
+    from,
+    until: period.end,
+    who: sql`s.developer_id <> ${input.developerId}`,
+    sourceIs: input.developerId,
+  });
+  const withheld = withholdingOf(aggregate, { sources: false, recorded: false });
+  return { ...stamps, followed: withheld === null ? aggregate.followed : null, withheld };
 };
 
 export const readMyHintOutcomes = async (
@@ -158,10 +193,10 @@ export const readMyHintOutcomes = async (
     settings.pilotOutcomesSince,
     now,
   );
-  const [tallies, reasons, followedWork] = await Promise.all([
+  const [tallies, reasons, yourWork] = await Promise.all([
     readTallies(deps, input, since),
     readReasons(deps, input, since),
-    readFollowedWork(deps, input, since),
+    readYourWork(deps, input, now, settings.pilotOutcomesSince),
   ]);
   const { total, sources } = foldTallies(tallies);
   const reasonsTotal = Number(reasons[0]?.total ?? 0);
@@ -175,6 +210,6 @@ export const readMyHintOutcomes = async (
     bySourceBeyondList: Math.max(0, sources.length - HINT_OUTCOME_MAX_SOURCES),
     reasons: reasons.map((row) => ({ outcome: row.outcome, reason: row.reason, source: row.source })),
     reasonsBeyondList: Math.max(0, reasonsTotal - reasons.length),
-    yourWork: { followed: followedWork },
+    yourWork,
   };
 };

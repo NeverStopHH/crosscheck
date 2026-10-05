@@ -27,10 +27,12 @@ import {
   recordOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
+import { SECONDS_TO_AUGUST, createCrowd, recordTenWords } from "./fixtures/hint-outcome-crowd.ts";
 import { jsonRequest, postRecords } from "./helpers.ts";
 import type { TestDeveloper } from "./helpers.ts";
 
 const SECONDS_PER_DAY = 86_400;
+const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z" };
 const OVERRIDE_REASON = "kept the developer key; the repo key mixes two people's caches";
 
 const viewOf = async (response: Response): Promise<Record<string, unknown>> =>
@@ -151,23 +153,71 @@ describe("GET /api/hint-outcomes/mine", () => {
     expect(ken["bySource"]).toEqual([]);
   });
 
-  test("a teammate learns how often their own work was followed — and nothing about who or why", async () => {
-    // Arrange
+  test("review #10: a teammate's credit is the last whole month's follows, once 3 people recorded about their work — nothing about who or why", async () => {
+    // Arrange — Nick, Mike and Anna each said something about Ken's work in July
+    const crowd = await createCrowd();
+    await recordTenWords(crowd);
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const ken = await viewOf(await readMine(crowd, crowd.ken));
+
+    // Assert
+    expect(ken["yourWork"]).toEqual({ ...JULY, followed: 4, withheld: null });
+    const said = JSON.stringify(ken);
+    for (const name of ["Nick", "Mike", "Anna"]) {
+      expect(said).not.toContain(name);
+    }
+    expect(said).not.toContain("kept my own cache key");
+  });
+
+  test("review #10: two people's words about a teammate's work print no count — a switch would show as a step", async () => {
+    // Arrange — only Nick and Mike received Ken's work
     const world = await createOutcomeWorld();
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
     await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "overrode", reason: OVERRIDE_REASON });
     await recordOutcome(world, world.mike, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
 
     // Act
     const ken = await viewOf(await readMine(world, world.ken));
 
     // Assert
-    expect(ken["yourWork"]).toEqual({ followed: 2 });
-    const said = JSON.stringify(ken);
-    expect(said).not.toContain("Nick");
-    expect(said).not.toContain("Mike");
-    expect(said).not.toContain(OVERRIDE_REASON);
-    expect(said).not.toContain("overrode\":1");
+    expect(ken["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "too_few_recorders" });
+    expect(JSON.stringify(ken)).not.toContain(OVERRIDE_REASON);
+  });
+
+  test("review #10: a word changed after the month never moves the credit", async () => {
+    // Arrange — the review's P3: Ken's count dropped the moment Nick switched
+    const crowd = await createCrowd();
+    await recordTenWords(crowd);
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    const before = (await viewOf(await readMine(crowd, crowd.ken)))["yourWork"];
+
+    // Act — and a minute passes, so the switch lies strictly in the past
+    await recordOutcome(crowd, crowd.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: OVERRIDE_REASON });
+    crowd.harness.clock.advanceSeconds(60);
+    const after = (await viewOf(await readMine(crowd, crowd.ken)))["yourWork"];
+
+    // Assert
+    expect(after).toEqual(before);
+  });
+
+  test("review #10: while the first recordable month is still open there is no credit, and it says why", async () => {
+    // Arrange — enrolled 2026-07-24; July has not ended, June was never recordable
+    const crowd = await createCrowd();
+    await recordTenWords(crowd);
+
+    // Act
+    const ken = await viewOf(await readMine(crowd, crowd.ken));
+
+    // Assert
+    expect(ken["yourWork"]).toEqual({
+      periodStartIso: "2026-06-01T00:00:00.000Z",
+      periodEndIso: "2026-07-01T00:00:00.000Z",
+      followed: null,
+      withheld: "not_recordable",
+    });
   });
 
   test("a hint delivered before the repo could record outcomes is outside my view, not unmarked", async () => {

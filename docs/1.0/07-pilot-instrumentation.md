@@ -921,7 +921,7 @@ enrolment** (D2's reasoning: outcomes are measurement).
 | Who | Sees | Where |
 |---|---|---|
 | the recipient | their own hints received, followed / overrode / not relevant now / noise / unmarked, by source teammate, with the reasons beside the current words | `crosscheck pilot --mine [--days N]` (`GET /api/hint-outcomes/mine`) |
-| the source teammate | ONE count: how often hints that pointed at their work were followed — no recipient, no reason, no override, no noise | the same command, run by them ("your own work, in teammates' hints: followed N times") |
+| the source teammate | ONE count: how often hints that pointed at their work were followed in the last whole month, frozen at its end, and only once at least 3 people recorded outcomes about that work (§13.10) — no recipient, no reason, no override, no noise | the same command, run by them ("your own work, in teammates' hints, July 2026: followed N times — …") |
 | the team | one per-repo line over the last whole calendar month, frozen at its end, and only once at least 3 people recorded outcomes about at least 3 people's work, 10 words or more (§13.9, §13.10) | `crosscheck pilot` |
 | anybody else | **nothing**: no route takes a person as a parameter, so somebody else's per-person view cannot be asked for | — |
 
@@ -930,7 +930,7 @@ employee measurement — and that refusal stands: `--by-developer` is still refu
 by `pilot --mine`. `--mine` is a reader's own history, which they already lived through. Its by-source lines
 are the reader's experience of teammates' work, listed in **name order, never by count**, with no
 percentage beside a person (00 §8.5's ban on scoring people). The source credit is one count about the
-source's own work; it is shown to the source alone. A real run against an in-process hub (Nick's agent
+source's own work, for a whole past month above the people-minimum (§13.10); it is shown to the source alone. A real run against an in-process hub (Nick's agent
 followed Ken's cache pointer with a reason and was refused when it tried `noise`; Nick overrode Ken's retry
 pointer, followed his filter pointer, and labelled Mike's export pointer noise at a terminal):
 
@@ -944,13 +944,14 @@ hints that reached you unasked: 4 — followed 2 · overrode 1 · not relevant n
 why, newest first — as you or your agent wrote it:
   overrode, from Ken: «kept the retry on the hub: the client retry doubled the uploads»
   followed, from Ken: «reused his decision to key the cache by repo»
-your own work, in teammates' hints: followed 0 times
+your own work, in teammates' hints, September 2026: nothing to count — outcomes became recordable here after it ended
 recorded with your key — by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode); noise is your own label (crosscheck noise)
-only you see this view in full; others see your words only inside the team report's totals for a whole past month, shown once at least 3 people recorded outcomes about at least 3 people's work, and each teammate whose work it was sees how often it was followed
+only you see this view in full; others see your words only inside totals for a whole past month — the team report's, once at least 3 people recorded outcomes about at least 3 people's work, and a teammate's count of how often their work was followed, once at least 3 people recorded outcomes about it
 ```
 
-and Ken's, on the same hub: `nothing reached you unasked on this repo in this window` · `your own work, in
-teammates' hints: followed 2 times` — no name, no reason, no override.
+and Ken's, on the same hub: `nothing reached you unasked on this repo in this window` and the same credit line —
+no name, no reason, no override, and (§13.10) no count before a whole month with three recorders has passed;
+before that revision his line read `followed 2 times`, live.
 
 **13.6 — The hint tells the agent, in one clause.** A delivered prompt hint (claim hint, pointer, or a
 teammate's answer) ends, as its last line, with `mark_hint_outcome <ref> records whether you followed it or
@@ -980,7 +981,7 @@ clause and a tally line.
 - **D-O2 — what the source sees.** One count, `followed`. Overrides, noise and reasons about a person's work
   are not shown to them, though an override's reason is often exactly what the author would want to read.
   On a team of two, "teammates followed your work N times" names the other person by elimination — stated,
-  not solved.
+  not solved. *Solved by §13.10 (#10): the count needs three recorders, which a team of two never has.*
 - **D-O3 — the clause on the briefing and the tripwire ask.** *Decided by the owner, built — §13.9.*
 - **D-O4 — an agent recording noise.** Refused (D3 kept). If the owner wants the agent's view of
   off-target hints, it would be a separate, agent-attributed figure, never the label.
@@ -1079,3 +1080,22 @@ Every printed promise was re-read against this and rewritten to be true: the `--
 `mark_hint_outcome` description, `crosscheck followed / overrode`'s answer and usage all now say a word is
 shown in full only to its recorder, others see it only inside a whole past month's team totals once the
 minimums are met, and the source teammate sees how often their work was followed.
+
+*#10 — the source credit leaked overrides and timing.* Ken's "followed" fell from 1 to 0 the moment Nick
+switched his word to overrode — an override of Ken's work, read off a count that was meant to carry none —
+and stepping `days` dated the deliveries behind it. The credit now follows the team line's rule, with the
+people-minimum only (the count is already about one person's work): **the last whole calendar month, frozen
+at its end**, counted only once at least **3** distinct teammates recorded something about the caller's work
+in it (`hint-outcome-view.ts`, `readYourWork`, on `readPeriodAggregate`). The wire carries `yourWork:
+{ periodStartIso, periodEndIso, followed: number | null, withheld }` — a count or the reason, never both (the
+client refuses a credit with both) — and `--mine` prints one of:
+
+```
+your own work, in teammates' hints, July 2026: followed 4 times — counted once at least 3 people recorded outcomes about it
+your own work, in teammates' hints, July 2026: no count — fewer than 3 people recorded an outcome about it, and a count could single someone out
+your own work, in teammates' hints, July 2026: no hint pointed at it
+your own work, in teammates' hints, September 2026: nothing to count — outcomes became recordable here after it ended
+```
+
+A word changed after the month never moves it (the review's P3, pinned), and D-O2's team-of-two elimination
+is gone with it: two teammates can never reach the minimum.

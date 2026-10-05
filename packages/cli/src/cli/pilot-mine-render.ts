@@ -13,8 +13,9 @@
  * and no line puts a percentage beside a person (00 §8.5).
  *
  * WHO SEES WHAT IS SAID ON THE PAGE, not left to be inferred: this view is
- * the caller's alone, a teammate learns one count about their own work, and
- * the team report stays per repo.
+ * the caller's alone; a teammate learns one count about their own work, for a
+ * whole past month and only above the people-minimum (review #10); the team
+ * report's line is a whole past month above its own minimums (review #4).
  */
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
@@ -22,7 +23,7 @@ import type { MyHintOutcomes, SourceTally } from "@crosscheck/connector-core/htt
 import { quoted } from "@crosscheck/connector-core/mcp/render.ts";
 import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
 
-import { outcomeWord } from "./outcome-render.ts";
+import { monthOf, outcomeWord } from "./outcome-render.ts";
 
 const INDENT = "  ";
 /** A source the hub could not name — work that is not this repo's, or is gone. */
@@ -94,10 +95,35 @@ const reasonLines = (view: MyHintOutcomes): readonly string[] =>
         ...(view.reasonsBeyondList > 0 ? [`${INDENT}(+${String(view.reasonsBeyondList)} more, not listed)`] : []),
       ];
 
+const PEOPLE_MINIMUM = String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders);
+
+/** Why a credit carries no number; a word this client lacks prints as itself. */
+const CREDIT_WITHHELD: Readonly<Record<string, string>> = {
+  not_recordable: "nothing to count — outcomes became recordable here after it ended",
+  no_interventions: "no hint pointed at it",
+  too_few_recorders: `no count — fewer than ${PEOPLE_MINIMUM} people recorded an outcome about it, and a count could single someone out`,
+};
+
+/**
+ * THE SOURCE CREDIT (07 §13.10, review #10): one closed month's follows of
+ * the caller's work — or why there is no number, never a "followed 0" that
+ * a teammate's one changed word could move.
+ */
+const creditWords = (credit: MyHintOutcomes["yourWork"]): string => {
+  if (credit.withheld === null && credit.followed !== null) {
+    return `followed ${plural(credit.followed, "time")} — counted once at least ${PEOPLE_MINIMUM} people recorded outcomes about it`;
+  }
+  const withheld = credit.withheld ?? "not_recordable";
+  return CREDIT_WITHHELD[withheld] ?? `no count (${bareUntrusted(withheld)})`;
+};
+
+const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
+  `your own work, in teammates' hints, ${monthOf(credit.periodStartIso)}: ${creditWords(credit)}`;
+
 const footerLines = (view: MyHintOutcomes): readonly string[] => [
-  `your own work, in teammates' hints: followed ${plural(view.yourWork.followed, "time")}`,
+  creditLine(view.yourWork),
   "recorded with your key — by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode); noise is your own label (crosscheck noise)",
-  `only you see this view in full; others see your words only inside the team report's totals for a whole past month, shown once at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders)} people recorded outcomes about at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work, and each teammate whose work it was sees how often it was followed`,
+  `only you see this view in full; others see your words only inside totals for a whole past month — the team report's, once at least ${PEOPLE_MINIMUM} people recorded outcomes about at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work, and a teammate's count of how often their work was followed, once at least ${PEOPLE_MINIMUM} people recorded outcomes about it`,
 ];
 
 export const renderMyOutcomes = (view: MyHintOutcomes): string =>

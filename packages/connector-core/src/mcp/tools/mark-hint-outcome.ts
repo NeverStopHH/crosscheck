@@ -70,7 +70,8 @@ export const definition = {
     "your developer's key and shown in full only to them (crosscheck pilot --mine); others see " +
     "it only inside the team report's totals for a whole past month, shown once at least three " +
     "people recorded outcomes about at least three people's work; the teammate whose work it " +
-    "was sees how often their work was followed.",
+    "was sees how often it was followed in a whole past month, once at least three people " +
+    "recorded outcomes about it.",
   inputSchema: z.toJSONSchema(ArgsSchema) as Record<string, unknown>,
 };
 

@@ -79,6 +79,16 @@ export const lastWholeMonth = (now: Date): ClosedPeriod => {
   return { start: new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 1, 1)), end };
 };
 
+/**
+ * Where a closed period's counting starts, or null when no moment of it was
+ * recordable — outcomes became recordable on the repo only after it ended,
+ * or never.
+ */
+export const recordableFrom = (period: ClosedPeriod, outcomesSinceIso: string | null, now: Date): Date | null =>
+  outcomesSinceIso === null || new Date(outcomesSinceIso).getTime() >= period.end.getTime()
+    ? null
+    : outcomePopulationStart(period.start, outcomesSinceIso, now);
+
 /** Only what existed before `until` — a frozen period's state at its end; null is now. */
 const before = (column: SQL, until: Date | null): SQL =>
   until === null ? sql`` : sql`AND ${column} < ${until.toISOString()}::timestamptz`;

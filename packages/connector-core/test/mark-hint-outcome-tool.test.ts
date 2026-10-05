@@ -20,7 +20,7 @@ import { rm } from "node:fs/promises";
 import { createDb, createServer } from "@crosscheck/server";
 import { hintDeliveryId } from "@crosscheck/schema";
 
-import { getMyHintOutcomes } from "../src/http/hint-outcomes.ts";
+import { MyHintOutcomesSchema, getMyHintOutcomes } from "../src/http/hint-outcomes.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
@@ -302,4 +302,38 @@ describe("a hostile hub cannot speak through mark_hint_outcome's reply", () => {
     },
     CORPUS_TIMEOUT_MS,
   );
+});
+
+describe("the source credit on the wire (review #10)", () => {
+  const view = (yourWork: Record<string, unknown>): Record<string, unknown> => ({
+    repo: REPO_ID,
+    days: 56,
+    sinceIso: "2026-08-10T00:00:00.000Z",
+    untilIso: "2026-10-05T00:00:00.000Z",
+    received: 0,
+    followed: 0,
+    overrode: 0,
+    notRelevantNow: 0,
+    noise: 0,
+    unmarked: 0,
+    bySource: [],
+    bySourceBeyondList: 0,
+    reasons: [],
+    reasonsBeyondList: 0,
+    yourWork: { periodStartIso: "2026-09-01T00:00:00.000Z", periodEndIso: "2026-10-01T00:00:00.000Z", ...yourWork },
+  });
+
+  test("a credit is a count or a withholding — one with both, or neither, is unreadable", () => {
+    // Act
+    const counted = MyHintOutcomesSchema.safeParse(view({ followed: 4, withheld: null }));
+    const withheld = MyHintOutcomesSchema.safeParse(view({ followed: null, withheld: "too_few_recorders" }));
+    const both = MyHintOutcomesSchema.safeParse(view({ followed: 4, withheld: "too_few_recorders" }));
+    const neither = MyHintOutcomesSchema.safeParse(view({ followed: null, withheld: null }));
+
+    // Assert — a number beside "withheld" would print what the hub held back
+    expect(counted.success).toBe(true);
+    expect(withheld.success).toBe(true);
+    expect(both.success).toBe(false);
+    expect(neither.success).toBe(false);
+  });
 });

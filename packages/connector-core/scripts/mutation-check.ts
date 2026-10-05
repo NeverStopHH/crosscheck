@@ -17459,8 +17459,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a source's credit counts an override as a follow",
     file: `${SERVER}/src/services/hint-outcome-view.ts`,
-    from: "    WHERE st.source_id = ${input.developerId} AND st.state = 'followed'`);",
-    to: "    WHERE st.source_id = ${input.developerId}`);",
+    from: "  return { ...stamps, followed: withheld === null ? aggregate.followed : null, withheld };",
+    to: "  return { ...stamps, followed: withheld === null ? aggregate.followed + aggregate.overrode : null, withheld };",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "Ken is told his work was followed when a teammate deliberately went another way",
   },
@@ -17804,6 +17804,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/pilot-client.test.ts`,
     because: "a hub that sends numbers beside 'withheld' has them printed as if the minimums were met",
   },
+  // ── 07 §13.10, review #10: the source credit leaks nothing ────────────────
+  {
+    label: "a teammate's credit counts one or two recipients' words",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false });",
+    to: '  const withheld = aggregate.interventions === 0 ? "no_interventions" : null;',
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "with two recipients the author's count drops by one the moment one of them switches to overrode",
+  },
+  {
+    label: "a word changed after the month moves a teammate's credit",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    until: period.end,",
+    to: "    until: now,",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the author reads the count before and after and learns which teammate overrode their work",
+  },
+  {
+    label: "the client prints a credit the hub withheld",
+    file: `${CORE}/src/http/hint-outcomes.ts`,
+    from: "    .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {",
+    to: "    .refine(() => true, {",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "a hub that sends a number beside 'withheld' has it printed as if the minimum were met",
+  },
+  {
+    label: "a credit over no hint reads as 'followed 0 times'",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: '  no_interventions: "no hint pointed at it",',
+    to: '  no_interventions: "followed 0 times",',
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a month nobody was shown the work reads as a month everybody went another way",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17894,7 +17927,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 1
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 2
  * PRINTS: packages/cli/test/pilot-render.test.ts 21
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
@@ -18038,7 +18071,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 4
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -18126,7 +18159,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 5
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 7
  * PRINTS: packages/server/test/hint-outcomes.test.ts 5
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3

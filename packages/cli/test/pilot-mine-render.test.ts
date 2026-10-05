@@ -12,6 +12,7 @@ import type { MyHintOutcomes } from "@crosscheck/connector-core/http/hint-outcom
 import { renderMyOutcomes } from "../src/cli/pilot-mine-render.ts";
 
 const UNTIL = "2026-10-05T12:00:00.000Z";
+const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z" };
 
 const viewSince = (sinceIso: string): MyHintOutcomes => ({
   repo: "github.com/acme/api",
@@ -28,8 +29,13 @@ const viewSince = (sinceIso: string): MyHintOutcomes => ({
   bySourceBeyondList: 0,
   reasons: [],
   reasonsBeyondList: 0,
-  yourWork: { followed: 0 },
+  yourWork: { ...JULY, followed: null, withheld: "no_interventions" },
 });
+
+const creditLine = (yourWork: MyHintOutcomes["yourWork"]): string | undefined =>
+  renderMyOutcomes({ ...viewSince("2026-08-10T12:00:00.000Z"), yourWork })
+    .split("\n")
+    .find((line) => line.startsWith("your own work"));
 
 describe("renderMyOutcomes' header", () => {
   test("a view that spans its whole window names the window", () => {
@@ -47,6 +53,61 @@ describe("renderMyOutcomes' header", () => {
     // Assert
     expect(header).toBe(
       "your hint outcomes on github.com/acme/api · since 2026-10-05, when outcomes became recordable here (..2026-10-05)",
+    );
+  });
+});
+
+describe("renderMyOutcomes' source credit (review #10)", () => {
+  test("a count names its closed month and the minimum it passed", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 4, withheld: null });
+
+    // Assert
+    expect(line).toBe(
+      "your own work, in teammates' hints, July 2026: followed 4 times — counted once at least 3 people recorded outcomes about it",
+    );
+  });
+
+  test("below the minimum there is no number, and the line says why", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: null, withheld: "too_few_recorders" });
+
+    // Assert
+    expect(line).toBe(
+      "your own work, in teammates' hints, July 2026: no count — fewer than 3 people recorded an outcome about it, and a count could single someone out",
+    );
+  });
+
+  test("a month nothing pointed at the work says so, never 'followed 0 times'", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: null, withheld: "no_interventions" });
+
+    // Assert
+    expect(line).toBe("your own work, in teammates' hints, July 2026: no hint pointed at it");
+  });
+
+  test("a month that ended before outcomes were recordable says so", () => {
+    // Act
+    const line = creditLine({
+      periodStartIso: "2026-06-01T00:00:00.000Z",
+      periodEndIso: "2026-07-01T00:00:00.000Z",
+      followed: null,
+      withheld: "not_recordable",
+    });
+
+    // Assert
+    expect(line).toBe(
+      "your own work, in teammates' hints, June 2026: nothing to count — outcomes became recordable here after it ended",
+    );
+  });
+
+  test("the footer's promise names both shared totals and their minimums", () => {
+    // Act
+    const out = renderMyOutcomes(viewSince("2026-08-10T12:00:00.000Z"));
+
+    // Assert
+    expect(out).toContain(
+      "only you see this view in full; others see your words only inside totals for a whole past month — the team report's, once at least 3 people recorded outcomes about at least 3 people's work, and a teammate's count of how often their work was followed, once at least 3 people recorded outcomes about it",
     );
   });
 });

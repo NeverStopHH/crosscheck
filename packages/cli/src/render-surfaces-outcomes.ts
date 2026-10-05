@@ -39,7 +39,7 @@ const mineWith = (payload: string): MyHintOutcomes => ({
     { outcome: "overrode", reason: payload, source: null },
   ],
   reasonsBeyondList: 1,
-  yourWork: { followed: 2 },
+  yourWork: { periodStartIso: payload, periodEndIso: payload, followed: null, withheld: payload },
 });
 
 export const HINT_OUTCOME_SURFACES: readonly RenderSurface[] = [

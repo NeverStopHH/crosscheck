@@ -82,8 +82,9 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
     const before = await outcomesOf(crowd);
 
-    // Act — Nick changes his mind in August about a July hint
+    // Act — Nick changes his mind in August about a July hint, and a minute passes
     await recordOutcome(crowd, crowd.nick, { ref: KEN_CLAIM, outcome: "followed" });
+    crowd.harness.clock.advanceSeconds(60);
     const after = await outcomesOf(crowd);
 
     // Assert

@@ -49,6 +49,8 @@ import type {
   PilotReport,
 } from "@crosscheck/connector-core/http/pilot.ts";
 
+import { monthOf } from "./outcome-render.ts";
+
 export interface ScoredFix {
   readonly repair: PilotRepair;
   readonly outcome: FixDiffOutcome;
@@ -347,14 +349,6 @@ const legacyNoiseLines = (proof: PilotReport["precision"]): readonly string[] =>
 const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key`;
 
 type OutcomeBlock = NonNullable<PilotReport["outcomes"]>;
-
-/** The closed month by name — "July 2026" — or "an unknown month" for a start this client cannot read. */
-const monthOf = (iso: string): string => {
-  const ms = Date.parse(iso);
-  return Number.isNaN(ms)
-    ? "an unknown month"
-    : new Date(ms).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
-};
 
 /** Why a figure is withheld, for each minimum (review #4); a word this client lacks prints as itself. */
 const WITHHELD_SENTENCE: Readonly<Record<string, string>> = {
