@@ -55,6 +55,7 @@
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import {
+  DEFAULT_DENYLIST,
   isDenied,
   matchesGlob,
 } from "@crosscheck/connector-core/capture/denylist.ts";
@@ -158,12 +159,24 @@ export const shadowedPinPaths = (
   );
 
 /**
+ * THE LIST A PIN IS JUDGED AGAINST: this machine's capture list plus the
+ * shipped default. The denylist is per-machine config, so a developer whose
+ * config REPLACES the defaults still has teammates whose capture applies
+ * them — a pin over `yarn.lock` would be blind on every one of those machines
+ * while reading as a guard here. Local rules come first, so a file both lists
+ * exclude is named by the rule this developer can change.
+ */
+export const pinDenylistPatterns = (local: readonly string[]): readonly string[] => [
+  ...new Set([...local, ...DEFAULT_DENYLIST]),
+];
+
+/**
  * Each of `paths` the effective denylist excludes, with the FIRST rule that
  * matches it. One question with three askers — the status/doctor shadow line
  * over the registry, and the pin door and the sweep over paths about to be
  * pinned (loss-accounting §10 item 4) — so the three cannot disagree about
  * which file capture never records. `patterns` is the caller's
- * `resolveDenylist` answer, the list capture itself applies.
+ * `pinDenylistPatterns` answer.
  */
 export const deniedPinPaths = (
   paths: readonly string[],
@@ -188,14 +201,33 @@ export const DENYLIST_REFUSAL_WHY =
  * or its rule the config, before this pin can exist. A pin carries at most
  * MAX_PIN_FILES paths, which bounds the list.
  */
-export const pinDenylistRefusal = (denied: readonly PinShadow[]): string =>
-  [
+export const pinDenylistRefusal = (denied: readonly PinShadow[]): string => {
+  const shipped = [
+    ...new Set(
+      denied
+        .map((shadow) => shadow.pattern)
+        .filter((pattern) => DEFAULT_DENYLIST.includes(pattern)),
+    ),
+  ];
+  // A shipped rule binds every teammate who kept the defaults, so no config
+  // on this machine can lift it — offering that remedy would send someone to
+  // edit a file that changes nothing.
+  const onlyShipped = shipped.length === new Set(denied.map((shadow) => shadow.pattern)).size;
+  return [
     `nothing was pinned — the hot-file denylist excludes ${String(denied.length)} of these file(s) from capture:`,
     ...denied.map((shadow) => `  ${token(shadow.path)} (excluded by ${token(shadow.pattern)})`),
     `${DENYLIST_REFUSAL_WHY}.`,
-    "Pin the files they are made from instead, or change the denylist in the crosscheck config.",
+    ...(shipped.length === 0
+      ? []
+      : [
+          `${shipped.map(token).join(", ")} ${shipped.length === 1 ? "is" : "are"} on crosscheck's shipped default list, which every teammate who kept the defaults applies — changing this machine's config does not lift ${shipped.length === 1 ? "it" : "them"}.`,
+        ]),
+    onlyShipped
+      ? "Pin the files they are made from instead."
+      : "Pin the files they are made from instead, or change the denylist in the crosscheck config.",
     "",
   ].join("\n");
+};
 
 /** A rename git followed into a path the denylist excludes. */
 export interface DeniedMove {

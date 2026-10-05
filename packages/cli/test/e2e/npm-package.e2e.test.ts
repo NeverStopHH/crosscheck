@@ -58,8 +58,16 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
  * catches them by NAME, which is the check that does not need a number at
  * all. The measured size is printed on every run so the next raise is a
  * decision somebody makes rather than a surprise.
+ *
+ * RAISED AGAIN, TO 2 000 000, on batch 0930 (Nick: as recommended, 2026-10-05),
+ * after the same question. The 1.0 cut (passkeys, loss accounting, provider
+ * guarantees, the CI reporter, init --remove) packed 1 498 109 bytes against
+ * 1 500 000: 461 files, ZERO under `test/`, `docs/`, `fixtures/` or `bench/`,
+ * 4.77 MB unpacked, of which `connector-core` is 1.76 MB and `server` 1.51 MB.
+ * A `node_modules` leak still trips this cap many times over; `docs` and every
+ * `test/` are refused by name below, whatever the number.
  */
-const TARBALL_SIZE_CAP_BYTES = 1_500_000;
+const TARBALL_SIZE_CAP_BYTES = 2_000_000;
 
 const nodeExe = Bun.which("node");
 const npmExe = Bun.which("npm");

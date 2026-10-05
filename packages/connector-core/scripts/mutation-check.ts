@@ -15606,8 +15606,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the pin door asks the shipped denylist instead of the one this machine's capture applies",
     file: `${CLI}/src/cli/pin.ts`,
-    from: "    patterns: resolveDenylist(config.denylist ?? undefined),\n",
-    to: "    patterns: resolveDenylist(undefined),\n",
+    from: "    patterns: pinDenylistPatterns(resolveDenylist(config.denylist ?? undefined)),\n",
+    to: "    patterns: pinDenylistPatterns(resolveDenylist(undefined)),\n",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "a rule the developer's config adds stops capture on that machine and the door lets a pin over it through",
   },
@@ -16400,6 +16400,54 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "the pilot's 'how to fix?' again, one command earlier than doctor",
   },
+  {
+    label: "the pin door judges a pin by this machine's denylist alone",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "patterns: pinDenylistPatterns(resolveDenylist(config.denylist ?? undefined)),",
+    to: "patterns: resolveDenylist(config.denylist ?? undefined),",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "a developer who replaced the defaults pins yarn.lock, and every teammate on the shipped list is blind to it while it reads as a guard",
+  },
+  {
+    label: "the pin denylist drops the shipped defaults",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "...new Set([...local, ...DEFAULT_DENYLIST]),",
+    to: "...new Set([...local]),",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the union the door, the sweep, status and doctor share loses the half that covers teammates",
+  },
+  {
+    label: "status shadows pins by this machine's denylist alone",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "pinDenylistPatterns(resolveDenylist(config.denylist ?? undefined)),",
+    to: "resolveDenylist(config.denylist ?? undefined),",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "status calls a pin over a shipped-excluded file watched, while the door would refuse the same pin",
+  },
+  {
+    label: "doctor shadows pins by this machine's denylist alone",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "pinDenylistPatterns(resolveDenylist(config.denylist ?? undefined)),",
+    to: "resolveDenylist(config.denylist ?? undefined),",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "doctor passes a pin denylist status warns about, and the two askers disagree",
+  },
+  {
+    label: "a pin refused by shipped rules is told to change the config",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "const onlyShipped = shipped.length ===",
+    to: "const onlyShipped = false && shipped.length ===",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the refusal sends someone to edit a config that cannot lift a rule every teammate applies",
+  },
+  {
+    label: "a pin refused by shipped rules does not say they bind teammates",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "...(shipped.length === 0",
+    to: "...(shipped.length >= 0",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the refusal names a rule this developer replaced and never says why it still applies",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16484,7 +16532,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
  * PRINTS: packages/cli/test/pilot-render.test.ts 19
- * PRINTS: packages/cli/test/pin-denylist-door.test.ts 7
+ * PRINTS: packages/cli/test/pin-denylist-door.test.ts 13
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5

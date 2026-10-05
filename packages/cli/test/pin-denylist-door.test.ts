@@ -4,10 +4,12 @@
  *
  * A file the capture denylist excludes is never recorded, so a pin over it is
  * a permanent attribution blind spot: `crosscheck trace` can never name who
- * touched it. The door refuses it by name, with the rule that excludes it,
- * and the rule is the EFFECTIVE denylist this machine's capture applies — the
+ * touched it. The door refuses it by name, with the rule that excludes it.
+ * The rules are the EFFECTIVE denylist this machine's capture applies — the
  * shipped defaults, extended or replaced by `denylist` in the stored config —
- * never a second copy. A sweep never moves a pin onto such a path either.
+ * plus the shipped defaults themselves: the denylist is per-machine config, so
+ * a teammate who kept the shipped list never records a touch this machine's
+ * replacement would. A sweep never moves a pin onto such a path either.
  *
  * A REAL hub over PGlite, a REAL git repository, the commands through
  * `runCli`, so the sentences asserted are the ones a person reads.
@@ -20,6 +22,8 @@ import { createDb, createServer } from "@crosscheck/server";
 import { sql } from "drizzle-orm";
 import type { Db } from "@crosscheck/server";
 import { EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
+import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
 import { runCli } from "../src/index.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
@@ -36,7 +40,11 @@ const LEGACY = "src/legacy/old.ts";
 const LEGACY_RULE = "**/legacy/**";
 const MOVED_FROM = "src/core/engine.ts";
 const MOVED_TO = "src/generated/engine.ts";
+const SECOND_FROM = "src/core/renderer.ts";
+const SECOND_TO = "src/generated/renderer.ts";
 const WHY = "no session's touch of these files is ever recorded, so a guard over them could never say who broke them";
+const CONFIG_REMEDY = "or change the denylist in the crosscheck config";
+const SHIPPED_NOTE = "on crosscheck's shipped default list";
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -96,7 +104,7 @@ beforeAll(async () => {
   server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   repo = await makeRepo("pin-denylist", { remote: "git@github.com:acme/api.git" });
-  for (const path of [PLAIN, GENERATED, LOCKFILE, LEGACY, MOVED_FROM]) {
+  for (const path of [PLAIN, GENERATED, LOCKFILE, LEGACY, MOVED_FROM, SECOND_FROM]) {
     await writeRepoFile(repo, path, "export const x = 1;\n");
   }
   await git(repo, ["add", "-A"]);
@@ -153,16 +161,68 @@ describe("the pin door refuses a file no capture can observe (loss-accounting §
     expect(await pinCount()).toBe(before);
   });
 
-  test("a config that replaces the shipped denylist lets the file be pinned, as capture records it", async () => {
-    // Arrange: capture on this machine applies no rule at all, so it records
-    // every touch of the generated client — the door asks the same list.
-    const home = await homeWith("replace", { mode: "replace", patterns: [] });
+  test("a rule only this machine's config adds keeps the config remedy", async () => {
+    // Arrange
+    const home = await homeWith("extend-remedy", { mode: "extend", patterns: [LEGACY_RULE] });
 
     // Act
-    const created = await pin(home, [GENERATED]);
+    const refused = await pin(home, [LEGACY]);
 
     // Assert
-    expect(created.stdout).toContain("pinned pin_");
+    expect(refused.stdout).toContain(CONFIG_REMEDY);
+    expect(refused.stdout).not.toContain(SHIPPED_NOTE);
+  });
+
+  test("a config that replaces the shipped denylist still cannot pin a file the shipped list excludes", async () => {
+    // Arrange: capture HERE records every touch of the generated client, but
+    // the denylist is per-machine config — every teammate who kept the
+    // shipped list never records one, so the pin would be blind on their side
+    const home = await homeWith("replace", { mode: "replace", patterns: [] });
+    const before = await pinCount();
+
+    // Act
+    const refused = await pin(home, [GENERATED]);
+
+    // Assert: refused by the shipped rule, and no config remedy is offered,
+    // because no config on this machine can change what teammates capture
+    expect(refused.exitCode).toBe(EXIT_USAGE);
+    expect(refused.stdout).toContain(`${GENERATED} (excluded by ${GENERATED_RULE})`);
+    expect(refused.stdout).toContain(SHIPPED_NOTE);
+    expect(refused.stdout).not.toContain(CONFIG_REMEDY);
+    expect(await pinCount()).toBe(before);
+  });
+
+  test("status names a pinned file the shipped list excludes even when this machine replaced it", async () => {
+    // Arrange: a pin registered before the door existed — straight through
+    // the hub, the only way one can exist now
+    const home = await homeWith("replace-status", { mode: "replace", patterns: [] });
+    const identity = await resolveRepoIdentity(repo);
+    const created = await fetch(`${hubUrl}/api/pins`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: `pin_${crypto.randomUUID()}`,
+        repo: identity?.repoId,
+        surface: "Legacy client guard",
+        files: [GENERATED],
+        check: "run the build",
+        presence: PIN_PRESENCE_TERMINAL,
+        verifiedAtCommit: identity?.baseCommit,
+      }),
+    });
+    expect(created.ok).toBe(true);
+
+    // Act
+    const status = await run(home, ["status"]);
+
+    // Assert
+    expect(status.stdout).toContain("pinned file(s) are never captured");
+    expect(status.stdout).toContain(`${GENERATED} (${GENERATED_RULE})`);
+
+    // And doctor asks the same list, so the two never disagree
+    const doctor = await run(home, ["doctor"]);
+    expect(doctor.stdout).toContain("WARN  pin denylist");
+    expect(doctor.stdout).toContain(`${GENERATED} (${GENERATED_RULE})`);
   });
 });
 
@@ -186,5 +246,21 @@ describe("a sweep never moves a pin onto a path no capture observes", () => {
     expect(swept.stdout).toContain("0 renamed, 1 missing");
     expect(listed.stdout).not.toContain(MOVED_TO);
     expect(listed.stdout).toContain("BROKEN — 1 of 1 paths missing");
+  });
+
+  test("a rename into a path only the shipped list excludes is missing on a machine that replaced it too", async () => {
+    // Arrange
+    const home = await homeWith("sweep-replace", { mode: "replace", patterns: [] });
+    const created = await pin(home, [SECOND_FROM]);
+    expect(created.stdout).toContain("pinned pin_");
+    await git(repo, ["mv", SECOND_FROM, SECOND_TO]);
+    await git(repo, ["commit", "-m", "generate the renderer"]);
+
+    // Act
+    const swept = await run(home, ["pin", "--sweep"]);
+
+    // Assert
+    expect(swept.stdout).toContain(`${SECOND_FROM} moved to ${SECOND_TO} (excluded by ${GENERATED_RULE})`);
+    expect(swept.stdout).toContain("recorded as missing");
   });
 });
