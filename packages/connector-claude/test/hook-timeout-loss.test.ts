@@ -10,7 +10,8 @@
  * budget itself.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { repoKey } from "../src/index.ts";
@@ -42,6 +43,38 @@ const RESOLVING_TIMEOUT_MS = "250";
 const UNRESOLVED_TIMEOUT_MS = "1";
 
 const paths: string[] = [];
+
+/** Long enough that no budget in this file can wait out a single git spawn. */
+const SLOW_GIT_SECONDS = 1;
+
+/**
+ * Runs `run` with a `git` first on PATH that answers only after
+ * SLOW_GIT_SECONDS. The unkeyed shape needs the budget to win the race
+ * against repo identity on ANY machine: a 4 ms budget alone lost that race on
+ * a fast CI runner, where repo identity resolved in time and the line came
+ * back keyed. Spawns inherit process.env (git/git.ts), so PATH is swapped for
+ * this one call and restored whatever happens.
+ */
+const withSlowGit = async <T>(run: () => Promise<T>): Promise<T> => {
+  const dir = await mkdtemp(join(tmpdir(), "cx-slow-git-"));
+  paths.push(dir);
+  const realGit = Bun.which("git");
+  if (realGit === null) {
+    throw new Error("git is not on PATH");
+  }
+  await writeFile(
+    join(dir, "git"),
+    `#!/bin/sh\nsleep ${String(SLOW_GIT_SECONDS)}\nexec "${realGit}" "$@"\n`,
+    { mode: 0o755 },
+  );
+  const saved = process.env["PATH"];
+  process.env["PATH"] = `${dir}:${saved ?? ""}`;
+  try {
+    return await run();
+  } finally {
+    process.env["PATH"] = saved;
+  }
+};
 
 afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
@@ -110,8 +143,8 @@ describe("LOSS-12: a hook that runs out of budget is a counted loss, keyed when 
     // Arrange
     const { repo, home, env } = await fixture("timeout-unkeyed", UNRESOLVED_TIMEOUT_MS);
 
-    // Act
-    await runHookWith("post-tool-use", neverSettles, editPayload(repo), env);
+    // Act: git cannot answer inside the budget, so repo identity never lands
+    await withSlowGit(() => runHookWith("post-tool-use", neverSettles, editPayload(repo), env));
 
     // Assert
     const [line] = await ledgerLines(home);
