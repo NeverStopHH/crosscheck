@@ -11,7 +11,7 @@ import { sql } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { MAX_HINT_OUTCOME_REASON_CHARS } from "@crosscheck/schema";
 
-import { hintOutcomes } from "../src/db/schema.ts";
+import { hintOutcomes, teamSettings } from "../src/db/schema.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
 import { createTestHarness } from "./helpers.ts";
 
@@ -50,6 +50,50 @@ describe("hint_outcomes DDL sync", () => {
     expect(match).not.toBeNull();
     expect(Number(match?.[1])).toBe(MAX_HINT_OUTCOME_REASON_CHARS);
     expect(constraint.rows).toHaveLength(1);
+  });
+
+  test("when outcomes became recordable is a team_settings column in both authorities", async () => {
+    // Arrange
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const harness = await createTestHarness();
+
+    // Act
+    const drizzle = getTableConfig(teamSettings).columns.map((column) => column.name);
+    const columns = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'team_settings' AND column_name = 'pilot_outcomes_since'`,
+    );
+
+    // Assert — a fresh hub from the CREATE, an existing one from the ALTER
+    expect(drizzle).toContain("pilot_outcomes_since");
+    expect(columns.rows).toHaveLength(1);
+    expect(bootstrapSql).toContain("  pilot_outcomes_since timestamptz,");
+    expect(bootstrapSql).toContain("ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_outcomes_since timestamptz");
+  });
+
+  test("an upgraded hub stamps outcomes-since for a repo already enrolled, and for no other", async () => {
+    // Arrange — the shape before 07 §13.9: no column; one enrolled repo, one not
+    const harness = await createTestHarness();
+    for (const statement of [
+      sql`ALTER TABLE team_settings DROP COLUMN pilot_outcomes_since`,
+      sql`INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at)
+          VALUES ('github.com/acme/api', 'anyone', 'sessions', true, now()),
+                 ('github.com/acme/web', 'anyone', 'sessions', false, now())`,
+    ]) {
+      await harness.db.execute(statement);
+    }
+    const client = (harness.db as unknown as { $client: { exec: (text: string) => Promise<unknown> } }).$client;
+
+    // Act
+    await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
+
+    // Assert
+    const since = await harness.db.execute(
+      sql`SELECT repo AS r, pilot_outcomes_since IS NOT NULL AS s FROM team_settings ORDER BY repo`,
+    );
+    expect(since.rows).toEqual([
+      { r: "github.com/acme/api", s: true },
+      { r: "github.com/acme/web", s: false },
+    ]);
   });
 
   test("'the current outcome of a delivery' is an index range, not a scan", async () => {

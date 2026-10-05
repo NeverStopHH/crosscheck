@@ -682,6 +682,10 @@ CREATE TABLE IF NOT EXISTS team_settings (
   -- 07 12 (second review): when enrolment last turned on, so when a person
   -- could first label this repo's interventions. NULL until it is enrolled.
   pilot_labels_since timestamptz,
+  -- 07 13.9: when outcomes became recordable here — stamped like
+  -- pilot_labels_since, so a delivery from before it is outside every outcome
+  -- figure instead of reading "unmarked". NULL until it is enrolled.
+  pilot_outcomes_since timestamptz,
   updated_at timestamptz NOT NULL,
   updated_by text REFERENCES developers(id)
 );
@@ -1130,6 +1134,14 @@ ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_labels_since timestampt
 -- names does not apply).
 UPDATE team_settings SET pilot_labels_since = now()
   WHERE pilot_enrolled AND pilot_labels_since IS NULL;
+
+-- 07 13.9 (the H1 lesson again): WHEN OUTCOMES BECAME RECORDABLE on a repo.
+-- A repo enrolled before this column existed could record no outcome until
+-- this hub started, so it is stamped NOW, once — only rows still NULL match,
+-- so every later start writes nothing.
+ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_outcomes_since timestamptz;
+UPDATE team_settings SET pilot_outcomes_since = now()
+  WHERE pilot_enrolled AND pilot_outcomes_since IS NULL;
 
 -- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
 

@@ -984,8 +984,8 @@ clause and a tally line.
 - **D-O3 — the clause on the briefing and the tripwire ask.** *Decided by the owner, built — §13.9.*
 - **D-O4 — an agent recording noise.** Refused (D3 kept). If the owner wants the agent's view of
   off-target hints, it would be a separate, agent-attributed figure, never the label.
-- **D-O5 — outcomes in the team report.** Not added. An aggregated "followed / overrode per 100
-  interventions" beside proof 4 is the obvious companion; it is a new figure and wants its own target.
+- **D-O5 — outcomes in the team report.** *Decided by the owner, built — §13.9: one descriptive line, no
+  target.*
 - **D-O6 — enrolment gate and retention.** Outcomes need `pilot_enrolled`; they have no age limit.
 - **D-O7 — ties.** When an outcome and the noise label carry the same instant, the label stands.
 
@@ -1005,4 +1005,23 @@ pointers — `mark_hint_outcome with the work context id a solved line names rec
 deliberately went another way.` — appended after the rendered text, only when a solved pointer is shown and
 only while the whole briefing still fits `MAX_BRIEFING_CHARS`. Neither costs a round trip: both flags ride the
 call the hook already makes.
+
+*D-O5 — one descriptive line in the team report.* `crosscheck pilot`'s proof 4 gains, before the cohorts:
+
+```
+   hint outcomes per 100 interventions that reached someone (8 since 2026-07-20): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 · unmarked 12.5 — a FLOOR: only what agents and people chose to record; no target, nobody named
+```
+
+Per repo, over every unasked delivery that reached someone (the report's `outcomes` block: counts and one
+instant, nothing that names a recipient or a source — tested); noise is the label, the same state the
+per-person view reads, from the same query. **No target** is declared and none is compared. **A floor**, said
+on the line: an outcome exists only where an agent or a person chose to record one, so "unmarked" is silence,
+never a verdict. A population of zero prints `no intervention reached anyone since …`, never `0.0`; an older
+hub's report has no block and the line says `this hub does not record them` (the client parse is strict for
+every count inside the block and treats only the block itself as optional). **It starts where outcomes
+could be recorded — the H1 lesson (§12.9) applied before it could recur:** `team_settings.pilot_outcomes_since`
+is stamped exactly as `pilot_labels_since` is (when enrolment turns on; for a repo already enrolled, on the
+first start of a hub that records outcomes), and every outcome figure — this line, `--mine`, the source
+credit — starts at the later of it and the window. A delivery from before that instant is outside the
+population rather than "unmarked". `--json` carries the block, cleaned like the rest.
 

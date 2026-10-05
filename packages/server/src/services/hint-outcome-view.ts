@@ -82,7 +82,7 @@ export interface ReadMyHintOutcomesInput {
   readonly days: number;
 }
 
-const EMPTY_TALLY: HintOutcomeTally = {
+export const EMPTY_TALLY: HintOutcomeTally = {
   received: 0,
   followed: 0,
   overrode: 0,
@@ -105,7 +105,7 @@ const TALLY_FIELD: Record<DeliveryState, keyof HintOutcomeTally> = {
  * stands at. The source is THIS repo's: a delivery's ref is the client's own
  * word, so a pointer at another repo's work names nobody (07 §11.9).
  */
-const deliveryStates = (repo: string, since: Date, who: SQL): SQL => sql`
+export const deliveryStates = (repo: string, since: Date, who: SQL): SQL => sql`
   WITH received AS (
     SELECT hd.id, hd.ref_kind, hd.ref_id, s.developer_id AS recipient
     FROM hint_deliveries hd
@@ -160,9 +160,21 @@ type ReasonRow = {
   readonly total: number;
 };
 
-const added = (tally: HintOutcomeTally, state: DeliveryState, n: number): HintOutcomeTally => {
+export const addToTally = (tally: HintOutcomeTally, state: DeliveryState, n: number): HintOutcomeTally => {
   const field = TALLY_FIELD[state];
   return { ...tally, received: tally.received + n, [field]: tally[field] + n };
+};
+
+/**
+ * WHERE AN OUTCOME FIGURE STARTS (07 §13.9): the later of its window's start
+ * and the instant outcomes became recordable on the repo. A delivery from
+ * before that instant could not have had an outcome, so it is outside the
+ * population — never "unmarked". No instant (never enrolled) starts at `now`:
+ * nothing counts, the conservative of the two errors.
+ */
+export const outcomePopulationStart = (windowStart: Date, outcomesSinceIso: string | null, now: Date): Date => {
+  const recordable = outcomesSinceIso === null ? now : new Date(outcomesSinceIso);
+  return recordable.getTime() > windowStart.getTime() ? recordable : windowStart;
 };
 
 const bySourceName = (left: SourceTally, right: SourceTally): number =>
@@ -175,9 +187,9 @@ const foldTallies = (
   for (const row of rows) {
     const key = row.source_id ?? "";
     const current = sources.get(key) ?? { source: row.source, ...EMPTY_TALLY };
-    sources.set(key, { ...added(current, row.state, row.n), source: current.source });
+    sources.set(key, { ...addToTally(current, row.state, row.n), source: current.source });
   }
-  const total = rows.reduce((sum, row) => added(sum, row.state, row.n), EMPTY_TALLY);
+  const total = rows.reduce((sum, row) => addToTally(sum, row.state, row.n), EMPTY_TALLY);
   return { total, sources: [...sources.values()].sort(bySourceName) };
 };
 
@@ -232,7 +244,11 @@ export const readMyHintOutcomes = async (
     return { refusal: "not_enrolled" };
   }
   const now = deps.now();
-  const since = new Date(now.getTime() - input.days * MS_PER_DAY);
+  const since = outcomePopulationStart(
+    new Date(now.getTime() - input.days * MS_PER_DAY),
+    settings.pilotOutcomesSince,
+    now,
+  );
   const [tallies, reasons, followedWork] = await Promise.all([
     readTallies(deps, input, since),
     readReasons(deps, input, since),

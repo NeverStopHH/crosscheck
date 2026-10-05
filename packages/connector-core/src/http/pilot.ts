@@ -174,6 +174,21 @@ export const PilotReportSchema = z.looseObject({
     reasons: z.array(LabelReasonSchema),
     reasonsBeyondList: CountSchema,
   }),
+  // 07 §13.9 (D-O5). OPTIONAL, unlike every count inside it: an older hub
+  // sends no block at all and the report says "this hub does not record
+  // them"; a hub that sends one sends every count, none defaulted, because
+  // "followed 0" read from a missing count is the AT-9 failure again.
+  outcomes: z
+    .looseObject({
+      sinceIso: z.string().nullable(),
+      interventions: CountSchema,
+      followed: CountSchema,
+      overrode: CountSchema,
+      notRelevantNow: CountSchema,
+      noise: CountSchema,
+      unmarked: CountSchema,
+    })
+    .optional(),
   // THE LIST MUST ARRIVE: a list that did not is a report this client cannot
   // read, for the same reason as a missing count. Its ENTRIES are printed as
   // the hub sent them — the hub sends both cohorts; this parse does not

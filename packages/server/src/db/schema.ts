@@ -1119,6 +1119,14 @@ export const teamSettings = pgTable("team_settings", {
    * started at or after it. Null while the repo has never been enrolled.
    */
   pilotLabelsSince: timestamptz("pilot_labels_since"),
+  /**
+   * WHEN OUTCOMES BECAME RECORDABLE ON THIS REPO (07 §13.9): stamped exactly
+   * as `pilotLabelsSince` is, and backfilled for a repo already enrolled on the
+   * first start of a hub that records outcomes. Every outcome figure starts
+   * at the later of it and its window, so a delivery from before it is
+   * outside the population rather than "unmarked".
+   */
+  pilotOutcomesSince: timestamptz("pilot_outcomes_since"),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });

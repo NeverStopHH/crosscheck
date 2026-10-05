@@ -19,13 +19,15 @@ import {
   KEN_CLAIM,
   KEN_CONTEXT,
   MIKE_CONTEXT,
+  NICK_SESSION,
   REPO,
   createOutcomeWorld,
+  deliveryRecord,
   readMine,
   recordOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
-import { jsonRequest } from "./helpers.ts";
+import { jsonRequest, postRecords } from "./helpers.ts";
 import type { TestDeveloper } from "./helpers.ts";
 
 const SECONDS_PER_DAY = 86_400;
@@ -166,6 +168,21 @@ describe("GET /api/hint-outcomes/mine", () => {
     expect(said).not.toContain("Mike");
     expect(said).not.toContain(OVERRIDE_REASON);
     expect(said).not.toContain("overrode\":1");
+  });
+
+  test("a hint delivered before the repo could record outcomes is outside my view, not unmarked", async () => {
+    // Arrange — a pointer delivered an hour before enrolment stamped the instant
+    const world = await createOutcomeWorld();
+    const earlier = new Date(world.harness.clock.now().getTime() - 3_600_000).toISOString();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", "wc_old_pointer", "prompt_hint", earlier)],
+    });
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick));
+
+    // Assert
+    expect(view).toMatchObject(tally({ received: 3, unmarked: 3 }));
   });
 
   test("the window bounds what is counted", async () => {

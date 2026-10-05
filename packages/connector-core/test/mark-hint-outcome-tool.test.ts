@@ -144,6 +144,9 @@ beforeAll(async () => {
   const ken = await developer("Ken", "ken-outcome-tool@example.com");
   await seat(ken, KEN_SESSION, "Widen the filter row");
   await seat(nick, NICK_SESSION, "Rework the importer");
+  // Enrolled BEFORE the hint arrives: a delivery from before the repo could
+  // record outcomes is outside every outcome figure (07 §13.9).
+  await send("/api/team-settings", ADMIN_TOKEN, { repo: REPO_ID, pilotEnrolled: true }, "PUT");
   await send("/api/records", nick.apiKey, {
     records: [
       envelope(nick.id, NICK_SESSION, "hint_delivery", {
@@ -156,7 +159,6 @@ beforeAll(async () => {
       }),
     ],
   });
-  await send("/api/team-settings", ADMIN_TOKEN, { repo: REPO_ID, pilotEnrolled: true }, "PUT");
   const home = await makeHome("outcome-tool");
   nickRepo = await makeRepo("outcome-tool", { remote: "git@github.com:acme/api.git" });
   cleanups.push(home, nickRepo);

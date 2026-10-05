@@ -346,6 +346,30 @@ const legacyNoiseLines = (proof: PilotReport["precision"]): readonly string[] =>
  */
 const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key`;
 
+/**
+ * 07 §13.9 (D-O5): WHAT THE INTERVENTIONS LED TO, one per-repo line —
+ * descriptive, so no target; a floor, because only what an agent or a person
+ * chose to record is in it; and counts over the repo, so nobody is named. An
+ * older hub sends no block and the line says so; a population of zero says
+ * so too, rather than printing "0.0" as if somebody had measured it.
+ */
+const outcomeLine = (report: PilotReport): string => {
+  const outcomes = report.outcomes;
+  if (outcomes === undefined) {
+    return `${INDENT}hint outcomes: this hub does not record them`;
+  }
+  const since = outcomes.sinceIso === null ? "unknown" : isoDay(outcomes.sinceIso);
+  if (outcomes.interventions === 0) {
+    return `${INDENT}hint outcomes: no intervention reached anyone since ${since}, when outcomes became recordable here`;
+  }
+  const per100 = (value: number): string => ((value / outcomes.interventions) * 100).toFixed(RATE_DECIMALS);
+  return (
+    `${INDENT}hint outcomes per 100 interventions that reached someone (${count(outcomes.interventions)} since ${since}): ` +
+    `followed ${per100(outcomes.followed)} · overrode ${per100(outcomes.overrode)} · not relevant now ${per100(outcomes.notRelevantNow)} · ` +
+    `noise ${per100(outcomes.noise)} · unmarked ${per100(outcomes.unmarked)} — a FLOOR: only what agents and people chose to record; no target, nobody named`
+  );
+};
+
 const precisionLines = (report: PilotReport): readonly string[] => {
   const proof = report.precision;
   return [
@@ -358,6 +382,7 @@ const precisionLines = (report: PilotReport): readonly string[] => {
     ...legacyNoiseLines(proof),
     `${INDENT}surface-ok marks ${count(proof.surfaceOkMarks)}`,
     ...reasonLines(proof),
+    outcomeLine(report),
     ...cohortLines(report.cohorts),
   ];
 };

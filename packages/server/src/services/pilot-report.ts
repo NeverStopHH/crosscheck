@@ -93,6 +93,8 @@ import {
 } from "./pilot-label-figures.ts";
 import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { NO_OUTCOME_FIGURES, readOutcomeFigures } from "./pilot-outcome-figures.ts";
+import type { OutcomeFigures } from "./pilot-outcome-figures.ts";
 import type { PilotAnswerSurface } from "./pilot.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -222,6 +224,8 @@ export interface PilotReport {
   readonly collisions: ProofCollisions;
   readonly attribution: ProofAttribution;
   readonly precision: ProofPrecision;
+  /** 07 §13.9 (D-O5): what interventions led to, per repo, counts only — a floor, no target. */
+  readonly outcomes: OutcomeFigures;
   /** Both cohorts, in PILOT_COHORTS order, each over its own sessions. */
   readonly cohorts: readonly CohortFigures[];
   readonly integrity: readonly SurfaceIntegrity[];
@@ -810,6 +814,7 @@ const notEnrolled = (): Omit<
     reasons: [],
     reasonsBeyondList: 0,
   },
+  outcomes: NO_OUTCOME_FIGURES,
   cohorts: PILOT_COHORTS.map((cohort) => ({
     cohort,
     cap: COHORT_CAP[cohort],
@@ -851,13 +856,19 @@ export const readPilotReport = async (
   // countable rather than everything — the conservative of the two errors.
   const labelsSince =
     settings.pilotLabelsSince === null ? until : new Date(settings.pilotLabelsSince);
-  const [sessionSet, duplicateWork, collisions, attribution, precision, cohorts, integrity] =
+  const [sessionSet, duplicateWork, collisions, attribution, precision, outcomes, cohorts, integrity] =
     await Promise.all([
       readSessionSet(deps, input.repo),
       readDuplicateWork(deps, input.repo, since, until),
       readCollisions(deps, input.repo, since, until),
       readAttribution(deps, input.repo, since, until),
       readPrecision(deps, input.repo, { since, until }, labelsSince),
+      readOutcomeFigures(deps, {
+        repo: input.repo,
+        windowStart: since,
+        now: until,
+        outcomesSinceIso: settings.pilotOutcomesSince,
+      }),
       readCohorts(deps, input.repo),
       readIntegrity(deps, input.repo, since),
     ]);
@@ -868,6 +879,7 @@ export const readPilotReport = async (
     collisions,
     attribution,
     precision,
+    outcomes,
     cohorts,
     integrity,
   };

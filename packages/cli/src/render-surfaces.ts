@@ -359,6 +359,7 @@ const pilotWith = (payload: string): PilotView => {
         reasons: [{ label: payload, reason: payload }],
         reasonsBeyondList: 1,
       },
+      outcomes: { sinceIso: payload, interventions: 4, followed: 1, overrode: 1, notRelevantNow: 1, noise: 0, unmarked: 1 },
       cohorts: [
         { cohort: payload, cap: 50, ...labels },
         {
@@ -778,8 +779,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ]),
       ].join("\n"),
   },
-  // 07 §13, THE ARRAY TAIL: `followed` / `overrode` and `pilot --mine`.
-  ...HINT_OUTCOME_SURFACES,
+  ...HINT_OUTCOME_SURFACES, // 07 §13, THE ARRAY TAIL: `followed` / `overrode` and `pilot --mine`
 ];
 
 /**

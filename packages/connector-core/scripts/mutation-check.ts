@@ -17657,6 +17657,63 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/outcome-clause.test.ts`,
     because: "a full briefing grows past the bound every teammate's lines are budgeted against",
   },
+  // ── 07 §13.9, D-O5: the team report's outcomes line ───────────────────────
+  {
+    label: "a delivery from before outcomes were recordable counts as unmarked",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  return recordable.getTime() > windowStart.getTime() ? recordable : windowStart;",
+    to: "  return windowStart;",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "every upgraded hub reports weeks of history as unmarked — the H1 error, measured as silence",
+  },
+  {
+    label: "enrolment does not stamp when outcomes became recordable",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    pilotOutcomesSince: sinceAfter(current.pilotOutcomesSince, current, pilotEnrolled, now),",
+    to: "    pilotOutcomesSince: current.pilotOutcomesSince === null ? null : new Date(current.pilotOutcomesSince),",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a newly enrolled repo has no instant, so its outcome figures count nothing for ever",
+  },
+  {
+    label: "an upgraded hub never stamps outcomes-since for a repo already enrolled",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "UPDATE team_settings SET pilot_outcomes_since = now()\n  WHERE pilot_enrolled AND pilot_outcomes_since IS NULL;",
+    to: "UPDATE team_settings SET pilot_outcomes_since = now()\n  WHERE false;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the monorepo, enrolled before outcomes existed, would never show an outcome figure",
+  },
+  {
+    label: "the team report's outcome line counts nobody's interventions",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    ${deliveryStates(input.repo, since, sql`true`)}",
+    to: "    ${deliveryStates(input.repo, since, sql`false`)}",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the per-repo line reads 'no intervention reached anyone' on a repo full of them",
+  },
+  {
+    label: "an older hub's report reads as zero outcomes",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "      unmarked: CountSchema,\n    })\n    .optional(),",
+    to: "      unmarked: CountSchema,\n    })\n    .default({ sinceIso: null, interventions: 0, followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 }),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because: "a hub that records no outcomes looks like a team whose hints led to nothing",
+  },
+  {
+    label: "the outcomes line prints per-100 figures over no intervention",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (outcomes.interventions === 0) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "an empty population prints NaN or 0.0 as if somebody had measured it",
+  },
+  {
+    label: "the outcomes line stops saying it is a floor",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: " — a FLOOR: only what agents and people chose to record; no target, nobody named`",
+    to: "`",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "an unmarked share reads as hints nobody followed, when it is only hints nobody recorded",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17747,7 +17804,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
- * PRINTS: packages/cli/test/pilot-render.test.ts 19
+ * PRINTS: packages/cli/test/pilot-render.test.ts 21
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -17901,7 +17958,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
- * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
+ * PRINTS: packages/connector-core/test/pilot-client.test.ts 5
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
@@ -17966,7 +18023,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 1
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 2
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -17997,6 +18054,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 3
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
