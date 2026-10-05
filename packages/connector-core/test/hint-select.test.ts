@@ -47,6 +47,7 @@ const context = (
   },
   claims,
   matchedTargets,
+  matchedOn: "prompt",
 });
 
 const fileTarget = (

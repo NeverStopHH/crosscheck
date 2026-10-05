@@ -69,6 +69,7 @@ import type {
   AnsweredQuestion,
   HintClaimCandidate,
   HintContextCandidate,
+  HintMatchedOn,
   LandedContextMatch,
   LandedNotice,
   SolvedMatchEntry,
@@ -79,6 +80,14 @@ const CONFIDENCE_DECIMALS = 2;
 
 const CLAIM_HEADER = `crosscheck hint: a teammate's recorded finding may relate to this prompt. ${QUOTED_DATA_NOTICE}`;
 const POINTER_HEADER = `crosscheck pointer: a teammate has notes that may relate to this prompt. ${QUOTED_DATA_NOTICE}`;
+/**
+ * The same two headers when the hub matched the session's INTENT in place of
+ * a prompt that carried nothing task-bearing (DESIGN.md §4). "This prompt"
+ * would then be false — the reader typed "weiter" — so the sentence names
+ * what was actually matched.
+ */
+const CLAIM_INTENT_HEADER = `crosscheck hint: a teammate's recorded finding may relate to this session's stated intent. ${QUOTED_DATA_NOTICE}`;
+const POINTER_INTENT_HEADER = `crosscheck pointer: a teammate has notes that may relate to this session's stated intent. ${QUOTED_DATA_NOTICE}`;
 /**
  * The ANSWER header, and the one word in it that matters is "asked": this is
  * the §4 solicited exception, so the sentence states out loud that the
@@ -234,6 +243,8 @@ export interface ClaimHintInput {
   readonly context: HintContext;
   readonly drift: CommitDrift | null;
   readonly now: Date;
+  /** What the hub matched it on; absent is the prompt, as it always was. */
+  readonly matchedOn?: HintMatchedOn;
 }
 
 const validityWordFact = (
@@ -294,7 +305,8 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
   const contextLine =
     `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} — ` +
     "the full tree is readable with get_diagnosis.";
-  return fitHint([CLAIM_HEADER, factsLine, contextLine, ...intentLines(context.intent)]);
+  const header = input.matchedOn === "intent" ? CLAIM_INTENT_HEADER : CLAIM_HEADER;
+  return fitHint([header, factsLine, contextLine, ...intentLines(context.intent)]);
 };
 
 export interface PointerHintInput {
@@ -315,6 +327,8 @@ export interface PointerHintInput {
   };
   readonly drift: CommitDrift | null;
   readonly now: Date;
+  /** What the hub matched it on; absent is the prompt, as it always was. */
+  readonly matchedOn?: HintMatchedOn;
 }
 
 /**
@@ -370,7 +384,8 @@ export const renderPointerHint = (input: PointerHintInput): string => {
           `readable with get_diagnosis ${safeId(context.id)}.`;
   // The intent BEFORE the tail: fitHint drops from the end, and of the two
   // the tail is the droppable one — the intent is what says WHAT they do.
-  return fitHint([POINTER_HEADER, factsLine, ...intentLines(context.intent), tailLine]);
+  const header = input.matchedOn === "intent" ? POINTER_INTENT_HEADER : POINTER_HEADER;
+  return fitHint([header, factsLine, ...intentLines(context.intent), tailLine]);
 };
 
 /**

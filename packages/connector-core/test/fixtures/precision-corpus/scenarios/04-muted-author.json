@@ -83,10 +83,8 @@
       "kind": "prompt",
       "reader": "Riley",
       "prompt": "does anything mangle the http header on ingress",
-      "expect": "substance",
-      "expectClaimId": "clm_lim_root",
-      "expectContextId": "wc_limits",
-      "rationale": "DEBATABLE BY DESIGN: the prompt shares exactly ONE mid-frequency word (header) with one claim body, and that single OR-joined FTS token qualifies the context as a provable lexical match, so the evidence-backed root cause arrives as full substance. Today's precision floor is tier membership alone — no matched-token minimum, no rank floor. Recorded as today's behavior, not endorsed: building this corpus surfaced the same single-token path delivering cross-domain noise (key, across, retries), and hint_deliveries telemetry decides whether substance should demand more than one shared word."
+      "expect": "silence",
+      "rationale": "SETTLED BY THE PILOT, no longer debatable: the prompt shares exactly ONE mid-frequency word (header) with one claim body. This probe used to record that one OR-joined FTS token qualified the context and the evidence-backed root cause arrived as full substance, and named hint_deliveries telemetry as the judge of whether more than one shared word should be demanded. The telemetry answered (7-day pilot, 2026-10): 95 prompt hints, 0 opened, 5 of 5 in one session fired on content-free prompts through one stray word. The content floor (server/src/services/hints.ts HINT_MIN_SHARED_TERMS) now asks for two words agreeing on ONE statement of the work, or an exact target; one shared word is a coincidence, so this prompt carries nothing task-bearing for a hint and the reader — who has no session intent here — hears nothing."
     }
   ]
 }

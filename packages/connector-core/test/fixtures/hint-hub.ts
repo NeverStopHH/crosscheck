@@ -39,6 +39,8 @@ export interface HintHub {
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
   /** The `?fingerprint=` of the last solved-match probe, or null. */
   readonly lastSolvedFingerprint: () => string | null;
+  /** The query string of the last candidates call — what went on the wire. */
+  readonly lastCandidatesQuery: () => URLSearchParams | null;
   /** Every record body POSTed to /api/records, in order — the delivery pins. */
   readonly postedRecords: readonly Record<string, unknown>[];
   readonly stop: () => void;
@@ -232,13 +234,15 @@ export const startHintHub = (
   let tripwireSessions: readonly unknown[] = [];
   let solvedMatches: readonly unknown[] = [];
   let lastSolvedFingerprint: string | null = null;
+  let lastCandidatesQuery: URLSearchParams | null = null;
   const postedRecords: Record<string, unknown>[] = [];
   const server = Bun.serve({
     port: 0,
     fetch: async (request) => {
-      const { pathname } = new URL(request.url);
+      const { pathname, searchParams } = new URL(request.url);
       if (pathname === "/api/hints/candidates") {
         calls.candidates += 1;
+        lastCandidatesQuery = searchParams;
         await sleep(latency.candidates);
         return Response.json({ ok: true, data: { candidates, answers, notices } });
       }
@@ -298,6 +302,7 @@ export const startHintHub = (
       solvedMatches = next;
     },
     lastSolvedFingerprint: () => lastSolvedFingerprint,
+    lastCandidatesQuery: () => lastCandidatesQuery,
     stop: () => {
       server.stop(true);
     },

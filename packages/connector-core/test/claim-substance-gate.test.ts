@@ -73,6 +73,7 @@ const context = (
   },
   claims,
   matchedTargets: [],
+  matchedOn: "prompt",
 });
 
 const select = (claims: readonly HintClaimCandidate[]) =>

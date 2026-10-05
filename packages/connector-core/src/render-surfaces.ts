@@ -872,6 +872,39 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       }),
   },
   {
+    // The same two hints when the hub matched the session's INTENT in place
+    // of a content-free prompt (DESIGN.md §4): a header of their own, the
+    // same untrusted slots under it.
+    kind: "corpus",
+    name: "claim-hint-on-intent",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderClaimHint({
+        claim: hintClaimWith(payload),
+        context: hintContextWith(payload),
+        drift: NO_DRIFT,
+        now: NOW,
+        matchedOn: "intent",
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "pointer-hint-on-intent",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderPointerHint({
+        context: hintContextWith(payload),
+        claimCount: 2,
+        drift: NO_DRIFT,
+        now: NOW,
+        matchedOn: "intent",
+      }),
+  },
+  {
     // The #19 targets-only pointer: the touched-file `value` is teammate-
     // controlled text (a path they edited), planted here alongside the title
     // and author so bare() + the title cap are exercised on it too.

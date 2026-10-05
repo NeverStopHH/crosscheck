@@ -70,10 +70,12 @@ export const DERIVED_TOKENS_MAX_CHARS = 600;
  *
  * Both for the same reason. `src` and `ts` are parts of nearly every path on
  * every repo, so indexing them made every context a lexical match for every
- * prompt that names any file — and this pipeline's precision floor is TIER
- * MEMBERSHIP, not rank: one shared FTS token is enough to qualify a context,
- * after which an evidence-backed claim inside it is injected as substance
- * (the corpus states that openly at `pr_limits_oneword_debatable`). A search
+ * prompt that names any file — and the search's precision floor is TIER
+ * MEMBERSHIP, not rank: one shared FTS token is enough to qualify a context.
+ * The hint path has since added its own content floor on top (two words on
+ * one statement, services/hints.ts HINT_MIN_SHARED_TERMS, which settled
+ * `pr_limits_oneword_debatable`), but search_related_work and every tier's
+ * ranking still read this doc, so the list stays. A search
  * engine absorbs `src` through IDF, which needs corpus-wide statistics; this
  * builder writes ONE row at ingest time and has none, so the same job is done
  * by a list — exactly as `to_tsvector('english', …)` does it for `the` and
