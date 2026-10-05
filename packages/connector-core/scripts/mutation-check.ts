@@ -17837,6 +17837,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "a month nobody was shown the work reads as a month everybody went another way",
   },
+  // ── 07 §13.10, review #13: the right date for the right reason ──────────
+  {
+    label: "the outcome line names the month's start as when outcomes became recordable",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  block.countedFromIso === null || block.countedFromIso === block.periodStartIso",
+    to: "  block.countedFromIso === null",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a repo enrolled in July reads as one that could record nothing before the first of September",
+  },
+  {
+    label: "a clipped month names the wrong day as where counting starts",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    : `, counted from ${isoDay(block.countedFromIso)}, when outcomes became recordable here`;",
+    to: "    : `, counted from ${isoDay(block.periodStartIso)}, when outcomes became recordable here`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the enrolment instant is replaced by the month's first day, the review's window-start error",
+  },
+  {
+    label: "a month before enrolment names its own start as the enrolment day",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "none could be recorded — outcomes became recordable here on ${isoDay(since)}`;",
+    to: "none could be recorded — outcomes became recordable here on ${isoDay(block.periodStartIso)}`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the line dates enrolment a month early, to a day nothing could be recorded on",
+  },
+  {
+    label: "the hub reports the month's start as where outcome counting starts",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    countedFromIso: from.toISOString(),",
+    to: "    countedFromIso: period.start.toISOString(),",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "every client prints the first of the month as when outcomes became recordable",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17928,7 +17961,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 2
- * PRINTS: packages/cli/test/pilot-render.test.ts 21
+ * PRINTS: packages/cli/test/pilot-render.test.ts 24
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -18179,7 +18212,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 8
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 9
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

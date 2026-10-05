@@ -619,6 +619,69 @@ describe("renderPilot", () => {
     expect(lines).toEqual(["   hint outcomes, July 2026: no intervention reached anyone"]);
   });
 
+  test("review #13: an empty month names no date when enrolment came before it — never the window start", () => {
+    // Arrange — the review's repo: enrolled 2026-07-24, the line once said "since 2026-08-07, when outcomes became recordable"
+    const outcomes = {
+      periodStartIso: "2026-09-01T00:00:00.000Z",
+      periodEndIso: "2026-10-01T00:00:00.000Z",
+      recordableSinceIso: "2026-07-24T09:00:00.000Z",
+      countedFromIso: "2026-09-01T00:00:00.000Z",
+      interventions: 0,
+      withheld: "no_interventions",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual(["   hint outcomes, September 2026: no intervention reached anyone"]);
+  });
+
+  test("review #13: a month enrolment clipped names the enrolment instant as where counting starts", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-07-24T09:00:00.000Z",
+      countedFromIso: "2026-07-24T09:00:00.000Z",
+      interventions: 0,
+      withheld: "no_interventions",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, July 2026: no intervention reached anyone, counted from 2026-07-24, when outcomes became recordable here",
+    ]);
+  });
+
+  test("review #13: a month that ended before enrolment names the enrolment day, not the month", () => {
+    // Arrange
+    const outcomes = {
+      periodStartIso: "2026-09-01T00:00:00.000Z",
+      periodEndIso: "2026-10-01T00:00:00.000Z",
+      recordableSinceIso: "2026-10-05T09:00:00.000Z",
+      countedFromIso: null,
+      interventions: 0,
+      withheld: "not_recordable",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, September 2026: none could be recorded — outcomes became recordable here on 2026-10-05",
+    ]);
+  });
+
   test("D-O5: a hub that predates outcomes says so instead of printing a figure", () => {
     // Arrange & Act — the builder carries no outcomes block, as an older hub's report does
     const out = renderPilot(view());

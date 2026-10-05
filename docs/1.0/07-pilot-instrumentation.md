@@ -1099,3 +1099,12 @@ your own work, in teammates' hints, September 2026: nothing to count — outcome
 
 A word changed after the month never moves it (the review's P3, pinned), and D-O2's team-of-two elimination
 is gone with it: two teammates can never reach the minimum.
+
+*#13 — the empty team line named the window start as "when outcomes became recordable here".* It printed
+`since 2026-08-07` — the report's 56-day window start — for a repo enrolled on 2026-07-24. The rewrite for #4
+already gives each date one meaning, and three render tests and four anchors now pin it: a month enrolment
+came before names **no** date (`hint outcomes, September 2026: no intervention reached anyone`); a month
+enrolment clipped names the enrolment instant (`…, counted from 2026-07-24, when outcomes became recordable
+here`), carried on the wire as `countedFromIso`, which the hub sets to the later of the month's start and
+`pilot_outcomes_since`; a month that ended before enrolment names the enrolment day
+(`…: none could be recorded — outcomes became recordable here on 2026-10-05`), from `recordableSinceIso`.
