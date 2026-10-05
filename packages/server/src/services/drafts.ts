@@ -13,7 +13,7 @@
  * `repo` is the usual relevance filter, never a boundary (DESIGN.md §2.1):
  * drafts surface where the developer is working on the same repo again.
  */
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import { MAX_DRAFTS_LISTED } from "../constants.ts";
 import { agentSessions, claims } from "../db/schema.ts";
@@ -77,17 +77,27 @@ export const summarizeOwnDrafts = async (
   };
 };
 
+/**
+ * Which end of the backlog a listing starts from. NEWEST is the default and
+ * what the briefing reads; OLDEST exists for the review nudge, which must
+ * name — and let review_draft reach — the drafts that have waited longest,
+ * and those are exactly the ones a newest-first page past the cap leaves out.
+ */
+export const DRAFT_ORDERS = ["newest", "oldest"] as const;
+export type DraftOrder = (typeof DRAFT_ORDERS)[number];
+
 export const listOwnDrafts = async (
   db: Db,
   developerId: string,
   repo: string,
+  order: DraftOrder = "newest",
 ): Promise<readonly DraftView[]> => {
   const rows = await db
     .select({ claim: claims })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .where(ownUnreviewed(db, developerId, repo))
-    .orderBy(desc(claims.createdAt))
+    .orderBy(order === "oldest" ? asc(claims.createdAt) : desc(claims.createdAt))
     .limit(MAX_DRAFTS_LISTED);
   return rows.map((row) => ({
     id: row.claim.id,

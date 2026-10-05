@@ -38,8 +38,8 @@ import {
   amountOf,
   backlogSize,
   countAtLeastAged,
-  listedAtLeastAged,
   oldestAgeMs,
+  reachableAtLeastAged,
 } from "./draft-backlog.ts";
 import type { DraftBacklog, DraftCount } from "./draft-backlog.ts";
 import { formatDraftLine, OWN_DRAFTS_QUOTED_DATA_NOTICE } from "./render.ts";
@@ -87,11 +87,14 @@ const kindSummary = (due: readonly DraftEntry[]): string => {
   ].join(", ");
 };
 
-/** The kinds are of the rows in hand; when those are fewer than the count, it says so. */
-const kindsClause = (dueListed: readonly DraftEntry[], due: DraftCount): string =>
-  dueListed.length < due.count || due.floor
-    ? `of the newest ${String(dueListed.length)}: ${kindSummary(dueListed)}`
-    : kindSummary(dueListed);
+/** The kinds are of the rows in hand; when those are fewer than the count, it says which. */
+const kindsClause = (
+  reachable: { readonly rows: readonly DraftEntry[]; readonly end: "oldest" | "newest" },
+  due: DraftCount,
+): string =>
+  reachable.rows.length < due.count || due.floor
+    ? `of the ${reachable.end} ${String(reachable.rows.length)}: ${kindSummary(reachable.rows)}`
+    : kindSummary(reachable.rows);
 
 const retentionSentence = (old: DraftCount): string =>
   old.count === 0
@@ -108,12 +111,15 @@ const backlogSentence = (backlog: DraftBacklog, now: Date): string => {
     : ` ${String(size.count)} await review in all, the oldest captured ${formatAge(oldest)} ago.`;
 };
 
-const headerLine = (input: DraftNudgeInput, dueListed: readonly DraftEntry[]): string => {
+const headerLine = (
+  input: DraftNudgeInput,
+  reachable: { readonly rows: readonly DraftEntry[]; readonly end: "oldest" | "newest" },
+): string => {
   const due = countAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
   const verb = due.count === 1 && !due.floor ? "has" : "have";
   return (
     `crosscheck: ${amountOf(due)} of your own auto-captured draft claims ${verb} waited over ` +
-    `${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h for review (${kindsClause(dueListed, due)}).` +
+    `${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h for review (${kindsClause(reachable, due)}).` +
     backlogSentence(input.backlog, input.now) +
     VISIBILITY +
     retentionSentence(countAtLeastAged(input.backlog, DRAFT_HORIZON_AGE_MS, input.now))
@@ -135,18 +141,19 @@ const compose = (
   ].join("\n");
 
 /**
- * "" when no LISTED draft is due: the nudge names drafts by id, and
- * review_draft can only reach the rows the hub lists, so a backlog whose
- * newest rows are all fresh waits until they are due or settled.
+ * "" when no draft in hand is due. The nudge names drafts by id, so it names
+ * rows a page actually returned: the oldest-first page's when the flow
+ * fetched one (flows/draft-nudge.ts does whenever the backlog runs past the
+ * newest-first page), and review_draft reaches both ends.
  */
 export const renderDraftNudge = (input: DraftNudgeInput): string => {
-  const dueListed = listedAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
-  if (dueListed.length === 0) {
+  const reachable = reachableAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
+  if (reachable.rows.length === 0) {
     return "";
   }
   const due = countAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
-  const fixed = [headerLine(input, dueListed), ASK, OWN_DRAFTS_QUOTED_DATA_NOTICE];
-  const pointers = dueListed.flatMap((entry) => {
+  const fixed = [headerLine(input, reachable), ASK, OWN_DRAFTS_QUOTED_DATA_NOTICE];
+  const pointers = reachable.rows.flatMap((entry) => {
     const line = formatDraftLine(entry, input.now);
     return line === null ? [] : [line];
   });

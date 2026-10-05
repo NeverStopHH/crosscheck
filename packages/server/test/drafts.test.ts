@@ -54,14 +54,16 @@ interface DraftListing {
   readonly drafts: readonly DraftView[];
   readonly total?: number;
   readonly oldestCreatedAt?: string | null;
+  readonly order?: string;
 }
 
 const fetchListing = async (
   harness: TestHarness,
   developer: TestDeveloper,
+  order?: "oldest",
 ): Promise<DraftListing> => {
   const response = await harness.app.request(
-    `/api/drafts?repo=${encodeURIComponent(VALID_SESSION_BODY.repo)}`,
+    `/api/drafts?repo=${encodeURIComponent(VALID_SESSION_BODY.repo)}${order === undefined ? "" : `&order=${order}`}`,
     jsonRequest("GET", developer.apiKey),
   );
   return ((await response.json()) as { data: DraftListing }).data;
@@ -137,6 +139,45 @@ describe("GET /api/drafts", () => {
     expect(listing.drafts[0]?.id).toBe("clm_b33");
     expect(listing.total).toBe(BACKLOG - 1);
     expect(listing.oldestCreatedAt).toBe(at(0));
+  });
+
+  test("order=oldest lists the oldest drafts first, says so, and keeps the totals", async () => {
+    // Arrange: 35 drafts, one minute apart — the newest-first page cannot
+    // reach the 15 oldest, which are the ones the review nudge must name
+    const { harness, developer } = await createHarnessWithSession();
+    const at = (i: number): string =>
+      new Date(Date.parse("2026-07-01T00:00:00.000Z") + i * 60_000).toISOString();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        ...Array.from({ length: BACKLOG }, (_, i) =>
+          recordEnvelope("claim", draftBody(`clm_o${String(i)}`, { createdAt: at(i) })),
+        ),
+      ],
+    });
+
+    // Act
+    const oldest = await fetchListing(harness, developer, "oldest");
+    const newest = await fetchListing(harness, developer);
+
+    // Assert
+    expect(oldest.order).toBe("oldest");
+    expect(oldest.drafts).toHaveLength(MAX_DRAFTS_LISTED);
+    expect(oldest.drafts[0]?.id).toBe("clm_o0");
+    expect(oldest.total).toBe(BACKLOG);
+    expect(newest.order).toBe("newest");
+    expect(newest.drafts[0]?.id).toBe(`clm_o${String(BACKLOG - 1)}`);
+  });
+
+  test("an unknown order is refused rather than guessed", async () => {
+    const { harness, developer } = await createHarnessWithSession();
+
+    const response = await harness.app.request(
+      `/api/drafts?repo=${encodeURIComponent(VALID_SESSION_BODY.repo)}&order=sideways`,
+      jsonRequest("GET", developer.apiKey),
+    );
+
+    expect(response.status).toBe(400);
   });
 
   test("an empty backlog says zero and no oldest", async () => {

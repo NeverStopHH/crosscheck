@@ -936,11 +936,20 @@ export interface DraftListing {
   readonly drafts: readonly DraftEntry[];
   readonly total: number | null;
   readonly oldestCreatedAt: string | null;
+  /**
+   * Which end the rows start from, as the HUB says — null from a hub too old
+   * to say, whose rows are newest-first whatever was asked for.
+   */
+  readonly order: "newest" | "oldest" | null;
 }
+
+/** The end of the backlog a listing should start from (`?order=`). */
+export type DraftListingOrder = "newest" | "oldest";
 
 const BacklogTotalsSchema = z.looseObject({
   total: z.number().int().min(0).nullable().optional().catch(null),
   oldestCreatedAt: z.string().min(1).nullable().optional().catch(null),
+  order: z.enum(["newest", "oldest"]).nullable().optional().catch(null),
 });
 
 const DraftListingAnswerSchema = z
@@ -951,6 +960,7 @@ const DraftListingAnswerSchema = z
       drafts: tolerantList("drafts", DraftEntrySchema).parse(value),
       total: totals.total ?? null,
       oldestCreatedAt: totals.oldestCreatedAt ?? null,
+      order: totals.order ?? null,
     };
   });
 
@@ -958,10 +968,11 @@ const DraftListingAnswerSchema = z
 export const getDraftListing = (
   ctx: HubContext,
   repo: string,
+  order: DraftListingOrder = "newest",
 ): Promise<HubResult<DraftListing>> =>
   hubRequest(ctx, {
     method: "GET",
-    path: `/api/drafts${encodeRepo(repo)}`,
+    path: `/api/drafts${encodeRepo(repo)}${order === "oldest" ? "&order=oldest" : ""}`,
     schema: DraftListingAnswerSchema,
   });
 

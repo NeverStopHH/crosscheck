@@ -178,7 +178,31 @@ describe("renderDraftNudge", () => {
     expect(text).toContain(`${String(listedPast + BACKLOG - DRAFT_LISTING_CAP)} of these drafts are older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
   });
 
-  test("names only drafts review_draft can reach: none due among the listed rows, no nudge", () => {
+  test("due drafts behind 20 fresh ones are named from the oldest-first page", () => {
+    // Arrange: the newest 20 are an hour old; 15 forty-day-old drafts sit
+    // behind them, which only an order=oldest page reaches
+    const fresh = Array.from({ length: DRAFT_LISTING_CAP }, (_, i) =>
+      draft({ id: `clm_y${String(i)}`, createdAt: new Date(NOW.getTime() - YOUNG_MS - i * 1000).toISOString() }),
+    );
+    const old = Array.from({ length: 15 }, (_, i) =>
+      draft({ id: `clm_old${String(i)}`, kind: "observation", body: `Old finding ${String(i)}`, createdAt: daysAgo(40 - i / 100) }),
+    );
+    const oldestFirst = [...old, ...fresh.slice().reverse()].slice(0, DRAFT_LISTING_CAP);
+    const backlog = backlogOf(
+      { drafts: fresh, total: BACKLOG, oldestCreatedAt: daysAgo(40) },
+      { drafts: oldestFirst },
+    );
+
+    // Act
+    const text = renderDraftNudge({ backlog, now: NOW });
+
+    // Assert: exactly the 15, the oldest named first
+    expect(text).toContain("15 of your own auto-captured draft claims have waited over 24h for review (15 observation)");
+    expect(pointerLines(text)[0]).toContain("review_draft clm_old0");
+    expect(text).toContain(`15 of these drafts are older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
+  });
+
+  test("without the oldest-first page, due drafts it cannot name produce no text", () => {
     const fresh = Array.from({ length: DRAFT_LISTING_CAP }, (_, i) =>
       draft({ id: `clm_y${String(i)}`, createdAt: new Date(NOW.getTime() - YOUNG_MS).toISOString() }),
     );
@@ -386,6 +410,75 @@ describe("deliverDraftNudge (real hub)", () => {
       expect(text).toContain(`${String(BACKLOG)} await review in all, the oldest captured 41d ago`);
       expect(text).not.toMatch(/at least \d+ of your own/);
     });
+  });
+
+  test("20 fresh drafts in front of 15 old ones: the old ones are named, the slot is spent on them", async () => {
+    await withOwnHub("draft-nudge-behind", async (own) => {
+      // Arrange
+      for (let i = 0; i < 15; i += 1) {
+        await own.seedDraft({ kind: "observation", body: `Old finding ${String(i)} about flush`, ageMs: 40 * MS_PER_DAY + i * 1000 });
+      }
+      for (let i = 0; i < DRAFT_LISTING_CAP; i += 1) {
+        await own.seedDraft({ kind: "decision", body: `Fresh finding ${String(i)} about cache`, ageMs: YOUNG_MS + i * 1000 });
+      }
+      const s = await session("nudge-behind", own);
+
+      // Act
+      const text = await nudge(s);
+
+      // Assert
+      expect(text).toContain("15 of your own auto-captured draft claims have waited over 24h");
+      expect(text).toContain("Old finding 14 about flush");
+      expect((await readSessionState(s.home, HOST_KEY))?.draftNudge).toBe("delivered");
+    });
+  });
+
+  /**
+   * A hub that counts 35 drafts, the oldest 40 days old, and lists 20 fresh
+   * ones newest-first — answering the oldest-first page with `oldestPage`.
+   */
+  const backlogBehindFreshHub = (oldestPage: (fresh: readonly DraftEntry[]) => Response) => {
+    const fresh = Array.from({ length: DRAFT_LISTING_CAP }, (_, i) =>
+      draft({ id: `clm_f${String(i)}`, createdAt: new Date(Date.now() - YOUNG_MS).toISOString() }),
+    );
+    const oldestCreatedAt = new Date(Date.now() - 40 * MS_PER_DAY).toISOString();
+    return Bun.serve({
+      port: 0,
+      fetch: (request) =>
+        new URL(request.url).searchParams.get("order") === "oldest"
+          ? oldestPage(fresh)
+          : Response.json({ ok: true, data: { drafts: fresh, total: BACKLOG, oldestCreatedAt, order: "newest" } }),
+    });
+  };
+
+  const nudgeAgainst = async (label: string, fake: ReturnType<typeof Bun.serve>): Promise<{ text: string; slot: string | null | undefined }> => {
+    const s = await session(label, hub);
+    const text = await nudge(s, { hub: { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}` } });
+    return { text, slot: (await readSessionState(s.home, HOST_KEY))?.draftNudge };
+  };
+
+  test("the slot is never spent while due drafts exist that could not be fetched", async () => {
+    const fake = backlogBehindFreshHub(() =>
+      Response.json({ ok: false, error: { code: "internal", message: "boom" } }, { status: 500 }),
+    );
+    try {
+      expect(await nudgeAgainst("nudge-keep-slot", fake)).toEqual({ text: "", slot: null });
+    } finally {
+      fake.stop(true);
+    }
+  });
+
+  test("an older hub that ignores order=oldest is not read as oldest-first", async () => {
+    // It answers the newest-first page again, with no `order` echo: read as
+    // oldest-first, those 20 fresh rows would "prove" nothing is due.
+    const fake = backlogBehindFreshHub((fresh) =>
+      Response.json({ ok: true, data: { drafts: fresh, total: BACKLOG, oldestCreatedAt: new Date(Date.now() - 40 * MS_PER_DAY).toISOString() } }),
+    );
+    try {
+      expect(await nudgeAgainst("nudge-old-hub-order", fake)).toEqual({ text: "", slot: null });
+    } finally {
+      fake.stop(true);
+    }
   });
 
   test("nothing is published by the nudge itself", async () => {

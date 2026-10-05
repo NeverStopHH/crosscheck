@@ -350,6 +350,21 @@ describe("review_draft", () => {
     }
   });
 
+  test("a draft behind the newest 20 is still reachable — the nudge names those", async () => {
+    // Arrange: the oldest draft, then 21 newer ones in front of it
+    const oldest = await seedDraft("The oldest draft, behind the newest-first page");
+    for (let i = 0; i < 21; i += 1) {
+      await seedDraft(`Newer draft number ${String(i)}`);
+    }
+
+    // Act
+    const { isError, text } = await review({ draft_claim_id: oldest, action: "discard" });
+
+    // Assert
+    expect(isError).toBe(false);
+    expect(text).toContain("Discarded draft");
+  });
+
   test("edit without a body is refused with a usable sentence", async () => {
     const draftId = await seedDraft("Draft that needs editing");
     const { isError, text } = await review({

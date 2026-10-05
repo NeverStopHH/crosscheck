@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1589
+    # PRINTS: 1596
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -244,7 +244,7 @@ jobs:
     # PRINTS: summarizer/transcript.ts 3
     # PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
     # PRINTS: briefing/context-group.ts 1
-    # PRINTS: briefing/draft-backlog.ts 5
+    # PRINTS: briefing/draft-backlog.ts 7
     # PRINTS: briefing/draft-nudge.ts 7
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
@@ -283,7 +283,7 @@ jobs:
     # PRINTS: flows/capture-touched-files.ts 3
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
-    # PRINTS: flows/draft-nudge.ts 4
+    # PRINTS: flows/draft-nudge.ts 7
     # PRINTS: flows/end-session.ts 4
     # PRINTS: flows/heartbeat.ts 1
     # PRINTS: flows/hint.ts 5
@@ -326,7 +326,7 @@ jobs:
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/get-diagnosis.ts 2
     # PRINTS: mcp/tools/publish-claim.ts 2
-    # PRINTS: mcp/tools/review-draft.ts 1
+    # PRINTS: mcp/tools/review-draft.ts 2
     # PRINTS: mcp/tools/search-related-work.ts 1
     # PRINTS: mcp/tools/set-intent.ts 4
     # PRINTS: mcp/tools/shared.ts 2
@@ -424,7 +424,7 @@ jobs:
     # PRINTS: packages/server/src/services/developer-settings.ts 1
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 6
-    # PRINTS: packages/server/src/services/drafts.ts 1
+    # PRINTS: packages/server/src/services/drafts.ts 2
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
@@ -532,9 +532,9 @@ jobs:
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor-sharing.ts 3
     # PRINTS: doctor.ts 70
-    # PRINTS: draft-backlog.ts 5
-    # PRINTS: draft-nudge.ts 11
-    # PRINTS: drafts.ts 2
+    # PRINTS: draft-backlog.ts 7
+    # PRINTS: draft-nudge.ts 14
+    # PRINTS: drafts.ts 3
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
     # PRINTS: end-session.ts 4
@@ -658,7 +658,7 @@ jobs:
     # PRINTS: retention-registry.ts 9
     # PRINTS: retention.ts 24
     # PRINTS: revalidate.ts 2
-    # PRINTS: review-draft.ts 1
+    # PRINTS: review-draft.ts 2
     # PRINTS: run.ts 9
     # PRINTS: runner.ts 17
     # PRINTS: sanitize.ts 10

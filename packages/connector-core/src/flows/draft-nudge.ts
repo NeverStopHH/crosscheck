@@ -28,7 +28,8 @@
  * hub, so it never comes back into this count.
  */
 import { DRAFT_NUDGE_MIN_FINISHED_TURNS, DRAFT_NUDGE_MIN_SPARE_MS } from "../constants.ts";
-import { backlogOf } from "../briefing/draft-backlog.ts";
+import { DRAFT_DUE_AGE_MS, backlogOf, countAtLeastAged } from "../briefing/draft-backlog.ts";
+import type { DraftBacklog } from "../briefing/draft-backlog.ts";
 import { renderDraftNudge } from "../briefing/draft-nudge.ts";
 import { getDraftListing } from "../http/hub.ts";
 import type { HubContext } from "../http/hub.ts";
@@ -73,6 +74,31 @@ const claimSlot = (
     fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },
   );
 
+/**
+ * The backlog, with the oldest-first page too whenever it runs past the
+ * newest-first one: the drafts that waited longest are exactly the ones a
+ * newest-first page leaves out, and a nudge that cannot name them would spend
+ * the session's slot on nothing while they rot. Only a page the hub SAYS is
+ * oldest-first is used as one — an older hub ignores the parameter.
+ */
+const fetchBacklog = async (input: DeliverDraftNudgeInput): Promise<DraftBacklog | null> => {
+  const hub = boundedHub(input);
+  if (hub === null) {
+    return null;
+  }
+  const listing = await getDraftListing(hub, input.repoId);
+  if (!listing.ok) {
+    return null;
+  }
+  const pastPage = listing.data.total !== null && listing.data.total > listing.data.drafts.length;
+  const again = pastPage ? boundedHub(input) : null;
+  if (again === null) {
+    return backlogOf(listing.data);
+  }
+  const oldest = await getDraftListing(again, input.repoId, "oldest");
+  return backlogOf(listing.data, oldest.ok && oldest.data.order === "oldest" ? oldest.data : null);
+};
+
 /** "" whenever nothing is owed or the slot was not this caller's to spend. */
 export const deliverDraftNudge = async (input: DeliverDraftNudgeInput): Promise<string> => {
   if (!input.personReads) {
@@ -82,15 +108,20 @@ export const deliverDraftNudge = async (input: DeliverDraftNudgeInput): Promise<
   if (!isDraftNudgeOpen(state)) {
     return "";
   }
-  const hub = boundedHub(input);
-  if (hub === null) {
+  const backlog = await fetchBacklog(input);
+  if (backlog === null) {
     return "";
   }
-  const listing = await getDraftListing(hub, input.repoId);
-  if (!listing.ok) {
+  const text = renderDraftNudge({ backlog, now: input.now });
+  if (text.length > 0) {
+    return (await claimSlot(input, "delivered")) ? text : "";
+  }
+  // NEVER SPENT WHILE A DUE DRAFT EXISTS: a draft this fetch could not name
+  // (the oldest-first page failed, or the hub could not say) is still owed a
+  // nudge, so the slot waits for a prompt that can name it.
+  if (countAtLeastAged(backlog, DRAFT_DUE_AGE_MS, input.now).count > 0) {
     return "";
   }
-  const text = renderDraftNudge({ backlog: backlogOf(listing.data), now: input.now });
-  const claimed = await claimSlot(input, text.length === 0 ? "nothing_due" : "delivered");
-  return claimed ? text : "";
+  await claimSlot(input, "nothing_due");
+  return "";
 };
