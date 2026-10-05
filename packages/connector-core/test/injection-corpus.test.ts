@@ -96,7 +96,7 @@
  *    1516, is 2200 - 684 and follows from the two below it.
  *
  * VERIFY: bun -e 'const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(INJECTION_CORPUS.length)'
- * PRINTS: 61
+ * PRINTS: 63
  *
  * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
  * PRINTS: 10

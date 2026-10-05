@@ -27,6 +27,7 @@ import { findTool } from "../src/mcp/tools/index.ts";
 import {
   NOISE_IS_THE_PERSONS_LABEL,
   OUTCOMES_NOT_SERVED,
+  OVERRIDE_NEEDS_REASON,
   REASON_SECRET_REFUSAL,
 } from "../src/mcp/tools/mark-hint-outcome.ts";
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
@@ -214,9 +215,9 @@ describe("mark_hint_outcome", () => {
     // Act
     const result = await call({ ref: KEN_CONTEXT, outcome: "overrode" });
 
-    // Assert
+    // Assert — refused here, in the tool's words, not by the hub's schema
     expect(result.isError).toBe(true);
-    expect(result.text).toContain("reason");
+    expect(result.text).toBe(OVERRIDE_NEEDS_REASON);
   });
 
   test("noise is refused by name, and pointed at the person's own label", async () => {
