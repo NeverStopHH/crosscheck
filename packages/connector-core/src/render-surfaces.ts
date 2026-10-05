@@ -35,6 +35,7 @@ import {
   renderTripwireReason,
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
+import { successText as reviewDraftSuccessText } from "./mcp/tools/review-draft.ts";
 import {
   quotingText,
   renderDiagnosis,
@@ -783,6 +784,17 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "corpus",
+    name: "review-draft-confirmation",
+    delivery: "pulled",
+    module: "src/mcp/tools/review-draft.ts",
+    framing: "framed",
+    notice: OWN_DRAFTS_QUOTED_DATA_NOTICE,
+    // review_draft's answer echoes the caller's OWN draft body (or their
+    // agent's edit of it) back as the claim just promoted.
+    render: (payload) => reviewDraftSuccessText("confirm", "clm_promoted", "clm_draft1", payload),
+  },
+  {
+    kind: "corpus",
     name: "briefing-ghost-draft-body",
     delivery: "outbound",
     module: "src/briefing/ghost.ts",
@@ -1336,7 +1348,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "mcp-tool-review-draft",
     delivery: "pulled",
     module: "src/mcp/tools/review-draft.ts",
-    note: "ids through safeId; promoted body through quoted under quotingText",
+    note: "ids through safeId; the caller's own promoted body through quotedBody under quotingOwnText, the own-drafts notice (the review-draft-confirmation corpus surface above)",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
   },
   {

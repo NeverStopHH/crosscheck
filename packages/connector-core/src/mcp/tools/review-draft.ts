@@ -29,7 +29,7 @@ import {
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
-import { quotedBody, quotingText, safeId } from "../render.ts";
+import { quotedBody, quotingOwnText, safeId } from "../render.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
@@ -194,12 +194,14 @@ export const successText = (
   const verb = action === "edit" ? "Promoted (edited)" : "Promoted";
   // The body is untrusted twice over — a derived draft's body came FROM the
   // hub, and an edit body is agent text — so it is framed and the sentence
-  // that contains a frame travels under the notice that names it
-  // (quotingText), like every framed tool answer. BODY class (`quotedBody`),
+  // that contains a frame travels under the notice that names it. That notice
+  // is the OWN-drafts one (quotingOwnText): the text is the caller's own
+  // auto-captured draft or their agent's edit of it, and the teammate notice
+  // would name the wrong author; the trust level is the same. BODY class (`quotedBody`),
   // matching the briefing line this call answers: the agent is being told
   // WHICH assertion it just promoted, and an echo that blanks the assertion
   // whole answers a different question than the one it was asked.
-  return quotingText(
+  return quotingOwnText(
     `${verb} draft ${safeId(draftId)} as your declared claim ${claimId} ` +
       `(a supersedes edge marks the draft reviewed): ${quotedBody(body, CLAIM_ECHO_MAX_CHARS)}. ` +
       "Pass this id as an evidenceRefs entry when you publish what supports it.",

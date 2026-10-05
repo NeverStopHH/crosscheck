@@ -49,6 +49,7 @@ import {
 import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
 import type { CoverageRecord } from "../http/coverage.ts";
 import {
+  OWN_DRAFTS_QUOTED_DATA_NOTICE,
   QUOTED_DATA_NOTICE,
   formatAge,
   formatSolvedAge,
@@ -153,6 +154,14 @@ export const quotedBody = (raw: string, maxChars: number): string =>
  */
 export const quotingText = (...sentences: readonly string[]): string =>
   [QUOTED_DATA_NOTICE, ...sentences].join("\n");
+
+/**
+ * The same document over the caller's OWN text — review_draft echoing the
+ * draft it just promoted, or the agent's edit of it — where "written by other
+ * developers" would be false. Same trust level, a different true author.
+ */
+export const quotingOwnText = (...sentences: readonly string[]): string =>
+  [OWN_DRAFTS_QUOTED_DATA_NOTICE, ...sentences].join("\n");
 
 /**
  * `bare` — a short field the renderer prints OUTSIDE the frame: a claim's kind

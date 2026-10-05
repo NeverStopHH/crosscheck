@@ -11,6 +11,7 @@ import { rm } from "node:fs/promises";
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
+import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
@@ -326,6 +327,27 @@ describe("review_draft", () => {
         claim.body === "The cursor offset is computed against the pre-reap file",
     );
     expect(edited?.provenance).toBe("declared");
+  });
+
+  test("the confirmation frames the caller's own draft as their own, not a teammate's", async () => {
+    // Arrange: one draft to confirm, one to edit — both echo own text
+    const confirmed = await seedDraft("The spool cursor skips a line after a reap");
+    const edited = await seedDraft("The lock outlives its holder somehow");
+
+    // Act
+    const confirm = await review({ draft_claim_id: confirmed, action: "confirm" });
+    const edit = await review({
+      draft_claim_id: edited,
+      action: "edit",
+      body: "The lock file outlives a holder killed by SIGKILL",
+    });
+
+    // Assert: the own-sessions notice heads the echo; the teammate one never does
+    for (const text of [confirm.text, edit.text]) {
+      expect(text).toContain("«");
+      expect(text.split("\n")[0]).toBe(OWN_DRAFTS_QUOTED_DATA_NOTICE);
+      expect(text).not.toContain(QUOTED_DATA_NOTICE);
+    }
   });
 
   test("edit without a body is refused with a usable sentence", async () => {

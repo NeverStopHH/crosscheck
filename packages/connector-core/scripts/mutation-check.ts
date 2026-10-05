@@ -17783,6 +17783,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "teammates' quoted text reaches the agent with no notice that it is data, not instruction",
   },
+  {
+    label: "review_draft's echo says the caller's own draft was written by teammates",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  [OWN_DRAFTS_QUOTED_DATA_NOTICE, ...sentences].join(\"\\n\");",
+    to: "  [QUOTED_DATA_NOTICE, ...sentences].join(\"\\n\");",
+    test: `${CORE}/test/review-draft.test.ts`,
+    because: "the agent is told the claim it just promoted from its own session is a teammate's words",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18042,6 +18050,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
+ * PRINTS: packages/connector-core/test/review-draft.test.ts 1
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
