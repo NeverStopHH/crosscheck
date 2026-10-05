@@ -521,6 +521,7 @@ const probeSessionState = (
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
   draftNudge: null,
+  draftNudgeRetryAt: null,
   lastDeriveFireAt: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],

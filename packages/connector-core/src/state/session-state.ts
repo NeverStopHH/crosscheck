@@ -586,6 +586,12 @@ const SessionStateObjectSchema = z.looseObject({
    */
   draftNudge: z.enum(["delivered", "nothing_due"]).nullable().default(null),
   /**
+   * Until when the nudge leaves the hub alone after a FAILED draft fetch
+   * (flows/draft-nudge.ts DRAFT_NUDGE_RETRY_COOLDOWN_MS); null when nothing
+   * failed. Not a spent slot: the nudge is still owed once it passes.
+   */
+  draftNudgeRetryAt: z.string().min(1).nullable().default(null),
+  /**
    * When the newest summarizer or derived-intent fire was booked — what lets
    * doctor tell a model run still in flight (or one that finished after
    * SessionEnd, with nowhere left to book its answer) from a worker that
@@ -1522,6 +1528,7 @@ export const deriveSessionState = (
     toolWindowEvictions: 0,
     toolWindowMisses: 0,
     draftNudge: null,
+    draftNudgeRetryAt: null,
     lastDeriveFireAt: null,
   };
 };

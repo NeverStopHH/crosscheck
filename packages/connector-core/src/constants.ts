@@ -1423,6 +1423,13 @@ export const DRAFT_NUDGE_MIN_SPARE_MS = 50;
  */
 export const DRAFT_NUDGE_SPENT_MAX_SESSIONS = 500;
 /**
+ * After a draft fetch for the nudge FAILED, how long the session leaves the
+ * nudge alone. Without it an unresponsive hub cost every prompt one more GET
+ * and its timeout (two, when the oldest-first page is due) — the nudge is
+ * housekeeping, and ten minutes late costs nothing.
+ */
+export const DRAFT_NUDGE_RETRY_COOLDOWN_MS = 10 * 60_000;
+/**
  * Past this age the nudge SAYS how many drafts are that old (binding
  * principle 6): nothing in crosscheck deletes or auto-discards a draft, so an
  * old one stays listed until a person settles it. Matched to the hub's

@@ -27,7 +27,11 @@
  * unchanged — is the only writer, and a discarded draft is superseded on the
  * hub, so it never comes back into this count.
  */
-import { DRAFT_NUDGE_MIN_FINISHED_TURNS, DRAFT_NUDGE_MIN_SPARE_MS } from "../constants.ts";
+import {
+  DRAFT_NUDGE_MIN_FINISHED_TURNS,
+  DRAFT_NUDGE_MIN_SPARE_MS,
+  DRAFT_NUDGE_RETRY_COOLDOWN_MS,
+} from "../constants.ts";
 import { DRAFT_DUE_AGE_MS, backlogOf, countAtLeastAged } from "../briefing/draft-backlog.ts";
 import type { DraftBacklog } from "../briefing/draft-backlog.ts";
 import { renderDraftNudge } from "../briefing/draft-nudge.ts";
@@ -108,23 +112,47 @@ const spentEarlier = async (input: DeliverDraftNudgeInput): Promise<boolean> => 
  * the session's slot on nothing while they rot. Only a page the hub SAYS is
  * oldest-first is used as one — an older hub ignores the parameter.
  */
-const fetchBacklog = async (input: DeliverDraftNudgeInput): Promise<DraftBacklog | null> => {
+/** What one attempt to read the backlog came to. */
+type BacklogFetch =
+  | { readonly kind: "skipped" }
+  | { readonly kind: "failed" }
+  | { readonly kind: "backlog"; readonly backlog: DraftBacklog; readonly oldestFailed: boolean };
+
+const fetchBacklog = async (input: DeliverDraftNudgeInput): Promise<BacklogFetch> => {
   const hub = boundedHub(input);
   if (hub === null) {
-    return null;
+    return { kind: "skipped" };
   }
   const listing = await getDraftListing(hub, input.repoId);
   if (!listing.ok) {
-    return null;
+    return { kind: "failed" };
   }
   const pastPage = listing.data.total !== null && listing.data.total > listing.data.drafts.length;
   const again = pastPage ? boundedHub(input) : null;
   if (again === null) {
-    return backlogOf(listing.data);
+    return { kind: "backlog", backlog: backlogOf(listing.data), oldestFailed: false };
   }
   const oldest = await getDraftListing(again, input.repoId, "oldest");
-  return backlogOf(listing.data, oldest.ok && oldest.data.order === "oldest" ? oldest.data : null);
+  return {
+    kind: "backlog",
+    backlog: backlogOf(listing.data, oldest.ok && oldest.data.order === "oldest" ? oldest.data : null),
+    oldestFailed: !oldest.ok,
+  };
 };
+
+/**
+ * A FAILED fetch is remembered for DRAFT_NUDGE_RETRY_COOLDOWN_MS: the nudge
+ * is housekeeping, and an unresponsive hub must not cost every prompt one
+ * more GET and its timeout. A budget too thin to look is not a failure.
+ */
+const isCoolingDown = (state: SessionState, now: Date): boolean =>
+  state.draftNudgeRetryAt !== null && now.getTime() < Date.parse(state.draftNudgeRetryAt);
+
+const coolDown = (input: DeliverDraftNudgeInput): Promise<boolean> =>
+  updateSessionState(input.home, input.hostSessionKey, (fresh) => ({
+    ...fresh,
+    draftNudgeRetryAt: new Date(input.now.getTime() + DRAFT_NUDGE_RETRY_COOLDOWN_MS).toISOString(),
+  }));
 
 /** "" whenever nothing is owed or the slot was not this caller's to spend. */
 export const deliverDraftNudge = async (input: DeliverDraftNudgeInput): Promise<string> => {
@@ -132,21 +160,27 @@ export const deliverDraftNudge = async (input: DeliverDraftNudgeInput): Promise<
     return "";
   }
   const state = await readSessionState(input.home, input.hostSessionKey);
-  if (!isDraftNudgeOpen(state) || (await spentEarlier(input))) {
+  if (!isDraftNudgeOpen(state) || isCoolingDown(state, input.now) || (await spentEarlier(input))) {
     return "";
   }
-  const backlog = await fetchBacklog(input);
-  if (backlog === null) {
+  const fetched = await fetchBacklog(input);
+  if (fetched.kind !== "backlog") {
+    if (fetched.kind === "failed") {
+      await coolDown(input);
+    }
     return "";
   }
-  const text = renderDraftNudge({ backlog, now: input.now });
+  const text = renderDraftNudge({ backlog: fetched.backlog, now: input.now });
   if (text.length > 0) {
     return (await claimSlot(input, "delivered")) ? text : "";
   }
   // NEVER SPENT WHILE A DUE DRAFT EXISTS: a draft this fetch could not name
   // (the oldest-first page failed, or the hub could not say) is still owed a
   // nudge, so the slot waits for a prompt that can name it.
-  if (countAtLeastAged(backlog, DRAFT_DUE_AGE_MS, input.now).count > 0) {
+  if (countAtLeastAged(fetched.backlog, DRAFT_DUE_AGE_MS, input.now).count > 0) {
+    if (fetched.oldestFailed) {
+      await coolDown(input);
+    }
     return "";
   }
   await claimSlot(input, "nothing_due");

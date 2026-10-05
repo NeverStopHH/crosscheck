@@ -18,6 +18,7 @@ import { repoKey } from "../src/config/paths.ts";
 import {
   DRAFT_LISTING_CAP,
   DRAFT_NUDGE_MIN_AGE_HOURS,
+  DRAFT_NUDGE_RETRY_COOLDOWN_MS,
   DRAFT_NUDGE_SPENT_MAX_SESSIONS,
   MAX_DRAFT_POINTERS,
   DRAFT_RETENTION_HORIZON_DAYS,
@@ -466,6 +467,43 @@ describe("deliverDraftNudge (real hub)", () => {
     );
     try {
       expect(await nudgeAgainst("nudge-keep-slot", fake)).toEqual({ text: "", slot: null });
+    } finally {
+      fake.stop(true);
+    }
+  });
+
+  test("a failed draft fetch is not retried on every prompt — only after the cooldown", async () => {
+    // An unresponsive hub used to cost every prompt one more GET (and its
+    // timeout); the failure is now remembered for the session.
+    let requests = 0;
+    const fake = Bun.serve({
+      port: 0,
+      fetch: () => {
+        requests += 1;
+        return Response.json({ ok: false, error: { code: "internal", message: "boom" } }, { status: 500 });
+      },
+    });
+    try {
+      const s = await session("nudge-cooldown", hub);
+      const ctx = { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}` };
+      const start = Date.now();
+      const promptAt = (offsetMs: number): Promise<string> =>
+        deliverDraftNudge({
+          home: s.home,
+          hub: ctx,
+          hostSessionKey: HOST_KEY,
+          repoId: REPO_ID,
+          now: new Date(start + offsetMs),
+          personReads: true,
+        });
+
+      // Act + Assert: one failed fetch, then silence until the cooldown ends
+      expect(await promptAt(0)).toBe("");
+      expect(await promptAt(60_000)).toBe("");
+      expect(requests).toBe(1);
+      expect(await promptAt(DRAFT_NUDGE_RETRY_COOLDOWN_MS + 1000)).toBe("");
+      expect(requests).toBe(2);
+      expect((await readSessionState(s.home, HOST_KEY))?.draftNudge).toBeNull();
     } finally {
       fake.stop(true);
     }
