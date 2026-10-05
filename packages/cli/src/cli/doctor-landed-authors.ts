@@ -50,17 +50,13 @@ const authorsOf = (log: string, own: string | null): readonly Author[] => {
   for (const line of log.split("\n")) {
     const [email = "", name = ""] = line.split(FIELD);
     const key = email.trim().toLowerCase();
+    const isSkipped =
+      !key.includes("@") || key === own || BOT.test(email) || BOT.test(name) || seen.has(key);
     // A cloud agent's commit identity is left out like a bot: it is nobody's
     // on the hub by design, and a .mailmap line for it would hand every cloud
     // session's commits to one person (schema CLOUD_AGENT_IDENTITIES).
-    const isSkipped =
-      !key.includes("@") ||
-      key === own ||
-      BOT.test(email) ||
-      BOT.test(name) ||
-      cloudAgentForEmail(key) !== null ||
-      seen.has(key);
-    if (!isSkipped) {
+    const isCloudAgent = cloudAgentForEmail(key) !== null;
+    if (!isSkipped && !isCloudAgent) {
       seen.set(key, { email: email.trim(), name: name.trim() });
     }
   }

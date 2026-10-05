@@ -201,14 +201,11 @@ export const toldAuthors = async (
   const rows = await deps.db
     .select({ email: developerEmails.email, developerId: developers.id, name: developers.name })
     .from(developerEmails)
-    .innerJoin(developers, eq(developers.id, developerEmails.developerId))
-    .where(
-      and(
-        inArray(developerEmails.email, emails),
-        resolvesToDeveloper(developerEmails.email),
-        ne(developers.id, callerDeveloperId),
-      ),
-    );
+    .innerJoin(
+      developers,
+      and(eq(developers.id, developerEmails.developerId), resolvesToDeveloper(developerEmails.email)),
+    )
+    .where(and(inArray(developerEmails.email, emails), ne(developers.id, callerDeveloperId)));
   const byEmail = new Map(rows.map((row) => [row.email, row]));
   return request.commits.flatMap((commit) => {
     const author = byEmail.get(lowered(commit.authorEmail));
