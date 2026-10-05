@@ -38,9 +38,12 @@ import type { CliResult } from "./login.ts";
 export const PILOT_FLAG_DAYS = "--days";
 export const PILOT_FLAG_JSON = "--json";
 export const PILOT_FLAG_BY_DEVELOPER = "--by-developer";
+/** 07 §13: the caller's OWN hint outcomes — the one view of a person, and only of yourself. */
+export const PILOT_FLAG_MINE = "--mine";
 
 export const PILOT_USAGE = [
   "usage: crosscheck pilot [--days N] [--json]",
+  "   or: crosscheck pilot --mine [--days N]   your own hint outcomes",
   "   or: crosscheck pilot label    label what reached you unasked, one key each",
   "",
   "  The five proofs for this repo, each measured or saying why not:",
@@ -50,15 +53,17 @@ export const PILOT_USAGE = [
   "",
   "  --days N   the window, in whole days (the hub's default when omitted)",
   "  --json     the same answer as data, every string cleaned",
+  "  --mine     what reached YOU, what each hint led to, from whose work",
   "",
-  "  Per repo, never per person: there is no breakdown by developer.",
+  "  The report is per repo, never per person: there is no breakdown by",
+  "  developer. --mine shows you your own history and nobody else's.",
   "",
 ].join("\n");
 
 const NOT_CONFIGURED = "not configured — run `crosscheck login <hubUrl>`\n";
 const NOT_A_REPO = "not a git repository — the pilot is repo-scoped\n";
 
-const BY_DEVELOPER_REFUSAL =
+export const BY_DEVELOPER_REFUSAL =
   "refused: the pilot counts per repo, never per person — this is reliability infrastructure, not employee measurement, so there is no breakdown by developer to ask for\n";
 
 const WHOLE_DAYS = /^[1-9]\d*$/;
@@ -67,7 +72,7 @@ type PilotArgs =
   | { readonly days: number | undefined; readonly json: boolean }
   | { readonly error: string };
 
-const parsePilotArgs = (argv: readonly string[]): PilotArgs => {
+export const parsePilotArgs = (argv: readonly string[]): PilotArgs => {
   const at = argv.indexOf(PILOT_FLAG_DAYS);
   const json = argv.includes(PILOT_FLAG_JSON);
   if (at === -1) {

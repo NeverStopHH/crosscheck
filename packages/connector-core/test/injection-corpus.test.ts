@@ -462,7 +462,8 @@ const CORPUS_SHAPE: Readonly<Record<InjectionCategory, number>> = {
   // entered is room nothing defends.
   oversize: 6,
   structure: 4,
-  "self-mimicry": 7,
+  // 7 → 9 with 07 §13: the outcome clause and the `--mine` tally line, forged.
+  "self-mimicry": 9,
 };
 const CORPUS_SIZE = Object.values(CORPUS_SHAPE).reduce(
   (total, count) => total + count,

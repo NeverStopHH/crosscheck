@@ -45,6 +45,13 @@ import {
   runPin,
 } from "./pin.ts";
 import { HELPFUL_USAGE, NOISE_USAGE, runHelpful, runNoise } from "./noise.ts";
+import {
+  FOLLOWED_USAGE,
+  OUTCOME_FLAG_REASON,
+  OVERRODE_USAGE,
+  runFollowed,
+  runOverrode,
+} from "./outcome.ts";
 import { KEY_FLAG_PRINT, KEY_USAGE, runKey } from "./key.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { SUSPECT_USAGE, runSuspect } from "./suspect.ts";
@@ -52,10 +59,12 @@ import {
   PILOT_FLAG_BY_DEVELOPER,
   PILOT_FLAG_DAYS,
   PILOT_FLAG_JSON,
+  PILOT_FLAG_MINE,
   PILOT_USAGE,
   runPilot,
 } from "./pilot.ts";
 import { PILOT_LABEL_SUBCOMMAND, runPilotLabel } from "./pilot-label.ts";
+import { runPilotMine } from "./pilot-mine.ts";
 import type { LabelTerminal } from "./terminal.ts";
 import { REVALIDATE_USAGE, runRevalidate } from "./revalidate.ts";
 import { runStatus } from "./status.ts";
@@ -100,6 +109,9 @@ const USAGE = [
   "  noise [<id>]              one word: the intervention a session just got",
   "                            was noise (pilot label's n key, as a command)",
   "  helpful [<id>]            one word: it helped (pilot label's h key)",
+  "  pilot --mine [--days N]   your own hint outcomes, by teammate, with reasons",
+  '  followed [<id>]           a hint you acted on (--reason "…" optional)',
+  '  overrode [<id>] --reason "…"  a hint you saw and deliberately did your way',
   "  revalidate                ask whether the code under this repo's recorded",
   "                            claims has moved, and record what this clone saw",
   "  presence [off|on]         hide/show your live presence to teammates",
@@ -190,12 +202,14 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   suspect: { usage: SUSPECT_USAGE },
   noise: { usage: NOISE_USAGE },
   helpful: { usage: HELPFUL_USAGE },
+  followed: { usage: FOLLOWED_USAGE, valueFlags: [OUTCOME_FLAG_REASON] },
+  overrode: { usage: OVERRODE_USAGE, valueFlags: [OUTCOME_FLAG_REASON] },
   pilot: {
     usage: PILOT_USAGE,
     valueFlags: [PILOT_FLAG_DAYS],
     // Listed so it reaches the command, which refuses it BY NAME (§8.4)
     // rather than as an unknown flag.
-    booleanFlags: [PILOT_FLAG_JSON, PILOT_FLAG_BY_DEVELOPER],
+    booleanFlags: [PILOT_FLAG_JSON, PILOT_FLAG_BY_DEVELOPER, PILOT_FLAG_MINE],
   },
   revalidate: { usage: REVALIDATE_USAGE },
   presence: { usage: PRESENCE_USAGE },
@@ -313,10 +327,12 @@ export const runCli = async (
     // 07 §5. A pull like the two above: one hub read, then the fix diffs run
     // on this clone, because the hub holds no repository. 07 §12's label
     // walk is the one subcommand: a person's verdicts, gated like `noise`.
+    // 07 §13: `--mine` is the caller's own outcomes, the one view of a person.
     case "pilot":
-      return rest[0] === PILOT_LABEL_SUBCOMMAND
-        ? runPilotLabel(rest.slice(1), env, cwd, options.isInteractive, options.terminal)
-        : runPilot(rest, env, cwd);
+      if (rest[0] === PILOT_LABEL_SUBCOMMAND) {
+        return runPilotLabel(rest.slice(1), env, cwd, options.isInteractive, options.terminal);
+      }
+      return rest.includes(PILOT_FLAG_MINE) ? runPilotMine(rest, env, cwd) : runPilot(rest, env, cwd);
     // 07 §3.2. The one-word shortcut for `pilot label`'s `n` key: typed beside
     // a session, gated on a person at a terminal exactly as `pin` is.
     case "noise":
@@ -329,6 +345,12 @@ export const runCli = async (
       return options.isInteractive === undefined
         ? runHelpful(rest, env, cwd)
         : runHelpful(rest, env, cwd, options.isInteractive);
+    // 07 §13. What a hint led to — the record an agent writes through
+    // mark_hint_outcome, so no terminal gate: only a label is a person's.
+    case "followed":
+      return runFollowed(rest, env, cwd);
+    case "overrode":
+      return runOverrode(rest, env, cwd);
     // D5's manual trigger: the same bounded check `get_diagnosis` runs, typed
     // by a person, so a repo nobody pulls a diagnosis from stops reading
     // `unknown` forever. A pull like the two above — no hook, no injection.

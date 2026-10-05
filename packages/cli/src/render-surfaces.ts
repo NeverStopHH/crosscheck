@@ -55,6 +55,7 @@ import {
   reasonPromptLine,
 } from "./cli/pilot-label-render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
+import { HINT_OUTCOME_SURFACES } from "./render-surfaces-outcomes.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
@@ -777,6 +778,8 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ]),
       ].join("\n"),
   },
+  // 07 §13, THE ARRAY TAIL: `followed` / `overrode` and `pilot --mine`.
+  ...HINT_OUTCOME_SURFACES,
 ];
 
 /**
