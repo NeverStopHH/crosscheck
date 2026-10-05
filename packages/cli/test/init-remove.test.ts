@@ -14,87 +14,24 @@
  * CROSSCHECK_HOME. No hub: neither init nor remove talks to one.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
-import type { Env } from "../src/index.ts";
-import { git, makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { git } from "../../connector-core/test/helpers.ts";
+import {
+  FOREIGN_MCP,
+  FOREIGN_SETTINGS,
+  INIT_ARGS,
+  backupsIn,
+  exists,
+  fixture,
+  read,
+  removeFixtures,
+  writeJson,
+} from "./fixtures/init-remove.ts";
 
-/** Never contacted: init only writes it into .crosscheck.json. */
-const HUB_URL = "https://hub.example.com";
-const INIT_ARGS = ["init", "--command-prefix", "crosscheck"];
-
-const paths: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
-  paths.length = 0;
-});
-
-interface Fixture {
-  readonly repo: string;
-  readonly home: string;
-  readonly env: Env;
-  readonly settingsPath: string;
-  readonly mcpPath: string;
-  readonly repoConfigPath: string;
-}
-
-const fixture = async (label: string): Promise<Fixture> => {
-  // REAL path: the command prints git's toplevel, and macOS's tmpdir is a
-  // symlink (/var → /private/var) that git resolves.
-  const repo = await realpath(
-    await makeRepo(`init-remove-${label}`, { remote: "git@github.com:acme/api.git" }),
-  );
-  const home = await makeHome(`init-remove-${label}`);
-  paths.push(repo, home);
-  return {
-    repo,
-    home,
-    env: {
-      HOME: home,
-      CROSSCHECK_HOME: join(home, ".crosscheck"),
-      CROSSCHECK_HUB_URL: HUB_URL,
-      CROSSCHECK_API_KEY: "test-key",
-    },
-    settingsPath: join(repo, ".claude", "settings.json"),
-    mcpPath: join(repo, ".mcp.json"),
-    repoConfigPath: join(repo, ".crosscheck.json"),
-  };
-};
-
-const read = async (path: string): Promise<string> => Bun.file(path).text();
-const exists = async (path: string): Promise<boolean> => Bun.file(path).exists();
-
-const writeJson = async (path: string, value: unknown, indent = 2): Promise<string> => {
-  const text = `${JSON.stringify(value, null, indent)}\n`;
-  await mkdir(join(path, ".."), { recursive: true });
-  await writeFile(path, text, "utf8");
-  return text;
-};
-
-const backupsIn = async (dir: string): Promise<readonly string[]> => {
-  try {
-    return (await readdir(dir)).filter((name) => name.includes(".bak-"));
-  } catch {
-    return [];
-  }
-};
-
-/** A teammate's own hook and permissions — what must survive install → remove. */
-const FOREIGN_SETTINGS = {
-  hooks: {
-    PreToolUse: [
-      { matcher: "Bash", hooks: [{ type: "command", command: "./scripts/guard.sh" }] },
-    ],
-  },
-  permissions: { allow: ["Bash(ls)"] },
-};
-
-const FOREIGN_MCP = {
-  mcpServers: { docs: { type: "stdio", command: "docs-mcp", args: ["serve"] } },
-};
+afterEach(removeFixtures);
 
 describe("crosscheck init --remove", () => {
   test("strips crosscheck's hooks, statusline and mcp server and hands back the user's own files byte-identical", async () => {
@@ -220,7 +157,7 @@ describe("crosscheck init --remove", () => {
 
     // Assert
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(`left ${userSettingsPath} untouched — it is not valid json`);
+    expect(result.stdout).toContain(`${userSettingsPath} is not valid json — left untouched`);
     expect(result.stdout).not.toContain("no user-level install");
     expect(await read(userSettingsPath)).toBe("{ not json");
   });
@@ -259,7 +196,7 @@ describe("crosscheck init --remove", () => {
     expect(result.exitCode).toBe(0);
     expect(await read(userSettingsPath)).toBe(userSettingsBefore);
     expect(await read(userMcpPath)).toBe(userMcpBefore);
-    expect(result.stdout).toContain(`left the user-level install in place (${userSettingsPath})`);
+    expect(result.stdout).toContain(`left the user-level install in place: ${userSettingsPath} (`);
   });
 
   test("without a user-level install it says sessions here now load no crosscheck hooks", async () => {
@@ -273,6 +210,7 @@ describe("crosscheck init --remove", () => {
     // Assert
     expect(result.stdout).toContain("crosscheck init --global");
     expect(result.stdout).toContain("load no crosscheck hooks");
+    expect(result.stdout).not.toContain("left the user-level install in place");
   });
 
   test("outside a git repository it says so and changes nothing", async () => {
@@ -346,7 +284,7 @@ describe("crosscheck init --remove and Cursor", () => {
     expect(result.exitCode).toBe(0);
     expect(await read(hooksPath)).toBe(hooksBefore);
     expect(await read(cursorMcpPath)).toBe(cursorMcpBefore);
-    expect(result.stdout).toContain(`left ${join(repo, ".cursor")} in place`);
+    expect(result.stdout).toContain(`left crosscheck's cursor entries in place — ${hooksPath}`);
     expect(result.stdout).toContain("--cursor");
   });
 
@@ -410,6 +348,28 @@ describe("crosscheck init --remove and Cursor", () => {
     expect(result.stdout).toMatch(
       new RegExp(`${hooksPath}: removed \\d+ cursor hook entries and deleted the file`),
     );
+  });
+});
+
+describe("crosscheck init --remove and install-only flags", () => {
+  test.each([
+    [["--hub", "https://other.example.com"], "--hub"],
+    [["--command-prefix", "crosscheck"], "--command-prefix"],
+    [["--force-statusline"], "--force-statusline"],
+    [["--global", "--force-statusline"], "--force-statusline"],
+  ])("refuses %p with a usage error instead of ignoring %s, and removes nothing", async (extra, flag) => {
+    // Arrange: an installed repo, so a removal would show
+    const { repo, env, settingsPath } = await fixture("flag-refused");
+    expect((await runCli(INIT_ARGS, env, repo)).exitCode).toBe(0);
+    const settingsBefore = await read(settingsPath);
+
+    // Act
+    const result = await runCli(["init", "--remove", ...extra], env, repo);
+
+    // Assert
+    expect(result.exitCode).toBe(64);
+    expect(result.stdout).toContain(`${flag} does not apply to --remove`);
+    expect(await read(settingsPath)).toBe(settingsBefore);
   });
 });
 

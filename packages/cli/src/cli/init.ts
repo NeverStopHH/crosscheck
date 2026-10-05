@@ -28,15 +28,24 @@ import {
 } from "@crosscheck/connector-core/config/launcher.ts";
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
-import { readGlobalWiring } from "./doctor-global.ts";
+import { readGlobalWiring, userLevelUnknown } from "./doctor-global.ts";
 import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
 import {
-  backUp,
+  originalSavedSuffix,
+  projectBackupDir,
   readJsonConfig,
   refusalMessage,
   renderJsonFile,
+  saveProjectOriginal,
 } from "./init-io.ts";
 import type { CliResult } from "./login.ts";
+import { doubleWiringRemedy, readProjectCopy } from "./project-copy.ts";
+import { wiringPaths } from "./wiring-removal.ts";
+import {
+  collisionSentence,
+  findUserLevelCollision,
+  projectWiringFiles,
+} from "./wiring-scope.ts";
 
 /** The connector's own entry point, resolved from this module's location. */
 const BIN_ENTRY_PATH = resolve(import.meta.dir, "..", "bin", "crosscheck.ts");
@@ -191,6 +200,20 @@ export const runInit = async (
     return { stdout: `${launcher.reason}\n`, exitCode: EXIT_FAIL };
   }
 
+  // A project copy that IS the user-level install ($HOME as the work tree,
+  // or a link into ~/.claude) would be written as one — and $HOME connected
+  // as a repo (review 2026-10-05). The same check `init --remove` makes.
+  const collision = await findUserLevelCollision(
+    await wiringPaths(await projectWiringFiles(identity.root, options.cursor)),
+    env,
+  );
+  if (collision !== null) {
+    return {
+      stdout: `${collisionSentence(collision, identity.root)}; run \`crosscheck init\` inside the project's own repository, or \`crosscheck init --global\` to wire this machine\n`,
+      exitCode: EXIT_ABORTED,
+    };
+  }
+
   const settingsDir = join(identity.root, CLAUDE_SETTINGS_DIR);
   const settingsPath = join(settingsDir, CLAUDE_SETTINGS_FILE);
   const mcpPath = join(identity.root, MCP_CONFIG_FILE);
@@ -216,6 +239,12 @@ export const runInit = async (
   }
   const prefix = resolveCommandPrefix(launcher);
   const mcpEntry = resolveMcpLauncher(launcher);
+  // Every original this run rewrites is saved OUT of the work tree and named
+  // in the output (init-io.ts `saveProjectOriginal` says why) — the Cursor
+  // pair's too, through the saver handed to its plan.
+  const backupDir = projectBackupDir(env, identity.root, "init");
+  const saveOriginal = (path: string, raw: string | null, next: string) =>
+    saveProjectOriginal(backupDir, identity.root, path, raw, next);
   // DYNAMIC import like the bin's cursor-hook branch: hooks and the
   // statusline must not pay connector-cursor's load. Prepare/apply split so
   // the Cursor files are validated HERE, written only after the Claude
@@ -225,7 +254,7 @@ export const runInit = async (
         const { prepareCursorInit } = await import(
           "@crosscheck/connector-cursor"
         );
-        return prepareCursorInit(identity.root, prefix, mcpEntry);
+        return prepareCursorInit(identity.root, prefix, mcpEntry, saveOriginal);
       })()
     : null;
   if (cursorPlan !== null && !cursorPlan.ok) {
@@ -234,26 +263,24 @@ export const runInit = async (
       exitCode: EXIT_ABORTED,
     };
   }
-  await backUp(settingsPath, settingsRead.raw);
-  await backUp(mcpPath, mcpRead.raw);
 
   const merged = mergeClaudeSettings(
     settingsRead.value,
     buildSettingsPlan(prefix, options.forceStatusline),
   );
+  const settingsNext = renderJsonFile(merged.settings);
+  const mcpNext = renderJsonFile(mergeMcpConfig(mcpRead.value, mcpEntry));
+  const settingsBackup = await saveOriginal(settingsPath, settingsRead.raw, settingsNext);
+  const mcpBackup = await saveOriginal(mcpPath, mcpRead.raw, mcpNext);
   await ensureDir(settingsDir);
-  await writeFile(settingsPath, renderJsonFile(merged.settings), "utf8");
-  await writeFile(
-    mcpPath,
-    renderJsonFile(mergeMcpConfig(mcpRead.value, mcpEntry)),
-    "utf8",
-  );
+  await writeFile(settingsPath, settingsNext, "utf8");
+  await writeFile(mcpPath, mcpNext, "utf8");
   await writeFile(
     repoConfigPath(identity.root),
     renderRepoConfig(hubUrl),
     "utf8",
   );
-  const cursorPaths =
+  const cursorWrites =
     cursorPlan !== null && cursorPlan.ok ? await cursorPlan.apply() : [];
   // Honest, not blocking (finding #11): the project install proceeds — it
   // is the team's committed mechanism, and one developer's user-level
@@ -261,13 +288,13 @@ export const runInit = async (
   // the cleanup command, never left for someone to discover via doctor.
   const globalWiring = await readGlobalWiring(env);
   const mcpIgnored = await isPathIgnored(identity.root, MCP_CONFIG_FILE);
-  // The fact doctor's double-wiring remedy keys on: an ignored project copy
-  // never reaches a teammate, so the side to remove is THIS one, never the
-  // user-level install that covers every worktree (pilot, 2026-10).
-  const settingsIgnored = await isPathIgnored(
-    identity.root,
-    `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE}`,
-  );
+  // The facts doctor's double-wiring remedy is worded from (project-copy.ts),
+  // so the note here and the WARN there say the same sentence — read only
+  // when the note prints.
+  const userLevel = userLevelUnknown(globalWiring);
+  const projectCopy = globalWiring.hooksInstalled
+    ? await readProjectCopy(identity.root)
+    : null;
 
   const notes = [
     ...(merged.statuslineInstalled
@@ -294,22 +321,25 @@ export const runInit = async (
           "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck-hub)",
         ]
       : []),
+    // A user settings file nobody could read may hold a user-level install:
+    // the double wiring is unknown, not absent (review 2026-10-05).
+    ...(userLevel === null
+      ? []
+      : [
+          `note: ${userLevel}, so this repo may now be wired twice on your machine — crosscheck doctor says more once the file is readable`,
+        ]),
     ...(globalWiring.hooksInstalled
       ? [
-          `note: a user-level (global) crosscheck install exists (${globalWiring.settingsPath}) — this repo is now wired twice on your machine; identical commands run once (Claude Code dedups them) and capture stays exactly-once either way, but doctor will flag the redundancy; ${
-            settingsIgnored === true
-              ? `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE} is ignored in this repo, so keep the user-level install and remove this project copy with \`crosscheck init --remove\``
-              : "`crosscheck init --global --remove` removes the user-level side if the committed install should stand alone"
-          }`,
+          `note: a user-level (global) crosscheck install exists (${globalWiring.settingsPath}) — this repo is now wired twice on your machine; identical commands run once (Claude Code dedups them) and capture stays exactly-once either way, but doctor will flag the redundancy; ${doubleWiringRemedy(projectCopy)}`,
         ]
       : []),
   ];
   return {
     stdout: [
       `wrote ${repoConfigPath(identity.root)}`,
-      `wrote ${settingsPath}`,
-      `wrote ${mcpPath}`,
-      ...cursorPaths.map((path) => `wrote ${path}`),
+      `wrote ${settingsPath}${originalSavedSuffix(settingsBackup)}`,
+      `wrote ${mcpPath}${originalSavedSuffix(mcpBackup)}`,
+      ...cursorWrites.map((write) => `wrote ${write.path}${originalSavedSuffix(write.backup)}`),
       `hooks use launcher: ${prefix}`,
       // Said explicitly because it is the ONLY delivery mechanism: a teammate
       // gets the tools from this file arriving in their checkout, and nowhere
@@ -325,7 +355,7 @@ export const runInit = async (
       // The same one-PR rule for the Cursor pair — and the gitignore warning
       // the design's rules-file rejection earned: an ignored .cursor/ is an
       // install that silently works for one person only.
-      ...(cursorPaths.length > 0
+      ...(cursorWrites.length > 0
         ? [
             "commit the .cursor files too (Cursor loads project hooks from version control in trusted workspaces) — if .cursor/ is gitignored, unignore hooks.json + mcp.json or teammates never get them",
           ]

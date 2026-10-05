@@ -28,15 +28,26 @@ import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts
 import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import type { Check } from "./doctor.ts";
+import { readJsonConfig, unreadableClause } from "./init-io.ts";
+import type { ReadRefusal } from "./init-io.ts";
+import { doubleWiringRemedy } from "./project-copy.ts";
+import type { ProjectCopy } from "./project-copy.ts";
 
 export interface GlobalWiring {
   readonly settingsPath: string;
   /** True = owned hook commands present in the user settings. */
   readonly hooksInstalled: boolean;
-  /** True = the user settings file exists but is not parseable JSON. */
-  readonly unreadable: boolean;
+  /**
+   * Why the user settings file EXISTS but could not be read — no permission,
+   * not json, not an object; null = read, or absent. While it is set, every
+   * "installed?" fact below is unknown, not false (review 2026-10-05).
+   */
+  readonly unreadable: ReadRefusal | null;
+  readonly mcpPath: string;
   /** True = the user-scope mcpServers carries our entry (~/.claude.json). */
   readonly mcpRegistered: boolean;
+  /** Why ~/.claude.json exists but could not be read; null = `mcpRegistered` is a fact. */
+  readonly mcpUnreadable: ReadRefusal | null;
   /** Hook events carrying an owned command in the user settings. */
   readonly hookEvents: readonly string[];
   /** The first owned hook command — what a user-scope hook would run. */
@@ -94,46 +105,48 @@ export const readProjectWiring = async (
   }
 };
 
-/** The user-scope install state, resolved read-only and fail-open. */
+/**
+ * The user-scope install state, read-only and fail-open — through
+ * `readJsonConfig`, which tells an ABSENT file from one that exists and could
+ * not be read. `readTextOrNull` folded the two, so an EACCES
+ * ~/.claude/settings.json read as "no user-level install" (review 2026-10-05).
+ */
 export const readGlobalWiring = async (env: Env): Promise<GlobalWiring> => {
   const settingsPath = claudeUserSettingsPath(env);
-  const raw = await readTextOrNull(settingsPath);
-  let hookEntries: readonly OwnedHookEntry[] = [];
-  let statuslineCommand: string | null = null;
-  let unreadable = false;
-  if (raw !== null) {
-    try {
-      const settings = asRecord(JSON.parse(raw) as unknown);
-      hookEntries = ownedHookEntries(settings);
-      const command = asRecord(settings["statusLine"])["command"];
-      statuslineCommand = typeof command === "string" ? command : null;
-    } catch {
-      unreadable = true;
-    }
-  }
-  let mcpRegistered = false;
-  const mcpRaw = await readTextOrNull(claudeUserMcpPath(env));
-  if (mcpRaw !== null) {
-    try {
-      const servers = asRecord(
-        asRecord(JSON.parse(mcpRaw) as unknown)["mcpServers"],
-      );
-      mcpRegistered = isOwnedMcpEntry(servers[MCP_SERVER_KEY]);
-    } catch {
-      // An unreadable ~/.claude.json is Claude's problem to report, not a
-      // reason to fail doctor: the mcp line simply reads "absent".
-    }
-  }
+  const mcpPath = claudeUserMcpPath(env);
+  const settingsRead = await readJsonConfig(settingsPath);
+  const settings = settingsRead.ok ? settingsRead.value : {};
+  const hookEntries = ownedHookEntries(settings);
+  const statusline = asRecord(settings["statusLine"])["command"];
+  const mcpRead = await readJsonConfig(mcpPath);
   return {
     settingsPath,
     hooksInstalled: hookEntries.length > 0,
-    unreadable,
-    mcpRegistered,
+    unreadable: settingsRead.ok ? null : settingsRead.reason,
+    mcpPath,
+    mcpRegistered:
+      mcpRead.ok && isOwnedMcpEntry(asRecord(mcpRead.value["mcpServers"])[MCP_SERVER_KEY]),
+    mcpUnreadable: mcpRead.ok ? null : mcpRead.reason,
     hookEvents: hookEntries.map((entry) => entry.event),
     launcherCommand: hookEntries[0]?.command ?? null,
-    statuslineCommand,
+    statuslineCommand: typeof statusline === "string" ? statusline : null,
   };
 };
+
+/**
+ * The sentence every surface prints for a user settings file that exists and
+ * could not be read — never "no user-level install"; null = it was read.
+ */
+export const userLevelUnknown = (wiring: GlobalWiring): string | null =>
+  wiring.unreadable === null
+    ? null
+    : `${unreadableClause(wiring.settingsPath, wiring.unreadable)} — whether a user-level install exists is unknown`;
+
+/** The same for ~/.claude.json, worded for the mcp lines; null = it was read. */
+export const userMcpUnknown = (wiring: GlobalWiring): string | null =>
+  wiring.mcpUnreadable === null
+    ? null
+    : `${unreadableClause(wiring.mcpPath, wiring.mcpUnreadable)} — whether the tools are registered at user scope is unknown`;
 
 const check = (level: Check["level"], name: string, detail: string): Check => ({
   level,
@@ -141,45 +154,41 @@ const check = (level: Check["level"], name: string, detail: string): Check => ({
   detail,
 });
 
+/** The user-scope mcp tools, as the global-install PASS line words them. */
+const userMcpClause = (wiring: GlobalWiring): string => {
+  if (wiring.mcpRegistered) {
+    return ", mcp tools at user scope";
+  }
+  const unknown = userMcpUnknown(wiring);
+  return unknown === null
+    ? "; user-scope mcp tools missing — rerun crosscheck init --global"
+    : `; ${unknown}`;
+};
+
 /**
  * The doctor lines. `projectWired` is whether crosscheck hooks are
  * registered project-scoped where doctor runs (null = there is no repo
  * here at all — the parent-workspace shape).
  *
- * `projectSettingsIgnored` is the M11 fact, passed IN as data so this stays a
- * pure function: `true` = this repo's `.claude/settings.json` is gitignored,
- * `false` = it is not, `null` = git could not say (git/check-ignore.ts). Only
- * `true` changes anything — see the double-wiring branch.
+ * `projectCopy` is the project copy's facts (project-copy.ts) — whether its
+ * settings are gitignored, whether `.cursor/` holds crosscheck's entries —
+ * passed IN as data so this stays a pure function; `null` = not read (the
+ * caller reads them only when both sides are wired).
  */
 export const globalInstallChecks = (
   wiring: GlobalWiring,
   projectWired: boolean | null,
-  projectSettingsIgnored: boolean | null = null,
+  projectCopy: ProjectCopy | null = null,
 ): readonly Check[] => {
   const name = "global install";
-  if (wiring.unreadable) {
-    return [
-      check(
-        "WARN",
-        name,
-        `${wiring.settingsPath} is not valid json — the user-level state cannot be read`,
-      ),
-    ];
+  const unknown = userLevelUnknown(wiring);
+  if (unknown !== null) {
+    return [check("WARN", name, unknown)];
   }
   if (wiring.hooksInstalled && projectWired === true) {
-    // The remedy has to know which side actually reaches a teammate (trial
-    // finding M11). Where the project settings file is GITIGNORED — the
-    // monorepo shape — `crosscheck init --global --remove` is the exactly
-    // wrong instruction: it deletes the only wiring that covers worktrees and
-    // parent workspaces, and leaves a project install nobody else will ever
-    // receive. So that branch never names it. It names the PROJECT-side
-    // `crosscheck init --remove` instead: "delete the gitignored project copy"
-    // left a pilot teammate asking how (2026-10), and that command strips
-    // exactly the ignored copy — never .crosscheck.json, never the user level.
-    const remedy =
-      projectSettingsIgnored === true
-        ? "keep the global install and remove the gitignored project copy with `crosscheck init --remove` — .claude/settings.json is ignored in this repo, so it never reaches teammates and only the user-level install covers your worktrees"
-        : "remove one side: `crosscheck init --global --remove`, or strip the repo's .claude/settings.json entries";
+    // Worded from the project copy's facts (project-copy.ts says why each
+    // matters), so init's note at install time says the same sentence.
+    const remedy = doubleWiringRemedy(projectCopy);
     return [
       check(
         "WARN",
@@ -193,7 +202,7 @@ export const globalInstallChecks = (
       check(
         "PASS",
         name,
-        `${wiring.settingsPath} (covers every checkout, worktree and parent workspace on this machine${wiring.mcpRegistered ? ", mcp tools at user scope" : "; user-scope mcp tools missing — rerun crosscheck init --global"})`,
+        `${wiring.settingsPath} (covers every checkout, worktree and parent workspace on this machine${userMcpClause(wiring)})`,
       ),
     ];
   }

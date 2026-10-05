@@ -130,8 +130,10 @@ describe("prepareCursorInit", () => {
     await mkdir(join(repo, ".cursor"), { recursive: true });
     await writeFile(join(repo, ".cursor", "hooks.json"), "{ not json", "utf8");
 
-    // Act
-    const plan = await prepareCursorInit(repo, "crosscheck", MCP_ENTRY);
+    // Act: a refusal saves nothing, so the saver must never be reached
+    const plan = await prepareCursorInit(repo, "crosscheck", MCP_ENTRY, async () => {
+      throw new Error("a refused plan saved an original");
+    });
 
     // Assert
     expect(plan.ok).toBe(false);
@@ -140,27 +142,38 @@ describe("prepareCursorInit", () => {
     expect(plan.reason).toContain("nothing was changed");
   });
 
-  test("apply writes both files, backs up preexisting ones, and lands the shared mcp entry", async () => {
-    // Arrange: a preexisting hooks.json that must be preserved AND backed up.
+  test("apply writes both files, hands each original it rewrites to the saver, and lands the shared mcp entry", async () => {
+    // Arrange: a preexisting hooks.json that must be preserved AND saved —
+    // by the caller's saver, never as a `.bak` beside it in the work tree.
     const repo = await makeRepo("init-apply");
     cleanups.push(repo);
     await mkdir(join(repo, ".cursor"), { recursive: true });
-    await writeFile(
-      join(repo, ".cursor", "hooks.json"),
-      JSON.stringify(HOOKS_JSON_EXAMPLE),
-      "utf8",
-    );
+    const original = JSON.stringify(HOOKS_JSON_EXAMPLE);
+    await writeFile(join(repo, ".cursor", "hooks.json"), original, "utf8");
+    // The saver owns the policy (cli: only an original the rewrite changes);
+    // the plan only hands it the facts, for every file it writes.
+    const offered: { path: string; raw: string | null }[] = [];
+    const saveOriginal = async (path: string, raw: string | null): Promise<string | null> => {
+      offered.push({ path, raw });
+      return raw === null ? null : `/backups${path}`;
+    };
 
     // Act
-    const plan = await prepareCursorInit(repo, "crosscheck", MCP_ENTRY);
+    const plan = await prepareCursorInit(repo, "crosscheck", MCP_ENTRY, saveOriginal);
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
     const written = await plan.apply();
 
     // Assert
+    const hooksPath = join(repo, ".cursor", "hooks.json");
     expect(written).toEqual([
-      join(repo, ".cursor", "hooks.json"),
-      join(repo, ".cursor", "mcp.json"),
+      { path: hooksPath, backup: `/backups${hooksPath}` },
+      // Created from nothing: there was no original to save.
+      { path: join(repo, ".cursor", "mcp.json"), backup: null },
+    ]);
+    expect(offered).toEqual([
+      { path: hooksPath, raw: original },
+      { path: join(repo, ".cursor", "mcp.json"), raw: null },
     ]);
     const hooksFile = JSON.parse(
       await Bun.file(join(repo, ".cursor", "hooks.json")).text(),
@@ -174,10 +187,11 @@ describe("prepareCursorInit", () => {
       await Bun.file(join(repo, ".cursor", "mcp.json")).text(),
     ) as { mcpServers: Record<string, unknown> };
     expect(mcpFile.mcpServers["crosscheck"]).toEqual(MCP_ENTRY);
-    // Timestamped backup beside the original it rewrote.
+    // Nothing beside the original: a `.bak` in the work tree is a new file
+    // git offers to commit (review 2026-10-05).
     const backups = (await readdir(join(repo, ".cursor"))).filter((name) =>
-      name.startsWith("hooks.json.bak-"),
+      name.includes(".bak-"),
     );
-    expect(backups.length).toBe(1);
+    expect(backups).toEqual([]);
   });
 });

@@ -21,12 +21,31 @@ import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-confi
 import { CURSOR_DIR, CURSOR_HOOKS_FILE, CURSOR_MCP_FILE } from "../constants.ts";
 import { buildCursorHooksPlan, mergeCursorHooks } from "./hooks-merge.ts";
 
+/**
+ * Saves a file's original before it is rewritten, and says where — or null
+ * when it saved nothing. The CALLER owns the policy and the place (cli's
+ * `saveProjectOriginal`: only an original the rewrite changes, and never
+ * beside the file — a `.bak` in the work tree is a new file git offers to
+ * commit, review 2026-10-05); this package only hands it the facts.
+ */
+export type SaveOriginal = (
+  path: string,
+  raw: string | null,
+  next: string,
+) => Promise<string | null>;
+
+export interface CursorWrite {
+  readonly path: string;
+  /** Where the original was saved; null = there was nothing to save. */
+  readonly backup: string | null;
+}
+
 export type CursorInitPlan =
   | { readonly ok: false; readonly reason: string }
   | {
       readonly ok: true;
-      /** Writes both files (+ timestamped backups); returns written paths. */
-      readonly apply: () => Promise<readonly string[]>;
+      /** Writes both files, each original handed to the saver first. */
+      readonly apply: () => Promise<readonly CursorWrite[]>;
     };
 
 interface ReadJson {
@@ -59,13 +78,6 @@ const readJsonConfig = async (path: string): Promise<ReadJson | null> => {
   }
 };
 
-/** Timestamped backup beside the original, so a bad merge is recoverable. */
-const backUp = async (path: string, raw: string | null): Promise<void> => {
-  if (raw !== null) {
-    await writeFile(`${path}.bak-${String(Date.now())}`, raw, "utf8");
-  }
-};
-
 const renderJson = (value: Record<string, unknown>): string =>
   `${JSON.stringify(value, null, 2)}\n`;
 
@@ -74,12 +86,14 @@ const renderJson = (value: Record<string, unknown>): string =>
  * deferred write. `commandPrefix` is the launcher the composed init already
  * resolved under the durable-install rules (core config/launcher.ts — cache
  * paths refused there, not re-checked here); `mcpEntry` is the same entry
- * shape `.mcp.json` gets (core resolveMcpLauncher).
+ * shape `.mcp.json` gets (core resolveMcpLauncher); `saveOriginal` receives
+ * every original before its file is rewritten.
  */
 export const prepareCursorInit = async (
   repoRoot: string,
   commandPrefix: string,
   mcpEntry: McpServerEntry,
+  saveOriginal: SaveOriginal,
 ): Promise<CursorInitPlan> => {
   const cursorDir = join(repoRoot, CURSOR_DIR);
   const hooksPath = join(cursorDir, CURSOR_HOOKS_FILE);
@@ -102,23 +116,21 @@ export const prepareCursorInit = async (
 
   return {
     ok: true,
-    apply: async (): Promise<readonly string[]> => {
+    apply: async (): Promise<readonly CursorWrite[]> => {
+      const hooksNext = renderJson(
+        mergeCursorHooks(hooksRead.value, buildCursorHooksPlan(commandPrefix)),
+      );
+      const mcpNext = renderJson(mergeMcpConfig(mcpRead.value, mcpEntry));
+      // Both originals are saved before EITHER file is written.
+      const hooksBackup = await saveOriginal(hooksPath, hooksRead.raw, hooksNext);
+      const mcpBackup = await saveOriginal(mcpPath, mcpRead.raw, mcpNext);
       await ensureDir(cursorDir);
-      await backUp(hooksPath, hooksRead.raw);
-      await backUp(mcpPath, mcpRead.raw);
-      await writeFile(
-        hooksPath,
-        renderJson(
-          mergeCursorHooks(hooksRead.value, buildCursorHooksPlan(commandPrefix)),
-        ),
-        "utf8",
-      );
-      await writeFile(
-        mcpPath,
-        renderJson(mergeMcpConfig(mcpRead.value, mcpEntry)),
-        "utf8",
-      );
-      return [hooksPath, mcpPath];
+      await writeFile(hooksPath, hooksNext, "utf8");
+      await writeFile(mcpPath, mcpNext, "utf8");
+      return [
+        { path: hooksPath, backup: hooksBackup },
+        { path: mcpPath, backup: mcpBackup },
+      ];
     },
   };
 };

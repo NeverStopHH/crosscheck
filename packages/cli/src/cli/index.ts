@@ -63,6 +63,13 @@ import { resolveVersion } from "./version.ts";
 
 export type { CliResult, SecretReader } from "./login.ts";
 
+/** Flags that only shape an INSTALL — a removal reads none of them. */
+const INSTALL_ONLY_FLAGS = [
+  INIT_HUB_FLAG,
+  INIT_COMMAND_PREFIX_FLAG,
+  INIT_FORCE_STATUSLINE_FLAG,
+] as const;
+
 const USAGE = [
   "usage: crosscheck <command>",
   "",
@@ -243,6 +250,18 @@ export const runCli = async (
     case "login":
       return runLogin(rest, env, readSecret);
     case "init": {
+      // "Refusing beats ignoring", the --global --hub rule below, for removal
+      // (review 2026-10-05): an install-only flag on `--remove` was dropped
+      // silently, so `init --remove --hub x` read as having used it.
+      const refusedFlag = rest.includes(INIT_REMOVE_FLAG)
+        ? INSTALL_ONLY_FLAGS.find((flag) => rest.includes(flag))
+        : undefined;
+      if (refusedFlag !== undefined) {
+        return {
+          stdout: `${refusedFlag} does not apply to ${INIT_REMOVE_FLAG} — a removal takes no install options (${INIT_CURSOR_FLAG} is the only flag it reads)\n${INIT_USAGE}`,
+          exitCode: EXIT_USAGE,
+        };
+      }
       if (rest.includes(INIT_GLOBAL_FLAG)) {
         const parsed = parseInitArgs(rest);
         // --hub has no meaning at machine scope: each repo's committed

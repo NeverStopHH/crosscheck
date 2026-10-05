@@ -74,7 +74,7 @@ export type {
   CursorRemovalResult,
 } from "./init/hooks-merge.ts";
 export { prepareCursorInit } from "./init/init.ts";
-export type { CursorInitPlan } from "./init/init.ts";
+export type { CursorInitPlan, CursorWrite, SaveOriginal } from "./init/init.ts";
 export { CURSOR_CAPABILITY_MANIFEST } from "./capabilities.ts";
 export { cursorDoctorChecks, cursorCapabilityDetail } from "./doctor.ts";
 export type { CursorCheck } from "./doctor.ts";

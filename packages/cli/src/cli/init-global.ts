@@ -34,7 +34,6 @@
  * formatting is normalized to 2-space on the first install and not
  * restored; the timestamped backup holds the exact original bytes).
  */
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -73,14 +72,11 @@ import {
 } from "./init-io.ts";
 import type { ReadRefusal } from "./init-io.ts";
 import { REMOVE_RESTART_LINE, removalTargets } from "./wiring-removal.ts";
+import { userCursorDir, userWiringFiles } from "./wiring-scope.ts";
 import type { CliResult } from "./login.ts";
 
 export const INIT_GLOBAL_FLAG = "--global";
 export const INIT_REMOVE_FLAG = "--remove";
-
-/** Cursor's user-level configuration directory (cursor.com/docs/agent/hooks). */
-const cursorUserDir = (env: Env): string =>
-  join(env["HOME"] ?? homedir(), ".cursor");
 
 export interface InitGlobalOptions {
   readonly commandPrefix?: string | undefined;
@@ -239,7 +235,7 @@ const readCursorFiles = async (env: Env): Promise<CursorReadResult> => {
   const { CURSOR_HOOKS_FILE, CURSOR_MCP_FILE } = await import(
     "@crosscheck/connector-cursor"
   );
-  const dir = cursorUserDir(env);
+  const dir = userCursorDir(env);
   const hooksPath = join(dir, CURSOR_HOOKS_FILE);
   const mcpPath = join(dir, CURSOR_MCP_FILE);
   const hooks = await readJsonConfig(hooksPath);
@@ -299,11 +295,7 @@ const applyCursorInstall = async (
 const runGlobalRemove = async (env: Env): Promise<CliResult> => {
   // The same table `init --remove` walks for a repo (wiring-removal.ts), so
   // both uninstalls recognise exactly the same entries.
-  const targets = await removalTargets({
-    claudeSettingsPath: claudeUserSettingsPath(env),
-    mcpPath: claudeUserMcpPath(env),
-    cursorDir: cursorUserDir(env),
-  });
+  const targets = await removalTargets(userWiringFiles(env));
   const reads = await Promise.all(
     targets.map(async (target) => ({ target, read: await readJsonConfig(target.path) })),
   );
