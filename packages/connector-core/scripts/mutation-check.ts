@@ -17426,7 +17426,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a prompt with no searchable word goes on the wire",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const promptQuery = hasSearchableWord(humanText)\n    ? humanText.slice(0, MAX_SEARCH_QUERY_CHARS)\n    : \"\";",
+    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
     to: "  const promptQuery = humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
@@ -17906,8 +17906,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the connector sends the harness's words beside the human's",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const promptQuery = hasSearchableWord(humanText)\n    ? humanText.slice(0, MAX_SEARCH_QUERY_CHARS)",
-    to: "  const promptQuery = hasSearchableWord(input.prompt)\n    ? input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS)",
+    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    to: "  const promptQuery = isContentFreePrompt(input.prompt) ? \"\" : input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS);",
     test: `${CORE}/test/hint-harness-turn.test.ts`,
     because: "a notification's task ids and status words go on the wire and top up a human prompt's count",
   },
@@ -17927,53 +17927,94 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-harness-turn.test.ts`,
     because: "a 0.10.0 connector's notification turn points at the automation tree it shares four words with",
   },
+  // SUPERSEDED AND REMOVED, 2026-10-06 — "one session-steering word silences
+  // a whole task prompt", "a five-letter word one letter off a session
+  // command counts as it" and "the hub scores a prompt of session commands as
+  // a task". The whole-prompt verdict and its edit-distance table were
+  // replaced by per-word steering (review 1006b, decision 2), so the code they
+  // mutated is gone. The hub's own content-free return stays as a
+  // short-circuit only: with no content term, the per-candidate floor already
+  // admits nothing, so deleting it reddens no test — recorded so it is not
+  // re-reported as a gap.
   {
-    label: "one session-steering word silences a whole task prompt",
-    file: `${SCHEMA}/src/session-control.ts`,
-    from: "  words.length > 0 && words.every(isControlWord);",
-    to: "  words.length > 0 && words.some(isControlWord);",
-    test: `${SCHEMA}/test/session-control.test.ts`,
-    because: "\"rate limit headers missing\" is treated as \"limit reset, continue\" and earns no hint",
+    label: "a steering word counts as a term beside a task word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    !isFunctionWord(token) && steeringWordOf(token) === null && !isMetaSteering(token);",
+    to: "    !isFunctionWord(token) && !isMetaSteering(token);",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"mache weiter mit den Tests, limit zurückgesetzt, bitte\" reaches the limit tree on mache and bitte (H1)",
+  },
+  {
+    label: "session-meta words are steering in every prompt",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const isMetaSteering = reportsTheSession(tokens) ? isSessionMetaWord : (): boolean => false;",
+    to: "  const isMetaSteering = isSessionMetaWord;",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"why does the usage limit reset\" is floored as a session command and never finds the limit tree (M3)",
+  },
+  {
+    label: "a reset report beside a continuation is scored as a task",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const isMetaSteering = reportsTheSession(tokens) ? isSessionMetaWord : (): boolean => false;",
+    to: "  const isMetaSteering = (): boolean => false;",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "\"mach weiter, limit zurückgesetzt\" points at the tree that says Limit and zurückgesetzt",
+  },
+  {
+    label: "a continuation alone makes the session's machinery steering",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  tokens.some(isContinuationTrigger) && tokens.some(isResetReport);",
+    to: "  tokens.some(isContinuationTrigger);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"keep going on usage limits\" — work on the limits — is floored as a session command",
   },
   {
     label: "a typo makes a session command a task again",
     file: `${SCHEMA}/src/session-control.ts`,
-    from: "    const allowed = editsAllowed(Math.max(folded.length, control.length));",
-    to: "    const allowed = 0;",
+    from: "  return CONTINUATION_TRIGGERS.find((trigger) => isTypoOf(folded, trigger)) ?? null;",
+    to: "  return null;",
     test: `${SCHEMA}/test/session-control.test.ts`,
-    because: "\"wiederuafnhemen\" is a word nobody's tree has, so the rest of the live prompt is scored as a task",
+    because: "\"wieter\" and \"wiederuafnhemen\" stop continuing, so \"limit reset\" beside them is scored as a task",
+  },
+  {
+    label: "typo tolerance reaches every steering word",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  return CONTINUATION_TRIGGERS.find((trigger) => isTypoOf(folded, trigger)) ?? null;",
+    to: "  return [...CONTINUATION_TRIGGERS, ...OTHER_STEERING].find((trigger) => isTypoOf(folded, trigger)) ?? null;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "Greta, prefect, waesome and genua are swallowed as steering words — real words a typo rule must never take",
   },
   {
     label: "an umlaut or a capital makes a session command a task again",
     file: `${SCHEMA}/src/session-control.ts`,
-    from: "  const folded = fold(word);",
-    to: "  const folded = word;",
+    from: "  word.normalize(\"NFKD\").replace(/\\p{M}/gu, \"\").replace(/ß/g, \"ss\").toLowerCase();",
+    to: "  word;",
     test: `${SCHEMA}/test/session-control.test.ts`,
-    because: "\"zurückgesetzt\" and \"Bitte\" stop matching the words they are",
+    because: "\"Weiter\", \"BITTE\" and \"nächsten\" stop matching the words they are",
   },
   {
-    label: "a five-letter word one letter off a session command counts as it",
+    label: "a swapped pair of letters is not tolerated",
     file: `${SCHEMA}/src/session-control.ts`,
-    from: "  [5, 0],\n",
-    to: "  [5, 1],\n",
-    test: `${SCHEMA}/test/session-control.test.ts`,
-    because: "\"cache limit\" reads as \"mache limit\" and a real two-word task earns nothing",
-  },
-  {
-    label: "a swapped pair of letters costs two edits",
-    file: `${SCHEMA}/src/session-control.ts`,
-    from: "        return [...built, swapped ? Math.min(best, twoBack[j - 2]! + 1) : best];",
-    to: "        return [...built, best];",
+    from: "    const isSwap = a[index] === b[index + 1] && a[index + 1] === b[index];",
+    to: "    const isSwap = false;",
     test: `${SCHEMA}/test/session-control.test.ts`,
     because: "\"contineu\" and \"wiederuafnhemen\" — a typist's commonest slip — stop being the words they are",
   },
   {
-    label: "the hub scores a prompt of session commands as a task",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (isSessionControlPrompt(content)) {\n    return [];\n  }\n",
-    to: "",
-    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
-    because: "\"mache weiter, limit zuruckgesetzt, bitte\" points at a German tree on mach, limit and bitte — the live pilot",
+    label: "only the first sixteen tokens of a prompt are judged",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS);",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS)\n    .slice(0, 16);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a long prompt whose task word comes late is judged on its preamble and floored",
+  },
+  {
+    label: "the connector asks a hub about a content-free prompt",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    to: "  const promptQuery = humanText.length === 0 ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "a 0.10.0 hub, which knows no steering word, points \"mache weiter\" at the tree that says mache (L5)",
   },
   {
     label: "the session-command rule judges stop words too",
@@ -18219,7 +18260,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 2
- * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
+ * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 8
@@ -18259,6 +18300,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
+ * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
@@ -18300,8 +18342,8 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 2
- * PRINTS: packages/schema/test/session-control.test.ts 5
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 4
+ * PRINTS: packages/schema/test/session-control.test.ts 4
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/substance-sentence.test.ts 3
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
@@ -18331,7 +18373,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-candidate-floor.test.ts 4
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 5
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-content-terms.test.ts 1
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5

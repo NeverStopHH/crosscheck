@@ -239,6 +239,34 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
     expect(candidates).toEqual([]);
   });
 
+  test.each([
+    ["mache weiter mit den Tests, limit zurückgesetzt, bitte"],
+    ["mache bitte weiter, das Limit ist zurückgesetzt, danach die Tests"],
+  ])("H1: %p — one other word never lets the steering words count again", async (prompt) => {
+    // Arrange — the German limit tree holds mache, Limit and bitte
+    const { harness, robin } = await germanLimitTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: prompt });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test.each([["why does the usage limit reset"], ["reset the limits please"], ["when does the limit reset?"]])(
+    "M3: %p is a task about the limit, and finds the tree about it",
+    async (prompt) => {
+      // Arrange
+      const { harness, robin } = await englishLimitTree();
+
+      // Act
+      const candidates = await fetchCandidates(harness, robin, { query: prompt });
+
+      // Assert
+      expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+    },
+  );
+
   test("the control: one task word beside them makes it a prompt that matches", async () => {
     // Arrange
     const { harness, robin } = await germanLimitTree();

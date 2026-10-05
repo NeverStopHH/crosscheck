@@ -8,7 +8,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { isGermanPrompt, promptTerms, promptTokens } from "../src/prompt-terms.ts";
+import { isContentFreePrompt, isGermanPrompt, promptTerms, promptTokens } from "../src/prompt-terms.ts";
 
 describe("the language signal: more German-only stop words than English-only ones", () => {
   test.each([
@@ -35,6 +35,33 @@ describe("content terms are the words left after the stop lists", () => {
 
   test("words repeat once, in order, lower-cased; words under three letters are not words", () => {
     expect(promptTerms("Cache cache KEY on a db").content).toEqual(["cache", "key"]);
+  });
+
+  test("a steering word is never a term, even beside a task word (H1)", () => {
+    expect(promptTerms("mache weiter mit den Tests, limit zurückgesetzt, bitte").content).toEqual(["tests"]);
+    expect(promptTerms("please continue with the tests, the limit was reset").content).toEqual(["tests"]);
+  });
+
+  test("session-meta words are the task in a task prompt (M3)", () => {
+    expect(promptTerms("why does the usage limit reset").content).toEqual(["usage", "limit", "reset"]);
+    expect(promptTerms("keep going on usage limits").content).toEqual(["usage", "limits"]);
+    expect(promptTerms("Limit zurücksetzen").content).toEqual(["limit", "zurücksetzen"]);
+  });
+
+  test("… and steering when the prompt reports the session and continues it", () => {
+    expect(promptTerms("the limit has been reset, you can continue now").content).toEqual([]);
+    expect(promptTerms("mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen").content).toEqual([]);
+  });
+
+  test.each([
+    ["mache weiter", true],
+    ["please continue", true],
+    ["session limit reset, resume", true],
+    ["reset the limits please", false],
+    ["continue the database migration", false],
+    ["", true],
+  ])("%p is content-free: %p", (prompt, contentFree) => {
+    expect(isContentFreePrompt(prompt)).toBe(contentFree);
   });
 
   test("every token is judged — a task word past the sixteenth is kept", () => {

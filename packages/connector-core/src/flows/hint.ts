@@ -33,7 +33,6 @@
  * second telemetry row (the loads/resumes idempotency pin).
  */
 import {
-  HINT_MIN_TOKEN_CHARS,
   LANDED_NOTICE_MIN_SPARE_MS,
   MAX_HINTS_PER_SESSION,
   MAX_SEARCH_QUERY_CHARS,
@@ -46,7 +45,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { humanPromptText, isHarnessTurn, substanceSentence } from "@crosscheck/schema";
+import { humanPromptText, isContentFreePrompt, isHarnessTurn, substanceSentence } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
   renderAnswerHint,
@@ -64,11 +63,6 @@ import {
   updateSessionState,
 } from "../state/session-state.ts";
 
-/** The same meaning floor the hub applies — zero HTTP for an empty question. */
-const hasSearchableWord = (prompt: string): boolean =>
-  prompt
-    .split(/[^\p{L}\p{N}]+/u)
-    .some((token) => token.length >= HINT_MIN_TOKEN_CHARS);
 
 export interface SelectAndRenderHintInput {
   readonly home: string;
@@ -276,13 +270,13 @@ export const selectAndRenderHint = async (
     return "";
   }
   const humanText = humanPromptText(input.prompt);
-  // A prompt with no searchable word is not a query, and it is not SENT: it
-  // stays on this machine. Whether a prompt WITH words carries anything
-  // task-bearing is the hub's call — only the hub holds the team's words to
-  // count against (server services/hints.ts, the content floor).
-  const promptQuery = hasSearchableWord(humanText)
-    ? humanText.slice(0, MAX_SEARCH_QUERY_CHARS)
-    : "";
+  // A CONTENT-FREE PROMPT is not a query, and it is not SENT: every word a
+  // function word or one that steers the session — "mache weiter", "please
+  // continue, the limit was reset" — decided here by the hub's own rule
+  // (@crosscheck/schema prompt-terms.ts), so a hub too old to know it is
+  // never asked (review 1006b, L5). Whether a prompt WITH content matches a
+  // teammate's work is the hub's call — only the hub holds their words.
+  const promptQuery = isContentFreePrompt(humanText) ? "" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);
   // SECRET GATE — the capture scan's sibling, on the QUERY. The prompt goes
   // on the wire as a GET string (into a shared hub's request path and access
   // logs), and on the Cursor connector it is captured tool output — a failing

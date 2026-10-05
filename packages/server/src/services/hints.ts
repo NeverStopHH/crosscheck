@@ -56,7 +56,6 @@ import {
   SUBSTANCE_MAX_CHARS,
   humanPromptText,
   isHarnessTurn,
-  isSessionControlOnly,
   promptTerms,
   substanceSentence,
 } from "@crosscheck/schema";
@@ -159,14 +158,6 @@ const sharedTermsSql = (document: SQL, terms: readonly string[]): SQL<number> =>
         WHERE numnode(term.lexeme) > 0
           AND ${document} @@ term.lexeme)`;
 
-/**
- * A prompt made only of words that steer the session — continue, limit,
- * reset, bitte, typos or not (@crosscheck/schema session-control.ts) —
- * carries no task. Live on 0.10.0, "mache weiter, limit zuruckgesetzt. bitte
- * alles wiederuafnhemen" cleared the floor on a German claim sharing three
- * words.
- */
-const isSessionControlPrompt = (content: readonly string[]): boolean => isSessionControlOnly(content);
 
 /**
  * The context's own statement — what its owner said the work is — as one
@@ -728,8 +719,13 @@ export const listHintCandidates = async (
     return [];
   }
   const humanText = humanPromptText(input.query);
+  // NOTHING TASK-BEARING, nothing to match: every word a function word or
+  // one that steers the session — continue, weiter, bitte, and "limit reset"
+  // beside a continuation (@crosscheck/schema session-control.ts). The same
+  // content terms are all the pool is ranked and counted on, so a steering
+  // word never counts beside a real one either (review 1006b, H1).
   const { content } = promptTerms(humanText);
-  if (isSessionControlPrompt(content)) {
+  if (content.length === 0) {
     return [];
   }
   return matchCandidates(deps, callerDeveloperId, {

@@ -312,10 +312,16 @@ export {
   isHarnessTurn,
 } from "./harness-turn.ts";
 export type { HarnessShape } from "./harness-turn.ts";
-export { isSessionControlOnly } from "./session-control.ts";
+export {
+  isContinuationTrigger,
+  isResetReport,
+  isSessionMetaWord,
+  steeringWordOf,
+} from "./session-control.ts";
 export { ENGLISH_STOP_WORDS, GERMAN_STOP_WORDS } from "./stop-words.ts";
 export {
   PROMPT_MIN_TOKEN_CHARS,
+  isContentFreePrompt,
   isGermanPrompt,
   promptTerms,
   promptTokens,

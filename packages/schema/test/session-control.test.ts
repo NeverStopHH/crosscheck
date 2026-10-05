@@ -1,38 +1,99 @@
 /**
- * A prompt made only of words that steer the SESSION — continue, resume,
- * limit, reset, please — carries no task (DESIGN.md §4), typos or not. Live
- * on 0.10.0: "mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen"
- * pointed at an unrelated teammate tree. The words arrive here AFTER the
- * hub's two stop lists, so "weiter" and "alles" are already gone.
+ * Words that steer the SESSION rather than name a task (DESIGN.md §4,
+ * review 1006b decision 2).
+ *
+ * STEERING WORDS — continue, weiter, mache, resume, please, bitte, next
+ * step, nochmal … — are never a task word, anywhere: not in the verdict,
+ * and not as a shared term beside a real one (H1). SESSION-META WORDS —
+ * limit, reset, usage, retry, restart, session — are steering only when a
+ * continuation verb AND a reset report stand beside them ("limit was
+ * reset, continue"); in a task prompt they are the task (M3: "why does the
+ * usage limit reset").
+ *
+ * TYPO TOLERANCE NEVER MAPS A REAL WORD: swapped neighbours only, two of
+ * them in long words, and only in a continuation trigger — the one word
+ * whose slip changes the verdict. A test runs the whole system dictionary
+ * (when present) plus a German sample through the matcher, failing on any
+ * word that maps to a steering word other than itself.
  */
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 
-import { isSessionControlOnly } from "../src/session-control.ts";
+import {
+  isContinuationTrigger,
+  isResetReport,
+  isSessionMetaWord,
+  steeringWordOf,
+} from "../src/session-control.ts";
 
-describe("a prompt of session-steering words only is content-free", () => {
+const DICTIONARY = "/usr/share/dict/words";
+
+/** German words near a steering word that are words of their own (synthetic sample). */
+const GERMAN_NEAR_MISSES = [
+  "bitter", "bitten", "bittet", "Fortsetzung", "Fortschritt", "fortan", "Resümee", "Matte", "Macher",
+  "Mächte", "Wetter", "weitere", "weiteren", "weiterer", "Weiterbildung", "weitermacht", "Wiederaufnahme",
+  "wiederaufgenommen", "einverstandene", "umgesetzt", "umsetzbar", "Versuchung", "versucht", "probiert",
+  "Probe", "schrittweise", "Superlativ", "Perfektion", "passte", "Klarheit", "Danksagung",
+  "erneuert", "Erneuerung", "nochmals", "einfache", "schonen", "Mahl", "Lose", "losen", "nächstens",
+  "Zurückhaltung", "zurückgesetzte", "Limitierung", "Sitzungen", "Neustarts", "Nutzungen", "fortsetzt",
+];
+
+describe("steering words are recognised, folded and with a typist's swaps", () => {
   test.each([
-    ["the live pilot prompt, typos included", ["mache", "limit", "zuruckgesetzt", "bitte", "wiederuafnhemen"]],
-    ["the same with its umlaut", ["mache", "limit", "zurückgesetzt"]],
-    ["an inserted letter in a longer word", ["macxhe", "limit", "zurukgsetz"]],
-    ["English", ["please", "continue", "limit", "reset"]],
-    ["an English transposition", ["contineu", "resume"]],
-    ["a plural", ["limits", "resets"]],
-    ["capitals", ["Weitermachen", "Bitte"]],
-    ["a usage limit reset", ["usage", "limit", "reset", "continue"]],
-  ])("%s", (_, words) => {
-    expect(isSessionControlOnly(words)).toBe(true);
+    ["continue", "continue"],
+    ["Weiter", "weiter"],
+    ["mache", "mache"],
+    ["BITTE", "bitte"],
+    ["nächsten", "nachsten"],
+    ["contineu", "continue"],
+    ["wieter", "weiter"],
+    ["wiederuafnhemen", "wiederaufnehmen"],
+    ["fortstezen", "fortsetzen"],
+  ])("%p is the steering word %p", (word, steering) => {
+    expect(steeringWordOf(word)).toBe(steering);
+  });
+
+  test.each([["cache"], ["process"], ["result"], ["preset"], ["lease"], ["bitter"], ["continued"], ["Fortsetzung"], ["Resümee"], ["potion"], ["plaese"], ["weitermachn"]])(
+    "%p is a word of its own",
+    (word) => {
+      expect(steeringWordOf(word)).toBeNull();
+    },
+  );
+});
+
+describe("session-meta words are steering only beside a continuation verb and a reset report", () => {
+  test.each([["limit"], ["Limits"], ["usage"], ["retry"], ["restart"], ["session"], ["Sitzung"], ["zurücksetzen"]])(
+    "%p is a session-meta word",
+    (word) => {
+      expect(isSessionMetaWord(word)).toBe(true);
+    },
+  );
+
+  test.each([["reset"], ["zurückgesetzt"], ["zurueckgesetzt"], ["frei"], ["back"]])("%p reports a reset", (word) => {
+    expect(isResetReport(word)).toBe(true);
+    expect(isSessionMetaWord(word)).toBe(true);
+  });
+
+  test.each([["continue"], ["weiter"], ["resume"], ["weitermachen"], ["contineu"]])("%p continues", (word) => {
+    expect(isContinuationTrigger(word)).toBe(true);
+  });
+
+  test.each([["please"], ["bitte"], ["proceed"], ["nochmal"], ["mache"]])("%p steers but does not continue", (word) => {
+    expect(steeringWordOf(word)).not.toBeNull();
+    expect(isContinuationTrigger(word)).toBe(false);
   });
 });
 
-describe("one task word makes it a prompt again", () => {
-  test.each([
-    ["a task word beside the control words", ["bitte", "limit", "upload", "robuster"]],
-    ["rate limit headers", ["rate", "limit", "headers"]],
-    ["a five-letter word one letter from a control word is not a typo of it", ["cache", "limit"]],
-    ["process is not proceed", ["process"]],
-    ["result is not resume", ["result"]],
-    ["nothing at all is not a session command either", []],
-  ])("%s", (_, words) => {
-    expect(isSessionControlOnly(words)).toBe(false);
+describe("typo tolerance never maps a real word to a steering word", () => {
+  test.skipIf(!existsSync(DICTIONARY))("the system dictionary, every word", () => {
+    const words = readFileSync(DICTIONARY, "utf8").split("\n").filter((word) => word.length > 0);
+    const collisions = words
+      .map((word) => [word, steeringWordOf(word)] as const)
+      .filter(([word, steering]) => steering !== null && steering !== word.toLowerCase());
+    expect(collisions).toEqual([]);
+  });
+
+  test("a German sample of near misses", () => {
+    expect(GERMAN_NEAR_MISSES.filter((word) => steeringWordOf(word) !== null)).toEqual([]);
   });
 });

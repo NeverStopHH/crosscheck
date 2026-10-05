@@ -122,6 +122,21 @@ describe("what goes on the wire: never the intent in a prompt's place (owner dec
     expect(f.hub.calls.candidates).toBe(0);
   });
 
+  test.each([["mache weiter"], ["please continue, the limit was reset"], ["contineu please"], ["Limit zurückgesetzt, bitte fortfahren"]])(
+    "a content-free %p makes no call, so a hub too old to floor it is never asked (L5)",
+    async (prompt) => {
+      // Arrange
+      const f = await fixture("if-steering", SESSION_INTENT);
+
+      // Act
+      const text = await selectAndRenderHint(flowInput(f, prompt));
+
+      // Assert
+      expect(text).toBe("");
+      expect(f.hub.calls.candidates).toBe(0);
+    },
+  );
+
   test("a prompt with words is sent alone — the intent never rides beside it", async () => {
     // Arrange
     const f = await fixture("if-words", SESSION_INTENT);
