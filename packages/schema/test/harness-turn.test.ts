@@ -1,33 +1,76 @@
 /**
  * The human text of a prompt turn (DESIGN.md §4): a harness delivers machine
  * text as user turns — Claude Code's background-task notifications, another
- * agent's or session's message — and their words (PR, CI, checks, pass,
- * event) are nobody's task. Seen live on 0.10.0: four consecutive pointers
- * at unrelated trees, every one fired by such a turn or by "mache weiter".
+ * agent's or session's message, the IDE's file context, /loop ticks — and
+ * their words (PR, CI, checks, pass, event) are nobody's task. Seen live on
+ * 0.10.0: four consecutive pointers at unrelated trees, every one fired by
+ * such a turn or by "mache weiter".
  *
- * EXACT, NOT AN HTML STRIPPER: one head marker and three named wrappers; any
- * other angle-bracket text is the human's and stays.
+ * EXACT, NOT AN HTML STRIPPER: a registry of named shapes, each with a
+ * synthetic sample; any other angle-bracket text is the human's and stays.
  */
 import { describe, expect, test } from "bun:test";
 
 import {
+  HARNESS_SCAN_MAX_CHARS,
+  HARNESS_SHAPES,
   SYSTEM_NOTIFICATION_MARKER,
   humanPromptText,
   isHarnessTurn,
 } from "../src/harness-turn.ts";
+
+/** What a turn costs at worst: the hook's whole budget is 800 ms. */
+const SCAN_BUDGET_MS = 50;
 
 const TASK_NOTIFICATION =
   "<task-notification><task-id>bp1v5vsl4</task-id>" +
   '<summary>Monitor event: "PR #74 CI checks for 493ffb4f"</summary>' +
   "<event>Comment claims (macos-latest): pass</event></task-notification>";
 
+const HUMAN = "why does the OPTA extraction drop events";
+
+describe("every registered shape is recognised from its own sample", () => {
+  test.each(HARNESS_SHAPES.map((shape) => [shape.name, shape] as const))("%s", (_, shape) => {
+    expect(isHarnessTurn(shape.sample)).toBe(true);
+    // An element is stripped and the human text after it kept; a head
+    // marker makes everything from it on the harness's.
+    expect(humanPromptText(`${shape.sample}\n${HUMAN}`)).toBe(shape.kind === "element" ? HUMAN : "");
+  });
+
+  test("the registry names the shapes seen live, and nothing generic", () => {
+    expect(HARNESS_SHAPES.map((shape) => shape.name).sort()).toEqual([
+      "# Autonomous loop check",
+      "# Autonomous loop tick",
+      "<agent-message>",
+      "<cross-session-message>",
+      "<ide_opened_file>",
+      "<ide_selection>",
+      "<system-reminder>",
+      "<task-notification>",
+      "<teammate-message>",
+      "[Cross-session idle notice]",
+      SYSTEM_NOTIFICATION_MARKER,
+    ]);
+  });
+});
+
 describe("a turn the harness wrote is nobody's prompt", () => {
   test.each([
     ["a task notification", TASK_NOTIFICATION],
     ["the system-notification marker at the head", `${SYSTEM_NOTIFICATION_MARKER}\n${TASK_NOTIFICATION}`],
     ["the marker followed by plain words", `${SYSTEM_NOTIFICATION_MARKER} Monitor event: PR #74 CI checks pass`],
+    ["the marker after leading whitespace", `  \n${SYSTEM_NOTIFICATION_MARKER}\nMonitor event: CI checks pass`],
+    ["the marker after a byte-order mark", `﻿${SYSTEM_NOTIFICATION_MARKER}\nMonitor event: CI checks pass`],
+    ["the marker in another casing", "[System Notification - Not User Input]\nMonitor event: CI checks pass"],
+    ["a system reminder before the marker", `<system-reminder>x</system-reminder>\n${SYSTEM_NOTIFICATION_MARKER}\nMonitor event: CI checks pass`],
+    ["a system reminder and a blank before the marker, one line", `<system-reminder>x</system-reminder> ${SYSTEM_NOTIFICATION_MARKER} Monitor event: CI checks pass`],
+    ["an upper-case element", "<TASK-NOTIFICATION><summary>Monitor event: CI checks pass</summary></TASK-NOTIFICATION>"],
     ["another agent's message", '<agent-message from="a781e1e961b68f4c2">Report: all suites pass</agent-message>'],
     ["another session's message", '<cross-session-message from="ken-laptop">CI checks pass on main</cross-session-message>'],
+    ["a teammate's message", '<teammate-message teammate_id="researcher" color="blue">Found the OAuth refresh race</teammate-message>'],
+    ["an idle notice", '[Cross-session idle notice] "agentic-main-f0" is idle now — its harness reports: «OpenAPI-Spec fertig»'],
+    ["a /loop tick", "# Autonomous loop tick (dynamic pacing)\nCheck the deploy and the CI checks."],
+    ["a /loop check", "# Autonomous loop check\nCheck the deploy and the CI checks."],
     ["two wrappers and whitespace", `  ${TASK_NOTIFICATION}\n\n${TASK_NOTIFICATION}  `],
     ["a wrapper cut off before it closes", "<task-notification><summary>Monitor event: PR #74 CI checks"],
   ])("%s has no human text", (_, turn) => {
@@ -36,15 +79,52 @@ describe("a turn the harness wrote is nobody's prompt", () => {
   });
 });
 
+describe("a turn that STARTS with a wrapper is wrapped to that element's LAST close (M1)", () => {
+  test.each([
+    [
+      "a hand-back quoting the closing tag",
+      '<agent-message from="a7">\n[Subagent hand-back] the matcher strips <agent-message from=…> up to </agent-message>, so OAuth refresh race findings stay unscored.\n</agent-message>',
+    ],
+    ["the same element nested", '<agent-message from="a1">outer <agent-message from="b2">inner</agent-message> then the deploy cache bug</agent-message>'],
+    [
+      "a body that closes early",
+      '<cross-session-message from="uds:/tmp/1.sock">done</cross-session-message> look at the gateway upload limit tree</cross-session-message>',
+    ],
+  ])("%s leaks nothing", (_, turn) => {
+    expect(humanPromptText(turn)).toBe("");
+  });
+});
+
 describe("the human text around a wrapper is kept, and only it", () => {
   test("text before and after a notification survives; the notification does not", () => {
-    const turn = `why does the OPTA extraction drop events ${TASK_NOTIFICATION} after the retry`;
-    expect(humanPromptText(turn)).toBe("why does the OPTA extraction drop events after the retry");
+    const turn = `${HUMAN} ${TASK_NOTIFICATION} after the retry`;
+    expect(humanPromptText(turn)).toBe(`${HUMAN} after the retry`);
     expect(isHarnessTurn(turn)).toBe(false);
   });
 
   test("words on either side of a wrapper never fuse into one", () => {
     expect(humanPromptText(`cache${TASK_NOTIFICATION}key`)).toBe("cache key");
+  });
+
+  test.each([
+    [
+      "the IDE's opened file",
+      "<ide_opened_file>The user opened the file /repo/src/auth/refresh.ts in the IDE. This may or may not be related to the current task.</ide_opened_file>\nmache weiter",
+      "mache weiter",
+    ],
+    ["the IDE's selection", "<ide_selection>The user selected the lines 3 to 9:\nconst token = await rotateKey(kid);\n</ide_selection>\nok", "ok"],
+    [
+      "a queued notification after the human text",
+      `fix the flaky checkout test\n\n${SYSTEM_NOTIFICATION_MARKER}\nThis is an automated background-task event.\n${TASK_NOTIFICATION}`,
+      "fix the flaky checkout test",
+    ],
+    [
+      "an indented notification queued after the human text",
+      `fix the flaky checkout test\n  ﻿${SYSTEM_NOTIFICATION_MARKER}\nMonitor event: CI checks pass`,
+      "fix the flaky checkout test",
+    ],
+  ])("%s", (_, turn, human) => {
+    expect(humanPromptText(turn)).toBe(human);
   });
 });
 
@@ -52,23 +132,52 @@ describe("everything else is the human's, exactly as typed", () => {
   test.each([
     ["a plain prompt", "why does src/auth/refresh.ts 500 after the key rotation"],
     ["other angle-bracket text", "the <div> in <Player/> overflows; compare <task-id> handling"],
-    ["the marker quoted mid-prompt", `what does ${SYSTEM_NOTIFICATION_MARKER} mean in the hook input`],
+    ["the marker quoted mid-line", `what does ${SYSTEM_NOTIFICATION_MARKER} mean in the hook input`],
     ["a tag that only starts like a wrapper", "<task-notifications> is the wrong element name"],
+    ["a heading that only starts like a loop tick", "# Autonomous loops in the scheduler stall after a deploy"],
   ])("%s is untouched", (_, prompt) => {
     expect(humanPromptText(prompt)).toBe(prompt);
     expect(isHarnessTurn(prompt)).toBe(false);
   });
 
-  test("a pasted megabyte of whitespace around a wrapper costs linear time, inside a hook budget", () => {
-    const LINEAR_BOUND_MS = 250;
-    const turn = `${" ".repeat(1_000_000)}${TASK_NOTIFICATION}${"\t".repeat(1_000_000)}x`;
-    const started = performance.now();
-    expect(humanPromptText(turn)).toBe("x");
-    expect(performance.now() - started).toBeLessThan(LINEAR_BOUND_MS);
-  });
-
   test("an empty or blank prompt is not a harness turn — there was nothing to wrap", () => {
     expect(isHarnessTurn("")).toBe(false);
     expect(isHarnessTurn("   ")).toBe(false);
+  });
+
+  test("ACCEPTED (L4): a human prompt naming an unclosed wrapper loses the text after it", () => {
+    // Suppression only: the cost is one hint on that prompt, never a hint
+    // the reader did not earn. DESIGN.md §4 records the trade-off.
+    expect(humanPromptText("der Matcher erkennt `<task-notification>` nicht, bitte harness-turn.ts fixen")).toBe(
+      "der Matcher erkennt `",
+    );
+  });
+});
+
+describe("the scan is linear and bounded (M2)", () => {
+  const MEGABYTE = 1_000_000;
+  const repeatTo = (unit: string): string => unit.repeat(Math.ceil(MEGABYTE / unit.length)).slice(0, MEGABYTE);
+
+  test.each([
+    ["unterminated openings with an attribute", "<agent-message x"],
+    ["unterminated openings with a space", "<task-notification "],
+    ["nested openings, never closed", "<task-notification>"],
+    ["opening and closing pairs", "<agent-message from=a>x</agent-message>"],
+    ["a storm of angle brackets", "<"],
+    ["plain words", "fix the oauth refresh race "],
+  ])("a megabyte of %s finishes inside the budget", (_, unit) => {
+    const turn = repeatTo(unit);
+    const started = performance.now();
+    humanPromptText(turn);
+    isHarnessTurn(turn);
+    expect(performance.now() - started).toBeLessThan(SCAN_BUDGET_MS);
+  });
+
+  test("only a bounded window after the leading whitespace is read", () => {
+    const turn = `${" ".repeat(MEGABYTE)}${HUMAN}${"x".repeat(HARNESS_SCAN_MAX_CHARS)} tail`;
+    const human = humanPromptText(turn);
+    expect(human.startsWith(HUMAN)).toBe(true);
+    expect(human.length).toBeLessThanOrEqual(HARNESS_SCAN_MAX_CHARS);
+    expect(human).not.toContain("tail");
   });
 });

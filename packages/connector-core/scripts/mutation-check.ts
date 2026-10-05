@@ -17810,34 +17810,98 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a turn headed by the system-notification marker reads as a human prompt",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "  if (prompt.trimStart().startsWith(SYSTEM_NOTIFICATION_MARKER)) {\n    return \"\";\n  }\n",
-    to: "",
+    from: "  const human = headAt === -1 ? stripped : stripped.slice(0, headAt);",
+    to: "  const human = stripped;",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "a background task's \"Monitor event: checks pass\" points the session at whichever tree shares those words",
   },
   {
     label: "a task notification's words count as the prompt's",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "  \"task-notification\",\n",
-    to: "",
+    from: "  element(\"task-notification\", ",
+    to: "  element(\"task-notificationx\", ",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "PR, CI, checks, pass — the live pilot's four pointers at unrelated trees",
   },
   {
     label: "a wrapper cut at the wire bound leaks its words",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "[\\\\s\\\\S]*?(?:</${element}>|$)`",
-    to: "[\\\\s\\\\S]*?</${element}>`",
+    from: "  return at < opening.end ? lower.length : at + close.length;",
+    to: "  return at < opening.end ? opening.end : at + close.length;",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "a notification sliced to the query bound has no closing tag, and all of it is scored",
   },
   {
     label: "stripping a wrapper fuses the words beside it",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "text.replace(wrapper, \" \")",
-    to: "text.replace(wrapper, \"\")",
+    from: "  return kept.join(\" \");",
+    to: "  return kept.join(\"\");",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "\"cache\" and \"key\" either side of a notification become \"cachekey\", a word nobody wrote",
+  },
+  {
+    label: "a quoted close ends a leading wrapper early",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const at = isLeading ? lower.lastIndexOf(close) : lower.indexOf(close, opening.end);",
+    to: "  const at = lower.indexOf(close, opening.end);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a hand-back quoting </agent-message> leaks the rest of its report as the reader's prompt (M1)",
+  },
+  {
+    label: "a head marker after leading blanks or a byte-order mark reads as human text",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: String.raw`(?:^|\\n)[ \\t\\uFEFF]*(?:`,
+    to: String.raw`(?:^|\\n)(?:`,
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a notification turn the IDE or a terminal prefixed with a blank or a BOM is scored whole",
+  },
+  {
+    label: "an upper-case wrapper is not recognised",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "join(\"|\")})(?=[\\\\s>])`, \"gi\");",
+    to: "join(\"|\")})(?=[\\\\s>])`, \"g\");",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "<TASK-NOTIFICATION> passes as the reader's own words",
+  },
+  {
+    label: "the head marker is matched in one casing only",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "    .join(\"|\")})`,\n  \"i\",\n);",
+    to: "    .join(\"|\")})`,\n  \"\",\n);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "[System Notification - Not User Input] passes as the reader's own words",
+  },
+  {
+    label: "an opening tag's attributes are scanned without a bound",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "new RegExp(`[^>]{0,${String(MAX_WRAPPER_ATTRIBUTE_CHARS)}}>`, \"y\")",
+    to: "new RegExp(`[^>]*>`, \"y\")",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a megabyte of unterminated openings turns the scan quadratic inside the 800 ms hook (M2)",
+  },
+  {
+    label: "the whole turn is scanned, however long",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const window = prompt.trimStart().slice(0, HARNESS_SCAN_MAX_CHARS);",
+    to: "  const window = prompt.trimStart();",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a pasted log of any size is read whole on every prompt",
+  },
+  {
+    label: "the IDE's opened-file context is scored as the prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"ide_opened_file\", ",
+    to: "  element(\"ide_opened_filex\", ",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"The user opened the file … in the IDE\" rides 4.8% of real prompts into the query",
+  },
+  {
+    label: "a /loop tick is scored as the prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  head(\"# Autonomous loop tick\", ",
+    to: "  head(\"# Autonomous loop tickx\", ",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "every scheduled tick's instructions point the session at whatever tree shares them",
   },
   {
     label: "a turn that is all harness still asks the hub",
@@ -18216,7 +18280,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
- * PRINTS: packages/schema/test/harness-turn.test.ts 4
+ * PRINTS: packages/schema/test/harness-turn.test.ts 12
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1

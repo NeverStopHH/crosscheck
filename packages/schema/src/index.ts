@@ -305,11 +305,13 @@ export {
   substanceSentence,
 } from "./substance-sentence.ts";
 export {
-  HARNESS_WRAPPER_ELEMENTS,
+  HARNESS_SCAN_MAX_CHARS,
+  HARNESS_SHAPES,
   SYSTEM_NOTIFICATION_MARKER,
   humanPromptText,
   isHarnessTurn,
 } from "./harness-turn.ts";
+export type { HarnessShape } from "./harness-turn.ts";
 export { isSessionControlOnly } from "./session-control.ts";
 export {
   CI_MAX_TEST_ROWS,
