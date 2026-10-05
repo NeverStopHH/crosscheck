@@ -40,6 +40,7 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
+import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
@@ -283,6 +284,13 @@ export interface SearchQuery {
    * the claims filed into it" in test/search-filters.test.ts.
    */
   readonly since?: Date | undefined;
+  /**
+   * Who is reading. Required, never defaulted: an opted-out developer's
+   * fallback title — their branch — is withheld from every viewer but them
+   * (services/live-location.ts), and a search that did not know its reader
+   * could only fail open.
+   */
+  readonly viewerDeveloperId: string;
   readonly limit: number;
 }
 
@@ -629,10 +637,12 @@ const hydrate = async (
   db: Db,
   entries: readonly FusedEntry[],
   solvedInfo: ReadonlyMap<string, Date>,
+  viewerDeveloperId: string,
 ): Promise<readonly SearchResultView[]> => {
   if (entries.length === 0) {
     return [];
   }
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
   const ids = entries.map((entry) => entry.row.id);
   const rows = await db
     .select({
@@ -644,6 +654,7 @@ const hydrate = async (
       updatedAt: workContexts.updatedAt,
       developerId: agentSessions.developerId,
       developerName: developers.name,
+      repo: agentSessions.repo,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -661,7 +672,7 @@ const hydrate = async (
         id: row.id,
         developerId: row.developerId,
         developerName: row.developerName,
-        title: row.title,
+        title: titleSeenBy(hidden, row.developerId, row.title, row.repo),
         status: row.status,
         intent: row.intent ?? null,
         createdAt: row.createdAt.toISOString(),
@@ -771,7 +782,12 @@ export const searchWorkContexts = async (
       new Set(solvedInfo.keys()),
     );
     return {
-      results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),
+      results: await hydrate(
+        deps.db,
+        fused.slice(0, limit),
+        solvedInfo,
+        input.viewerDeveloperId,
+      ),
       vectorTierActive: false,
     };
   }
@@ -803,7 +819,12 @@ export const searchWorkContexts = async (
     floorIds,
   );
   return {
-    results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),
+    results: await hydrate(
+      deps.db,
+      fused.slice(0, limit),
+      solvedInfo,
+      input.viewerDeveloperId,
+    ),
     vectorTierActive: vector.active,
   };
 };

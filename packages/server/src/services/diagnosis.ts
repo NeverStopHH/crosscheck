@@ -17,6 +17,7 @@ import {
 } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
+import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
@@ -396,6 +397,7 @@ export const listWorkContextsByRepo = async (
     window.limit ?? WORK_CONTEXT_LIST_MAX,
     WORK_CONTEXT_LIST_MAX,
   );
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
   const rows = await db
     .select({
       workContext: workContexts,
@@ -456,6 +458,7 @@ export const listWorkContextsByRepo = async (
     .limit(limit);
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext, row.baseCommit),
+    title: titleSeenBy(hidden, row.developerId, row.workContext.title, repo),
     developerId: row.developerId,
     developerName: row.developerName,
     claimCount: row.claimCount,
@@ -537,8 +540,10 @@ export const getDiagnosis = async (
   db: Db,
   now: Date,
   workContextId: string,
+  viewerDeveloperId: string,
   limits: DiagnosisLimits = DEFAULT_DIAGNOSIS_LIMITS,
 ): Promise<Diagnosis | undefined> => {
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
   // innerJoin for the base commit: every context reaches the table through
   // checkOwnedSession (record-handlers.ts), so its session always exists.
   const contextRows = await db
@@ -546,6 +551,7 @@ export const getDiagnosis = async (
       workContext: workContexts,
       baseCommit: agentSessions.baseCommit,
       repo: agentSessions.repo,
+      ownerDeveloperId: agentSessions.developerId,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -612,7 +618,15 @@ export const getDiagnosis = async (
 
   return {
     repo: contextRow.repo,
-    workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
+    workContext: {
+      ...toWorkContextView(contextRow.workContext, contextRow.baseCommit),
+      title: titleSeenBy(
+        hidden,
+        contextRow.ownerDeveloperId,
+        contextRow.workContext.title,
+        contextRow.repo,
+      ),
+    },
     claims: claimRows.map((row) =>
       toClaimView(
         row,

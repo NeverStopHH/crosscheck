@@ -53,6 +53,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
 import { readPin } from "./pins.ts";
 import { explanationTimingOf } from "./intent-ledger.ts";
 import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
@@ -583,6 +584,7 @@ export const suspectSessions = async (
   }
   const developerIds = [...new Set(rows.map((row) => row.developerId))];
   const muted = await readMutedAuthors(deps, readerDeveloperId, developerIds);
+  const hidden = await locationHiddenFrom(deps.db, readerDeveloperId);
   // WAS THE STATED PLAN WRITTEN BEFORE THE CHANGE? (spec 06 §5, decision
   // 10.2.) This is the surface where the missing distinction costs most: it
   // names sessions beside their declared intent, and a reader who cannot tell
@@ -603,7 +605,7 @@ export const suspectSessions = async (
         agentKind: row.agentKind,
         branch: row.branch,
         workContextId: row.workContextId,
-        workContextTitle: row.workContextTitle,
+        workContextTitle: titleSeenBy(hidden, row.developerId, row.workContextTitle, input.repo),
         intent: row.intent,
         lastActiveAt: row.lastActiveAt.toISOString(),
         overlap: row.overlap,

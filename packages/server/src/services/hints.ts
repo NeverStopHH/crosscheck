@@ -399,6 +399,7 @@ export const listHintCandidates = async (
       // must neither surface nor crowd (services/visibility.ts).
       excludeMutedForDeveloperId: callerDeveloperId,
       limit: SEARCH_POOL_LIMIT,
+      viewerDeveloperId: callerDeveloperId,
     },
   );
   const eligible = searched.results

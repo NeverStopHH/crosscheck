@@ -50,6 +50,8 @@ import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import type { ClaimValidityInput } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { ClaimAxesRow } from "./evidence-axes.ts";
+import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
@@ -448,17 +450,30 @@ const buildPosition = async (
   };
 };
 
+/** Each side's title as THIS viewer may read it (services/live-location.ts). */
 const loadWorkContextTitles = async (
   db: Db,
   ids: readonly string[],
+  hidden: HiddenLocations,
 ): Promise<ReadonlyMap<string, string>> => {
   const unique = [...new Set(ids)];
   const rows = await db
-    .select({ id: workContexts.id, title: workContexts.title })
+    .select({
+      id: workContexts.id,
+      title: workContexts.title,
+      ownerDeveloperId: agentSessions.developerId,
+      repo: agentSessions.repo,
+    })
     .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(inArray(workContexts.id, unique))
     .limit(unique.length);
-  return new Map(rows.map((row) => [row.id, row.title]));
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      titleSeenBy(hidden, row.ownerDeveloperId, row.title, row.repo),
+    ]),
+  );
 };
 
 /**
@@ -469,6 +484,7 @@ export const getRefereeBrief = async (
   db: Db,
   now: Date,
   contradictionId: string,
+  viewerDeveloperId: string,
 ): Promise<RefereeBriefView | undefined> => {
   const pair: ContradictionView | undefined = await findContradictionById(
     db,
@@ -477,10 +493,12 @@ export const getRefereeBrief = async (
   if (pair === undefined) {
     return undefined;
   }
-  const titles = await loadWorkContextTitles(db, [
-    pair.claimA.workContextId,
-    pair.claimB.workContextId,
-  ]);
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
+  const titles = await loadWorkContextTitles(
+    db,
+    [pair.claimA.workContextId, pair.claimB.workContextId],
+    hidden,
+  );
   const [positionA, positionB, shared] = await Promise.all([
     buildPosition(db, now, pair.claimA, pair.claimB.id, titles),
     buildPosition(db, now, pair.claimB, pair.claimA.id, titles),

@@ -299,6 +299,11 @@ export {
 
 export { containsSecret } from "./secret-scan.ts";
 export {
+  WITHHELD_TITLE,
+  isFallbackTitle,
+  repoLabel,
+} from "./fallback-title.ts";
+export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,
   CI_PROVIDERS,

@@ -45,6 +45,8 @@ import {
   solvedCandidateCondition,
 } from "./solved.ts";
 import { loadClaimValidities } from "./claim-validity.ts";
+import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import { notMutedCondition } from "./visibility.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { ClaimAxesRow } from "./evidence-axes.ts";
@@ -398,6 +400,7 @@ const listIntentMatchIds = async (
 const hydrateMatches = async (
   db: Db,
   ids: readonly string[],
+  hidden: HiddenLocations,
 ): Promise<
   ReadonlyMap<
     string,
@@ -413,6 +416,7 @@ const hydrateMatches = async (
       title: workContexts.title,
       landedAt: workContexts.landedAt,
       developerName: developers.name,
+      developerId: agentSessions.developerId,
       repo: agentSessions.repo,
     })
     .from(workContexts)
@@ -423,7 +427,7 @@ const hydrateMatches = async (
     rows.map((row) => [
       row.id,
       {
-        title: row.title,
+        title: titleSeenBy(hidden, row.developerId, row.title, row.repo),
         developerName: row.developerName,
         repo: row.repo,
         landedAt: row.landedAt,
@@ -456,11 +460,14 @@ const toMatchViews = async (
   now: Date,
   winners: readonly (MatchStrength & { id: string })[],
   solvedInfo: ReadonlyMap<string, Date>,
+  viewerDeveloperId: string,
 ): Promise<readonly SolvedMatchView[]> => {
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
   const [display, rootCauses] = await Promise.all([
     hydrateMatches(
       db,
       winners.map((winner) => winner.id),
+      hidden,
     ),
     // Bodies only for the trees that will be allowed to carry one, so a
     // file-matched tree's claim never leaves the hub at all.
@@ -633,7 +640,7 @@ export const listSolvedByFingerprint = async (
     }))
     .sort((left, right) => right.solvedAtMs - left.solvedAtMs)
     .slice(0, SOLVED_MATCH_MAX_PROBE_FINDINGS);
-  return toMatchViews(deps.db, deps.now(), winners, solvedInfo);
+  return toMatchViews(deps.db, deps.now(), winners, solvedInfo, viewerDeveloperId);
 };
 
 /**
@@ -704,5 +711,5 @@ export const listSolvedMatches = async (
     )
     .slice(0, SOLVED_MATCH_MAX_FINDINGS);
 
-  return toMatchViews(deps.db, deps.now(), winners, solvedInfo);
+  return toMatchViews(deps.db, deps.now(), winners, solvedInfo, viewerDeveloperId);
 };

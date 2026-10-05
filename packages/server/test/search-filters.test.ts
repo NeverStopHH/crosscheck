@@ -921,11 +921,17 @@ describe("the search service composes the filters with self-exclusion", () => {
         limit: 10,
         developerId: ken.developerId,
         excludeDeveloperId: ken.developerId,
+        viewerDeveloperId: ken.developerId,
       },
     );
     const asked = await searchWorkContexts(
       { db: harness.db, now: harness.clock.now, embedder: null },
-      { query: NEEDLE_TARGET, limit: 10, developerId: ken.developerId },
+      {
+        query: NEEDLE_TARGET,
+        limit: 10,
+        developerId: ken.developerId,
+        viewerDeveloperId: ken.developerId,
+      },
     );
 
     // Assert: intersection, not replacement — and the filter itself works

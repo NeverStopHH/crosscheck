@@ -86,6 +86,8 @@ import {
 } from "./ghost-overlap.ts";
 import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -182,6 +184,7 @@ const listRecentContexts = async (
   deps: Deps,
   repo: string,
   cutoff: Date,
+  hidden: HiddenLocations,
 ): Promise<readonly Omit<ConferenceContextView, "claims">[]> => {
   const rows = await deps.db
     .select({
@@ -201,7 +204,7 @@ const listRecentContexts = async (
     .limit(CONFERENCE_MAX_CONTEXTS);
   return rows.map((row) => ({
     id: row.id,
-    title: row.title,
+    title: titleSeenBy(hidden, row.developerId, row.title, repo),
     status: row.status,
     intent: row.intent ?? null,
     developerId: row.developerId,
@@ -494,6 +497,7 @@ const listOpenQuestions = async (
   deps: Deps,
   viewerDeveloperId: string,
   repo: string,
+  hidden: HiddenLocations,
 ): Promise<readonly ConferenceQuestionView[]> => {
   const authors = alias(developers, "conference_question_authors");
   const targets = alias(developers, "conference_question_targets");
@@ -528,7 +532,10 @@ const listOpenQuestions = async (
     authorDeveloperName: row.authorDeveloperName,
     targetDeveloperName: row.targetDeveloperName,
     workContextId: row.workContextId,
-    workContextTitle: row.workContextTitle,
+    workContextTitle:
+      row.workContextTitle === null || row.contextOwnerId === null
+        ? row.workContextTitle
+        : titleSeenBy(hidden, row.contextOwnerId, row.workContextTitle, repo),
     createdAt: row.createdAt.toISOString(),
     isForReader:
       row.targetDeveloperId === viewerDeveloperId ||
@@ -549,10 +556,11 @@ export const readConference = async (
   const cutoff = new Date(
     deps.now().getTime() - CONFERENCE_ACTIVE_WINDOW_DAYS * MS_PER_DAY,
   );
+  const hidden = await locationHiddenFrom(deps.db, viewerDeveloperId);
   const [contexts, window, questionRows] = await Promise.all([
-    listRecentContexts(deps, repo, cutoff),
+    listRecentContexts(deps, repo, cutoff, hidden),
     countContextsInWindow(deps, repo, cutoff),
-    listOpenQuestions(deps, viewerDeveloperId, repo),
+    listOpenQuestions(deps, viewerDeveloperId, repo, hidden),
   ]);
   const ids = contexts.map((context) => context.id);
   const [claimLists, sliceTargets, contradictions] = await Promise.all([

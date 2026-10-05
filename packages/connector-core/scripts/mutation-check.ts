@@ -17722,6 +17722,18 @@ export const MUTATIONS: readonly Mutation[
       "a drafts-only briefing frames a teammate's live plan in « » with nothing " +
       "telling the agent the quoted text is data and not instruction",
   },
+  {
+    // Review M1: the connector's fallback title `<branch> @ <repo>` IS the
+    // branch an opted-out developer's teammates are not told.
+    label: "an opted-out teammate's fallback title reaches other viewers",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  hidden.has(ownerDeveloperId) && isFallbackTitle(title, repo)",
+    to: "  false && isFallbackTitle(title, repo)",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "Robin opts out and re-registers on feat/acquisition-talks; her context " +
+      "titled `feat/acquisition-talks @ api` says so to every colleague",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18099,7 +18111,7 @@ interface Outcome {
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
- * PRINTS: packages/server/test/work-context-listing.test.ts 7
+ * PRINTS: packages/server/test/work-context-listing.test.ts 8
  */
 const greenGuards = new Map<string, boolean>();
 

@@ -10,6 +10,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
+import { WITHHELD_TITLE } from "@crosscheck/schema";
 
 import { WORK_CONTEXT_LIST_MAX } from "../src/constants.ts";
 import {
@@ -509,5 +510,55 @@ describe("GET /api/work-contexts names each context's branch", () => {
     expect(seenByNick?.branch).toBeUndefined();
     expect(JSON.stringify(asNick)).not.toContain("feat/acquisition-talks");
     expect(asRobin.find((row) => row.id === "wc_robin")?.branch).toBe("feat/acquisition-talks");
+  });
+
+  test("an opted-out teammate's FALLBACK title is withheld too — it is the branch", async () => {
+    // A session whose host supplied no title is named `<branch> @ <repo>` by
+    // the connector, so that title says where its author is. A title a
+    // person or host wrote is published knowledge and stays.
+    const robinSession = "cc_44444444-5555-4666-8777-888888888888";
+    const setup = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+      { id: robinSession, branch: "feat/acquisition-talks" },
+    );
+    await postRecords(setup.harness, robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_robin_fallback",
+            sessionId: robinSession,
+            title: "feat/acquisition-talks @ api",
+          }),
+          { sessionId: robinSession },
+        ),
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_robin_named",
+            sessionId: robinSession,
+            title: "Login 500s after key rotation",
+          }),
+          { sessionId: robinSession },
+        ),
+      ],
+    });
+    await setup.harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+
+    const asNick = await list(setup, `${REPO_QUERY}&since=14d`);
+    const asRobin = await list({ harness: setup.harness, developer: robin }, `${REPO_QUERY}&since=14d`);
+    const titleOf = (rows: readonly ListEntry[], id: string) =>
+      rows.find((row) => row.id === id)?.title;
+
+    expect(titleOf(asNick, "wc_robin_fallback")).toBe(WITHHELD_TITLE);
+    expect(titleOf(asNick, "wc_robin_named")).toBe("Login 500s after key rotation");
+    expect(JSON.stringify(asNick)).not.toContain("acquisition-talks");
+    expect(titleOf(asRobin, "wc_robin_fallback")).toBe("feat/acquisition-talks @ api");
   });
 });
