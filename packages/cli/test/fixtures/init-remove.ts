@@ -1,5 +1,5 @@
 /**
- * The shared fixture of the `crosscheck init --remove` test files: a real git
+ * The shared fixture of the `crosscheck init --remove` (and init backup) test files: a real git
  * repo (tracked vs ignored is git's answer), a temp HOME and a temp
  * CROSSCHECK_HOME. No hub: neither init nor remove talks to one.
  *
@@ -70,6 +70,27 @@ export const writeJson = async (path: string, value: unknown, indent = 2): Promi
   await writeFile(path, text, "utf8");
   return text;
 };
+
+/**
+ * Backup or temp copies anywhere in the work tree, as git sees them — new or
+ * ignored (with -uall, git lists the files inside ignored directories too).
+ */
+export const strayCopies = (repo: string): readonly string[] =>
+  new TextDecoder()
+    .decode(
+      Bun.spawnSync({
+        cmd: ["git", "status", "--porcelain", "--untracked-files=all", "--ignored"],
+        cwd: repo,
+      }).stdout,
+    )
+    .split("\n")
+    .filter((line) => line.startsWith("?? ") || line.startsWith("!! "))
+    .map((line) => line.slice(3))
+    .filter((path) => path.includes(".bak-") || path.includes(".tmp-"));
+
+/** The private path an output line says an original was saved to ("" if none). */
+export const savedOriginal = (stdout: string, path: string): string =>
+  new RegExp(`${path} .*\\(original saved to (\\S+)\\)`).exec(stdout)?.[1] ?? "";
 
 /** `.bak-` files directly in `dir` — what a backup beside the original leaves. */
 export const backupsIn = async (dir: string): Promise<readonly string[]> => {

@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1436
+    # PRINTS: 1441
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -179,10 +179,11 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor.ts 44
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
-    # PRINTS: packages/cli/src/cli/init-remove-plan.ts 7
+    # PRINTS: packages/cli/src/cli/init-io.ts 5
+    # PRINTS: packages/cli/src/cli/init-remove-plan.ts 5
     # PRINTS: packages/cli/src/cli/init-remove-report.ts 8
     # PRINTS: packages/cli/src/cli/init-remove.ts 5
-    # PRINTS: packages/cli/src/cli/init.ts 1
+    # PRINTS: packages/cli/src/cli/init.ts 2
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
@@ -354,6 +355,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/stop.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 3
+    # PRINTS: packages/connector-cursor/src/init/init.ts 1
     # PRINTS: packages/connector-cursor/src/inject/hint.ts 1
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
@@ -548,10 +550,11 @@ jobs:
     # PRINTS: hub.ts 9
     # PRINTS: index.ts 4
     # PRINTS: init-global.ts 2
-    # PRINTS: init-remove-plan.ts 7
+    # PRINTS: init-io.ts 5
+    # PRINTS: init-remove-plan.ts 5
     # PRINTS: init-remove-report.ts 8
     # PRINTS: init-remove.ts 5
-    # PRINTS: init.ts 1
+    # PRINTS: init.ts 3
     # PRINTS: injector.ts 5
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1

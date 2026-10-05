@@ -16443,17 +16443,17 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove saves an original without saying where",
-    file: `${CLI}/src/cli/init-remove-plan.ts`,
-    from: "plan.backup === null ? \"\" :",
-    to: "true ? \"\" :",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  backup === null ? \"\" :",
+    to: "  true ? \"\" :",
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "a copy of the user's settings, secrets included, sits somewhere nobody was told about",
   },
   {
     label: "init --remove saves an original holding secrets readable by everyone",
-    file: `${CLI}/src/cli/init-remove-plan.ts`,
-    from: "      await writePrivateFile(backup, plan.raw);",
-    to: "      await Bun.write(backup, plan.raw);",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  await writePrivateFile(backup, raw);",
+    to: "  await Bun.write(backup, raw);",
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "the backup of a .mcp.json with an API key in a server's env is world-readable on a shared machine",
   },
@@ -16569,6 +16569,46 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove.test.ts`,
     because: "`init --remove --hub x` removes the wiring and reads as if it had done something with the hub",
   },
+  {
+    label: "crosscheck init saves a rewritten file's original inside the work tree",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "projectBackupDir(env, identity.root, \"init\")",
+    to: "identity.root",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "the install itself leaves the copy of an ignored .mcp.json — a teammate's API key in it — where git offers to commit it",
+  },
+  {
+    label: "crosscheck init saves an original on a re-run that changed nothing",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  if (raw === null || raw === next) {",
+    to: "  if (raw === null) {",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "every idempotent re-run piles one more private copy of the settings into CROSSCHECK_HOME and names it as if something changed",
+  },
+  {
+    label: "crosscheck init saves an original without saying where",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  backup === null ? \"\" :",
+    to: "  true ? \"\" :",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "a copy of the user's settings, secrets included, sits somewhere the install never mentioned",
+  },
+  {
+    label: "crosscheck init saves an original holding secrets readable by everyone",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  await writePrivateFile(backup, raw);",
+    to: "  await Bun.write(backup, raw);",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "the saved copy of a .mcp.json with an API key in a server's env is world-readable on a shared machine",
+  },
+  {
+    label: "init --cursor rewrites .cursor/hooks.json without saving its original",
+    file: `${CURSOR}/src/init/init.ts`,
+    from: "      const hooksBackup = await saveOriginal(hooksPath, hooksRead.raw, hooksNext);",
+    to: "      const hooksBackup = null;",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "the team's own Cursor hooks file is merged over with no recoverable copy anywhere",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16642,6 +16682,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
+ * PRINTS: packages/cli/test/init-backups.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6

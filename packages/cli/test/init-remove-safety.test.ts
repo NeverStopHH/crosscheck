@@ -18,28 +18,13 @@ import {
   fixture,
   read,
   removeFixtures,
+  strayCopies,
   tempDir,
   writeJson,
 } from "./fixtures/init-remove.ts";
 
 afterEach(removeFixtures);
 
-/**
- * Backup or temp copies anywhere in the work tree, as git sees them — new or
- * ignored (with -uall, git lists the files inside ignored directories too).
- */
-const strayCopies = (repo: string): readonly string[] =>
-  new TextDecoder()
-    .decode(
-      Bun.spawnSync({
-        cmd: ["git", "status", "--porcelain", "--untracked-files=all", "--ignored"],
-        cwd: repo,
-      }).stdout,
-    )
-    .split("\n")
-    .filter((line) => line.startsWith("?? ") || line.startsWith("!! "))
-    .map((line) => line.slice(3))
-    .filter((path) => path.includes(".bak-") || path.includes(".tmp-"));
 
 describe("a project copy that is really the user-level install", () => {
   test("init --remove refuses and changes nothing when $HOME itself is the git work tree", async () => {

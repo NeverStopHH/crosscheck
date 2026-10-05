@@ -31,10 +31,12 @@ import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-cl
 import { readGlobalWiring } from "./doctor-global.ts";
 import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
 import {
-  backUp,
+  originalSavedSuffix,
+  projectBackupDir,
   readJsonConfig,
   refusalMessage,
   renderJsonFile,
+  saveProjectOriginal,
 } from "./init-io.ts";
 import type { CliResult } from "./login.ts";
 import { doubleWiringRemedy, readProjectCopy } from "./project-copy.ts";
@@ -237,6 +239,12 @@ export const runInit = async (
   }
   const prefix = resolveCommandPrefix(launcher);
   const mcpEntry = resolveMcpLauncher(launcher);
+  // Every original this run rewrites is saved OUT of the work tree and named
+  // in the output (init-io.ts `saveProjectOriginal` says why) — the Cursor
+  // pair's too, through the saver handed to its plan.
+  const backupDir = projectBackupDir(env, identity.root, "init");
+  const saveOriginal = (path: string, raw: string | null, next: string) =>
+    saveProjectOriginal(backupDir, identity.root, path, raw, next);
   // DYNAMIC import like the bin's cursor-hook branch: hooks and the
   // statusline must not pay connector-cursor's load. Prepare/apply split so
   // the Cursor files are validated HERE, written only after the Claude
@@ -246,7 +254,7 @@ export const runInit = async (
         const { prepareCursorInit } = await import(
           "@crosscheck/connector-cursor"
         );
-        return prepareCursorInit(identity.root, prefix, mcpEntry);
+        return prepareCursorInit(identity.root, prefix, mcpEntry, saveOriginal);
       })()
     : null;
   if (cursorPlan !== null && !cursorPlan.ok) {
@@ -255,26 +263,24 @@ export const runInit = async (
       exitCode: EXIT_ABORTED,
     };
   }
-  await backUp(settingsPath, settingsRead.raw);
-  await backUp(mcpPath, mcpRead.raw);
 
   const merged = mergeClaudeSettings(
     settingsRead.value,
     buildSettingsPlan(prefix, options.forceStatusline),
   );
+  const settingsNext = renderJsonFile(merged.settings);
+  const mcpNext = renderJsonFile(mergeMcpConfig(mcpRead.value, mcpEntry));
+  const settingsBackup = await saveOriginal(settingsPath, settingsRead.raw, settingsNext);
+  const mcpBackup = await saveOriginal(mcpPath, mcpRead.raw, mcpNext);
   await ensureDir(settingsDir);
-  await writeFile(settingsPath, renderJsonFile(merged.settings), "utf8");
-  await writeFile(
-    mcpPath,
-    renderJsonFile(mergeMcpConfig(mcpRead.value, mcpEntry)),
-    "utf8",
-  );
+  await writeFile(settingsPath, settingsNext, "utf8");
+  await writeFile(mcpPath, mcpNext, "utf8");
   await writeFile(
     repoConfigPath(identity.root),
     renderRepoConfig(hubUrl),
     "utf8",
   );
-  const cursorPaths =
+  const cursorWrites =
     cursorPlan !== null && cursorPlan.ok ? await cursorPlan.apply() : [];
   // Honest, not blocking (finding #11): the project install proceeds — it
   // is the team's committed mechanism, and one developer's user-level
@@ -323,9 +329,9 @@ export const runInit = async (
   return {
     stdout: [
       `wrote ${repoConfigPath(identity.root)}`,
-      `wrote ${settingsPath}`,
-      `wrote ${mcpPath}`,
-      ...cursorPaths.map((path) => `wrote ${path}`),
+      `wrote ${settingsPath}${originalSavedSuffix(settingsBackup)}`,
+      `wrote ${mcpPath}${originalSavedSuffix(mcpBackup)}`,
+      ...cursorWrites.map((write) => `wrote ${write.path}${originalSavedSuffix(write.backup)}`),
       `hooks use launcher: ${prefix}`,
       // Said explicitly because it is the ONLY delivery mechanism: a teammate
       // gets the tools from this file arriving in their checkout, and nowhere
@@ -341,7 +347,7 @@ export const runInit = async (
       // The same one-PR rule for the Cursor pair — and the gitignore warning
       // the design's rules-file rejection earned: an ignored .cursor/ is an
       // install that silently works for one person only.
-      ...(cursorPaths.length > 0
+      ...(cursorWrites.length > 0
         ? [
             "commit the .cursor files too (Cursor loads project hooks from version control in trusted workspaces) — if .cursor/ is gitignored, unignore hooks.json + mcp.json or teammates never get them",
           ]

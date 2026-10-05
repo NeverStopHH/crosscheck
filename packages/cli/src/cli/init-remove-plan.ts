@@ -5,20 +5,18 @@
  * changes anything, and the one sentence per file the output prints.
  */
 import { lstat, realpath, rm } from "node:fs/promises";
-import { basename, join, relative } from "node:path";
 
-import { crosscheckHome, writePrivateFile } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
+  originalSavedSuffix,
+  projectBackupDir,
   readJsonConfig,
   refusalMessage,
   renderJsonFile,
+  saveProjectOriginal,
   writeConfigAtomically,
 } from "./init-io.ts";
 import type { RemovalTarget, Stripped } from "./wiring-removal.ts";
-
-/** Under CROSSCHECK_HOME: where a removal's originals are kept. */
-const BACKUP_DIR = "backups";
 
 export type FilePlan =
   | { readonly kind: "absent"; readonly path: string }
@@ -96,17 +94,14 @@ const linkRefusal = async (plans: readonly FilePlan[]): Promise<string | null> =
   return null;
 };
 
-/** One private directory per run, named for the repo it came from. */
+/** One private directory per run (init-io.ts `projectBackupDir`). */
 export const removalBackupDir = (env: Env, root: string): string =>
-  join(crosscheckHome(env), BACKUP_DIR, `init-remove-${String(Date.now())}-${basename(root)}`);
+  projectBackupDir(env, root, "init-remove");
 
 /**
  * Every file the run will REWRITE has its original saved first — OUT of the
- * work tree (review 2026-10-05). A `.mcp.json.bak-…` beside an ignored
- * `.mcp.json` is a new file `git status` offers to commit, holding whatever a
- * teammate's server keeps in its env, API keys included. Originals go to a
- * private directory (0700, files 0600) under CROSSCHECK_HOME, at their path
- * relative to the repo, and the output names each one. A DELETED file gets
+ * work tree, through the same `saveProjectOriginal` project init uses
+ * (init-io.ts says why), and the output names each one. A DELETED file gets
  * none: it held nothing but crosscheck's entries, which `crosscheck init`
  * writes again.
  */
@@ -116,14 +111,20 @@ export const saveOriginals = async (
   backupDir: string,
 ): Promise<readonly FilePlan[]> =>
   Promise.all(
-    plans.map(async (plan) => {
-      if (plan.kind !== "strip") {
-        return plan;
-      }
-      const backup = join(backupDir, relative(root, plan.path));
-      await writePrivateFile(backup, plan.raw);
-      return { ...plan, backup };
-    }),
+    plans.map(async (plan) =>
+      plan.kind === "strip"
+        ? {
+            ...plan,
+            backup: await saveProjectOriginal(
+              backupDir,
+              root,
+              plan.path,
+              plan.raw,
+              renderJsonFile(plan.stripped.value),
+            ),
+          }
+        : plan,
+    ),
   );
 
 const applyPlan = async (plan: FilePlan): Promise<void> => {
@@ -201,9 +202,7 @@ export const planLine = (plan: FilePlan): string => {
     case "untouched":
       return `${plan.path}: no crosscheck entries — left as is`;
     case "strip":
-      return `${plan.path}: removed ${plan.stripped.removed}; everything else in it is kept${
-        plan.backup === null ? "" : ` (original saved to ${plan.backup})`
-      }`;
+      return `${plan.path}: removed ${plan.stripped.removed}; everything else in it is kept${originalSavedSuffix(plan.backup)}`;
     case "delete":
       return `${plan.path}: removed ${plan.stripped.removed} and deleted the file — nothing else was in it`;
   }
