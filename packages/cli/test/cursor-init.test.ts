@@ -7,7 +7,7 @@
  * Claude file is touched.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli/index.ts";
@@ -105,6 +105,30 @@ describe("init --cursor", () => {
     ).toBe(false);
     expect(await Bun.file(join(repo, ".mcp.json")).exists()).toBe(false);
   });
+
+  test.skipIf(process.getuid?.() === 0)(
+    "an unreadable .cursor/hooks.json refuses the WHOLE init before any Claude file or .crosscheck.json is written",
+    async () => {
+      // Arrange: it read as absent, so the Claude files and .crosscheck.json
+      // landed and the Cursor write failed with EACCES after them
+      const { repo, env } = await fixture("cursor-unreadable");
+      const hooksPath = join(repo, ".cursor", "hooks.json");
+      await mkdir(join(repo, ".cursor"), { recursive: true });
+      await writeFile(hooksPath, "{}\n", "utf8");
+      await chmod(hooksPath, 0o000);
+
+      // Act
+      const result = await runCli(["init", "--cursor"], env, repo).finally(() =>
+        chmod(hooksPath, 0o644),
+      );
+
+      // Assert
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain(`${hooksPath} could not be read — nothing was changed`);
+      expect(await Bun.file(join(repo, ".claude", "settings.json")).exists()).toBe(false);
+      expect(await Bun.file(join(repo, ".crosscheck.json")).exists()).toBe(false);
+    },
+  );
 
   test("re-running is idempotent — no duplicate cursor entries", async () => {
     // Arrange

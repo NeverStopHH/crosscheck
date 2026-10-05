@@ -16728,7 +16728,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "init --remove never names entries it did not recognise as its own",
     file: `${CLI}/src/cli/wiring-lookalikes.ts`,
-    from: "  typeof command === \"string\" && subcommands.some((suffix) => command.trimEnd().endsWith(suffix));",
+    from: "  subcommands.some((suffix) => command.trimEnd().endsWith(suffix));",
     to: "  false;",
     test: `${CLI}/test/init-remove-verdict.test.ts`,
     because: "'no crosscheck entries' is printed for a file still running every crosscheck hook through a wrapper",
@@ -16823,9 +16823,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --cursor rewrites .cursor/hooks.json without saving its original",
-    file: `${CURSOR}/src/init/init.ts`,
-    from: "      const hooksBackup = await saveOriginal(hooksPath, hooksRead.raw, hooksNext);",
-    to: "      const hooksBackup = null;",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "      ...cursorFiles,\n",
+    to: "",
     test: `${CLI}/test/init-backups.test.ts`,
     because: "the team's own Cursor hooks file is merged over with no recoverable copy anywhere",
   },
@@ -16833,8 +16833,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an unreadable file reads as absent",
     file: `${CORE}/src/config/paths.ts`,
-    from: "    return { kind: \"text\", text: await file.text() };\n  } catch {\n    return { kind: \"unreadable\" };",
-    to: "    return { kind: \"text\", text: await file.text() };\n  } catch {\n    return { kind: \"absent\" };",
+    from: "    return { kind: \"text\", text: await Bun.file(path).text() };\n  } catch {\n    return { kind: \"unreadable\" };",
+    to: "    return { kind: \"text\", text: await Bun.file(path).text() };\n  } catch {\n    return { kind: \"absent\" };",
     test: `${CLI}/test/user-level-unreadable.test.ts`,
     because: "an EACCES ~/.claude/settings.json reads as 'no user-level install' on every surface at once",
   },
@@ -17286,6 +17286,103 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "the refusal says two contradictory things about the same files",
   },
+  // ── final review (2026-10-05) ──
+  {
+    label: "doctor calls one install read under two names double wiring",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  if (oneInstall !== null && wiring.hooksInstalled) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "a dotfiles user is told to remove a 'side' — init --remove refuses, init --global --remove deletes the only install",
+  },
+  {
+    label: "doctor tells a home work tree to run the init that refuses there",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (userScopeRegistered && oneInstall !== null) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "the mcp line sends the user to `crosscheck init`, which refuses to write a project copy into $HOME",
+  },
+  {
+    label: "doctor calls a home work tree's own install a link",
+    file: `${CLI}/src/cli/wiring-scope.ts`,
+    from: "  return { root, collision, homeRoot: (await canonicalPath(root)) === home };",
+    to: "  return { root, collision, homeRoot: false };",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "the one fact the reader needs — the repo root IS the home directory — is replaced by a sentence about symlinks",
+  },
+  {
+    label: "a user-level backup is written wider than its original",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  await writeFile(`${path}.bak-${String(Date.now())}`, raw, { encoding: \"utf8\", mode });",
+    to: "  await writeFile(`${path}.bak-${String(Date.now())}`, raw, \"utf8\");",
+    test: `${CLI}/test/init-global.test.ts`,
+    because: "the 0600 ~/.claude.json's OAuth account and mcp tokens sit in a 0644 copy beside it",
+  },
+  {
+    label: "another tool's statusline is called crosscheck's for sharing the subcommand word",
+    file: `${CLI}/src/cli/wiring-lookalikes.ts`,
+    from: "  NAMES_CROSSCHECK.test(command) &&\n",
+    to: "",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "`npx -y ccusage statusline` is flagged as crosscheck's and the verified closing line never prints",
+  },
+  {
+    label: "a file inside an untraversable directory reads as absent",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "    return code === \"ENOENT\" || code === \"ENOTDIR\" ? { kind: \"absent\" } : { kind: \"unreadable\" };",
+    to: "    return { kind: \"absent\" };",
+    test: `${CORE}/test/read-text.test.ts`,
+    because: "a mode-000 ~/.claude reads as 'no user-level install' on every surface again",
+  },
+  {
+    label: "init --cursor treats an unreadable .cursor file as absent",
+    file: `${CURSOR}/src/init/init.ts`,
+    from: "  if (read.kind === \"unreadable\") {\n    return \"could not be read\";",
+    to: "  if (false) {\n    return \"could not be read\";",
+    test: `${CLI}/test/cursor-init.test.ts`,
+    because: "the Claude files and .crosscheck.json are written, then the Cursor write fails with EACCES: a half-installed repo",
+  },
+  {
+    label: "doctor tells a checkout that deleted the committed .mcp.json to run init",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if ((await isPathTracked(repoRoot, MCP_CONFIG_FILE)) === true) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "init recreates the ignored settings copy and the double wiring the removal just undid, while git restore was the fix",
+  },
+  {
+    label: "an unwritable CROSSCHECK_HOME crashes init with a bare EACCES",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "    } catch (error) {\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    to: "    } catch (error) {\n      throw error;\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "\"crosscheck failed: EACCES … mkdir …/backups\" says nothing about whether the repo was changed",
+  },
+  {
+    label: "an unwritable CROSSCHECK_HOME crashes init --remove with a bare EACCES",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "    } catch (error) {\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    to: "    } catch (error) {\n      throw error;\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "the removal dies with a bare EACCES and nothing tells the developer the repo is untouched",
+  },
+  {
+    label: "init --remove carries on after failing to save an original",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (!saved.ok) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "a rewrite whose original could not be saved goes ahead with no recovery copy anywhere",
+  },
+  {
+    label: "crosscheck init writes the repo after failing to save an original",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "  if (!saved.ok) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "the team's files are merged over with no copy of what they held",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17344,11 +17441,13 @@ interface Outcome {
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
+ * PRINTS: packages/cli/test/cursor-init.test.ts 1
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
+ * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
@@ -17359,11 +17458,11 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
- * PRINTS: packages/cli/test/init-backups.test.ts 5
- * PRINTS: packages/cli/test/init-global.test.ts 2
- * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
- * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
+ * PRINTS: packages/cli/test/init-backups.test.ts 7
+ * PRINTS: packages/cli/test/init-global.test.ts 3
+ * PRINTS: packages/cli/test/init-remove-safety.test.ts 11
+ * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
@@ -17532,6 +17631,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
+ * PRINTS: packages/connector-core/test/read-text.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1

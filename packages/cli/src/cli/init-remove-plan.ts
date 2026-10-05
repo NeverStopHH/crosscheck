@@ -13,7 +13,7 @@ import {
   readJsonConfig,
   refusalMessage,
   renderJsonFile,
-  saveProjectOriginal,
+  saveProjectOriginals,
   writeConfigAtomically,
 } from "./init-io.ts";
 import type { RemovalTarget, Stripped } from "./wiring-removal.ts";
@@ -109,23 +109,29 @@ export const saveOriginals = async (
   plans: readonly FilePlan[],
   root: string,
   backupDir: string,
-): Promise<readonly FilePlan[]> =>
-  Promise.all(
-    plans.map(async (plan) =>
+): Promise<
+  | { readonly ok: true; readonly plans: readonly FilePlan[] }
+  | { readonly ok: false; readonly refusal: string }
+> => {
+  const saved = await saveProjectOriginals(
+    backupDir,
+    root,
+    plans.flatMap((plan) =>
       plan.kind === "strip"
-        ? {
-            ...plan,
-            backup: await saveProjectOriginal(
-              backupDir,
-              root,
-              plan.path,
-              plan.raw,
-              renderJsonFile(plan.stripped.value),
-            ),
-          }
-        : plan,
+        ? [{ path: plan.path, raw: plan.raw, next: renderJsonFile(plan.stripped.value) }]
+        : [],
     ),
   );
+  if (!saved.ok) {
+    return saved;
+  }
+  return {
+    ok: true,
+    plans: plans.map((plan) =>
+      plan.kind === "strip" ? { ...plan, backup: saved.backups.get(plan.path) ?? null } : plan,
+    ),
+  };
+};
 
 const applyPlan = async (plan: FilePlan): Promise<void> => {
   if (plan.kind === "strip") {
@@ -186,7 +192,7 @@ export const unrecognisedLine = (path: string, commands: readonly string[]): rea
     : [
         `${path}: left ${commands.length === 1 ? "1 entry that looks" : `${String(commands.length)} entries that look`} like crosscheck's but ${commands.length === 1 ? "runs" : "run"} through a launcher it does not recognise as its own — NOT removed: ${commands
           .map((command) => `\`${command}\``)
-          .join(", ")}; if an \`init --command-prefix\` install wrote them, delete them by hand`,
+          .join(", ")}; if an \`init --command-prefix\` install wrote them, delete them by hand, with any hooks that run through the same launcher`,
       ];
 
 /** The leftovers a plan's file still holds, as lines (none for absent or deleted files). */

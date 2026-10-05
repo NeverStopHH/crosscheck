@@ -14,7 +14,7 @@
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 
-import { ensureDir, readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
+import { ensureDir, readText } from "@crosscheck/connector-core/config/paths.ts";
 import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 
@@ -22,30 +22,26 @@ import { CURSOR_DIR, CURSOR_HOOKS_FILE, CURSOR_MCP_FILE } from "../constants.ts"
 import { buildCursorHooksPlan, mergeCursorHooks } from "./hooks-merge.ts";
 
 /**
- * Saves a file's original before it is rewritten, and says where — or null
- * when it saved nothing. The CALLER owns the policy and the place (cli's
- * `saveProjectOriginal`: only an original the rewrite changes, and never
- * beside the file — a `.bak` in the work tree is a new file git offers to
- * commit, review 2026-10-05); this package only hands it the facts.
+ * One file the plan will write: its original (null = none) and its new
+ * content. Handed to the CALLER, which saves every original — the Claude
+ * pair's and these — before ANY file is written, out of the work tree (cli's
+ * `saveProjectOriginals`; a `.bak` beside the file is a new file git offers
+ * to commit, and a save failing after the Claude writes left a
+ * half-installed repo — review 2026-10-05).
  */
-export type SaveOriginal = (
-  path: string,
-  raw: string | null,
-  next: string,
-) => Promise<string | null>;
-
-export interface CursorWrite {
+export interface CursorFile {
   readonly path: string;
-  /** Where the original was saved; null = there was nothing to save. */
-  readonly backup: string | null;
+  readonly raw: string | null;
+  readonly next: string;
 }
 
 export type CursorInitPlan =
   | { readonly ok: false; readonly reason: string }
   | {
       readonly ok: true;
-      /** Writes both files, each original handed to the saver first. */
-      readonly apply: () => Promise<readonly CursorWrite[]>;
+      readonly files: readonly CursorFile[];
+      /** Writes `files`; their originals are the caller's to have saved first. */
+      readonly apply: () => Promise<void>;
     };
 
 interface ReadJson {
@@ -54,27 +50,33 @@ interface ReadJson {
 }
 
 /**
- * A JSON config init is going to rewrite, or null when it refuses — the
- * Claude installer's rule, same reason: a file that cannot be parsed is a
- * file whose contents cannot be preserved, and overwriting it would silently
- * delete a teammate's configuration.
+ * A JSON config init is going to rewrite, or the clause saying why it
+ * refuses — the Claude installer's rule, same reason: a file that cannot be
+ * read or parsed is a file whose contents cannot be preserved, and
+ * overwriting it would silently delete a teammate's configuration. An
+ * unreadable file is NOT an absent one (review 2026-10-05: it read as absent,
+ * so the Claude files and .crosscheck.json were written and the Cursor write
+ * failed with EACCES after them).
  */
-const readJsonConfig = async (path: string): Promise<ReadJson | null> => {
-  const raw = await readTextOrNull(path);
-  if (raw === null) {
+const readJsonConfig = async (path: string): Promise<ReadJson | string> => {
+  const read = await readText(path);
+  if (read.kind === "absent") {
     return { value: {}, raw: null };
   }
+  if (read.kind === "unreadable") {
+    return "could not be read";
+  }
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = JSON.parse(read.text) as unknown;
     return {
       value:
         typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
           ? (parsed as Record<string, unknown>)
           : {},
-      raw,
+      raw: read.text,
     };
   } catch {
-    return null;
+    return "is not valid json";
   }
 };
 
@@ -86,51 +88,42 @@ const renderJson = (value: Record<string, unknown>): string =>
  * deferred write. `commandPrefix` is the launcher the composed init already
  * resolved under the durable-install rules (core config/launcher.ts — cache
  * paths refused there, not re-checked here); `mcpEntry` is the same entry
- * shape `.mcp.json` gets (core resolveMcpLauncher); `saveOriginal` receives
- * every original before its file is rewritten.
+ * shape `.mcp.json` gets (core resolveMcpLauncher).
  */
 export const prepareCursorInit = async (
   repoRoot: string,
   commandPrefix: string,
   mcpEntry: McpServerEntry,
-  saveOriginal: SaveOriginal,
 ): Promise<CursorInitPlan> => {
   const cursorDir = join(repoRoot, CURSOR_DIR);
   const hooksPath = join(cursorDir, CURSOR_HOOKS_FILE);
   const mcpPath = join(cursorDir, CURSOR_MCP_FILE);
 
   const hooksRead = await readJsonConfig(hooksPath);
-  if (hooksRead === null) {
-    return {
-      ok: false,
-      reason: `${hooksPath} is not valid json — nothing was changed`,
-    };
+  if (typeof hooksRead === "string") {
+    return { ok: false, reason: `${hooksPath} ${hooksRead} — nothing was changed` };
   }
   const mcpRead = await readJsonConfig(mcpPath);
-  if (mcpRead === null) {
-    return {
-      ok: false,
-      reason: `${mcpPath} is not valid json — nothing was changed`,
-    };
+  if (typeof mcpRead === "string") {
+    return { ok: false, reason: `${mcpPath} ${mcpRead} — nothing was changed` };
   }
 
+  const files: readonly CursorFile[] = [
+    {
+      path: hooksPath,
+      raw: hooksRead.raw,
+      next: renderJson(mergeCursorHooks(hooksRead.value, buildCursorHooksPlan(commandPrefix))),
+    },
+    { path: mcpPath, raw: mcpRead.raw, next: renderJson(mergeMcpConfig(mcpRead.value, mcpEntry)) },
+  ];
   return {
     ok: true,
-    apply: async (): Promise<readonly CursorWrite[]> => {
-      const hooksNext = renderJson(
-        mergeCursorHooks(hooksRead.value, buildCursorHooksPlan(commandPrefix)),
-      );
-      const mcpNext = renderJson(mergeMcpConfig(mcpRead.value, mcpEntry));
-      // Both originals are saved before EITHER file is written.
-      const hooksBackup = await saveOriginal(hooksPath, hooksRead.raw, hooksNext);
-      const mcpBackup = await saveOriginal(mcpPath, mcpRead.raw, mcpNext);
+    files,
+    apply: async (): Promise<void> => {
       await ensureDir(cursorDir);
-      await writeFile(hooksPath, hooksNext, "utf8");
-      await writeFile(mcpPath, mcpNext, "utf8");
-      return [
-        { path: hooksPath, backup: hooksBackup },
-        { path: mcpPath, backup: mcpBackup },
-      ];
+      for (const file of files) {
+        await writeFile(file.path, file.next, "utf8");
+      }
     },
   };
 };

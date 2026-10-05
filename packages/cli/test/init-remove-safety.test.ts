@@ -124,6 +124,31 @@ describe("the backup of a rewritten file", () => {
   });
 });
 
+describe("an unwritable CROSSCHECK_HOME", () => {
+  test.skipIf(process.getuid?.() === 0)(
+    "refuses the removal, saying so, before anything in the repo is changed",
+    async () => {
+      // Arrange: a rewrite needs its original saved, and the backups can't be
+      const { repo, env, settingsPath } = await fixture("backup-dir-locked");
+      const settingsBefore = await writeJson(settingsPath, { hooks: OWNED_HOOKS, model: "opus" });
+      const crosscheckHome = env["CROSSCHECK_HOME"] ?? "";
+      await mkdir(crosscheckHome, { recursive: true });
+      await chmod(crosscheckHome, 0o500);
+
+      // Act
+      const result = await runCli(["init", "--remove"], env, repo).finally(() =>
+        chmod(crosscheckHome, 0o700),
+      );
+
+      // Assert
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain(`could not save the original of ${settingsPath}`);
+      expect(result.stdout).toContain("nothing was changed");
+      expect(await read(settingsPath)).toBe(settingsBefore);
+    },
+  );
+});
+
 describe("a write that fails mid-run", () => {
   // Root ignores permission bits, so the failure cannot be staged there.
   const isRoot = process.getuid?.() === 0;

@@ -26,6 +26,7 @@ import {
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { PRIVATE_FILE_MODE } from "@crosscheck/connector-core/constants.ts";
 
 /** Under CROSSCHECK_HOME: where project files' originals are kept. */
 const PROJECT_BACKUP_DIR = "backups";
@@ -57,6 +58,45 @@ export const saveProjectOriginal = async (
   const backup = join(backupDir, relative(root, path));
   await writePrivateFile(backup, raw);
   return backup;
+};
+
+/** A file a run will write: its original (null = none) and its new content. */
+export interface PlannedWrite {
+  readonly path: string;
+  readonly raw: string | null;
+  readonly next: string;
+}
+
+export type SavedOriginals =
+  | { readonly ok: true; readonly backups: ReadonlyMap<string, string> }
+  | { readonly ok: false; readonly refusal: string };
+
+/**
+ * Every original a run will rewrite, saved BEFORE any file is written — so a
+ * failure here (an unwritable CROSSCHECK_HOME) is a refusal that changed
+ * nothing, never a bare EACCES out of a half-written repo (review
+ * 2026-10-05). `backups` maps each saved file's path to its copy.
+ */
+export const saveProjectOriginals = async (
+  backupDir: string,
+  root: string,
+  writes: readonly PlannedWrite[],
+): Promise<SavedOriginals> => {
+  const backups = new Map<string, string>();
+  for (const write of writes) {
+    try {
+      const backup = await saveProjectOriginal(backupDir, root, write.path, write.raw, write.next);
+      if (backup !== null) {
+        backups.set(write.path, backup);
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        refusal: `could not save the original of ${write.path} to ${backupDir} (${error instanceof Error ? error.message : String(error)}) — nothing was changed`,
+      };
+    }
+  }
+  return { ok: true, backups };
 };
 
 /** The output's name for a saved original, appended to the line about its file. */
@@ -136,9 +176,18 @@ export const readJsonConfig = async (path: string): Promise<ReadJson> => {
  * through `saveProjectOriginal`.
  */
 const backUp = async (path: string, raw: string | null): Promise<void> => {
-  if (raw !== null) {
-    await writeFile(`${path}.bak-${String(Date.now())}`, raw, "utf8");
+  if (raw === null) {
+    return;
   }
+  // At most the original's mode, never the 0644 default (review 2026-10-05):
+  // a 0600 ~/.claude.json holds an OAuth account and mcp env tokens, and its
+  // backup was left world-readable. The umask can only narrow this further.
+  // A vanished original gets the private mode.
+  const mode = await stat(path).then(
+    (info) => info.mode & 0o777,
+    () => PRIVATE_FILE_MODE,
+  );
+  await writeFile(`${path}.bak-${String(Date.now())}`, raw, { encoding: "utf8", mode });
 };
 
 /**

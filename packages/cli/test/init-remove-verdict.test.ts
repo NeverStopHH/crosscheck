@@ -79,9 +79,10 @@ describe("the 'sessions here load no crosscheck hooks' sentence", () => {
     expect(result.stdout).not.toContain(ABSENCE);
   });
 
-  test("is withheld, and the leftovers named, when hooks run through a launcher crosscheck does not recognise", async () => {
-    // Arrange: an install made with an operator's own --command-prefix
-    const { repo, env, settingsPath, mcpPath } = await fixture("verdict-prefix");
+  test("is withheld, and the server under crosscheck's key named, after an install through an unrecognised launcher", async () => {
+    // Arrange: an install made with an operator's own --command-prefix — its
+    // hooks never name crosscheck, but its mcp server sits under crosscheck's key
+    const { repo, env, mcpPath } = await fixture("verdict-prefix");
     expect(
       (await runCli(["init", "--command-prefix", "/opt/tools/cx-wrap"], env, repo)).exitCode,
     ).toBe(0);
@@ -91,13 +92,59 @@ describe("the 'sessions here load no crosscheck hooks' sentence", () => {
 
     // Assert
     expect(result.stdout).not.toContain(ABSENCE);
-    expect(result.stdout).toContain(`${settingsPath}: left`);
-    expect(result.stdout).toContain("/opt/tools/cx-wrap hook session-start");
-    expect(result.stdout).toContain("NOT removed");
     expect(result.stdout).toContain(
       `${mcpPath}: left 1 entry that looks like crosscheck's but runs through a launcher`,
     );
+    expect(result.stdout).toContain("mcpServers.crosscheck: sh -c /opt/tools/cx-wrap mcp");
+    expect(result.stdout).toContain("NOT removed");
+    expect(result.stdout).toContain("hooks that run through the same launcher");
   });
+
+  test("is withheld, and the entry named, for a hook that names crosscheck through a launcher it does not own", async () => {
+    // Arrange: `crosscheck-hub` names crosscheck, but is not a launcher init writes
+    const { repo, env, settingsPath } = await fixture("verdict-named");
+    await writeJson(settingsPath, {
+      hooks: {
+        SessionStart: [
+          { hooks: [{ type: "command", command: "bunx crosscheck-hub hook session-start" }] },
+        ],
+      },
+    });
+
+    // Act
+    const result = await runCli(["init", "--remove"], env, repo);
+
+    // Assert
+    expect(result.stdout).not.toContain(ABSENCE);
+    expect(result.stdout).toContain(`${settingsPath}: left 1 entry that looks like crosscheck's`);
+    expect(result.stdout).toContain("`bunx crosscheck-hub hook session-start`");
+  });
+
+  test.each([
+    ["npx -y ccusage statusline", "~/.local/bin/cc-tools statusline"],
+    ["bunx ccusage statusline", "starship-claude statusline"],
+  ])(
+    "is printed when the only leftovers are other tools' statuslines (%s, %s) that merely share the word",
+    async (projectStatusline, userStatusline) => {
+      // Arrange: crosscheck's hooks beside a foreign project statusline, and
+      // a foreign user-level statusline — neither names crosscheck
+      const { repo, home, env, settingsPath } = await fixture("verdict-statusline");
+      await writeJson(settingsPath, {
+        hooks: OWNED_HOOKS,
+        statusLine: { type: "command", command: projectStatusline },
+      });
+      await writeJson(join(home, ".claude", "settings.json"), {
+        statusLine: { type: "command", command: userStatusline },
+      });
+
+      // Act
+      const result = await runCli(["init", "--remove"], env, repo);
+
+      // Assert
+      expect(result.stdout).not.toContain("looks like crosscheck's");
+      expect(result.stdout).toContain(ABSENCE);
+    },
+  );
 
   test.skipIf(process.getuid?.() === 0)(
     "is withheld when a user-level file cannot be read, and that file is named",
