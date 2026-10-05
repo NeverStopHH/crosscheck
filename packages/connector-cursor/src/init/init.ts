@@ -14,7 +14,7 @@
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 
-import { ensureDir, readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
+import { ensureDir, readText } from "@crosscheck/connector-core/config/paths.ts";
 import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 
@@ -54,27 +54,33 @@ interface ReadJson {
 }
 
 /**
- * A JSON config init is going to rewrite, or null when it refuses — the
- * Claude installer's rule, same reason: a file that cannot be parsed is a
- * file whose contents cannot be preserved, and overwriting it would silently
- * delete a teammate's configuration.
+ * A JSON config init is going to rewrite, or the clause saying why it
+ * refuses — the Claude installer's rule, same reason: a file that cannot be
+ * read or parsed is a file whose contents cannot be preserved, and
+ * overwriting it would silently delete a teammate's configuration. An
+ * unreadable file is NOT an absent one (review 2026-10-05: it read as absent,
+ * so the Claude files and .crosscheck.json were written and the Cursor write
+ * failed with EACCES after them).
  */
-const readJsonConfig = async (path: string): Promise<ReadJson | null> => {
-  const raw = await readTextOrNull(path);
-  if (raw === null) {
+const readJsonConfig = async (path: string): Promise<ReadJson | string> => {
+  const read = await readText(path);
+  if (read.kind === "absent") {
     return { value: {}, raw: null };
   }
+  if (read.kind === "unreadable") {
+    return "could not be read";
+  }
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = JSON.parse(read.text) as unknown;
     return {
       value:
         typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
           ? (parsed as Record<string, unknown>)
           : {},
-      raw,
+      raw: read.text,
     };
   } catch {
-    return null;
+    return "is not valid json";
   }
 };
 
@@ -100,18 +106,12 @@ export const prepareCursorInit = async (
   const mcpPath = join(cursorDir, CURSOR_MCP_FILE);
 
   const hooksRead = await readJsonConfig(hooksPath);
-  if (hooksRead === null) {
-    return {
-      ok: false,
-      reason: `${hooksPath} is not valid json — nothing was changed`,
-    };
+  if (typeof hooksRead === "string") {
+    return { ok: false, reason: `${hooksPath} ${hooksRead} — nothing was changed` };
   }
   const mcpRead = await readJsonConfig(mcpPath);
-  if (mcpRead === null) {
-    return {
-      ok: false,
-      reason: `${mcpPath} is not valid json — nothing was changed`,
-    };
+  if (typeof mcpRead === "string") {
+    return { ok: false, reason: `${mcpPath} ${mcpRead} — nothing was changed` };
   }
 
   return {

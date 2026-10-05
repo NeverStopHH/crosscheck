@@ -16611,8 +16611,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an unreadable file reads as absent",
     file: `${CORE}/src/config/paths.ts`,
-    from: "    return { kind: \"text\", text: await file.text() };\n  } catch {\n    return { kind: \"unreadable\" };",
-    to: "    return { kind: \"text\", text: await file.text() };\n  } catch {\n    return { kind: \"absent\" };",
+    from: "    return { kind: \"text\", text: await Bun.file(path).text() };\n  } catch {\n    return { kind: \"unreadable\" };",
+    to: "    return { kind: \"text\", text: await Bun.file(path).text() };\n  } catch {\n    return { kind: \"absent\" };",
     test: `${CLI}/test/user-level-unreadable.test.ts`,
     because: "an EACCES ~/.claude/settings.json reads as 'no user-level install' on every surface at once",
   },
@@ -16745,6 +16745,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-verdict.test.ts`,
     because: "`npx -y ccusage statusline` is flagged as crosscheck's and the verified closing line never prints",
   },
+  {
+    label: "a file inside an untraversable directory reads as absent",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "    return code === \"ENOENT\" || code === \"ENOTDIR\" ? { kind: \"absent\" } : { kind: \"unreadable\" };",
+    to: "    return { kind: \"absent\" };",
+    test: `${CORE}/test/read-text.test.ts`,
+    because: "a mode-000 ~/.claude reads as 'no user-level install' on every surface again",
+  },
+  {
+    label: "init --cursor treats an unreadable .cursor file as absent",
+    file: `${CURSOR}/src/init/init.ts`,
+    from: "  if (read.kind === \"unreadable\") {\n    return \"could not be read\";",
+    to: "  if (false) {\n    return \"could not be read\";",
+    test: `${CLI}/test/cursor-init.test.ts`,
+    because: "the Claude files and .crosscheck.json are written, then the Cursor write fails with EACCES: a half-installed repo",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16802,6 +16818,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
+ * PRINTS: packages/cli/test/cursor-init.test.ts 1
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
@@ -16990,6 +17007,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
+ * PRINTS: packages/connector-core/test/read-text.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
