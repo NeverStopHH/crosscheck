@@ -490,8 +490,17 @@ const agentGapReason = (
  * A NAMED SESSION MAY ONLY WEAKEN THE RUNG. It joins the fold, so its reap,
  * its silence and its losses count; it never counts as somebody reporting —
  * only the window can say that — so a clean named session cannot turn an
- * empty window `complete`. The order minimum needs no such rule: one more
- * session can only lower it.
+ * empty window `complete`.
+ *
+ * THE ORDER BLOCK HAS NO SUCH RULE, AND ON AN EMPTY WINDOW A NAMED SESSION
+ * CAN LIFT IT (review of H3, finding 5): over no session it reads
+ * `undeclared / no_session_in_scope`, and over one named session it reads
+ * that session's declaration — `partial`, say. Kept on purpose. A
+ * declaration is present evidence about exactly the session the answer
+ * names, while "somebody reported" is a claim about the window that a
+ * session outside it cannot make; and nothing gates on order (`isJudgeable`
+ * never reads it). Over a scope that already holds a session, one more can
+ * only lower the minimum.
  */
 interface SessionScope {
   readonly window: SQL;
