@@ -16529,6 +16529,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "the remedy's own command leaves crosscheck's Cursor hooks loading and nobody is told",
   },
+  {
+    label: "the ignored-copy remedy hides that it also changes a committed .mcp.json",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "  copy.sharedMcp\n    ? `;",
+    to: "  false\n    ? `;",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "the 'local cleanup' deletes the team's committed .mcp.json and git status is the first place anyone hears of it",
+  },
+  {
+    label: "the ignored-copy remedy calls an ignored .mcp.json committed",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "      (await isPathTracked(root, MCP_CONFIG_FILE)) === true,",
+    to: "      true,",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "a developer cleaning up a purely local copy is told to commit or restore a file nobody shares",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16601,7 +16617,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/gitignored-advice.test.ts 6
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 8
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6

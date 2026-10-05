@@ -111,6 +111,19 @@ const fixture = async (ignoreProjectFiles: boolean): Promise<Fixture> => {
   };
 };
 
+/**
+ * The mixed shape (review 2026-10-05): `.claude/` ignored, the team's
+ * `.mcp.json` committed with crosscheck's server — so the project-side
+ * removal also changes a file teammates share.
+ */
+const mixedFixture = async (): Promise<Fixture> => {
+  const mixed = await fixture(false);
+  await writeFile(join(mixed.repo, ".gitignore"), ".claude/\n", "utf8");
+  await git(mixed.repo, ["add", ".gitignore", ".mcp.json"]);
+  await git(mixed.repo, ["commit", "-m", "share the mcp server"]);
+  return mixed;
+};
+
 describe("isPathIgnored", () => {
   test("answers true, false and null for the three states", async () => {
     // Arrange
@@ -162,6 +175,8 @@ describe("doctor's advice under a .gitignore", () => {
     expect(result.stdout).toContain("keep the global install");
     expect(result.stdout).toContain("`crosscheck init --remove`");
     expect(result.stdout).not.toContain("crosscheck init --global --remove");
+    // Both files are ignored here, so nothing of the removal is shared.
+    expect(result.stdout).not.toContain(".mcp.json is committed");
   });
 
   test("the ignored-copy remedy names --cursor when the repo also holds crosscheck's cursor entries", async () => {
@@ -180,6 +195,19 @@ describe("doctor's advice under a .gitignore", () => {
 
     // Assert
     expect(result.stdout).toContain("`crosscheck init --remove --cursor`");
+  });
+
+  test("the ignored-copy remedy says a committed .mcp.json is part of the same removal", async () => {
+    // Arrange: the mixed shape — .claude/ ignored, the team's .mcp.json committed
+    const { repo, env } = await mixedFixture();
+
+    // Act
+    const result = await runDoctor(env, repo, async () => null);
+
+    // Assert: still the project-side command, and the shared file said aloud
+    expect(result.stdout).toContain("keep the global install");
+    expect(result.stdout).toContain(".mcp.json is committed");
+    expect(result.stdout).toContain("`git restore -- .mcp.json`");
   });
 
   test("without a .gitignore the original remedy stands", async () => {
@@ -294,6 +322,18 @@ describe("init's advice under a .gitignore", () => {
     // Assert
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("`crosscheck init --remove --cursor`");
+  });
+
+  test("the ignored double-wiring note says a committed .mcp.json is part of the same removal", async () => {
+    // Arrange
+    const { repo, env } = await mixedFixture();
+
+    // Act
+    const result = await runCli(["init", "--command-prefix", "crosscheck"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("wired twice");
+    expect(result.stdout).toContain(".mcp.json is committed");
   });
 
   test("the double-wiring note keeps --global --remove when the project copy is shared", async () => {
