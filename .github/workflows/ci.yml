@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1595
+    # PRINTS: 1599
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -187,6 +187,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/init.ts 5
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
+    # PRINTS: packages/cli/src/cli/outcome-render.ts 1
     # PRINTS: packages/cli/src/cli/outcome.ts 3
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
@@ -324,7 +325,7 @@ jobs:
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/get-diagnosis.ts 2
-    # PRINTS: mcp/tools/mark-hint-outcome.ts 4
+    # PRINTS: mcp/tools/mark-hint-outcome.ts 5
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
@@ -427,7 +428,7 @@ jobs:
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
     # PRINTS: packages/server/src/services/hint-outcome-view.ts 4
-    # PRINTS: packages/server/src/services/hint-outcomes.ts 5
+    # PRINTS: packages/server/src/services/hint-outcomes.ts 7
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
@@ -567,7 +568,7 @@ jobs:
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint-outcome-view.ts 4
     # PRINTS: hint-outcome.ts 1
-    # PRINTS: hint-outcomes.ts 6
+    # PRINTS: hint-outcomes.ts 8
     # PRINTS: hint.ts 7
     # PRINTS: hints.ts 7
     # PRINTS: hook-budget.ts 2
@@ -601,11 +602,12 @@ jobs:
     # PRINTS: loss-refusals.ts 1
     # PRINTS: loss-report.ts 14
     # PRINTS: manifest-doc.ts 2
-    # PRINTS: mark-hint-outcome.ts 4
+    # PRINTS: mark-hint-outcome.ts 5
     # PRINTS: noise.ts 7
     # PRINTS: normalized-doc.ts 2
     # PRINTS: outcome-clause.ts 2
     # PRINTS: outcome-population.ts 8
+    # PRINTS: outcome-render.ts 1
     # PRINTS: outcome.ts 3
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2

@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
-import { hintDeliveryId } from "@crosscheck/schema";
+import { PIN_PRESENCE_TERMINAL, hintDeliveryId } from "@crosscheck/schema";
 
 import { MyHintOutcomesSchema, getMyHintOutcomes } from "../src/http/hint-outcomes.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
@@ -55,6 +55,7 @@ let hostileHub: ReturnType<typeof Bun.serve>;
 let hostileAnswer: () => Response = () => Response.json({}, { status: 500 });
 let hubUrl: string;
 let nickEnv: Env;
+let nickApiKey: string;
 let nickRepo: string;
 const cleanups: string[] = [];
 
@@ -178,6 +179,7 @@ beforeAll(async () => {
     workContextStatus: "analyzing",
   });
   nickEnv = { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hubUrl, CROSSCHECK_API_KEY: nick.apiKey };
+  nickApiKey = nick.apiKey;
 });
 
 afterAll(async () => {
@@ -211,6 +213,44 @@ describe("mark_hint_outcome", () => {
     expect(result.isError).toBe(false);
     expect(result.text).toContain("followed");
     expect(await mine()).toMatchObject({ received: 1, followed: 0, overrode: 1 });
+  });
+
+  test("review #11: after the person's noise label the same word is written, and the answer names the label it superseded", async () => {
+    // Arrange — the person labels the delivery noise at a terminal, after the agent's word
+    const reason = "kept the narrow row: the wide one breaks the mobile layout";
+    await send("/api/pilot-marks", nickApiKey, {
+      repo: REPO_ID,
+      refKind: "hint_delivery",
+      refId: hintDeliveryId(NICK_SESSION, KEN_CONTEXT),
+      mark: "noise",
+      presence: PIN_PRESENCE_TERMINAL,
+    });
+
+    // Act — "Already recorded … stands at overrode" would be false: the label stands
+    const again = await call({ ref: KEN_CONTEXT, outcome: "overrode", reason });
+    const repeat = await call({ ref: KEN_CONTEXT, outcome: "overrode", reason });
+
+    // Assert
+    expect(again.text).toContain("It supersedes your earlier noise label, which stays in the history.");
+    expect(await mine()).toMatchObject({ received: 1, overrode: 1, noise: 0 });
+    expect(repeat.text).toContain(`Already recorded: the hint at ${KEN_CONTEXT} stands at overrode.`);
+  });
+
+  test("review #11: a word that ties with the noise label says the label still stands", async () => {
+    // Arrange — the hub reports a tie (the label wins, D-O7)
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
+    hostileAnswer = () =>
+      Response.json({
+        ok: true,
+        data: { id: "ho_1", deliveryId: "hd_1", outcome: "followed", repeated: false, replaced: "noise", stands: "noise" },
+      });
+
+    // Act
+    const tied = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
+
+    // Assert
+    expect(tied.text).toContain("A noise label made at the same instant still stands: a label wins a tie.");
+    expect(tied.text).not.toContain("It supersedes");
   });
 
   test("an override without its reason is refused before any round trip", async () => {
@@ -288,7 +328,14 @@ describe("a hostile hub cannot speak through mark_hint_outcome's reply", () => {
         hostileAnswer = () =>
           Response.json({
             ok: true,
-            data: { id: entry.payload, deliveryId: entry.payload, outcome: entry.payload, repeated: false, replaced: entry.payload },
+            data: {
+              id: entry.payload,
+              deliveryId: entry.payload,
+              outcome: entry.payload,
+              repeated: false,
+              replaced: entry.payload,
+              stands: entry.payload,
+            },
           });
         const recorded = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
         hostileAnswer = () =>

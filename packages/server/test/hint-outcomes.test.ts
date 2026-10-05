@@ -30,6 +30,7 @@ import {
   enrol,
   recordOutcome,
 } from "./fixtures/hint-outcome-world.ts";
+import { labelNoise } from "./fixtures/hint-outcome-crowd.ts";
 import { postRecords, registerTestSession } from "./helpers.ts";
 
 /** A synthetic AWS example key, the fixture every secret-scan test uses. */
@@ -115,8 +116,39 @@ describe("POST /api/hint-outcomes", () => {
 
     // Assert
     expect(again.status).toBe(200);
-    expect(await bodyOf(again)).toMatchObject({ repeated: true });
+    expect(await bodyOf(again)).toMatchObject({ repeated: true, stands: "followed" });
     expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
+  });
+
+  test("review #11: the same word after a newer noise label is written, and the answer says what it superseded", async () => {
+    // Arrange — the agent said followed, then the person labelled it noise
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — "already recorded … stands at followed" would be false: noise stands
+    const again = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(again.status).toBe(201);
+    expect(await bodyOf(again)).toMatchObject({ repeated: false, replaced: "noise", stands: "followed" });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(2);
+  });
+
+  test("review #11: a word at the same instant as the noise label is written, and the answer says the label still stands", async () => {
+    // Arrange — a tie goes to the label (D-O7)
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+
+    // Act
+    const tied = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(await bodyOf(tied)).toMatchObject({ repeated: false, replaced: "noise", stands: "noise" });
   });
 
   test("a different word supersedes the first and deletes nothing", async () => {

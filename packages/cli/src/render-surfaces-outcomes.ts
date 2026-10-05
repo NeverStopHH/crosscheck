@@ -57,6 +57,8 @@ export const HINT_OUTCOME_SURFACES: readonly RenderSurface[] = [
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: false, replaced: payload }),
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: true, replaced: null }),
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: "followed", repeated: false, replaced: null }),
+        outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: false, replaced: "noise", stands: payload }),
+        outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: true, replaced: null, stands: payload }),
         OUTCOMES_NOT_SERVED_LINE,
         REASON_REQUIRED_LINE,
         REASON_SECRET_LINE,

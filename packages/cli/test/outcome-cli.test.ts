@@ -24,12 +24,14 @@ import { hintDeliveryId } from "@crosscheck/connector-core/capture/records.ts";
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import { EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import type { RecordedOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 
 import { runCli } from "../src/index.ts";
 import {
   OUTCOMES_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
+  outcomeRecordedLine,
 } from "../src/cli/outcome-render.ts";
 import { MINE_NOT_SERVED_LINE } from "../src/cli/pilot-mine-render.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
@@ -318,5 +320,43 @@ describe("crosscheck pilot --mine", () => {
 
     // Assert
     expect(result.stdout).toBe(MINE_NOT_SERVED_LINE);
+  });
+});
+
+describe("outcomeRecordedLine (review #11): the answer says what stands", () => {
+  const recorded = (fields: Partial<RecordedOutcome>): RecordedOutcome => ({
+    id: "ho_1",
+    deliveryId: "hd_1",
+    outcome: "followed",
+    repeated: false,
+    replaced: null,
+    stands: "followed",
+    ...fields,
+  });
+
+  test("a repeat names the word that stands", () => {
+    // Act
+    const line = outcomeRecordedLine(KEN_CONTEXT, recorded({ repeated: true }));
+
+    // Assert
+    expect(line).toBe(`already recorded: ${KEN_CONTEXT} stands at followed — nothing was written a second time\n`);
+  });
+
+  test("a word after the noise label names the label it superseded", () => {
+    // Act
+    const line = outcomeRecordedLine(KEN_CONTEXT, recorded({ replaced: "noise" }));
+
+    // Assert
+    expect(line).toStartWith(`recorded: ${KEN_CONTEXT} — followed, superseding your earlier noise label (kept in the history). `);
+  });
+
+  test("a word that ties with the noise label says the label still stands", () => {
+    // Act
+    const line = outcomeRecordedLine(KEN_CONTEXT, recorded({ replaced: "noise", stands: "noise" }));
+
+    // Assert
+    expect(line).toStartWith(
+      `recorded: ${KEN_CONTEXT} — followed, but your noise label from the same instant still stands (a label wins a tie). `,
+    );
   });
 });

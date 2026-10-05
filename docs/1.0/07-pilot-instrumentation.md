@@ -1108,3 +1108,13 @@ enrolment clipped names the enrolment instant (`…, counted from 2026-07-24, wh
 here`), carried on the wire as `countedFromIso`, which the hub sets to the later of the month's start and
 `pilot_outcomes_since`; a month that ended before enrolment names the enrolment day
 (`…: none could be recorded — outcomes became recordable here on 2026-10-05`), from `recordableSinceIso`.
+
+*#11 — "already recorded … stands at followed" while a newer noise label stood.* The repeat check compared
+the new word with the newest outcome row only, so after the person labelled the delivery noise, the agent
+saying `followed` again was told it "stands at followed" and nothing was written — while every figure read
+noise. A repeat is now judged against **what stands**, by the view's own rule (the later of the newest
+outcome and the person's noise label, the label on a tie): the same word after a newer label is a new word,
+written, and the answer names what it superseded (`replaced: "noise"` → `superseding your earlier noise
+label (kept in the history)`). The answer carries `stands` (additive; absent from an older hub, read as the
+word itself), so a word that ties with the label is answered `…, but your noise label from the same instant
+still stands (a label wins a tie)` rather than claiming the word took.

@@ -31,18 +31,34 @@ export const monthOf = (iso: string): string => {
     : new Date(ms).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 };
 
+/** What a delivery stood or stands at, as a person reads it: the noise label is theirs. */
+const standingWord = (word: string): string => (word === "noise" ? "your noise label" : outcomeWord(word));
+
+/**
+ * What the new word did to what stood before (review #11): superseded it —
+ * an outcome, or the person's noise label — or, on a tie with the label,
+ * nothing, and the label still stands.
+ */
+const supersededWords = (recorded: RecordedOutcome): string => {
+  const stands = recorded.stands ?? recorded.outcome;
+  if (stands !== recorded.outcome) {
+    return `, but ${standingWord(stands)} from the same instant still stands (a label wins a tie)`;
+  }
+  if (recorded.replaced === null) {
+    return "";
+  }
+  const earlier = recorded.replaced === "noise" ? "your earlier noise label" : `the earlier ${outcomeWord(recorded.replaced)}`;
+  return `, superseding ${earlier} (kept in the history)`;
+};
+
 export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): string => {
   const shown = safeId(ref);
-  const word = outcomeWord(recorded.outcome);
   if (recorded.repeated) {
-    return `already recorded: ${shown} stands at ${word} — nothing was written a second time\n`;
+    const stands = standingWord(recorded.stands ?? recorded.outcome);
+    return `already recorded: ${shown} stands at ${stands} — nothing was written a second time\n`;
   }
-  const replaced =
-    recorded.replaced === null
-      ? ""
-      : `, superseding the earlier ${outcomeWord(recorded.replaced)} (kept in the history)`;
   return (
-    `recorded: ${shown} — ${word}${replaced}. It shows in full only in your own crosscheck pilot --mine; ` +
+    `recorded: ${shown} — ${outcomeWord(recorded.outcome)}${supersededWords(recorded)}. It shows in full only in your own crosscheck pilot --mine; ` +
     "others see it only inside the team's totals for a whole past month, once at least 3 people recorded outcomes; " +
     "the teammate whose work it was sees how often it was followed in a whole past month, once at least 3 people recorded outcomes about it\n"
   );

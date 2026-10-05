@@ -17395,7 +17395,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "saying the same outcome twice writes a second row",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "  if (current !== undefined && current.outcome === input.outcome && current.reason === input.reason) {",
+    from: "  if (standing !== null && standing.word === input.outcome && standing.reason === input.reason) {",
     to: "  if (false) {",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "an agent retrying its call doubles the history and the answer never says it was already recorded",
@@ -17870,6 +17870,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "every client prints the first of the month as when outcomes became recordable",
   },
+  // ── 07 §13.10, review #11: a repeat reports what stands ──────────────────
+  {
+    label: "a repeat is judged against the newest outcome, not against what stands",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  const isNoise = noiseAt !== null && (latest === undefined || noiseAt.getTime() >= latest.createdAt.getTime());",
+    to: "  const isNoise = false;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the answer says 'stands at followed' while the person's newer noise label stands, and nothing is written",
+  },
+  {
+    label: "a word that ties with the noise label is reported as standing",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '    stands: noiseAt !== null && noiseAt.getTime() >= now.getTime() ? "noise" : input.outcome,',
+    to: "    stands: input.outcome,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the label wins a tie (D-O7), so 'recorded' would claim a word took that every figure overrules",
+  },
+  {
+    label: "crosscheck followed says the word took when the noise label still stands",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "    return `, but ${standingWord(stands)} from the same instant still stands (a label wins a tie)`;",
+    to: '    return "";',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person is told their word stands while their own label still decides the delivery",
+  },
+  {
+    label: "mark_hint_outcome says the word took when the noise label still stands",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: '      ? " A noise label made at the same instant still stands: a label wins a tie."',
+    to: '      ? ""',
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent reports an outcome to its person that no figure counts",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17955,7 +17988,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 4
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 5
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
@@ -18104,7 +18137,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 5
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 6
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -18193,7 +18226,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 7
- * PRINTS: packages/server/test/hint-outcomes.test.ts 5
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 7
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

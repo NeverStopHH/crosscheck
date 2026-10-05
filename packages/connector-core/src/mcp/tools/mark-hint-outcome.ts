@@ -92,19 +92,35 @@ export const OUTCOMES_NOT_SERVED =
   "This hub does not record hint outcomes — it predates them, so nothing was recorded. " +
   "Whoever runs it can upgrade it; the hint itself is unaffected.";
 
+/**
+ * What the new word did to what stood before (review #11). A tie with the
+ * person's noise label leaves the label standing (07 D-O7), and the answer
+ * says so rather than claiming the word took.
+ */
+const supersededText = (recorded: RecordedOutcome): string => {
+  const stands = recorded.stands ?? recorded.outcome;
+  if (stands !== recorded.outcome) {
+    return stands === NOISE_WORD
+      ? " A noise label made at the same instant still stands: a label wins a tie."
+      : ` It does not stand: the delivery stands at ${safeId(stands)}.`;
+  }
+  if (recorded.replaced === null) {
+    return "";
+  }
+  const earlier =
+    recorded.replaced === NOISE_WORD ? "your earlier noise label" : `the earlier ${safeId(recorded.replaced)}`;
+  return ` It supersedes ${earlier}, which stays in the history.`;
+};
+
 const recordedText = (ref: string, recorded: RecordedOutcome): string => {
   const shown = safeId(ref);
-  const word = safeId(recorded.outcome);
   if (recorded.repeated) {
-    return `Already recorded: the hint at ${shown} stands at ${word}. Nothing was written a second time.`;
+    const stands = safeId(recorded.stands ?? recorded.outcome);
+    return `Already recorded: the hint at ${shown} stands at ${stands}. Nothing was written a second time.`;
   }
-  const replaced =
-    recorded.replaced === null
-      ? ""
-      : ` It supersedes the earlier ${safeId(recorded.replaced)}, which stays in the history.`;
   return (
-    `Recorded: the hint at ${shown} (delivery ${safeId(recorded.deliveryId)}) was ${word}.${replaced} ` +
-    "It counts in your own crosscheck pilot --mine."
+    `Recorded: the hint at ${shown} (delivery ${safeId(recorded.deliveryId)}) was ${safeId(recorded.outcome)}.` +
+    `${supersededText(recorded)} It counts in your own crosscheck pilot --mine.`
   );
 };
 

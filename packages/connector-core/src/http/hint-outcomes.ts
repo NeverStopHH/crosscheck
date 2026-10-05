@@ -36,8 +36,14 @@ const RecordedOutcomeSchema = z.looseObject({
   outcome: z.string().min(1),
   /** The caller had said exactly this already; nothing was written. */
   repeated: z.boolean(),
-  /** The outcome this one superseded — kept, never deleted — or null. */
+  /** What this one superseded — an outcome or the person's noise label, kept, never deleted — or null. */
   replaced: z.string().nullable(),
+  /**
+   * What the delivery stands at now (review #11): the word just said, or a
+   * noise label from the same instant. Absent from an older hub, which is
+   * read as the word itself.
+   */
+  stands: z.string().min(1).optional(),
 });
 
 export type RecordedOutcome = z.infer<typeof RecordedOutcomeSchema>;

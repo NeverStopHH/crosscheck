@@ -16,6 +16,12 @@
  * different word is a new row that supersedes the old by being newer. Nothing
  * is updated, nothing is deleted.
  *
+ * A REPEAT IS JUDGED AGAINST WHAT STANDS (review #11), and that may be the
+ * person's later noise label rather than the newest outcome row: the same word
+ * said again after the label is a new word, written, superseding the label.
+ * The answer always carries what stands once it is said — the label on a tie
+ * (D-O7) — so no reply claims a word stands that does not.
+ *
  * NEVER `pilot_marks`. The agent writes these, through `mark_hint_outcome`,
  * and an agent writing a label would be the product grading itself (PIL-6).
  */
@@ -26,6 +32,7 @@ import { PULLED_DELIVERY_CHANNEL, containsSecret } from "@crosscheck/schema";
 import type { HintOutcome } from "@crosscheck/schema";
 
 import { agentSessions, hintDeliveries, hintOutcomes } from "../db/schema.ts";
+import { NOISE_WORDS } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -57,14 +64,19 @@ export interface WriteHintOutcomeInput {
   readonly recordedBy: string;
 }
 
+/** What a delivery can stand at once something was said: an outcome, or the person's noise label. */
+type StandingWord = HintOutcome | "noise";
+
 export type WriteHintOutcomeResult =
   | {
       readonly id: string;
       readonly deliveryId: string;
       readonly outcome: HintOutcome;
       readonly repeated: boolean;
-      /** The outcome this one superseded, or null when it is the first. */
-      readonly replaced: HintOutcome | null;
+      /** What this one superseded — an outcome or the noise label — or null when nothing stood. */
+      readonly replaced: StandingWord | null;
+      /** What the delivery stands at now: the word just said, or a noise label from the same instant. */
+      readonly stands: StandingWord;
     }
   | { readonly refusal: HintOutcomeRefusal };
 
@@ -144,18 +156,70 @@ const refuse = (
   return null;
 };
 
-const readCurrent = async (
+interface Standing {
+  readonly word: StandingWord;
+  readonly reason: string | null;
+}
+
+const readLatestOutcome = async (
   deps: Deps,
   deliveryId: string,
   recordedBy: string,
-): Promise<{ readonly outcome: HintOutcome; readonly reason: string | null } | undefined> => {
+): Promise<{ readonly outcome: HintOutcome; readonly reason: string | null; readonly createdAt: Date } | undefined> => {
   const rows = await deps.db
-    .select({ outcome: hintOutcomes.outcome, reason: hintOutcomes.reason })
+    .select({ outcome: hintOutcomes.outcome, reason: hintOutcomes.reason, createdAt: hintOutcomes.createdAt })
     .from(hintOutcomes)
     .where(and(eq(hintOutcomes.deliveryId, deliveryId), eq(hintOutcomes.recordedBy, recordedBy)))
     .orderBy(desc(hintOutcomes.createdAt), desc(hintOutcomes.id))
     .limit(1);
   return rows[0];
+};
+
+/** When the recipient labelled this delivery noise, newest — the one noise concept (07 §13.2). */
+const readNoiseLabelAt = async (deps: Deps, deliveryId: string, recipient: string): Promise<Date | null> => {
+  const rows = await deps.db.execute<{ at: string | Date | null }>(sql`
+    SELECT max(m.created_at) AS at FROM pilot_marks m
+    WHERE m.ref_kind = 'hint_delivery' AND m.ref_id = ${deliveryId}
+      AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}`);
+  const at = rows.rows[0]?.at ?? null;
+  return at === null ? null : new Date(at);
+};
+
+/** What stands before this word, by the view's rule: the later of the two, the label on a tie. */
+const readStanding = async (
+  deps: Deps,
+  deliveryId: string,
+  recipient: string,
+): Promise<{ readonly standing: Standing | null; readonly noiseAt: Date | null }> => {
+  const [latest, noiseAt] = await Promise.all([
+    readLatestOutcome(deps, deliveryId, recipient),
+    readNoiseLabelAt(deps, deliveryId, recipient),
+  ]);
+  const isNoise = noiseAt !== null && (latest === undefined || noiseAt.getTime() >= latest.createdAt.getTime());
+  if (isNoise) {
+    return { standing: { word: "noise", reason: null }, noiseAt };
+  }
+  return { standing: latest === undefined ? null : { word: latest.outcome, reason: latest.reason }, noiseAt };
+};
+
+/** One new row — never an update: a changed word supersedes the old by being newer. */
+const appendOutcome = async (
+  deps: Deps,
+  deliveryId: string,
+  input: WriteHintOutcomeInput,
+): Promise<{ readonly id: string; readonly now: Date }> => {
+  const id = `ho_${randomUUID()}`;
+  const now = deps.now();
+  await deps.db.insert(hintOutcomes).values({
+    id,
+    repo: input.repo,
+    deliveryId,
+    outcome: input.outcome,
+    reason: input.reason,
+    recordedBy: input.recordedBy,
+    createdAt: now,
+  });
+  return { id, now };
 };
 
 export const writeHintOutcome = async (
@@ -179,25 +243,24 @@ export const writeHintOutcome = async (
   if (refusal !== null || delivery === undefined) {
     return { refusal: refusal ?? "unknown_ref" };
   }
-  const current = await readCurrent(deps, delivery.id, input.recordedBy);
-  if (current !== undefined && current.outcome === input.outcome && current.reason === input.reason) {
-    return { id: delivery.id, deliveryId: delivery.id, outcome: input.outcome, repeated: true, replaced: null };
+  const { standing, noiseAt } = await readStanding(deps, delivery.id, input.recordedBy);
+  if (standing !== null && standing.word === input.outcome && standing.reason === input.reason) {
+    return {
+      id: delivery.id,
+      deliveryId: delivery.id,
+      outcome: input.outcome,
+      repeated: true,
+      replaced: null,
+      stands: input.outcome,
+    };
   }
-  const id = `ho_${randomUUID()}`;
-  await deps.db.insert(hintOutcomes).values({
-    id,
-    repo: input.repo,
-    deliveryId: delivery.id,
-    outcome: input.outcome,
-    reason: input.reason,
-    recordedBy: input.recordedBy,
-    createdAt: deps.now(),
-  });
+  const { id, now } = await appendOutcome(deps, delivery.id, input);
   return {
     id,
     deliveryId: delivery.id,
     outcome: input.outcome,
     repeated: false,
-    replaced: current?.outcome ?? null,
+    replaced: standing?.word ?? null,
+    stands: noiseAt !== null && noiseAt.getTime() >= now.getTime() ? "noise" : input.outcome,
   };
 };
