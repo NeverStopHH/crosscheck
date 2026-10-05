@@ -217,10 +217,31 @@ const spendsAnotherConversation = (input: HealInput, refusals: readonly RecordRe
   });
 
 /**
+ * Whether the refusal fell on the flusher's OWN work context while the hub has
+ * never registered the flusher (review-2 finding 1). That life may still be
+ * registered as itself, and every later record of it names this one: spent
+ * now, the heal that registers the life finds its work context gone, and
+ * every edit after it is refused. A life the hub ENDED is never registered
+ * again — its heal moves on and spools the next life's — so its own is
+ * spent as before.
+ */
+const spendsOwnWorkContext = (
+  input: HealInput,
+  refusals: readonly RecordResult[],
+  cause: RefusalCause,
+): boolean =>
+  cause === "session_unknown" &&
+  refusals.some((result) => {
+    const record = input.spooled[result.index];
+    return record?.["kind"] === "work_context" && writtenBy(record) === input.flusherSessionId;
+  });
+
+/**
  * Null when the batch must stay on disk: a re-send was owed and could not be
- * made — no room left, or the hub did not take the request — or the refusal
- * fell on ANOTHER conversation's records and no life was healed to carry them.
- * One conversation's dead session never spends another conversation's records
+ * made — no room left, or the hub did not take the request — or no life was
+ * healed and the refusal fell on records a later heal needs: ANOTHER
+ * conversation's, or the unregistered flusher's own work context. One
+ * conversation's dead session never spends another conversation's records
  * (review P7): they wait for a live flusher — that conversation's own, or this
  * one once it heals — and the hub deduplicates whatever was already accepted.
  */
@@ -229,11 +250,12 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   if (refusals.length === 0) {
     return { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };
   }
-  const othersAtStake = spendsAnotherConversation(input, refusals);
-  if (input.healer === undefined) {
-    return othersAtStake ? null : { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };
-  }
   const cause = refusalCauseOf(refusals[0] ?? { index: 0, status: "rejected" });
+  const neededLater =
+    spendsAnotherConversation(input, refusals) || spendsOwnWorkContext(input, refusals, cause);
+  if (input.healer === undefined) {
+    return neededLater ? null : { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };
+  }
   const sealed = sealedRefusals(input, refusals, cause);
   // BEFORE THE WALK'S REGISTER, so the next life reports what this refusal
   // cost from its first word and coverage never reads the window complete in
@@ -251,7 +273,7 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
     return null;
   }
   if (result.outcome === "failed") {
-    return othersAtStake ? null : { summary: input.first, heal: null, asked: true, counted };
+    return neededLater ? null : { summary: input.first, heal: null, asked: true, counted };
   }
   const heal: SessionHeal = { refusedSessionId: result.refusedSessionId, sessionId: result.sessionId };
   const resent = refusals

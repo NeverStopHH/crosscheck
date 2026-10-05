@@ -368,6 +368,95 @@ describe("a flush whose own session the hub never registered", () => {
   });
 });
 
+/**
+ * THE WORK CONTEXT OF A LIFE THE HUB NEVER REGISTERED (review-2 finding 1).
+ * Every later record of that life names it, and the life may still be
+ * registered as itself — so a refusal no heal answered spent the one record
+ * the life could not do without, and every edit after the heal was refused
+ * for a work context the hub never saw.
+ */
+describe("a life the hub never registered keeps its work context", () => {
+  test("a refused flush with no healer leaves it on disk for the heal that registers the life", async () => {
+    // Arrange: SessionStart's register did not land
+    const fx = await fixture("wc-healless", proxyUrl);
+    refuseRegisters = true;
+    const life = await register(fx);
+    refuseRegisters = false;
+
+    // Act: a flush that carries no healer, then a hook's
+    const healless = await flushSpool(
+      fx.hub,
+      { sessionId: life.crosscheckSessionId, developerId },
+      GENEROUS_BUDGET_MS,
+    );
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/kept.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await flushAsHook(fx);
+
+    // Assert
+    expect(healless.outcome).toBe("failed");
+    expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+    expect(await targetsOf(life.workContextId)).toEqual(["src/kept.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason["rejected"] ?? 0).toBe(0);
+  });
+
+  test("a walk the hub refuses too leaves it on disk, and the walk after the cooldown delivers it", async () => {
+    // Arrange: the register and SessionStart's own heal both refused
+    const fx = await fixture("wc-failed-walk", proxyUrl);
+    const clock = { ms: Date.now() };
+    const now = () => new Date(clock.ms);
+    refuseRegisters = true;
+    const life = await register(fx);
+    await flushAsHook(fx, GENEROUS_BUDGET_MS, now);
+    refuseRegisters = false;
+
+    // Act: the hub is back, the cooldown over, and the next edit flushes
+    clock.ms += HEAL_COOLDOWN_MS + 1;
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/after-cooldown.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await flushAsHook(fx, GENEROUS_BUDGET_MS, now);
+
+    // Assert
+    expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+    expect(await targetsOf(life.workContextId)).toEqual(["src/after-cooldown.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason["rejected"] ?? 0).toBe(0);
+  });
+
+  test("a heal onto the same id spools it again when another conversation's flush spent it", async () => {
+    // Arrange: the unregistered life's work context, delivered by another
+    // conversation's live flush and refused there — its session is unknown
+    const fx = await fixture("wc-respool", proxyUrl);
+    refuseRegisters = true;
+    const life = await register(fx);
+    refuseRegisters = false;
+    await Bun.sleep(SPOOL_ORDER_GAP_MS);
+    const otherLife = await register(fx, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: otherLife.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+
+    // Act: the edit whose flush heals the life as itself, then the next one
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/healing.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await flushAsHook(fx);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/after-heal.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await flushAsHook(fx);
+
+    // Assert: the work context is on the hub again, and the edits after the
+    // heal land in it. The healing edit's own re-send ran ahead of the work
+    // context the heal spooled behind it, and is counted.
+    expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+    expect(await raw("select id from work_contexts where id = $1", [life.workContextId])).toEqual([
+      { id: life.workContextId },
+    ]);
+    expect(await targetsOf(life.workContextId)).toEqual(["src/after-heal.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).rejectedCauses).toEqual({ other: 2 });
+  });
+});
+
 describe("the bounds", () => {
   test("a hub that keeps refusing gets one walk per cooldown, not one per hook", async () => {
     // Arrange: an ended life, and a hub whose register never answers ok

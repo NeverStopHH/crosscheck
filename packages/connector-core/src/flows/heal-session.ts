@@ -298,10 +298,15 @@ const walk = async (
   }
   if (ladder.sessionId !== refusal.sessionId) {
     // The refused life's stragglers are withheld from every later flush on
-    // this repo (spool/refused-lives.ts), then the next life's work context.
+    // this repo (spool/refused-lives.ts).
     await recordRefusedLife(input.home, input.repoKey, refusal.sessionId, now);
-    await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
   }
+  // Then the life's work context — a heal onto the SAME id too (review-2
+  // finding 1): the one it spooled when the hub had not registered it may
+  // have been spent by then, by another conversation's flush or an older
+  // connector, and every later record of the life names it. A second copy
+  // costs the hub a duplicate.
+  await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
   return healedTo(refusal.sessionId, ladder.sessionId);
 };
 

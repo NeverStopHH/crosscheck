@@ -611,9 +611,17 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           logger.line(`inject briefing-prefetch-error ${describeError(error)}`);
         });
     }
+    // WITH THE HEALER, as SessionStart's flush on the other hosts: a register
+    // the hub refused leaves the life unknown to it, and this flush is the
+    // first to hear so — the heal registers the life as itself and its work
+    // context goes with the batch (review-2 finding 1).
     await flushSpool(
       hub,
-      { sessionId: registered.crosscheckSessionId, developerId: registered.developerId },
+      {
+        sessionId: session.crosscheckSessionId,
+        developerId: registered.developerId,
+        heal: healerFor(session),
+      },
       ACP_CAPTURE_FLUSH_BUDGET_MS,
     );
   };

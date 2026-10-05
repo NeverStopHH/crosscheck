@@ -26,7 +26,11 @@ import type { Db } from "@crosscheck/server";
 // reaps the way it does has to reach it where it lives.
 import { reapStaleSessions } from "../../server/src/services/sessions.ts";
 import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
-import { sessionLineagePathForSlug, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
+import {
+  sessionHealPathForSlug,
+  sessionLineagePathForSlug,
+  sessionSlug,
+} from "@crosscheck/connector-core/config/paths.ts";
 import { readDropDetail, recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
@@ -62,8 +66,9 @@ let hubUrl: string;
 let proxyUrl: string;
 let apiKey: string;
 let registerCalls = 0;
-/** The proxy's dials: hold every register this long; refuse every end. */
+/** The proxy's dials: hold every register this long; refuse every register, every end. */
 let registerDelayMs = 0;
+let refuseRegisters = false;
 let refuseEnds = false;
 /** The session every heartbeat through the proxy named, in order. */
 const heartbeatIds: string[] = [];
@@ -196,6 +201,9 @@ beforeAll(async () => {
       const { pathname, search } = new URL(request.url);
       if (request.method === "POST" && pathname === "/api/sessions") {
         registerCalls += 1;
+        if (refuseRegisters) {
+          return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
+        }
         if (registerDelayMs > 0) {
           await Bun.sleep(registerDelayMs);
         }
@@ -678,5 +686,47 @@ describe("a re-fire whose register outlives its timeout", () => {
       { work_context_id: `wc_${next}`, value: "src/slow-refire/before.ts" },
     ]);
     expect((await readDropDetail(fx.home, repoKey(fx.url, REPO_ID))).byReason["rejected"] ?? 0).toBe(0);
+  });
+});
+
+/**
+ * `claude --resume` WHILE THE HUB REFUSES REGISTERS (review-2 E2E-3). The
+ * resume lands on the next life unregistered, and SessionStart's heal is
+ * refused too. That flush spent the life's work context, so after the hub
+ * came back and a heal registered the life as itself, every edit was refused
+ * for a work context the hub never saw.
+ */
+describe("a conversation resumed while the hub refuses its register", () => {
+  test("the resumed life's edits land once the hub takes it", async () => {
+    // Arrange: life 0 lived and ended; the resume's register and its heal refused
+    const fx = await fixture("resume-refused", { url: proxyUrl });
+    const sessionId = "resume-refused-uuid";
+    await sessionStart(fx, sessionId, "startup");
+    await edit(fx, sessionId, "src/resume-refused/k.ts");
+    await sessionEnd(fx, sessionId);
+    refuseRegisters = true;
+    await sessionStart(fx, sessionId, "resume");
+    refuseRegisters = false;
+    // The five-minute cooldown, elapsed: the stamp the refused walk left goes.
+    await rm(sessionHealPathForSlug(fx.home, sessionSlug(sessionId)), { force: true });
+
+    // Act
+    await edit(fx, sessionId, "src/resume-refused/after-1.ts");
+    await edit(fx, sessionId, "src/resume-refused/after-2.ts");
+
+    // Assert
+    const base = `cc_${sessionId}`;
+    const next = `${base}~r1`;
+    expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(next);
+    const byContext = await db.execute(sql`
+      select work_context_id, value from work_context_targets
+       where value like 'src/resume-refused/%' order by value`);
+    expect(byContext.rows).toEqual([
+      { work_context_id: `wc_${next}`, value: "src/resume-refused/after-1.ts" },
+      { work_context_id: `wc_${next}`, value: "src/resume-refused/after-2.ts" },
+      { work_context_id: `wc_${base}`, value: "src/resume-refused/k.ts" },
+    ]);
+    expect(await readSessionCausalOrder(db, next)).toMatchObject({ state: "usable", epochs: 1 });
+    expect(await rejectedDrops(fx)).toBe(0);
   });
 });

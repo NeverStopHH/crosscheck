@@ -11,6 +11,7 @@ import { rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "@crosscheck/connector-core/constants.ts";
+import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
 import {
   sessionHealPathForSlug,
   sessionLineagePathForSlug,
@@ -18,7 +19,7 @@ import {
 } from "@crosscheck/connector-core/config/paths.ts";
 import { readDropDetail } from "@crosscheck/connector-core/spool/drops.ts";
 // By path, the wire-loss suite's arrangement: this package has no drizzle edge.
-import { workContextTargets } from "../../server/src/db/schema.ts";
+import { developers, workContextTargets, workContexts } from "../../server/src/db/schema.ts";
 
 import {
   SHUTDOWN_BUDGET_MS,
@@ -163,6 +164,70 @@ describe("an ACP session the hub ends while its proxy keeps capturing", () => {
       { workContextId: `wc_cc_${hostKey}~r1`, value: "src/mid/after.ts" },
     ]);
     expect((await readDropDetail(h.home, h.hub.repoKey)).rejectedCauses).toEqual({ session_ended: 1 });
+  });
+});
+
+/**
+ * A REGISTER THE HUB REFUSED AT session/new (review-2 finding 1). The
+ * registration flush carried no healer, so the hub's `session_unknown` for
+ * the life's own work context spent it, and every capture after a later heal
+ * named a work context the hub never saw.
+ */
+describe("an ACP session whose register the hub refused", () => {
+  test("is registered by its first flush, work context and all, and its edits land", async () => {
+    // Arrange: a front to the hub that refuses the proxy's first register
+    let refuseNext = 1;
+    const front = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const { pathname, search } = new URL(request.url);
+        if (request.method === "POST" && pathname === "/api/sessions" && refuseNext > 0) {
+          refuseNext -= 1;
+          return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
+        }
+        return fetch(`${hub.hubUrl}${pathname}${search}`, {
+          method: request.method,
+          headers: request.headers,
+          body: request.method === "GET" ? undefined : await request.arrayBuffer(),
+        });
+      },
+    });
+    const frontUrl = `http://127.0.0.1:${String(front.port)}`;
+    const h = await createHarness({ ...hub, hubUrl: frontUrl }, cleanups, "acp-refused");
+    // A LOGGED-IN machine: a refused register falls back to the stored
+    // developer id, so the life's records name a developer the hub knows.
+    const [developer] = await hub.db.select({ id: developers.id }).from(developers);
+    await saveConfig(h.home, { version: 1, hubUrl: frontUrl, apiKey: hub.apiKey, developerId: developer?.id ?? "" });
+    const sessionId = "sess_register_refused";
+    const workContextId = `wc_cc_acp-fake-agent--${sessionId}`;
+
+    // Act: session/new, then one edit
+    handshake(h, sessionId, h.repo);
+    await h.capture.settle();
+    const contexts = await hub.db.select({ id: workContexts.id }).from(workContexts);
+    await writeRepoFile(h.repo, "src/refused-register/a.ts", "export const a = 1;\n");
+    h.capture.offer(
+      "a2c",
+      toolCallUpdate(sessionId, {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_refused_register",
+        kind: "edit",
+        status: "completed",
+        locations: [{ path: join(h.repo, "src/refused-register/a.ts") }],
+      }),
+    );
+    await h.capture.settle();
+    front.stop(true);
+
+    // Assert: the work context reached the hub at registration, the edit after it
+    expect(contexts.map((row) => row.id)).toContain(workContextId);
+    const rows = await hub.db
+      .select({ workContextId: workContextTargets.workContextId, value: workContextTargets.value })
+      .from(workContextTargets);
+    expect(rows.filter((row) => row.value.startsWith("src/refused-register/"))).toEqual([
+      { workContextId, value: "src/refused-register/a.ts" },
+    ]);
+    expect((await readDropDetail(h.home, h.hub.repoKey)).byReason["rejected"] ?? 0).toBe(0);
   });
 });
 

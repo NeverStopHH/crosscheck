@@ -302,6 +302,17 @@ else is re-sent: producer-filed kinds lose their position on the way (`foreign_s
 session's backlog lands where its body says, as any successor flush delivers it. The edits between the hub's end
 and the heal are the cost; every edit after it is captured.
 
+**A life the hub never registered keeps its work context** (review-2 finding 1). Every later record of such a
+life names its work context, and the life may still be registered AS ITSELF — so a refusal no heal answered (a
+flush with no healer, a walk the hub refused too) used to spend that one record, and after the hub recovered and a
+heal registered the life, every edit was refused as `other` for a work context the hub never saw (`claude
+--resume` while registers failed: every later edit of the conversation). Now a `session_unknown` refusal that
+falls on the flusher's own `work_context` and is not healed keeps the batch on disk, as one that falls on another
+conversation's records does; a life the hub ENDED is never registered again, so its own is still spent. And every
+heal that lands spools the life's work context, a heal onto the same id too — the copy a heal finds missing was
+spent by another conversation's flush or an older connector; a second copy is a duplicate to the hub. ACP's
+registration flush now carries the healer, as SessionStart's does on the other hosts.
+
 ### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a

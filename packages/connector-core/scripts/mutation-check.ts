@@ -17418,7 +17418,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heal registers the next life and spools no work context for it",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "    await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n",
+    from: "  await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n",
     to: "",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "every target of the healed life names a work context the hub never heard of and is rejected",
@@ -17498,7 +17498,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a refused flusher spends another conversation's records when it cannot heal",
     file: `${CORE}/src/spool/flush-heal.ts`,
-    from: "    return othersAtStake ? null : { summary: input.first, heal: null, asked: true, counted };",
+    from: "    return neededLater ? null : { summary: input.first, heal: null, asked: true, counted };",
     to: "    return { summary: input.first, heal: null, asked: true, counted };",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review P7: one conversation's dead session drops another conversation's edits, cursor and all",
@@ -17506,7 +17506,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a refused drain with no healer spends another conversation's records",
     file: `${CORE}/src/spool/flush-heal.ts`,
-    from: "    return othersAtStake ? null : { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };",
+    from: "    return neededLater ? null : { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };",
     to: "    return { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "SessionEnd's drain under a session the hub refuses drops whatever other conversations left on disk",
@@ -17663,6 +17663,38 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/resumed-session.test.ts`,
     because: "review finding 8: the proxy's machines keep every side file of every session it ever loaded",
   },
+  {
+    label: "a refusal no heal answered spends an unregistered life's own work context",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    spendsAnotherConversation(input, refusals) || spendsOwnWorkContext(input, refusals, cause);",
+    to: "    spendsAnotherConversation(input, refusals);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 finding 1: the heal that later registers the life as itself finds its work context gone, and every edit after it is refused",
+  },
+  {
+    label: "the work context kept on disk is an ended life's, not an unregistered one's",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "  cause === \"session_unknown\" &&\n",
+    to: "  cause !== \"session_unknown\" &&\n",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "review-2 E2E-3: `--resume` while the hub refuses registers spends the resumed life's work context, and every edit after the hub recovers is refused as `other`",
+  },
+  {
+    label: "a heal onto the same id spools no work context",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "  await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n  return healedTo(",
+    to: "  if (ladder.sessionId !== refusal.sessionId) {\n    await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n  }\n  return healedTo(",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 finding 1: a work context another conversation's flush spent is never sent again, and the life's edits are refused for good",
+  },
+  {
+    label: "ACP's registration flush carries no healer",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        developerId: registered.developerId,\n        heal: healerFor(session),\n",
+    to: "        developerId: registered.developerId,\n",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 finding 1: a register the hub refused at session/new stays unregistered until the first capture, its work context never reaching the hub before it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17778,7 +17810,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
- * PRINTS: packages/connector-acp/test/resumed-session.test.ts 2
+ * PRINTS: packages/connector-acp/test/resumed-session.test.ts 3
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -17823,7 +17855,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/resumed-session.test.ts 9
+ * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
@@ -17920,7 +17952,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 11
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 13
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 15
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
