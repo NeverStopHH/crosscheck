@@ -155,8 +155,15 @@ scope is still `incomplete`, and the reason enum still names it.
 sessions. `agent_event` folds over the scope's sessions **and** those, wherever their heartbeat sits, because trace picks
 candidates by work-context activity and a named session can sit outside the heartbeat window. The `order` block reads the same
 scope (`sessionScope`, `server/src/services/coverage.ts`). A named session can only weaken the rung: its reap, its silence and
-every loss it reported count, and it never counts as a session reporting, so it cannot turn `unknown` into `complete`
-(`server/test/coverage-answer-sessions.test.ts`).
+its losses inside the window count, and it never counts as a session reporting, so it cannot turn `unknown` into `complete`
+(`server/test/coverage-answer-sessions.test.ts`). The loss window is the same for a named session as for any other (LOSS-4):
+a loss report is the machine's ledger, not the session's (loss-accounting §4.4). A named session must be on the repo the
+question is about. Under `paths`, a context on the surface counts the session that delivered its latest update
+(`work_contexts.updated_by_session_id`) beside the one that opened it: an update is stamped at ingest, so a successor that
+drained a spool is what put trace's candidate inside the window (`server/test/coverage-successor-session.test.ts`). The
+rung's instants (`gapSince`, `observedAt`) come only from sessions the viewer may be told about (`visiblePresenceCondition`,
+services/visibility.ts). An opted-out teammate's session still counts towards the state, named or in the window, but its heartbeat
+is presence and is not printed (`server/test/coverage-instant-privacy.test.ts`).
 
 **And the distribution is measured before merge, not argued about** — COV-11. If `complete` proves unreachable even scoped, §5.1
 and §10.4 are re-decided **with data**, not by the noise argument, whose premise this section inverts.

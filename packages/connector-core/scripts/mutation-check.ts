@@ -16479,23 +16479,6 @@ export const MUTATIONS: readonly Mutation[
       "an answer naming one session that ended cleanly weeks ago turns an empty window from unknown to complete",
   },
   {
-    label: "a named session's loss is read through the window",
-    file: `${SERVER}/src/services/coverage.ts`,
-    from: "    : sql`(${term(since)} or (${named} and ${term(NO_FLOOR)}))`;",
-    to: "    : term(since);",
-    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
-    because:
-      "the session the answer cites lost records before the window and the rung beside the answer reads complete",
-  },
-  {
-    label: "a named session's ignored kind is read through the window",
-    file: `${SERVER}/src/services/coverage.ts`,
-    from: "      ignored: sql`count(*) filter (where ${isLost} and ${isIgnored})`,",
-    to: "      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,",
-    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
-    because: "a named session's ignored kinds read telemetry_lost, and the one remedy that fixes them, upgrade the hub, goes unsaid",
-  },
-  {
     label: "the order block folds over the window alone",
     file: `${SERVER}/src/services/coverage.ts`,
     from: "      inScope(scope),\n",
@@ -16549,7 +16532,90 @@ export const MUTATIONS: readonly Mutation[
     from: "      answerSessionIds: sessions.map((session) => session.sessionId),\n",
     to: "",
     test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
-    because: "the tripwire names a teammate's session that reported a loss and calls the path watched",
+    // Re-worded by the review of H3: the lifted loss window it once cited is gone.
+    because: "the tripwire names a teammate's session the order line beside it never read",
+  },
+  // The review of H3, finding 1: a loss report is the machine's ledger, so a
+  // named session's losses keep the window every other session's keep.
+  {
+    label: "a named session's loss is read with no window",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  const isLost = lossCondition(agentSessions, since);",
+    to: "  const isLost = scope.named === null ? lossCondition(agentSessions, since) : sql`(${lossCondition(agentSessions, since)} or (${scope.named} and ${agentSessions.lossReportedAt} is not null and ${agentSessions.lossTotal} > 0))`;",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because:
+      "a 300-day-old loss on the machine gaps every tripwire and trace that names a session re-stating it, and masks yesterday's reap",
+  },
+  // The review of H3, finding 2: the repo predicate holds for a named session.
+  {
+    label: "a named session of another repo enters this repo's fold",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "        : sql`(${eq(agentSessions.repo, repo)} and ${inArray(agentSessions.id, [...answerSessionIds])})`,",
+    to: "        : inArray(agentSessions.id, [...answerSessionIds]),",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because:
+      "repo B's loss renders as 'agent telemetry on this repo was lost' on repo A's tree, and repo B's heartbeat moves repo A's observedAt and order",
+  },
+  // The review of H3, finding 3: the session that delivered a context's
+  // latest update is recorded, and the path scope reads it.
+  {
+    label: "the path scope reads a context's creator but not its last deliverer",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    onSurface(workContexts.updatedBySessionId),\n",
+    to: "    onSurface(workContexts.sessionId),\n",
+    test: `${SERVER}/test/coverage-successor-session.test.ts`,
+    because:
+      "a successor reaped after delivering trace's candidate into the window leaves the rung complete / sessions_reported",
+  },
+  {
+    label: "a work-context update does not record the session that delivered it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      ...(producerSessionId === undefined ? {} : { updatedBySessionId: producerSessionId }),\n",
+    to: "",
+    test: `${SERVER}/test/coverage-successor-session.test.ts`,
+    because: "the session behind a candidate's in-window activity is written down nowhere, so no scope can read it",
+  },
+  {
+    label: "ingest drops the producer of a work-context record",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "      return ingestWorkContext(deps, developerId, body as WorkContext, seq, producerSessionId);",
+    to: "      return ingestWorkContext(deps, developerId, body as WorkContext, seq);",
+    test: `${SERVER}/test/coverage-successor-session.test.ts`,
+    because: "a clean successor's delivery reads 'no agent session reported on these files'",
+  },
+  {
+    label: "an existing hub never gets the updated-by column",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text REFERENCES agent_sessions(id);\n",
+    to: "",
+    test: `${SERVER}/test/ddl-sync-work-context-updater.test.ts`,
+    because: "drizzle selects a column the database does not have, and every work-context read on an upgraded hub fails",
+  },
+  // The review of H3, finding 4: an instant is presence, so only a session the
+  // viewer may be told about lends the rung one.
+  {
+    label: "an opted-out session's heartbeat dates the agent rung's gap",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap} and ${isTold})`,",
+    to: "      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "get_diagnosis prints when an opted-out claim author last ran an agent",
+  },
+  {
+    label: "an opted-out session's loss dates the agent rung's gap",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost} and ${isTold})`,",
+    to: "      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "an opted-out teammate's machine ledger dates the gap every teammate reads",
+  },
+  {
+    label: "an opted-out teammate's heartbeat is the agent rung's observedAt",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      observedAt: sql`max(${agentSessions.lastHeartbeatAt}) filter (where ${isTold})`,",
+    to: "      observedAt: sql`max(${agentSessions.lastHeartbeatAt})`,",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "/api/absences tells every teammate when the opted-out developer last ran an agent",
   },
   // ── init --remove review (2026-10-05) ──
   {
@@ -17149,12 +17215,15 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
+ * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 11
+ * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
+ * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5

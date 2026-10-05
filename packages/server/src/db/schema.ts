@@ -263,6 +263,14 @@ export const workContexts = pgTable("work_contexts", {
   landedAt: timestamptz("landed_at"),
   createdAt: timestamptz("created_at").notNull(),
   updatedAt: timestamptz("updated_at"),
+  /**
+   * The PRODUCER of the update that last set `updated_at` — the session
+   * whose delivery moved this context into a window, which is a successor
+   * whenever a spool was drained by one (review of H3, finding 3). Null until
+   * the first update; `session_id` stays the creator. Coverage's path scope
+   * reads it beside `session_id` (services/coverage.ts touchedScope).
+   */
+  updatedBySessionId: text("updated_by_session_id").references(() => agentSessions.id),
 }, (table) => [
   // `session_id` is a foreign key, which Postgres does NOT index on its own.
   // services/presence.ts reads the newest context of every live session to

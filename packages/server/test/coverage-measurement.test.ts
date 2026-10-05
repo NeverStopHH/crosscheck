@@ -42,10 +42,12 @@ import {
 } from "../src/db/schema.ts";
 import { listAbsences } from "../src/services/absences.ts";
 import { isJudgeable, readCoverage } from "../src/services/coverage.ts";
+import { TRIPWIRE_MAX_SESSIONS } from "../src/services/hints.ts";
 import {
   TEST_START_ISO,
   createTestDeveloper,
   createTestHarness,
+  jsonRequest,
 } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 
@@ -243,6 +245,69 @@ describe("COV-8: what coverage costs the response it rides", () => {
     );
 
     // Assert
+    expect(p95).toBeLessThan(HUB_RESPONSE_ALLOWANCE_MS);
+  });
+
+  test("p95 of GET /api/hints/tripwire, which now reads its sessions before its coverage, stays inside it too", async () => {
+    // Arrange: the trial-shaped repo, plus a teammate with as many live
+    // sessions on one file as the tripwire names (review of H3) — the route
+    // lists them, THEN folds them into a scoped coverage read, in sequence.
+    const { harness, files } = await trialRepo();
+    const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    const viewer = await createTestDeveloper(harness, "Mia", "mia@example.com");
+    const value = files[0] ?? "src/a.ts";
+    const now = harness.clock.now();
+    const live = Array.from({ length: TRIPWIRE_MAX_SESSIONS }, (_unused, index) => ({
+      id: `ses_ken_${String(index)}`,
+      developerId: ken.developerId,
+      agentKind: "claude-code",
+      repo: REPO,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "analyzing" as const,
+      startedAt: new Date(now.getTime() - HOUR_MS),
+      lastHeartbeatAt: now,
+    }));
+    await harness.db.insert(agentSessions).values(live);
+    await harness.db.insert(workContexts).values(
+      live.map((session) => ({
+        id: `wc_${session.id}`,
+        sessionId: session.id,
+        title: "work",
+        status: "analyzing" as const,
+        createdAt: now,
+      })),
+    );
+    await harness.db.insert(workContextTargets).values(
+      live.map((session) => ({
+        workContextId: `wc_${session.id}`,
+        kind: "file" as const,
+        value,
+        source: "tool_edit" as const,
+        createdAt: now,
+      })),
+    );
+    const url = `/api/hints/tripwire?repo=${encodeURIComponent(REPO)}&value=${encodeURIComponent(value)}`;
+    const rounds = 20;
+    const timings: number[] = [];
+    let named = 0;
+
+    // Act
+    for (let round = 0; round < rounds; round += 1) {
+      const start = performance.now();
+      const response = await harness.app.request(url, jsonRequest("GET", viewer.apiKey));
+      timings.push(performance.now() - start);
+      expect(response.status).toBe(200);
+      named = ((await response.json()) as { data: { sessions: unknown[] } }).data.sessions.length;
+    }
+    const p95 = percentile(timings, 0.95);
+    process.stdout.write(
+      `COV-8  GET /api/hints/tripwire p95: ${p95.toFixed(1)} ms with ${String(named)} named sessions, over ` +
+        `${String(rounds)} rounds; allowance ${String(HUB_RESPONSE_ALLOWANCE_MS)} ms\n`,
+    );
+
+    // Assert
+    expect(named).toBe(TRIPWIRE_MAX_SESSIONS);
     expect(p95).toBeLessThan(HUB_RESPONSE_ALLOWANCE_MS);
   });
 });
