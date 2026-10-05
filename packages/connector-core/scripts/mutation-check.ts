@@ -17927,6 +17927,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/sharing.test.ts`,
     because: "a model that spoke five times is told to the developer as one that never answered",
   },
+  {
+    label: "doctor rules out transcript drift when no turn read as a conclusion",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "          \"fix: have the agent publish_claim what it concluded; if its turns did conclude, send this line — the transcript format may have changed\",",
+    to: "          \"fix: nothing is broken — have the agent publish_claim what it concluded\",",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a host update that broke the transcript reader is told to the developer as healthy quiet work",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18195,7 +18203,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 18
+ * PRINTS: packages/connector-core/test/sharing.test.ts 19
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2

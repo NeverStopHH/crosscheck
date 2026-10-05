@@ -414,9 +414,11 @@ const gateQuietRule: Rule = (_input, totals) =>
   totals.turns >= DOCTOR_SHARING_QUIET_TURNS_WARN && totals.fires - totals.intentFires === 0 && totals.noSlice === 0
     ? finding(
         "gate_quiet",
-        `your agent drafts nothing because none of its ${String(totals.turns)} finished turns read as a conclusion to the Tier-1 gate (a test or an error beside hypothesis language, or a stated verdict beside work it did), so the summarizer never ran; ` +
-          "fix: nothing is broken — have the agent publish_claim what it concluded, or ask it to state its conclusion in words",
-        `no drafts — none of ${String(totals.turns)} turns read as a conclusion`,
+        `your agent drafts nothing because the Tier-1 gate read ${String(totals.turns)} finished turns and none read as a conclusion ` +
+          "(a test or an error beside hypothesis language, or a stated verdict beside work it did), so the summarizer never ran — " +
+          "quiet work does that, and so does a transcript the hook can no longer read after a host update; " +
+          "fix: have the agent publish_claim what it concluded; if its turns did conclude, send this line — the transcript format may have changed",
+        `no drafts — none of ${String(totals.turns)} turns read as a conclusion (or the transcript format changed)`,
       )
     : null;
 

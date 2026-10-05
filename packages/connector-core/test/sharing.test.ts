@@ -290,6 +290,13 @@ describe("sharingFindings — what the workers booked", () => {
 
     expect(causes(value)).toContain("gate_quiet");
     expect(detailFor(value, "gate_quiet")).toContain("publish_claim");
+    // Says what was READ, and does not rule out the one fault that reads
+    // exactly like quiet work: a transcript format the hook no longer parses.
+    expect(detailFor(value, "gate_quiet")).toContain(
+      `the Tier-1 gate read ${String(DOCTOR_SHARING_QUIET_TURNS_WARN)} finished turns and none read as a conclusion`,
+    );
+    expect(detailFor(value, "gate_quiet")).toContain("the transcript format may have changed");
+    expect(detailFor(value, "gate_quiet")).not.toContain("nothing is broken");
   });
 
   test("a short session is not a quiet gate", () => {
