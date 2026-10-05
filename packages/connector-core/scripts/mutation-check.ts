@@ -16596,16 +16596,19 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an opted-out session's heartbeat dates the agent rung's gap",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap} and ${isTold})`,",
-    to: "      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,",
+    // Re-pointed by the final review: a hidden gap now withholds gapSince
+    // whole instead of filtering it, which stated a later start than the truth.
+    from: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;",
+    to: "  const isGapSinceWithheld = toCount(row?.hiddenLosses) > 0;",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "get_diagnosis prints when an opted-out claim author last ran an agent",
   },
   {
     label: "an opted-out session's loss dates the agent rung's gap",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost} and ${isTold})`,",
-    to: "      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,",
+    // Re-pointed by the final review, for the same reason.
+    from: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;",
+    to: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0;",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "an opted-out teammate's machine ledger dates the gap every teammate reads",
   },

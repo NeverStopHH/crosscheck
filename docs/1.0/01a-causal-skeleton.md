@@ -1484,7 +1484,8 @@ The evidence for each row:
    - A named session must be on the question's repo.
    - Under `paths` the scope reads the session that delivered a context's latest update
      (`work_contexts.updated_by_session_id`), which is how a successor makes trace's candidate active.
-   - The rung's instants come only from sessions the viewer may be told about.
+   - The rung's instants come only from sessions the viewer may be told about, and a hidden gap
+     or loss withholds `gapSince` rather than leave a later one standing.
 5. **03 §5.3 still says "one line"** (§13.11.2). The renderer and its tests now allow two. A longer
    note also makes it more likely that a hint near `MAX_HINT_TEXT_LENGTH` drops the note. That
    behaviour predates this round.

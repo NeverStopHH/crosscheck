@@ -11,6 +11,13 @@
  * author's last heartbeat. The window arm had the same channel already:
  * `/api/absences` carried an opted-out teammate's newest heartbeat as
  * `observedAt`.
+ *
+ * AND WITHHOLDING MUST NEVER STATE A LATER START (final review). `gapSince`
+ * is the EARLIEST instant: dropping a hidden session's earlier one and
+ * printing a told session's later one states a later start than the truth,
+ * so a hidden gap or loss withholds the field. `observedAt` is the newest
+ * heartbeat the viewer may be told about: older than the truth when a hidden
+ * session is newer, which can only make the rung look staler.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -142,5 +149,57 @@ describe("a session the viewer may not be told about weakens the rung and lends 
       reason: "telemetry_lost",
       gapSince: null,
     });
+  });
+});
+
+describe("a hidden session never moves an instant the unsafe way", () => {
+  test("gap: Ken, opted out, went quiet five days before Nick did — Nick's view prints no later start", async () => {
+    // Arrange: both sessions stop heartbeating; Ken's stopped first.
+    const { harness, nick, ken } = await seed();
+    await registerTestSession(harness, ken.apiKey, { id: "ses_ken" });
+    const kenQuietSince = harness.clock.now().toISOString();
+    harness.clock.advanceSeconds(5 * DAY_SECONDS - HOUR_SECONDS);
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    harness.clock.advanceSeconds(HOUR_SECONDS);
+    // Act
+    const nickView = agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, nick, absencesUrl)).coverage);
+    const kenView = agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, ken, absencesUrl)).coverage);
+    // Assert: withheld for Nick, the true earliest for Ken, who may see both.
+    expect(nickView).toMatchObject({ state: "incomplete", reason: "session_silent", gapSince: null });
+    expect(kenView).toMatchObject({ state: "incomplete", gapSince: kenQuietSince });
+  });
+
+  test("loss: Ken's hidden loss three days ago, Nick's own one day ago — Nick's view prints no later start", async () => {
+    // Arrange
+    const { harness, nick, ken } = await seed();
+    const daysAgo = (days: number): string =>
+      new Date(harness.clock.now().getTime() - days * DAY_SECONDS * 1000).toISOString();
+    await registerTestSession(harness, ken.apiKey, {
+      id: "ses_ken",
+      losses: { total: 2, kinds: { spool_expired: 2 }, oldestAt: daysAgo(3), newestAt: daysAgo(3) },
+    });
+    await registerTestSession(harness, nick.apiKey, {
+      id: "ses_nick",
+      losses: { total: 2, kinds: { spool_expired: 2 }, oldestAt: daysAgo(1), newestAt: daysAgo(1) },
+    });
+    // Act
+    const nickView = agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, nick, absencesUrl)).coverage);
+    const kenView = agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, ken, absencesUrl)).coverage);
+    // Assert
+    expect(nickView).toMatchObject({ state: "incomplete", reason: "telemetry_lost", gapSince: null });
+    expect(kenView).toMatchObject({ state: "incomplete", reason: "telemetry_lost", gapSince: daysAgo(3) });
+  });
+
+  test("observedAt: with Ken's hidden heartbeat newer, Nick's view carries the newest he may be told, never Ken's", async () => {
+    // Arrange: Nick's live session, and Ken's newer one.
+    const { harness, nick, ken } = await seed();
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    const nickHeartbeat = harness.clock.now().toISOString();
+    harness.clock.advanceSeconds(30);
+    await registerTestSession(harness, ken.apiKey, { id: "ses_ken" });
+    // Act
+    const nickView = agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, nick, absencesUrl)).coverage);
+    // Assert: older than the truth, the direction that can only look staler.
+    expect(nickView).toMatchObject({ state: "complete", observedAt: nickHeartbeat });
   });
 });
