@@ -23,7 +23,13 @@ jobs:
       # The junit file is what the reporter step below reads (spec 05 §10 D4);
       # console output is unchanged — measured on bun 1.3.13, the XML is written
       # alongside it, not instead of it.
-      - run: bun test --reporter=junit --reporter-outfile=junit.xml
+      # The per-test timeout is raised for THIS run only: the whole suite in one
+      # process on a hosted macOS runner made sub-second tests take over 6 s
+      # (PR #74: a cold PGlite boot in the first file's beforeAll, two
+      # coverage-render cases). Local runs keep bun's 5 s default, so a test
+      # that is slow on a developer's machine still fails where it is written;
+      # the timing lanes below measure what speed has to.
+      - run: bun test --reporter=junit --reporter-outfile=junit.xml --timeout=20000
       - run: bun run typecheck
       # Runs on BOTH platforms deliberately: it walks every Unicode
       # Default_Ignorable code point through the briefing renderer, so it is also
