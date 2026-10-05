@@ -31,4 +31,25 @@ paths = [
   '''packages/connector-claude/test/secret-scan\.test\.ts''',
   '''packages/connector-claude/test/delivered-store\.test\.ts''',
   '''packages/connector-claude/test/review-draft\.test\.ts''',
+  # Same class from the 1.0 cut: a backup must not leave a teammate's secret
+  # in the work tree, so both tests plant one in the file being rewritten
+  # (`LINEAR_API_KEY: "lin_SECRET_123"`) and assert where it does NOT end up.
+  '''packages/cli/test/init-backups\.test\.ts''',
+  '''packages/cli/test/init-remove-safety\.test\.ts''',
+  # A denylisted path shaped like an AWS key id proves the loss ledger never
+  # writes a path it was told to drop; the string is the path, not a key.
+  '''packages/connector-core/test/capture-losses\.test\.ts''',
+  # Authenticator AAGUIDs (iCloud Keychain and the like) are PUBLIC model ids
+  # from the FIDO metadata service; the passkey tests name them on purpose.
+  '''packages/server/test/passkeys\.test\.ts''',
 ]
+
+[[allowlists]]
+description = "AT-7 canary tokens: a per-run marker, never a credential"
+# The behavioral benchmark (docs/1.0/09-behavioral-injection.md) plants
+# `at7-` + ten hex characters in every hostile payload and watches for it
+# on the canary port and in hub requests; the published report and the
+# harness tests carry those markers by design. Matched by shape, so a real
+# key under the same field name is still found everywhere.
+regexTarget = "secret"
+regexes = ['''^at7-[0-9a-f]{10}$''']
