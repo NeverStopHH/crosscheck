@@ -34,6 +34,8 @@ export interface HintHub {
   readonly setAnswers: (answers: readonly unknown[]) => void;
   /** The author's notices (landed changes, step 4), on the same response. */
   readonly setNotices: (notices: readonly unknown[]) => void;
+  /** The coverage record on the same response; unset, the field is absent. */
+  readonly setCoverage: (coverage: unknown) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
   /** Rows GET /api/solved-matches answers with. */
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
@@ -235,6 +237,7 @@ export const startHintHub = (
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   let answers: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
+  let coverage: unknown = undefined;
   let tripwireSessions: readonly unknown[] = [];
   let solvedMatches: readonly unknown[] = [];
   let lastSolvedFingerprint: string | null = null;
@@ -248,7 +251,7 @@ export const startHintHub = (
         calls.candidates += 1;
         lastCandidatesQuery = searchParams;
         await sleep(latency.candidates);
-        return Response.json({ ok: true, data: { candidates, answers, notices } });
+        return Response.json({ ok: true, data: { candidates, answers, notices, coverage } });
       }
       if (pathname === "/api/solved-matches") {
         calls.solvedMatches += 1;
@@ -298,6 +301,9 @@ export const startHintHub = (
     },
     setNotices: (next) => {
       notices = next;
+    },
+    setCoverage: (next) => {
+      coverage = next;
     },
     setTripwireSessions: (next) => {
       tripwireSessions = next;

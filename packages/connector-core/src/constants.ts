@@ -2315,3 +2315,16 @@ export const MAX_COVERAGE_LINE_CHARS = 160;
  * minute (COV-1) and the age beside it (COV-11) are never shed.
  */
 export const MAX_COVERAGE_LINES = 2;
+
+/**
+ * The room a teammate hint leaves for ONE closing line after its coverage
+ * note — the outcome clause the pilot's outcome recording appends (148
+ * characters at the longest id) — plus the newline before it. Held to the
+ * same one-line bound as a coverage line. The note itself is reserved at its
+ * actual length (hints/render.ts `hintTrailerReserve`), so a repo without a
+ * gap spends only this.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.HINT_CLOSING_LINE_RESERVE_CHARS === c.MAX_COVERAGE_LINE_CHARS + 1, c.HINT_CLOSING_LINE_RESERVE_CHARS)'
+ * PRINTS: true 161
+ */
+export const HINT_CLOSING_LINE_RESERVE_CHARS = MAX_COVERAGE_LINE_CHARS + 1;

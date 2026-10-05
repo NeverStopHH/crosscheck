@@ -48,6 +48,7 @@ import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/del
 import { hintBodyHash } from "../hints/echo.ts";
 import { substanceSentence } from "@crosscheck/schema";
 import {
+  hintTrailerReserve,
   renderAnswerHint,
   renderClaimHint,
   renderLandedNoticeHint,
@@ -130,13 +131,14 @@ interface RenderScope {
   readonly now: Date;
   /** Who wrote the session intent a candidate may have been matched on. */
   readonly intentProvenance: string | null;
+  /** What the lines appended after the hint need (`hintTrailerReserve`). */
+  readonly reserveChars: number;
 }
 
 const renderSelection = async (
   scope: RenderScope,
   selection: HintSelection,
 ): Promise<Delivery | null> => {
-  const { repoRoot, now, intentProvenance } = scope;
   if (selection.kind === "silence") {
     return null;
   }
@@ -146,10 +148,40 @@ const renderSelection = async (
   const drift: CommitDrift | null =
     context.baseCommit === undefined || context.baseCommit.length === 0
       ? null
-      : await resolveCommitDrift(repoRoot, context.baseCommit);
+      : await resolveCommitDrift(scope.repoRoot, context.baseCommit);
+  return deliveryOf(scope, selection, drift);
+};
+
+/** One selection rendered with its tree's drift — the fallback shares both. */
+const deliveryOf = (
+  scope: RenderScope,
+  selection: HintSelection,
+  drift: CommitDrift | null,
+): Delivery | null => {
+  const { now, intentProvenance, reserveChars } = scope;
+  if (selection.kind === "silence") {
+    return null;
+  }
+  const context = selection.context.workContext;
   // What the hub matched this candidate on — the hint says which (§4).
   const matchedOn = selection.context.matchedOn;
   if (selection.kind === "claim") {
+    const text = renderClaimHint({
+      claim: selection.claim,
+      context,
+      drift,
+      now,
+      matchedOn,
+      intentProvenance,
+      restCount: selection.restCount,
+      reserveChars,
+    });
+    // TOO LONG TO SHOW WHOLE beside the lines appended after it: the
+    // selector's pointer at the same tree goes out instead, booked as a
+    // pointer — never a finding cut shorter than the sentence the hub scored.
+    if (text.length === 0) {
+      return deliveryOf(scope, selection.ifUnfit, drift);
+    }
     return {
       refKind: "claim",
       refId: selection.claim.id,
@@ -159,15 +191,7 @@ const renderSelection = async (
       // The echo mark covers what was SHOWN — the first sentence — so that
       // sentence coming back as the reader's own observation is caught.
       bodyHash: hintBodyHash(substanceSentence(selection.claim.body)),
-      text: renderClaimHint({
-        claim: selection.claim,
-        context,
-        drift,
-        now,
-        matchedOn,
-        intentProvenance,
-        restCount: selection.restCount,
-      }),
+      text,
     };
   }
   return {
@@ -187,6 +211,7 @@ const renderSelection = async (
         : { matchedTarget: selection.matchedTarget }),
       drift,
       now,
+      reserveChars,
     }),
   };
 };
@@ -357,6 +382,7 @@ export const selectAndRenderHint = async (
       repoRoot: input.repoRoot,
       now: input.now,
       intentProvenance: state.workContextIntentProvenance ?? null,
+      reserveChars: hintTrailerReserve(result.data.coverage, input.now),
     },
     selection,
   );

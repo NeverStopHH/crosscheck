@@ -70,6 +70,12 @@ export type HintSelection =
       readonly claim: HintClaimCandidate;
       /** The teammate claims the substance leaves behind — the pointer to the rest. */
       readonly restCount: number;
+      /**
+       * What goes out instead when the finding cannot be shown whole beside
+       * the lines appended after it (flows/hint.ts): the pointer at the same
+       * tree, under the pointer pass's own unseen rule, or silence.
+       */
+      readonly ifUnfit: Extract<HintSelection, { readonly kind: "pointer" | "silence" }>;
     }
   | {
       readonly kind: "pointer";
@@ -100,7 +106,7 @@ export interface SelectHintInput {
   readonly selfDeveloperId: string | null;
 }
 
-const SILENCE: HintSelection = { kind: "silence" };
+const SILENCE = { kind: "silence" } as const satisfies HintSelection;
 
 const hasEvidence = (claim: HintClaimCandidate): boolean =>
   claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS;
@@ -304,6 +310,18 @@ const isForeignIntentOnly = (
   return context.workContext.developerId !== selfDeveloperId;
 };
 
+/**
+ * A context a pointer may still name: neither it nor any of its claims was
+ * already shown. The pointer pass below and the flow's fallback for a
+ * finding too long to show (flows/hint.ts) apply this one rule.
+ */
+export const isUnpointed = (
+  context: HintContextCandidate,
+  seen: ReadonlySet<string>,
+): boolean =>
+  !seen.has(context.workContext.id) &&
+  !context.claims.some((claim) => seen.has(claim.id));
+
 export const selectHint = (input: SelectHintInput): HintSelection => {
   if (input.deliveredCount >= MAX_HINTS_PER_SESSION) {
     return SILENCE;
@@ -333,7 +351,15 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     if (injectable !== undefined) {
       // The rest are the OTHER teammate claims of the tree — what the hint's
       // pointer line says is one get_diagnosis away.
-      return { kind: "claim", context, claim: injectable, restCount: foreign.length - 1 };
+      return {
+        kind: "claim",
+        context,
+        claim: injectable,
+        restCount: foreign.length - 1,
+        ifUnfit: isUnpointed(context, seen)
+          ? { kind: "pointer", context, claimCount: foreign.length }
+          : SILENCE,
+      };
     }
   }
 
@@ -343,10 +369,7 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
   // the context id AND its claims: once substance from a context was
   // delivered, re-surfacing the same context as a pointer is noise, not news.
   for (const context of eligible) {
-    if (seen.has(context.workContext.id)) {
-      continue;
-    }
-    if (context.claims.some((claim) => seen.has(claim.id))) {
+    if (!isUnpointed(context, seen)) {
       continue;
     }
     const foreignCount = context.claims.filter((claim) =>

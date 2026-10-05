@@ -17498,8 +17498,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a substance hint hides how many claims stay behind",
     file: `${CORE}/src/hints/select.ts`,
-    from: "restCount: foreign.length - 1 }",
-    to: "restCount: 0 }",
+    from: "        restCount: foreign.length - 1,\n",
+    to: "        restCount: 0,\n",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the pointer to the rest says nothing remains, so nobody reads the tree",
   },
@@ -17670,6 +17670,70 @@ export const MUTATIONS: readonly Mutation[
     to: "    withIntentSet(withRecordedIntent(state, sentence, \"declared\")),",
     test: `${CONNECTOR}/test/intent-worker.test.ts`,
     because: "a model's one-sentence guess is presented as the session's declared intent",
+  },
+  {
+    label: "a substance hint leaves no room for its trailers",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const cap = reservedCap(input.reserveChars);\n  const restCount",
+    to: "  const cap = MAX_HINT_TEXT_LENGTH;\n  const restCount",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "long labels fill the hint to the wire cap and the coverage note and the outcome clause are dropped without a word",
+  },
+  {
+    label: "a pointer hint leaves no room for its trailers",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const reserved = fitHint(lines, reservedCap(input.reserveChars));",
+    to: "  const reserved = fitHint(lines);",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a long-labelled pointer on a repo with a gap loses its coverage note",
+  },
+  {
+    label: "the trailer reserve silences a pointer whose own lines are long",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return reserved.length > 0 ? reserved : fitHint(lines);",
+    to: "  return reserved;",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a caveat about the archive costs the hint it was meant to qualify — §5.1 says it never does",
+  },
+  {
+    label: "the pointer line keeps its title over the finding",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const rest = [true, false]\n",
+    to: "  const rest = [true]\n",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a long title costs the reader the teammate's finding when dropping the title would have made room",
+  },
+  {
+    label: "the closing line is not reserved",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return (note === null ? 0 : note.length + 1) + HINT_CLOSING_LINE_RESERVE_CHARS;",
+    to: "  return note === null ? 0 : note.length + 1;",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "the outcome clause is the first casualty on every long hint",
+  },
+  {
+    label: "the prompt flow reserves nothing for the trailers",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "      reserveChars: hintTrailerReserve(result.data.coverage, input.now),",
+    to: "      reserveChars: 0,",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the renderer budgets for trailers nobody tells it about, and the note is dropped again",
+  },
+  {
+    label: "a finding too long for its trailers goes silent instead of pointing",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "      return deliveryOf(scope, selection.ifUnfit, drift);",
+    to: "      return null;",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a strongly matched tree is not mentioned at all because its finding was long",
+  },
+  {
+    label: "the too-long fallback re-points a tree already pointed at",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "        ifUnfit: isUnpointed(context, seen)\n",
+    to: "        ifUnfit: true\n",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a tree the briefing already named is pointed at a second time — the noise the seen-set exists to stop",
   },
 ];
 
@@ -17885,9 +17949,10 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
- * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 5
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 2
  * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 11
+ * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 5
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1

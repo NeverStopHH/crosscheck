@@ -31,6 +31,7 @@ import {
 } from "@crosscheck/schema";
 
 import {
+  HINT_CLOSING_LINE_RESERVE_CHARS,
   HINT_SUBSTANCE_MAX_CHARS,
   LANDED_RECENT_WORKING_DAYS,
   MAX_LANDED_COMMITS_SHOWN,
@@ -210,15 +211,30 @@ const intentLines = (
  * trailing lines are the droppable context, not the substance. Empty when not
  * even the first two lines fit — silence beats a broken frame.
  */
-const fitHint = (lines: readonly string[]): string => {
+const fitHint = (lines: readonly string[], cap: number = MAX_HINT_TEXT_LENGTH): string => {
   const kept = lines.reduce<readonly string[]>((accumulated, line) => {
     const candidate = [...accumulated, line];
-    return candidate.join("\n").length <= MAX_HINT_TEXT_LENGTH
+    return candidate.join("\n").length <= cap
       ? candidate
       : accumulated;
   }, []);
   return kept.length < 2 ? "" : kept.join("\n");
 };
+
+/**
+ * What a teammate hint leaves free for the lines the flow appends after it
+ * (review 1006b): the coverage note at its actual length, on its own line,
+ * and one closing line. Long labels used to fill a hint to the wire cap, and
+ * `withCoverageNote` then dropped the note without a word.
+ */
+export const hintTrailerReserve = (coverage: CoverageRecord, now: Date): number => {
+  const note = coverageNote(coverage, now);
+  return (note === null ? 0 : note.length + 1) + HINT_CLOSING_LINE_RESERVE_CHARS;
+};
+
+/** The cap a hint's own lines fit under, beside the trailers reserved for. */
+const reservedCap = (reserveChars: number | undefined): number =>
+  MAX_HINT_TEXT_LENGTH - (reserveChars ?? 0);
 
 /**
  * §5.1's SOFT rule on a hint, with one priority that is not negotiable: THE
@@ -264,18 +280,22 @@ export interface ClaimHintInput {
   readonly intentProvenance?: string | null;
   /** The teammate claims the substance leaves behind; absent counts none. */
   readonly restCount?: number;
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  readonly reserveChars?: number;
 }
 
 /**
  * The pointer to the rest (§4): how many claims stay behind, and the id the
  * next call takes — a tool named without its argument sends an agent off to
- * invent one (the answer hint learned that first).
+ * invent one (the answer hint learned that first). The title is the one part
+ * that can go when room is short; the id and the call never do.
  */
-const restLine = (context: HintContext, restCount: number): string => {
+const restLine = (context: HintContext, restCount: number, withTitle: boolean): string => {
   const rest =
     restCount > 0 ? ` beside ${String(restCount)} more claim${restCount === 1 ? "" : "s"}` : "";
+  const title = withTitle ? ` ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}` : "";
   return (
-    `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}${rest} — ` +
+    `Recorded on work context ${safeId(context.id)}${title}${rest} — ` +
     `the full tree is readable with get_diagnosis ${safeId(context.id)}.`
   );
 };
@@ -345,12 +365,18 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
   }
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(sentence, HINT_SUBSTANCE_MAX_CHARS)}`;
   const header = claimHeader(input.matchedOn, input.intentProvenance);
-  return fitHint([
-    header,
-    factsLine,
-    restLine(context, input.restCount ?? 0),
-    ...intentLines(context.intent),
-  ]);
+  // ROOM FOR WHAT FOLLOWS, and the finding is not what pays for it: the
+  // sentence shown is the one the hub scored, so it is never cut shorter.
+  // The intent line goes first (fitHint drops from the end), then the title
+  // on the pointer line; when even that cannot fit, "" — the flow points.
+  const cap = reservedCap(input.reserveChars);
+  const restCount = input.restCount ?? 0;
+  const rest = [true, false]
+    .map((withTitle) => restLine(context, restCount, withTitle))
+    .find((line) => [header, factsLine, line].join("\n").length <= cap);
+  return rest === undefined
+    ? ""
+    : fitHint([header, factsLine, rest, ...intentLines(context.intent)], cap);
 };
 
 export interface PointerHintInput {
@@ -375,6 +401,8 @@ export interface PointerHintInput {
   readonly matchedOn?: HintMatchedOn;
   /** Who wrote the session intent it was matched on (declared / derived). */
   readonly intentProvenance?: string | null;
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  readonly reserveChars?: number;
 }
 
 /**
@@ -431,7 +459,11 @@ export const renderPointerHint = (input: PointerHintInput): string => {
   // The intent BEFORE the tail: fitHint drops from the end, and of the two
   // the tail is the droppable one — the intent is what says WHAT they do.
   const header = pointerHeader(input.matchedOn, input.intentProvenance);
-  return fitHint([header, factsLine, ...intentLines(context.intent), tailLine]);
+  const lines = [header, factsLine, ...intentLines(context.intent), tailLine];
+  // Room for what follows (review 1006b) — but a pointer whose own two lines
+  // leave none still renders: the trailers never cost the hint (§5.1).
+  const reserved = fitHint(lines, reservedCap(input.reserveChars));
+  return reserved.length > 0 ? reserved : fitHint(lines);
 };
 
 /**
