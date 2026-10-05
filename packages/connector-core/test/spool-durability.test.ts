@@ -72,14 +72,14 @@ afterEach(async () => {
   homes.length = 0;
 });
 
-const envelope = (id: string, at: Date = NOW): Record<string, unknown> => ({
+const envelope = (id: string, at: Date = NOW, writtenBy = "cc_old"): Record<string, unknown> => ({
   cx: "0.1",
   id,
   ts: at.toISOString(),
   producer: {
     developerId: "unknown",
     agentKind: "claude-code",
-    sessionId: "cc_old",
+    sessionId: writtenBy,
   },
   kind: "target",
   body: { workContextId: "wc_1", kind: "file", value: `src/${id}.ts` },
@@ -189,11 +189,11 @@ describe("reap against an appender that holds a handle", () => {
   });
 
   test("a batch the hub rejected in full is counted, not reported as capture", async () => {
-    // Arrange: two records, and a hub that answers HTTP 200 with accepted:0.
-    // The envelope is `ok`, so every surface downstream read this as a
-    // successful capture while the cursor advanced past the records and the
-    // work was gone — H4's deafness, reachable through nothing but a hub
-    // verdict (review finding B2-07).
+    // Arrange: two records of the flushing session's own conversation, and a
+    // hub that answers HTTP 200 with accepted:0. The envelope is `ok`, so every
+    // surface downstream read this as a successful capture while the cursor
+    // advanced past the records and the work was gone — H4's deafness,
+    // reachable through nothing but a hub verdict (review finding B2-07).
     const path = await home();
     const server = rejectingHub();
     const ctx = hubContext(path, `http://127.0.0.1:${String(server.port)}`);
@@ -201,7 +201,7 @@ describe("reap against an appender that holds a handle", () => {
       path,
       KEY,
       SESSION,
-      [envelope("lost-a"), envelope("lost-b")],
+      [envelope("lost-a", NOW, "cc_live"), envelope("lost-b", NOW, "cc_live")],
       NOW,
     );
 
@@ -217,6 +217,27 @@ describe("reap against an appender that holds a handle", () => {
     const sync = await readSyncState(path, KEY);
     expect(sync.lastCaptureOkAt).toBeNull();
     expect((await readDropSummary(path, KEY)).records).toBe(2);
+    server.stop(true);
+  });
+
+  test("another conversation's batch refused for the flusher's sake stays on disk, not reported as capture", async () => {
+    // Arrange: the same hub verdict, about records ANOTHER conversation wrote
+    // (cc_old) — refused only because the flusher (cc_live) is dead to the hub.
+    // Spending them would lose that conversation's work for this one's failure
+    // (adversarial review, P7).
+    const path = await home();
+    const server = rejectingHub();
+    const ctx = hubContext(path, `http://127.0.0.1:${String(server.port)}`);
+    await appendRecords(path, KEY, SESSION, [envelope("kept-a"), envelope("kept-b")], NOW);
+
+    // Act
+    await flushSpool(ctx, { sessionId: "cc_live", developerId: "dev_1" }, AMPLE_BUDGET_MS);
+
+    // Assert: still no false capture, and nothing lost — both wait for a live flusher
+    const sync = await readSyncState(path, KEY);
+    expect(sync.lastCaptureOkAt).toBeNull();
+    expect((await readDropSummary(path, KEY)).records).toBe(0);
+    expect(await readSpoolLines(path, KEY)).toHaveLength(2);
     server.stop(true);
   });
 
