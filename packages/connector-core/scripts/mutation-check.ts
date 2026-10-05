@@ -16411,8 +16411,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub names every stranger a cloud agent",
     file: `${SCHEMA}/src/commit-evidence.ts`,
-    from: "CLOUD_AGENT_IDENTITIES.find((identity) => identity.email === email)?.id ??",
-    to: "CLOUD_AGENT_IDENTITIES.find(() => true)?.id ??",
+    from: "  CLOUD_AGENT_IDENTITIES.find((identity) => identity.email === email) ?? null;",
+    to: "  CLOUD_AGENT_IDENTITIES.find(() => true) ?? null;",
     test: `${SERVER}/test/absences.test.ts`,
     because: "a teammate who needs an invitation is told crosscheck cannot capture them, and nobody sends one",
   },

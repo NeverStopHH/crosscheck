@@ -252,6 +252,52 @@ describe("developer alias emails (admin)", () => {
     expect(stored).toHaveLength(MAX_EMAILS_PER_DEVELOPER);
   });
 
+  test("Claude Code on the web's commit identity is refused as anyone's alias", async () => {
+    // Arrange: linking it would hand every cloud session's commits, by
+    // anyone, to Ken — and a session of his nearby would close their gap
+    const harness = await createTestHarness();
+    const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+
+    // Act
+    const refused = await addEmail(harness, ken.developerId, "NoReply@Anthropic.com");
+
+    // Assert: a stable code, one sentence saying why and what to do instead
+    expect(refused.status).toBe(400);
+    expect(refused.body["error"]).toEqual({
+      code: "cloud_agent_identity",
+      message:
+        "noreply@anthropic.com is the commit identity every Claude Code on the web " +
+        "session shares, whoever started it, so it cannot belong to one person — " +
+        "link nothing: its commits stay a named gap in the absence listing",
+    });
+    const { emails } = await listEmails(harness, ken.developerId);
+    expect(emails).toEqual([{ email: "ken@example.com", isPrimary: true }]);
+  });
+
+  test("Claude Code on the web's commit identity is refused as a new developer's primary", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+
+    // Act
+    const response = await harness.app.request(
+      "/api/developers",
+      jsonRequest("POST", TEST_ADMIN_TOKEN, {
+        name: "Claude",
+        email: "noreply@ANTHROPIC.com",
+      }),
+    );
+
+    // Assert: refused before any row is written
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("cloud_agent_identity");
+    const stored = await harness.db
+      .select()
+      .from(developerEmails)
+      .where(eq(developerEmails.email, "noreply@anthropic.com"));
+    expect(stored).toEqual([]);
+  });
+
   test("a body that is not an email is a 400, before any lookup", async () => {
     // Arrange
     const harness = await createTestHarness();

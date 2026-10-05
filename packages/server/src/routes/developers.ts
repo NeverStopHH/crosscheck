@@ -7,6 +7,7 @@ import { CreateDeveloperBodySchema } from "../http/schemas.ts";
 import { requireAdmin } from "../middleware/auth.ts";
 import {
   addDeveloperEmail,
+  cloudAgentRefusal,
   createDeveloper,
   listDeveloperEmails,
   listDevelopers,
@@ -39,6 +40,9 @@ export const developersRoutes = (deps: AppDeps): Hono<AppEnv> => {
     }
 
     const result = await createDeveloper(deps, parsed.data);
+    if (result.outcome === "cloud_agent_identity") {
+      return fail(c, 400, result.outcome, cloudAgentRefusal(result.identity));
+    }
     if (result.outcome === "email_taken") {
       return fail(
         c,
@@ -85,6 +89,8 @@ export const developersRoutes = (deps: AppDeps): Hono<AppEnv> => {
       parsed.data.email,
     );
     switch (result.outcome) {
+      case "cloud_agent_identity":
+        return fail(c, 400, result.outcome, cloudAgentRefusal(result.identity));
       case "developer_not_found":
         return fail(c, 404, "not_found", "no developer with this id");
       case "taken_by_other":

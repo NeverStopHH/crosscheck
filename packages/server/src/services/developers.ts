@@ -5,6 +5,8 @@ import { DEVELOPERS_MAX_LISTED, EVENT_KINDS } from "../constants.ts";
 import { developerEmails, developers } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { normalizeEmail } from "./commit-evidence.ts";
+import { cloudAgentByEmail } from "@crosscheck/schema";
+import type { CloudAgentIdentity } from "@crosscheck/schema";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -37,13 +39,41 @@ export interface CreateDeveloperInput {
   readonly email: string;
 }
 
+/**
+ * AN EMAIL NO DEVELOPER MAY HOLD: a cloud agent's commit identity (schema
+ * CLOUD_AGENT_IDENTITIES), shared by every session of that agent whoever
+ * started it. Linked to one developer — as an alias or as the primary — it
+ * would make every such commit, by anyone, theirs: absence matching would
+ * name them, and a session of theirs near the commit would close a gap the
+ * hub has no evidence about (principle 5). So both entry points refuse it,
+ * matched like the absence listing matches it, on the lowercased address.
+ */
+export interface CloudAgentRefused {
+  readonly outcome: "cloud_agent_identity";
+  readonly identity: CloudAgentIdentity;
+}
+
+/** The refusal's one sentence: why, and what to do instead (nothing). */
+export const cloudAgentRefusal = (identity: CloudAgentIdentity): string =>
+  `${identity.email} is the commit identity every ${identity.product} ` +
+  "session shares, whoever started it, so it cannot belong to one person — " +
+  "link nothing: its commits stay a named gap in the absence listing";
+
+const refuseCloudAgent = (email: string): CloudAgentRefused | null => {
+  const identity = cloudAgentByEmail(email);
+  return identity === null
+    ? null
+    : { outcome: "cloud_agent_identity", identity };
+};
+
 export type CreateDeveloperResult =
   | {
       readonly outcome: "created";
       readonly developer: DeveloperView;
       readonly apiKey: string;
     }
-  | { readonly outcome: "email_taken" };
+  | { readonly outcome: "email_taken" }
+  | CloudAgentRefused;
 
 export const createDeveloper = async (
   deps: { readonly db: Db; readonly now: Clock },
@@ -56,6 +86,10 @@ export const createDeveloper = async (
   // that join — two case-variant accounts would each match the same commit
   // author and yield duplicate findings for one person.
   const email = normalizeEmail(input.email);
+  const refused = refuseCloudAgent(email);
+  if (refused !== null) {
+    return refused;
+  }
   try {
     // One transaction: the developer row and its primary email row land
     // together or not at all. developer_emails' PK on email is the "at most
@@ -348,7 +382,8 @@ export type AddDeveloperEmailResult =
     }
   | { readonly outcome: "developer_not_found" }
   | { readonly outcome: "taken_by_other" }
-  | { readonly outcome: "limit_reached" };
+  | { readonly outcome: "limit_reached" }
+  | CloudAgentRefused;
 
 /**
  * The cap check and the insert, against ONE executor. Inside a transaction
@@ -409,10 +444,14 @@ export const addDeveloperEmail = async (
   developerId: string,
   rawEmail: string,
 ): Promise<AddDeveloperEmailResult> => {
+  const email = normalizeEmail(rawEmail);
+  const refused = refuseCloudAgent(email);
+  if (refused !== null) {
+    return refused;
+  }
   if (!(await developerExists(deps.db, developerId))) {
     return { outcome: "developer_not_found" };
   }
-  const email = normalizeEmail(rawEmail);
   return deps.db.transaction((tx) =>
     linkEmailUnderCap({ db: tx, now: deps.now }, developerId, email),
   );

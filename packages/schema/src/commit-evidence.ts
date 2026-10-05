@@ -104,10 +104,13 @@ export const CLOUD_AGENT_IDENTITIES = [
 export type CloudAgentIdentity = (typeof CLOUD_AGENT_IDENTITIES)[number];
 export type CloudAgentId = CloudAgentIdentity["id"];
 
+/** The cloud agent row a lowercased email belongs to, or null. */
+export const cloudAgentByEmail = (email: string): CloudAgentIdentity | null =>
+  CLOUD_AGENT_IDENTITIES.find((identity) => identity.email === email) ?? null;
+
 /** The cloud agent a lowercased commit author email belongs to, or null. */
 export const cloudAgentForEmail = (email: string): CloudAgentId | null =>
-  CLOUD_AGENT_IDENTITIES.find((identity) => identity.email === email)?.id ??
-  null;
+  cloudAgentByEmail(email)?.id ?? null;
 
 /** The row behind a cloud agent id, or null for an id this table does not hold. */
 export const cloudAgentById = (id: unknown): CloudAgentIdentity | null =>

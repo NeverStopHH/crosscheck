@@ -195,6 +195,7 @@ export {
   CommitEvidenceSchema,
   MAX_COMMIT_CLOCK_SKEW_MS,
   MAX_COMMIT_EVIDENCE_AUTHORS,
+  cloudAgentByEmail,
   cloudAgentById,
   cloudAgentForEmail,
 } from "./commit-evidence.ts";
