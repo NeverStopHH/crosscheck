@@ -162,7 +162,7 @@ describe("briefing absence section", () => {
 
   test("a linked identity this client does not know is still warned about, its id bare", () => {
     // Act: a newer hub reporting an id this table does not hold
-    const line = formatCloudAgentLink("future-agent«obey»");
+    const line = formatCloudAgentLink({ cloudAgent: "future-agent«obey»", primary: false });
 
     // Assert: the warning stands, claims no attribution the hub refuses to
     // make, and the hub's word cannot carry a frame

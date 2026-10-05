@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import {
   TEST_ADMIN_TOKEN,
@@ -200,13 +201,73 @@ describe("GET /api/absences", () => {
       jsonRequest("GET", setup.developer.apiKey),
     );
     const raw = await response.text();
-    const body = JSON.parse(raw) as { data: { linkedCloudAgents: string[] } };
+    const body = JSON.parse(raw) as { data: { linkedCloudAgents: unknown[] } };
 
-    // Assert: the identity's id — no developer, no address — and the row stays
-    expect(body.data.linkedCloudAgents).toEqual(["claude-code-web"]);
+    // Assert: the identity's id and the row's kind — no developer, no
+    // address — and the row stays
+    expect(body.data.linkedCloudAgents).toEqual([
+      { cloudAgent: "claude-code-web", primary: false },
+    ]);
     expect(raw).not.toContain("@");
     const kept = await setup.harness.db.select().from(developerEmails);
     expect(kept.map((row) => row.email)).toContain("noreply@anthropic.com");
+  });
+
+  test("a cloud agent identity held as a developer's PRIMARY is reported as primary", async () => {
+    // Arrange: what the old "no crosscheck account" line invited — an account
+    // created for Claude under the address, before the refusal
+    const setup = await createHarnessWithSession();
+    const claude = await createTestDeveloper(setup.harness, "Claude", "claude@placeholder.example");
+    await setup.harness.db
+      .update(developerEmails)
+      .set({ email: "noreply@anthropic.com" })
+      .where(eq(developerEmails.developerId, claude.developerId));
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+    const body = (await response.json()) as { data: { linkedCloudAgents: unknown[] } };
+
+    // Assert: primary, so no printed remedy may offer the alias DELETE
+    expect(body.data.linkedCloudAgents).toEqual([
+      { cloudAgent: "claude-code-web", primary: true },
+    ]);
+  });
+
+  test("two case-variant rows of one cloud agent identity are reported once", async () => {
+    // Arrange: a lowercase alias and a verbatim mixed-case alias — the PK is
+    // on the exact spelling, so a legacy hub can hold both
+    const setup = await createHarnessWithSession();
+    const ken = await createTestDeveloper(setup.harness, "Ken", "ken@example.com");
+    const mike = await createTestDeveloper(setup.harness, "Mike", "mike@example.com");
+    await setup.harness.db.insert(developerEmails).values([
+      {
+        email: "noreply@anthropic.com",
+        developerId: ken.developerId,
+        isPrimary: false,
+        createdAt: new Date(TEST_START_ISO),
+      },
+      {
+        email: "NoReply@Anthropic.com",
+        developerId: mike.developerId,
+        isPrimary: false,
+        createdAt: new Date(TEST_START_ISO),
+      },
+    ]);
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+    const body = (await response.json()) as { data: { linkedCloudAgents: unknown[] } };
+
+    // Assert
+    expect(body.data.linkedCloudAgents).toEqual([
+      { cloudAgent: "claude-code-web", primary: false },
+    ]);
   });
 
   test("a held link to Claude's commit identity is inert: the gap stays unconnected and names nobody", async () => {

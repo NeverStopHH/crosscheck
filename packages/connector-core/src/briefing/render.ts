@@ -908,29 +908,45 @@ export const absenceCloudAgent = (entry: AbsenceEntry): string | null =>
     ? (cloudAgentById(entry.cloudAgent)?.product ?? null)
     : null;
 
-const CLOUD_AGENT_LINK_EFFECT =
-  "is linked to a developer on this hub; crosscheck ignores that link, so " +
-  "its commits stay an unconnected gap attributed to nobody";
+const IGNORED_GAP = "so its commits stay an unconnected gap attributed to nobody";
+
+const CLOUD_AGENT_LINK_EFFECT = `is linked to a developer on this hub; crosscheck ignores that link, ${IGNORED_GAP}`;
+
+const CLOUD_AGENT_PRIMARY_EFFECT =
+  "is a developer's primary email on this hub; crosscheck ignores it for " +
+  `attribution, ${IGNORED_GAP}`;
 
 /**
- * A cloud agent identity the hub reports linked to a developer (AbsencesOutcome
- * linkedCloudAgents). The hub that reports it resolves no address through it
- * (server services/cloud-agent-identity.ts), so the sentence says the link is
- * ignored — never that it attributes anything — and still asks an admin to
- * remove the stale row. Exported because doctor's WARN and status's line say
- * it; two spellings would drift. An id this client's table does not hold is
- * still warned about, its word printed bare: silence would read as none.
+ * Only a remedy the hub will perform. An alias goes with DELETE …/emails/
+ * <address> (case-insensitive); a primary is the account's identity and no
+ * route removes one, so saying so is the whole of the truthful next step.
  */
-export const formatCloudAgentLink = (id: string): string => {
-  const identity = cloudAgentById(id);
+const cloudAgentLinkRemedy = (email: string, isPrimary: boolean): string =>
+  isPrimary
+    ? "no admin route removes a primary email, so this stays; GET /api/developers shows which account holds it"
+    : "an admin should still remove it: find the developer in GET /api/developers, then " +
+      `DELETE /api/developers/<developerId>/emails/${email}`;
+
+/**
+ * A cloud agent identity the hub reports held on a developer row
+ * (AbsencesOutcome linkedCloudAgents). The hub that reports it resolves no
+ * address through it (server services/cloud-agent-identity.ts), so the
+ * sentence says it is ignored — never that it attributes anything — and
+ * offers the remedy for that kind of row. Exported because doctor's WARN and
+ * status's line say it; two spellings would drift. An id this client's table
+ * does not hold is still warned about, its word printed bare: silence would
+ * read as none.
+ */
+export const formatCloudAgentLink = (link: {
+  readonly cloudAgent: string;
+  readonly primary: boolean;
+}): string => {
+  const effect = link.primary ? CLOUD_AGENT_PRIMARY_EFFECT : CLOUD_AGENT_LINK_EFFECT;
+  const identity = cloudAgentById(link.cloudAgent);
   if (identity === null) {
-    return `a cloud agent identity this client does not know (${bareUntrusted(id)}) ${CLOUD_AGENT_LINK_EFFECT}`;
+    return `a cloud agent identity this client does not know (${bareUntrusted(link.cloudAgent)}) ${effect}`;
   }
-  return (
-    `${identity.product}'s commit identity ${identity.email} ${CLOUD_AGENT_LINK_EFFECT} — ` +
-    "an admin should still remove it: find the developer in GET /api/developers, then " +
-    `DELETE /api/developers/<developerId>/emails/${identity.email}`
-  );
+  return `${identity.product}'s commit identity ${identity.email} ${effect} — ${cloudAgentLinkRemedy(identity.email, link.primary)}`;
 };
 
 /**

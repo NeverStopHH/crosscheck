@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { generateApiKey, hashApiKey } from "../auth/keys.ts";
 import { DEVELOPERS_MAX_LISTED, EVENT_KINDS } from "../constants.ts";
@@ -473,6 +473,11 @@ export type RemoveDeveloperEmailResult =
  * accounts. The primary is the account's identity — auth surfaces and
  * `developers.email` carry it — so removing it is refused rather than
  * silently re-pointing the account.
+ *
+ * Matched case-insensitively, the way the absence join and the cloud agent
+ * link report read the table: a row stored in another case (a legacy
+ * verbatim spelling) is the same address, and the remedy doctor prints for
+ * it must reach it. Every spelling this developer holds goes together.
  */
 export const removeDeveloperEmail = async (
   db: Db,
@@ -484,19 +489,17 @@ export const removeDeveloperEmail = async (
   }
   const email = normalizeEmail(rawEmail);
   const ownRow = and(
-    eq(developerEmails.email, email),
+    eq(sql`lower(${developerEmails.email})`, email),
     eq(developerEmails.developerId, developerId),
   );
   const rows = await db
     .select({ isPrimary: developerEmails.isPrimary })
     .from(developerEmails)
-    .where(ownRow)
-    .limit(1);
-  const row = rows[0];
-  if (row === undefined) {
+    .where(ownRow);
+  if (rows.length === 0) {
     return { outcome: "not_linked" };
   }
-  if (row.isPrimary) {
+  if (rows.some((row) => row.isPrimary)) {
     return { outcome: "is_primary" };
   }
   await db.delete(developerEmails).where(ownRow);

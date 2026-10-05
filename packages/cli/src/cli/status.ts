@@ -441,7 +441,7 @@ export const runStatus = async (
   // link the hub ignores, not about an author. Doctor's WARN, verbatim.
   const cloudAgentLinkLines = (
     absences.ok ? (absences.data.linkedCloudAgents ?? []) : []
-  ).map((id) => `cloud agent identity: ${formatCloudAgentLink(id)}`);
+  ).map((link) => `cloud agent identity: ${formatCloudAgentLink(link)}`);
 
   // Teammate lines through the render layer: name, branch and status are
   // hub-served, teammate-written short fields printed BARE on a ·-separated

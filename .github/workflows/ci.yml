@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1443
+    # PRINTS: 1449
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -240,7 +240,7 @@ jobs:
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 17
+    # PRINTS: briefing/render.ts 19
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/records.ts 1
@@ -292,7 +292,7 @@ jobs:
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
-    # PRINTS: http/hub.ts 11
+    # PRINTS: http/hub.ts 12
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 5
     # PRINTS: http/verdict.ts 4
@@ -390,7 +390,7 @@ jobs:
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
     # PRINTS: packages/server/src/routes/work-contexts.ts 1
-    # PRINTS: packages/server/src/services/absences.ts 8
+    # PRINTS: packages/server/src/services/absences.ts 10
     # PRINTS: packages/server/src/services/calibration.ts 1
     # PRINTS: packages/server/src/services/causal-guarantees.ts 11
     # PRINTS: packages/server/src/services/ci-coverage.ts 3
@@ -405,7 +405,7 @@ jobs:
     # PRINTS: packages/server/src/services/coverage.ts 23
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developer-settings.ts 1
-    # PRINTS: packages/server/src/services/developers.ts 12
+    # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 3
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
@@ -454,7 +454,7 @@ jobs:
     # PRINTS: packages/server/test/verdict-latency.test.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
-    # PRINTS: absences.ts 10
+    # PRINTS: absences.ts 12
     # PRINTS: answer-question.ts 1
     # PRINTS: args.ts 2
     # PRINTS: ask-teammate.ts 1
@@ -503,7 +503,7 @@ jobs:
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developer-settings.ts 1
-    # PRINTS: developers.ts 12
+    # PRINTS: developers.ts 13
     # PRINTS: diagnosis.ts 3
     # PRINTS: doctor-global.ts 2
     # PRINTS: doctor-landed-authors.ts 4
@@ -548,7 +548,7 @@ jobs:
     # PRINTS: hint.ts 6
     # PRINTS: hints.ts 4
     # PRINTS: hook-budget.ts 2
-    # PRINTS: hub.ts 11
+    # PRINTS: hub.ts 12
     # PRINTS: index.ts 3
     # PRINTS: init-global.ts 2
     # PRINTS: init-remove.ts 10
@@ -624,7 +624,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 81
+    # PRINTS: render.ts 83
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9

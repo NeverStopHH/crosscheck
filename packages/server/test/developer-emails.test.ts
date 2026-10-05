@@ -298,6 +298,27 @@ describe("developer alias emails (admin)", () => {
     expect(stored).toEqual([]);
   });
 
+  test("a held alias stored in another case is removed by the remedy doctor prints", async () => {
+    // Arrange: a verbatim mixed-case row — the listing matches it with
+    // lower(), so the DELETE doctor names must reach it the same way
+    const harness = await createTestHarness();
+    const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await harness.db.insert(developerEmails).values({
+      email: "NoReply@Anthropic.com",
+      developerId: ken.developerId,
+      isPrimary: false,
+      createdAt: new Date(),
+    });
+
+    // Act: exactly the path doctor prints
+    const status = await removeEmail(harness, ken.developerId, "noreply@anthropic.com");
+
+    // Assert
+    expect(status).toBe(200);
+    const { emails } = await listEmails(harness, ken.developerId);
+    expect(emails).toEqual([{ email: "ken@example.com", isPrimary: true }]);
+  });
+
   test("a body that is not an email is a 400, before any lookup", async () => {
     // Arrange
     const harness = await createTestHarness();

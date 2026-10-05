@@ -250,19 +250,31 @@ export const listAbsences = async (
  * rewrite the developer's linked addresses without a word to anyone. Reported
  * instead, ids only — never the developer, never the address — so doctor and
  * status can say it is there and ignored; `[]` is "none linked", and an older
- * hub sends nothing.
+ * hub sends nothing. `primary` because the remedy differs: an alias goes with
+ * DELETE …/emails/<address>, and no route removes a primary — a printed
+ * remedy the hub would refuse is worse than none. Once per (identity, kind):
+ * case-variant rows are one address.
  */
+export interface LinkedCloudAgent {
+  readonly cloudAgent: CloudAgentId;
+  readonly primary: boolean;
+}
+
 export const listLinkedCloudAgents = async (
   db: Db,
-): Promise<readonly CloudAgentId[]> => {
+): Promise<readonly LinkedCloudAgent[]> => {
   const rows = await db
-    .select({ email: developerEmails.email })
+    .select({ email: developerEmails.email, isPrimary: developerEmails.isPrimary })
     .from(developerEmails)
     .where(isCloudAgentEmail(developerEmails.email));
-  return rows.flatMap((row) => {
+  const links = rows.flatMap((row): readonly LinkedCloudAgent[] => {
     const cloudAgent = cloudAgentForEmail(row.email.toLowerCase());
-    return cloudAgent === null ? [] : [cloudAgent];
+    return cloudAgent === null ? [] : [{ cloudAgent, primary: row.isPrimary }];
   });
+  const byKey = new Map(
+    links.map((link) => [`${link.cloudAgent}:${String(link.primary)}`, link]),
+  );
+  return [...byKey.values()];
 };
 
 /**

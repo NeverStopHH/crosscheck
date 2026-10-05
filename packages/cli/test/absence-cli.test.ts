@@ -75,6 +75,18 @@ const LINKED_SENTENCE =
   "it: find the developer in GET /api/developers, then " +
   "DELETE /api/developers/<developerId>/emails/noreply@anthropic.com";
 
+/** How the hub reports a held link: the identity and the row's kind. */
+const ALIAS_LINK = { cloudAgent: "claude-code-web", primary: false };
+const PRIMARY_LINK = { cloudAgent: "claude-code-web", primary: true };
+
+/** For a PRIMARY row: no route removes one, so no DELETE is offered. */
+const PRIMARY_SENTENCE =
+  "Claude Code on the web's commit identity noreply@anthropic.com is a " +
+  "developer's primary email on this hub; crosscheck ignores it for " +
+  "attribution, so its commits stay an unconnected gap attributed to nobody " +
+  "— no admin route removes a primary email, so this stays; " +
+  "GET /api/developers shows which account holds it";
+
 const paths: string[] = [];
 const stops: (() => void)[] = [];
 
@@ -150,7 +162,7 @@ describe("crosscheck status absence lines", () => {
     // would have printed one, so the warning cannot ride on that section
     const { repo, env } = await fixture("status-linked-cloud-agent", {
       ok: true,
-      data: { absences: [], linkedCloudAgents: ["claude-code-web"] },
+      data: { absences: [], linkedCloudAgents: [ALIAS_LINK] },
     });
 
     // Act
@@ -166,7 +178,7 @@ describe("crosscheck status absence lines", () => {
       ok: true,
       data: {
         absences: [cloudAgentAbsence(Date.now())],
-        linkedCloudAgents: ["claude-code-web"],
+        linkedCloudAgents: [ALIAS_LINK],
       },
     });
 
@@ -259,7 +271,7 @@ describe("crosscheck doctor absence check", () => {
     // Arrange: a link from before the hub refused them
     const { repo, env } = await fixture("doctor-linked-cloud-agent", {
       ok: true,
-      data: { absences: [], linkedCloudAgents: ["claude-code-web"] },
+      data: { absences: [], linkedCloudAgents: [ALIAS_LINK] },
     });
 
     // Act
@@ -269,6 +281,39 @@ describe("crosscheck doctor absence check", () => {
     expect(result.stdout).toContain(
       `WARN  cloud agent identity  ${LINKED_SENTENCE}`,
     );
+  });
+
+  test("for an identity held as a PRIMARY email, offers no remedy the hub would refuse", async () => {
+    // Arrange: the account the old "no crosscheck account" line invited
+    const { repo, env } = await fixture("doctor-primary-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [PRIMARY_LINK] },
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert: DELETE …/emails answers 400 for a primary, so it is not offered
+    expect(result.stdout).toContain(
+      `WARN  cloud agent identity  ${PRIMARY_SENTENCE}`,
+    );
+    expect(result.stdout).not.toContain("DELETE /api/developers");
+  });
+
+  test("says a held identity once, however many times the hub lists it", async () => {
+    // Arrange
+    const { repo, env } = await fixture("doctor-duplicate-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [ALIAS_LINK, ALIAS_LINK] },
+    });
+
+    // Act
+    const doctor = await runCli(["doctor"], env, repo);
+    const status = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(doctor.stdout.split(LINKED_SENTENCE).length - 1).toBe(1);
+    expect(status.stdout.split(LINKED_SENTENCE).length - 1).toBe(1);
   });
 
   test("says no cloud agent identity is linked when the hub measured none", async () => {

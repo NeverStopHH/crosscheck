@@ -69,8 +69,8 @@ curl -sX POST http://localhost:7100/api/developers/<developerId>/emails \
 identity every Claude Code on the web session commits under, whoever started
 it, so its absence line names that identity instead of asking for an account,
 its commits still count as a coverage gap, and a link an older hub already
-holds is ignored for attribution and stays a `crosscheck doctor` WARN until
-an admin removes it.
+holds is ignored for attribution and stays a `crosscheck doctor` WARN — until
+an admin removes it if it is an alias; no route removes a primary email.
 
 The id is shown exactly once, above, and every admin route after that takes it
 as a path parameter — so if it is lost, list the team back out. This is the

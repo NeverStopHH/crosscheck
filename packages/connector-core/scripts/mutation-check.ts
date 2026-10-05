@@ -16491,7 +16491,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub hides a cloud agent identity it already linked to a developer",
     file: `${SERVER}/src/services/absences.ts`,
-    from: "    return cloudAgent === null ? [] : [cloudAgent];",
+    from: "    return cloudAgent === null ? [] : [{ cloudAgent, primary: row.isPrimary }];",
     to: "    return [];",
     test: `${SERVER}/test/absences.test.ts`,
     because: "a link from before the refusal keeps attributing everyone's cloud commits to one person, and nothing on any surface says so",
@@ -16499,8 +16499,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an older hub's silence on linked identities reads as none linked",
     file: `${CORE}/src/http/hub.ts`,
-    from: "      linkedCloudAgents: value.linkedCloudAgents ?? null,",
-    to: "      linkedCloudAgents: value.linkedCloudAgents ?? [],",
+    from: "        value.linkedCloudAgents === undefined\n          ? null\n",
+    to: "        value.linkedCloudAgents === undefined\n          ? []\n",
     test: `${CLI}/test/absence-cli.test.ts`,
     because: "doctor reports a check the hub never ran as passed, the silence-that-looks-like-safety this project refuses",
   },
@@ -16523,8 +16523,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a newer hub's unknown cloud agent id prints its own frame characters",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "does not know (${bareUntrusted(id)})",
-    to: "does not know (${id})",
+    from: "does not know (${bareUntrusted(link.cloudAgent)})",
+    to: "does not know (${link.cloudAgent})",
     test: `${CORE}/test/absence-render.test.ts`,
     because: "hub text in a bare slot can mint the renderer's own framing on doctor's and status's lines",
   },
@@ -16603,16 +16603,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the held-link WARN claims the link still attributes commits",
     file: `${CORE}/src/briefing/render.ts`,
-    from: '  "is linked to a developer on this hub; crosscheck ignores that link, so " +\n  "its commits stay an unconnected gap attributed to nobody";',
-    to: '  "is linked to a developer on this hub, so every commit under it is attributed to that one person";',
+    from: 'const IGNORED_GAP = "so its commits stay an unconnected gap attributed to nobody";',
+    to: 'const IGNORED_GAP = "so every commit under it is attributed to that one person";',
     test: `${CORE}/test/absence-render.test.ts`,
     because: "doctor and status state an attribution the hub refuses to make, and an admin chases a misattribution that is not there",
   },
   {
     label: "the held-link WARN drops the admin's way to remove the row",
     file: `${CORE}/src/briefing/render.ts`,
-    from: '    "an admin should still remove it: find the developer in GET /api/developers, then " +\n',
-    to: "",
+    from: '    : "an admin should still remove it: find the developer in GET /api/developers, then " +\n      `DELETE /api/developers/<developerId>/emails/${email}`;',
+    to: '    : "";',
     test: `${CLI}/test/absence-cli.test.ts`,
     because: "the stale row is ignored but never removed, and nobody is told how",
   },
@@ -16623,6 +16623,54 @@ export const MUTATIONS: readonly Mutation[
     to: "      `spool:${depth} pending",
     test: `${CLI}/test/absence-cli.test.ts`,
     because: "the review's finding: a line every reader scans for, spelled unlike every other key on the surface",
+  },
+  {
+    label: "the hub reports a primary-held cloud agent identity as an alias",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "primary: row.isPrimary }",
+    to: "primary: false }",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "doctor offers DELETE …/emails for a row the hub answers with 400, the remedy the review could not carry out",
+  },
+  {
+    label: "the hub reports one cloud agent identity once per stored spelling",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  return [...byKey.values()];",
+    to: "  return links;",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "case-variant rows of one address print the same WARN twice",
+  },
+  {
+    label: "the alias DELETE misses a held row stored in another case",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "    eq(sql`lower(${developerEmails.email})`, email),",
+    to: "    eq(developerEmails.email, email),",
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because: "the remedy doctor prints answers 404 for the very row the link report found with lower()",
+  },
+  {
+    label: "doctor prints a held identity once per time the hub repeats it",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "          : distinctLinks(value.linkedCloudAgents),",
+    to: "          : value.linkedCloudAgents,",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the review's duplicate: one stale row reads as two",
+  },
+  {
+    label: "doctor offers the alias DELETE for a primary email the hub will not remove",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "${cloudAgentLinkRemedy(identity.email, link.primary)}",
+    to: "${cloudAgentLinkRemedy(identity.email, false)}",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "an admin runs the printed DELETE and gets 400 'the primary email … cannot be removed'",
+  },
+  {
+    label: "doctor calls a primary-held cloud agent identity a linked alias",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const effect = link.primary ? CLOUD_AGENT_PRIMARY_EFFECT : CLOUD_AGENT_LINK_EFFECT;",
+    to: "  const effect = CLOUD_AGENT_LINK_EFFECT;",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the account the old line invited is described as somebody's extra address, and the admin looks for the wrong row",
   },
 ];
 
@@ -16668,7 +16716,7 @@ interface Outcome {
  * other.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: packages/cli/test/absence-cli.test.ts 7
+ * PRINTS: packages/cli/test/absence-cli.test.ts 10
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
@@ -16905,7 +16953,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
- * PRINTS: packages/server/test/absences.test.ts 5
+ * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -16921,7 +16969,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage.test.ts 13
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
- * PRINTS: packages/server/test/developer-emails.test.ts 4
+ * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
