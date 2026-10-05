@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1426
+    # PRINTS: 1431
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -171,7 +171,6 @@ jobs:
     # PRINTS: packages/cli/src/ci-report/report.ts 4
     # PRINTS: packages/cli/src/ci-report/run.ts 4
     # PRINTS: packages/cli/src/cli/conference.ts 15
-    # PRINTS: packages/cli/src/cli/doctor-global.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 3
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
@@ -181,8 +180,9 @@ jobs:
     # PRINTS: packages/cli/src/cli/index.ts 3
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-remove-plan.ts 7
-    # PRINTS: packages/cli/src/cli/init-remove.ts 11
-    # PRINTS: packages/cli/src/cli/init.ts 3
+    # PRINTS: packages/cli/src/cli/init-remove-report.ts 8
+    # PRINTS: packages/cli/src/cli/init-remove.ts 5
+    # PRINTS: packages/cli/src/cli/init.ts 1
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
@@ -193,12 +193,14 @@ jobs:
     # PRINTS: packages/cli/src/cli/pin-observability.ts 5
     # PRINTS: packages/cli/src/cli/pin-render.ts 7
     # PRINTS: packages/cli/src/cli/pin.ts 9
+    # PRINTS: packages/cli/src/cli/project-copy.ts 5
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 7
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
-    # PRINTS: packages/cli/src/cli/wiring-removal.ts 6
+    # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 1
+    # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 1
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
     # PRINTS: packages/connector-acp/src/capture/engine.ts 18
@@ -501,7 +503,6 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor-global.ts 2
     # PRINTS: doctor-landed-authors.ts 3
     # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-landing-fetch.ts 6
@@ -548,8 +549,9 @@ jobs:
     # PRINTS: index.ts 3
     # PRINTS: init-global.ts 2
     # PRINTS: init-remove-plan.ts 7
-    # PRINTS: init-remove.ts 11
-    # PRINTS: init.ts 3
+    # PRINTS: init-remove-report.ts 8
+    # PRINTS: init-remove.ts 5
+    # PRINTS: init.ts 1
     # PRINTS: injector.ts 5
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
@@ -604,6 +606,7 @@ jobs:
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 39
     # PRINTS: profile.ts 2
+    # PRINTS: project-copy.ts 5
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
@@ -687,7 +690,8 @@ jobs:
     # PRINTS: waivers.ts 5
     # PRINTS: waivers.tsx 2
     # PRINTS: webauthn.ts 11
-    # PRINTS: wiring-removal.ts 6
+    # PRINTS: wiring-lookalikes.ts 1
+    # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 1
     # PRINTS: work-contexts.ts 1
     # PRINTS: worker-env.ts 1

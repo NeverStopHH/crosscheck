@@ -164,6 +164,24 @@ describe("doctor's advice under a .gitignore", () => {
     expect(result.stdout).not.toContain("crosscheck init --global --remove");
   });
 
+  test("the ignored-copy remedy names --cursor when the repo also holds crosscheck's cursor entries", async () => {
+    // Arrange: plain `init --remove` would leave these, and Cursor would
+    // keep loading them
+    const { repo, env } = await fixture(true);
+    await mkdir(join(repo, ".cursor"), { recursive: true });
+    await writeFile(
+      join(repo, ".cursor", "hooks.json"),
+      `${JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: "crosscheck cursor-hook sessionStart" }] } }, null, 2)}\n`,
+      "utf8",
+    );
+
+    // Act
+    const result = await runDoctor(env, repo, async () => null);
+
+    // Assert
+    expect(result.stdout).toContain("`crosscheck init --remove --cursor`");
+  });
+
   test("without a .gitignore the original remedy stands", async () => {
     // Arrange
     const { repo, env } = await fixture(false);
@@ -260,6 +278,22 @@ describe("init's advice under a .gitignore", () => {
     expect(result.stdout).toContain("wired twice");
     expect(result.stdout).toContain("`crosscheck init --remove`");
     expect(result.stdout).not.toContain("crosscheck init --global --remove");
+  });
+
+  test("the ignored double-wiring note names --cursor after an init --cursor", async () => {
+    // Arrange
+    const { repo, env } = await fixture(true);
+
+    // Act
+    const result = await runCli(
+      ["init", "--command-prefix", "crosscheck", "--cursor"],
+      env,
+      repo,
+    );
+
+    // Assert
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("`crosscheck init --remove --cursor`");
   });
 
   test("the double-wiring note keeps --global --remove when the project copy is shared", async () => {

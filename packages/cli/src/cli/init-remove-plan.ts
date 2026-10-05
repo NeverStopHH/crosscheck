@@ -21,7 +21,8 @@ import type { RemovalTarget, Stripped } from "./wiring-removal.ts";
 const BACKUP_DIR = "backups";
 
 export type FilePlan =
-  | { readonly kind: "absent" | "untouched"; readonly path: string }
+  | { readonly kind: "absent"; readonly path: string }
+  | { readonly kind: "untouched"; readonly path: string; readonly stripped: Stripped }
   | {
       readonly kind: "delete";
       readonly path: string;
@@ -51,7 +52,7 @@ const planFile = (
   }
   const stripped = target.strip(value);
   if (!stripped.changed) {
-    return { kind: "untouched", path: target.path };
+    return { kind: "untouched", path: target.path, stripped };
   }
   return stripped.leftover
     ? { kind: "delete", path: target.path, raw, stripped }
@@ -171,6 +172,27 @@ export const applyAll = async (plans: readonly FilePlan[]): Promise<ApplyOutcome
   }
   return { ok: true };
 };
+
+/**
+ * Entries left in a file that look like crosscheck's but ran through a
+ * launcher it does not recognise (wiring-lookalikes.ts): named, and NOT
+ * removed — only a person can tell an `init --command-prefix` install from a
+ * tool that happens to share a subcommand name.
+ */
+export const unrecognisedLine = (path: string, commands: readonly string[]): readonly string[] =>
+  commands.length === 0
+    ? []
+    : [
+        `${path}: left ${String(commands.length)} ${commands.length === 1 ? "entry" : "entries"} that look like crosscheck's but run through a launcher it does not recognise as its own — NOT removed: ${commands
+          .map((command) => `\`${command}\``)
+          .join(", ")}; if an \`init --command-prefix\` install wrote them, delete them by hand`,
+      ];
+
+/** The leftovers a plan's file still holds, as lines (none for absent or deleted files). */
+export const planLeftovers = (plan: FilePlan): readonly string[] =>
+  plan.kind === "untouched" || plan.kind === "strip"
+    ? unrecognisedLine(plan.path, plan.stripped.unrecognised)
+    : [];
 
 export const planLine = (plan: FilePlan): string => {
   switch (plan.kind) {

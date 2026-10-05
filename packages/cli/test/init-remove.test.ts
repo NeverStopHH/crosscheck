@@ -157,7 +157,7 @@ describe("crosscheck init --remove", () => {
 
     // Assert
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(`left ${userSettingsPath} untouched — it is not valid json`);
+    expect(result.stdout).toContain(`${userSettingsPath} is not valid json — left untouched`);
     expect(result.stdout).not.toContain("no user-level install");
     expect(await read(userSettingsPath)).toBe("{ not json");
   });
@@ -196,7 +196,7 @@ describe("crosscheck init --remove", () => {
     expect(result.exitCode).toBe(0);
     expect(await read(userSettingsPath)).toBe(userSettingsBefore);
     expect(await read(userMcpPath)).toBe(userMcpBefore);
-    expect(result.stdout).toContain(`left the user-level install in place (${userSettingsPath})`);
+    expect(result.stdout).toContain(`left the user-level install in place: ${userSettingsPath} (`);
   });
 
   test("without a user-level install it says sessions here now load no crosscheck hooks", async () => {
@@ -210,6 +210,7 @@ describe("crosscheck init --remove", () => {
     // Assert
     expect(result.stdout).toContain("crosscheck init --global");
     expect(result.stdout).toContain("load no crosscheck hooks");
+    expect(result.stdout).not.toContain("left the user-level install in place");
   });
 
   test("outside a git repository it says so and changes nothing", async () => {

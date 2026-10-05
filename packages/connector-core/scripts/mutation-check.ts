@@ -16330,7 +16330,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove changes a committed file without calling it a team change",
-    file: `${CLI}/src/cli/init-remove.ts`,
+    file: `${CLI}/src/cli/init-remove-report.ts`,
     from: "  if ((await isPathTracked(root, path)) !== true) {",
     to: "  if (true) {",
     test: `${CLI}/test/init-remove.test.ts`,
@@ -16338,7 +16338,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove tells the owner of an ignored copy to commit or restore it",
-    file: `${CLI}/src/cli/init-remove.ts`,
+    file: `${CLI}/src/cli/init-remove-report.ts`,
     from: "  if ((await isPathTracked(root, path)) !== true) {",
     to: "  if (false) {",
     test: `${CLI}/test/init-remove.test.ts`,
@@ -16346,7 +16346,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove does not say the team's repo connection stays",
-    file: `${CLI}/src/cli/init-remove.ts`,
+    file: `${CLI}/src/cli/init-remove-report.ts`,
     from: "      ? [`left ${connection} in place — the team's repo connection; init --remove never touches it`]",
     to: "      ? []",
     test: `${CLI}/test/init-remove.test.ts`,
@@ -16354,48 +16354,48 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove claims a user-level install that is not there",
-    file: `${CLI}/src/cli/init-remove.ts`,
-    from: "  if (wiring.hooksInstalled) {",
-    to: "  if (true) {",
+    file: `${CLI}/src/cli/init-remove-report.ts`,
+    from: "  ...(state.wired.length === 0",
+    to: "  ...(false",
     test: `${CLI}/test/init-remove.test.ts`,
     because: "the repo is left deaf while the output promises something still wires it",
   },
   {
     label: "init --remove calls an unreadable user settings file no install",
-    file: `${CLI}/src/cli/init-remove.ts`,
-    from: "  if (wiring.unreadable) {",
-    to: "  if (false) {",
+    file: `${CLI}/src/cli/wiring-removal.ts`,
+    from: " && state.unreadable.length === 0;",
+    to: ";",
     test: `${CLI}/test/init-remove.test.ts`,
     because: "a broken ~/.claude/settings.json is reported as absent instead of named",
   },
   {
     label: "doctor's ignored-copy remedy names no command that removes it",
-    file: `${CLI}/src/cli/doctor-global.ts`,
-    from: "remove the gitignored project copy with `crosscheck init --remove`",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "remove the gitignored project copy with ${projectRemoveCommand(copy)}",
     to: "delete the gitignored project copy instead",
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "the pilot's 'how to fix?' again: the WARN says what to delete and no command does it",
   },
   {
     label: "doctor's ignored-copy remedy points at removing the global install",
-    file: `${CLI}/src/cli/doctor-global.ts`,
-    from: "remove the gitignored project copy with `crosscheck init --remove`",
-    to: "remove one side with `crosscheck init --global --remove`",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "remove the gitignored project copy with ${projectRemoveCommand(copy)}",
+    to: "remove one side with crosscheck init --global --remove",
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "M11: the only wiring covering worktrees is removed, and a project copy nobody else receives is kept",
   },
   {
     label: "init's double-wiring note reads the ignore verdict backwards",
-    file: `${CLI}/src/cli/init.ts`,
-    from: "settingsIgnored === true",
-    to: "settingsIgnored !== true",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "copy !== null && copy.settingsIgnored === true",
+    to: "copy !== null && copy.settingsIgnored !== true",
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "the pilot's wrong advice at install time: an ignored copy is told to remove the global side, a shared one the reverse",
   },
   {
     label: "init's ignored double-wiring note names no command that removes the copy",
-    file: `${CLI}/src/cli/init.ts`,
-    from: "with \\`crosscheck init --remove\\`",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "with ${projectRemoveCommand(copy)}",
     to: "by hand",
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "the pilot's 'how to fix?' again, one command earlier than doctor",
@@ -16476,18 +16476,58 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a wiring file holding only the user's own entries is reported as crosscheck's",
     file: `${CLI}/src/cli/wiring-removal.ts`,
-    from: "      return stripped.changed ? [{ path: target.path, removed: stripped.removed }] : [];",
-    to: "      return [{ path: target.path, removed: stripped.removed }];",
+    from: "      stripped.changed ? [{ path, removed: stripped.removed }] : [],",
+    to: "      [{ path, removed: stripped.removed }],",
     test: `${CLI}/test/init-remove-verdict.test.ts`,
     because: "the team's own .cursor/mcp.json is called crosscheck's wiring, and someone reruns with --cursor for nothing",
   },
   {
     label: "init --remove leaves crosscheck's cursor entries in place without saying so",
-    file: `${CLI}/src/cli/init-remove.ts`,
-    from: "    ...(state.wired.length === 0",
-    to: "    ...(true",
+    file: `${CLI}/src/cli/init-remove-report.ts`,
+    from: "  ...(state.wired.length === 0",
+    to: "  ...(true",
     test: `${CLI}/test/init-remove-verdict.test.ts`,
     because: "Cursor sessions keep loading crosscheck's hooks after a removal that never mentioned them",
+  },
+  {
+    label: "init --remove says nothing wires the repo while an unrecognised launcher's hooks remain",
+    file: `${CLI}/src/cli/init-remove-report.ts`,
+    from: "    leftovers.length === 0 && (cursorState",
+    to: "    (cursorState",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "an --command-prefix install keeps seven hooks while the output says sessions load none",
+  },
+  {
+    label: "init --remove says nothing wires the repo while Cursor entries stay in place",
+    file: `${CLI}/src/cli/init-remove-report.ts`,
+    from: "(cursorState === null || isClean(cursorState))",
+    to: "true",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "Cursor sessions still load crosscheck's hooks after a removal that said none load",
+  },
+  {
+    label: "init --remove never names entries it did not recognise as its own",
+    file: `${CLI}/src/cli/wiring-lookalikes.ts`,
+    from: "  typeof command === \"string\" && subcommands.some((suffix) => command.trimEnd().endsWith(suffix));",
+    to: "  false;",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "'no crosscheck entries' is printed for a file still running every crosscheck hook through a wrapper",
+  },
+  {
+    label: "init --remove does not name an unreadable user-level file",
+    file: `${CLI}/src/cli/init-remove-report.ts`,
+    from: "  ...state.unreadable.map(",
+    to: "  ...[].map(",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "a ~/.claude/settings.json the command could not read is silently left out of what still wires the repo",
+  },
+  {
+    label: "the double-wiring remedy leaves Cursor wired by omitting --cursor",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "${copy.cursorWired ? \" --cursor\" : \"\"}",
+    to: "",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "the remedy's own command leaves crosscheck's Cursor hooks loading and nobody is told",
   },
 ];
 
@@ -16561,10 +16601,10 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/gitignored-advice.test.ts 5
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 6
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
- * PRINTS: packages/cli/test/init-remove-verdict.test.ts 2
+ * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3

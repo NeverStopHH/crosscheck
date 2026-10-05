@@ -21,6 +21,7 @@ import { removeClaudeSettings } from "@crosscheck/connector-claude";
 import type { CursorRemovalResult } from "@crosscheck/connector-cursor";
 import { readJsonConfig } from "./init-io.ts";
 import type { ReadRefusal } from "./init-io.ts";
+import { claudeLookalikes, cursorLookalikes, mcpLookalikes } from "./wiring-lookalikes.ts";
 
 /**
  * The last line of both removals, the mirror of init's restart hint: hooks
@@ -41,6 +42,12 @@ export interface Stripped {
    * `changed`: a file crosscheck took nothing from is never our leftover.
    */
   readonly leftover: boolean;
+  /**
+   * Entries left in `value` that look like crosscheck's but ran through a
+   * launcher the ownership rule does not recognise (wiring-lookalikes.ts) —
+   * named in the output, never removed.
+   */
+  readonly unrecognised: readonly string[];
 }
 
 export interface RemovalTarget {
@@ -105,6 +112,7 @@ const stripClaudeSettings = (value: Record<string, unknown>): Stripped => {
     changed: removed.changed,
     removed: describeClaudeRemoval(value, removed.settings),
     leftover: isEmpty(removed.settings),
+    unrecognised: claudeLookalikes(removed.settings),
   };
 };
 
@@ -115,6 +123,7 @@ const stripMcpServers = (value: Record<string, unknown>): Stripped => {
     changed: removed.changed,
     removed: "the crosscheck mcp server",
     leftover: isEmpty(removed.config),
+    unrecognised: mcpLookalikes(removed.config),
   };
 };
 
@@ -129,7 +138,10 @@ const isCursorSkeleton = (file: Record<string, unknown>): boolean =>
   isEmpty(asRecord(file["hooks"]));
 
 const cursorHooksStrip =
-  (removeCursorHooks: (value: Record<string, unknown>) => CursorRemovalResult) =>
+  (
+    removeCursorHooks: (value: Record<string, unknown>) => CursorRemovalResult,
+    subcommands: readonly string[],
+  ) =>
   (value: Record<string, unknown>): Stripped => {
     const removed = removeCursorHooks(value);
     return {
@@ -137,6 +149,7 @@ const cursorHooksStrip =
       changed: removed.changed,
       removed: entries(cursorHookCount(value) - cursorHookCount(removed.hooks), "cursor hook"),
       leftover: isCursorSkeleton(removed.hooks),
+      unrecognised: cursorLookalikes(removed.hooks, subcommands),
     };
   };
 
@@ -159,11 +172,15 @@ export const cursorTargets = async (
 ): Promise<readonly RemovalTarget[]> => {
   // DYNAMIC like every Cursor branch of init: hooks and the statusline must
   // not pay connector-cursor's load.
-  const { CURSOR_HOOKS_FILE, CURSOR_MCP_FILE, removeCursorHooks } = await import(
-    "@crosscheck/connector-cursor"
-  );
+  const { CURSOR_HOOKS_FILE, CURSOR_MCP_FILE, buildCursorHooksPlan, removeCursorHooks } =
+    await import("@crosscheck/connector-cursor");
+  // " cursor-hook sessionStart", … — the plan's commands with no launcher.
+  const subcommands = Object.values(buildCursorHooksPlan("").commands);
   return [
-    { path: join(cursorDir, CURSOR_HOOKS_FILE), strip: cursorHooksStrip(removeCursorHooks) },
+    {
+      path: join(cursorDir, CURSOR_HOOKS_FILE),
+      strip: cursorHooksStrip(removeCursorHooks, subcommands),
+    },
     { path: join(cursorDir, CURSOR_MCP_FILE), strip: stripMcpServers },
   ];
 };
@@ -171,9 +188,15 @@ export const cursorTargets = async (
 export interface WiringState {
   /** Files holding crosscheck's entries, with what a removal would take. */
   readonly wired: readonly { readonly path: string; readonly removed: string }[];
+  /** Files holding entries that look like crosscheck's under a launcher it does not recognise. */
+  readonly unrecognised: readonly { readonly path: string; readonly commands: readonly string[] }[];
   /** Files that exist but could not be read as a json object. */
   readonly unreadable: readonly { readonly path: string; readonly reason: ReadRefusal }[];
 }
+
+/** Nothing crosscheck's, nothing like it, nothing unreadable: the files were read and are clean. */
+export const isClean = (state: WiringState): boolean =>
+  state.wired.length === 0 && state.unrecognised.length === 0 && state.unreadable.length === 0;
 
 /**
  * READ-ONLY: which of these files still hold crosscheck's entries — the same
@@ -188,14 +211,16 @@ export const readWiringState = async (
   const reads = await Promise.all(
     targets.map(async (target) => ({ target, read: await readJsonConfig(target.path) })),
   );
+  const strips = reads.flatMap(({ target, read }) =>
+    read.ok && read.raw !== null ? [{ path: target.path, stripped: target.strip(read.value) }] : [],
+  );
   return {
-    wired: reads.flatMap(({ target, read }) => {
-      if (!read.ok || read.raw === null) {
-        return [];
-      }
-      const stripped = target.strip(read.value);
-      return stripped.changed ? [{ path: target.path, removed: stripped.removed }] : [];
-    }),
+    wired: strips.flatMap(({ path, stripped }) =>
+      stripped.changed ? [{ path, removed: stripped.removed }] : [],
+    ),
+    unrecognised: strips.flatMap(({ path, stripped }) =>
+      stripped.unrecognised.length > 0 ? [{ path, commands: stripped.unrecognised }] : [],
+    ),
     unreadable: reads.flatMap(({ target, read }) =>
       read.ok ? [] : [{ path: target.path, reason: read.reason }],
     ),

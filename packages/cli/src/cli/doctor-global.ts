@@ -28,6 +28,8 @@ import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts
 import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import type { Check } from "./doctor.ts";
+import { doubleWiringRemedy } from "./project-copy.ts";
+import type { ProjectCopy } from "./project-copy.ts";
 
 export interface GlobalWiring {
   readonly settingsPath: string;
@@ -146,15 +148,15 @@ const check = (level: Check["level"], name: string, detail: string): Check => ({
  * registered project-scoped where doctor runs (null = there is no repo
  * here at all — the parent-workspace shape).
  *
- * `projectSettingsIgnored` is the M11 fact, passed IN as data so this stays a
- * pure function: `true` = this repo's `.claude/settings.json` is gitignored,
- * `false` = it is not, `null` = git could not say (git/check-ignore.ts). Only
- * `true` changes anything — see the double-wiring branch.
+ * `projectCopy` is the project copy's facts (project-copy.ts) — whether its
+ * settings are gitignored, whether `.cursor/` holds crosscheck's entries —
+ * passed IN as data so this stays a pure function; `null` = not read (the
+ * caller reads them only when both sides are wired).
  */
 export const globalInstallChecks = (
   wiring: GlobalWiring,
   projectWired: boolean | null,
-  projectSettingsIgnored: boolean | null = null,
+  projectCopy: ProjectCopy | null = null,
 ): readonly Check[] => {
   const name = "global install";
   if (wiring.unreadable) {
@@ -167,19 +169,9 @@ export const globalInstallChecks = (
     ];
   }
   if (wiring.hooksInstalled && projectWired === true) {
-    // The remedy has to know which side actually reaches a teammate (trial
-    // finding M11). Where the project settings file is GITIGNORED — the
-    // monorepo shape — `crosscheck init --global --remove` is the exactly
-    // wrong instruction: it deletes the only wiring that covers worktrees and
-    // parent workspaces, and leaves a project install nobody else will ever
-    // receive. So that branch never names it. It names the PROJECT-side
-    // `crosscheck init --remove` instead: "delete the gitignored project copy"
-    // left a pilot teammate asking how (2026-10), and that command strips
-    // exactly the ignored copy — never .crosscheck.json, never the user level.
-    const remedy =
-      projectSettingsIgnored === true
-        ? "keep the global install and remove the gitignored project copy with `crosscheck init --remove` — .claude/settings.json is ignored in this repo, so it never reaches teammates and only the user-level install covers your worktrees"
-        : "remove one side: `crosscheck init --global --remove`, or strip the repo's .claude/settings.json entries";
+    // Worded from the project copy's facts (project-copy.ts says why each
+    // matters), so init's note at install time says the same sentence.
+    const remedy = doubleWiringRemedy(projectCopy);
     return [
       check(
         "WARN",

@@ -235,6 +235,8 @@ import {
   readProjectWiring,
 } from "./doctor-global.ts";
 import type { GlobalWiring } from "./doctor-global.ts";
+import { readProjectCopy } from "./project-copy.ts";
+import type { ProjectCopy } from "./project-copy.ts";
 import { getPilotReport } from "@crosscheck/connector-core/http/pilot.ts";
 import type {
   PilotFigure,
@@ -3320,6 +3322,18 @@ export const repoConnectedCheck = (
     : check("PASS", name, `${REPO_CONFIG_FILE} present and tracked`);
 };
 
+/**
+ * The project copy's facts (project-copy.ts) — read only when the
+ * double-wiring remedy will actually print, because they cost git spawns and
+ * Cursor file reads every other doctor run would pay for nothing.
+ */
+const projectCopyForRemedy = async (
+  root: string,
+  projectWired: boolean | null,
+  wiring: GlobalWiring,
+): Promise<ProjectCopy | null> =>
+  projectWired === true && wiring.hooksInstalled ? readProjectCopy(root) : null;
+
 // The tracked answer (and why it reads STDOUT, not an exit code) lives in
 // core's git/check-ignore.ts since `crosscheck init --remove` asks it too.
 const checkRepoConnected = async (
@@ -3478,6 +3492,12 @@ export const runDoctor = async (
   // would silence the one place it exists for.
   const globalWiring = await readGlobalWiring(env);
   if (config === null || identity === null) {
+    const projectWired =
+      identity === null
+        ? null
+        : await readProjectWiring(
+            join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
+          );
     // The MCP checks belong in THIS branch too, and leaving them out was the
     // first version's bug: a developer with no key would have been told the hub
     // was unconfigured and nothing at all about the tools, which is the exact
@@ -3488,11 +3508,10 @@ export const runDoctor = async (
       ...workspaceChecks,
       ...globalInstallChecks(
         globalWiring,
+        projectWired,
         identity === null
           ? null
-          : await readProjectWiring(
-              join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
-            ),
+          : await projectCopyForRemedy(identity.root, projectWired, globalWiring),
       ),
       check("FAIL", "hub reachable", "no hub configured"),
       ...(identity === null
@@ -3720,15 +3739,12 @@ export const runDoctor = async (
   const contradictedDeclarations = orderReport.ok
     ? orderReport.data.contradictedDeclarations
     : null;
-  // Whether the two PROJECT files this repo's advice keeps recommending can
-  // actually reach a teammate (trial finding M11). Resolved once, passed as
-  // data, so `globalInstallChecks` stays pure and testable.
+  // Whether the project .mcp.json this repo's advice keeps recommending can
+  // actually reach a teammate (trial finding M11), resolved once and passed as
+  // data. The settings file's verdict now travels inside the project copy's
+  // facts (project-copy.ts), read only when the double-wiring remedy prints.
   const ignoreVerdicts = {
     mcp: await isPathIgnored(identity.root, MCP_CONFIG_FILE),
-    projectSettings: await isPathIgnored(
-      identity.root,
-      `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE}`,
-    ),
   };
   const agentSettingsPaths = ((): readonly string[] => {
     const projectPath = join(
@@ -3773,7 +3789,11 @@ export const runDoctor = async (
     ...globalInstallChecks(
       globalWiring,
       settingsInspection.launcherCommand !== null,
-      ignoreVerdicts.projectSettings,
+      await projectCopyForRemedy(
+        identity.root,
+        settingsInspection.launcherCommand !== null,
+        globalWiring,
+      ),
     ),
     hubCheck,
     timeoutCheck(config.timeoutMs, owner),

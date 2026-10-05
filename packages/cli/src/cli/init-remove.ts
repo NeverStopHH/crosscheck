@@ -22,18 +22,13 @@
  * structure is deleted; any other changed file is rewritten atomically, its
  * original saved OUTSIDE the work tree and named (init-remove-plan.ts).
  */
-import { join, relative } from "node:path";
-
 import {
   EXIT_ABORTED,
   EXIT_FAIL,
   EXIT_OK,
 } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { repoConfigPath } from "@crosscheck/connector-core/config/repo-config.ts";
-import { isPathTracked } from "@crosscheck/connector-core/git/check-ignore.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
-import { readGlobalWiring } from "./doctor-global.ts";
 import {
   applyAll,
   planAll,
@@ -41,18 +36,11 @@ import {
   removalBackupDir,
   saveOriginals,
 } from "./init-remove-plan.ts";
-import type { ApplyOutcome, FilePlan } from "./init-remove-plan.ts";
-import { unreadableClause } from "./init-io.ts";
-import {
-  REMOVE_RESTART_LINE,
-  cursorTargets,
-  readWiringState,
-  removalTargets,
-} from "./wiring-removal.ts";
+import { afterRunLines, failureReport, teamChangeNote } from "./init-remove-report.ts";
+import { REMOVE_RESTART_LINE, removalTargets } from "./wiring-removal.ts";
 import {
   collisionSentence,
   findUserLevelCollision,
-  projectCursorDir,
   projectWiringFiles,
 } from "./wiring-scope.ts";
 import type { CliResult } from "./login.ts";
@@ -61,87 +49,6 @@ export interface ProjectRemoveOptions {
   /** Include `.cursor/hooks.json` + `.cursor/mcp.json`, as `init --cursor` did. */
   readonly cursor: boolean;
 }
-
-/**
- * A changed file git TRACKS is a change every teammate receives once it is
- * committed — the opposite of the ignored project copy this command was built
- * for. Said per file, with both ways out, because only the developer knows
- * whether the team's install should go.
- */
-const teamChangeNote = async (root: string, plan: FilePlan): Promise<readonly string[]> => {
-  if (plan.kind !== "strip" && plan.kind !== "delete") {
-    return [];
-  }
-  const path = relative(root, plan.path);
-  if ((await isPathTracked(root, path)) !== true) {
-    return [];
-  }
-  return [
-    `note: ${path} is tracked by git, so this changes a file your teammates share — commit it only if the whole team should stop loading crosscheck from this repo; otherwise put it back with \`git restore -- ${path}\``,
-  ];
-};
-
-/**
- * The Cursor pair a run WITHOUT --cursor leaves in place — said only when the
- * strip finds crosscheck's entries there (a file merely existing proves
- * nothing: it may hold only the team's own server), per file, with the flag
- * that removes them; a file that cannot be read is named as unknown.
- */
-const cursorLeftLines = async (root: string): Promise<readonly string[]> => {
-  const state = await readWiringState(await cursorTargets(await projectCursorDir(root)));
-  return [
-    ...(state.wired.length === 0
-      ? []
-      : [
-          `left crosscheck's cursor entries in place — ${state.wired
-            .map((file) => `${file.path} (${file.removed})`)
-            .join(", ")}: Cursor sessions here still load them; \`crosscheck init --remove --cursor\` removes them too`,
-        ]),
-    ...state.unreadable.map(
-      (file) =>
-        `${unreadableClause(file.path, file.reason)} — whether it still holds crosscheck's cursor entries is unknown`,
-    ),
-  ];
-};
-
-const userLevelLine = async (env: Env): Promise<string> => {
-  const wiring = await readGlobalWiring(env);
-  if (wiring.unreadable) {
-    return `left ${wiring.settingsPath} untouched — it is not valid json, so whether a user-level install still wires this repo cannot be read`;
-  }
-  if (wiring.hooksInstalled) {
-    return `left the user-level install in place (${wiring.settingsPath}) — it keeps wiring this repo and every other checkout on this machine`;
-  }
-  return "no user-level install either: sessions starting in this repo now load no crosscheck hooks — `crosscheck init --global` wires every checkout on this machine";
-};
-
-/** What this command never touches, said so nobody has to wonder. */
-const leftInPlaceLines = async (
-  root: string,
-  env: Env,
-  cursor: boolean,
-): Promise<readonly string[]> => {
-  const connection = repoConfigPath(root);
-  return [
-    ...((await Bun.file(connection).exists())
-      ? [`left ${connection} in place — the team's repo connection; init --remove never touches it`]
-      : []),
-    ...(cursor ? [] : await cursorLeftLines(root)),
-    await userLevelLine(env),
-  ];
-};
-
-/** A run that stopped part-way: what changed, where it stopped, what did not. */
-const failureReport = (outcome: ApplyOutcome & { readonly ok: false }): string =>
-  [
-    `stopped at ${outcome.failed.path}: ${outcome.error}`,
-    ...(outcome.applied.length === 0
-      ? ["nothing had been changed before that — the repo is as it was"]
-      : ["already changed before that:", ...outcome.applied.map((plan) => `  ${planLine(plan)}`)]),
-    `not changed: ${[outcome.failed, ...outcome.pending].map((plan) => plan.path).join(", ")}`,
-    "rerun crosscheck init --remove once that is fixed — the files already changed have nothing left to remove",
-    "",
-  ].join("\n");
 
 export const runProjectRemove = async (
   options: ProjectRemoveOptions,
@@ -181,7 +88,7 @@ export const runProjectRemove = async (
     stdout: [
       ...plans.map(planLine),
       ...notes.flat(),
-      ...(await leftInPlaceLines(root, env, options.cursor)),
+      ...(await afterRunLines(root, env, options.cursor, plans)),
       REMOVE_RESTART_LINE,
       "",
     ].join("\n"),
