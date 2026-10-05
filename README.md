@@ -64,6 +64,12 @@ curl -sX POST http://localhost:7100/api/developers/<developerId>/emails \
 # unlink with DELETE /api/developers/<developerId>/emails/alice@gmail.com
 ```
 
+`Claude <noreply@anthropic.com>` is not an alias to link: it is the identity
+Claude Code on the web commits under, from a cloud session crosscheck cannot
+capture and git does not say who started, so its absence line names that
+identity instead of asking for an account, and its commits still count as a
+coverage gap.
+
 The id is shown exactly once, above, and every admin route after that takes it
 as a path parameter — so if it is lost, list the team back out. This is the
 only surface that prints ids and linked addresses together, which is why it
