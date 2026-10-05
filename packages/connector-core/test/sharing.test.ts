@@ -159,6 +159,48 @@ describe("sharingFindings — what the workers booked", () => {
     expect(detailFor(value, "runner_failing")).toContain("Not logged in");
   });
 
+  test("intent runs that all failed beside a summarizer that answered are named as such", () => {
+    // The review's probe: 5 summarizer answers (refused, but answers), 1
+    // intent run that timed out — "every model run failed" would be false.
+    const value = input({
+      live: [
+        session({
+          stopTurnCount: 9,
+          summarizerFireCount: 6,
+          summarizerRejectCount: 5,
+          intentFireCount: 1,
+          intentFailCount: 1,
+          intentLastFailure: "timed out after 60 s",
+        }),
+      ],
+    });
+
+    const detail = detailFor(value, "runner_failing");
+    expect(detail).toContain(
+      "your agent derives no intent because every intent run that reported back failed (1 of 1; last: timed out after 60 s) — its summarizer runs answered 5 times, so the model is reachable",
+    );
+    expect(detail).not.toContain("every model run");
+  });
+
+  test("when every kind failed, 'every model run' is true and the counts say so", () => {
+    const value = input({
+      live: [
+        session({
+          summarizerFireCount: 2,
+          summarizerFailCount: 2,
+          summarizerLastFailure: "exit 1: Not logged in Please run /login",
+          intentFireCount: 1,
+          intentFailCount: 1,
+          intentLastFailure: "exit 1: Not logged in Please run /login",
+        }),
+      ],
+    });
+
+    expect(detailFor(value, "runner_failing")).toContain(
+      "every model run that reported back failed (summarizer: 2 of 2; intent: 1 of 1; last: exit 1: Not logged in Please run /login)",
+    );
+  });
+
   test("a runner that answered even once is not 'failing on every run'", () => {
     const value = input({
       live: [

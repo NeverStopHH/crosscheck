@@ -17554,8 +17554,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a runner that answered once is called failing on every run",
     file: `${CORE}/src/derive/sharing.ts`,
-    from: "  totals.fails > 0 && totals.answered === 0 && !isSpawnFailure(totals)\n",
-    to: "  totals.fails > 0 && !isSpawnFailure(totals)\n",
+    from: "  runs.failed > 0 &&\n  runs.answered === 0 &&\n",
+    to: "  runs.failed > 0 &&\n",
     test: `${CORE}/test/sharing.test.ts`,
     because: "one timeout among healthy NONE answers sends the developer to re-login for nothing",
   },
@@ -17911,6 +17911,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/derive-history.test.ts`,
     because: "an ended session's late runs are measured against doctor's clock and blamed on the host",
   },
+  {
+    label: "doctor says every model run failed while another kind of run answered",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  if (failing.length === reporting.length) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "one timed-out intent run is reported as a dead runner beside five summarizer answers",
+  },
+  {
+    label: "refused summarizer answers are not counted as answers",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "      (d) => d.summarizerNoneCount + d.summarizerDraftCount + d.summarizerRejectCount + d.summarizerUnreadableCount,",
+    to: "      (d) => d.summarizerNoneCount + d.summarizerDraftCount,",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a model that spoke five times is told to the developer as one that never answered",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18179,7 +18195,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 16
+ * PRINTS: packages/connector-core/test/sharing.test.ts 18
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2

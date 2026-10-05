@@ -149,7 +149,8 @@ interface Totals {
   readonly sessions: number;
   readonly turns: number;
   readonly fires: number;
-  readonly answered: number;
+  /** Per kind of run, so a claim like "every run failed" can be checked against it. */
+  readonly kinds: readonly KindRuns[];
   readonly drafts: number;
   readonly fails: number;
   readonly lastFailure: string | null;
@@ -164,6 +165,29 @@ interface Totals {
   /** Unanswered runs of LIVE sessions still inside the grace window. */
   readonly inFlight: number;
 }
+
+/**
+ * One kind of model run (summarizer or derived intent): how many reported an
+ * ANSWER — any answer the model gave, refused or unreadable ones included,
+ * because the model spoke — and how many reported a runner failure.
+ */
+interface KindRuns {
+  readonly kind: "summarizer" | "intent";
+  readonly answered: number;
+  readonly failed: number;
+  readonly lastFailure: string | null;
+}
+
+/** What a run of that kind would have produced: the line's verb for it. */
+const KIND_LOSS: Readonly<Record<KindRuns["kind"], string>> = {
+  summarizer: "drafts nothing",
+  intent: "derives no intent",
+};
+
+const KIND_SHORT: Readonly<Record<KindRuns["kind"], string>> = {
+  summarizer: "no drafts",
+  intent: "no intents",
+};
 
 const sumOf = (digests: readonly DeriveDigest[], pick: (digest: DeriveDigest) => number): number =>
   digests.reduce((sum, digest) => sum + pick(digest), 0);
@@ -208,6 +232,24 @@ const settlementOf = (
   };
 };
 
+const kindRunsOf = (digests: readonly DeriveDigest[]): readonly KindRuns[] => [
+  {
+    kind: "summarizer",
+    answered: sumOf(
+      digests,
+      (d) => d.summarizerNoneCount + d.summarizerDraftCount + d.summarizerRejectCount + d.summarizerUnreadableCount,
+    ),
+    failed: sumOf(digests, (d) => d.summarizerFailCount),
+    lastFailure: firstOf(digests.map((d) => d.summarizerLastFailure)),
+  },
+  {
+    kind: "intent",
+    answered: sumOf(digests, (d) => d.intentNoneCount + d.intentSetCount),
+    failed: sumOf(digests, (d) => d.intentFailCount),
+    lastFailure: firstOf(digests.map((d) => d.intentLastFailure)),
+  },
+];
+
 const totalsOf = (digests: readonly DeriveDigest[], now: Date): Totals => {
   const nones = sumOf(digests, (d) => d.summarizerNoneCount + d.intentNoneCount);
   const drafts = sumOf(digests, (d) => d.summarizerDraftCount);
@@ -218,7 +260,7 @@ const totalsOf = (digests: readonly DeriveDigest[], now: Date): Totals => {
     sessions: digests.length,
     turns: sumOf(digests, (d) => d.stopTurnCount),
     fires: sumOf(digests, (d) => d.summarizerFireCount + d.intentFireCount),
-    answered: nones + drafts + intentsSet,
+    kinds: kindRunsOf(digests),
     drafts,
     fails,
     lastFailure: firstOf(digests.flatMap((d) => [d.summarizerLastFailure, d.intentLastFailure])),
@@ -290,15 +332,52 @@ const cannotStartRule: Rule = (input, totals) =>
       )
     : null;
 
-const runnerFailingRule: Rule = (_input, totals) =>
-  totals.fails > 0 && totals.answered === 0 && !isSpawnFailure(totals)
-    ? finding(
-        "runner_failing",
-        `your agent shares nothing because every model run that reported back failed (${String(totals.fails)} failed; last: ${totals.lastFailure ?? "unknown"}); ` +
-          `fix: run \`${DEFAULT_BACKEND_BINARY} -p hi\` as this user to see the same error — usually a login (\`${DEFAULT_BACKEND_BINARY}\` once) or an outdated CLI — the summarizer runner check probes it`,
-        `no drafts or intents — every model run failed (last: ${totals.lastFailure ?? "unknown"})`,
-      )
-    : null;
+/**
+ * A kind that failed on every run it reported, with a reason on record — and
+ * not by failing to START, which cannot_start and no_backend own.
+ */
+const isAllFailing = (runs: KindRuns): boolean =>
+  runs.failed > 0 &&
+  runs.answered === 0 &&
+  runs.lastFailure !== null &&
+  !runs.lastFailure.startsWith(SPAWN_FAILURE_LABEL);
+
+const RUNNER_FIX =
+  `fix: run \`${DEFAULT_BACKEND_BINARY} -p hi\` as this user to see the same error — usually a login (\`${DEFAULT_BACKEND_BINARY}\` once), ` +
+  "an outdated CLI, or a deadline too short (CROSSCHECK_SUMMARIZER_TIMEOUT_MS) — the summarizer runner check probes it";
+
+/**
+ * "Every run failed" only where it is true: per KIND of run, against that
+ * kind's own answers. A summarizer whose answers were all refused still
+ * answered, so an intent run that timed out beside it is "every intent run
+ * failed", never "every model run failed".
+ */
+const runnerFailingRule: Rule = (_input, totals) => {
+  const failing = totals.kinds.filter(isAllFailing);
+  const first = failing[0];
+  if (first === undefined) {
+    return null;
+  }
+  const reporting = totals.kinds.filter((runs) => runs.answered + runs.failed > 0);
+  const counts = (runs: KindRuns): string => `${String(runs.failed)} of ${String(runs.failed)}`;
+  const last = first.lastFailure ?? "unknown";
+  if (failing.length === reporting.length) {
+    return finding(
+      "runner_failing",
+      "your agent shares nothing because every model run that reported back failed " +
+        `(${failing.map((runs) => `${runs.kind}: ${counts(runs)}`).join("; ")}; last: ${last}); ${RUNNER_FIX}`,
+      `no drafts or intents — every model run failed (last: ${last})`,
+    );
+  }
+  const working = reporting.filter((runs) => !isAllFailing(runs));
+  const answered = working.reduce((sum, runs) => sum + runs.answered, 0);
+  return finding(
+    "runner_failing",
+    `your agent ${KIND_LOSS[first.kind]} because every ${first.kind} run that reported back failed (${counts(first)}; last: ${last}) — ` +
+      `its ${working.map((runs) => runs.kind).join(" and ")} runs answered ${String(answered)} times, so the model is reachable; ${RUNNER_FIX}`,
+    `${KIND_SHORT[first.kind]} — every ${first.kind} run failed (last: ${last})`,
+  );
+};
 
 const workersSilentRule: Rule = (_input, totals) =>
   totals.settledFires >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.settledOutcomes === 0
