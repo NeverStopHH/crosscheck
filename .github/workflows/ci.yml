@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1413
+    # PRINTS: 1415
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -181,6 +181,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/index.ts 3
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-remove.ts 10
+    # PRINTS: packages/cli/src/cli/init.ts 2
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
@@ -545,6 +546,7 @@ jobs:
     # PRINTS: index.ts 3
     # PRINTS: init-global.ts 2
     # PRINTS: init-remove.ts 10
+    # PRINTS: init.ts 2
     # PRINTS: injector.ts 5
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1

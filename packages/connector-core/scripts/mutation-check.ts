@@ -16384,6 +16384,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "M11: the only wiring covering worktrees is removed, and a project copy nobody else receives is kept",
   },
+  {
+    label: "init's double-wiring note reads the ignore verdict backwards",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "settingsIgnored === true",
+    to: "settingsIgnored !== true",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "the pilot's wrong advice at install time: an ignored copy is told to remove the global side, a shared one the reverse",
+  },
+  {
+    label: "init's ignored double-wiring note names no command that removes the copy",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "with \\`crosscheck init --remove\\`",
+    to: "by hand",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "the pilot's 'how to fix?' again, one command earlier than doctor",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16456,7 +16472,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/gitignored-advice.test.ts 3
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6

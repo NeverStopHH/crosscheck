@@ -245,4 +245,32 @@ describe("init's advice under a .gitignore", () => {
     // Assert
     expect(result.stdout).toContain("so teammates get the mcp tools on git pull");
   });
+
+  test("the double-wiring note names crosscheck init --remove, never --global --remove, when the project copy is ignored", async () => {
+    // Arrange: the pilot's shape — an ignored project copy on a machine that
+    // already has the user-level install
+    const { repo, env } = await fixture(true);
+
+    // Act
+    const result = await runCli(["init", "--command-prefix", "crosscheck"], env, repo);
+
+    // Assert: the same remedy doctor gives, never the one that removes the
+    // only side covering this repo's worktrees
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("wired twice");
+    expect(result.stdout).toContain("`crosscheck init --remove`");
+    expect(result.stdout).not.toContain("crosscheck init --global --remove");
+  });
+
+  test("the double-wiring note keeps --global --remove when the project copy is shared", async () => {
+    // Arrange
+    const { repo, env } = await fixture(false);
+
+    // Act
+    const result = await runCli(["init", "--command-prefix", "crosscheck"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("wired twice");
+    expect(result.stdout).toContain("crosscheck init --global --remove");
+  });
 });
