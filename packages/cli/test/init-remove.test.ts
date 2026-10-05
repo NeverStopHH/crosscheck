@@ -351,6 +351,28 @@ describe("crosscheck init --remove and Cursor", () => {
   });
 });
 
+describe("crosscheck init --remove and install-only flags", () => {
+  test.each([
+    [["--hub", "https://other.example.com"], "--hub"],
+    [["--command-prefix", "crosscheck"], "--command-prefix"],
+    [["--force-statusline"], "--force-statusline"],
+    [["--global", "--force-statusline"], "--force-statusline"],
+  ])("refuses %p with a usage error instead of ignoring %s, and removes nothing", async (extra, flag) => {
+    // Arrange: an installed repo, so a removal would show
+    const { repo, env, settingsPath } = await fixture("flag-refused");
+    expect((await runCli(INIT_ARGS, env, repo)).exitCode).toBe(0);
+    const settingsBefore = await read(settingsPath);
+
+    // Act
+    const result = await runCli(["init", "--remove", ...extra], env, repo);
+
+    // Assert
+    expect(result.exitCode).toBe(64);
+    expect(result.stdout).toContain(`${flag} does not apply to --remove`);
+    expect(await read(settingsPath)).toBe(settingsBefore);
+  });
+});
+
 describe("crosscheck init --remove in the help", () => {
   test("init's usage and the top-level usage both list the project-side form", async () => {
     // Act

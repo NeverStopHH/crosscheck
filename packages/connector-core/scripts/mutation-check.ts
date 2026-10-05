@@ -16561,6 +16561,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "a copy only one developer has is treated as the team's install, and its owner keeps the double wiring",
   },
+  {
+    label: "init --remove silently ignores an install-only flag",
+    file: `${CLI}/src/cli/index.ts`,
+    from: "      if (refusedFlag !== undefined) {",
+    to: "      if (false) {",
+    test: `${CLI}/test/init-remove.test.ts`,
+    because: "`init --remove --hub x` removes the wiring and reads as if it had done something with the hub",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16637,7 +16645,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6
- * PRINTS: packages/cli/test/init-remove.test.ts 16
+ * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
