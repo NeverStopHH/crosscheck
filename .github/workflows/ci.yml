@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1551
+    # PRINTS: 1569
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -177,6 +177,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
+    # PRINTS: packages/cli/src/cli/doctor-sharing.ts 2
     # PRINTS: packages/cli/src/cli/doctor.ts 54
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
@@ -197,7 +198,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pin.ts 9
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
-    # PRINTS: packages/cli/src/cli/status.ts 9
+    # PRINTS: packages/cli/src/cli/status.ts 10
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
@@ -269,6 +270,7 @@ jobs:
     # PRINTS: derive/ghost/worker.ts 5
     # PRINTS: derive/intent/prompt.ts 1
     # PRINTS: derive/intent/worker.ts 2
+    # PRINTS: derive/sharing.ts 13
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 2
@@ -281,7 +283,7 @@ jobs:
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/draft-nudge.ts 6
-    # PRINTS: flows/end-session.ts 3
+    # PRINTS: flows/end-session.ts 4
     # PRINTS: flows/heartbeat.ts 1
     # PRINTS: flows/hint.ts 5
     # PRINTS: flows/register-session.ts 4
@@ -342,6 +344,7 @@ jobs:
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
+    # PRINTS: state/derive-history.ts 1
     # PRINTS: state/git-lane-cost.ts 2
     # PRINTS: state/loss-ledger.ts 10
     # PRINTS: state/loss-refusals.ts 1
@@ -511,6 +514,7 @@ jobs:
     # PRINTS: declarations.ts 5
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
+    # PRINTS: derive-history.ts 1
     # PRINTS: derive.ts 2
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
@@ -523,11 +527,12 @@ jobs:
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
+    # PRINTS: doctor-sharing.ts 2
     # PRINTS: doctor.ts 70
     # PRINTS: draft-nudge.ts 8
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
-    # PRINTS: end-session.ts 3
+    # PRINTS: end-session.ts 4
     # PRINTS: engine.ts 18
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
@@ -670,6 +675,7 @@ jobs:
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
+    # PRINTS: sharing.ts 13
     # PRINTS: skeleton-identity.ts 8
     # PRINTS: slice.ts 2
     # PRINTS: solved-counts.ts 1
@@ -679,7 +685,7 @@ jobs:
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stats.ts 1
-    # PRINTS: status.ts 9
+    # PRINTS: status.ts 10
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
     # PRINTS: suspect-render.ts 3

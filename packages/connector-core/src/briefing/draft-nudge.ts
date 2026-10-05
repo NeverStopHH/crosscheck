@@ -66,7 +66,8 @@ const kindSummary = (due: readonly DraftEntry[]): string => {
   ].join(", ");
 };
 
-const olderThanHorizon = (due: readonly DraftEntry[], now: Date): number =>
+/** How many are past DRAFT_RETENTION_HORIZON_DAYS — doctor's drafts line counts the same. */
+export const countPastRetentionHorizon = (due: readonly DraftEntry[], now: Date): number =>
   due.filter((entry) => {
     const created = Date.parse(entry.createdAt);
     return !Number.isNaN(created) && now.getTime() - created > DRAFT_RETENTION_HORIZON_DAYS * MS_PER_DAY;
@@ -86,7 +87,7 @@ const headerLine = (input: DraftNudgeInput): string => {
     `crosscheck: ${amount} of your own auto-captured draft claims ${verb} waited over ` +
     `${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h for review (${kindSummary(input.due)}). ` +
     "No teammate is shown a draft until it is confirmed." +
-    retentionSentence(olderThanHorizon(input.due, input.now))
+    retentionSentence(countPastRetentionHorizon(input.due, input.now))
   );
 };
 

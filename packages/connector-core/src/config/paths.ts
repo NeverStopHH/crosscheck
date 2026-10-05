@@ -248,6 +248,14 @@ export const conferenceCostPath = (home: string, key: string): string =>
 export const conferenceCostLockPath = (home: string, key: string): string =>
   `${conferenceCostPath(home, key)}.lock`;
 
+/** Ended sessions' derive counters for this repo+hub (state/derive-history.ts). */
+export const deriveHistoryPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-derive-history.json`);
+
+/** Its lock: two sessions ending at once must not lose a digest between them. */
+export const deriveHistoryLockPath = (home: string, key: string): string =>
+  `${deriveHistoryPath(home, key)}.lock`;
+
 /**
  * The background landing fetch's record for ONE CLONE
  * (landed-changes/fetch-state.ts). Keyed by the clone, not by repo+hub: what

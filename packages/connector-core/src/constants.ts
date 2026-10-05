@@ -1436,6 +1436,33 @@ export const DRAFT_RETENTION_HORIZON_DAYS = 30;
  */
 export const DRAFT_LISTING_CAP = 20;
 /**
+ * WHY AN AGENT SHARES NOTHING (derive/sharing.ts) — doctor's `sharing` lines.
+ *
+ * Finished turns with not one summarizer fire before doctor says the Tier-1
+ * gate never saw a conclusion. Below it a short session is simply short; at
+ * it, the agent did a day's worth of turns and none of them read as a
+ * finding, which is the one zero that needs no broken part to explain it.
+ */
+export const DOCTOR_SHARING_QUIET_TURNS_WARN = 20;
+/**
+ * Model runs (summarizer and intent together) that booked no outcome at all
+ * before doctor calls the worker silent. Two, like the intent line's own
+ * threshold: an intent fires once per session, so one silent run is a single
+ * slow laptop and two is a worker that does not report back.
+ */
+export const DOCTOR_SHARING_SILENT_FIRES_WARN = 2;
+/**
+ * Sessions with not one derived-intent fire before doctor says no session
+ * opened with a substantive prompt. Two, because one session is one prompt.
+ */
+export const DOCTOR_SHARING_QUIET_INTENT_SESSIONS_WARN = 2;
+/**
+ * Ended sessions whose derive counters the per-repo history keeps
+ * (state/derive-history.ts) — the evidence doctor reads once the sessions
+ * that could answer are gone. Newest kept; the total folded is counted.
+ */
+export const DERIVE_HISTORY_MAX_SESSIONS = 20;
+/**
  * Most session state files one scan reads (status/doctor, bounded).
  *
  * The cap is spent NEWEST FIRST — the readers stat and sort by mtime before

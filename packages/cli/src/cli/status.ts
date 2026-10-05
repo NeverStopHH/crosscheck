@@ -62,6 +62,7 @@ import {
 import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
+import { readSharingInput, sharingStatusLine } from "./doctor-sharing.ts";
 import {
   formatConferenceCost,
   readConferenceCost,
@@ -411,6 +412,17 @@ export const runStatus = async (
   const announcements = await getPasskeyAnnouncements(hubCtx);
   const passkeyLines = passkeyStatusLines(announcementAnswerOf(announcements), config.hubUrl, now);
   const privacy = await getPrivacySettings(hubCtx);
+  // "Why does my agent share nothing?" in one line — the same causes doctor
+  // prints in full (doctor-sharing.ts), for one more GET and one small file.
+  const sharing = await readSharingInput({
+    env,
+    hub: hubCtx,
+    repoId: identity.repoId,
+    home: config.home,
+    key,
+    liveStates: liveStates.states,
+    now,
+  });
   const privacyLines = privacy.ok
     ? [
         presenceStateLine(privacy.data.presenceOptOut),
@@ -515,6 +527,7 @@ export const runStatus = async (
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,
+      sharingStatusLine(sharing),
       `git evidence lane: ${formatGitLaneCost(gitLaneCost)}`,
       // Beside the lane it is measured with: both answer "what can this
       // machine still tell you", and both fail by going quiet.

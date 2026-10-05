@@ -17511,6 +17511,150 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/draft-nudge-inject.test.ts`,
     because: "a --no-inject user's drafts rot with no line naming the mode as the cause",
   },
+  {
+    label: "doctor stops naming CROSSCHECK_DISABLED as why nothing is shared",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  isDisabled(input.env)\n    ? finding(",
+    to: "  false\n    ? finding(",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a developer whose every hook exits on an off switch is told nothing is wrong",
+  },
+  {
+    label: "doctor stops naming a leaked worker marker as why nothing is shared",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  isSummarizerChild(input.env)\n    ? finding(",
+    to: "  false\n    ? finding(",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "every hook stays silent under CROSSCHECK_SUMMARIZER_CHILD and no line says it leaked",
+  },
+  {
+    label: "doctor stops naming a missing model backend as why nothing is shared",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  resolveDeriveBackend(input.env).kind === \"absent\"\n    ? finding(",
+    to: "  false\n    ? finding(",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a machine with no claude and no override derives nothing, and the sharing verdict calls it healthy",
+  },
+  {
+    label: "a hook that could not start the model goes unexplained",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  totals.lastFailure?.startsWith(SPAWN_FAILURE_LABEL) === true;",
+    to: "  false;",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the editor's PATH hides claude from every hook while doctor's shell finds it, and nothing names the editor",
+  },
+  {
+    label: "a machine with no backend is sent to fix the editor's PATH",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  isSpawnFailure(totals) && resolveDeriveBackend(input.env).kind !== \"absent\"\n",
+    to: "  isSpawnFailure(totals)\n",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the line claims this shell finds claude when it does not, and points at the wrong remedy",
+  },
+  {
+    label: "a runner that answered once is called failing on every run",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  totals.fails > 0 && totals.answered === 0 && !isSpawnFailure(totals)\n",
+    to: "  totals.fails > 0 && !isSpawnFailure(totals)\n",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "one timeout among healthy NONE answers sends the developer to re-login for nothing",
+  },
+  {
+    label: "model runs that never reported back read as healthy",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  totals.fires >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.outcomes === 0\n",
+    to: "  false\n",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a worker that dies with its hook is the finding-#14 silence again, now on the line built to end it",
+  },
+  {
+    label: "turns with no transcript read as healthy",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  totals.noSlice > 0 && totals.drafts === 0\n",
+    to: "  false\n",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a Cursor with transcripts off drafts nothing and nothing tells its developer to turn them on",
+  },
+  {
+    label: "answers that were all refused read as healthy",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  totals.refused >= DOCTOR_SUMMARIZER_REJECTED_WARN && totals.drafts === 0\n",
+    to: "  false\n",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the model speaks, the quota is spent, every answer is dropped, and the verdict says nothing stops sharing",
+  },
+  {
+    label: "a short session is called a quiet gate",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  totals.turns >= DOCTOR_SHARING_QUIET_TURNS_WARN &&",
+    to: "  totals.turns >= 0 &&",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "every three-turn session WARNs that no conclusion was ever reached",
+  },
+  {
+    label: "sessions that never opened with a substantive prompt read as healthy",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  totals.sessions >= DOCTOR_SHARING_QUIET_INTENT_SESSIONS_WARN && totals.intentFires === 0\n",
+    to: "  false\n",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "contexts carry no intent and nothing says it is the prompts, not the install",
+  },
+  {
+    label: "drafts nobody reviewed read as shared",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  if (drafts === null || drafts.due === 0) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "twenty unreviewed drafts are invisible to the team and doctor calls the agent's sharing fine",
+  },
+  {
+    label: "doctor's drafts line hides drafts past the retention horizon",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "    drafts.pastHorizon === 0\n      ? \"\"",
+    to: "    true\n      ? \"\"",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "month-old drafts are counted like fresh ones and nothing says crosscheck keeps them",
+  },
+  {
+    label: "SessionEnd forgets why nothing was drafted",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  await foldDeriveHistory(input.home, input.repoKey, input.hostSessionKey);\n",
+    to: "",
+    test: `${CORE}/test/derive-history.test.ts`,
+    because: "a doctor run after the editor closed reads no live session and explains nothing",
+  },
+  {
+    label: "the derive history grows without bound",
+    file: `${CORE}/src/state/derive-history.ts`,
+    from: "  sessions: [digest, ...history.sessions].slice(0, DERIVE_HISTORY_MAX_SESSIONS),",
+    to: "  sessions: [digest, ...history.sessions],",
+    test: `${CORE}/test/derive-history.test.ts`,
+    because: "one state file gains a digest per session forever and every doctor run reads all of them",
+  },
+  {
+    label: "doctor reads only live sessions for the sharing verdict",
+    file: `${CLI}/src/cli/doctor-sharing.ts`,
+    from: "    ended: history.sessions,",
+    to: "    ended: [],",
+    test: `${CLI}/test/doctor-sharing.test.ts`,
+    because: "the answer to 'why does my agent share nothing' vanishes the moment the session closes",
+  },
+  {
+    label: "doctor never prints why the agent shares nothing",
+    file: `${CLI}/src/cli/doctor-sharing.ts`,
+    from: "    : findings.map((found) => ({ level: \"WARN\", name: NAME, detail: found.detail }));",
+    to: "    : [];",
+    test: `${CLI}/test/doctor-sharing.test.ts`,
+    because: "every cause is found and none is printed",
+  },
+  {
+    label: "status drops the sharing line",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      sharingStatusLine(sharing),\n",
+    to: "",
+    test: `${CLI}/test/doctor-sharing.test.ts`,
+    because: "the one-line answer is fetched and never shown",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17581,6 +17725,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 6
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
+ * PRINTS: packages/cli/test/doctor-sharing.test.ts 3
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
@@ -17713,6 +17858,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
+ * PRINTS: packages/connector-core/test/derive-history.test.ts 2
  * PRINTS: packages/connector-core/test/draft-nudge.test.ts 9
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
@@ -17775,6 +17921,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
+ * PRINTS: packages/connector-core/test/sharing.test.ts 13
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
