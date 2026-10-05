@@ -160,7 +160,6 @@ import {
   orphanSentence,
   orphanedPins,
   pinCoverageSentence,
-  pinDenylistPatterns,
   shadowSentence,
   shadowedPinPaths,
 } from "./pin-observability.ts";
@@ -3650,9 +3649,9 @@ export const runDoctor = async (
       pinRegistry,
       // The EFFECTIVE list, defaults included: the shadowing question is
       // about what actually suppresses capture, not about what this
-      // developer added on top of it — plus the shipped defaults a teammate
-      // who kept them applies, the same list the pin door refuses on.
-      pinDenylistPatterns(resolveDenylist(config.denylist ?? undefined)),
+      // developer added on top of it. The shipped defaults a teammate who
+      // kept them applies are added inside, the same as at the pin door.
+      resolveDenylist(config.denylist ?? undefined),
       now,
     ),
     verdictLegalityCheck,

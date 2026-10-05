@@ -56,7 +56,6 @@ import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import {
   DEFAULT_DENYLIST,
-  isDenied,
   matchesGlob,
 } from "@crosscheck/connector-core/capture/denylist.ts";
 import { MAX_PIN_PATH_CHARS } from "@crosscheck/schema";
@@ -130,8 +129,20 @@ export const orphanSentence = (
 
 export interface PinShadow {
   readonly path: string;
+  /** The rule named: this machine's first match, else the shipped list's. */
   readonly pattern: string;
+  /** This machine's capture excludes it too; false = only machines that keep the shipped list do. */
+  readonly here: boolean;
+  /**
+   * The first shipped rule that matches, whether or not a local one does:
+   * every teammate who kept the defaults applies it, so no config on this
+   * machine can lift the exclusion. Null = only this machine's list excludes it.
+   */
+  readonly shippedPattern: string | null;
 }
+
+/** How a rule that binds only OTHER machines is named, after the rule itself. */
+const ELSEWHERE = "on machines that keep the shipped denylist";
 
 /**
  * Every LIVE pinned path the effective denylist suppresses, with the pattern
@@ -159,40 +170,51 @@ export const shadowedPinPaths = (
   );
 
 /**
- * THE LIST A PIN IS JUDGED AGAINST: this machine's capture list plus the
- * shipped default. The denylist is per-machine config, so a developer whose
- * config REPLACES the defaults still has teammates whose capture applies
- * them — a pin over `yarn.lock` would be blind on every one of those machines
- * while reading as a guard here. Local rules come first, so a file both lists
- * exclude is named by the rule this developer can change.
- */
-export const pinDenylistPatterns = (local: readonly string[]): readonly string[] => [
-  ...new Set([...local, ...DEFAULT_DENYLIST]),
-];
-
-/**
- * Each of `paths` the effective denylist excludes, with the FIRST rule that
- * matches it. One question with three askers — the status/doctor shadow line
- * over the registry, and the pin door and the sweep over paths about to be
- * pinned (loss-accounting §10 item 4) — so the three cannot disagree about
- * which file capture never records. `patterns` is the caller's
- * `pinDenylistPatterns` answer.
+ * Each of `paths` a pin cannot guard, with the rule that excludes it. One
+ * question with four askers — the pin door and the sweep over paths about to
+ * be pinned, the status and doctor shadow line over the registry
+ * (loss-accounting §10 item 4) — so they cannot disagree.
+ *
+ * TWO LISTS, because the denylist is per-machine config: `local` is the
+ * caller's `resolveDenylist` answer, what capture HERE applies, and the
+ * shipped defaults are what every teammate who kept them applies. A
+ * developer whose config replaces the defaults still has those teammates, and
+ * on each of their machines a pin over `yarn.lock` is blind while it reads
+ * as a guard. The shipped half is decided by a MATCH, never by comparing rule
+ * text, so a local `*.lock` backed by the shipped `**\/*.lock` is still known
+ * to be unliftable.
  */
 export const deniedPinPaths = (
   paths: readonly string[],
-  patterns: readonly string[],
+  local: readonly string[],
 ): readonly PinShadow[] =>
   paths.flatMap((path) => {
-    if (!isDenied(path, patterns)) {
-      return [];
-    }
-    const pattern = patterns.find((candidate) => matchesGlob(candidate, path));
-    return [{ path, pattern: pattern ?? "(unknown)" }];
+    const localPattern = local.find((candidate) => matchesGlob(candidate, path));
+    const shippedPattern = DEFAULT_DENYLIST.find((candidate) => matchesGlob(candidate, path));
+    const pattern = localPattern ?? shippedPattern;
+    return pattern === undefined
+      ? []
+      : [{ path, pattern, here: localPattern !== undefined, shippedPattern: shippedPattern ?? null }];
   });
 
 /** Why a pin over an excluded file is refused, in one sentence (loss-accounting §10 item 4). */
 export const DENYLIST_REFUSAL_WHY =
   "no session's touch of these files is ever recorded, so a guard over them could never say who broke them";
+
+/** The same reason for a file THIS machine records and the shipped list does not. */
+export const DENYLIST_REFUSAL_WHY_ELSEWHERE =
+  "this machine records touching them, but no machine that keeps the shipped denylist does, so a guard over them could never say who broke them";
+
+const excludedBy = (shadow: { readonly here: boolean; readonly pattern: string }): string =>
+  shadow.here
+    ? `excluded by ${token(shadow.pattern)}`
+    : `excluded by ${token(shadow.pattern)} ${ELSEWHERE}`;
+
+/** The reason line(s) true of `shadows`: one per kind present, never one that is false of them. */
+const refusalWhyLines = (shadows: readonly { readonly here: boolean }[]): readonly string[] => [
+  ...(shadows.some((shadow) => shadow.here) ? [DENYLIST_REFUSAL_WHY] : []),
+  ...(shadows.some((shadow) => !shadow.here) ? [DENYLIST_REFUSAL_WHY_ELSEWHERE] : []),
+];
 
 /**
  * WHAT THE PIN DOOR PRINTS when the denylist excludes a file (loss-accounting
@@ -203,28 +225,24 @@ export const DENYLIST_REFUSAL_WHY =
  */
 export const pinDenylistRefusal = (denied: readonly PinShadow[]): string => {
   const shipped = [
-    ...new Set(
-      denied
-        .map((shadow) => shadow.pattern)
-        .filter((pattern) => DEFAULT_DENYLIST.includes(pattern)),
-    ),
+    ...new Set(denied.flatMap((shadow) => (shadow.shippedPattern === null ? [] : [shadow.shippedPattern]))),
   ];
   // A shipped rule binds every teammate who kept the defaults, so no config
-  // on this machine can lift it — offering that remedy would send someone to
-  // edit a file that changes nothing.
-  const onlyShipped = shipped.length === new Set(denied.map((shadow) => shadow.pattern)).size;
+  // on this machine can lift it — the config remedy is offered only when some
+  // file is excluded by this machine's list ALONE, the one case it can fix.
+  const configCanLift = denied.some((shadow) => shadow.shippedPattern === null);
   return [
     `nothing was pinned — the hot-file denylist excludes ${String(denied.length)} of these file(s) from capture:`,
-    ...denied.map((shadow) => `  ${token(shadow.path)} (excluded by ${token(shadow.pattern)})`),
-    `${DENYLIST_REFUSAL_WHY}.`,
+    ...denied.map((shadow) => `  ${token(shadow.path)} (${excludedBy(shadow)})`),
+    ...refusalWhyLines(denied).map((why) => `${why}.`),
     ...(shipped.length === 0
       ? []
       : [
           `${shipped.map(token).join(", ")} ${shipped.length === 1 ? "is" : "are"} on crosscheck's shipped default list, which every teammate who kept the defaults applies — changing this machine's config does not lift ${shipped.length === 1 ? "it" : "them"}.`,
         ]),
-    onlyShipped
-      ? "Pin the files they are made from instead."
-      : "Pin the files they are made from instead, or change the denylist in the crosscheck config.",
+    configCanLift
+      ? "Pin the files they are made from instead, or change the denylist in the crosscheck config."
+      : "Pin the files they are made from instead.",
     "",
   ].join("\n");
 };
@@ -234,6 +252,8 @@ export interface DeniedMove {
   readonly path: string;
   readonly newPath: string;
   readonly pattern: string;
+  /** As on PinShadow: false = only machines that keep the shipped list exclude the new path. */
+  readonly here: boolean;
 }
 
 /**
@@ -247,10 +267,8 @@ export const sweepDenylistLines = (moves: readonly DeniedMove[]): readonly strin
     ? []
     : [
         `${String(moves.length)} renamed path(s) recorded as missing — git followed each into a file the hot-file denylist excludes from capture:`,
-        ...moves.map(
-          (move) => `  ${token(move.path)} moved to ${token(move.newPath)} (excluded by ${token(move.pattern)})`,
-        ),
-        `${DENYLIST_REFUSAL_WHY}. Re-pin the surface on files capture records, or retire the pin: crosscheck pin --broke with the pin id.`,
+        ...moves.map((move) => `  ${token(move.path)} moved to ${token(move.newPath)} (${excludedBy(move)})`),
+        `${refusalWhyLines(moves).join("; ")}. Re-pin the surface on files capture records, or retire the pin: crosscheck pin --broke with the pin id.`,
       ];
 
 /**
@@ -259,6 +277,15 @@ export const sweepDenylistLines = (moves: readonly DeniedMove[]): readonly strin
  * rather than only that it happened, because the consequence is the part a
  * reader cannot derive from the fact.
  */
+const namedShadows = (shadows: readonly PinShadow[]): string => {
+  const named = shadows
+    .slice(0, MAX_NAMED_SHADOWS)
+    .map((shadow) => `${token(shadow.path)} (${token(shadow.pattern)})`)
+    .join(", ");
+  const rest = shadows.length - Math.min(shadows.length, MAX_NAMED_SHADOWS);
+  return `${named}${rest > 0 ? ` … and ${String(rest)} more` : ""}`;
+};
+
 export const shadowSentence = (
   shadows: readonly PinShadow[],
   patternCount: number,
@@ -266,16 +293,25 @@ export const shadowSentence = (
   if (shadows.length === 0) {
     return `no pinned file is shadowed by the ${String(patternCount)} effective hot-file pattern(s)`;
   }
-  const named = shadows
-    .slice(0, MAX_NAMED_SHADOWS)
-    .map((shadow) => `${token(shadow.path)} (${token(shadow.pattern)})`)
-    .join(", ");
-  const rest = shadows.length - Math.min(shadows.length, MAX_NAMED_SHADOWS);
-  return (
-    `${String(shadows.length)} pinned file(s) are never captured — the hot-file denylist matches them: ` +
-    `${named}${rest > 0 ? ` … and ${String(rest)} more` : ""} — ` +
-    'no session records touching them, so crosscheck trace answers "no session touched this surface" no matter who did'
-  );
+  const here = shadows.filter((shadow) => shadow.here);
+  // A file THIS machine records is not "never captured": said as what it is,
+  // a blind spot on every machine that kept the shipped list.
+  const elsewhere = shadows.filter((shadow) => !shadow.here);
+  return [
+    ...(here.length === 0
+      ? []
+      : [
+          `${String(here.length)} pinned file(s) are never captured — the hot-file denylist matches them: ` +
+            `${namedShadows(here)} — ` +
+            'no session records touching them, so crosscheck trace answers "no session touched this surface" no matter who did',
+        ]),
+    ...(elsewhere.length === 0
+      ? []
+      : [
+          `${String(elsewhere.length)} pinned file(s) are never captured ${ELSEWHERE}: ${namedShadows(elsewhere)} — ` +
+            "this machine records touching them, but crosscheck trace cannot name a session on those machines",
+        ]),
+  ].join("; ");
 };
 
 /**

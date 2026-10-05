@@ -53,12 +53,7 @@ import {
 } from "@crosscheck/schema";
 import { postPilotMark } from "@crosscheck/connector-core/http/pilot.ts";
 import { hubSaid, noSuchPinLine, renderPinList, renderWaiverRequested } from "./pin-render.ts";
-import {
-  deniedPinPaths,
-  pinDenylistPatterns,
-  pinDenylistRefusal,
-  sweepDenylistLines,
-} from "./pin-observability.ts";
+import { deniedPinPaths, pinDenylistRefusal, sweepDenylistLines } from "./pin-observability.ts";
 import type { DeniedMove } from "./pin-observability.ts";
 import type { PinPathOutcome } from "@crosscheck/connector-core/git/pin-sweep.ts";
 import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
@@ -127,10 +122,10 @@ interface Resolved {
   readonly repoRoot: string;
   readonly baseCommit: string;
   /**
-   * The denylist a pin is judged against (loss-accounting §10 item 4): the
-   * stored config's `denylist` through the same `resolveDenylist` every
-   * capture flow calls, plus the shipped defaults every teammate who kept
-   * them applies (`pinDenylistPatterns`) — never a second copy of the rule.
+   * The denylist THIS MACHINE'S CAPTURE applies (loss-accounting §10 item 4):
+   * the stored config's `denylist` through the same `resolveDenylist` every
+   * capture flow calls — never a second copy of the rule. `deniedPinPaths`
+   * adds the shipped defaults every teammate who kept them applies.
    */
   readonly patterns: readonly string[];
 }
@@ -159,7 +154,7 @@ const resolve = async (
     repoId: identity.repoId,
     repoRoot: identity.root,
     baseCommit: identity.baseCommit,
-    patterns: pinDenylistPatterns(resolveDenylist(config.denylist ?? undefined)),
+    patterns: resolveDenylist(config.denylist ?? undefined),
   };
 };
 
@@ -376,7 +371,10 @@ const sweepUpdateFor = (
   const rule = moved === null ? undefined : deniedPinPaths([moved], patterns)[0];
   return rule === undefined
     ? { update: { pinId, path, newPath: outcome.resolved }, denied: null }
-    : { update: { pinId, path, newPath: null }, denied: { path, newPath: rule.path, pattern: rule.pattern } };
+    : {
+        update: { pinId, path, newPath: null },
+        denied: { path, newPath: rule.path, pattern: rule.pattern, here: rule.here },
+      };
 };
 
 const runSweep = async (resolved: Resolved): Promise<CliResult> => {

@@ -45,6 +45,9 @@ const SECOND_TO = "src/generated/renderer.ts";
 const WHY = "no session's touch of these files is ever recorded, so a guard over them could never say who broke them";
 const CONFIG_REMEDY = "or change the denylist in the crosscheck config";
 const SHIPPED_NOTE = "on crosscheck's shipped default list";
+/** How a rule is named when this machine records the file and the shipped list does not. */
+const ELSEWHERE = "on machines that keep the shipped denylist";
+const WHY_ELSEWHERE = "this machine records touching them, but no machine that keeps the shipped denylist does";
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -183,13 +186,36 @@ describe("the pin door refuses a file no capture can observe (loss-accounting §
     // Act
     const refused = await pin(home, [GENERATED]);
 
-    // Assert: refused by the shipped rule, and no config remedy is offered,
-    // because no config on this machine can change what teammates capture
+    // Assert: refused by the shipped rule, named as the rule of OTHER
+    // machines — this one records the file — and no config remedy is
+    // offered, because no config on this machine changes what teammates capture
     expect(refused.exitCode).toBe(EXIT_USAGE);
-    expect(refused.stdout).toContain(`${GENERATED} (excluded by ${GENERATED_RULE})`);
+    expect(refused.stdout).toContain(`${GENERATED} (excluded by ${GENERATED_RULE} ${ELSEWHERE})`);
+    expect(refused.stdout).toContain(WHY_ELSEWHERE);
+    expect(refused.stdout).not.toContain(WHY);
     expect(refused.stdout).toContain(SHIPPED_NOTE);
     expect(refused.stdout).not.toContain(CONFIG_REMEDY);
     expect(await pinCount()).toBe(before);
+  });
+
+  test("a local rule that a shipped rule backs up offers no config remedy", async () => {
+    // Arrange: this machine's own rule names the lockfile, and so does the
+    // shipped list — dropping the local rule would change capture here and
+    // the pin would still be refused
+    // (spelled differently from the shipped `package-lock.json`, so only a
+    // MATCH against the shipped list can tell — never string equality)
+    const localRule = "**/package-lock.json";
+    const home = await homeWith("replace-backed", { mode: "replace", patterns: [localRule] });
+
+    // Act
+    const refused = await pin(home, [LOCKFILE]);
+
+    // Assert
+    expect(refused.exitCode).toBe(EXIT_USAGE);
+    expect(refused.stdout).toContain(`${LOCKFILE} (excluded by ${localRule})`);
+    expect(refused.stdout).toContain(WHY);
+    expect(refused.stdout).toContain(SHIPPED_NOTE);
+    expect(refused.stdout).not.toContain(CONFIG_REMEDY);
   });
 
   test("status names a pinned file the shipped list excludes even when this machine replaced it", async () => {
@@ -215,14 +241,18 @@ describe("the pin door refuses a file no capture can observe (loss-accounting §
     // Act
     const status = await run(home, ["status"]);
 
-    // Assert
-    expect(status.stdout).toContain("pinned file(s) are never captured");
+    // Assert: named as blind on the machines that keep the shipped list —
+    // never as blind for everyone, since this machine records it
+    expect(status.stdout).toContain(`pinned file(s) are never captured ${ELSEWHERE}`);
     expect(status.stdout).toContain(`${GENERATED} (${GENERATED_RULE})`);
+    expect(status.stdout).not.toContain("no matter who did");
 
     // And doctor asks the same list, so the two never disagree
     const doctor = await run(home, ["doctor"]);
     expect(doctor.stdout).toContain("WARN  pin denylist");
     expect(doctor.stdout).toContain(`${GENERATED} (${GENERATED_RULE})`);
+    expect(doctor.stdout).toContain(ELSEWHERE);
+    expect(doctor.stdout).not.toContain("no matter who did");
   });
 });
 
@@ -260,7 +290,10 @@ describe("a sweep never moves a pin onto a path no capture observes", () => {
     const swept = await run(home, ["pin", "--sweep"]);
 
     // Assert
-    expect(swept.stdout).toContain(`${SECOND_FROM} moved to ${SECOND_TO} (excluded by ${GENERATED_RULE})`);
+    expect(swept.stdout).toContain(
+      `${SECOND_FROM} moved to ${SECOND_TO} (excluded by ${GENERATED_RULE} ${ELSEWHERE})`,
+    );
     expect(swept.stdout).toContain("recorded as missing");
+    expect(swept.stdout).toContain(WHY_ELSEWHERE);
   });
 });

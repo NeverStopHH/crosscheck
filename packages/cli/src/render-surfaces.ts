@@ -766,8 +766,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     framing: "bare",
     render: (payload) =>
       [
-        pinDenylistRefusal([{ path: payload, pattern: payload }]),
-        ...sweepDenylistLines([{ path: payload, newPath: payload, pattern: payload }]),
+        pinDenylistRefusal([
+          { path: payload, pattern: payload, here: true, shippedPattern: null },
+          { path: payload, pattern: payload, here: false, shippedPattern: payload },
+        ]),
+        ...sweepDenylistLines([
+          { path: payload, newPath: payload, pattern: payload, here: true },
+          { path: payload, newPath: payload, pattern: payload, here: false },
+        ]),
       ].join("\n"),
   },
 ];
