@@ -197,6 +197,9 @@ describe("a weak match keeps today's pointer-only form", () => {
     // Assert
     expect(text).toContain("crosscheck pointer:");
     expect(text).toContain("It carries 3 claims crosscheck does not inject unasked");
+    // The tail says WHY, and "evidence-backed" alone would be false here:
+    // this decision has evidence; what it lacks is a strong match.
+    expect(text).toContain("substance is pushed only for a strongly matched, evidence-backed finding");
     expect(text).not.toContain("Keep the chunked upload");
   });
 });

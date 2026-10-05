@@ -400,10 +400,10 @@ export const renderPointerHint = (input: PointerHintInput): string => {
     matchedTarget !== undefined
       ? targetsPointerTail(context, matchedTarget, now)
       : claimCount === 0
-        ? "It carries no claims yet (substance is pushed only for evidence-backed findings); " +
+        ? "It carries no claims yet (substance is pushed only for a strongly matched, evidence-backed finding); " +
           `the tree is readable with get_diagnosis ${safeId(context.id)}.`
         : `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
-          "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +
+          "inject unasked (substance is pushed only for a strongly matched, evidence-backed finding); the tree is " +
           `readable with get_diagnosis ${safeId(context.id)}.`;
   // The intent BEFORE the tail: fitHint drops from the end, and of the two
   // the tail is the droppable one — the intent is what says WHAT they do.
