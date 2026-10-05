@@ -1417,6 +1417,12 @@ export const MAX_DRAFT_NUDGE_POINTERS = 5;
  */
 export const DRAFT_NUDGE_MIN_SPARE_MS = 50;
 /**
+ * Conversations whose spent nudge slot is remembered past SessionEnd
+ * (state/draft-nudge-spent.ts), newest kept: a conversation resumed after it
+ * ended is the same conversation, and is not nudged twice.
+ */
+export const DRAFT_NUDGE_SPENT_MAX_SESSIONS = 500;
+/**
  * Past this age the nudge SAYS how many drafts are that old (binding
  * principle 6): nothing in crosscheck deletes or auto-discards a draft, so an
  * old one stays listed until a person settles it. Matched to the hub's

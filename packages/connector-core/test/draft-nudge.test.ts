@@ -18,6 +18,7 @@ import { repoKey } from "../src/config/paths.ts";
 import {
   DRAFT_LISTING_CAP,
   DRAFT_NUDGE_MIN_AGE_HOURS,
+  DRAFT_NUDGE_SPENT_MAX_SESSIONS,
   MAX_DRAFT_POINTERS,
   DRAFT_RETENTION_HORIZON_DAYS,
   MAX_DRAFT_NUDGE_POINTERS,
@@ -28,7 +29,9 @@ import { deliverDraftNudge } from "../src/flows/draft-nudge.ts";
 import type { DraftEntry, HubContext } from "../src/http/hub.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
+import { readNudgeSpent, recordNudgeSpent } from "../src/state/draft-nudge-spent.ts";
 import {
+  deleteSessionState,
   readSessionState,
   withCarriedCapture,
   writeSessionState,
@@ -497,6 +500,49 @@ describe("deliverDraftNudge (real hub)", () => {
       const body = (await response.json()) as { data: { drafts: { id: string }[] } };
       expect(body.data.drafts.map((entry) => entry.id)).toEqual([id]);
     });
+  });
+});
+
+describe("the nudge slot survives the session that spent it", () => {
+  test("a conversation resumed after SessionEnd is not nudged a second time", async () => {
+    await withOwnHub("draft-nudge-resume", async (own) => {
+      // Arrange: the nudge is delivered, then the session ends — SessionEnd
+      // deletes the state file that held the spent flag
+      await own.seedDraft({ kind: "decision", body: "Keep the reaper grace at 90 s", ageMs: OLD_MS });
+      const s = await session("nudge-resume", own);
+      expect(await nudge(s)).toContain("review_draft");
+      await deleteSessionState(s.home, HOST_KEY);
+
+      // Act: `--resume` brings the same conversation back with a fresh state
+      await writeSessionState(s.home, {
+        hostSessionKey: HOST_KEY,
+        crosscheckSessionId: SESSION_ID,
+        workContextId: WORK_CONTEXT_ID,
+        repoId: REPO_ID,
+        repoRoot: s.repo,
+        hubUrl: own.hubUrl,
+        developerId: own.developerId,
+        startedAt: new Date().toISOString(),
+        stopTurnCount: 1,
+      });
+      const again = await nudge(s);
+
+      // Assert
+      expect(again).toBe("");
+      expect((await readSessionState(s.home, HOST_KEY))?.draftNudge).toBe("delivered");
+    });
+  });
+
+  test("the record of spent slots stays bounded", async () => {
+    const home = await makeHome("nudge-spent-bound");
+    cleanups.push(home);
+    const total = DRAFT_NUDGE_SPENT_MAX_SESSIONS + 5;
+    for (let i = 0; i < total; i += 1) {
+      await recordNudgeSpent(home, `bound-${String(i)}`, "delivered", new Date(Date.parse("2026-10-01T00:00:00.000Z") + i * 1000));
+    }
+
+    expect(await readNudgeSpent(home, `bound-${String(total - 1)}`)).toBe("delivered");
+    expect(await readNudgeSpent(home, "bound-0")).toBeNull();
   });
 });
 

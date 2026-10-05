@@ -17943,6 +17943,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/derive-history.test.ts`,
     because: "a SessionEnd fired from a sibling checkout files one repo's evidence under another",
   },
+  {
+    label: "a conversation resumed after SessionEnd is nudged again",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "  if (!isDraftNudgeOpen(state) || (await spentEarlier(input))) {",
+    to: "  if (!isDraftNudgeOpen(state)) {",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "`claude --resume` brings back a conversation already asked once, and it is asked again",
+  },
+  {
+    label: "a spent nudge slot is forgotten at SessionEnd",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "    await recordNudgeSpent(input.home, input.hostSessionKey, outcome, input.now);\n",
+    to: "",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the only record of the spent slot dies with the state file SessionEnd deletes",
+  },
+  {
+    label: "the spent nudge record grows without bound",
+    file: `${CORE}/src/state/draft-nudge-spent.ts`,
+    from: "    .slice(0, DRAFT_NUDGE_SPENT_MAX_SESSIONS);",
+    to: "    .slice(0);",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "one home file gains an entry per conversation forever and every prompt reads all of it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18148,7 +18172,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 4
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 29
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 32
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
