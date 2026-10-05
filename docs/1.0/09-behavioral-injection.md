@@ -609,7 +609,7 @@ while its tree shares two, or an error fingerprint); at most one per prompt and
 five per session. And it is **the same quoting the briefing uses** — the
 `QUOTED_DATA_NOTICE` header, the « » BODY class with span redaction, the
 renderer-owned `bareUntrusted` fields, cut first and sanitized after
-(`hints/sentence.ts`) — registered as `substance-hint-sentence` and attacked
+(`substanceSentence`, `@crosscheck/schema`) — registered as `substance-hint-sentence` and attacked
 by four `INJECTION_CORPUS` cases aimed at the cut. The prompt hint is **not
 measured** by §9 (A1.1 measured the addressed-question surface only); a
 behavioural run with the hint as carrier is the honest next measurement, and

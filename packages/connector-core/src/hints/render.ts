@@ -39,7 +39,7 @@ import {
   SUBSTANCE_MATCH_KIND,
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
-import { firstSentence } from "./sentence.ts";
+import { substanceSentence } from "@crosscheck/schema";
 import type { LandedChanges, LandedCommit } from "../landed-changes/probe.ts";
 import { namedLandedCommits } from "../landed-changes/named-commits.ts";
 import { renderIntent } from "../briefing/intent.ts";
@@ -321,8 +321,14 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
   ];
   // ONE SENTENCE OF IT, bounded (§4, revised): the hint says what the finding
   // IS and points at the rest. Cut first, then framed — the BODY class runs
-  // on exactly what is shown (hints/sentence.ts says why that order is safe).
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(firstSentence(claim.body), HINT_SUBSTANCE_MAX_CHARS)}`;
+  // on exactly what is shown (@crosscheck/schema substance-sentence.ts says
+  // why that order is safe). No sentence with content is no substance: "",
+  // never a frame around nothing.
+  const sentence = substanceSentence(claim.body);
+  if (sentence.length === 0) {
+    return "";
+  }
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(sentence, HINT_SUBSTANCE_MAX_CHARS)}`;
   const header = input.matchedOn === "intent" ? CLAIM_INTENT_HEADER : CLAIM_HEADER;
   return fitHint([
     header,

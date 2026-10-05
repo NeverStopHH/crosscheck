@@ -172,6 +172,21 @@ describe("an inline finding is still counted, on a channel of its own", () => {
     expect(await spooledChannel(f)).toBe(SUBSTANCE_DELIVERY_CHANNEL);
   });
 
+  test("a decision with no sentence worth showing is a pointer, booked as one", async () => {
+    // Arrange — the trust and the match are there; the substance is not
+    const f = await fixture("sf-channel-empty");
+    const tree = decisionTree(4);
+    const [first, ...rest] = tree["claims"] as readonly Record<string, unknown>[];
+    f.hub.setCandidates([{ ...tree, claims: [{ ...first, body: "Bestätigt." }, ...rest] }]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert — prompt_substance only ever books a finding that was shown
+    expect(text).toContain("crosscheck pointer:");
+    expect(await spooledChannel(f)).toBe("prompt_hint");
+  });
+
   test("a pointer stays on prompt_hint", async () => {
     // Arrange
     const f = await fixture("sf-channel-pointer");

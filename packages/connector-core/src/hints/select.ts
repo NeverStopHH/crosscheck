@@ -34,6 +34,8 @@ import {
   MAX_HINTS_PER_SESSION,
   SUBSTANCE_MATCH_KIND,
 } from "../constants.ts";
+import { substanceSentence } from "@crosscheck/schema";
+
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
 
@@ -206,6 +208,17 @@ const hasBody = (claim: HintClaimCandidate): boolean =>
   claim.body.trim().length > 0;
 
 /**
+ * A body is not yet substance: it must hold a SENTENCE WORTH SHOWING (the
+ * shared cut, @crosscheck/schema substanceSentence — content words, not "1.",
+ * "Yes." or a full stop behind invisible characters). Without one the claim
+ * stays a pointer, so a substance hint never frames nothing and
+ * `prompt_substance` is only ever booked for a finding that was shown
+ * (review of batch 1006, finding 7).
+ */
+const hasSubstanceSentence = (claim: HintClaimCandidate): boolean =>
+  substanceSentence(claim.body).length > 0;
+
+/**
  * THE CODE AXIS OF THE SUBSTANCE GATE (1.0 spec 02 §5, CCB-1/CCB-7).
  *
  * The predicate itself lives in src/claim-validity.ts, because the briefing's
@@ -235,6 +248,7 @@ const isCodeCurrent = (claim: HintClaimCandidate): boolean =>
 const isInjectable = (claim: HintClaimCandidate): boolean =>
   isDeclared(claim) &&
   hasBody(claim) &&
+  hasSubstanceSentence(claim) &&
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
   isCodeCurrent(claim) &&

@@ -46,7 +46,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { firstSentence } from "../hints/sentence.ts";
+import { substanceSentence } from "@crosscheck/schema";
 import {
   renderAnswerHint,
   renderClaimHint,
@@ -150,7 +150,7 @@ const renderSelection = async (
       channel: SUBSTANCE_DELIVERY_CHANNEL,
       // The echo mark covers what was SHOWN — the first sentence — so that
       // sentence coming back as the reader's own observation is caught.
-      bodyHash: hintBodyHash(firstSentence(selection.claim.body)),
+      bodyHash: hintBodyHash(substanceSentence(selection.claim.body)),
       text: renderClaimHint({
         claim: selection.claim,
         context,

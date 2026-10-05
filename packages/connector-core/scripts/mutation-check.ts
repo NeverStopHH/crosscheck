@@ -17506,7 +17506,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a substance hint carries the whole body instead of one sentence",
     file: `${CORE}/src/hints/render.ts`,
-    from: "quotedBody(firstSentence(claim.body), HINT_SUBSTANCE_MAX_CHARS)",
+    from: "quotedBody(sentence, HINT_SUBSTANCE_MAX_CHARS)",
     to: "quotedBody(claim.body, HINT_SUBSTANCE_MAX_CHARS)",
     test: `${CORE}/test/hint-substance-render.test.ts`,
     because: "a forged second line rides into the unsolicited hint up to the cap",
@@ -17514,7 +17514,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the echo mark misses the sentence the hint showed",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "      bodyHash: hintBodyHash(firstSentence(selection.claim.body)),",
+    from: "      bodyHash: hintBodyHash(substanceSentence(selection.claim.body)),",
     to: "      bodyHash: hintBodyHash(selection.claim.body),",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "the one sentence an agent was shown comes back as its own observation and is published under the reader's name",
@@ -17590,6 +17590,46 @@ export const MUTATIONS: readonly Mutation[
     to: "  ...[...claims].sort(",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a more word-rich decision is pushed over the dead end §4 privileges",
+  },
+  {
+    label: "a claim with no sentence worth showing is pushed as substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  hasSubstanceSentence(claim) &&\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "\"Bestätigt.\" is booked as prompt_substance and the hint frames nothing where a finding should be",
+  },
+  {
+    label: "a substance hint frames an empty sentence",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  if (sentence.length === 0) {\n    return \"\";\n  }\n  const factsLine",
+    to: "  const factsLine",
+    test: `${CORE}/test/hint-substance-render.test.ts`,
+    because: "the reader is handed «» under a teammate's name — a finding that reads as \"they looked and found nothing\"",
+  },
+  {
+    label: "an ordinal list marker is shown as the whole substance",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  ORDINAL_MARKER.test(text.trim()) || endsInAbbreviation(text);",
+    to: "  endsInAbbreviation(text);",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"1. The cache key changes…\" loses its first sentence to the marker",
+  },
+  {
+    label: "an abbreviation ends the substance mid-sentence",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    SINGLE_LETTER_ABBREVIATION.test(token) ||\n",
+    to: "",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Wir nutzen z.\" is all a German decision gets to say",
+  },
+  {
+    label: "a one-word acknowledgement is shown as the substance",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "sentencesOf(body).find((sentence) => contentWords(sentence) >= SUBSTANCE_MIN_WORDS) ?? \"\";",
+    to: "sentencesOf(body).find((sentence) => sentence.length > 0) ?? \"\";",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Yes.\" or a full stop behind zero-width spaces is pushed as a teammate's finding",
   },
 ];
 
@@ -17806,8 +17846,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2
- * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 1
- * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 10
+ * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 11
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -17882,6 +17922,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/schema/test/substance-sentence.test.ts 3
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1

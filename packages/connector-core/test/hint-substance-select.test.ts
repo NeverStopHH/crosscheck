@@ -124,6 +124,13 @@ describe("a weak or unbacked match keeps today's pointer", () => {
     expect(select([context([withoutCount])]).kind).toBe("pointer");
   });
 
+  test.each([["Yes."], ["Bestätigt."], ["See PR #412."], ["​​."]])(
+    "a decision whose body has no sentence with content (%p) is a pointer, never a frame around nothing",
+    (body) => {
+      expect(select([context([decision({ body, matchedTerms: 4 })])]).kind).toBe("pointer");
+    },
+  );
+
   test("a PROPOSED root cause stays a pointer however strongly it matched", () => {
     // Principle 5 (Nick, via the batch-1006 review, finding 3): an
     // unverified cause pushed unasked as "a teammate's recorded finding"

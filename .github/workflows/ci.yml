@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1561
+    # PRINTS: 1566
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -295,8 +295,8 @@ jobs:
     # PRINTS: guarantees/doctor.ts 3
     # PRINTS: hints/delivery.ts 7
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 20
-    # PRINTS: hints/select.ts 20
+    # PRINTS: hints/render.ts 21
+    # PRINTS: hints/select.ts 21
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
     # PRINTS: http/hub.ts 12
@@ -378,6 +378,7 @@ jobs:
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
+    # PRINTS: packages/schema/src/substance-sentence.ts 3
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 17
@@ -637,7 +638,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 85
+    # PRINTS: render.ts 86
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9
@@ -653,7 +654,7 @@ jobs:
     # PRINTS: search-tokens.ts 4
     # PRINTS: search.ts 12
     # PRINTS: secret-scan.ts 1
-    # PRINTS: select.ts 20
+    # PRINTS: select.ts 21
     # PRINTS: seq-cost.ts 8
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
@@ -677,6 +678,7 @@ jobs:
     # PRINTS: status.ts 9
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
+    # PRINTS: substance-sentence.ts 3
     # PRINTS: suspect-render.ts 3
     # PRINTS: suspect.ts 7
     # PRINTS: sweep.ts 3
