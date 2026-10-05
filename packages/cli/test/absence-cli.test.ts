@@ -70,9 +70,9 @@ const cloudAgentAbsence = (now: number): Record<string, unknown> => ({
 /** Doctor's WARN and status's line: one sentence, two surfaces. */
 const LINKED_SENTENCE =
   "Claude Code on the web's commit identity noreply@anthropic.com is linked " +
-  "to a developer on this hub, so every commit under it, whoever started the " +
-  "session, is attributed to that one person and a session of theirs can close " +
-  "its gap — an admin finds them in GET /api/developers and unlinks it with " +
+  "to a developer on this hub; crosscheck ignores that link, so its commits " +
+  "stay an unconnected gap attributed to nobody — an admin should still remove " +
+  "it: find the developer in GET /api/developers, then " +
   "DELETE /api/developers/<developerId>/emails/noreply@anthropic.com";
 
 const paths: string[] = [];

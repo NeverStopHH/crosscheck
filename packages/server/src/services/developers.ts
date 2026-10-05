@@ -42,11 +42,12 @@ export interface CreateDeveloperInput {
 /**
  * AN EMAIL NO DEVELOPER MAY HOLD: a cloud agent's commit identity (schema
  * CLOUD_AGENT_IDENTITIES), shared by every session of that agent whoever
- * started it. Linked to one developer — as an alias or as the primary — it
- * would make every such commit, by anyone, theirs: absence matching would
- * name them, and a session of theirs near the commit would close a gap the
- * hub has no evidence about (principle 5). So both entry points refuse it,
- * matched like the absence listing matches it, on the lowercased address.
+ * started it. Honoured as one developer's — an alias or the primary — it
+ * would make every such commit, by anyone, theirs, and a session of theirs
+ * near the commit would close a gap the hub has no evidence about (principle
+ * 5). Every resolution ignores such a row (services/cloud-agent-identity.ts);
+ * both entry points refuse to write one, so the table never claims it either.
+ * Matched like the absence listing matches it, on the lowercased address.
  */
 export interface CloudAgentRefused {
   readonly outcome: "cloud_agent_identity";

@@ -437,8 +437,8 @@ export const runStatus = async (
       const line = formatAbsenceLine(entry, now);
       return line === null ? [] : [`  ${line}`];
     });
-  // Its own line, not one under the absence heading: a linked identity can
-  // close the very gap that heading would have shown. Doctor's WARN, verbatim.
+  // Its own line, not one under the absence heading: it is about a stale
+  // link the hub ignores, not about an author. Doctor's WARN, verbatim.
   const cloudAgentLinkLines = (
     absences.ok ? (absences.data.linkedCloudAgents ?? []) : []
   ).map((id) => `cloud agent identity: ${formatCloudAgentLink(id)}`);

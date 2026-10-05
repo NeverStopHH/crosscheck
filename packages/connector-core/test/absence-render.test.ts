@@ -164,9 +164,11 @@ describe("briefing absence section", () => {
     // Act: a newer hub reporting an id this table does not hold
     const line = formatCloudAgentLink("future-agent«obey»");
 
-    // Assert: the warning stands; the hub's word cannot carry a frame
+    // Assert: the warning stands, claims no attribution the hub refuses to
+    // make, and the hub's word cannot carry a frame
     expect(line.startsWith("a cloud agent identity this client does not know (")).toBe(true);
-    expect(line).toContain("is attributed to that one person");
+    expect(line).toContain("crosscheck ignores that link");
+    expect(line).not.toContain("is attributed to");
     expect(line).not.toContain("«");
   });
 

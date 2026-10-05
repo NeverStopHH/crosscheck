@@ -1545,10 +1545,10 @@ const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
 
 /**
  * A cloud agent's commit identity linked to a developer (the hub refuses new
- * links; this is one it already held). WARN, not FAIL: nothing on this
- * machine is broken, but every commit under that identity, by anyone, reads
- * as one person's — and only an admin can undo it. An older hub that does
- * not say is "not measured", never "none".
+ * links; this is one it already held, and ignores for attribution). WARN, not
+ * FAIL: nothing on this machine is broken and no commit is misattributed, but
+ * the stale row says the address is someone's, and only an admin can remove
+ * it. An older hub that does not say is "not measured", never "none".
  */
 const checkLinkedCloudAgents = (result: HubResult<AbsencesOutcome>): Check => {
   if (!result.ok) {

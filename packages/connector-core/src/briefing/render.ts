@@ -909,16 +909,17 @@ export const absenceCloudAgent = (entry: AbsenceEntry): string | null =>
     : null;
 
 const CLOUD_AGENT_LINK_EFFECT =
-  "is linked to a developer on this hub, so every commit under it, whoever " +
-  "started the session, is attributed to that one person and a session of " +
-  "theirs can close its gap";
+  "is linked to a developer on this hub; crosscheck ignores that link, so " +
+  "its commits stay an unconnected gap attributed to nobody";
 
 /**
  * A cloud agent identity the hub reports linked to a developer (AbsencesOutcome
- * linkedCloudAgents) — what the link does, and the admin's way out. Exported
- * because doctor's WARN and status's line say it; two spellings would drift.
- * An id this client's table does not hold is still warned about, its word
- * printed bare: silence here would read as nothing linked.
+ * linkedCloudAgents). The hub that reports it resolves no address through it
+ * (server services/cloud-agent-identity.ts), so the sentence says the link is
+ * ignored — never that it attributes anything — and still asks an admin to
+ * remove the stale row. Exported because doctor's WARN and status's line say
+ * it; two spellings would drift. An id this client's table does not hold is
+ * still warned about, its word printed bare: silence would read as none.
  */
 export const formatCloudAgentLink = (id: string): string => {
   const identity = cloudAgentById(id);
@@ -927,7 +928,7 @@ export const formatCloudAgentLink = (id: string): string => {
   }
   return (
     `${identity.product}'s commit identity ${identity.email} ${CLOUD_AGENT_LINK_EFFECT} — ` +
-    "an admin finds them in GET /api/developers and unlinks it with " +
+    "an admin should still remove it: find the developer in GET /api/developers, then " +
     `DELETE /api/developers/<developerId>/emails/${identity.email}`
   );
 };
