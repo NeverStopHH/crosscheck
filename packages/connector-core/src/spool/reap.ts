@@ -71,7 +71,7 @@ import {
   spoolDataPath,
   spoolDir,
   spoolFlushLockPath,
-  PENDING_END_LIFE_SEPARATOR,
+  PENDING_LIFE_SUFFIX,
 } from "../config/paths.ts";
 import {
   DROPS_SUFFIX,
@@ -380,31 +380,36 @@ export type DeferredEnder = (
   seq?: SeqField,
 ) => Promise<DeferredEndOutcome>;
 
-/** A `.pending-end` marker on disk: the host session whose life it ends, and its file. */
+/** A deferred-end marker on disk: the host session whose life it ends, and its file. */
 interface PendingEndMarker {
   readonly slug: string;
   readonly path: string;
 }
 
+/** A later life's marker: the slug, then its rung — the last `.r<n>` before the suffix. */
+const LATER_LIFE_MARKER = new RegExp(`^(.+)\\.r\\d+${PENDING_LIFE_SUFFIX.replace(".", "\\.")}$`, "u");
+
+/** The host session's slug a marker name belongs to, or null for any other file. */
+const slugOfMarker = (name: string): string | null =>
+  name.endsWith(PENDING_END_SUFFIX)
+    ? name.slice(0, -PENDING_END_SUFFIX.length)
+    : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);
+
 /**
  * Every deferred end in the repo's spool, ONE PER LIFE (config/paths.ts
- * spoolPendingEndPath, review-2 finding 3): the host session's slug is the
- * name up to PENDING_END_LIFE_SEPARATOR, which no slug holds.
+ * spoolPendingEndPath, review-2 finding 3): the base life's `.pending-end`,
+ * and a later life's `.r<n>.pending-life` — a name no older reap lists
+ * (review-2 MEDIUM-2).
  */
 const pendingEndMarkers = async (
   home: string,
   key: string,
 ): Promise<readonly PendingEndMarker[]> => {
   try {
-    return (await readdir(spoolDir(home, key)))
-      .filter((name) => name.endsWith(PENDING_END_SUFFIX))
-      .map((name) => {
-        const stem = name.slice(0, -PENDING_END_SUFFIX.length);
-        return {
-          slug: stem.split(PENDING_END_LIFE_SEPARATOR)[0] ?? stem,
-          path: join(spoolDir(home, key), name),
-        };
-      });
+    return (await readdir(spoolDir(home, key))).flatMap((name) => {
+      const slug = slugOfMarker(name);
+      return slug === null ? [] : [{ slug, path: join(spoolDir(home, key), name) }];
+    });
   } catch {
     return [];
   }

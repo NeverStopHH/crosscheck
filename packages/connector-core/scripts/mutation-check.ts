@@ -17706,8 +17706,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "reap reads a later life's marker as a host session of its own",
     file: `${CORE}/src/spool/reap.ts`,
-    from: "          slug: stem.split(PENDING_END_LIFE_SEPARATOR)[0] ?? stem,\n",
-    to: "          slug: stem,\n",
+    from: "    : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);",
+    to: "    : name.endsWith(PENDING_LIFE_SUFFIX) ? name.slice(0, -PENDING_LIFE_SUFFIX.length) : null;",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "a resumed life's deferred end is published while its records are still on disk, under a spool nobody writes",
   },
@@ -17814,6 +17814,22 @@ export const MUTATIONS: readonly Mutation[
     to: "  return { spool, lines: 0, expired: 0 };",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 MEDIUM-1: a life that never registers and never ends pins its records past the bound every spool obeys, counted nowhere",
+  },
+  {
+    label: "a later life's marker is a name an older connector's reap lists",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  rung === 0 ? `${slug}.pending-end` : `${slug}.r${String(rung)}${PENDING_LIFE_SUFFIX}`;",
+    to: "  rung === 0 ? `${slug}.pending-end` : `${slug}.r${String(rung)}.pending-end`;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 MEDIUM-2: a proxy started before the upgrade reads the marker as a session with no spool and ends the life while its records are still on disk",
+  },
+  {
+    label: "reap never lists a later life's marker",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);",
+    to: "    : null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a resumed life's deferred end is never delivered and never ages into doctor's unclosed count",
   },
 ];
 
@@ -18074,7 +18090,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 20
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 18
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 20
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

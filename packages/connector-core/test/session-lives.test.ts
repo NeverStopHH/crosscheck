@@ -14,7 +14,7 @@ import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/serv
 import type { Db } from "@crosscheck/server";
 
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
-import { repoKey, spoolDir } from "../src/config/paths.ts";
+import { repoKey, sessionSlug, spoolDir } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
@@ -571,7 +571,19 @@ describe("a heal asked from a hook in another repo (review finding 7)", () => {
  * `session.ended` position was lost, and no count ever said so.
  */
 const pendingEnds = async (fx: Fixture): Promise<readonly string[]> =>
-  (await readdir(spoolDir(fx.home, fx.key))).filter((name) => name.endsWith(".pending-end"));
+  (await readdir(spoolDir(fx.home, fx.key))).filter(
+    (name) => name.endsWith(".pending-end") || name.endsWith(".pending-life"),
+  );
+
+/**
+ * What a reap from before per-life markers lists (connector-core 0.10.0,
+ * spool/reap.ts pendingEndSlugs): every `.pending-end` file, its whole stem
+ * read as a host session's slug. A proxy started before an upgrade runs it.
+ */
+const slugsAnOlderReapLists = async (fx: Fixture): Promise<readonly string[]> =>
+  (await readdir(spoolDir(fx.home, fx.key)))
+    .filter((name) => name.endsWith(".pending-end"))
+    .map((name) => name.slice(0, -".pending-end".length));
 
 describe("a resumed life's end beside a deferred end before it", () => {
   test("each life keeps its own marker, and the next reap ends the earlier one", async () => {
@@ -655,6 +667,27 @@ describe("a resumed life's end beside a deferred end before it", () => {
     expect(await isEnded(r1.crosscheckSessionId)).toBe(true);
     expect(await targetsOf(r1.workContextId)).toEqual(["src/r1.ts"]);
     expect(await pendingEnds(fx)).toEqual([]);
+  });
+
+  test("a later life's marker is no name an older connector's reap lists (review-2 MEDIUM-2)", async () => {
+    // Arrange: life 0 ended; the resumed life's end deferred with its edit on disk
+    const fx = await fixture("older-reap");
+    await register(fx);
+    await endViaFlow(fx);
+    await register(fx);
+    await captureTarget(fx, "src/r1.ts");
+    refuseRecords = true;
+    await endViaFlow(fx, fx.proxied);
+    refuseRecords = false;
+
+    // Act
+    const listed = await slugsAnOlderReapLists(fx);
+
+    // Assert: that reap finds no marker to end the life from — it read a later
+    // life's `<slug>@r1.pending-end` as a slug with no spool, saw nothing
+    // pending, and ended the life while `<slug>.jsonl` still held its edit
+    expect(listed).toEqual([]);
+    expect(await pendingEnds(fx)).toEqual([`${sessionSlug(fx.hostSessionKey)}.r1.pending-life`]);
   });
 });
 

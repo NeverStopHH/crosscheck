@@ -317,9 +317,13 @@ registration flush now carries the healer, as SessionStart's does on the other h
 **One deferred end per life** (review-2 finding 3). The `.pending-end` marker was one per HOST session, so a
 conversation resumed after a deferred end wrote the next life's marker over it: the earlier life was never ended
 from this machine (left to the hub's reaper), its `session.ended` position was lost, and it never reached doctor's
-`unclosed sessions` count, which counts markers as they age out. A later life's marker now carries its rung after
-`@` (`<slug>@r<n>.pending-end`; the base life keeps the old name), reap reads the slug back from the part before
-it, and each life's end waits for the conversation's backlog and lands — or ages out and is counted — on its own.
+`unclosed sessions` count, which counts markers as they age out. A later life's marker now carries its rung —
+`<slug>.r<n>.pending-life`, the base life keeps `<slug>.pending-end` — reap lists both and reads the slug back
+from before the last `.r<n>`, and each life's end waits for the conversation's backlog and lands — or ages out
+and is counted — on its own. The later-life name is deliberately no `.pending-end` name (review-2 MEDIUM-2): every
+reap before per-life markers lists those and reads the whole stem as a slug, and a proxy started before an upgrade
+read the first spelling, `<slug>@r1.pending-end`, as a session with no spool, saw nothing pending, and ended the
+life while `<slug>.jsonl` still held its records. An older reap never sees a `.pending-life` file at all.
 
 **SessionEnd compares before it deletes** (review-2 finding 2). SessionEnd reads the life it ends at its start and
 deleted the state unconditionally at its end; a mid-life heal landing in between (`K → K~r1`) left the healed life

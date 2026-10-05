@@ -156,21 +156,27 @@ export const spoolCursorPath = (
  * ONE PER LIFE, not per host session (review-2 finding 3): a conversation
  * resumed after a deferred end ends again under the same slug, and a second
  * marker written over the first lost that life's end for good. The base life
- * keeps the name every earlier connector wrote; a later life's rung follows
- * PENDING_END_LIFE_SEPARATOR, which no slug holds — `encodeURIComponent`
- * escapes it — so reap reads the slug back unambiguously.
+ * keeps the name every earlier connector wrote.
+ *
+ * A LATER LIFE'S IS NO `.pending-end` NAME (review-2 MEDIUM-2):
+ * `<slug>.r<n>.pending-life`. Every reap before per-life markers lists the
+ * `.pending-end` files and reads each whole stem as a slug — a proxy started
+ * before an upgrade still runs one — and it read `<slug>@r1` as a session
+ * with no spool, saw nothing pending, and ended the life while `<slug>.jsonl`
+ * still held its records. The rung is the last `.r<n>` before the suffix, so
+ * a slug with dots in it reads back whole.
  */
-export const PENDING_END_LIFE_SEPARATOR = "@";
+export const PENDING_LIFE_SUFFIX = ".pending-life";
 
-const pendingEndStem = (slug: string, rung: number): string =>
-  rung === 0 ? slug : `${slug}${PENDING_END_LIFE_SEPARATOR}r${String(rung)}`;
+const pendingEndName = (slug: string, rung: number): string =>
+  rung === 0 ? `${slug}.pending-end` : `${slug}.r${String(rung)}${PENDING_LIFE_SUFFIX}`;
 
 export const spoolPendingEndPath = (
   home: string,
   key: string,
   slug: string,
   rung = 0,
-): string => join(spoolDir(home, key), `${pendingEndStem(slug, rung)}.pending-end`);
+): string => join(spoolDir(home, key), pendingEndName(slug, rung));
 
 /** Append-only ledger of dropped batches: the source of truth for `spoolDropped`. */
 export const spoolDropsPath = (
