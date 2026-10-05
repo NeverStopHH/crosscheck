@@ -102,6 +102,7 @@ import { endSession } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
+import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
 import {
   acpAgentKind,
   acpHostSessionKey,
@@ -1346,6 +1347,19 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
               return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
             },
           );
+        }
+        // Abandoned writePrivateFile temps, once per home reaped above. ACP
+        // has no SessionStart hook: this child-exit drain is where its
+        // session-start maintenance runs, off the wire and after every
+        // request, so it is the one point that sweeps for an ACP-only
+        // machine (state/temp-sweep.ts). Local readdirs only, never throws.
+        const homes = new Set(
+          [...reapTargets.values()].flatMap((session) =>
+            session.config === null ? [] : [session.config.home],
+          ),
+        );
+        for (const home of homes) {
+          await sweepAbandonedTemps(home, now());
         }
       } catch (error) {
         counters.errors += 1;

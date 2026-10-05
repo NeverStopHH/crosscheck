@@ -17515,6 +17515,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/state-reap.test.ts`,
     because: "the sweep exists and nothing on the hook path calls it, so the orphans grow exactly as the pilot machine's did",
   },
+  {
+    label: "Cursor SessionStart never sweeps abandoned temps",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "  await sweepAbandonedTemps(ctx.config.home, now);\n",
+    to: "",
+    test: `${CURSOR}/test/handlers.test.ts`,
+    because: "a Cursor-only machine has no Claude SessionStart, so its abandoned temps grow without bound exactly as the pilot machine's did",
+  },
+  {
+    label: "ACP shutdown never sweeps abandoned temps",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          await sweepAbandonedTemps(home, now());\n",
+    to: "",
+    test: `${ACP}/test/capture-engine.test.ts`,
+    because: "an ACP-only machine has no SessionStart hook at all, and the child-exit drain is its only maintenance point — its abandoned temps grow without bound",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17623,7 +17639,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/waiver-render.test.ts 12
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
- * PRINTS: packages/connector-acp/test/capture-engine.test.ts 1
+ * PRINTS: packages/connector-acp/test/capture-engine.test.ts 2
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
@@ -17794,7 +17810,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
- * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
+ * PRINTS: packages/connector-cursor/test/handlers.test.ts 5
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7

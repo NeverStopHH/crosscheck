@@ -89,8 +89,12 @@ const removeIfAbandoned = async (path: string, now: Date): Promise<void> => {
 /**
  * One readdir per directory and one lstat per temp-shaped name; an ordinary
  * file costs nothing beyond its entry in the listing, because the name is
- * tested before any syscall. Runs in SessionStart's maintenance region after
- * the briefing is in hand (connector-claude hooks/session-start.ts).
+ * tested before any syscall. Runs where each connector already does its
+ * session-start maintenance, so a machine running only one of them is still
+ * swept: the Claude and Cursor SessionStart hooks after the briefing is in
+ * hand (connector-claude hooks/session-start.ts, connector-cursor
+ * handlers/session-start.ts), and the ACP proxy's child-exit drain, off the
+ * wire, which is where that connector reaps (connector-acp capture/engine.ts).
  *
  * NOT BOUNDED PER RUN, unlike the session-state reap, because the work per
  * orphan is one lstat and one unlink rather than a read and a parse.

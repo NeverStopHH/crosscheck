@@ -6,12 +6,16 @@
  * the pipe above this layer is Block 3's untouched proof.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sessionEvents } from "@crosscheck/server";
 
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
+import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  MS_PER_DAY,
+} from "@crosscheck/connector-core/constants.ts";
 import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
 import { spoolPendingEndPath } from "@crosscheck/connector-core/config/paths.ts";
 import { getDiagnosis, getPresence, registerSession } from "@crosscheck/connector-core/http/hub.ts";
@@ -404,6 +408,34 @@ describe("the §2.4 mapping against a live hub", () => {
       presence.data.some((entry) => entry.sessionId === "cc_acp-fake-agent--sess_close_b"),
     ).toBe(false);
     expect(await readSessionState(h.home, "acp-fake-agent--sess_close_b")).toBeNull();
+  });
+
+  test("shutdown sweeps a writePrivateFile temp past ABANDONED_TEMP_MAX_AGE_MS and keeps a fresh one", async () => {
+    // Arrange: a live session gives the shutdown its home; the two ages are
+    // set against the engine's injected clock, which is what the sweep reads
+    const h = await harness("temp-sweep");
+    handshake(h, "sess_temp_sweep", h.repo);
+    await h.capture.settle();
+    const state = join(h.home, "state");
+    await mkdir(state, { recursive: true });
+    const abandoned = "0123456789abcdef-hooks.json.tmp-4242-k3j9x0qa";
+    const inFlight = "0123456789abcdef.json.tmp-4243-p0w8rt2z";
+    for (const [name, ageMs] of [
+      [abandoned, ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY],
+      [inFlight, 60 * 60 * 1000],
+    ] as const) {
+      await writeFile(join(state, name), "", "utf8");
+      const when = new Date(h.clock.value.getTime() - ageMs);
+      await utimes(join(state, name), when, when);
+    }
+
+    // Act: the real child-exit drain
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert
+    const names = await readdir(state);
+    expect(names).not.toContain(abandoned);
+    expect(names).toContain(inFlight);
   });
 
   test("a deferred end the shutdown reap spends carries the position its marker holds", async () => {
