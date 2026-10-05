@@ -160,3 +160,7 @@ export const removalTargets = async (
     { path: join(files.cursorDir, CURSOR_MCP_FILE), strip: stripMcpServers },
   ];
 };
+
+/** The same files' paths alone, for a command that writes rather than strips. */
+export const wiringPaths = async (files: WiringFiles): Promise<readonly string[]> =>
+  (await removalTargets(files)).map((target) => target.path);

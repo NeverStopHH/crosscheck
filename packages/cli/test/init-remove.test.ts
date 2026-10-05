@@ -14,87 +14,24 @@
  * CROSSCHECK_HOME. No hub: neither init nor remove talks to one.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
-import type { Env } from "../src/index.ts";
-import { git, makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { git } from "../../connector-core/test/helpers.ts";
+import {
+  FOREIGN_MCP,
+  FOREIGN_SETTINGS,
+  INIT_ARGS,
+  backupsIn,
+  exists,
+  fixture,
+  read,
+  removeFixtures,
+  writeJson,
+} from "./fixtures/init-remove.ts";
 
-/** Never contacted: init only writes it into .crosscheck.json. */
-const HUB_URL = "https://hub.example.com";
-const INIT_ARGS = ["init", "--command-prefix", "crosscheck"];
-
-const paths: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
-  paths.length = 0;
-});
-
-interface Fixture {
-  readonly repo: string;
-  readonly home: string;
-  readonly env: Env;
-  readonly settingsPath: string;
-  readonly mcpPath: string;
-  readonly repoConfigPath: string;
-}
-
-const fixture = async (label: string): Promise<Fixture> => {
-  // REAL path: the command prints git's toplevel, and macOS's tmpdir is a
-  // symlink (/var → /private/var) that git resolves.
-  const repo = await realpath(
-    await makeRepo(`init-remove-${label}`, { remote: "git@github.com:acme/api.git" }),
-  );
-  const home = await makeHome(`init-remove-${label}`);
-  paths.push(repo, home);
-  return {
-    repo,
-    home,
-    env: {
-      HOME: home,
-      CROSSCHECK_HOME: join(home, ".crosscheck"),
-      CROSSCHECK_HUB_URL: HUB_URL,
-      CROSSCHECK_API_KEY: "test-key",
-    },
-    settingsPath: join(repo, ".claude", "settings.json"),
-    mcpPath: join(repo, ".mcp.json"),
-    repoConfigPath: join(repo, ".crosscheck.json"),
-  };
-};
-
-const read = async (path: string): Promise<string> => Bun.file(path).text();
-const exists = async (path: string): Promise<boolean> => Bun.file(path).exists();
-
-const writeJson = async (path: string, value: unknown, indent = 2): Promise<string> => {
-  const text = `${JSON.stringify(value, null, indent)}\n`;
-  await mkdir(join(path, ".."), { recursive: true });
-  await writeFile(path, text, "utf8");
-  return text;
-};
-
-const backupsIn = async (dir: string): Promise<readonly string[]> => {
-  try {
-    return (await readdir(dir)).filter((name) => name.includes(".bak-"));
-  } catch {
-    return [];
-  }
-};
-
-/** A teammate's own hook and permissions — what must survive install → remove. */
-const FOREIGN_SETTINGS = {
-  hooks: {
-    PreToolUse: [
-      { matcher: "Bash", hooks: [{ type: "command", command: "./scripts/guard.sh" }] },
-    ],
-  },
-  permissions: { allow: ["Bash(ls)"] },
-};
-
-const FOREIGN_MCP = {
-  mcpServers: { docs: { type: "stdio", command: "docs-mcp", args: ["serve"] } },
-};
+afterEach(removeFixtures);
 
 describe("crosscheck init --remove", () => {
   test("strips crosscheck's hooks, statusline and mcp server and hands back the user's own files byte-identical", async () => {

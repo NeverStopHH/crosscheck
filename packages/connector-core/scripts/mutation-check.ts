@@ -16323,8 +16323,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "init --remove strips the cursor files without --cursor",
     file: `${CLI}/src/cli/init-remove.ts`,
-    from: "    cursorDir: options.cursor ? await projectCursorDir(root) : null,",
-    to: "    cursorDir: await projectCursorDir(root),",
+    from: "removalTargets(await projectWiringFiles(root, options.cursor))",
+    to: "removalTargets(await projectWiringFiles(root, true))",
     test: `${CLI}/test/init-remove.test.ts`,
     because: "the committed .cursor pair changes for a command that was asked only about the Claude files",
   },
@@ -16400,6 +16400,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "the pilot's 'how to fix?' again, one command earlier than doctor",
   },
+  // ── init --remove review (2026-10-05) ──
+  {
+    label: "init --remove strips the user-level install when $HOME is the work tree",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (collision !== null) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "a dotfiles user loses the global install doctor told them to keep, then reads 'no user-level install either'",
+  },
+  {
+    label: "a project file linked into ~/.claude passes as a project copy",
+    file: `${CLI}/src/cli/wiring-scope.ts`,
+    from: "  const projectCanonical = await Promise.all(projectPaths.map(canonicalPath));",
+    to: "  const projectCanonical = projectPaths;",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "the user-level settings are rewritten through a symlink the guard compares by spelling, not by file",
+  },
+  {
+    label: "crosscheck init writes the user-level settings as a project copy when $HOME is the work tree",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "  if (collision !== null) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "$HOME is connected as a repo and every session under it reports to the hub",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16474,6 +16499,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 2
+ * PRINTS: packages/cli/test/init-remove-safety.test.ts 3
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3

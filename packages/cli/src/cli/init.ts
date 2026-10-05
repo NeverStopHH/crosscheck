@@ -37,6 +37,12 @@ import {
   renderJsonFile,
 } from "./init-io.ts";
 import type { CliResult } from "./login.ts";
+import { wiringPaths } from "./wiring-removal.ts";
+import {
+  collisionSentence,
+  findUserLevelCollision,
+  projectWiringFiles,
+} from "./wiring-scope.ts";
 
 /** The connector's own entry point, resolved from this module's location. */
 const BIN_ENTRY_PATH = resolve(import.meta.dir, "..", "bin", "crosscheck.ts");
@@ -189,6 +195,20 @@ export const runInit = async (
   const launcher = await resolveLauncher(options.commandPrefix, env);
   if (launcher.kind === "refused") {
     return { stdout: `${launcher.reason}\n`, exitCode: EXIT_FAIL };
+  }
+
+  // A project copy that IS the user-level install ($HOME as the work tree,
+  // or a link into ~/.claude) would be written as one — and $HOME connected
+  // as a repo (review 2026-10-05). The same check `init --remove` makes.
+  const collision = await findUserLevelCollision(
+    await wiringPaths(await projectWiringFiles(identity.root, options.cursor)),
+    env,
+  );
+  if (collision !== null) {
+    return {
+      stdout: `${collisionSentence(collision, identity.root)}; run \`crosscheck init\` inside the project's own repository, or \`crosscheck init --global\` to wire this machine\n`,
+      exitCode: EXIT_ABORTED,
+    };
   }
 
   const settingsDir = join(identity.root, CLAUDE_SETTINGS_DIR);

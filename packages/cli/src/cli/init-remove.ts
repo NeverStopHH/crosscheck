@@ -26,12 +26,9 @@ import { rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import {
-  CLAUDE_SETTINGS_DIR,
-  CLAUDE_SETTINGS_FILE,
   EXIT_ABORTED,
   EXIT_FAIL,
   EXIT_OK,
-  MCP_CONFIG_FILE,
 } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { repoConfigPath } from "@crosscheck/connector-core/config/repo-config.ts";
@@ -46,6 +43,11 @@ import {
 } from "./init-io.ts";
 import { REMOVE_RESTART_LINE, removalTargets } from "./wiring-removal.ts";
 import type { RemovalTarget, Stripped } from "./wiring-removal.ts";
+import {
+  collisionSentence,
+  findUserLevelCollision,
+  projectWiringFiles,
+} from "./wiring-scope.ts";
 import type { CliResult } from "./login.ts";
 
 export interface ProjectRemoveOptions {
@@ -198,11 +200,20 @@ export const runProjectRemove = async (
     return { stdout: "not a git repository\n", exitCode: EXIT_FAIL };
   }
   const root = identity.root;
-  const targets = await removalTargets({
-    claudeSettingsPath: join(root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
-    mcpPath: join(root, MCP_CONFIG_FILE),
-    cursorDir: options.cursor ? await projectCursorDir(root) : null,
-  });
+  const targets = await removalTargets(await projectWiringFiles(root, options.cursor));
+  // Before anything is read: a "project" file that IS a user-level one
+  // ($HOME as the work tree, or a link into ~/.claude) is the install
+  // doctor said to keep (review 2026-10-05).
+  const collision = await findUserLevelCollision(
+    targets.map((target) => target.path),
+    env,
+  );
+  if (collision !== null) {
+    return {
+      stdout: `${collisionSentence(collision, root)}; \`crosscheck init --global --remove\` is the user-level removal\n`,
+      exitCode: EXIT_ABORTED,
+    };
+  }
   const planned = await planAll(targets);
   if (!planned.ok) {
     return { stdout: `${planned.refusal}\n`, exitCode: EXIT_ABORTED };
