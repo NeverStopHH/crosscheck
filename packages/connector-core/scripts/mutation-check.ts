@@ -16425,23 +16425,6 @@ export const MUTATIONS: readonly Mutation[
       "an answer naming one session that ended cleanly weeks ago turns an empty window from unknown to complete",
   },
   {
-    label: "a named session's loss is read through the window",
-    file: `${SERVER}/src/services/coverage.ts`,
-    from: "    : sql`(${term(since)} or (${named} and ${term(NO_FLOOR)}))`;",
-    to: "    : term(since);",
-    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
-    because:
-      "the session the answer cites lost records before the window and the rung beside the answer reads complete",
-  },
-  {
-    label: "a named session's ignored kind is read through the window",
-    file: `${SERVER}/src/services/coverage.ts`,
-    from: "      ignored: sql`count(*) filter (where ${isLost} and ${isIgnored})`,",
-    to: "      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,",
-    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
-    because: "a named session's ignored kinds read telemetry_lost, and the one remedy that fixes them, upgrade the hub, goes unsaid",
-  },
-  {
     label: "the order block folds over the window alone",
     file: `${SERVER}/src/services/coverage.ts`,
     from: "      inScope(scope),\n",
@@ -16495,7 +16478,19 @@ export const MUTATIONS: readonly Mutation[
     from: "      answerSessionIds: sessions.map((session) => session.sessionId),\n",
     to: "",
     test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
-    because: "the tripwire names a teammate's session that reported a loss and calls the path watched",
+    // Re-worded by the review of H3: the lifted loss window it once cited is gone.
+    because: "the tripwire names a teammate's session the order line beside it never read",
+  },
+  // The review of H3, finding 1: a loss report is the machine's ledger, so a
+  // named session's losses keep the window every other session's keep.
+  {
+    label: "a named session's loss is read with no window",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  const isLost = lossCondition(agentSessions, since);",
+    to: "  const isLost = scope.named === null ? lossCondition(agentSessions, since) : sql`(${lossCondition(agentSessions, since)} or (${scope.named} and ${agentSessions.lossReportedAt} is not null and ${agentSessions.lossTotal} > 0))`;",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because:
+      "a 300-day-old loss on the machine gaps every tripwire and trace that names a session re-stating it, and masks yesterday's reap",
   },
 ];
 
@@ -16784,7 +16779,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
- * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
+ * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 9
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2

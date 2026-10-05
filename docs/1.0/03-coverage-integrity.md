@@ -155,8 +155,9 @@ scope is still `incomplete`, and the reason enum still names it.
 sessions. `agent_event` folds over the scope's sessions **and** those, wherever their heartbeat sits, because trace picks
 candidates by work-context activity and a named session can sit outside the heartbeat window. The `order` block reads the same
 scope (`sessionScope`, `server/src/services/coverage.ts`). A named session can only weaken the rung: its reap, its silence and
-every loss it reported count, and it never counts as a session reporting, so it cannot turn `unknown` into `complete`
-(`server/test/coverage-answer-sessions.test.ts`).
+its losses inside the window count, and it never counts as a session reporting, so it cannot turn `unknown` into `complete`
+(`server/test/coverage-answer-sessions.test.ts`). The loss window is the same for a named session as for any other (LOSS-4):
+a loss report is the machine's ledger, not the session's (loss-accounting §4.4).
 
 **And the distribution is measured before merge, not argued about** — COV-11. If `complete` proves unreachable even scoped, §5.1
 and §10.4 are re-decided **with data**, not by the noise argument, whose premise this section inverts.

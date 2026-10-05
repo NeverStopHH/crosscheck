@@ -155,38 +155,75 @@ describe("a named session the window left out weakens the rung", () => {
     });
   });
 
-  test("a named session's loss counts though it predates the window — the answer cites that session's records", async () => {
-    // Arrange: ended cleanly, so the loss is the only thing wrong with it.
+});
+
+describe("a loss report is the machine's ledger, so naming a session moves no loss window (LOSS-4)", () => {
+  const ANCIENT = new Date(Date.parse(TEST_START_ISO) - 300 * DAY_MS);
+
+  test("a loss older than the window is no gap for a named session either", async () => {
+    // Arrange: today's live session re-reports a 300-day-old machine loss, and
+    // a session that ended twenty days ago carries one from before the window.
     const { harness, developer } = await seed();
-    await registerTestSession(harness, developer.apiKey);
+    await registerTestSession(harness, developer.apiKey, {
+      losses: {
+        total: 3,
+        kinds: { spool_expired: 3 },
+        oldestAt: ANCIENT.toISOString(),
+        newestAt: ANCIENT.toISOString(),
+      },
+    });
     await insertOldSession(harness, developer, OLD_LOSS);
     // Act
     const unnamed = await coverageOf(harness, developer);
-    const named = await coverageOf(harness, developer, [OLD_SESSION]);
+    const named = await coverageOf(harness, developer, [VALID_SESSION_BODY.id, OLD_SESSION]);
     // Assert
-    expect(agentEventOf(unnamed).state).toBe("complete");
-    expect(agentEventOf(named)).toMatchObject({
-      state: "incomplete",
-      reason: "telemetry_lost",
-      gapSince: OLD_LOSS_FROM.toISOString(),
-    });
+    expect(agentEventOf(named)).toEqual(agentEventOf(unnamed));
+    expect(agentEventOf(named)).toMatchObject({ state: "complete", reason: "sessions_reported" });
   });
 
-  test("a named session's ignored kind keeps its own word whenever it was ignored", async () => {
-    // Arrange
+  test("an ignored kind from before the window cannot take the word from yesterday's reap", async () => {
+    // Arrange: a session reaped inside the window, and a live session whose
+    // report carries a 300-day-old ignored kind.
     const { harness, developer } = await seed();
-    await registerTestSession(harness, developer.apiKey);
-    await insertOldSession(harness, developer, {
-      ...OLD_LOSS,
-      lossKinds: { hub_ignored: 5 },
-      lossIgnoredAt: OLD_HEARTBEAT,
-    });
+    const now = harness.clock.now().getTime();
+    const reapedHeartbeat = new Date(now - 24 * HOUR_MS);
+    const live = {
+      developerId: developer.developerId,
+      agentKind: "claude-code",
+      repo: REPO,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "analyzing",
+    } as const;
+    await harness.db.insert(agentSessions).values([
+      {
+        ...live,
+        id: "ses_reaped",
+        startedAt: new Date(now - 30 * HOUR_MS),
+        lastHeartbeatAt: reapedHeartbeat,
+        endedAt: new Date(now - 18 * HOUR_MS),
+        reapedAt: new Date(now - 18 * HOUR_MS),
+      },
+      {
+        ...live,
+        id: "ses_live",
+        startedAt: new Date(now - HOUR_MS),
+        lastHeartbeatAt: new Date(now - 10_000),
+        lossReportedAt: new Date(now - HOUR_MS),
+        lossTotal: 2,
+        lossKinds: { hub_ignored: 2 },
+        lossOldestAt: ANCIENT,
+        lossNewestAt: ANCIENT,
+        lossIgnoredAt: ANCIENT,
+      },
+    ]);
     // Act
-    const named = await coverageOf(harness, developer, [OLD_SESSION]);
+    const named = await coverageOf(harness, developer, ["ses_live"]);
     // Assert
     expect(agentEventOf(named)).toMatchObject({
       state: "incomplete",
-      reason: "record_kinds_ignored",
+      reason: "session_reaped",
+      gapSince: reapedHeartbeat.toISOString(),
     });
   });
 });
@@ -395,21 +432,51 @@ describe("every answer that names sessions passes them", () => {
     });
   });
 
-  test("the tripwire reads the sessions it names, their old losses included", async () => {
-    // Arrange: Ken's live session is on the file, and reported a loss from
-    // before the window.
+  test("a machine loss from before the window is no gap beside a tripwire or a trace that names the session", async () => {
+    // Arrange: Ken's live session is on the file, and its report re-states a
+    // loss his machine's ledger has held for 300 days.
     const { harness, developer } = await seed();
     const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    const ancient = new Date(harness.clock.now().getTime() - 300 * DAY_MS).toISOString();
     await registerTestSession(harness, ken.apiKey, {
       id: "ses_ken",
-      losses: {
-        total: 5,
-        kinds: { spool_expired: 5 },
-        oldestAt: OLD_LOSS_FROM.toISOString(),
-        newestAt: OLD_HEARTBEAT.toISOString(),
-      },
+      losses: { total: 3, kinds: { spool_expired: 3 }, oldestAt: ancient, newestAt: ancient },
     });
     await touchAuth(harness, ken, "ses_ken", "wc_ken");
+    // Act
+    const tripwire = await bodyOf<{ sessions: { sessionId: string }[]; coverage: CoverageRecord }>(
+      harness,
+      developer,
+      `/api/hints/tripwire?repo=${encodeURIComponent(REPO)}&value=src/auth.ts`,
+    );
+    const trace = await bodyOf<{ candidates: { sessionId: string }[]; coverage: CoverageRecord }>(
+      harness,
+      developer,
+      `/api/suspect?repo=${encodeURIComponent(REPO)}&path=src/auth.ts`,
+    );
+    // Assert
+    expect(tripwire.sessions.map((session) => session.sessionId)).toEqual(["ses_ken"]);
+    expect(trace.candidates.map((candidate) => candidate.sessionId)).toEqual(["ses_ken"]);
+    expect(agentEventOf(tripwire.coverage)).toMatchObject({ state: "complete", reason: "sessions_reported" });
+    expect(agentEventOf(trace.coverage)).toMatchObject({ state: "complete", reason: "sessions_reported" });
+  });
+
+  test("the tripwire's order block reads the session it names, though only a symbol target matched", async () => {
+    // Arrange: the tripwire matches a target's value whatever its kind, the
+    // rung's path scope reads file targets only. Ken's session declared nothing.
+    const { harness, developer } = await seed();
+    const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await registerTestSession(harness, ken.apiKey, { id: "ses_ken" });
+    await postRecords(harness, ken, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_ken", sessionId: "ses_ken" }), {
+          sessionId: "ses_ken",
+        }),
+        recordEnvelope("target", { workContextId: "wc_ken", kind: "symbol", value: "src/auth.ts" }, {
+          sessionId: "ses_ken",
+        }),
+      ],
+    });
     // Act
     const data = await bodyOf<{ sessions: { sessionId: string }[]; coverage: CoverageRecord }>(
       harness,
@@ -418,9 +485,6 @@ describe("every answer that names sessions passes them", () => {
     );
     // Assert
     expect(data.sessions.map((session) => session.sessionId)).toEqual(["ses_ken"]);
-    expect(agentEventOf(data.coverage)).toMatchObject({
-      state: "incomplete",
-      reason: "telemetry_lost",
-    });
+    expect(data.coverage.order).toEqual({ state: "undeclared", reason: "provider_undeclared" });
   });
 });

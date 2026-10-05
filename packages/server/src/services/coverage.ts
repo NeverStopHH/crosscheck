@@ -334,7 +334,7 @@ const gapCondition = (
  */
 const lossCondition = (
   table: typeof agentSessions | typeof scopeSessions,
-  since: Date | SQL,
+  since: Date,
 ): SQL =>
   sql`(${table.lossReportedAt} is not null and ${table.lossTotal} > 0 and (${table.lossNewestAt} is null or ${table.lossNewestAt} > ${since}))`;
 
@@ -346,7 +346,7 @@ const lossCondition = (
  */
 const ignoredKindCondition = (
   table: typeof agentSessions | typeof scopeSessions,
-  since: Date | SQL,
+  since: Date,
 ): SQL => sql`${table.lossIgnoredAt} > ${since}`;
 
 /**
@@ -517,27 +517,15 @@ const sessionScope = (
 const inScope = (scope: SessionScope): SQL =>
   scope.named === null ? scope.window : sql`(${scope.window} or ${scope.named})`;
 
-/** Earlier than any instant: a loss term over it holds for every loss reported. */
-const NO_FLOOR = sql`'-infinity'::timestamptz`;
-
 /**
- * A LOSS TERM, ITS WINDOW LIFTED FOR THE SESSIONS THE ANSWER NAMES. The
- * window reads a loss older than `since` as out of scope because the question
- * is about newer records (lossCondition). An answer that names a session
- * cites that session's records whenever they were written — trace's
- * candidate is a work context created before the window and touched inside
- * it — so every loss a named session reported is about the answer. Lifting a
- * floor can only count more losses, never fewer.
+ * THE LOSS TERMS KEEP THEIR WINDOW FOR A NAMED SESSION TOO. A loss report is
+ * a snapshot of every ledger on the reporting MACHINE for the repo
+ * (connector-core/src/spool/loss-report.ts, loss-accounting §4.4), not an
+ * account of that one session, so lifting the floor for a named session made
+ * a 300-day-old loss on the machine gap every answer naming any session that
+ * re-stated it (review of H3). A named session adds its reap, its silence and
+ * its in-window losses, exactly what a session in the window adds.
  */
-const lossTerm = (
-  term: (floor: Date | SQL) => SQL,
-  since: Date,
-  named: SQL | null,
-): SQL =>
-  named === null
-    ? term(since)
-    : sql`(${term(since)} or (${named} and ${term(NO_FLOOR)}))`;
-
 const readAgentEventCoverage = async (
   deps: Deps,
   now: Date,
@@ -545,12 +533,7 @@ const readAgentEventCoverage = async (
   scope: SessionScope,
 ): Promise<CoverageSourceRecord> => {
   const isGap = gapCondition(agentSessions, presenceCutoff(now));
-  const isLost = lossTerm((floor) => lossCondition(agentSessions, floor), since, scope.named);
-  const isIgnored = lossTerm(
-    (floor) => ignoredKindCondition(agentSessions, floor),
-    since,
-    scope.named,
-  );
+  const isLost = lossCondition(agentSessions, since);
   const rows = await deps.db
     .select({
       // The window alone can say somebody was reporting (sessionScope).
@@ -559,7 +542,7 @@ const readAgentEventCoverage = async (
       gaps: sql`count(*) filter (where ${isGap})`,
       gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
       lost: sql`count(*) filter (where ${isLost})`,
-      ignored: sql`count(*) filter (where ${isLost} and ${isIgnored})`,
+      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,
       lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
       observedAt: sql`max(${agentSessions.lastHeartbeatAt})`,
     })
