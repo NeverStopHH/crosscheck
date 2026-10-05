@@ -2,7 +2,8 @@
  * `endSessionFlow` (DESIGN-agent-agnostic.md §1.3) — the session-end recipe
  * as an extracted function:
  *
- *   flush (budgeted) → count undelivered → pending-end marker → delete state
+ *   flush (budgeted) → count undelivered → pending-end marker → ended-life
+ *   lineage → delete state
  *   → `end` only when nothing is left on disk (else the marker defers it to
  *   `reap`'s DeferredEnder).
  *
@@ -31,6 +32,7 @@ import { readSessionSpool } from "../spool/files.ts";
 import { flushSpool } from "../spool/flush.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { seqAt } from "../capture/seq.ts";
+import { recordEndedLife } from "../state/session-lineage.ts";
 import { allocateSeq, deleteSessionState } from "../state/session-state.ts";
 import type { SeqField } from "@crosscheck/schema";
 
@@ -96,6 +98,11 @@ export const endSessionFlow = async (
       seq,
     })}\n`,
   );
+  // The life this end closes, written down BEFORE its state goes: the state
+  // file is what named it, and a host that resumes this conversation under
+  // the same id must start its next life one rung up, not on this one — an
+  // end reported here is final on the hub (state/session-lineage.ts).
+  await recordEndedLife(input.home, input.hostSessionKey, input.crosscheckSessionId, input.now());
   await deleteSessionState(input.home, input.hostSessionKey);
   // A first prompt parked for the derived-intent worker that never ran (a
   // spawn that failed, a session ending inside the worker's deadline) must

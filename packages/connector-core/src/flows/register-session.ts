@@ -1,7 +1,8 @@
 /**
  * `registerSessionFlow` (DESIGN-agent-agnostic.md §1.3) — the session-start
  * recipe as an extracted function: register with `cc_<hostSessionKey>`
- * (+ `~r1`/`~r2` retry on 409) → `writeSessionState` BEFORE any append (reap
+ * (+ the `~r<n>` life ladder on 409, state/session-lineage.ts) →
+ * `writeSessionState` BEFORE any append (reap
  * infers "writer alive" from the state file, so a spool without state is an
  * orphan on sight) → spool the work-context record.
  *
@@ -12,7 +13,7 @@
  * titles from session metadata) stays in each connector; this flow takes the
  * already-resolved values.
  */
-import type { CausalGuaranteeTriple } from "@crosscheck/schema";
+import type { CausalGuaranteeTriple, SeqField } from "@crosscheck/schema";
 
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
@@ -23,6 +24,12 @@ import {
   workContextRecord,
 } from "../capture/records.ts";
 import {
+  ladderRungs,
+  ladderStart,
+  lifeSessionId,
+  readEndedLifeRung,
+} from "../state/session-lineage.ts";
+import {
   carriedSeqEpoch,
   claimSessionState,
   crosscheckSessionIdFor,
@@ -30,9 +37,6 @@ import {
   readSessionState,
   workContextIdFor,
 } from "../state/session-state.ts";
-
-/** A resumed session whose crosscheck session was closed gets a fresh suffix. */
-const RETRY_SUFFIXES = ["", "~r1", "~r2"] as const;
 
 const HTTP_CONFLICT = 409;
 
@@ -44,9 +48,6 @@ const HTTP_CONFLICT = 409;
  * ended session being reopened) keeps walking the suffixes.
  */
 const REPO_MISMATCH_CODE = "repo_mismatch";
-
-/** Sentinel: registration refused because a live sibling owns another repo. */
-const REPO_MISMATCH = Symbol("crosscheck.register.repo-mismatch");
 
 const LOCAL_REPO_PREFIX = "local:";
 
@@ -132,24 +133,60 @@ export interface RegisterSessionFlowResult {
   readonly registered: boolean;
 }
 
-interface Registration {
-  readonly sessionId: string;
-  readonly developerId: string | null;
+/** What one walk of the life ladder needs (state/session-lineage.ts). */
+export interface RegisterLadderInput {
+  readonly home: string;
+  readonly repoKey: string;
+  readonly hub: HubContext;
+  readonly agentKind: string;
+  readonly hostSessionKey: string;
+  readonly repoId: string;
+  readonly branch: string;
+  readonly baseCommit: string;
+  readonly status: string;
+  readonly guarantees: readonly CausalGuaranteeTriple[];
+  /** `session.started`'s own position, or the refusal that travels instead. */
+  readonly seq: SeqField;
+  /** Stop on `repo_mismatch` (RegisterSessionFlowInput.recovery). */
+  readonly recovery?: boolean;
+  /** The crosscheck session the state file is on, when there is one. */
+  readonly liveSessionId: string | null;
 }
 
-const registerWithRetry = async (
-  input: RegisterSessionFlowInput,
-  baseId: string,
-  epoch: string,
-): Promise<Registration | typeof REPO_MISMATCH | null> => {
+export type RegisterLadderOutcome =
+  | {
+      readonly outcome: "registered";
+      readonly sessionId: string;
+      readonly developerId: string | null;
+    }
+  /** Recovery only: a LIVE session with this id is bound to another repo. */
+  | { readonly outcome: "repo_mismatch" }
+  /** The hub did not answer, answered something else, or refused every rung. */
+  | { readonly outcome: "unregistered" };
+
+/**
+ * ONE WALK OF THE LIFE LADDER, shared by every register that can meet an
+ * ended session: SessionStart on all three hosts and Claude's state-less
+ * recovery. A 409 is the hub saying this rung is ended or somebody else's, so
+ * the walk climbs; anything else ends it.
+ */
+export const registerSessionLadder = async (
+  input: RegisterLadderInput,
+): Promise<RegisterLadderOutcome> => {
+  const baseId = crosscheckSessionIdFor(input.hostSessionKey);
   // THE LOSS REPORT, READ ONCE FOR THE LADDER (docs/1.0/loss-accounting.md
   // §4.2). Registration runs right after `reapSpool`, which is where expiry
   // drops and the unclosed count are written, so this is the call that
   // carries a DEAD session's post-mortem losses to the hub. A local read of
-  // the ledgers; every rung of the ~r1/~r2 ladder sends the same snapshot.
+  // the ledgers; every rung of the ladder sends the same snapshot.
   const losses = await readTelemetryLossReport(input.home, input.repoKey);
-  for (const suffix of RETRY_SUFFIXES) {
-    const sessionId = `${baseId}${suffix}`;
+  const start = ladderStart(
+    baseId,
+    input.liveSessionId,
+    await readEndedLifeRung(input.home, input.hostSessionKey, baseId),
+  );
+  for (const rung of ladderRungs(start)) {
+    const sessionId = lifeSessionId(baseId, rung);
     const result = await registerSession(input.hub, {
       id: sessionId,
       agentKind: input.agentKind,
@@ -159,27 +196,23 @@ const registerWithRetry = async (
       status: input.status,
       losses,
       guarantees: input.guarantees,
-      // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the
-      // only call that can send it: the allocator mints `eventSeq` at 0 and
-      // hands out from 1, so nothing ever allocates this position — it is
-      // minted with the epoch, by construction. An ABSENT field here would
-      // not be a missing position but a WRONG SENTENCE: the hub reads an
-      // absent `seq` as `pre_seq_connector`, "a connector from before this
-      // field", and would say it about a current connector on the one row
-      // every session is guaranteed to have.
-      seq: { epoch, n: 0 },
+      seq: input.seq,
     });
     if (result.ok) {
-      return { sessionId, developerId: result.data.session.developerId };
+      return {
+        outcome: "registered",
+        sessionId,
+        developerId: result.data.session.developerId,
+      };
     }
     if (result.status !== HTTP_CONFLICT) {
-      return null;
+      return { outcome: "unregistered" };
     }
     if (input.recovery === true && result.code === REPO_MISMATCH_CODE) {
-      return REPO_MISMATCH;
+      return { outcome: "repo_mismatch" };
     }
   }
-  return null;
+  return { outcome: "unregistered" };
 };
 
 /** The session-start recipe: register → state BEFORE append → work context. */
@@ -203,13 +236,23 @@ export const registerSessionFlow = async (
   // under the foreign epoch and the hub answers `broken / epoch_split` for
   // every pair in that session, permanently. Read here, before the POST,
   // because the POST is what carries it (carriedSeqEpoch's header).
-  const seqEpoch = carriedSeqEpoch(
-    await readSessionState(input.home, input.hostSessionKey),
-    input,
-    mintedEpoch,
-  );
-  const registration = await registerWithRetry(input, baseSessionId, seqEpoch);
-  if (registration === REPO_MISMATCH) {
+  const previous = await readSessionState(input.home, input.hostSessionKey);
+  const seqEpoch = carriedSeqEpoch(previous, input, mintedEpoch);
+  const ladder = await registerSessionLadder({
+    ...input,
+    // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the only
+    // call that can send it: the allocator mints `eventSeq` at 0 and hands
+    // out from 1, so nothing ever allocates this position — it is minted with
+    // the epoch, by construction. An ABSENT field here would not be a missing
+    // position but a WRONG SENTENCE: the hub reads an absent `seq` as
+    // `pre_seq_connector`, "a connector from before this field", and would
+    // say it about a current connector on the one row every session is
+    // guaranteed to have.
+    seq: { epoch: seqEpoch, n: 0 },
+    liveSessionId: previous?.crosscheckSessionId ?? null,
+  });
+  const registration = ladder.outcome === "registered" ? ladder : null;
+  if (ladder.outcome === "repo_mismatch") {
     // First-wins (trial finding #9): a LIVE session with this id is bound to
     // another repo. NOTHING is written — a state file would re-home the
     // binding, and a spooled work context would be ingested against the

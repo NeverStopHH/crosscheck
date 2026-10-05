@@ -90,6 +90,16 @@ export const sessionStatePathForSlug = (home: string, slug: string): string =>
 export const intentPromptPathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.intent-prompt`);
 
+/**
+ * The crosscheck session a host session ENDED last (state/session-lineage.ts):
+ * written by `endSessionFlow`, read by the next register of the same host
+ * session so a resumed conversation starts its next life one rung up instead
+ * of walking every ended life again. Not `.json`, so no reader of session
+ * state ever mistakes it for one.
+ */
+export const sessionLineagePathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.lineage`);
+
 export const sessionStatePath = (
   home: string,
   hostSessionKey: string,

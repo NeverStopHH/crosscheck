@@ -1609,6 +1609,23 @@ export const SESSION_STATE_SCAN_MAX_FILES = 200;
  * unlink storm on the hook whose latency the developer feels most.
  */
 export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
+/**
+ * Most register calls ONE walk of the life ladder makes (state/session-lineage.ts).
+ *
+ * The ladder used to be three fixed rungs — `cc_<id>`, `~r1`, `~r2` — and the
+ * pilot ran off its end: one Claude Code conversation is ONE host session id
+ * for its whole life, every VS Code reload or exit ENDS its crosscheck session,
+ * and the fourth life found all three rungs ended and fell back to the base id
+ * the hub had just refused. Every record of that conversation was then
+ * rejected as a late write, for a month (docs/1.0/loss-accounting.md §4.3).
+ *
+ * The walk starts at the newest life this machine knows and gallops from
+ * there (+0, +1, +2, +4, …), so a resume costs two calls and a re-fire one;
+ * twelve attempts reach 1024 lives past the start when nothing is known —
+ * a lost lineage file, or one past its age — and a wrong guess about which
+ * rungs are taken costs a skipped rung name, never a refused record.
+ */
+export const REGISTER_LADDER_MAX_ATTEMPTS = 12;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
 

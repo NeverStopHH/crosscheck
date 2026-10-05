@@ -47,6 +47,7 @@ import {
   deriveLastSeen,
   writePresenceCache,
 } from "@crosscheck/connector-core/state/presence-cache.ts";
+import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
@@ -451,6 +452,10 @@ export const handleSessionStart = async (
   await reapStaleSessionStates(ctx.config.home, now, {
     keepHostSessionKey: ctx.payload.session_id,
   });
+  // ...and the ended-life notes of conversations that never came back
+  // (state/session-lineage.ts), on the same bound. Ours was read by the
+  // register above and is no longer needed by this run.
+  await reapStaleLineages(ctx.config.home, now);
   await landingFetch;
 
   if (briefing.length === 0) {

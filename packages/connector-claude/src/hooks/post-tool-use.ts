@@ -13,11 +13,10 @@ import {
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
-import { registerSession } from "@crosscheck/connector-core/http/hub.ts";
+import { registerSessionLadder } from "@crosscheck/connector-core/flows/register-session.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
-import { readTelemetryLossReport } from "@crosscheck/connector-core/spool/loss-report.ts";
 import {
   diagnosisPath,
   withCaptureBookkeeping,
@@ -30,6 +29,7 @@ import {
   readSessionState,
   updateSessionState,
   withSeenTargets,
+  workContextIdFor,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { ALLOCATION_FAILED, seqAt } from "@crosscheck/connector-core/capture/seq.ts";
@@ -39,7 +39,6 @@ import { resolveSessionWorkContextTitle } from "./session-start.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const IMPLEMENTING_STATUS = "implementing";
-const HTTP_CONFLICT = 409;
 
 /**
  * THE WORST CASE ONE INVOCATION CAN EMIT: every file target it may capture
@@ -76,10 +75,18 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     developerId: ctx.config.developerId,
     startedAt: ctx.now().toISOString(),
   });
-  const result = await registerSession(ctx.hub, {
-    id: derived.crosscheckSessionId,
+  // THE SAME LIFE LADDER SessionStart walks (state/session-lineage.ts), in
+  // recovery mode. A conversation that SessionEnd closed and that came back
+  // without a SessionStart this hook could see — the parent-workspace shape —
+  // used to register `cc_<id>`, take the hub's 409 for "nothing to recover"
+  // and capture nothing for the rest of that life, silently.
+  const ladder = await registerSessionLadder({
+    home: ctx.config.home,
+    repoKey: ctx.repoKey,
+    hub: ctx.hub,
     agentKind: ctx.config.agentKind,
-    repo: ctx.identity.repoId,
+    hostSessionKey: ctx.payload.session_id,
+    repoId: ctx.identity.repoId,
     branch: ctx.identity.branch,
     baseCommit: ctx.identity.baseCommit,
     status: IMPLEMENTING_STATUS,
@@ -93,24 +100,25 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     // have. `derived.seqEpoch` is minted by `deriveSessionState` and is never
     // null in practice; the refusal is what an impossible null becomes,
     // because an omitted field is a sentence about a different machine.
+    // Every rung carries the machine's loss report, zeros included
+    // (loss-accounting §4.2; review LOW), read by the ladder itself.
     seq:
       derived.seqEpoch === null
         ? ALLOCATION_FAILED
         : { epoch: derived.seqEpoch, n: 0 },
-    // Every register carries the machine's loss report, zeros included
-    // (loss-accounting §4.2; review LOW): an omitted one reads as "a connector
-    // from before the field" on exactly the session a recovery rebuilt.
-    losses: await readTelemetryLossReport(ctx.config.home, ctx.repoKey),
+    recovery: true,
+    liveSessionId: null,
   });
-  // A conflict means the id belongs to somebody else, OR to a live session
-  // this developer already bound to ANOTHER repo (the hub's repo_mismatch,
-  // first-wins) — either way, nothing to recover.
-  if (!result.ok && result.status === HTTP_CONFLICT) {
+  // A live session this developer already bound to ANOTHER repo (the hub's
+  // repo_mismatch, first-wins) — nothing to recover.
+  if (ladder.outcome === "repo_mismatch") {
     return null;
   }
-  const developerId = result.ok
-    ? result.data.session.developerId
-    : ctx.config.developerId;
+  const crosscheckSessionId =
+    ladder.outcome === "registered" ? ladder.sessionId : derived.crosscheckSessionId;
+  const workContextId = workContextIdFor(crosscheckSessionId);
+  const developerId =
+    ladder.outcome === "registered" ? ladder.developerId : ctx.config.developerId;
   const now = ctx.now();
   // `briefingPending`: a recovery registration means SessionStart never ran
   // for this session (or ran somewhere it could not resolve the repo — the
@@ -124,6 +132,8 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
   const title = await resolveSessionWorkContextTitle(undefined, ctx.identity);
   const recovered: SessionState = {
     ...derived,
+    crosscheckSessionId,
+    workContextId,
     developerId,
     briefingPending: true,
     workContextTitle: title,
@@ -152,15 +162,15 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     [
       workContextRecord(
         {
-          workContextId: derived.workContextId,
-          sessionId: derived.crosscheckSessionId,
+          workContextId,
+          sessionId: crosscheckSessionId,
           title,
           status: IMPLEMENTING_STATUS,
         },
         {
           developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
           agentKind: ctx.config.agentKind,
-          sessionId: derived.crosscheckSessionId,
+          sessionId: crosscheckSessionId,
         },
         now,
       ),
