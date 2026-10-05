@@ -28,6 +28,8 @@ import {
   postRecords,
   recordEnvelope,
   registerTestSession,
+  validClaimBody,
+  validClaimEdgeBody,
   validWorkContextBody,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
@@ -284,6 +286,141 @@ describe("every answer that names sessions passes them", () => {
     expect(agentEventOf(data.coverage)).toMatchObject({
       state: "incomplete",
       reason: "session_reaped",
+    });
+  });
+
+  const endCleanly = async (
+    harness: TestHarness,
+    developer: TestDeveloper,
+    sessionId: string,
+  ): Promise<void> => {
+    const response = await harness.app.request(
+      `/api/sessions/${sessionId}/end`,
+      jsonRequest("POST", developer.apiKey, { status: "done" }),
+    );
+    expect(response.status).toBe(200);
+  };
+
+  /** Twenty days on, a clean session reports inside the window; the tree's sessions are reaped. */
+  const diagnosisLater = async (
+    harness: TestHarness,
+    developer: TestDeveloper,
+  ): Promise<{
+    workContext: { sessionId: string };
+    claims: { authorSessionId: string }[];
+    edges: { authorSessionId: string }[];
+    coverage: CoverageRecord;
+  }> => {
+    harness.clock.advanceSeconds(OUTSIDE_WINDOW_DAYS * DAY_SECONDS);
+    await registerTestSession(harness, developer.apiKey, { id: "ses_c" });
+    return bodyOf(harness, developer, "/api/work-contexts/wc_old/diagnosis?telemetry=0");
+  };
+
+  test("get_diagnosis reads the tree's owning session, wherever its heartbeat sits", async () => {
+    // Arrange: the tree's session went quiet twenty days ago.
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey, { id: OLD_SESSION });
+    await touchAuth(harness, developer, OLD_SESSION, "wc_old");
+    // Act
+    const data = await diagnosisLater(harness, developer);
+    // Assert
+    expect(data.workContext.sessionId).toBe(OLD_SESSION);
+    expect(agentEventOf(data.coverage)).toMatchObject({
+      state: "incomplete",
+      reason: "session_reaped",
+    });
+  });
+
+  test("get_diagnosis reads the session that wrote a claim in the tree, not only its owner", async () => {
+    // Arrange: the owner ended cleanly; a second session wrote a claim into
+    // its tree and went quiet; both twenty days ago.
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey, { id: OLD_SESSION });
+    await touchAuth(harness, developer, OLD_SESSION, "wc_old");
+    await endCleanly(harness, developer, OLD_SESSION);
+    await registerTestSession(harness, developer.apiKey, { id: "ses_author" });
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({ workContextId: "wc_old", authorSessionId: "ses_author" }),
+          { sessionId: "ses_author" },
+        ),
+      ],
+    });
+    // Act
+    const data = await diagnosisLater(harness, developer);
+    // Assert
+    expect(data.claims.map((claim) => claim.authorSessionId)).toEqual(["ses_author"]);
+    expect(agentEventOf(data.coverage)).toMatchObject({
+      state: "incomplete",
+      reason: "session_reaped",
+    });
+  });
+
+  test("get_diagnosis reads the session that wrote an edge in the tree", async () => {
+    // Arrange: the owner wrote two claims and ended cleanly; a second session
+    // linked them and went quiet; both twenty days ago.
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey, { id: OLD_SESSION });
+    await touchAuth(harness, developer, OLD_SESSION, "wc_old");
+    const ownClaim = (id: string, body: string): Record<string, unknown> =>
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id, body, workContextId: "wc_old", authorSessionId: OLD_SESSION }),
+        { sessionId: OLD_SESSION },
+      );
+    await postRecords(harness, developer, {
+      records: [
+        ownClaim("clm_01", "JWT validation fails after token refresh"),
+        ownClaim("clm_02", "the refresh handler drops the signing key"),
+      ],
+    });
+    await endCleanly(harness, developer, OLD_SESSION);
+    await registerTestSession(harness, developer.apiKey, { id: "ses_linker" });
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("claim_edge", validClaimEdgeBody({ authorSessionId: "ses_linker" }), {
+          sessionId: "ses_linker",
+        }),
+      ],
+    });
+    // Act
+    const data = await diagnosisLater(harness, developer);
+    // Assert
+    expect(data.edges.map((edge) => edge.authorSessionId)).toEqual(["ses_linker"]);
+    expect(agentEventOf(data.coverage)).toMatchObject({
+      state: "incomplete",
+      reason: "session_reaped",
+    });
+  });
+
+  test("the tripwire reads the sessions it names, their old losses included", async () => {
+    // Arrange: Ken's live session is on the file, and reported a loss from
+    // before the window.
+    const { harness, developer } = await seed();
+    const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await registerTestSession(harness, ken.apiKey, {
+      id: "ses_ken",
+      losses: {
+        total: 5,
+        kinds: { spool_expired: 5 },
+        oldestAt: OLD_LOSS_FROM.toISOString(),
+        newestAt: OLD_HEARTBEAT.toISOString(),
+      },
+    });
+    await touchAuth(harness, ken, "ses_ken", "wc_ken");
+    // Act
+    const data = await bodyOf<{ sessions: { sessionId: string }[]; coverage: CoverageRecord }>(
+      harness,
+      developer,
+      `/api/hints/tripwire?repo=${encodeURIComponent(REPO)}&value=src/auth.ts`,
+    );
+    // Assert
+    expect(data.sessions.map((session) => session.sessionId)).toEqual(["ses_ken"]);
+    expect(agentEventOf(data.coverage)).toMatchObject({
+      state: "incomplete",
+      reason: "telemetry_lost",
     });
   });
 });

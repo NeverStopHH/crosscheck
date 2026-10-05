@@ -105,25 +105,26 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const [sessions, coverage] = await Promise.all([
-      listTargetSessions(
-        deps,
-        c.get("developer").id,
-        parsed.data.repo,
-        parsed.data.value,
-      ),
-      // SCOPED TO THE FILE the tripwire is about (§3.2a): the question is
-      // "was anybody watching THIS path", not "was anybody watching this
-      // repo for a fortnight".
-      readCoverage(deps, c.get("developer").id, parsed.data.repo, {
-        scope: {
-          sinceIso: new Date(
-            deps.now().getTime() - COVERAGE_SESSION_WINDOW_DAYS * MS_PER_DAY,
-          ).toISOString(),
-          paths: [parsed.data.value],
-        },
-      }),
-    ]);
+    // In sequence, not in parallel: the coverage folds over the sessions
+    // this answer names (review H3), so they come first.
+    const sessions = await listTargetSessions(
+      deps,
+      c.get("developer").id,
+      parsed.data.repo,
+      parsed.data.value,
+    );
+    // SCOPED TO THE FILE the tripwire is about (§3.2a): the question is
+    // "was anybody watching THIS path", not "was anybody watching this
+    // repo for a fortnight".
+    const coverage = await readCoverage(deps, c.get("developer").id, parsed.data.repo, {
+      scope: {
+        sinceIso: new Date(
+          deps.now().getTime() - COVERAGE_SESSION_WINDOW_DAYS * MS_PER_DAY,
+        ).toISOString(),
+        paths: [parsed.data.value],
+      },
+      answerSessionIds: sessions.map((session) => session.sessionId),
+    });
     // 07 §3.5, proof 5: this answer carried a coverage record, and
     // whether it did is what 03 made mandatory and nobody counted.
     await countCoverageAnswer(deps, {
