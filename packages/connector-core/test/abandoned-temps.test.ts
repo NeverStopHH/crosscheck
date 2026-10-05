@@ -317,6 +317,54 @@ describe("sweepAbandonedTemps never touches a symlink", () => {
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
     expect(await exists(victim)).toBe(true);
   });
+
+  /**
+   * An old temp in a directory OUTSIDE the home, reached only through a link
+   * — under `nested`, because spool/ holds its temps one directory deeper.
+   */
+  const outsideTemp = async (
+    home: string,
+    nested: readonly string[] = [],
+  ): Promise<{ dir: string; temp: string }> => {
+    const dir = join(home, "..", `${basename(home)}-outside`);
+    homes.push(dir);
+    const temp = await seed(join(dir, ...nested, `${KEY}.json.tmp-7-outside`), ABANDONED_MS);
+    return { dir, temp };
+  };
+
+  for (const [name, nested] of [
+    ["state", []],
+    ["sessions", []],
+    ["cache", []],
+    ["spool", [KEY]],
+  ] as const) {
+    test(`a symlinked ${name}/ is not followed: the temp behind it stays`, async () => {
+      // Arrange: <home>/<name> is a link to a directory somewhere else
+      const home = await tempHome(`sweep-link-${name}`);
+      const outside = await outsideTemp(home, nested);
+      await symlink(outside.dir, join(home, name));
+
+      // Act
+      await sweepAbandonedTemps(home, NOW, ROOM);
+
+      // Assert
+      expect(await exists(outside.temp)).toBe(true);
+    });
+  }
+
+  test("a symlinked spool/<key>/ is not followed: the temp behind it stays", async () => {
+    // Arrange
+    const home = await tempHome("sweep-link-spool-key");
+    const outside = await outsideTemp(home);
+    await mkdir(join(home, "spool"), { recursive: true });
+    await symlink(outside.dir, join(home, "spool", KEY));
+
+    // Act
+    await sweepAbandonedTemps(home, NOW, ROOM);
+
+    // Assert
+    expect(await exists(outside.temp)).toBe(true);
+  });
 });
 
 describe("sweepAbandonedTemps stays inside its caller's budget", () => {
@@ -377,6 +425,28 @@ describe("sweepAbandonedTemps never fails its caller", () => {
       expect(await exists(free)).toBe(false);
     } finally {
       await chmod(dirname(stuck), 0o700);
+    }
+  });
+
+  test.skipIf(isRoot)("a directory it may not list is skipped and every other directory is still swept", async () => {
+    // Arrange: state/ mode 000, so even its listing is refused (EACCES)
+    const home = await tempHome("sweep-unlistable");
+    const hidden = await seed(tempSibling(syncStatePath(home, KEY)), ABANDONED_MS);
+    const free = await seed(tempSibling(sessionStatePathForSlug(home, SLUG)), ABANDONED_MS);
+    await chmod(dirname(hidden), 0o000);
+
+    try {
+      // Act
+      const outcome = await sweepAbandonedTemps(home, NOW, ROOM).then(
+        () => "resolved",
+        () => "rejected",
+      );
+
+      // Assert
+      expect(outcome).toBe("resolved");
+      expect(await exists(free)).toBe(false);
+    } finally {
+      await chmod(dirname(hidden), 0o700);
     }
   });
 

@@ -21,7 +21,8 @@
  * ABANDONED_TEMP_MAX_AGE_MS, in a directory a hook-path writer points
  * writePrivateFile at. Nothing reads a temp name, so a temp past that age has
  * no reader and — the constant carries the argument — no writer either. Any
- * other name is never touched, whatever its age; a directory never is.
+ * other name is never touched, whatever its age; a directory never is, nor a
+ * symlink, and no symlinked directory under the home is ever followed.
  *
  * Fail-open throughout, like the session-state reap it runs beside: a
  * directory that cannot be listed, a file that vanished, an unlink that is
@@ -49,13 +50,39 @@ const listEntries = async (dir: string): Promise<readonly Dirent[]> => {
 };
 
 /**
+ * A directory UNDER the home that is a symlink is not the home's, whatever
+ * it points at: the sweep deletes, so it follows no link anywhere — not a
+ * linked `state/` any more than a linked `spool/<key>/` (review 2026-10-06).
+ * The home root itself is exempt; CROSSCHECK_HOME may well be a link, and it
+ * is the one directory the developer chose.
+ */
+const isOwnDirectory = async (dir: string): Promise<boolean> => {
+  try {
+    return (await lstat(dir)).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Listed rather than taken from the caller, so the spool of a repo nobody
  * opens any more is swept too — its temps are as abandoned as anybody's.
+ * `isDirectory` on the entry is false for a link, so a linked
+ * `spool/<key>/` is skipped the same way a linked `spool/` is.
  */
 const spoolDirectories = async (home: string): Promise<readonly string[]> =>
-  (await listEntries(join(home, "spool")))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(home, "spool", entry.name));
+  (await isOwnDirectory(join(home, "spool")))
+    ? (await listEntries(join(home, "spool")))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(home, "spool", entry.name))
+    : [];
+
+const ownDirectories = async (
+  dirs: readonly string[],
+): Promise<readonly string[]> => {
+  const owned = await Promise.all(dirs.map(isOwnDirectory));
+  return dirs.filter((_dir, index) => owned[index] === true);
+};
 
 /**
  * Where hook-path writers point writePrivateFile: the home root itself, one
@@ -75,9 +102,11 @@ const spoolDirectories = async (home: string): Promise<readonly string[]> =>
  */
 const sweptDirectories = async (home: string): Promise<readonly string[]> => [
   home,
-  join(home, "state"),
-  join(home, "sessions"),
-  join(home, "cache"),
+  ...(await ownDirectories([
+    join(home, "state"),
+    join(home, "sessions"),
+    join(home, "cache"),
+  ])),
   ...(await spoolDirectories(home)),
 ];
 

@@ -17494,7 +17494,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a missing home directory makes the temp sweep throw",
     file: `${CORE}/src/state/temp-sweep.ts`,
-    from: "  } catch {\n    return [];\n  }",
+    from: "  } catch {\n    return false;\n  }",
     to: "  } catch (error) {\n    throw error;\n  }",
     test: `${CORE}/test/abandoned-temps.test.ts`,
     because: "a home with no cache/ yet throws inside SessionStart's raced handler, and the hook answers \"\" — the briefing is lost to a cleanup",
@@ -17662,6 +17662,32 @@ export const MUTATIONS: readonly Mutation[
     to: "  const temp = `${path}.tmp`;\n",
     test: `${CLI}/test/init-io-atomic.test.ts`,
     because: "the shape drifts from tempSibling's the way it did before, with nothing to notice",
+  },
+  {
+    // Review 2026-10-06 (L5): a linked spool/<key> was skipped, a linked
+    // state/ followed — the sweep deletes, so it follows no link at all.
+    label: "the temp sweep follows a symlinked home subdirectory",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "    return (await lstat(dir)).isDirectory();",
+    to: "    return true;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a `state/` linked to a shared directory has a day-old temp-shaped file deleted out of somebody else's tree",
+  },
+  {
+    label: "the temp sweep follows a symlinked spool/<key>",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "        .filter((entry) => entry.isDirectory())\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a repo key linked out of the home is walked and its temp-shaped files deleted",
+  },
+  {
+    label: "an unlistable home subdirectory makes the temp sweep throw",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  } catch {\n    return [];\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "one directory whose listing is refused throws inside SessionStart's raced handler, and the hook answers \"\" — the briefing lost to a cleanup",
   },
 ];
 
@@ -17838,7 +17864,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 21
+ * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
