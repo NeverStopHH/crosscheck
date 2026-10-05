@@ -16,6 +16,8 @@ import {
   developers,
 } from "../db/schema.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import { cloudAgentForEmail } from "@crosscheck/schema";
+import type { CloudAgentId } from "@crosscheck/schema";
 import type { SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -64,6 +66,19 @@ export interface AbsenceFinding {
   readonly lastSessionAt: string | null;
   /** When the evidence behind this line was read from git — staleness surface. */
   readonly evidenceCollectedAt: string;
+  /**
+   * `unconnected` only: the author's email is a known cloud agent's commit
+   * identity (schema CLOUD_AGENT_IDENTITIES) — an id, never the address.
+   *
+   * A REFINEMENT, NOT A THIRD KIND, on purpose. A 0.10 client skips a kind it
+   * does not know, so a `cloud_agent` kind would drop the line from its
+   * briefing and leave doctor's count with no word for it; an extra field is
+   * ignored and the line still renders as the unconnected one, which stays
+   * true. The finding is still `unconnected` because that is still the fact:
+   * no member's address matches, and git does not name who started the
+   * session — so the census below counts it as a gap exactly as before.
+   */
+  readonly cloudAgent?: CloudAgentId;
 }
 
 interface Deps {
@@ -146,6 +161,8 @@ export const listAbsences = async (
   const rows = await deps.db
     .select({
       authorName: commitEvidence.authorName,
+      // Read to classify, never returned: the response carries names only.
+      authorEmail: commitEvidence.authorEmail,
       latestCommitAt: commitEvidence.latestCommitAt,
       collectedAt: commitEvidence.collectedAt,
       developerId: developers.id,
@@ -183,8 +200,15 @@ export const listAbsences = async (
       evidenceCollectedAt: row.collectedAt.toISOString(),
     };
     if (row.developerId === null || row.developerName === null) {
+      const cloudAgent = cloudAgentForEmail(row.authorEmail);
       return [
-        { kind: "unconnected", name: row.authorName, lastSessionAt: null, ...base },
+        {
+          kind: "unconnected",
+          name: row.authorName,
+          lastSessionAt: null,
+          ...base,
+          ...(cloudAgent === null ? {} : { cloudAgent }),
+        },
       ];
     }
     const lastSession = lastSessions.get(row.developerId) ?? null;

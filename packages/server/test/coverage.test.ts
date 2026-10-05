@@ -441,6 +441,40 @@ describe("git: stale evidence is not the same answer as no evidence", () => {
     expect(row.observedAt).toBe(at(-1 * 60 * MINUTE_MS).toISOString());
   });
 
+  test("a commit by Claude <noreply@anthropic.com> stays a gap, even beside a member's session that hour", async () => {
+    // Arrange: Claude Code on the web's commit identity, and a member who
+    // reported a session minutes after that commit. The absence line names
+    // the identity now; naming it must close nothing — git does not say who
+    // started the cloud session, so no member's session may be credited to it.
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_same_hour",
+      lastHeartbeatAt: at(-3 * DAY_MS + 10 * MINUTE_MS),
+      endedAt: at(-3 * DAY_MS + 10 * MINUTE_MS),
+    });
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "noreply@anthropic.com",
+      authorName: "Claude",
+      latestCommitAt: at(-3 * DAY_MS),
+      collectedAt: at(-1 * 60 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+    const census = await readAbsenceCensus(
+      { db: harness.db, now: harness.clock.now },
+      viewerId,
+      REPO,
+    );
+
+    // Assert: exactly the stranger's gap above
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("commit_authors_unreported");
+    expect(row.gapSince).toBe(at(-3 * DAY_MS).toISOString());
+    expect(census.unreportedAuthors).toBe(1);
+    expect(census.earliestSessionAt).toBeNull();
+  });
+
   test("fresh evidence whose authors all reported a session is complete", async () => {
     // Arrange: the viewer's own commits, an hour after their own session
     const { harness, viewerId } = await seed();

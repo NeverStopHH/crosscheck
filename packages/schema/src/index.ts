@@ -190,12 +190,15 @@ export {
 export type { Hint, HintDelivery, HintTrust } from "./hint.ts";
 
 export {
+  CLOUD_AGENT_IDENTITIES,
   CommitAuthorEvidenceSchema,
   CommitEvidenceSchema,
   MAX_COMMIT_CLOCK_SKEW_MS,
   MAX_COMMIT_EVIDENCE_AUTHORS,
+  cloudAgentForEmail,
 } from "./commit-evidence.ts";
 export type {
+  CloudAgentId,
   CommitAuthorEvidence,
   CommitEvidence,
 } from "./commit-evidence.ts";

@@ -25,6 +25,7 @@ interface AbsenceView {
   readonly latestCommitAt: string;
   readonly lastSessionAt: string | null;
   readonly evidenceCollectedAt: string;
+  readonly cloudAgent?: string;
 }
 
 const ingestEvidence = async (
@@ -108,6 +109,43 @@ describe("GET /api/absences", () => {
     expect(absences[0]?.kind).toBe("unconnected");
     expect(absences[0]?.name).toBe("Sam Stranger");
     expect(absences[0]?.lastSessionAt).toBeNull();
+  });
+
+  test("Claude Code on the web's commit identity stays 'unconnected', named as that identity", async () => {
+    // Arrange: commits authored AND committed as Claude <noreply@anthropic.com>
+    // — what a Claude Code on the web session pushes from a cloud sandbox no
+    // connector runs in — beside a plain stranger. Git names no developer
+    // for them, and nothing the hub holds does either.
+    const setup = await createHarnessWithSession();
+    await ingestEvidence(setup, [
+      {
+        name: "Claude",
+        email: "NoReply@Anthropic.com",
+        latestCommitAt: isoAt(-3 * MS_PER_DAY),
+        commitCount: 2,
+      },
+      {
+        name: "Sam Stranger",
+        email: "sam@external.example",
+        latestCommitAt: isoAt(-1 * MS_PER_DAY),
+        commitCount: 2,
+      },
+    ]);
+
+    // Act
+    const { raw, absences } = await fetchAbsences(setup);
+
+    // Assert: the kind a 0.10 client already renders, refined by an
+    // identifier — never the address, never a developer
+    const claude = absences.find((entry) => entry.name === "Claude");
+    const stranger = absences.find((entry) => entry.name === "Sam Stranger");
+    expect(absences.length).toBe(2);
+    expect(claude?.kind).toBe("unconnected");
+    expect(claude?.cloudAgent).toBe("claude-code-web");
+    expect(claude?.lastSessionAt).toBeNull();
+    expect(stranger?.kind).toBe("unconnected");
+    expect(stranger).not.toHaveProperty("cloudAgent");
+    expect(raw).not.toContain("@");
   });
 
   test("a member matched via an ALIAS email is a member, never 'unconnected'", async () => {

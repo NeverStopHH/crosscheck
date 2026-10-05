@@ -72,3 +72,32 @@ export const CommitEvidenceSchema = z
 
 export type CommitAuthorEvidence = z.infer<typeof CommitAuthorEvidenceSchema>;
 export type CommitEvidence = z.infer<typeof CommitEvidenceSchema>;
+
+/**
+ * COMMIT IDENTITIES THAT ARE A CLOUD AGENT, NOT A PERSON — only those with
+ * evidence behind them.
+ *
+ * Claude Code on the web runs in a cloud sandbox no crosscheck connector runs
+ * in, and authors AND commits as `Claude <noreply@anthropic.com>` from
+ * whichever account started it (pilot, 2026-10). The hub keeps such an author
+ * `unconnected` — no session was reported for those commits, and git does not
+ * name who started the cloud one — and adds the identity's id, so a renderer
+ * can say what the author is instead of advising an account for "Claude".
+ * Nothing here attributes a commit to anybody: the address is never an alias
+ * of a developer, and the commits stay a coverage gap.
+ *
+ * Matched on the lowercased author email the hub already stores. That is a
+ * free-text git field like the name, which is why renderers name the
+ * IDENTITY and never assert who or what made the commit. A row is added with
+ * evidence of the address a product commits under, never by guess.
+ */
+export const CLOUD_AGENT_IDENTITIES = [
+  { id: "claude-code-web", email: "noreply@anthropic.com" },
+] as const;
+
+export type CloudAgentId = (typeof CLOUD_AGENT_IDENTITIES)[number]["id"];
+
+/** The cloud agent a lowercased commit author email belongs to, or null. */
+export const cloudAgentForEmail = (email: string): CloudAgentId | null =>
+  CLOUD_AGENT_IDENTITIES.find((identity) => identity.email === email)?.id ??
+  null;
