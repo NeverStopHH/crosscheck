@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1415
+    # PRINTS: 1424
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -177,7 +177,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 44
+    # PRINTS: packages/cli/src/cli/doctor.ts 46
     # PRINTS: packages/cli/src/cli/index.ts 3
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-remove.ts 10
@@ -240,8 +240,9 @@ jobs:
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 12
+    # PRINTS: briefing/render.ts 15
     # PRINTS: briefing/sanitize.ts 10
+    # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/records.ts 1
     # PRINTS: capture/target-paths.ts 1
     # PRINTS: capture/touched-root.ts 5
@@ -291,7 +292,7 @@ jobs:
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
-    # PRINTS: http/hub.ts 9
+    # PRINTS: http/hub.ts 10
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 5
     # PRINTS: http/verdict.ts 4
@@ -356,6 +357,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/runner.ts 5
     # PRINTS: packages/schema/src/causal-guarantees.ts 10
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
+    # PRINTS: packages/schema/src/commit-evidence.ts 1
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/enums.ts 2
     # PRINTS: packages/schema/src/envelope.ts 1
@@ -388,7 +390,7 @@ jobs:
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
     # PRINTS: packages/server/src/routes/work-contexts.ts 1
-    # PRINTS: packages/server/src/services/absences.ts 4
+    # PRINTS: packages/server/src/services/absences.ts 5
     # PRINTS: packages/server/src/services/calibration.ts 1
     # PRINTS: packages/server/src/services/causal-guarantees.ts 11
     # PRINTS: packages/server/src/services/ci-coverage.ts 3
@@ -450,7 +452,7 @@ jobs:
     # PRINTS: packages/server/test/verdict-latency.test.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
-    # PRINTS: absences.ts 6
+    # PRINTS: absences.ts 7
     # PRINTS: answer-question.ts 1
     # PRINTS: args.ts 2
     # PRINTS: ask-teammate.ts 1
@@ -478,7 +480,7 @@ jobs:
     # PRINTS: claim-surface.ts 1
     # PRINTS: claim-validity.ts 8
     # PRINTS: client.ts 12
-    # PRINTS: commit-evidence.ts 2
+    # PRINTS: commit-evidence.ts 4
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 17
     # PRINTS: config.ts 4
@@ -505,7 +507,7 @@ jobs:
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
-    # PRINTS: doctor.ts 57
+    # PRINTS: doctor.ts 59
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
     # PRINTS: end-session.ts 3
@@ -542,7 +544,7 @@ jobs:
     # PRINTS: hint.ts 6
     # PRINTS: hints.ts 4
     # PRINTS: hook-budget.ts 2
-    # PRINTS: hub.ts 9
+    # PRINTS: hub.ts 10
     # PRINTS: index.ts 3
     # PRINTS: init-global.ts 2
     # PRINTS: init-remove.ts 10
@@ -618,7 +620,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 76
+    # PRINTS: render.ts 79
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9

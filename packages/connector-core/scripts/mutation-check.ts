@@ -16400,6 +16400,78 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "the pilot's 'how to fix?' again, one command earlier than doctor",
   },
+  {
+    label: "the hub names no cloud agent for Claude Code on the web's commits",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      const cloudAgent = cloudAgentForEmail(row.authorEmail);",
+    to: "      const cloudAgent = null;",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "every briefing on the pilot repo goes back to telling the reader Claude needs a crosscheck account",
+  },
+  {
+    label: "the hub names every stranger a cloud agent",
+    file: `${SCHEMA}/src/commit-evidence.ts`,
+    from: "CLOUD_AGENT_IDENTITIES.find((identity) => identity.email === email)?.id ??",
+    to: "CLOUD_AGENT_IDENTITIES.find(() => true)?.id ??",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "a teammate who needs an invitation is told crosscheck cannot capture them, and nobody sends one",
+  },
+  {
+    label: "the briefing still asks for an account for Claude Code on the web",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    return product === null",
+    to: "    return true",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "the pilot's line again: a reader invited to create an account for something that is not a person",
+  },
+  {
+    label: "an unknown cloud agent id is rendered as a product name",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  id !== undefined && Object.hasOwn(CLOUD_AGENT_PRODUCT, id);",
+    to: "  id !== undefined;",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "a newer hub's id prints `the identity undefined commits under`, or a prototype method's source, as a fact",
+  },
+  {
+    label: "a cloud agent id relabels a member's absence",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: '  entry.kind === "unconnected" && isKnownCloudAgent(entry.cloudAgent)',
+    to: "  isKnownCloudAgent(entry.cloudAgent)",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "doctor counts a named hub member as a cloud agent identity, and the member's own gap loses its name",
+  },
+  {
+    label: "a malformed cloud agent field drops the absence row",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  cloudAgent: z.string().min(1).optional().catch(undefined),",
+    to: "  cloudAgent: z.string().min(1).optional(),",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "a refinement this client cannot read hides a coverage gap from the briefing, status and doctor",
+  },
+  {
+    label: "skipping Claude Code on the web's commits as automation erases their gap",
+    file: `${CORE}/src/capture/commit-evidence.ts`,
+    from: "  entry.email.endsWith(GITHUB_NOREPLY_EMAIL_SUFFIX);",
+    to: '  entry.email.endsWith(GITHUB_NOREPLY_EMAIL_SUFFIX) ||\n  entry.email === "noreply@anthropic.com";',
+    test: `${CORE}/test/commit-evidence.test.ts`,
+    because: "the tempting fix for the pilot's line deletes the only trace of a session no connector ran in, and coverage reads complete",
+  },
+  {
+    label: "doctor still counts Claude Code on the web as an author without an account",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    (entry) => absenceCloudAgent(entry) !== null,",
+    to: "    () => false,",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "doctor repeats the pilot's wrong remedy one surface over from the briefing that stopped saying it",
+  },
+  {
+    label: "doctor counts Claude Code on the web's commits twice",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: 'findings.filter((entry) => entry.kind === "unconnected").length -',
+    to: 'findings.filter((entry) => entry.kind === "unconnected").length + 0 *',
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the parts sum past the total, and one cloud identity reads as a stranger needing an account as well",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16444,6 +16516,7 @@ interface Outcome {
  * other.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
+ * PRINTS: packages/cli/test/absence-cli.test.ts 2
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
@@ -16566,7 +16639,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/absence-render.test.ts 1
+ * PRINTS: packages/connector-core/test/absence-render.test.ts 5
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
@@ -16580,6 +16653,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
+ * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
@@ -16679,6 +16753,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
+ * PRINTS: packages/server/test/absences.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
