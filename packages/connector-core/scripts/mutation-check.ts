@@ -17510,6 +17510,36 @@ export const MUTATIONS: readonly Mutation[
       "the connector cannot tell a teammate the row bound cut short from one " +
       "it listed whole, and prints the floor as the exact count",
   },
+  {
+    label: "status cuts a teammate's topics past the cap without saying so",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    ...(hidden > 0 ? [`    ${moreTopicsTail(hidden, false)}`] : []),",
+    to: "    ...[],",
+    test: `${CLI}/test/status-topics.test.ts`,
+    because:
+      "a teammate live on four branches reads as live on three, in the one " +
+      "command a person runs to see who is doing what",
+  },
+  {
+    label: "status stops saying how many sessions a topic holds",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    ...(topic.sessions === 1 ? [] : [countOf(topic.sessions, \"session\", false)]),",
+    to: "    ...[],",
+    test: `${CLI}/test/status-topics.test.ts`,
+    because:
+      "three sessions on one branch print as one, and the reader cannot see " +
+      "that a teammate's subagents are all on the same piece of work",
+  },
+  {
+    label: "status groups teammates through the prose sanitizer instead of the bare one",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "groupTeammates(presence.data, now, bareUntrusted)",
+    to: "groupTeammates(presence.data, now)",
+    test: `${CLI}/test/status-intent.test.ts`,
+    because:
+      "a display name carrying ` · ` mints a field on a line whose fields are " +
+      "separated by exactly that",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17610,6 +17640,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 15
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
+ * PRINTS: packages/cli/test/status-intent.test.ts 1
+ * PRINTS: packages/cli/test/status-topics.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/terminal.test.ts 3
  * PRINTS: packages/cli/test/trace-command.test.ts 2
