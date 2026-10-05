@@ -58,19 +58,23 @@ const spoolDirectories = async (home: string): Promise<readonly string[]> =>
     .map((entry) => join(home, "spool", entry.name));
 
 /**
- * Where hook-path writers point writePrivateFile: per-repo state (sync,
- * fired markers, landing fetch, conference counters), session state and the
- * intent prompt beside it, the presence cache SessionStart and the statusline
- * both write inside a budget race, and every repo's spool (cursors, drop
- * aggregates, `.pending-end` markers — SessionEnd writes those through
- * writePrivateFile too, so their temps carry the same shape).
+ * Where hook-path writers point writePrivateFile: the home root itself, one
+ * level, because SessionStart rewrites `config.json` there inside its budget
+ * race (config/config.ts rememberDeveloper) and that temp carries the API
+ * key — it goes first, so a capped run never leaves it for later; per-repo
+ * state (sync, fired markers, landing fetch, conference counters); session
+ * state and the intent prompt beside it; the presence cache SessionStart and
+ * the statusline both write inside a budget race; and every repo's spool
+ * (cursors, drop aggregates, `.pending-end` markers — SessionEnd writes
+ * those through writePrivateFile too, so their temps carry the same shape).
  *
- * NOT the CLI's own destinations (`config.json` at the home root,
- * `conferences/`, `backups/`): those writers are commands a person runs to
- * completion, not hooks a budget race abandons. A directory joins this list
- * on the evidence each of these four has — a writer that can be abandoned.
+ * NOT `conferences/` or `backups/`: their writers are CLI commands a person
+ * runs to completion, not hooks a budget race abandons. A directory joins
+ * this list on the evidence each of these has — a writer that can be
+ * abandoned.
  */
 const sweptDirectories = async (home: string): Promise<readonly string[]> => [
+  home,
   join(home, "state"),
   join(home, "sessions"),
   join(home, "cache"),

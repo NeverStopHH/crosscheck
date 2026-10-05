@@ -17591,6 +17591,16 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/abandoned-temps.test.ts`,
     because: "temps nothing will ever read or rename stay on disk for a week instead of a day",
   },
+  {
+    // Review 2026-10-06 (L1): SessionStart rewrites config.json inside its
+    // budget race, and that temp carries the API key.
+    label: "the temp sweep skips the home root",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  home,\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "an abandoned config.json temp — the API key in a second file — stays beside config.json for good",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17765,7 +17775,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 16
+ * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 17
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2

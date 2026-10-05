@@ -21,6 +21,7 @@ import {
   ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
 } from "../src/constants.ts";
 import {
+  configPath,
   presenceCachePath,
   sessionStatePathForSlug,
   spoolCursorPath,
@@ -109,6 +110,21 @@ describe("sweepAbandonedTemps covers every directory writePrivateFile litters", 
     // Arrange
     const home = await tempHome("sweep-sessions");
     const real = await seed(sessionStatePathForSlug(home, SLUG), ABANDONED_MS);
+    const temp = await seed(tempSibling(real), ABANDONED_MS);
+
+    // Act
+    await sweepAbandonedTemps(home, NOW, ROOM);
+
+    // Assert
+    expect(await exists(temp)).toBe(false);
+    expect(await exists(real)).toBe(true);
+  });
+
+  test("an abandoned config.json temp in the home root goes; config.json stays", async () => {
+    // Arrange: SessionStart rewrites config.json (rememberDeveloper) inside
+    // its budget race, so its temp — API key and all — can be abandoned too
+    const home = await tempHome("sweep-root");
+    const real = await seed(configPath(home), ABANDONED_MS);
     const temp = await seed(tempSibling(real), ABANDONED_MS);
 
     // Act
