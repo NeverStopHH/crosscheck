@@ -17995,6 +17995,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "an unmarked share reads as hints nobody followed, when it is only hints nobody recorded",
   },
+  // ── 07 §13.10, review LOW: the corpus covers what the hub says stands ─────
+  {
+    label: "mark_hint_outcome echoes the hub's standing word raw",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "      : ` It does not stand: the delivery stands at ${safeId(stands)}.`;",
+    to: "      : ` It does not stand: the delivery stands at ${stands}.`;",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "a hostile hub's 'stands' word reaches the agent unframed, as instruction",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18229,7 +18238,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 8
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 9
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

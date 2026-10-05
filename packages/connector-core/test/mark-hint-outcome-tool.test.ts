@@ -48,7 +48,12 @@ const KEN_CONTEXT = `wc_${KEN_SESSION}`;
 /** A synthetic AWS example key, the same fixture secret-scan.test.ts uses. */
 const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
 
-/** The full corpus twice over, under a loaded runner (mcp-hostile-hub.test.ts says why). */
+/**
+ * The full corpus four times over, under a loaded runner (mcp-hostile-hub.test.ts
+ * says why). Kept fast by preparing the tool's context ONCE: preparing it per
+ * call spawned git for every answer and ran 6–9 s alone, 20 s under four
+ * parallel runs — the timeout is not what was raised.
+ */
 const CORPUS_TIMEOUT_MS = 20_000;
 
 let server: ReturnType<typeof Bun.serve>;
@@ -139,14 +144,17 @@ const contextFor = async (env: Env): Promise<McpContext> => {
   return setup.ctx;
 };
 
-const call = async (args: unknown, env: Env = nickEnv): Promise<{ text: string; isError: boolean }> => {
+const callIn = async (ctx: McpContext, args: unknown): Promise<{ text: string; isError: boolean }> => {
   const tool = findTool("mark_hint_outcome");
   if (tool === undefined) {
     throw new Error("no tool mark_hint_outcome");
   }
-  const result = await tool.run(await contextFor(env), args);
+  const result = await tool.run(ctx, args);
   return { text: result.content.map((part) => part.text).join("\n"), isError: result.isError === true };
 };
+
+const call = async (args: unknown, env: Env = nickEnv): Promise<{ text: string; isError: boolean }> =>
+  callIn(await contextFor(env), args);
 
 const mine = async () => {
   const ctx = await contextFor(nickEnv);
@@ -392,33 +400,41 @@ const assertSafeReply = (text: string, where: string): void => {
 
 describe("a hostile hub cannot speak through mark_hint_outcome's reply", () => {
   test(
-    "every string the hub chooses — ids, outcome words, refusal code and message — holds the invariants",
+    "every string the hub chooses — ids, outcome words, what stands, refusal code and message — holds the invariants",
     async () => {
-      // Arrange
-      const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
-
-      for (const entry of INJECTION_CORPUS) {
-        // Act — a success that names everything with the payload, then a refusal
-        hostileAnswer = () =>
+      // Arrange — one context for the whole corpus: the hub's answer is what varies
+      const ctx = await contextFor({ ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` });
+      const args = { ref: KEN_CONTEXT, outcome: "followed" };
+      const answers = (payload: string): readonly (() => Response)[] => [
+        // a success naming everything with the payload; what stands differing
+        // from the word (a tie); a repeat standing at the payload; a refusal
+        () =>
           Response.json({
             ok: true,
-            data: {
-              id: entry.payload,
-              deliveryId: entry.payload,
-              outcome: entry.payload,
-              repeated: false,
-              replaced: entry.payload,
-              stands: entry.payload,
-            },
-          });
-        const recorded = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
-        hostileAnswer = () =>
-          Response.json({ ok: false, error: { code: entry.payload, message: entry.payload } }, { status: 422 });
-        const refused = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
+            data: { id: payload, deliveryId: payload, outcome: payload, repeated: false, replaced: payload, stands: payload },
+          }),
+        () =>
+          Response.json({
+            ok: true,
+            data: { id: payload, deliveryId: payload, outcome: "followed", repeated: false, replaced: payload, stands: payload },
+          }),
+        () =>
+          Response.json({
+            ok: true,
+            data: { id: payload, deliveryId: payload, outcome: payload, repeated: true, replaced: null, stands: payload },
+          }),
+        () => Response.json({ ok: false, error: { code: payload, message: payload } }, { status: 422 }),
+      ];
 
-        // Assert
-        assertSafeReply(recorded.text, `recorded/${entry.id}`);
-        assertSafeReply(refused.text, `refused/${entry.id}`);
+      for (const entry of INJECTION_CORPUS) {
+        for (const [index, answer] of answers(entry.payload).entries()) {
+          // Act
+          hostileAnswer = answer;
+          const reply = await callIn(ctx, args);
+
+          // Assert
+          assertSafeReply(reply.text, `answer ${String(index)}/${entry.id}`);
+        }
       }
     },
     CORPUS_TIMEOUT_MS,

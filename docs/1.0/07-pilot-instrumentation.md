@@ -1154,3 +1154,10 @@ person chose to say it, so followed, overrode, not relevant now and noise can on
 is everything nobody spoke about, some of which was acted on, so it can only be over-counted. The line now
 words the qualifier per figure: `noise 9.1 (FLOORS: only what agents and people chose to record) · unmarked 9.1
 (a CEILING: some of it was acted on and never recorded) — no target, nobody named`.
+
+*LOW — the hostile-hub corpus test for `mark_hint_outcome` hit its 20 s timeout under four parallel runs*
+(6–9 s alone), which the two-CPU CI lane would hit too. It prepared the tool's context — git spawns and config
+loads — for every one of its calls. It now prepares one context for the whole corpus and varies only the hub's
+answer, and it checks four answers per payload instead of two (the tie and the repeat that carry `stands`, #11,
+were not covered): about 0.4 s for the corpus, four parallel runs of the whole file in 3 s. The timeout was not
+raised.
