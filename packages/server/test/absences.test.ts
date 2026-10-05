@@ -11,6 +11,7 @@ import {
   registerTestSession,
 } from "./helpers.ts";
 import type { HarnessWithSession } from "./helpers.ts";
+import { developerEmails } from "../src/db/schema.ts";
 
 const REPO = "github.com/acme/api";
 const MS_PER_HOUR = 3_600_000;
@@ -179,6 +180,50 @@ describe("GET /api/absences", () => {
     expect(absences.length).toBe(1);
     expect(absences[0]?.kind).toBe("inactive");
     expect(absences[0]?.name).toBe("Robin");
+  });
+
+  test("a cloud agent identity a hub already linked to a developer is reported, never deleted", async () => {
+    // Arrange: a link from before the developers routes refused it — the
+    // alias API accepted noreply@anthropic.com until then
+    const setup = await createHarnessWithSession();
+    const ken = await createTestDeveloper(setup.harness, "Ken", "ken@example.com");
+    await setup.harness.db.insert(developerEmails).values({
+      email: "noreply@anthropic.com",
+      developerId: ken.developerId,
+      isPrimary: false,
+      createdAt: new Date(TEST_START_ISO),
+    });
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+    const raw = await response.text();
+    const body = JSON.parse(raw) as { data: { linkedCloudAgents: string[] } };
+
+    // Assert: the identity's id — no developer, no address — and the row stays
+    expect(body.data.linkedCloudAgents).toEqual(["claude-code-web"]);
+    expect(raw).not.toContain("@");
+    const kept = await setup.harness.db.select().from(developerEmails);
+    expect(kept.map((row) => row.email)).toContain("noreply@anthropic.com");
+  });
+
+  test("a hub holding no such link says so with an empty list", async () => {
+    // Arrange
+    const setup = await createHarnessWithSession();
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+    const body = (await response.json()) as {
+      data: { linkedCloudAgents?: string[] };
+    };
+
+    // Assert: [] is "measured, none" — an absent field is an older hub
+    expect(body.data.linkedCloudAgents).toEqual([]);
   });
 
   test("a member whose commit falls inside the grace window stays silent", async () => {

@@ -16,7 +16,7 @@ import {
   developers,
 } from "../db/schema.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
-import { cloudAgentForEmail } from "@crosscheck/schema";
+import { CLOUD_AGENT_IDENTITIES, cloudAgentForEmail } from "@crosscheck/schema";
 import type { CloudAgentId } from "@crosscheck/schema";
 import type { SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -228,6 +228,37 @@ export const listAbsences = async (
     ];
   });
   return findings.slice(0, ABSENCE_MAX_FINDINGS);
+};
+
+/**
+ * CLOUD AGENT IDENTITIES THIS HUB HAS LINKED TO A DEVELOPER anyway — rows
+ * from before the developers routes refused them (services/developers.ts
+ * CloudAgentRefused), or written straight into the table. Such a link makes
+ * every commit under that identity, by anyone, one developer's: the listing
+ * above names them instead of the identity, and a session of theirs near the
+ * commit closes a gap the hub has no evidence about.
+ *
+ * NOT DELETED: the link is an admin's to undo, and dropping it here would
+ * change whose commits are whose without a word to anyone. Reported instead,
+ * ids only — never the developer, never the address — so doctor and status
+ * can say it is there; `[]` is "none linked", and an older hub sends nothing.
+ */
+export const listLinkedCloudAgents = async (
+  db: Db,
+): Promise<readonly CloudAgentId[]> => {
+  const rows = await db
+    .select({ email: developerEmails.email })
+    .from(developerEmails)
+    .where(
+      inArray(
+        developerEmails.email,
+        CLOUD_AGENT_IDENTITIES.map((identity) => identity.email),
+      ),
+    );
+  return rows.flatMap((row) => {
+    const cloudAgent = cloudAgentForEmail(row.email);
+    return cloudAgent === null ? [] : [cloudAgent];
+  });
 };
 
 /**
