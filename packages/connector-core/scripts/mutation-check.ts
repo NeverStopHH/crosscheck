@@ -125,9 +125,7 @@ export const MUTATIONS: readonly Mutation[
     file: `${CURSOR}/src/doctor.ts`,
     from:
       "  const user = await readHooks(cursorUserDir(input.env), \"user\");\n" +
-      "  return user.kind === \"installed\" || user.kind === \"unparseable\"\n" +
-      "    ? user\n" +
-      "    : project;",
+      "  return isReported(user) ? user : project;",
     to: "  return project;",
     test: `${CLI}/test/cursor-doctor.test.ts`,
     because:
@@ -140,7 +138,7 @@ export const MUTATIONS: readonly Mutation[
     // described whenever it carries our entries.
     label: "a user-level Cursor install is preferred over the repo's",
     file: `${CURSOR}/src/doctor.ts`,
-    from: "  if (project.kind === \"installed\" || project.kind === \"unparseable\") {",
+    from: "  if (isReported(project)) {",
     to: "  if (false) {",
     test: `${CLI}/test/cursor-doctor.test.ts`,
     because:
@@ -16609,6 +16607,103 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-backups.test.ts`,
     because: "the team's own Cursor hooks file is merged over with no recoverable copy anywhere",
   },
+  // ── an unreadable user-level wiring file is unknown, never absent ──
+  {
+    label: "an unreadable file reads as absent",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "    return { kind: \"text\", text: await file.text() };\n  } catch {\n    return { kind: \"unreadable\" };",
+    to: "    return { kind: \"text\", text: await file.text() };\n  } catch {\n    return { kind: \"absent\" };",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "an EACCES ~/.claude/settings.json reads as 'no user-level install' on every surface at once",
+  },
+  {
+    label: "readGlobalWiring forgets that the user settings could not be read",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "    unreadable: settingsRead.ok ? null : settingsRead.reason,",
+    to: "    unreadable: null,",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "doctor and init describe a user-level install nobody could read as absent",
+  },
+  {
+    label: "doctor reports no user-level install for a settings file it could not read",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  const unknown = userLevelUnknown(wiring);\n  if (unknown !== null) {",
+    to: "  const unknown = userLevelUnknown(wiring);\n  if (false) {",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "the Ken-shape WARN sends someone with a working but locked global install to install it again",
+  },
+  {
+    label: "doctor FAILs a repo's hooks as missing while the user-level settings could not be read",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (wiring.unreadable !== null) {\n    return check(\n      \"WARN\",\n      \"hooks registered\",",
+    to: "  if (false) {\n    return check(\n      \"WARN\",\n      \"hooks registered\",",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "the hooks that may well load from user scope are reported missing, and init is recommended for a repo that may not need it",
+  },
+  {
+    label: "doctor says no statusline while the user-level settings could not be read",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "        wiring.unreadable === null\n          ? noneDetail",
+    to: "        true\n          ? noneDetail",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "a statusline set at user scope is reported as none because its file could not be read",
+  },
+  {
+    label: "doctor says no mcp server is registered anywhere when ~/.claude.json could not be read",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "    mcpUnreadable: mcpRead.ok ? null : mcpRead.reason,",
+    to: "    mcpUnreadable: null,",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "the mcp lines FAIL 'in either scope' about a user-scope file nobody read",
+  },
+  {
+    label: "doctor FAILs the mcp registration as not found while ~/.claude.json could not be read",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (!userScopeRegistered && userScopeUnknown !== null) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "the registration line says the tools are missing when they may be registered at user scope",
+  },
+  {
+    label: "doctor says no mcp server is registered in either scope while ~/.claude.json could not be read",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    const unknown = facts.userScopeUnknown ?? null;",
+    to: "    const unknown = null;",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "the usable line FAILs 'no agent can call the tools' about a file nobody read",
+  },
+  {
+    label: "init says nothing about a double wiring it could not rule out",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "    ...(userLevel === null\n      ? []",
+    to: "    ...(true\n      ? []",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "a locked user-level install stays wired beside the new project copy and nothing at install time says so",
+  },
+  {
+    label: "Cursor's doctor calls an unreadable hooks.json not installed",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "  if (read.kind !== \"text\") {\n    return { kind: read.kind, path };",
+    to: "  if (read.kind !== \"text\") {\n    return { kind: \"absent\", path };",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "the Cursor section says capture is not installed about a user-level hooks file nobody read",
+  },
+  {
+    label: "Cursor's doctor has no line for an unreadable hooks.json",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "  if (install.kind === \"unreadable\") {",
+    to: "  if (false) {",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "an unreadable hooks file falls through to the installed-path checks, which have nothing to check",
+  },
+  {
+    label: "Cursor's doctor calls an unreadable mcp.json not found",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "  if (read.kind === \"unreadable\") {\n    return check(\n      \"WARN\",\n      \"cursor mcp tools\",",
+    to: "  if (false) {\n    return check(\n      \"WARN\",\n      \"cursor mcp tools\",",
+    test: `${CLI}/test/user-level-unreadable.test.ts`,
+    because: "a locked user-level mcp.json is reported missing and the remedy is to install again",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16709,6 +16804,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/terminal.test.ts 3
  * PRINTS: packages/cli/test/trace-command.test.ts 2
+ * PRINTS: packages/cli/test/user-level-unreadable.test.ts 12
  * PRINTS: packages/cli/test/verdict-render.test.ts 5
  * PRINTS: packages/cli/test/waiver-render.test.ts 12
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1

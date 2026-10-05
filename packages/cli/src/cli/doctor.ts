@@ -233,7 +233,9 @@ import {
   ownedHookEntries,
   readGlobalWiring,
   readProjectWiring,
+  userMcpUnknown,
 } from "./doctor-global.ts";
+import { unreadableClause } from "./init-io.ts";
 import type { GlobalWiring } from "./doctor-global.ts";
 import { readProjectCopy } from "./project-copy.ts";
 import type { ProjectCopy } from "./project-copy.ts";
@@ -422,13 +424,28 @@ const hooksViaScopes = (wiring: GlobalWiring, projectDetail: string): Check => {
       `user-scope hooks in ${wiring.settingsPath} are missing: ${missing.join(", ")} — rerun crosscheck init --global`,
     );
   }
+  // A user settings file nobody could read may hold the very hooks this
+  // repo lacks: unknown, not missing (review 2026-10-05).
+  if (wiring.unreadable !== null) {
+    return check(
+      "WARN",
+      "hooks registered",
+      `${projectDetail}; ${unreadableClause(wiring.settingsPath, wiring.unreadable)} — whether user-scope hooks cover this repo is unknown`,
+    );
+  }
   return check("FAIL", "hooks registered", projectDetail);
 };
 
 /** The statusline line when the project scope sets none — user scope applies. */
 const statuslineViaGlobal = (wiring: GlobalWiring, noneDetail: string): Check =>
   wiring.statuslineCommand === null
-    ? check("WARN", "statusline registered", noneDetail)
+    ? check(
+        "WARN",
+        "statusline registered",
+        wiring.unreadable === null
+          ? noneDetail
+          : `${noneDetail}; ${unreadableClause(wiring.settingsPath, wiring.unreadable)} — whether a user-scope statusline applies is unknown`,
+      )
     : isOwnedCommand(wiring.statuslineCommand)
       ? check(
           "PASS",
@@ -953,10 +970,17 @@ const checkMcpRegistration = async (
   repoRoot: string,
   userScopeRegistered: boolean,
   mcpIgnored: boolean | null,
+  /** Set when ~/.claude.json could not be read (doctor-global `userMcpUnknown`). */
+  userScopeUnknown: string | null,
 ): Promise<Check> => {
   const path = join(repoRoot, MCP_CONFIG_FILE);
   const raw = await readTextOrNull(path);
   if (raw === null) {
+    // An unreadable user-scope file may register the tools: unknown, never
+    // the "not found" FAIL that says they are missing (review 2026-10-05).
+    if (!userScopeRegistered && userScopeUnknown !== null) {
+      return check("WARN", "mcp tools registered", `${path} not found, and ${userScopeUnknown}`);
+    }
     // Finding #13: a missing PROJECT file is not a broken install when the
     // user scope registers the tools — but user scope covers only THIS
     // machine, so the committed-file advice survives as a note instead of
@@ -1052,6 +1076,11 @@ export interface McpUsableFacts {
   readonly hub: { readonly ok: boolean; readonly status: number; readonly kind: HubFailureKind } | null;
   /** Registered in EITHER scope: an unregistered tool is never called. */
   readonly registered: boolean;
+  /**
+   * Set when ~/.claude.json exists and could not be read: `registered: false`
+   * is then unknown at user scope, not "in neither scope" (review 2026-10-05).
+   */
+  readonly userScopeUnknown?: string | null;
   readonly probe: McpProbeOutcome;
 }
 
@@ -1085,11 +1114,18 @@ export const mcpUsableCheck = (facts: McpUsableFacts): Check => {
     );
   }
   if (!facts.registered) {
-    return check(
-      "FAIL",
-      name,
-      "no mcp server is registered in either scope, so no agent can call the tools — run `crosscheck init` (or `crosscheck init --global`)",
-    );
+    const unknown = facts.userScopeUnknown ?? null;
+    return unknown === null
+      ? check(
+          "FAIL",
+          name,
+          "no mcp server is registered in either scope, so no agent can call the tools — run `crosscheck init` (or `crosscheck init --global`)",
+        )
+      : check(
+          "WARN",
+          name,
+          `no mcp server is registered in this repo, and ${unknown}`,
+        );
   }
   switch (facts.probe.kind) {
     case "failed":
@@ -3521,6 +3557,7 @@ export const runDoctor = async (
               identity.root,
               globalWiring.mcpRegistered,
               await isPathIgnored(identity.root, MCP_CONFIG_FILE),
+              userMcpUnknown(globalWiring),
             ),
           ]),
       mcpUsableCheck({
@@ -3533,6 +3570,7 @@ export const runDoctor = async (
           globalWiring.mcpRegistered ||
           (identity !== null &&
             (await readRegisteredMcpEntry(identity.root, env)) !== null),
+        userScopeUnknown: userMcpUnknown(globalWiring),
         probe: { kind: "not-probed", why: "no hub configured" },
       }),
       bunfigCheck,
@@ -3812,6 +3850,7 @@ export const runDoctor = async (
       identity.root,
       globalWiring.mcpRegistered,
       ignoreVerdicts.mcp,
+      userMcpUnknown(globalWiring),
     ),
     await checkMcpUsable(identity.root, env, {
       configured: true,
@@ -3822,6 +3861,7 @@ export const runDoctor = async (
       registered:
         globalWiring.mcpRegistered ||
         (await readRegisteredMcpEntry(identity.root, env)) !== null,
+      userScopeUnknown: userMcpUnknown(globalWiring),
     }),
     ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),

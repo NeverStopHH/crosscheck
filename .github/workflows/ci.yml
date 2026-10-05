@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1441
+    # PRINTS: 1453
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -171,19 +171,20 @@ jobs:
     # PRINTS: packages/cli/src/ci-report/report.ts 4
     # PRINTS: packages/cli/src/ci-report/run.ts 4
     # PRINTS: packages/cli/src/cli/conference.ts 15
+    # PRINTS: packages/cli/src/cli/doctor-global.ts 3
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 3
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 44
+    # PRINTS: packages/cli/src/cli/doctor.ts 48
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-io.ts 5
     # PRINTS: packages/cli/src/cli/init-remove-plan.ts 5
     # PRINTS: packages/cli/src/cli/init-remove-report.ts 8
     # PRINTS: packages/cli/src/cli/init-remove.ts 5
-    # PRINTS: packages/cli/src/cli/init.ts 2
+    # PRINTS: packages/cli/src/cli/init.ts 3
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
@@ -255,6 +256,7 @@ jobs:
     # PRINTS: config/config.ts 4
     # PRINTS: config/connected-repo.ts 3
     # PRINTS: config/hook-budget.ts 2
+    # PRINTS: config/paths.ts 1
     # PRINTS: constants.ts 9
     # PRINTS: coverage/exempt-surfaces.ts 2
     # PRINTS: coverage/render.ts 20
@@ -348,7 +350,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/capabilities.ts 2
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
-    # PRINTS: packages/connector-cursor/src/doctor.ts 7
+    # PRINTS: packages/connector-cursor/src/doctor.ts 10
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
@@ -505,12 +507,13 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
+    # PRINTS: doctor-global.ts 3
     # PRINTS: doctor-landed-authors.ts 3
     # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
-    # PRINTS: doctor.ts 57
+    # PRINTS: doctor.ts 64
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
     # PRINTS: end-session.ts 3
@@ -554,7 +557,7 @@ jobs:
     # PRINTS: init-remove-plan.ts 5
     # PRINTS: init-remove-report.ts 8
     # PRINTS: init-remove.ts 5
-    # PRINTS: init.ts 3
+    # PRINTS: init.ts 4
     # PRINTS: injector.ts 5
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
@@ -584,6 +587,7 @@ jobs:
     # PRINTS: passkey-status.ts 4
     # PRINTS: passkeys.ts 8
     # PRINTS: passkeys.tsx 1
+    # PRINTS: paths.ts 1
     # PRINTS: payload.ts 1
     # PRINTS: pilot-candidates.ts 15
     # PRINTS: pilot-label-figures.ts 12

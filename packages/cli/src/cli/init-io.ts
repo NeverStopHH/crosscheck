@@ -22,6 +22,7 @@ import { basename, dirname, join, relative } from "node:path";
 import {
   crosscheckHome,
   ensureDir,
+  readText,
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -109,16 +110,14 @@ export const skippedMessage = (path: string, reason: ReadRefusal): string =>
  * stopped it, and why.
  */
 export const readJsonConfig = async (path: string): Promise<ReadJson> => {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
+  const read = await readText(path);
+  if (read.kind === "absent") {
     return { ok: true, value: {}, raw: null };
   }
-  let raw: string;
-  try {
-    raw = await file.text();
-  } catch {
+  if (read.kind === "unreadable") {
     return { ok: false, reason: "unreadable" };
   }
+  const raw = read.text;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;

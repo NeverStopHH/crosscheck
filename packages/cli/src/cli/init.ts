@@ -28,7 +28,7 @@ import {
 } from "@crosscheck/connector-core/config/launcher.ts";
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
-import { readGlobalWiring } from "./doctor-global.ts";
+import { readGlobalWiring, userLevelUnknown } from "./doctor-global.ts";
 import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
 import {
   originalSavedSuffix,
@@ -291,6 +291,7 @@ export const runInit = async (
   // The facts doctor's double-wiring remedy is worded from (project-copy.ts),
   // so the note here and the WARN there say the same sentence — read only
   // when the note prints.
+  const userLevel = userLevelUnknown(globalWiring);
   const projectCopy = globalWiring.hooksInstalled
     ? await readProjectCopy(identity.root)
     : null;
@@ -320,6 +321,13 @@ export const runInit = async (
           "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck-hub)",
         ]
       : []),
+    // A user settings file nobody could read may hold a user-level install:
+    // the double wiring is unknown, not absent (review 2026-10-05).
+    ...(userLevel === null
+      ? []
+      : [
+          `note: ${userLevel}, so this repo may now be wired twice on your machine — crosscheck doctor says more once the file is readable`,
+        ]),
     ...(globalWiring.hooksInstalled
       ? [
           `note: a user-level (global) crosscheck install exists (${globalWiring.settingsPath}) — this repo is now wired twice on your machine; identical commands run once (Claude Code dedups them) and capture stays exactly-once either way, but doctor will flag the redundancy; ${doubleWiringRemedy(projectCopy)}`,
