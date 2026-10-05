@@ -373,7 +373,13 @@ const sweepUpdateFor = (
     ? { update: { pinId, path, newPath: outcome.resolved }, denied: null }
     : {
         update: { pinId, path, newPath: null },
-        denied: { path, newPath: rule.path, pattern: rule.pattern, here: rule.here },
+        denied: {
+          path,
+          newPath: rule.path,
+          pattern: rule.pattern,
+          here: rule.here,
+          shippedPattern: rule.shippedPattern,
+        },
       };
 };
 

@@ -15622,7 +15622,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the pin door refuses without saying why an excluded file can never be guarded",
     file: `${CLI}/src/cli/pin-observability.ts`,
-    from: "    ...refusalWhyLines(denied).map((why) => `${why}.`),\n",
+    from: "    ...refusalWhyLines(denied, (shadow) => shadow.path).map((why) => `${why}.`),\n",
     to: "",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "a refusal with no reason reads as a bug to route around, not as a blind spot",
@@ -16427,8 +16427,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the shadow line calls every shadowed file never captured by anyone",
     file: `${CLI}/src/cli/pin-observability.ts`,
-    from: "const here = shadows.filter((shadow) => shadow.here);",
-    to: "const here = shadows;",
+    from: "  !shadow.here ? \"elsewhere\" : shadow.shippedPattern === null ? \"here\" : \"everywhere\";",
+    to: "  \"everywhere\" as ShadowReach;",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "'no matter who did' is printed for a file this machine records",
   },
@@ -16443,8 +16443,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a sweep says no session records a file this machine records",
     file: `${CLI}/src/cli/pin-observability.ts`,
-    from: "`${refusalWhyLines(moves).join(\"; \")}. Re-pin",
-    to: "`${DENYLIST_REFUSAL_WHY}. Re-pin",
+    from: "        ...refusalWhyLines(moves, (move) => move.newPath).map((why) => `${why}.`),\n",
+    to: "        `${DENYLIST_REFUSAL_WHY}.`,\n",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "the sweep's reason is false on the machine that ran it",
   },
@@ -16455,6 +16455,22 @@ export const MUTATIONS: readonly Mutation[
     to: "...(shipped.length >= 0",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "the refusal names a rule this developer replaced and never says why it still applies",
+  },
+  {
+    label: "a file only this machine's own rule skips is called unrecorded by everyone",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "shadow.shippedPattern === null ? \"here\" : \"everywhere\"",
+    to: "\"everywhere\"",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "status says no session records a file every teammate on the shipped list records, and nudges them to retire a working pin",
+  },
+  {
+    label: "one refusal reason is printed over files of different reach",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "    const files = items.filter((item) => reachOf(item) === reach).map(pathOf);",
+    to: "    const files = items.map(pathOf);",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the refusal says two contradictory things about the same files",
   },
 ];
 
@@ -16540,7 +16556,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
  * PRINTS: packages/cli/test/pilot-render.test.ts 19
- * PRINTS: packages/cli/test/pin-denylist-door.test.ts 14
+ * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
