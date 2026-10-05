@@ -17354,8 +17354,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "status's losses line leaves the rejection causes out",
     file: `${CLI}/src/cli/status.ts`,
-    from: "  const parts = [rejected, ignored, capture].filter((part): part is string => part !== null);",
-    to: "  const parts = [ignored, capture].filter((part): part is string => part !== null);",
+    from: "  const parts = [rejected, withheld, ignored, capture].filter((part): part is string => part !== null);",
+    to: "  const parts = [withheld, ignored, capture].filter((part): part is string => part !== null);",
     test: `${CLI}/test/doctor-losses.test.ts`,
     because: "status says '433 dropped' beside nothing that explains it, which is what the pilot read",
   },
@@ -17583,6 +17583,38 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "an edit made in the hook the hub refused is never captured into the healed life, however often the file is edited again",
   },
+  {
+    label: "a withheld straggler is booked as rejected by the hub",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "withheld", ctx.now(), kindsOf(withheld), {',
+    to: '    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "rejected", ctx.now(), kindsOf(withheld), {',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review finding 5: doctor says the hub rejected records that were never sent",
+  },
+  {
+    label: "the withheld line is never formatted",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  withheld: withheldLine(local),",
+    to: "  withheld: null,",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "records the connector withheld are counted in `spool drops` and explained nowhere",
+  },
+  {
+    label: "doctor drops its withheld records line",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: '    lineCheck("withheld records", lines.withheld),\n',
+    to: "",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the withheld count is kept and printed nowhere a person runs",
+  },
+  {
+    label: "status's losses line leaves the withheld records out",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  const parts = [rejected, withheld, ignored, capture].filter((part): part is string => part !== null);",
+    to: "  const parts = [rejected, ignored, capture].filter((part): part is string => part !== null);",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "status counts withheld records as dropped beside nothing that says why",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17649,7 +17681,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
- * PRINTS: packages/cli/test/doctor-losses.test.ts 9
+ * PRINTS: packages/cli/test/doctor-losses.test.ts 12
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
@@ -17840,7 +17872,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 10
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 11
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
  * PRINTS: packages/connector-core/test/session-lives.test.ts 12
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4

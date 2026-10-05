@@ -332,7 +332,9 @@ describe("a flush whose own session the hub ended", () => {
 
     // Assert
     expect(await targetsOf(life.workContextId)).toEqual([]);
-    expect((await readDropDetail(fx.home, fx.key)).rejectedCauses).toEqual({ session_ended: 2 });
+    const drops = await readDropDetail(fx.home, fx.key);
+    expect(drops.byReason).toEqual({ rejected: 1, withheld: 1 });
+    expect(drops.rejectedCauses).toEqual({ session_ended: 1 });
   });
 });
 

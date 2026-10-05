@@ -226,7 +226,7 @@ describe("doctor and status say why the hub rejected records", () => {
 
     // Assert
     expect(result.stdout).toContain(
-      "WARN  hub rejected records  5 records rejected by the hub: 2 because the hub held their session as ended",
+      "WARN  hub rejected records  5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
     );
     expect(result.stdout).toContain(" · 3 with no cause recorded — written by a connector before 1.0");
   });
@@ -251,6 +251,45 @@ describe("doctor and status say why the hub rejected records", () => {
     const result = await runCli(["status"], env, repo);
 
     // Assert
-    expect(result.stdout).toContain("\nlosses: 5 records rejected by the hub: 2 because the hub held their session as ended");
+    expect(result.stdout).toContain(
+      "\nlosses: 5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
+    );
+  });
+});
+
+/**
+ * WITHHELD IS NOT REJECTED (review finding 5). A straggler of a life the hub
+ * had ended is never sent — spool/flush-heal.ts holds it back — so "rejected
+ * by the hub" was a false sentence about it. It has its own word and line.
+ */
+describe("doctor and status name withheld records as withheld", () => {
+  const seedWithheld = async (home: string, key: string): Promise<void> => {
+    await recordDrop(home, key, sessionSlug("withheld-cli"), 2, "withheld", new Date(), { target: 2 }, { session_ended: 2 });
+  };
+
+  test("doctor prints them on their own line, never as rejected by the hub", async () => {
+    // Arrange
+    const { repo, home, env, key } = await fixture("doctor-withheld");
+    await seedWithheld(home, key);
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  withheld records  2 records withheld unsent");
+    expect(result.stdout).toContain("PASS  hub rejected records  none");
+    expect(result.stdout).toContain("WARN  spool drops  2 records discarded in 1 batch (withheld 2)");
+  });
+
+  test("status carries them on its losses line", async () => {
+    // Arrange
+    const { repo, home, env, key } = await fixture("status-withheld");
+    await seedWithheld(home, key);
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("\nlosses: 2 records withheld unsent");
   });
 });

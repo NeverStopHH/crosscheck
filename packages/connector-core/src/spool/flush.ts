@@ -161,9 +161,10 @@ interface BatchOutcome {
 
 /**
  * WITHHELD, NOT SENT: records a refused life produced whose body names that
- * life (spool/flush-heal.ts). Counted as the hub's own `rejected` with the
- * cause it gave for their life — the hub already ended it, and any live
- * session's delivery would file them into it past its end.
+ * life (spool/flush-heal.ts). Counted under their own reason, `withheld` —
+ * nothing was sent, so "rejected by the hub" would be false — with the cause
+ * the hub gave for their life: it already ended it, and any live session's
+ * delivery would file them into it past its end.
  */
 const recordWithheld = async (
   ctx: HubContext,
@@ -171,7 +172,7 @@ const recordWithheld = async (
   withheld: readonly Record<string, unknown>[],
 ): Promise<void> => {
   if (withheld.length > 0) {
-    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "rejected", ctx.now(), kindsOf(withheld), {
+    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "withheld", ctx.now(), kindsOf(withheld), {
       session_ended: withheld.length,
     });
   }

@@ -100,8 +100,8 @@ const plural = (count: number, noun: string): string =>
  * two commands cannot describe one loss two ways.
  */
 const statusLossLines = (local: LocalLosses, now: Date): readonly string[] => {
-  const { rejected, ignored, capture } = formatLossLines(local, now);
-  const parts = [rejected, ignored, capture].filter((part): part is string => part !== null);
+  const { rejected, withheld, ignored, capture } = formatLossLines(local, now);
+  const parts = [rejected, withheld, ignored, capture].filter((part): part is string => part !== null);
   return parts.length === 0 ? [] : [`losses: ${parts.join(" · ")}`];
 };
 

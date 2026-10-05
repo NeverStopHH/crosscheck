@@ -81,6 +81,13 @@ export type DropReason =
    */
   | "rejected"
   /**
+   * NEVER SENT: a record the hub would have filed into a life it had already
+   * ended (spool/flush-heal.ts). Its own word, because "rejected by the hub"
+   * would be a sentence about a request that never went; it carries `causes`
+   * like a rejected line — the reason its life is refused.
+   */
+  | "withheld"
+  /**
    * The hub answered 200 and IGNORED the record's kind — a hub from before
    * that kind, or a kind never ingested over this route (server
    * services/records.ts). The sibling of `rejected`, read nowhere until

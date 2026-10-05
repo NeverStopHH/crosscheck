@@ -61,18 +61,33 @@ export const screenCauses = (causes: Readonly<Record<string, number>>): Counts =
  * What each cause means to the person reading doctor, and what clears it —
  * each one reads after a count ("225 because …"). Renderer-owned literals;
  * the count beside them is the only number.
+ *
+ * THE SESSION NAMED IS THE ONE THAT DELIVERED THEM. The hub's issue is about
+ * `producer.sessionId`, which the flush stamps with the FLUSHING session — not
+ * the session that wrote the records, which may be another conversation's, and
+ * not a claim that anything was resumed (review finding 5).
  */
 export const REJECT_CAUSE_SENTENCES: Readonly<Record<RejectCause, string>> = {
   session_ended:
-    "because the hub held their session as ended — a conversation resumed after its " +
-    "SessionEnd; this connector registers a new crosscheck session for every resumed life, " +
-    "so the next SessionStart of that conversation captures again",
+    "because the session delivering them was one the hub held as ended — its conversation " +
+    "went on past an end (a resume, a reload, another window's SessionEnd); this connector now " +
+    "moves such a session to its next life and re-sends what it may",
   session_unknown:
-    "because the hub had never registered their session — its SessionStart did not reach the hub",
-  session_foreign: "because their session id belongs to another developer on this hub",
-  developer_mismatch: "because they named a developer other than this machine's login",
+    "because the session delivering them was not registered on the hub — its register had " +
+    "not landed; this connector now registers it when the hub says so",
+  session_foreign: "because the session delivering them belongs to another developer on this hub",
+  developer_mismatch: "because the developer they were delivered as is not this machine's login",
   other: "for a reason this connector does not name — the hub's response carries the sentence",
 };
+
+/**
+ * Records never sent at all (spool/flush-heal.ts): the life that wrote them
+ * was already ended on the hub, and any other life delivering them would file
+ * them into it past its end. Reads after a count, like the sentences above.
+ */
+export const WITHHELD_SENTENCE =
+  "withheld unsent — the life that wrote them had already been ended on the hub, and " +
+  "delivering them under another life would have filed them after that end";
 
 /** The `rejected` records no line said a cause for: ledgers from before the field. */
 export const UNRECORDED_CAUSE_SENTENCE =

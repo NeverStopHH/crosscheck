@@ -38,6 +38,7 @@ import {
   REJECT_CAUSES,
   REJECT_CAUSE_SENTENCES,
   UNRECORDED_CAUSE_SENTENCE,
+  WITHHELD_SENTENCE,
 } from "./reject-cause.ts";
 
 /**
@@ -53,6 +54,8 @@ const DROP_REASON_KINDS: Readonly<Record<string, LossKind>> = {
   unparsable: "spool_torn",
   expired: "spool_expired",
   rejected: "hub_rejected",
+  // Never sent, but lost to the same refusal: the hub had ended their life.
+  withheld: "hub_rejected",
   ignored: "hub_ignored",
   "capture-capped": "capture_capped",
   "secret-path": "capture_secret_path",
@@ -297,6 +300,8 @@ export interface LossLines {
   readonly dropped: string | null;
   /** Records the hub rejected, and WHY, cause by cause (loss-accounting §4.3). */
   readonly rejected: string | null;
+  /** Records never sent because the hub had ended the life that wrote them. */
+  readonly withheld: string | null;
   /** Records a hub older than this connector threw away INSIDE the hub's window, with their kinds and the remedy. */
   readonly ignored: string | null;
   /** Ignored records whose newest predates the window: said, without telling anyone to upgrade (review M3). */
@@ -370,6 +375,12 @@ const rejectedLine = (local: LocalLosses): string | null => {
   const unnamed = records - Object.values(causes).reduce((sum, count) => sum + count, 0);
   const parts = unnamed > 0 ? [...named, `${String(unnamed)} ${UNRECORDED_CAUSE_SENTENCE}`] : named;
   return `${plural(records, "record")} rejected by the hub: ${parts.join(" · ")}`;
+};
+
+/** Withheld records, in their own words — never "rejected by the hub" (review finding 5). */
+const withheldLine = (local: LocalLosses): string | null => {
+  const records = local.drops.byReason["withheld"] ?? 0;
+  return records === 0 ? null : `${plural(records, "record")} ${WITHHELD_SENTENCE}`;
 };
 
 /**
@@ -469,6 +480,7 @@ const captureLine = (local: LocalLosses): string | null => {
 export const formatLossLines = (local: LocalLosses, now: Date): LossLines => ({
   dropped: droppedLine(local),
   rejected: rejectedLine(local),
+  withheld: withheldLine(local),
   ...ignoredLines(local, now),
   capture: captureLine(local),
 });

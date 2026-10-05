@@ -71,6 +71,8 @@ export const lossChecks = (local: LocalLosses, now: Date): readonly Check[] => {
     lineCheck("spool drops", lines.dropped),
     // WHY the hub refused what `spool drops` counts as `rejected` (§4.3).
     lineCheck("hub rejected records", lines.rejected),
+    // ...and what was never sent because the hub had ended its life.
+    lineCheck("withheld records", lines.withheld),
     ignoredCheck(lines),
     lineCheck("capture losses", lines.capture),
   ];

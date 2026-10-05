@@ -14,9 +14,10 @@
  * delivers it — so a record the refused life produced would land in an ended
  * session past its end, or under an epoch that session never had, and break
  * an order that was fine (spec 01 §3.4). Those are never re-sent under another
- * life, and the stragglers of a refused life are withheld from every later
- * delivery (spool/refused-lives.ts); both are counted as `rejected` with the
- * cause `session_ended`, which is what the hub answered for them.
+ * life — the refused batch's ones are counted `rejected / session_ended`, what
+ * the hub answered for them — and the stragglers of a refused life are
+ * withheld from every later delivery (spool/refused-lives.ts), counted under
+ * their own reason, `withheld`, because they were never sent.
  *
  * Everything else re-sends: a kind the hub files under the PRODUCER loses its
  * position on the way (capture/records.ts withProducer — a foreign delivery is
