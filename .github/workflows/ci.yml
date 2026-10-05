@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1426
+    # PRINTS: 1430
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -370,7 +370,7 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/src/constants.ts 1
-    # PRINTS: packages/server/src/db/bootstrap.sql 16
+    # PRINTS: packages/server/src/db/bootstrap.sql 17
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
     # PRINTS: packages/server/src/http/schemas.ts 1
@@ -399,7 +399,7 @@ jobs:
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
-    # PRINTS: packages/server/src/services/coverage.ts 28
+    # PRINTS: packages/server/src/services/coverage.ts 29
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 10
     # PRINTS: packages/server/src/services/diagnosis.ts 6
@@ -420,8 +420,8 @@ jobs:
     # PRINTS: packages/server/src/services/pins.ts 9
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
-    # PRINTS: packages/server/src/services/record-handlers.ts 21
-    # PRINTS: packages/server/src/services/records.ts 1
+    # PRINTS: packages/server/src/services/record-handlers.ts 22
+    # PRINTS: packages/server/src/services/records.ts 2
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/retention-registry.ts 9
     # PRINTS: packages/server/src/services/retention.ts 24
@@ -456,7 +456,7 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 16
+    # PRINTS: bootstrap.sql 17
     # PRINTS: briefing.ts 5
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
@@ -489,7 +489,7 @@ jobs:
     # PRINTS: cost.ts 2
     # PRINTS: counts.ts 1
     # PRINTS: coverage-order.ts 5
-    # PRINTS: coverage.ts 31
+    # PRINTS: coverage.ts 32
     # PRINTS: crosscheck.ts 1
     # PRINTS: declarations.ts 5
     # PRINTS: delivery-id.ts 2
@@ -608,8 +608,8 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 21
-    # PRINTS: records.ts 2
+    # PRINTS: record-handlers.ts 22
+    # PRINTS: records.ts 3
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: register-session.ts 4

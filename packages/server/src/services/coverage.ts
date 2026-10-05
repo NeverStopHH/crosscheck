@@ -37,7 +37,7 @@ import {
   COVERAGE_SESSION_WINDOW_DAYS,
   SUSPECT_MAX_PATHS,
 } from "../constants.ts";
-import { alias } from "drizzle-orm/pg-core";
+import { alias, union } from "drizzle-orm/pg-core";
 
 import {
   agentSessions,
@@ -399,19 +399,28 @@ const touchedScope = (
   cutoff: Date,
   paths: readonly string[],
 ): SQL => {
-  const touched = deps.db
-    .select({ sessionId: workContexts.sessionId })
-    .from(workContexts)
-    .innerJoin(
-      workContextTargets,
-      eq(workContextTargets.workContextId, workContexts.id),
-    )
-    .where(
-      and(
-        eq(workContextTargets.kind, "file"),
-        inArray(workContextTargets.value, [...paths]),
-      ),
-    );
+  const onSurface = (session: AnyPgColumn) =>
+    deps.db
+      .select({ sessionId: sql<string>`${session}`.as("session_id") })
+      .from(workContexts)
+      .innerJoin(
+        workContextTargets,
+        eq(workContextTargets.workContextId, workContexts.id),
+      )
+      .where(
+        and(
+          eq(workContextTargets.kind, "file"),
+          inArray(workContextTargets.value, [...paths]),
+        ),
+      );
+  // THE CREATOR AND THE LAST DELIVERER (review of H3, finding 3). A context
+  // on the surface names the session that opened it and the one whose update
+  // last moved it into a window — a successor that drained a spool — and an
+  // answer about the surface is as weak as either.
+  const touched = union(
+    onSurface(workContexts.sessionId),
+    onSurface(workContexts.updatedBySessionId),
+  );
   const unreported = deps.db
     .select({ id: scopeSessions.id })
     .from(scopeSessions)

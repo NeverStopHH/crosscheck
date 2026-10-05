@@ -16502,6 +16502,41 @@ export const MUTATIONS: readonly Mutation[
     because:
       "repo B's loss renders as 'agent telemetry on this repo was lost' on repo A's tree, and repo B's heartbeat moves repo A's observedAt and order",
   },
+  // The review of H3, finding 3: the session that delivered a context's
+  // latest update is recorded, and the path scope reads it.
+  {
+    label: "the path scope reads a context's creator but not its last deliverer",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    onSurface(workContexts.updatedBySessionId),\n",
+    to: "    onSurface(workContexts.sessionId),\n",
+    test: `${SERVER}/test/coverage-successor-session.test.ts`,
+    because:
+      "a successor reaped after delivering trace's candidate into the window leaves the rung complete / sessions_reported",
+  },
+  {
+    label: "a work-context update does not record the session that delivered it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      ...(producerSessionId === undefined ? {} : { updatedBySessionId: producerSessionId }),\n",
+    to: "",
+    test: `${SERVER}/test/coverage-successor-session.test.ts`,
+    because: "the session behind a candidate's in-window activity is written down nowhere, so no scope can read it",
+  },
+  {
+    label: "ingest drops the producer of a work-context record",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "      return ingestWorkContext(deps, developerId, body as WorkContext, seq, producerSessionId);",
+    to: "      return ingestWorkContext(deps, developerId, body as WorkContext, seq);",
+    test: `${SERVER}/test/coverage-successor-session.test.ts`,
+    because: "a clean successor's delivery reads 'no agent session reported on these files'",
+  },
+  {
+    label: "an existing hub never gets the updated-by column",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text REFERENCES agent_sessions(id);\n",
+    to: "",
+    test: `${SERVER}/test/ddl-sync-work-context-updater.test.ts`,
+    because: "drizzle selects a column the database does not have, and every work-context read on an upgraded hub fails",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16794,8 +16829,10 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 11
+ * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
+ * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5

@@ -205,12 +205,16 @@ const touchProducerHeartbeats = async (
  * meet — dropping `seq` at this boundary would leave every canonical event
  * unsequenced while every connector believed it had sent a position.
  *
- * `producerSessionId` is passed for `commit_evidence` ALONE, and only because
- * that body names no session and no join reaches one: its aggregate is keyed
- * by (repo, author_email), and the event records that a COLLECTION happened
- * here in the order. Every other kind resolves its session from the body, for
- * the reason spelled out in record-handlers.ts — the producer is rewritten by
- * whichever session drains the spool.
+ * `producerSessionId` is passed for `commit_evidence`, because that body
+ * names no session and no join reaches one: its aggregate is keyed by (repo,
+ * author_email), and the event records that a COLLECTION happened here in
+ * the order. Every other kind resolves its session from the body, for the
+ * reason spelled out in record-handlers.ts — the producer is rewritten by
+ * whichever session drains the spool. `work_context` gets it too, and for
+ * exactly that rewrite: an update stamps `updated_at` at ingest, so the
+ * DELIVERING session is the one that moved the context into a window, and
+ * coverage reads it (review of H3, finding 3). It is stored beside the
+ * creator, never as an author or a position.
  */
 const dispatchRecord = (
   deps: Deps,
@@ -223,7 +227,7 @@ const dispatchRecord = (
   // Bodies were validated by parseRecord against the kind's schema.
   switch (kind) {
     case "work_context":
-      return ingestWorkContext(deps, developerId, body as WorkContext, seq);
+      return ingestWorkContext(deps, developerId, body as WorkContext, seq, producerSessionId);
     case "target":
       return ingestTarget(deps, developerId, body as Target, seq);
     case "claim":

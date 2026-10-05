@@ -173,6 +173,13 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
       "ownership, not dependence: every registered session has one, so retaining through it keeps every session for ever (Nick, 2026-09-17)",
   },
   {
+    table: "work_contexts",
+    column: "updated_by_session_id",
+    semantics: "non_retaining_edge",
+    reason:
+      "names which session delivered the latest update, for coverage's scope; reads no position in that session's order",
+  },
+  {
     table: "hint_deliveries",
     column: "session_id",
     semantics: "non_retaining_edge",

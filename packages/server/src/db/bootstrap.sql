@@ -207,6 +207,12 @@ UPDATE work_contexts SET normalized_doc = title || ' ' || status
 -- statement covers fresh databases and ones created before this column.
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS landed_at timestamptz;
 
+-- The producer of the update that last set updated_at (review of H3, finding
+-- 3): a successor that drained a spool moves a context into a window, and
+-- coverage's path scope reads it beside the creating session. Null until the
+-- first update. ALTER so an existing hub gets it too.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text REFERENCES agent_sessions(id);
+
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
 -- configured, and recomputing pairwise cosine at read time would be O(n²) over
