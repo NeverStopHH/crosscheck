@@ -87,6 +87,11 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
         "the Stop-time `git diff --name-only HEAD` lane is registered only by Claude Code's Stop hook, so a file this host changed through `sed -i`, a codemod or a generator raises no edit event and produces no file.modified to order or to attribute — `crosscheck trace` will name the session that used an edit tool and never this one",
     },
     {
+      name: "draft review nudge without --inject",
+      sentence:
+        "the once-per-session draft review nudge rides the appended prompt block, the proxy's only write to a prompt, so a --no-inject proxy never asks its agent to settle the developer's drafts; they stay listed on the hub until an --inject session or another host settles them",
+    },
+    {
       name: "forward-path capture",
       sentence:
         "nothing here reads the wire by parsing and re-emitting it: every rung rides a bounded copy of each line, the proxy stays byte-transparent, and the only two writes to the wire remain the MCP server entry at session setup and the appended prompt block",

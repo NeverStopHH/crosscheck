@@ -1391,6 +1391,51 @@ export const STOP_BUDGET_RATIO = 2;
 /** Draft pointers one briefing may spend — pointer discipline like solved. */
 export const MAX_DRAFT_POINTERS = 2;
 /**
+ * THE DRAFT REVIEW NUDGE (flows/draft-nudge.ts) — the once-per-session ask
+ * that turns the briefing's passive own-drafts list into a moment the agent
+ * settles them WITH THE PERSON. Measured reason it exists: twenty
+ * auto-captured drafts on one pilot developer, none reviewed, while the
+ * briefing listed two of them on every SessionStart.
+ *
+ * A draft is DUE once it has waited this long: a younger one may still be
+ * reviewed in the sitting that produced it, and a draft the Stop hook minted
+ * minutes ago is part of the work in progress, not a backlog.
+ */
+export const DRAFT_NUDGE_MIN_AGE_HOURS = 24;
+/**
+ * Turns the session must have FINISHED before the nudge may ride a prompt:
+ * the first prompt carries the person's opening request, and the
+ * SessionStart briefing has only just listed the drafts.
+ */
+export const DRAFT_NUDGE_MIN_FINISHED_TURNS = 1;
+/** Due drafts the nudge names by id; the rest are counted, never silently left out. */
+export const MAX_DRAFT_NUDGE_POINTERS = 5;
+/**
+ * Below this much of the prompt hook's spare budget the nudge is not even
+ * looked up and waits for the next prompt: a slot spent by a hook that then
+ * runs out of time would be marked delivered and never shown.
+ */
+export const DRAFT_NUDGE_MIN_SPARE_MS = 50;
+/**
+ * Past this age the nudge SAYS how many drafts are that old (binding
+ * principle 6): nothing in crosscheck deletes or auto-discards a draft, so an
+ * old one stays listed until a person settles it. Matched to the hub's
+ * 30-day content windows:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.DRAFT_RETENTION_HORIZON_DAYS === s.COMMIT_EVIDENCE_RETENTION_DAYS)'
+ * PRINTS: true
+ */
+export const DRAFT_RETENTION_HORIZON_DAYS = 30;
+/**
+ * The most drafts one `GET /api/drafts` answer carries (the hub's own
+ * MAX_DRAFTS_LISTED, newest first). An answer this long is a FLOOR, and the
+ * nudge and doctor say "at least" rather than print a count the hub cut:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.DRAFT_LISTING_CAP === s.MAX_DRAFTS_LISTED)'
+ * PRINTS: true
+ */
+export const DRAFT_LISTING_CAP = 20;
+/**
  * Most session state files one scan reads (status/doctor, bounded).
  *
  * The cap is spent NEWEST FIRST — the readers stat and sort by mtime before

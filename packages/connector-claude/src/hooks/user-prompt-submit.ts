@@ -1,7 +1,7 @@
 /**
  * UserPromptSubmit — the injection pipeline's fast path (DESIGN.md §4).
  *
- * TWO deliveries can ride this hook, never both on one prompt:
+ * THREE deliveries can ride this hook, never two on one prompt:
  *
  *   1. A DEFERRED BRIEFING (flows/briefing.ts `deliverDeferredBriefing`):
  *      a session that registered late — PostToolUse's recovery, the
@@ -16,6 +16,9 @@
  *      record-then-emit — is the core `selectAndRenderHint` flow since
  *      Block 5 extracted it (connector-core/src/flows/hint.ts, where the
  *      ordering and privacy arguments now live).
+ *   3. Only when neither spoke: the draft review nudge, once per session
+ *      (connector-core/src/flows/draft-nudge.ts) — housekeeping yields to
+ *      team knowledge, and a nudge that loses this prompt waits for the next.
  *
  * AND, BEFORE EITHER, one thing that delivers nothing: the derived-intent
  * fire (trial finding #16). On the FIRST substantive prompt of a session
@@ -54,6 +57,7 @@ import {
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
 import { deliverDeferredBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
+import { deliverDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import {
   readSessionState,
@@ -236,10 +240,21 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     tellsNotices: aPersonReads(ctx.env),
     spareMs: () => budget.spareMs(),
   });
-  if (text.length === 0) {
-    return "";
+  if (text.length > 0) {
+    return envelope(text);
   }
-  return envelope(text);
+  // THIRD, and only on a prompt nothing else spoke on: the once-per-session
+  // draft review nudge (flows/draft-nudge.ts says why a prompt and never Stop).
+  const nudge = await deliverDraftNudge({
+    home: ctx.config.home,
+    hub: ctx.hub,
+    hostSessionKey: ctx.payload.session_id,
+    repoId: ctx.identity.repoId,
+    now: ctx.now(),
+    personReads: aPersonReads(ctx.env),
+    spareMs: budget.spareMs,
+  });
+  return nudge.length === 0 ? "" : envelope(nudge);
 };
 
 export const handleUserPromptSubmit = async (

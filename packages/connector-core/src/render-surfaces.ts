@@ -21,6 +21,7 @@ import type { CommitDrift } from "./git/commit-drift.ts";
 import type { LandedChanges, LandedCommit } from "./landed-changes/probe.ts";
 import type { CoverageRecord } from "./http/coverage.ts";
 import { renderBriefing } from "./briefing/render.ts";
+import { renderDraftNudge } from "./briefing/draft-nudge.ts";
 import { renderConferenceReport } from "./conference/report.ts";
 import { formatSummarizerFailure } from "./model/runner.ts";
 import { ghostDraftBody } from "./briefing/ghost.ts";
@@ -51,6 +52,7 @@ import type {
   ConferenceCorpus,
   ContradictionEntry,
   Diagnosis,
+  DraftEntry,
   GhostCheckEntry,
   HintClaimCandidate,
   InboxQuestion,
@@ -535,6 +537,32 @@ const landedNoticeWith = (payload: string): LandedNotice => ({
   ],
 });
 
+/**
+ * The reader's own drafts, as the hub lists them, with the payload in every
+ * hub-sent string the nudge prints: the kind, the body — and the id, on a
+ * second row, so the body slot is still attacked when the id sanitizes away.
+ */
+const draftsWith = (payload: string): readonly DraftEntry[] => [
+  {
+    id: "clm_11111111-2222-4333-8444-555555555555",
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    kind: payload,
+    body: payload,
+    status: "proposed",
+    confidence: 0.3,
+    createdAt: ISO,
+  },
+  {
+    id: payload,
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    kind: "root_cause",
+    body: "The reaper closes a session whose spool is still flushing",
+    status: "proposed",
+    confidence: 0.3,
+    createdAt: ISO,
+  },
+];
+
 const diagnosisWith = (payload: string): Diagnosis => ({
   workContext: {
     id: "wc_cc_11111111-2222-4333-8444-555555555555",
@@ -961,6 +989,18 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/hints/render.ts",
     framing: "framed",
     render: (payload) => renderLandedNoticeHint(landedNoticeWith(payload), NOW)?.text ?? "",
+  },
+  {
+    // The once-per-session draft review nudge (flows/draft-nudge.ts), told on
+    // a prompt: the counts and the ask are renderer-owned, the kinds are
+    // counted against the claim-kind enum, the pointer lines are the
+    // briefing's own formatDraftLine.
+    kind: "corpus",
+    name: "draft-nudge",
+    delivery: "unsolicited",
+    module: "src/briefing/draft-nudge.ts",
+    framing: "framed",
+    render: (payload) => renderDraftNudge({ due: draftsWith(payload), listedAtCap: false, now: NOW }),
   },
   {
     kind: "corpus",

@@ -17383,6 +17383,134 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-backups.test.ts`,
     because: "the team's files are merged over with no copy of what they held",
   },
+  {
+    label: "the draft review nudge fires on every prompt of a session",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "    fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },",
+    to: "    ({ ...fresh, draftNudge: null }),",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the slot is never spent, so every quiet prompt asks the person about the same drafts again",
+  },
+  {
+    label: "the draft review nudge rides the opening prompt",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "  state.stopTurnCount >= DRAFT_NUDGE_MIN_FINISHED_TURNS;",
+    to: "  state.stopTurnCount >= 0;",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the person's opening request is answered with housekeeping the briefing listed a moment earlier",
+  },
+  {
+    label: "a headless run is told to ask a person about its drafts",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "  if (!input.personReads) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "a run nobody reads spends the session's one nudge, or settles drafts with no human answer",
+  },
+  {
+    label: "a draft minted minutes ago is nudged as a backlog",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "now.getTime() - created >= MIN_AGE_MS;",
+    to: "now.getTime() - created >= 0;",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the work in progress is interrupted to review what the Stop hook just wrote",
+  },
+  {
+    label: "a listing the hub cut at its cap is printed as an exact count",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "    listedAtCap: drafts.data.length >= DRAFT_LISTING_CAP,",
+    to: "    listedAtCap: false,",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "\"20 drafts\" is said of a backlog the hub stopped listing at 20",
+  },
+  {
+    label: "an unreachable hub spends the session's draft nudge",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "  if (!drafts.ok) {\n    return \"\";\n  }",
+    to: "  if (!drafts.ok) {\n    await claimSlot(input, \"nothing_due\");\n    return \"\";\n  }",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "one prompt during a hub blip costs the whole session its nudge, and the drafts rot another day",
+  },
+  {
+    label: "a SessionStart re-fire re-arms the draft nudge",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        draftNudge: previous.draftNudge,",
+    to: "        draftNudge: null,",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "every compact or resume asks the person about the same drafts again inside one session",
+  },
+  {
+    label: "the draft nudge stops saying the person decides",
+    file: `${CORE}/src/briefing/draft-nudge.ts`,
+    from: "  \"When the current request is done, ask the person — do not decide yourself — \" +",
+    to: "  \"When the current request is done, \" +",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the agent is free to confirm machine guesses on its own say-so, and confirm publishes them to the team",
+  },
+  {
+    label: "drafts past the retention horizon go unmentioned",
+    file: `${CORE}/src/briefing/draft-nudge.ts`,
+    from: "  old === 0\n    ? \"\"",
+    to: "  true\n    ? \"\"",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "month-old drafts read like fresh ones, and nothing says crosscheck keeps them rather than letting them lapse",
+  },
+  {
+    label: "UserPromptSubmit never carries the draft nudge",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  return nudge.length === 0 ? \"\" : envelope(nudge);",
+    to: "  return \"\";",
+    test: `${CONNECTOR}/test/draft-nudge-hook.test.ts`,
+    because: "Claude Code sessions spend the slot and the agent is never asked to settle its drafts",
+  },
+  {
+    label: "Cursor's postToolUse never carries the draft nudge",
+    file: `${CURSOR}/src/handlers/post-tool-use.ts`,
+    from: "  const spoken = text.length === 0 ? await attemptDraftNudge(ctx, budget) : text;",
+    to: "  const spoken = text;",
+    test: `${CURSOR}/test/draft-nudge.test.ts`,
+    because: "a Cursor developer's drafts are listed in no prompt and rot exactly as before",
+  },
+  {
+    label: "a Cursor background agent is nudged about drafts",
+    file: `${CURSOR}/src/inject/hint.ts`,
+    from: "    personReads: ctx.config.agentKind !== CURSOR_BACKGROUND_AGENT_KIND && aPersonReads(ctx.env),",
+    to: "    personReads: true,",
+    test: `${CURSOR}/test/draft-nudge.test.ts`,
+    because: "a run nobody reads is told to ask a person, and spends the slot",
+  },
+  {
+    label: "the ACP prompt block never carries the draft nudge",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "    if (nudge === null || nudge.length === 0) {",
+    to: "    if (true) {",
+    test: `${ACP}/test/draft-nudge-inject.test.ts`,
+    because: "an ACP session spends the slot and its agent is never asked to settle the drafts",
+  },
+  {
+    label: "doctor stops saying a headless Claude run is never nudged",
+    file: `${CONNECTOR}/src/capabilities.ts`,
+    from: "      name: \"draft review nudge in headless runs\",",
+    to: "      name: \"headless runs\",",
+    test: `${CONNECTOR}/test/draft-nudge-hook.test.ts`,
+    because: "a CI user whose drafts are never settled finds no line saying why",
+  },
+  {
+    label: "doctor stops saying where Cursor cannot nudge",
+    file: `${CURSOR}/src/capabilities.ts`,
+    from: "      name: \"draft review nudge\",",
+    to: "      name: \"nudge\",",
+    test: `${CURSOR}/test/draft-nudge.test.ts`,
+    because: "a background-agent user reads no nudge and no reason for it",
+  },
+  {
+    label: "doctor stops saying a --no-inject proxy cannot nudge",
+    file: `${ACP}/src/capabilities.ts`,
+    from: "      name: \"draft review nudge without --inject\",",
+    to: "      name: \"without --inject\",",
+    test: `${ACP}/test/draft-nudge-inject.test.ts`,
+    because: "a --no-inject user's drafts rot with no line naming the mode as the cause",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17496,6 +17624,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
+ * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 2
  * PRINTS: packages/connector-acp/test/injector.test.ts 6
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
@@ -17522,6 +17651,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
+ * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
@@ -17583,6 +17713,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 9
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
@@ -17659,6 +17790,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
+ * PRINTS: packages/connector-cursor/test/draft-nudge.test.ts 3
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4

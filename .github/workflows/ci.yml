@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1535
+    # PRINTS: 1551
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -204,12 +204,12 @@ jobs:
     # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 2
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 2
-    # PRINTS: packages/connector-acp/src/capabilities.ts 3
+    # PRINTS: packages/connector-acp/src/capabilities.ts 4
     # PRINTS: packages/connector-acp/src/capture/engine.ts 18
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 2
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
-    # PRINTS: packages/connector-acp/src/inject/injector.ts 5
+    # PRINTS: packages/connector-acp/src/inject/injector.ts 6
     # PRINTS: packages/connector-acp/src/proxy.ts 1
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: packages/connector-acp/src/report.ts 1
@@ -227,6 +227,7 @@ jobs:
     # PRINTS: packages/connector-claude/bench/at7/stats.ts 1
     # PRINTS: packages/connector-claude/bench/at7/stream.ts 3
     # PRINTS: packages/connector-claude/bench/at7/sweep.ts 3
+    # PRINTS: capabilities.ts 1
     # PRINTS: capture/tool-events.ts 2
     # PRINTS: cli/settings-merge.ts 2
     # PRINTS: doctor.ts 1
@@ -237,11 +238,12 @@ jobs:
     # PRINTS: hooks/runner.ts 7
     # PRINTS: hooks/session-start.ts 4
     # PRINTS: hooks/stop.ts 2
-    # PRINTS: hooks/user-prompt-submit.ts 4
+    # PRINTS: hooks/user-prompt-submit.ts 5
     # PRINTS: summarizer/probe.ts 1
     # PRINTS: summarizer/transcript.ts 3
     # PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
     # PRINTS: briefing/context-group.ts 1
+    # PRINTS: briefing/draft-nudge.ts 2
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
@@ -278,6 +280,7 @@ jobs:
     # PRINTS: flows/capture-touched-files.ts 3
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
+    # PRINTS: flows/draft-nudge.ts 6
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
     # PRINTS: flows/hint.ts 5
@@ -344,22 +347,23 @@ jobs:
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 20
+    # PRINTS: state/session-state.ts 21
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
-    # PRINTS: packages/connector-cursor/src/capabilities.ts 2
+    # PRINTS: packages/connector-cursor/src/capabilities.ts 3
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
     # PRINTS: packages/connector-cursor/src/doctor.ts 10
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
+    # PRINTS: packages/connector-cursor/src/handlers/post-tool-use.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/stop.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 3
     # PRINTS: packages/connector-cursor/src/init/init.ts 1
-    # PRINTS: packages/connector-cursor/src/inject/hint.ts 1
+    # PRINTS: packages/connector-cursor/src/inject/hint.ts 2
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
     # PRINTS: packages/connector-cursor/src/runner.ts 5
@@ -471,7 +475,7 @@ jobs:
     # PRINTS: bootstrap.sql 17
     # PRINTS: briefing.ts 5
     # PRINTS: calibration.ts 1
-    # PRINTS: capabilities.ts 6
+    # PRINTS: capabilities.ts 9
     # PRINTS: capture-bookkeeping.ts 6
     # PRINTS: capture-git-touches.ts 1
     # PRINTS: capture-health.ts 2
@@ -520,6 +524,7 @@ jobs:
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor.ts 70
+    # PRINTS: draft-nudge.ts 8
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
     # PRINTS: end-session.ts 3
@@ -553,7 +558,7 @@ jobs:
     # PRINTS: git.ts 4
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
-    # PRINTS: hint.ts 6
+    # PRINTS: hint.ts 7
     # PRINTS: hints.ts 5
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 12
@@ -564,7 +569,7 @@ jobs:
     # PRINTS: init-remove-report.ts 8
     # PRINTS: init-remove.ts 6
     # PRINTS: init.ts 6
-    # PRINTS: injector.ts 5
+    # PRINTS: injector.ts 6
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
@@ -612,7 +617,7 @@ jobs:
     # PRINTS: pin.ts 11
     # PRINTS: pins.ts 12
     # PRINTS: post-tool-use-failure.ts 5
-    # PRINTS: post-tool-use.ts 9
+    # PRINTS: post-tool-use.ts 10
     # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 18
     # PRINTS: precision.ts 2
@@ -659,7 +664,7 @@ jobs:
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 6
-    # PRINTS: session-state.ts 20
+    # PRINTS: session-state.ts 21
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 15
     # PRINTS: set-intent.ts 4
@@ -693,7 +698,7 @@ jobs:
     # PRINTS: triggers.ts 2
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-passkeys.tsx 1
-    # PRINTS: user-prompt-submit.ts 4
+    # PRINTS: user-prompt-submit.ts 5
     # PRINTS: v1.ts 2
     # PRINTS: verdict-latency.test.ts 1
     # PRINTS: verdict-render.ts 3

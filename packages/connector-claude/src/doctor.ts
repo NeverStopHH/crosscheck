@@ -41,7 +41,7 @@ const check = (
  * these sentences are the same on every Claude machine.
  *
  * VERIFY: bun -e 'const {claudeDoctorChecks:c}=await import("./packages/connector-claude/src/doctor.ts");console.log(c().length, c().map(l=>l.name).join(","), new Set(c().map(l=>l.level)).size)'
- * PRINTS: 7 intent (claude-code),ghost (claude-code),summarizer (claude-code),conference (claude-code),event_seq (claude-code),intent timing events (claude-code),git lane blind spots (claude-code) 1
+ * PRINTS: 8 intent (claude-code),ghost (claude-code),summarizer (claude-code),conference (claude-code),event_seq (claude-code),intent timing events (claude-code),draft review nudge in headless runs (claude-code),git lane blind spots (claude-code) 1
  */
 export const claudeDoctorChecks = (): readonly ClaudeCheck[] => [
   ...CLAUDE_CAPABILITY_MANIFEST.capabilities.map((capability) =>
@@ -59,8 +59,9 @@ export const claudeDoctorChecks = (): readonly ClaudeCheck[] => [
   // said six while the function returned seven. They arrive by two routes. One
   // is carried by reference from core because the fact is about the MODEL and
   // holds on every host, so the three manifests cannot drift apart while it is
-  // true. The other is this host's alone: it runs the only Stop-time git lane,
-  // so this is the only section that has to say what that lane cannot see.
+  // true. The others are this host's alone: it runs the only Stop-time git
+  // lane, so this is the only section that has to say what that lane cannot
+  // see, and its draft review nudge is withheld from a run no person reads.
   ...CLAUDE_CAPABILITY_MANIFEST.refusals.map((refusal) =>
     check("PASS", `${refusal.name} (claude-code)`, refusal.sentence),
   ),
