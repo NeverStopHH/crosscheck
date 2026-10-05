@@ -203,6 +203,50 @@ describe("doctor's landed-change reasons line", () => {
   );
 
   test(
+    "counts Claude's commits apart instead of calling every author known",
+    async () => {
+      // Arrange: Mike is known; a cloud squash landed beside his work
+      const s = await setup("lad-cloud-known");
+      await post(s.hubUrl, "/api/developers", ADMIN_TOKEN, { name: "Mike", email: "mike@example.com" });
+      await lands(s, { name: "Claude", email: "noreply@anthropic.com" }, "export const offset = 8;\n");
+
+      // Act
+      const line = await checkLandedAuthors(s.repos.reader, hubFor(s));
+
+      // Assert: known authors, and the cloud commit said apart
+      expect(line.detail).toContain("are known to the hub, so a stop can name their work");
+      expect(line.detail).toContain(
+        "except 1 commit under Claude Code on the web's commit identity, which names no work " +
+          "behind it (crosscheck cannot capture those sessions)",
+      );
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "never says 'no commits by others' when a cloud session's commits are there",
+    async () => {
+      // Arrange: the reader commits as Mike, so the fixture's commits are
+      // their own, and the only other commit is Claude's
+      const s = await setup("lad-cloud-only");
+      await gitIn(s.repos.reader, ["config", "user.email", "mike@example.com"]);
+      await lands(s, { name: "Claude", email: "noreply@anthropic.com" }, "export const offset = 9;\n");
+
+      // Act
+      const line = await checkLandedAuthors(s.repos.reader, hubFor(s));
+
+      // Assert
+      expect(line.detail).not.toContain("no commits by others");
+      expect(line.detail).toContain(
+        "no teammate's commits in the last 500 commits on main, staging — only 1 commit under " +
+          "Claude Code on the web's commit identity, which names no work behind it " +
+          "(crosscheck cannot capture those sessions)",
+      );
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
     "an older hub without the question is said, not warned about",
     async () => {
       const fake = Bun.serve({

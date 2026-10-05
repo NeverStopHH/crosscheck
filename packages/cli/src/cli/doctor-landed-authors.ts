@@ -16,7 +16,8 @@
  * where a count only orders them by those dates, so in a busy repo a
  * long-lived branch merged just now can still sit past the count — author
  * addresses after .mailmap (`%aE`, exactly what the stop sends), the
- * reader's own (the stop's own rule) and bots' left out. PASS throughout: an outside contributor is no fault, and a
+ * reader's own (the stop's own rule) and bots' left out, a cloud agent's
+ * counted apart — they are there and name no work. PASS throughout: an outside contributor is no fault, and a
  * hub that does not answer is already another line's WARN.
  */
 import {
@@ -31,6 +32,7 @@ import { readLandingBranches, resolveLandingRefs } from "@crosscheck/connector-c
 import {
   CLOUD_AGENT_IDENTITIES,
   LANDED_AUTHORS_MAX_EMAILS,
+  cloudAgentByEmail,
   cloudAgentForEmail,
 } from "@crosscheck/schema";
 import type { CloudAgentIdentity } from "@crosscheck/schema";
@@ -49,25 +51,54 @@ interface Author {
   readonly name: string;
 }
 
-/** Distinct by address (case-insensitive), first spelling kept, in log order. */
-const authorsOf = (log: string, own: string | null): readonly Author[] => {
+interface AuthorScan {
+  /** Distinct by address (case-insensitive), first spelling kept, in log order. */
+  readonly authors: readonly Author[];
+  /** Commits per cloud agent commit identity (raw address): counted, never asked. */
+  readonly cloudCommits: ReadonlyMap<string, number>;
+}
+
+const authorsOf = (log: string, own: string | null): AuthorScan => {
   const seen = new Map<string, Author>();
+  const cloudCommits = new Map<string, number>();
   for (const line of log.split("\n")) {
     const [email = "", name = "", rawEmail = ""] = line.split(FIELD);
     const key = email.trim().toLowerCase();
     const isSkipped =
       !key.includes("@") || key === own || BOT.test(email) || BOT.test(name) || seen.has(key);
-    // A cloud agent's commit identity is left out like a bot: it is nobody's
-    // on the hub by design, and a .mailmap line for it would hand every cloud
-    // session's commits to one person (schema CLOUD_AGENT_IDENTITIES). Decided
-    // on the RAW address, so such a line cannot launder it into the list.
+    // A cloud agent's commit identity is left out of the hub question: it is
+    // nobody's on the hub by design, and a .mailmap line for it would hand
+    // every cloud session's commits to one person (schema
+    // CLOUD_AGENT_IDENTITIES). Decided on the RAW address, so such a line
+    // cannot launder it into the list — and counted apart, because those
+    // commits are there and name no work.
     const isCloudAgent = cloudAgentForEmail(rawEmail.trim().toLowerCase()) !== null;
+    if (isCloudAgent) {
+      const rawKey = rawEmail.trim().toLowerCase();
+      cloudCommits.set(rawKey, (cloudCommits.get(rawKey) ?? 0) + 1);
+    }
     if (!isSkipped && !isCloudAgent) {
       seen.set(key, { email: email.trim(), name: name.trim() });
     }
   }
-  return [...seen.values()];
+  return { authors: [...seen.values()], cloudCommits };
 };
+
+/** "1 commit under X's commit identity, which names no work behind it (…)", per identity. */
+const cloudCommitsClause = (cloudCommits: ReadonlyMap<string, number>): string =>
+  [...cloudCommits]
+    .flatMap(([email, commits]) => {
+      const identity = cloudAgentByEmail(email);
+      const isOne = commits === 1;
+      return identity === null
+        ? []
+        : [
+            `${String(commits)} commit${isOne ? "" : "s"} under ${identity.product}'s commit identity, ` +
+              `which name${isOne ? "s" : ""} no work behind ${isOne ? "it" : "them"} ` +
+              "(crosscheck cannot capture those sessions)",
+          ];
+    })
+    .join("; ");
 
 const listed = (authors: readonly Author[]): string => {
   const shown = authors.slice(0, DOCTOR_LANDED_AUTHORS_SHOWN).map((author) => author.email);
@@ -111,9 +142,14 @@ export const checkLandedAuthors = async (repoRoot: string, hub: HubContext): Pro
   if (log === null) {
     return pass("git did not answer, so the landing branches' commit authors were not checked");
   }
-  const authors = authorsOf(log, own?.toLowerCase() ?? null);
+  const { authors, cloudCommits } = authorsOf(log, own?.toLowerCase() ?? null);
+  const cloud = cloudCommitsClause(cloudCommits);
   if (authors.length === 0) {
-    return pass(`no commits by others ${WHERE(branches)}`);
+    return pass(
+      cloud.length === 0
+        ? `no commits by others ${WHERE(branches)}`
+        : `no teammate's commits ${WHERE(branches)} — only ${cloud}`,
+    );
   }
   const asked = authors.slice(0, LANDED_AUTHORS_MAX_EMAILS);
   // repoKey "" keeps this probe out of the sync record, like doctor's others.
@@ -127,12 +163,17 @@ export const checkLandedAuthors = async (repoRoot: string, hub: HubContext): Pro
   }
   const unknownSet = new Set(answer.data.map((email) => email.toLowerCase()));
   const unknown = asked.filter((author) => unknownSet.has(author.email.toLowerCase()));
+  const besideCloud = (detail: string, joiner: string): string =>
+    cloud.length === 0 ? detail : `${detail}${joiner}${cloud}`;
   return unknown.length === 0
     ? pass(
-        `all ${String(asked.length)} commit authors ${WHERE(branches)} are known to the hub, ` +
-          "so a stop can name their work",
+        besideCloud(
+          `all ${String(asked.length)} commit authors ${WHERE(branches)} are known to the hub, ` +
+            "so a stop can name their work",
+          " — except ",
+        ),
       )
-    : pass(unknownLine(unknown, branches));
+    : pass(besideCloud(unknownLine(unknown, branches), "; and "));
 };
 
 const MAILMAP_NAME = "cloud agent mailmap";

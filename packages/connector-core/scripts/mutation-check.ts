@@ -16720,6 +16720,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/absence-cli.test.ts`,
     because: "the check exists and no doctor run prints it",
   },
+  {
+    label: "doctor says 'no commits by others' beside a cloud session's commits",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "      cloud.length === 0\n        ? `no commits by others ${WHERE(branches)}`",
+    to: "      true\n        ? `no commits by others ${WHERE(branches)}`",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the review's finding: a false sentence about the landing branches, and the cloud commits behind it unsaid",
+  },
+  {
+    label: "doctor calls every landed author known beside a cloud session's commits",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "    cloud.length === 0 ? detail : `${detail}${joiner}${cloud}`;",
+    to: "    detail;",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "'so a stop can name their work' overstates: the cloud commits name none",
+  },
+  {
+    label: "doctor stops counting a cloud session's landed commits",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "      cloudCommits.set(rawKey, (cloudCommits.get(rawKey) ?? 0) + 1);",
+    to: "",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the commits are dropped silently again, which is what the review found",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16797,7 +16821,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
- * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 6
+ * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
