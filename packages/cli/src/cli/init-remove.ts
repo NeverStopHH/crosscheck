@@ -74,7 +74,7 @@ export const runProjectRemove = async (
       exitCode: EXIT_ABORTED,
     };
   }
-  const planned = await planAll(targets);
+  const planned = await planAll(targets, root);
   if (!planned.ok) {
     return { stdout: `${planned.refusal}\n`, exitCode: EXIT_ABORTED };
   }
