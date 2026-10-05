@@ -1478,7 +1478,13 @@ The evidence for each row:
    which is 03's predicate.
    **Closed 2026-10-05, on Nick's go-ahead:** the rung folds over the same scope (`sessionScope` in
    `coverage.ts`), with the named sessions passed by trace, `get_diagnosis` and the tripwire as
-   `answerSessionIds`. A named session can only weaken the rung (03 §3.2a).
+   `answerSessionIds`. A named session can only weaken the rung (03 §3.2a). The same day's review of
+   that fix closed four more gaps:
+   - A named session keeps the loss window, because a loss report is the machine's ledger.
+   - A named session must be on the question's repo.
+   - Under `paths` the scope reads the session that delivered a context's latest update
+     (`work_contexts.updated_by_session_id`), which is how a successor makes trace's candidate active.
+   - The rung's instants come only from sessions the viewer may be told about.
 5. **03 §5.3 still says "one line"** (§13.11.2). The renderer and its tests now allow two. A longer
    note also makes it more likely that a hint near `MAX_HINT_TEXT_LENGTH` drops the note. That
    behaviour predates this round.
