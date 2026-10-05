@@ -283,7 +283,7 @@ describe("crosscheck init --remove and Cursor", () => {
     expect(result.exitCode).toBe(0);
     expect(await read(hooksPath)).toBe(hooksBefore);
     expect(await read(cursorMcpPath)).toBe(cursorMcpBefore);
-    expect(result.stdout).toContain(`left ${join(repo, ".cursor")} in place`);
+    expect(result.stdout).toContain(`left crosscheck's cursor entries in place — ${hooksPath}`);
     expect(result.stdout).toContain("--cursor");
   });
 

@@ -36,6 +36,12 @@ export const userWiringFiles = (env: Env): WiringFiles => ({
   cursorDir: userCursorDir(env),
 });
 
+/** A repo's `.cursor` directory. */
+export const projectCursorDir = async (root: string): Promise<string> =>
+  // DYNAMIC like every Cursor branch of init: hooks and the statusline must
+  // not pay connector-cursor's load.
+  join(root, (await import("@crosscheck/connector-cursor")).CURSOR_DIR);
+
 /** A repo's project copy: the Claude pair, and the Cursor pair when asked. */
 export const projectWiringFiles = async (
   root: string,
@@ -43,11 +49,7 @@ export const projectWiringFiles = async (
 ): Promise<WiringFiles> => ({
   claudeSettingsPath: join(root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
   mcpPath: join(root, MCP_CONFIG_FILE),
-  // DYNAMIC like every Cursor branch of init: hooks and the statusline must
-  // not pay connector-cursor's load.
-  cursorDir: cursor
-    ? join(root, (await import("@crosscheck/connector-cursor")).CURSOR_DIR)
-    : null,
+  cursorDir: cursor ? await projectCursorDir(root) : null,
 });
 
 /**

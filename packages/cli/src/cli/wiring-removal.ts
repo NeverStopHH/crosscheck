@@ -19,6 +19,8 @@ import { join } from "node:path";
 import { removeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { removeClaudeSettings } from "@crosscheck/connector-claude";
 import type { CursorRemovalResult } from "@crosscheck/connector-cursor";
+import { readJsonConfig } from "./init-io.ts";
+import type { ReadRefusal } from "./init-io.ts";
 
 /**
  * The last line of both removals, the mirror of init's restart hint: hooks
@@ -146,19 +148,58 @@ export const removalTargets = async (
     { path: files.claudeSettingsPath, strip: stripClaudeSettings },
     { path: files.mcpPath, strip: stripMcpServers },
   ];
-  if (files.cursorDir === null) {
-    return claudeTargets;
-  }
+  return files.cursorDir === null
+    ? claudeTargets
+    : [...claudeTargets, ...(await cursorTargets(files.cursorDir))];
+};
+
+/** Cursor's pair alone — for a run that leaves it in place but must say so. */
+export const cursorTargets = async (
+  cursorDir: string,
+): Promise<readonly RemovalTarget[]> => {
   // DYNAMIC like every Cursor branch of init: hooks and the statusline must
   // not pay connector-cursor's load.
   const { CURSOR_HOOKS_FILE, CURSOR_MCP_FILE, removeCursorHooks } = await import(
     "@crosscheck/connector-cursor"
   );
   return [
-    ...claudeTargets,
-    { path: join(files.cursorDir, CURSOR_HOOKS_FILE), strip: cursorHooksStrip(removeCursorHooks) },
-    { path: join(files.cursorDir, CURSOR_MCP_FILE), strip: stripMcpServers },
+    { path: join(cursorDir, CURSOR_HOOKS_FILE), strip: cursorHooksStrip(removeCursorHooks) },
+    { path: join(cursorDir, CURSOR_MCP_FILE), strip: stripMcpServers },
   ];
+};
+
+export interface WiringState {
+  /** Files holding crosscheck's entries, with what a removal would take. */
+  readonly wired: readonly { readonly path: string; readonly removed: string }[];
+  /** Files that exist but could not be read as a json object. */
+  readonly unreadable: readonly { readonly path: string; readonly reason: ReadRefusal }[];
+}
+
+/**
+ * READ-ONLY: which of these files still hold crosscheck's entries — the same
+ * strips decide it, run and thrown away, so "still wired" can never disagree
+ * with what a removal would take (review 2026-10-05: a `.cursor/mcp.json`
+ * holding only the user's own server was called crosscheck's). Missing files
+ * are neither.
+ */
+export const readWiringState = async (
+  targets: readonly RemovalTarget[],
+): Promise<WiringState> => {
+  const reads = await Promise.all(
+    targets.map(async (target) => ({ target, read: await readJsonConfig(target.path) })),
+  );
+  return {
+    wired: reads.flatMap(({ target, read }) => {
+      if (!read.ok || read.raw === null) {
+        return [];
+      }
+      const stripped = target.strip(read.value);
+      return stripped.changed ? [{ path: target.path, removed: stripped.removed }] : [];
+    }),
+    unreadable: reads.flatMap(({ target, read }) =>
+      read.ok ? [] : [{ path: target.path, reason: read.reason }],
+    ),
+  };
 };
 
 /** The same files' paths alone, for a command that writes rather than strips. */

@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1424
+    # PRINTS: 1426
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -181,7 +181,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/index.ts 3
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-remove-plan.ts 7
-    # PRINTS: packages/cli/src/cli/init-remove.ts 10
+    # PRINTS: packages/cli/src/cli/init-remove.ts 11
     # PRINTS: packages/cli/src/cli/init.ts 3
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
@@ -198,7 +198,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
-    # PRINTS: packages/cli/src/cli/wiring-removal.ts 5
+    # PRINTS: packages/cli/src/cli/wiring-removal.ts 6
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 1
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
     # PRINTS: packages/connector-acp/src/capture/engine.ts 18
@@ -548,7 +548,7 @@ jobs:
     # PRINTS: index.ts 3
     # PRINTS: init-global.ts 2
     # PRINTS: init-remove-plan.ts 7
-    # PRINTS: init-remove.ts 10
+    # PRINTS: init-remove.ts 11
     # PRINTS: init.ts 3
     # PRINTS: injector.ts 5
     # PRINTS: install.ts 1
@@ -687,7 +687,7 @@ jobs:
     # PRINTS: waivers.ts 5
     # PRINTS: waivers.tsx 2
     # PRINTS: webauthn.ts 11
-    # PRINTS: wiring-removal.ts 5
+    # PRINTS: wiring-removal.ts 6
     # PRINTS: wiring-scope.ts 1
     # PRINTS: work-contexts.ts 1
     # PRINTS: worker-env.ts 1

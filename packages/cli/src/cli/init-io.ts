@@ -30,9 +30,13 @@ const REFUSAL_CLAUSE: Readonly<Record<ReadRefusal, string>> = {
   "not-object": "is not a json object",
 };
 
+/** The bare fact — "<path> is not valid json" — for a sentence of a caller's own. */
+export const unreadableClause = (path: string, reason: ReadRefusal): string =>
+  `${path} ${REFUSAL_CLAUSE[reason]}`;
+
 /** Install's abort sentence — the JSON IS valid in the not-object case. */
 export const refusalMessage = (path: string, reason: ReadRefusal): string =>
-  `${path} ${REFUSAL_CLAUSE[reason]} — nothing was changed`;
+  `${unreadableClause(path, reason)} — nothing was changed`;
 
 /**
  * Remove's per-file skip sentence: a file crosscheck cannot parse is, by
@@ -41,7 +45,7 @@ export const refusalMessage = (path: string, reason: ReadRefusal): string =>
  * aborting the whole uninstall over an unrelated editor's broken file.
  */
 export const skippedMessage = (path: string, reason: ReadRefusal): string =>
-  `${path} ${REFUSAL_CLAUSE[reason]} — skipped`;
+  `${unreadableClause(path, reason)} — skipped`;
 
 /**
  * Reads a JSON config init is going to rewrite, or refuses.

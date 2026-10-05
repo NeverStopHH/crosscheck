@@ -42,10 +42,17 @@ import {
   saveOriginals,
 } from "./init-remove-plan.ts";
 import type { ApplyOutcome, FilePlan } from "./init-remove-plan.ts";
-import { REMOVE_RESTART_LINE, removalTargets } from "./wiring-removal.ts";
+import { unreadableClause } from "./init-io.ts";
+import {
+  REMOVE_RESTART_LINE,
+  cursorTargets,
+  readWiringState,
+  removalTargets,
+} from "./wiring-removal.ts";
 import {
   collisionSentence,
   findUserLevelCollision,
+  projectCursorDir,
   projectWiringFiles,
 } from "./wiring-scope.ts";
 import type { CliResult } from "./login.ts";
@@ -74,22 +81,27 @@ const teamChangeNote = async (root: string, plan: FilePlan): Promise<readonly st
   ];
 };
 
-const projectCursorDir = async (root: string): Promise<string> => {
-  // DYNAMIC like every Cursor branch of init: hooks and the statusline must
-  // not pay connector-cursor's load.
-  const { CURSOR_DIR } = await import("@crosscheck/connector-cursor");
-  return join(root, CURSOR_DIR);
-};
-
-const cursorLeftLine = async (root: string): Promise<readonly string[]> => {
-  const { CURSOR_HOOKS_FILE, CURSOR_MCP_FILE } = await import("@crosscheck/connector-cursor");
-  const dir = await projectCursorDir(root);
-  const present = await Promise.all(
-    [CURSOR_HOOKS_FILE, CURSOR_MCP_FILE].map((name) => Bun.file(join(dir, name)).exists()),
-  );
-  return present.some(Boolean)
-    ? [`left ${dir} in place — crosscheck's cursor entries there go only with --cursor`]
-    : [];
+/**
+ * The Cursor pair a run WITHOUT --cursor leaves in place — said only when the
+ * strip finds crosscheck's entries there (a file merely existing proves
+ * nothing: it may hold only the team's own server), per file, with the flag
+ * that removes them; a file that cannot be read is named as unknown.
+ */
+const cursorLeftLines = async (root: string): Promise<readonly string[]> => {
+  const state = await readWiringState(await cursorTargets(await projectCursorDir(root)));
+  return [
+    ...(state.wired.length === 0
+      ? []
+      : [
+          `left crosscheck's cursor entries in place — ${state.wired
+            .map((file) => `${file.path} (${file.removed})`)
+            .join(", ")}: Cursor sessions here still load them; \`crosscheck init --remove --cursor\` removes them too`,
+        ]),
+    ...state.unreadable.map(
+      (file) =>
+        `${unreadableClause(file.path, file.reason)} — whether it still holds crosscheck's cursor entries is unknown`,
+    ),
+  ];
 };
 
 const userLevelLine = async (env: Env): Promise<string> => {
@@ -114,7 +126,7 @@ const leftInPlaceLines = async (
     ...((await Bun.file(connection).exists())
       ? [`left ${connection} in place — the team's repo connection; init --remove never touches it`]
       : []),
-    ...(cursor ? [] : await cursorLeftLine(root)),
+    ...(cursor ? [] : await cursorLeftLines(root)),
     await userLevelLine(env),
   ];
 };

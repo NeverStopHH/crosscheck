@@ -16473,6 +16473,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "the developer is told the repo is as it was while one file has already lost its hooks",
   },
+  {
+    label: "a wiring file holding only the user's own entries is reported as crosscheck's",
+    file: `${CLI}/src/cli/wiring-removal.ts`,
+    from: "      return stripped.changed ? [{ path: target.path, removed: stripped.removed }] : [];",
+    to: "      return [{ path: target.path, removed: stripped.removed }];",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "the team's own .cursor/mcp.json is called crosscheck's wiring, and someone reruns with --cursor for nothing",
+  },
+  {
+    label: "init --remove leaves crosscheck's cursor entries in place without saying so",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "    ...(state.wired.length === 0",
+    to: "    ...(true",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "Cursor sessions keep loading crosscheck's hooks after a removal that never mentioned them",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16548,6 +16564,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
+ * PRINTS: packages/cli/test/init-remove-verdict.test.ts 2
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
