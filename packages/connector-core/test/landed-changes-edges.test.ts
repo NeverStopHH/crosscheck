@@ -334,6 +334,54 @@ describe("the reader's identity", () => {
   });
 });
 
+describe("a cloud agent's commit identity under the repo's .mailmap", () => {
+  /** The line the old doctor's own advice produced: Claude mapped to a person. */
+  const MAP_CLAUDE_TO = (person: { readonly name: string; readonly email: string }): string =>
+    `${person.name} <${person.email}> Claude <noreply@anthropic.com>\n`;
+  const CLAUDE = { name: "Claude", email: "noreply@anthropic.com" } as const;
+
+  test("a landed Claude commit keeps its own identity, whoever the mailmap names", async () => {
+    // Arrange — a cloud session's squash, and a team mailmap that hands it to Mike
+    const r = await repos("mailmap-cloud-agent");
+    await landWithSquash(r, { ...JUNE_LANDING, subject: "A cloud change", author: CLAUDE });
+    await readerFetches(r);
+    await writeFile(join(r.reader, ".mailmap"), MAP_CLAUDE_TO(MIKE));
+
+    // Act
+    const changes = await find(r.reader);
+
+    // Assert — the stop sends the raw identity, which the hub resolves to nobody
+    expect(changes?.missing.map((c) => [c.authorName, c.authorEmail])).toEqual([
+      ["Claude", "noreply@anthropic.com"],
+    ]);
+  });
+
+  test("mapped to the reader, a cherry-picked Claude fix still counts as someone else's", async () => {
+    // Arrange — Nick picked a Claude fix; staging then reverted it. Read as
+    // Nick's own commit, the pick would make the revert look like nothing
+    // to undo and silence the stop.
+    const r = await repos("mailmap-cloud-agent-self");
+    const fix = await landWithSquash(r, { ...JUNE_LANDING, subject: "Claude fix", author: CLAUDE });
+    await readerFetches(r);
+    await gitIn(r.reader, ["cherry-pick", fix], { as: NICK });
+    await landWithSquash(r, {
+      ...JUNE_LANDING,
+      content: ORIGINAL_CONTENT,
+      subject: 'Revert "Claude fix"',
+      author: KEN,
+      landedAt: "2026-06-03T10:00:00Z",
+    });
+    await readerFetches(r);
+    await writeFile(join(r.reader, ".mailmap"), MAP_CLAUDE_TO(NICK));
+
+    // Act
+    const changes = await find(r.reader);
+
+    // Assert
+    expect(changes?.missing.map((c) => c.subject)).toEqual(['Revert "Claude fix"']);
+  });
+});
+
 describe("nothing an edit could undo", () => {
   test("a stacked branch whose base was squash-merged already has that content", async () => {
     // Arrange — Nick built on Mike's two commits; Mike's PR landed on main as one squash

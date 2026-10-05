@@ -91,12 +91,14 @@ export type CommitEvidence = z.infer<typeof CommitEvidenceSchema>;
  * IDENTITY and never assert who or what made the commit. A row is added with
  * evidence of the address a product commits under, never by guess. The
  * product name rides on the row so the hub's refusals and every renderer
- * spell one identity one way.
+ * spell one identity one way; `commitName` is the author name the evidence
+ * shows, so a `.mailmap` line keyed on name and address can be checked too.
  */
 export const CLOUD_AGENT_IDENTITIES = [
   {
     id: "claude-code-web",
     email: "noreply@anthropic.com",
+    commitName: "Claude",
     product: "Claude Code on the web",
   },
 ] as const;

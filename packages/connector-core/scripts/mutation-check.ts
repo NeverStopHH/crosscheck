@@ -10773,8 +10773,8 @@ export const MUTATIONS: readonly Mutation[
     // Landed changes. A separator in a subject cannot hide its commit.
     label: "a subject carrying the separator hides its commit",
     file: `${CORE}/src/landed-changes/git-queries.ts`,
-    from: "const FIELD = \"\\x00\";\n/** full sha, short sha, author, email, committer time, subject */\nconst COMMIT_FORMAT = \"%H%x00%h%x00%aN%x00%aE%x00%ct%x00%s\";",
-    to: "const FIELD = \"\\x1f\";\n/** full sha, short sha, author, email, committer time, subject */\nconst COMMIT_FORMAT = \"%H%x1f%h%x1f%aN%x1f%aE%x1f%ct%x1f%s\";",
+    from: "const FIELD = \"\\x00\";\n/** full sha, short sha, author, email, committer time, subject, raw author, raw email */\nconst COMMIT_FORMAT = \"%H%x00%h%x00%aN%x00%aE%x00%ct%x00%s%x00%an%x00%ae\";",
+    to: "const FIELD = \"\\x1f\";\n/** full sha, short sha, author, email, committer time, subject, raw author, raw email */\nconst COMMIT_FORMAT = \"%H%x1f%h%x1f%aN%x1f%aE%x1f%ct%x1f%s%x1f%an%x1f%ae\";",
     test: `${CORE}/test/landed-changes-edges.test.ts`,
     because:
       "one control character in a commit subject makes that commit invisible to the stop",
@@ -16672,6 +16672,54 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/absence-cli.test.ts`,
     because: "the account the old line invited is described as somebody's extra address, and the admin looks for the wrong row",
   },
+  {
+    label: "a .mailmap line sends a teammate's address for a landed Claude commit",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "    authorEmail: isCloudAgent ? rawEmail : mappedEmail,",
+    to: "    authorEmail: mappedEmail,",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because: "the review's reproduction: every stop asks the hub about the mapped teammate, which names their work behind a cloud session's commit",
+  },
+  {
+    label: "a .mailmap line names a teammate as the author of a landed Claude commit",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "    authorName: isCloudAgent ? rawName : mappedName,",
+    to: "    authorName: mappedName,",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because: "the stop prints a person's name for a commit git never attributed to them",
+  },
+  {
+    label: "a .mailmap line mapping Claude to the reader silences a revert stop",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "          return isCloudAgentAuthor(raw) || mapped.toLowerCase() !== self;",
+    to: "          return mapped.toLowerCase() !== self;",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because: "a cloud fix the reader picked reads as their own, so its revert looks like nothing to undo and the stop stays silent",
+  },
+  {
+    label: "doctor's author list reads Claude's commits through the .mailmap",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "    const isCloudAgent = cloudAgentForEmail(rawEmail.trim().toLowerCase()) !== null;",
+    to: "    const isCloudAgent = cloudAgentForEmail(key) !== null;",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the mapped address is listed as a teammate to map, so the laundering line advertises itself as a fix",
+  },
+  {
+    label: "doctor passes a .mailmap line that hands Claude's commits to a person",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "    (answer) => answer.email?.trim().toLowerCase() !== answer.identity.email,",
+    to: "    () => false,",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "git log, blame and shortlog credit one person with every cloud session's commits and nothing says so",
+  },
+  {
+    label: "doctor never asks git whether the .mailmap remaps a cloud agent identity",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    await checkCloudAgentMailmap(identity.root),\n",
+    to: "",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the check exists and no doctor run prints it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16716,7 +16764,7 @@ interface Outcome {
  * other.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: packages/cli/test/absence-cli.test.ts 10
+ * PRINTS: packages/cli/test/absence-cli.test.ts 11
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
@@ -16749,7 +16797,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
- * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 4
+ * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 6
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
@@ -16885,7 +16933,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
- * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
+ * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4

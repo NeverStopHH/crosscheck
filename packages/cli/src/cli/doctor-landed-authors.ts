@@ -28,7 +28,12 @@ import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { getUnknownAuthors } from "@crosscheck/connector-core/http/hub.ts";
 import { quietGitRunner, readOwnEmail } from "@crosscheck/connector-core/landed-changes/git-queries.ts";
 import { readLandingBranches, resolveLandingRefs } from "@crosscheck/connector-core/landed-changes/landing-branches.ts";
-import { LANDED_AUTHORS_MAX_EMAILS, cloudAgentForEmail } from "@crosscheck/schema";
+import {
+  CLOUD_AGENT_IDENTITIES,
+  LANDED_AUTHORS_MAX_EMAILS,
+  cloudAgentForEmail,
+} from "@crosscheck/schema";
+import type { CloudAgentIdentity } from "@crosscheck/schema";
 
 import type { Check } from "./doctor.ts";
 
@@ -48,14 +53,15 @@ interface Author {
 const authorsOf = (log: string, own: string | null): readonly Author[] => {
   const seen = new Map<string, Author>();
   for (const line of log.split("\n")) {
-    const [email = "", name = ""] = line.split(FIELD);
+    const [email = "", name = "", rawEmail = ""] = line.split(FIELD);
     const key = email.trim().toLowerCase();
     const isSkipped =
       !key.includes("@") || key === own || BOT.test(email) || BOT.test(name) || seen.has(key);
     // A cloud agent's commit identity is left out like a bot: it is nobody's
     // on the hub by design, and a .mailmap line for it would hand every cloud
-    // session's commits to one person (schema CLOUD_AGENT_IDENTITIES).
-    const isCloudAgent = cloudAgentForEmail(key) !== null;
+    // session's commits to one person (schema CLOUD_AGENT_IDENTITIES). Decided
+    // on the RAW address, so such a line cannot launder it into the list.
+    const isCloudAgent = cloudAgentForEmail(rawEmail.trim().toLowerCase()) !== null;
     if (!isSkipped && !isCloudAgent) {
       seen.set(key, { email: email.trim(), name: name.trim() });
     }
@@ -97,7 +103,7 @@ export const checkLandedAuthors = async (repoRoot: string, hub: HubContext): Pro
       "log",
       "--no-merges",
       `--max-count=${String(DOCTOR_LANDED_AUTHORS_MAX_COMMITS)}`,
-      "--format=%aE%x00%aN",
+      "--format=%aE%x00%aN%x00%ae",
       ...refs.map((ref) => ref.ref),
     ]),
     readOwnEmail({ root: repoRoot, file: "", run, isCancelled: () => false }),
@@ -127,4 +133,50 @@ export const checkLandedAuthors = async (repoRoot: string, hub: HubContext): Pro
           "so a stop can name their work",
       )
     : pass(unknownLine(unknown, branches));
+};
+
+const MAILMAP_NAME = "cloud agent mailmap";
+const EMAIL_IN_CONTACT = /<([^<>]*)>/;
+
+const mailmapLine = (identity: CloudAgentIdentity): string =>
+  `the repo's .mailmap maps ${identity.product}'s commit identity ${identity.email} to another ` +
+  "address, so git log, blame and shortlog credit one person with every cloud session's commits; " +
+  "crosscheck ignores that mapping and those commits stay an unconnected gap — " +
+  `remove the line for ${identity.email} from .mailmap`;
+
+/**
+ * `doctor`'s "cloud agent mailmap" line: a `.mailmap` line that maps a cloud
+ * agent's commit identity to another address — the shape this file's own
+ * advice once produced for an unknown author. Crosscheck ignores it: the
+ * landed probe keeps such a commit's raw identity
+ * (landed-changes/git-queries.ts isCloudAgentAuthor) and commit evidence reads
+ * the raw `%ae`. Git does not, and the team reads git, so it is a WARN the
+ * team fixes in the file. Asked of git itself (`check-mailmap`), for the
+ * identity's own name and address, so an entry keyed on either is found.
+ */
+export const checkCloudAgentMailmap = async (repoRoot: string): Promise<Check> => {
+  const run = quietGitRunner(repoRoot, DOCTOR_LANDED_AUTHORS_GIT_TIMEOUT_MS);
+  const answers = await Promise.all(
+    CLOUD_AGENT_IDENTITIES.map(async (identity) => {
+      const mapped = await run(["check-mailmap", `${identity.commitName} <${identity.email}>`]);
+      return { identity, email: mapped === null ? undefined : EMAIL_IN_CONTACT.exec(mapped)?.[1] };
+    }),
+  );
+  if (answers.some((answer) => answer.email === undefined)) {
+    return { level: "PASS", name: MAILMAP_NAME, detail: "not measured (git did not answer)" };
+  }
+  const remapped = answers.filter(
+    (answer) => answer.email?.trim().toLowerCase() !== answer.identity.email,
+  );
+  return remapped.length === 0
+    ? {
+        level: "PASS",
+        name: MAILMAP_NAME,
+        detail: "no .mailmap line maps a cloud agent's commit identity to another address",
+      }
+    : {
+        level: "WARN",
+        name: MAILMAP_NAME,
+        detail: remapped.map((answer) => mailmapLine(answer.identity)).join("; "),
+      };
 };

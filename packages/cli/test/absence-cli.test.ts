@@ -326,9 +326,13 @@ describe("crosscheck doctor absence check", () => {
     // Act
     const result = await runCli(["doctor"], env, repo);
 
-    // Assert
+    // Assert: and the repo's .mailmap, the other way to hand Claude's
+    // commits to a person, is checked beside it
     expect(result.stdout).toContain(
       "PASS  cloud agent identity  none linked to a developer",
+    );
+    expect(result.stdout).toContain(
+      "PASS  cloud agent mailmap  no .mailmap line maps a cloud agent's commit identity to another address",
     );
   });
 

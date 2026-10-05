@@ -12,12 +12,16 @@
  * team. PASS throughout: an outside contributor is no fault.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 
-import { checkLandedAuthors } from "../src/cli/doctor-landed-authors.ts";
+import {
+  checkCloudAgentMailmap,
+  checkLandedAuthors,
+} from "../src/cli/doctor-landed-authors.ts";
 import { makeHome } from "../../connector-core/test/helpers.ts";
 import {
   NICK,
@@ -180,6 +184,25 @@ describe("doctor's landed-change reasons line", () => {
   );
 
   test(
+    "a .mailmap line cannot launder a Claude commit into the address it names",
+    async () => {
+      // Arrange: the line the old doctor suggested, pointing at an address
+      // no commit of the fixture carries
+      const s = await setup("lad-cloud-agent-mailmap");
+      await lands(s, { name: "Claude", email: "noreply@anthropic.com" }, "export const offset = 7;\n");
+      await writeFile(join(s.repos.reader, ".mailmap"), "Ghost <ghost@example.com> Claude <noreply@anthropic.com>\n");
+
+      // Act
+      const line = await checkLandedAuthors(s.repos.reader, hubFor(s));
+
+      // Assert: the raw identity decides, never the mapped one
+      expect(line.detail).not.toContain("ghost@example.com");
+      expect(line.detail).not.toContain("noreply@anthropic.com");
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
     "an older hub without the question is said, not warned about",
     async () => {
       const fake = Bun.serve({
@@ -197,6 +220,52 @@ describe("doctor's landed-change reasons line", () => {
 
       expect(line.level).toBe("PASS");
       expect(line.detail).toContain("does not answer this yet");
+    },
+    HEAVY_SETUP_MS,
+  );
+});
+
+describe("doctor's cloud agent mailmap line", () => {
+  test(
+    "warns when the repo's .mailmap hands Claude's commit identity to a person",
+    async () => {
+      // Arrange: the old doctor's own suggested shape
+      const s = await setup("cam-mapped");
+      await writeFile(join(s.repos.reader, ".mailmap"), "Mike <mike@example.com> Claude <noreply@anthropic.com>\n");
+
+      // Act
+      const line = await checkCloudAgentMailmap(s.repos.reader);
+
+      // Assert: what the line does, that crosscheck ignores it, and the fix
+      expect(line).toEqual({
+        level: "WARN",
+        name: "cloud agent mailmap",
+        detail:
+          "the repo's .mailmap maps Claude Code on the web's commit identity noreply@anthropic.com " +
+          "to another address, so git log, blame and shortlog credit one person with every cloud " +
+          "session's commits; crosscheck ignores that mapping and those commits stay an unconnected " +
+          "gap — remove the line for noreply@anthropic.com from .mailmap",
+      });
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
+    "passes when no .mailmap line maps a cloud agent's commit identity",
+    async () => {
+      // Arrange: a mapping for a teammate only
+      const s = await setup("cam-clean");
+      await writeFile(join(s.repos.reader, ".mailmap"), "Mike <mike@example.com> <12345+mike@users.noreply.github.com>\n");
+
+      // Act
+      const line = await checkCloudAgentMailmap(s.repos.reader);
+
+      // Assert
+      expect(line).toEqual({
+        level: "PASS",
+        name: "cloud agent mailmap",
+        detail: "no .mailmap line maps a cloud agent's commit identity to another address",
+      });
     },
     HEAVY_SETUP_MS,
   );
