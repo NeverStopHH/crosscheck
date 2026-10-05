@@ -17796,6 +17796,110 @@ export const MUTATIONS: readonly Mutation[
       "crosscheck suspect prints `last active unknown` for a teammate who chose " +
       "not to share it, so the reader distrusts the hub instead",
   },
+  // The live-location guard walks every GET route the app registers as a
+  // colleague of an opted-out developer. Each anchor below drops the
+  // withholding on ONE surface, and the guard — not a per-route test
+  // somebody had to remember to write — is the test that must fail.
+  {
+    label: "search names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "        title: titleSeenBy(hidden, row.developerId, row.title, row.repo),",
+    to: "        title: row.title,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "search_related_work hands a colleague `feat/robin-relocates-to-zurich " +
+      "@ api` — the branch the listing withholds, under another field name",
+  },
+  {
+    label: "the conference names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    title: titleSeenBy(hidden, row.developerId, row.title, repo),",
+    to: "    title: row.title,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "crosscheck conference prints every recent context's title, so an " +
+      "opted-out teammate's live branch is one command away",
+  },
+  {
+    label: "a diagnosis names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "      title: titleSeenBy(\n        hidden,",
+    to: "      title: ((...args: [unknown, unknown, string, string]) => args[2])(\n        hidden,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "get_diagnosis, GET /api/work-contexts/:id and the /ui work-context page " +
+      "all title the tree with the branch its owner withheld",
+  },
+  {
+    label: "a referee brief names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/referee.ts`,
+    from: "      titleSeenBy(hidden, row.ownerDeveloperId, row.title, row.repo),",
+    to: "      row.title,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "get_referee_brief titles each side of a contradiction with its work " +
+      "context, so the opted-out side's live branch rides the brief",
+  },
+  {
+    label: "suspect names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "        workContextTitle: titleSeenBy(hidden, row.developerId, row.workContextTitle, input.repo),",
+    to: "        workContextTitle: row.workContextTitle,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the suspect row withholds `branch` and then prints the same branch as " +
+      "its work-context title one field later",
+  },
+  {
+    label: "hint candidates carry an opted-out teammate's HEAD as base commit",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      baseCommit: commitSeenBy(hidden, row.developerId, baseCommits.get(row.id) ?? \"\") ?? \"\",",
+    to: "      baseCommit: baseCommits.get(row.id) ?? \"\",",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "every prompt hint about an opted-out teammate's work names the commit " +
+      "their live branch sits on",
+  },
+  {
+    label: "solved matches name an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "        title: titleSeenBy(hidden, row.developerId, row.title, row.repo),",
+    to: "        title: row.title,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the briefing's solved pointer titles an opted-out teammate's solved " +
+      "tree with the branch they were on when they solved it",
+  },
+  {
+    label: "a referee brief carries an opted-out author's HEAD as a claim's commit",
+    file: `${SERVER}/src/services/referee.ts`,
+    from: "    validity: validitySeenBy(\n      hidden,\n      loaded.view.authorDeveloperId,\n      claimValidity(",
+    to: "    validity: ((_hidden: unknown, _author: unknown, validity: unknown) => validity)(\n      hidden,\n      loaded.view.authorDeveloperId,\n      claimValidity(",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "a claim bound to its session's base names the author's live HEAD, and " +
+      "the brief prints each side's validity for both developers",
+  },
+  {
+    label: "hint candidates carry an opted-out author's HEAD as a claim's commit",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      validity: validitySeenBy(hidden, claim.authorDeveloperId, claim.validity),",
+    to: "      validity: claim.validity,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the hint the reader's prompt is shown about an opted-out teammate's " +
+      "claim names the commit that teammate's branch sits on",
+  },
+  {
+    label: "a solved pointer carries an opted-out author's HEAD as its root cause's commit",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "            : validitySeenBy(hidden, cause.authorDeveloperId, validity);",
+    to: "            : validity;",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the solved pointer's root-cause validity carries the commit the " +
+      "opted-out teammate's session was on when they found it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18124,6 +18228,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
+ * PRINTS: packages/server/test/live-location-privacy.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

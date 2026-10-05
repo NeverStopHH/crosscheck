@@ -6,8 +6,14 @@
  * applied after a LIMIT would let hidden rows crowd includable ones out of
  * the bound.
  *
- * PRESENCE OPT-OUT (self-set, hides me from everyone else) covers exactly
- * the LIVE-presence surfaces:
+ * PRESENCE OPT-OUT (self-set, hides me from everyone else). THE POLICY:
+ * opt-out withholds a developer's LIVE LOCATION from every other viewer on
+ * every hub route: current branch, HEAD/base commit, and heartbeat/last-
+ * active time. Their work contexts, claims and diagnoses remain shared;
+ * that is what the product is for.
+ *
+ * It is enforced at two grains. Whole ROWS go on the LIVE-presence surfaces,
+ * where the row itself is the statement "this person is here now":
  *
  *   1. GET /api/presence          — briefing "active teammates", statusline,
  *                                   `crosscheck status` teammate lines
@@ -32,15 +38,57 @@
  *                                   in these files NOW, which is presence-
  *                                   class exactly as the tripwire is, and it
  *                                   carries their last-active age out loud
+ *   6. GET /api/sessions?open=1   — the open-session listing without mine=1.
+ *                                   A row with its branch and heartbeat gone
+ *                                   says only THAT the session exists, which
+ *                                   is presence, so the row goes
+ *
+ * Location FIELDS go everywhere else, per viewer, and the row stays — the
+ * work, the claims and the collision are the product (services/live-
+ * location.ts holds the substitutions):
+ *
+ *   - branch                      — the GET /api/work-contexts listing, in
+ *                                   its SQL by this file's
+ *                                   visiblePresenceCondition (the field is
+ *                                   omitted); GET /api/suspect, as
+ *                                   LOCATION_WITHHELD
+ *   - fallback title              — `<branch> @ <repo>` IS the branch, so it
+ *                                   reads as WITHHELD_TITLE on the work-
+ *                                   context listing and diagnosis, search,
+ *                                   hint candidates, referee briefs, the
+ *                                   conference, suspect and the /ui pages. A
+ *                                   title a person or host wrote stays
+ *   - base commit                 — omitted from the work-context listing
+ *                                   and every diagnosis; "" (unknown) on
+ *                                   hint candidates
+ *   - a claim's observedAtCommit  — null on diagnosis, hint candidates,
+ *                                   referee briefs and solved matches: a
+ *                                   claim bound to `session_base` names the
+ *                                   author's HEAD. The claim, its state and
+ *                                   its binding stay; the reader just cannot
+ *                                   revalidate it against their own clone
+ *   - last-active time            — GET /api/suspect, as LOCATION_WITHHELD
+ *
+ * Pinned route by route in test/live-location-privacy.test.ts, which calls
+ * EVERY GET route the app registers as a colleague of an opted-out developer
+ * and fails on their branch or HEAD anywhere in a response — so a route added
+ * later is covered without anybody remembering to list it here.
+ *
+ * ACCEPTED: the withholding is itself visible. A colleague who sees a
+ * teammate's work but never their presence line, or reads LOCATION_WITHHELD
+ * and WITHHELD_TITLE, can tell that teammate opted out. That is the price of
+ * keeping the row, and it reveals the CHOICE, never the location; hiding the
+ * choice too would mean hiding the work, which the policy keeps shared.
  *
  * The subject's OWN reads are unaffected on every surface — the control is
- * over what OTHERS see. Deliberately NOT covered, because opt-out hides live
- * presence and does not retract published knowledge (append-only knowledge
+ * over what OTHERS see. Deliberately NOT withheld, because opt-out hides live
+ * location and does not retract published knowledge (append-only knowledge
  * is the product; the control is over the surveillance surface, not over
  * authorship): work contexts, claims, edges, search results, diagnosis
  * trees, solved matches, contradictions, referee briefs — all stay visible
- * and attributed on every PULL surface. Hiding an event ROW about a claim
- * hides its timing from the feed, never the claim itself. Also not coverable: an "unconnected" absence line for a
+ * and attributed on every PULL surface, minus the location fields above.
+ * Hiding an event ROW about a claim hides its timing from the feed, never
+ * the claim itself. Also not coverable: an "unconnected" absence line for a
  * git author email the hub cannot match to any account — the hub cannot
  * know it is the opted-out developer. Opt-out is a live switch, not
  * retroactive redaction: opting back in restores surfaces, including

@@ -433,9 +433,11 @@ export const listWorkContextsByRepo = async (
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
     // The viewer's mutes apply — this listing feeds the briefing's related-
-    // work pointers (an unasked surface). Opt-out does NOT: these rows are
-    // published knowledge, not live presence (services/visibility.ts). The
-    // by-id diagnosis read below stays unfiltered — that is the pull.
+    // work pointers (an unasked surface). Opt-out drops no ROW: these rows
+    // are published knowledge. It withholds their live location FIELDS —
+    // the branch above, the fallback title and base commit below
+    // (services/visibility.ts states the policy). The by-id diagnosis read
+    // below is not muted — that is the pull — and withholds the same fields.
     .where(
       and(
         eq(agentSessions.repo, repo),
