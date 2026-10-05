@@ -33,7 +33,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { PULLED_DELIVERY_CHANNEL, containsSecret } from "@crosscheck/schema";
 import type { HintOutcome } from "@crosscheck/schema";
 
@@ -127,10 +127,12 @@ const readDeliveryById = async (
 };
 
 /**
- * THE REF A HINT PRINTED, resolved to the caller's own unasked delivery of it
- * on this repo: the named session's first, then the newest. A tripwire ask
- * and a prompt hint about the same ref are two deliveries, and the newer one
- * is the one the reader most plausibly acted on.
+ * THE REF A HINT PRINTED, resolved to the caller's own delivery of it on this
+ * repo: an unasked one first, then the named session's, then the newest. A
+ * tripwire ask and a prompt hint about the same ref are two deliveries, and the
+ * newer one is the one the reader most plausibly acted on. A ref that only
+ * ever arrived because the reader ASKED resolves to that pulled delivery, so
+ * the refusal says it was asked for — not that nothing reached them (review).
  */
 const readDeliveryByRef = async (
   deps: Deps,
@@ -145,10 +147,10 @@ const readDeliveryByRef = async (
         eq(hintDeliveries.refId, input.ref),
         eq(agentSessions.repo, input.repo),
         eq(agentSessions.developerId, input.recordedBy),
-        ne(hintDeliveries.channel, PULLED_DELIVERY_CHANNEL),
       ),
     )
     .orderBy(
+      desc(sql`${hintDeliveries.channel} <> ${PULLED_DELIVERY_CHANNEL}`),
       desc(sql`${hintDeliveries.sessionId} = ${input.session ?? ""}`),
       desc(hintDeliveries.deliveredAt),
       desc(hintDeliveries.id),

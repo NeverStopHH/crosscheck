@@ -17969,6 +17969,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
   },
+  // ── 07 §13.10, review LOW: a pulled answer named by its ref ──────────────
+  {
+    label: "an answer somebody asked for, named by its ref, is answered 'never reached you'",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "        eq(agentSessions.developerId, input.recordedBy),\n      ),\n    )\n    .orderBy(",
+    to: "        eq(agentSessions.developerId, input.recordedBy),\n        sql`${hintDeliveries.channel} <> ${PULLED_DELIVERY_CHANNEL}`,\n      ),\n    )\n    .orderBy(",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the reader is told a hint never reached them when they asked for it and it answered",
+  },
+  {
+    label: "a newer pulled answer outranks the unasked delivery of the same ref",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "      desc(sql`${hintDeliveries.channel} <> ${PULLED_DELIVERY_CHANNEL}`),\n",
+    to: "",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "asking about work a hint already pointed at makes that hint's outcome unrecordable",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18292,7 +18309,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 7
- * PRINTS: packages/server/test/hint-outcomes.test.ts 9
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 11
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

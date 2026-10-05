@@ -1138,3 +1138,10 @@ own id), neither says "never reached you": `mark_hint_outcome` answers that the 
 delivery is still on this machine, sent after the next tool call, nothing recorded, call again then; `crosscheck
 followed / overrode` says the same, with an id and — when no recent delivery is listed while the spool holds
 one — without.
+
+*LOW — naming a pulled delivery by its ref answered "never reached you".* The ref lookup left out every
+answer the reader asked for, so a ref that only ever arrived that way read as "no hint with that id reached
+you". The lookup now reads every channel and ranks an unasked delivery first (then the named session's, then
+the newest), so a ref that only arrived because the reader asked resolves to that pulled delivery and is
+refused as `not_unsolicited` — "that was an answer somebody asked for" — while a ref that also arrived unasked
+still records against the unasked delivery, even when the pulled one is newer.

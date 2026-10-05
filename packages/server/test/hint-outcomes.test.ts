@@ -202,6 +202,39 @@ describe("POST /api/hint-outcomes", () => {
     expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(0);
   });
 
+  test("review LOW: an answer somebody asked for, named by its ref, is refused as pulled — not as never reached", async () => {
+    // Arrange — Nick asked (get_diagnosis) and was answered with Ken's claim
+    const world = await createOutcomeWorld();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "claim", "clm_ken_pulled", "suspect")],
+    });
+
+    // Act
+    const response = await recordOutcome(world, world.nick, { ref: "clm_ken_pulled", outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(await errorOf(response)).toMatchObject({ code: "not_unsolicited" });
+  });
+
+  test("review LOW: a ref that arrived both unasked and pulled resolves to the unasked delivery", async () => {
+    // Arrange — in a second session Nick later ASKED and was answered with Ken's context
+    const world = await createOutcomeWorld();
+    await registerTestSession(world.harness, world.nick.apiKey, { id: NICK_SECOND_SESSION, repo: REPO });
+    world.harness.clock.advanceSeconds(60);
+    const later = world.harness.clock.now().toISOString();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SECOND_SESSION, "work_context", KEN_CONTEXT, "suspect", later)],
+    });
+
+    // Act
+    const response = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect(await bodyOf(response)).toMatchObject({ deliveryId: world.delivered.kenContext });
+  });
+
   test("a teammate's delivery answers exactly like an id that does not exist", async () => {
     // Arrange — Ken never received a pointer at Mike's context; Nick did. A
     // distinct refusal would tell Ken what Nick was shown (§8.4, §11.9).
