@@ -281,6 +281,23 @@ matched against the hub's own sentence and never storing it; the archive folds i
 from before the field parse the line unchanged (their schema is a loose object), and doctor's `hub rejected
 records` line and `status`'s `losses:` say why — counting the lines that carry no cause as "cause not recorded".
 
+**A refused session heals mid-life** (`flows/heal-session.ts`, `spool/flush-heal.ts`). The ladder above ran only
+at SessionStart, so a session the hub ended or never registered — a sibling process's SessionEnd after a reload, a
+register that did not land, a conversation already deaf at upgrade — stayed refused until the host fired
+SessionStart again. Now a flush whose records come back `session_ended` or `session_unknown` for its OWN
+producer, or a heartbeat answered 409/404, walks the ladder once: at most one walk per flush, at most one per
+`HEAL_COOLDOWN_MS` per session (stamped in `sessions/<slug>.heal` before the walk), each rung clamped to the
+flush's deadline. A NEW life is registered with `session.started` at `(state epoch, 0)` — the counter runs on, so
+no position is issued twice — the state switches to it, and its work context is spooled; a session the hub never
+registered is registered as itself. The refused batch is re-sent under the life the walk landed on, except for one
+class: a record whose body names its session (`target`, `claim`, `claim_edge`, `work_context`) and that the
+refused life produced. The hub positions those in the session the body names, so under any other producer they
+would land in an ended session past its end, or under an epoch it never had. They stay `rejected / session_ended`,
+and so do that life's stragglers in later flushes (`spool/refused-lives.ts`, one line per healed life). Everything
+else is re-sent: producer-filed kinds lose their position on the way (`foreign_session_delivery`), and another
+session's backlog lands where its body says, as any successor flush delivers it. The edits between the hub's end
+and the heal are the cost; every edit after it is captured.
+
 ### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a

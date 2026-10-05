@@ -61,6 +61,7 @@ The design's (§1.3) flow helpers are **all extracted functions in `src/flows/`*
 | `renderGhostNotice` | the ONE spelling of a plan-overlap block (`briefing/ghost.ts`), shared by the SessionStart briefing section and `set_intent`'s own answer — a POINTER line per teammate (who, since when, which of YOUR values, their intent, `get_diagnosis <id>`), bounded at `MAX_GHOST_POINTERS`, never blocking | `briefing/render.ts`, `mcp/tools/set-intent.ts` |
 | `selectAndRenderHint` | meaning floor → state (seen-set + cap) → `getHintCandidates` (the prompt as EPHEMERAL query — never stored) → `selectHint` → drift → `renderClaimHint`·`renderPointerHint` → record delivery, THEN return the text | `hooks/user-prompt-submit.ts`, `connector-acp/src/inject/injector.ts` |
 | `endSessionFlow` | budgeted `flushSpool` → pending-end marker → state delete → `endSession` only when nothing undelivered remains (else reap's `DeferredEnder` finishes it) | `hooks/session-end.ts`, `capture/engine.ts` |
+| `sessionHealer` | the life ladder MID-LIFE, when the hub refuses the session's own id: once per flush (`FlushInput.heal`) or refused heartbeat (`onRefused`), once per `HEAL_COOLDOWN_MS`, inside the caller's deadline → state switch → next life's work context. Re-sends never file a refused life's body-naming records into another life (`spool/flush-heal.ts`). | `hooks/heal.ts` (Claude), `handlers/heal.ts` (Cursor), `capture/engine.ts` |
 
 ### Cross-connector invariants (single implementation now)
 
