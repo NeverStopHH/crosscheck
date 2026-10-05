@@ -143,7 +143,7 @@ describe("renderDraftNudge", () => {
     expect(text).toContain(`(of the newest ${String(DRAFT_LISTING_CAP)}: ${String(DRAFT_LISTING_CAP)} root_cause)`);
     expect(text).toContain(`${String(BACKLOG)} await review in all, the oldest captured 41d ago`);
     expect(text).not.toMatch(/at least \d+ of your own/);
-    expect(text).toContain(`at least 1 of them is older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
+    expect(text).toContain(`confirmed. At least 1 of them is older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
     expect(text).toContain(`(+${String(BACKLOG - pointerLines(text).length)} more not shown)`);
   });
 

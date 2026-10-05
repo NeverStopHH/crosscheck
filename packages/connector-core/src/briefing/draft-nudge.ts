@@ -83,7 +83,7 @@ const kindsClause = (dueListed: readonly DraftEntry[], due: DraftCount): string 
 const retentionSentence = (old: DraftCount): string =>
   old.count === 0
     ? ""
-    : ` ${amountOf(old)} of them ${old.count === 1 ? "is" : "are"} older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days; ` +
+    : ` ${old.floor ? "At least " : ""}${String(old.count)} of them ${old.count === 1 ? "is" : "are"} older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days; ` +
       "crosscheck never deletes or auto-discards a draft, so they stay listed until settled.";
 
 /** The backlog in all, said only when the hub (or a short listing) makes it exact. */
