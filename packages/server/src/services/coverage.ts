@@ -504,12 +504,15 @@ const sessionScope = (
         ? []
         : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),
     ) ?? sql`false`;
+  // THE REPO HOLDS FOR A NAMED SESSION TOO (review of H3, finding 2): a claim
+  // or an edge in this repo's tree can come from another repo's session, and
+  // that session's loss would read "agent telemetry on this repo was lost".
   return {
     window,
     named:
       answerSessionIds.length === 0
         ? null
-        : inArray(agentSessions.id, [...answerSessionIds]),
+        : sql`(${eq(agentSessions.repo, repo)} and ${inArray(agentSessions.id, [...answerSessionIds])})`,
   };
 };
 

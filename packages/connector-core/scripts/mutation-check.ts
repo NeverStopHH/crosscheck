@@ -16492,6 +16492,16 @@ export const MUTATIONS: readonly Mutation[
     because:
       "a 300-day-old loss on the machine gaps every tripwire and trace that names a session re-stating it, and masks yesterday's reap",
   },
+  // The review of H3, finding 2: the repo predicate holds for a named session.
+  {
+    label: "a named session of another repo enters this repo's fold",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "        : sql`(${eq(agentSessions.repo, repo)} and ${inArray(agentSessions.id, [...answerSessionIds])})`,",
+    to: "        : inArray(agentSessions.id, [...answerSessionIds]),",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because:
+      "repo B's loss renders as 'agent telemetry on this repo was lost' on repo A's tree, and repo B's heartbeat moves repo A's observedAt and order",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16779,7 +16789,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
- * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 9
+ * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2

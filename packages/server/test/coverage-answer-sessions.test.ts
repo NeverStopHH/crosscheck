@@ -35,6 +35,7 @@ import {
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
+const OTHER_REPO = "github.com/acme/other";
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const DAY_SECONDS = DAY_MS / 1000;
@@ -268,6 +269,30 @@ describe("a named session never strengthens the rung", () => {
       reason: "session_silent",
     });
   });
+
+  test("a session of another repo that the answer names reads nothing in this repo's coverage", async () => {
+    // Arrange: nobody reported on this repo; the named session is another
+    // repo's, reaped an hour ago and declared nothing.
+    const { harness, developer } = await seed();
+    const now = harness.clock.now().getTime();
+    await insertOldSession(harness, developer, {
+      repo: OTHER_REPO,
+      lastHeartbeatAt: new Date(now - 2 * HOUR_MS),
+      endedAt: new Date(now - HOUR_MS),
+      reapedAt: new Date(now - HOUR_MS),
+    });
+    // Act
+    const named = await coverageOf(harness, developer, [OLD_SESSION]);
+    // Assert
+    expect(agentEventOf(named)).toEqual({
+      source: "agent_event",
+      state: "unknown",
+      reason: "no_session_in_window",
+      gapSince: null,
+      observedAt: null,
+    });
+    expect(named.order).toEqual({ state: "undeclared", reason: "no_session_in_scope" });
+  });
 });
 
 describe("every answer that names sessions passes them", () => {
@@ -430,6 +455,42 @@ describe("every answer that names sessions passes them", () => {
       state: "incomplete",
       reason: "session_reaped",
     });
+  });
+
+  test("get_diagnosis reads no session of another repo, though it wrote a claim into the tree", async () => {
+    // Arrange: the tree's session ended cleanly; two days on, a session on
+    // another repo reports a fresh loss and writes a claim into the tree.
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey, { id: OLD_SESSION });
+    await touchAuth(harness, developer, OLD_SESSION, "wc_old");
+    await endCleanly(harness, developer, OLD_SESSION);
+    harness.clock.advanceSeconds(2 * DAY_SECONDS);
+    const nowIso = harness.clock.now().toISOString();
+    await registerTestSession(harness, developer.apiKey, {
+      id: "ses_elsewhere",
+      repo: OTHER_REPO,
+      losses: { total: 5, kinds: { spool_expired: 5 }, oldestAt: nowIso, newestAt: nowIso },
+    });
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({ workContextId: "wc_old", authorSessionId: "ses_elsewhere" }),
+          { sessionId: "ses_elsewhere" },
+        ),
+      ],
+    });
+    // Act
+    const unnamed = await coverageOf(harness, developer);
+    const data = await bodyOf<{ claims: { authorSessionId: string }[]; coverage: CoverageRecord }>(
+      harness,
+      developer,
+      "/api/work-contexts/wc_old/diagnosis?telemetry=0",
+    );
+    // Assert: neither the other repo's loss nor its newer heartbeat lands here.
+    expect(data.claims.map((claim) => claim.authorSessionId)).toEqual(["ses_elsewhere"]);
+    expect(agentEventOf(data.coverage)).toEqual(agentEventOf(unnamed));
+    expect(agentEventOf(data.coverage).state).toBe("complete");
   });
 
   test("a machine loss from before the window is no gap beside a tripwire or a trace that names the session", async () => {
