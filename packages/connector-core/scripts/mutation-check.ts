@@ -17546,7 +17546,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heal that loses the state race answers a dead end",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "    const moved = await movedLife(input, refusal.sessionId);\n    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  if (ladder",
+    from: "    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  if (ladder",
     to: "    return FAILED;\n  }\n  if (ladder",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review P4: the loser of two concurrent heals throws its batch away although the winner registered the very life it walked to",
@@ -17614,6 +17614,22 @@ export const MUTATIONS: readonly Mutation[
     to: "  const parts = [rejected, ignored, capture].filter((part): part is string => part !== null);",
     test: `${CLI}/test/doctor-losses.test.ts`,
     because: "status counts withheld records as dropped beside nothing that says why",
+  },
+  {
+    label: "a heal that loses its life to a SessionEnd leaves it open",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      await retireOrphan(input, ladder.sessionId, now);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review finding 6: the orphan life stays open, the next resume lands on it under a fresh epoch, and its order splits",
+  },
+  {
+    label: "an orphaned life is written down but never ended",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "  await endSession(input.hub, sessionId, ALLOCATION_FAILED);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the life a raced heal registered stays open on the hub until the reaper guesses it dead",
   },
 ];
 
@@ -17874,7 +17890,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 11
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
- * PRINTS: packages/connector-core/test/session-lives.test.ts 12
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 14
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

@@ -487,3 +487,36 @@ describe("coverage right after a heal never reads a loss as observed (review P3)
     expect((await readDropDetail(fx.home, fx.key)).byReason["rejected"]).toBe(1);
   });
 });
+
+describe("a heal racing a SessionEnd (review finding 6)", () => {
+  test("ends the life it registered too late, and the next resume starts above it", async () => {
+    // Arrange: a life the hub ended, a heal's walk in flight against a slow hub
+    const fx = await fixture("heal-vs-end");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    registerDelayMs = WALK_DELAY_MS;
+    const walking = healerFor(fx, fx.proxied)(
+      { sessionId: life.crosscheckSessionId, cause: "session_ended" },
+      Date.now() + BUDGET_MS,
+    );
+    await Bun.sleep(WALK_HEAD_START_MS);
+
+    // Act: SessionEnd deletes the state while the walk registers the next life
+    await endViaFlow(fx);
+    await walking;
+    registerDelayMs = 0;
+    const resumed = await register(fx);
+    await captureTarget(fx, "src/after-resume.ts");
+    await flushAsHook(fx);
+
+    // Assert: the late life is closed, the resume is a fresh one, both orders whole
+    const late = `${life.crosscheckSessionId}~r1`;
+    expect(await isEnded(late)).toBe(true);
+    expect(resumed.crosscheckSessionId).toBe(`${life.crosscheckSessionId}~r2`);
+    for (const id of [late, resumed.crosscheckSessionId]) {
+      expect((await readSessionCausalOrder(db, id)).epochs).toBe(1);
+    }
+    expect(await targetsOf(resumed.workContextId)).toEqual(["src/after-resume.ts"]);
+  });
+});

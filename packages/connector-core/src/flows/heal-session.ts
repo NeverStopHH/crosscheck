@@ -44,10 +44,13 @@ import {
 import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import { ALLOCATION_FAILED } from "../capture/seq.ts";
 import type { HubContext } from "../http/client.ts";
+import { endSession } from "../http/hub.ts";
 import { appendRecords } from "../spool/append.ts";
 import type { HealResult, SessionHealer, SessionRefusal } from "../spool/flush-heal.ts";
 import { recordRefusedLife } from "../spool/refused-lives.ts";
+import { lifeRungOf, readEndedLifeRung, recordEndedLife } from "../state/session-lineage.ts";
 import {
+  crosscheckSessionIdFor,
   readSessionState,
   updateSessionState,
   workContextIdFor,
@@ -221,6 +224,22 @@ const movedLife = async (input: SessionHealerInput, refusedSessionId: string): P
   return state === null || state.crosscheckSessionId === refusedSessionId ? null : state.crosscheckSessionId;
 };
 
+/**
+ * A life the walk registered that no state file names: ended on the hub at
+ * once — it never allocated a position, so its end travels the refusal that
+ * says so — and written down as the newest ended life, so a resume starts
+ * above it. Best-effort: an end that does not land leaves the life to the
+ * hub's reaper, and the lineage still keeps the resume off it.
+ */
+const retireOrphan = async (input: SessionHealerInput, sessionId: string, now: Date): Promise<void> => {
+  await endSession(input.hub, sessionId, ALLOCATION_FAILED);
+  const baseId = crosscheckSessionIdFor(input.hostSessionKey);
+  const ended = await readEndedLifeRung(input.home, input.hostSessionKey, baseId);
+  if ((lifeRungOf(baseId, sessionId) ?? 0) > (ended ?? -1)) {
+    await recordEndedLife(input.home, input.hostSessionKey, sessionId, now);
+  }
+};
+
 /** The walk itself, once `mayWalk` allowed it and the attempt is stamped. */
 const walk = async (
   input: SessionHealerInput,
@@ -255,6 +274,13 @@ const walk = async (
     // Lost the compare-and-swap: a sibling moved the state first. Its life is
     // the answer — usually the very one this walk just registered (review P4).
     const moved = await movedLife(input, refusal.sessionId);
+    if (moved !== ladder.sessionId) {
+      // ...and when it is not — SessionEnd deleted the state mid-walk, or a
+      // sibling landed elsewhere — the life this walk registered belongs to
+      // nobody. Left open, the next resume would land on it under a fresh
+      // epoch and split its order (review finding 6).
+      await retireOrphan(input, ladder.sessionId, now);
+    }
     return moved === null ? FAILED : healedTo(refusal.sessionId, moved);
   }
   if (ladder.sessionId !== refusal.sessionId) {
