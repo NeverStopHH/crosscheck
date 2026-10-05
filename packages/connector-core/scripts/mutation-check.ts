@@ -17601,6 +17601,16 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/abandoned-temps.test.ts`,
     because: "an abandoned config.json temp — the API key in a second file — stays beside config.json for good",
   },
+  {
+    // Review 2026-10-06 (L2): the ACP sweep sat inside the end-and-reap try,
+    // so any throw there skipped it.
+    label: "a throw while ending ACP sessions skips the temp sweep",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        logger.line(`capture-shutdown-error ${describeError(error)}`);\n      }\n",
+    to: "        logger.line(`capture-shutdown-error ${describeError(error)}`);\n        return;\n      }\n",
+    test: `${ACP}/test/capture-engine.test.ts`,
+    because: "one unwritable spool directory and the ACP-only machine's only sweep never runs again",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17709,7 +17719,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/waiver-render.test.ts 12
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
- * PRINTS: packages/connector-acp/test/capture-engine.test.ts 3
+ * PRINTS: packages/connector-acp/test/capture-engine.test.ts 4
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1

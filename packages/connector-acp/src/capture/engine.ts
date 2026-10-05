@@ -1304,6 +1304,13 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         pendingClient.evictions() + pendingAgent.evictions(),
         now(),
       );
+      // Gathered BEFORE anything below can throw: the temp sweep at the end
+      // of this drain must not depend on the end-and-reap block finishing.
+      const sweptHomes = new Set(
+        [...sessions.values()].flatMap((session) =>
+          session.enabled && session.config !== null ? [session.config.home] : [],
+        ),
+      );
       try {
         // End every live session (§2.4 last row: child exit → endSessionFlow),
         // then reap once per (home, repoKey) with a DeferredEnder bounded by
@@ -1348,22 +1355,31 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
             },
           );
         }
-        // Abandoned writePrivateFile temps, once per home reaped above. ACP
-        // has no SessionStart hook: this child-exit drain is where its
-        // session-start maintenance runs, off the wire and after every
-        // request, so it is the one point that sweeps for an ACP-only
-        // machine (state/temp-sweep.ts). Local readdirs only, never throws.
-        const homes = new Set(
-          [...reapTargets.values()].flatMap((session) =>
-            session.config === null ? [] : [session.config.home],
-          ),
-        );
-        for (const home of homes) {
+      } catch (error) {
+        counters.errors += 1;
+        logger.line(`capture-shutdown-error ${describeError(error)}`);
+      }
+      // Abandoned writePrivateFile temps, once per home a session captured
+      // into. ACP has no SessionStart hook: this child-exit drain is where
+      // its session-start maintenance runs, off the wire and after every
+      // request, so it is the one point that sweeps for an ACP-only machine
+      // (state/temp-sweep.ts). Its OWN try, after the block above, so a
+      // throw while ending or reaping cannot skip it; held to what is left
+      // of the exit budget.
+      //
+      // Only homes a session resolved a config for — not the env's home when
+      // every session was disabled. A proxy that captured nothing (an
+      // unconnected directory, no login, CROSSCHECK_DISABLED) has not been
+      // given that home to maintain, and a disabled connector deleting files
+      // there would be the opposite of disabled; the other connectors and
+      // the next connected ACP session sweep it.
+      try {
+        for (const home of sweptHomes) {
           await sweepAbandonedTemps(home, now(), remaining);
         }
       } catch (error) {
         counters.errors += 1;
-        logger.line(`capture-shutdown-error ${describeError(error)}`);
+        logger.line(`capture-sweep-error ${describeError(error)}`);
       }
       logger.line(
         `capture sessions=${counters.sessions} targets=${counters.targets} ` +

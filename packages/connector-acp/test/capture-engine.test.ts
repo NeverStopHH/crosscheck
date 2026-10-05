@@ -439,6 +439,32 @@ describe("the §2.4 mapping against a live hub", () => {
     expect(names).toContain(inFlight);
   });
 
+  test("shutdown still sweeps when ending a session throws", async () => {
+    // Arrange: the repo's spool directory replaced by a FILE, so the end
+    // flow's marker write throws inside the end-and-reap block
+    const h = await harness("temp-sweep-throw");
+    handshake(h, "sess_temp_throw", h.repo);
+    await h.capture.settle();
+    const spool = join(h.home, "spool", h.hub.repoKey);
+    await rm(spool, { recursive: true, force: true });
+    await writeFile(spool, "not a directory", "utf8");
+    const temps = await seedAbandonedTemps(
+      join(h.home, "state"),
+      3,
+      ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+      h.clock.value,
+    );
+
+    // Act
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert: the drain did fail, and the sweep ran anyway
+    expect(h.logger.lines.some((line) => line.startsWith("capture-shutdown-error"))).toBe(true);
+    for (const temp of temps) {
+      expect(await Bun.file(temp).exists()).toBe(false);
+    }
+  });
+
   test("a shutdown with no exit budget left sweeps nothing: the temps wait for a later drain", async () => {
     // Arrange: a live session gives the shutdown its home
     const h = await harness("temp-sweep-spent");
