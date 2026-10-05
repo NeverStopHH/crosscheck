@@ -160,6 +160,23 @@ describe("crosscheck status absence lines", () => {
     expect(result.stdout).toContain(`cloud agent identity: ${LINKED_SENTENCE}`);
   });
 
+  test("the line after the absence section keeps its spelling: `spool: N pending`", async () => {
+    // Arrange: an absence line and a linked identity, both printed above it
+    const { repo, env } = await fixture("status-spool-spelling", {
+      ok: true,
+      data: {
+        absences: [cloudAgentAbsence(Date.now())],
+        linkedCloudAgents: ["claude-code-web"],
+      },
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toMatch(/^spool: 0 pending, 0 dropped$/m);
+  });
+
   test("prints no linked-identity line when nothing is linked", async () => {
     // Arrange
     const { repo, env } = await fixture("status-unlinked-cloud-agent", {

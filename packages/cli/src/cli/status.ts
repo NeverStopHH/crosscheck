@@ -500,7 +500,7 @@ export const runStatus = async (
         ? []
         : ["commit authors without a recent session:", ...absenceLines]),
       ...cloudAgentLinkLines,
-      `spool:${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
+      `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...lossLines,
       ...foreignDropLines,
       ...questionLines,

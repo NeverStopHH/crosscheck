@@ -16616,6 +16616,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/absence-cli.test.ts`,
     because: "the stale row is ignored but never removed, and nobody is told how",
   },
+  {
+    label: "status loses the space in spool: N pending",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      `spool: ${depth} pending",
+    to: "      `spool:${depth} pending",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the review's finding: a line every reader scans for, spelled unlike every other key on the surface",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16660,7 +16668,7 @@ interface Outcome {
  * other.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: packages/cli/test/absence-cli.test.ts 6
+ * PRINTS: packages/cli/test/absence-cli.test.ts 7
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
