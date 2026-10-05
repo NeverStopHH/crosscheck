@@ -2,7 +2,7 @@
  * "Teammate sessions active now" runs the same topic grouping as the work
  * contexts below it (briefing/topic-group.ts): a teammate's live sessions are
  * grouped by branch, the branch list is bounded with the rest counted, and
- * the status shown is the most advanced one on the freshest branch.
+ * the status shown is the highest-ranked one on the freshest branch.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -62,7 +62,7 @@ describe("a teammate's live sessions, grouped by topic", () => {
     ]);
   });
 
-  test("the status shown is the most advanced one on the freshest branch", () => {
+  test("the status shown is the highest-ranked one on the freshest branch", () => {
     // The freshest session on feat/x is analyzing; an older one on the same
     // branch is implementing. A session on another branch says testing, and
     // is not the freshest topic's — so it does not speak for the line.

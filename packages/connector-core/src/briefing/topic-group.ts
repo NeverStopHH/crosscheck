@@ -32,11 +32,12 @@
  * did nothing — then the freshest, then the smaller session key, so the
  * answer never depends on the order rows arrived in.
  *
- * WHICH STATUS A TOPIC SHOWS: the most advanced one any of its rows reports,
- * in SESSION_STATUSES order (analyzing → planning → implementing → testing →
- * blocked → done). Ranked, never rewritten: the shown status is always one a
- * row in the topic carries, and a status this client does not know ranks
- * below every known one, so with none known the speaking row's own is shown.
+ * WHICH STATUS A TOPIC SHOWS: the highest any of its rows reports in
+ * TOPIC_STATUS_PRECEDENCE — what is LIVE, so blocked > testing >
+ * implementing > planning > analyzing > done. Ranked, never rewritten: the
+ * shown status is always one a row in the topic carries, and a status this
+ * client does not know ranks below every known one, so with none known the
+ * speaking row's own is shown.
  *
  * WHICH TOPIC COMES FIRST: one with recorded work, then the freshest, then the
  * one with more sessions, then the smaller label. Teammates come in order of
@@ -47,7 +48,7 @@
  * gets back the groups. That is why this module is not in the §4.4
  * render-surface registry — it names no render identifier and emits no text.
  */
-import { SESSION_STATUSES } from "@crosscheck/schema";
+import type { SessionStatus } from "@crosscheck/schema";
 
 /** What grouping needs from a row; the caller may carry anything else along. */
 export interface TopicRow {
@@ -71,7 +72,7 @@ export interface Topic<T extends TopicRow> {
   readonly sessions: number;
   /** The newest activity in the topic. */
   readonly ageMs: number;
-  /** The most advanced status any of its rows reports. */
+  /** The highest-ranked status any of its rows reports (TOPIC_STATUS_PRECEDENCE). */
   readonly status: string;
   readonly hasRecordedWork: boolean;
 }
@@ -86,10 +87,32 @@ export interface TeammateTopics<T extends TopicRow> {
   readonly ageMs: number;
 }
 
-const KNOWN_STATUSES: readonly string[] = SESSION_STATUSES;
+/**
+ * The order a topic's status is DISPLAYED in, LOWEST first — deliberately
+ * not SESSION_STATUSES, which is the lifecycle order (analyzing → planning →
+ * implementing → testing → blocked → done). A reader of a teammate listing is
+ * asking what is LIVE: in the lifecycle order `done` is last, so one finished
+ * subagent on a branch three others are still implementing made the whole
+ * topic read done. Here `done` ranks below every live status and shows only
+ * when nothing in the topic is live, and `blocked` ranks above them all,
+ * because a stuck session is the one fact about a topic a teammate most needs
+ * to see. `planning` and `testing` keep their lifecycle places among the live
+ * ones. Every enum value appears exactly once (test/briefing-contexts.test.ts),
+ * so a status added to the enum cannot silently rank as unknown.
+ */
+export const TOPIC_STATUS_PRECEDENCE: readonly SessionStatus[] = [
+  "done",
+  "analyzing",
+  "planning",
+  "implementing",
+  "testing",
+  "blocked",
+];
+
+const RANKED_STATUSES: readonly string[] = TOPIC_STATUS_PRECEDENCE;
 
 /** -1 for a status this client does not know: below every known one. */
-const statusRank = (status: string): number => KNOWN_STATUSES.indexOf(status);
+const statusRank = (status: string): number => RANKED_STATUSES.indexOf(status);
 
 /**
  * True when `candidate` should speak for the topic instead of `current`.
@@ -117,7 +140,7 @@ const bySpeakingOrder = <T extends TopicRow>(left: T, right: T): number => {
 };
 
 /** Starts from the speaking row's own, so an all-unknown topic keeps it. */
-const mostAdvancedStatus = <T extends TopicRow>(rows: readonly T[]): string =>
+const displayedStatus = <T extends TopicRow>(rows: readonly T[]): string =>
   rows.reduce(
     (best, row) => (statusRank(row.status) > statusRank(best) ? row.status : best),
     rows[0]?.status ?? "",
@@ -136,7 +159,7 @@ const toTopic = <T extends TopicRow>(label: string, rows: readonly T[]): Topic<T
     rows: ordered,
     sessions: distinctSessions(ordered),
     ageMs: newestAge(ordered),
-    status: mostAdvancedStatus(ordered),
+    status: displayedStatus(ordered),
     hasRecordedWork: ordered.some((row) => row.hasRecordedWork),
   };
 };

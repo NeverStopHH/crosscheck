@@ -10,13 +10,17 @@
  * sessions on one branch are one topic with a count and the newest activity.
  */
 import { describe, expect, test } from "bun:test";
+import { SESSION_STATUSES } from "@crosscheck/schema";
 
 import {
   MAX_BRIEFING_CHARS,
   MAX_CONTEXTS,
   MAX_TOPICS_PER_TEAMMATE,
 } from "../src/constants.ts";
-import { groupTopicsByDeveloper } from "../src/briefing/topic-group.ts";
+import {
+  TOPIC_STATUS_PRECEDENCE,
+  groupTopicsByDeveloper,
+} from "../src/briefing/topic-group.ts";
 import { renderBriefing } from "../src/briefing/render.ts";
 import type { PresenceEntry, WorkContextEntry } from "../src/http/hub.ts";
 
@@ -217,6 +221,48 @@ describe("the status a topic shows", () => {
     expect(contextLines(rendered)).toEqual([
       "- Ken, 2 sessions, 2m ago, status implementing: «feat/x»",
     ]);
+  });
+
+  test("live work outranks a session that finished on the same branch", () => {
+    // One subagent on the branch is done; another is still implementing it.
+    // The reader asking "what is live?" must read implementing.
+    const rendered = render([
+      context({ id: "wc_done", sessionId: "cc_done", title: "feat/x @ api", status: "done", createdAt: minutesAgo(2) }),
+      context({ id: "wc_live", sessionId: "cc_live", title: "feat/x @ api", status: "implementing", createdAt: minutesAgo(20) }),
+    ]);
+
+    expect(contextLines(rendered)[0]).toContain("status implementing");
+  });
+
+  test("a blocked session always surfaces, over live and finished work alike", () => {
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "feat/x @ api", status: "implementing", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "feat/x @ api", status: "testing", createdAt: minutesAgo(3) }),
+      context({ id: "wc_3", sessionId: "cc_3", title: "feat/x @ api", status: "done", createdAt: minutesAgo(5) }),
+      context({ id: "wc_4", sessionId: "cc_4", title: "feat/x @ api", status: "blocked", createdAt: minutesAgo(40) }),
+    ]);
+
+    expect(contextLines(rendered)[0]).toContain("status blocked");
+  });
+
+  test("done shows only when nothing in the topic is live", () => {
+    const finished = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "feat/x @ api", status: "done", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "feat/x @ api", status: "done", createdAt: minutesAgo(5) }),
+    ]);
+    const stillAnalyzing = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "feat/x @ api", status: "done", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "feat/x @ api", status: "analyzing", createdAt: minutesAgo(5) }),
+    ]);
+
+    expect(contextLines(finished)[0]).toContain("status done");
+    expect(contextLines(stillAnalyzing)[0]).toContain("status analyzing");
+  });
+
+  test("the display order ranks every status the enum has, each exactly once", () => {
+    // A status added to SESSION_STATUSES and forgotten here would rank as
+    // unknown — below `done` — on every surface that lists a teammate.
+    expect([...TOPIC_STATUS_PRECEDENCE].sort()).toEqual([...SESSION_STATUSES].sort());
   });
 
   test("a status this client does not know is never promoted over one it does", () => {

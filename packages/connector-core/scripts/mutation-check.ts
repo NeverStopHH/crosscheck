@@ -17401,7 +17401,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a topic shows its freshest session's status, not its most advanced",
     file: `${CORE}/src/briefing/topic-group.ts`,
-    from: "    status: mostAdvancedStatus(ordered),",
+    from: "    status: displayedStatus(ordered),",
     to: "    status: ordered[0]?.status ?? \"\",",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
@@ -17411,8 +17411,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a status this client does not know outranks every known one",
     file: `${CORE}/src/briefing/topic-group.ts`,
-    from: "const statusRank = (status: string): number => KNOWN_STATUSES.indexOf(status);",
-    to: "const statusRank = (status: string): number => KNOWN_STATUSES.indexOf(status) === -1 ? KNOWN_STATUSES.length : KNOWN_STATUSES.indexOf(status);",
+    from: "const statusRank = (status: string): number => RANKED_STATUSES.indexOf(status);",
+    to: "const statusRank = (status: string): number => RANKED_STATUSES.indexOf(status) === -1 ? RANKED_STATUSES.length : RANKED_STATUSES.indexOf(status);",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "a hostile or newer hub's made-up status word displaces the real one the " +
@@ -17539,6 +17539,28 @@ export const MUTATIONS: readonly Mutation[
     because:
       "a display name carrying ` · ` mints a field on a line whose fields are " +
       "separated by exactly that",
+  },
+  {
+    // The display order is NOT the enum's lifecycle order, on purpose: a
+    // reader of a teammate listing asks what is live.
+    label: "a topic's status ranks in lifecycle order again, so done outranks live work",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "const RANKED_STATUSES: readonly string[] = TOPIC_STATUS_PRECEDENCE;",
+    to: "const RANKED_STATUSES: readonly string[] = [\"analyzing\", \"planning\", \"implementing\", \"testing\", \"blocked\", \"done\"];",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "one finished subagent on a branch three others are still implementing " +
+      "makes the whole topic read done",
+  },
+  {
+    label: "a testing session outranks a blocked one",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  \"testing\",\n  \"blocked\",\n];",
+    to: "  \"blocked\",\n  \"testing\",\n];",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "a stuck session disappears behind a sibling that is testing, and the " +
+      "one fact a teammate most needs about the topic is not on the line",
   },
 ];
 
@@ -17717,7 +17739,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
- * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 10
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 12
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5

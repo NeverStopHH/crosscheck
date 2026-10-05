@@ -164,7 +164,7 @@ export interface TeammateGroup {
   readonly name: string;
   /** Every live branch, most active first — a surface bounds what it prints. */
   readonly branches: readonly string[];
-  /** The most advanced status on the freshest branch (topic-group.ts). */
+  /** The highest-ranked status on the freshest branch (topic-group.ts). */
   readonly status: string;
   readonly ageMs: number;
   readonly baseCommit: string | null;
