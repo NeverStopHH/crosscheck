@@ -305,6 +305,12 @@ export {
   substanceSentence,
 } from "./substance-sentence.ts";
 export {
+  HARNESS_WRAPPER_ELEMENTS,
+  SYSTEM_NOTIFICATION_MARKER,
+  humanPromptText,
+  isHarnessTurn,
+} from "./harness-turn.ts";
+export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,
   CI_PROVIDERS,

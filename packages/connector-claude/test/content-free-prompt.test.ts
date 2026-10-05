@@ -17,7 +17,10 @@ import {
   writeSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
-import { startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import {
+  rejectedApproachCandidate,
+  startHintHub,
+} from "../../connector-core/test/fixtures/hint-hub.ts";
 import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -148,8 +151,44 @@ const captureCounters = async (f: Fixture): Promise<Record<string, unknown>> => 
   };
 };
 
+/** A background task's notification, delivered by Claude Code as a user turn (live, 0.10.0). */
+const TASK_NOTIFICATION =
+  "<task-notification><task-id>bp1v5vsl4</task-id>" +
+  '<summary>Monitor event: "PR #74 CI checks for 493ffb4f"</summary>' +
+  "<event>Comment claims (macos-latest): pass</event></task-notification>";
+
+/** The turns the live pilot pointed on: content-free human prompts and harness turns. */
+const FLOORED_TURNS = [
+  ["mache weiter"],
+  ["macxhe weiter, limit ist zurukgsetz"],
+  ["mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen"],
+  ["ja"],
+  [TASK_NOTIFICATION],
+  [`[SYSTEM NOTIFICATION - NOT USER INPUT]\n${TASK_NOTIFICATION}`],
+  ['<agent-message from="a781e1e961b68f4c2">Report: CI checks pass</agent-message>'],
+  ['<cross-session-message from="ken">PR #74 checks pass</cross-session-message>'],
+] as const;
+
 describe("capture after a content-free prompt is capture as usual", () => {
-  test.each([["mache weiter"], ["macxhe weiter, limit ist zurukgsetz"], ["ja"]])(
+  test("a harness turn gets no hint even with a teammate candidate waiting — and capture is untouched", async () => {
+    // Arrange — this hub would answer with an injectable candidate
+    const prompted = await fixture("cf-harness");
+    const control = await fixture("cf-harness-control");
+    prompted.hub.setCandidates([rejectedApproachCandidate()]);
+
+    // Act
+    const hint = await runHook("user-prompt-submit", promptPayload(prompted, TASK_NOTIFICATION), prompted.env);
+    await runHook("post-tool-use", editPayload(prompted), prompted.env);
+    await runHook("post-tool-use", editPayload(control), control.env);
+
+    // Assert — the pointer is what was suppressed, and nothing else
+    expect(hint).toBe("");
+    expect(prompted.hub.calls.candidates).toBe(0);
+    expect(await capturedShape(prompted)).toEqual(await capturedShape(control));
+    expect(await captureCounters(prompted)).toEqual(await captureCounters(control));
+  });
+
+  test.each(FLOORED_TURNS)(
     "an edit after %p is captured exactly as an edit with no prompt before it",
     async (prompt) => {
       // Arrange — two sessions, identical but for the prompt

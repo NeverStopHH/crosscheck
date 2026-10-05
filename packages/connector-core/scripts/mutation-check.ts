@@ -17434,8 +17434,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a prompt with no searchable word goes on the wire",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const promptQuery = hasSearchableWord(input.prompt)\n    ? input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS)\n    : \"\";",
-    to: "  const promptQuery = input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    from: "  const promptQuery = hasSearchableWord(humanText)\n    ? humanText.slice(0, MAX_SEARCH_QUERY_CHARS)\n    : \"\";",
+    to: "  const promptQuery = humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
   },
@@ -17807,6 +17807,70 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "a current hub is treated as an old one, and every shown finding is booked as an opened-able pointer",
   },
+  {
+    label: "a turn headed by the system-notification marker reads as a human prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  if (prompt.trimStart().startsWith(SYSTEM_NOTIFICATION_MARKER)) {\n    return \"\";\n  }\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a background task's \"Monitor event: checks pass\" points the session at whichever tree shares those words",
+  },
+  {
+    label: "a task notification's words count as the prompt's",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  \"task-notification\",\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "PR, CI, checks, pass — the live pilot's four pointers at unrelated trees",
+  },
+  {
+    label: "a wrapper cut at the wire bound leaks its words",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "[\\\\s\\\\S]*?(?:</${element}>|$)`",
+    to: "[\\\\s\\\\S]*?</${element}>`",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a notification sliced to the query bound has no closing tag, and all of it is scored",
+  },
+  {
+    label: "stripping a wrapper fuses the words beside it",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "text.replace(wrapper, \" \")",
+    to: "text.replace(wrapper, \"\")",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"cache\" and \"key\" either side of a notification become \"cachekey\", a word nobody wrote",
+  },
+  {
+    label: "a turn that is all harness still asks the hub",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  if (isHarnessTurn(input.prompt)) {\n    return \"\";\n  }\n  const humanText",
+    to: "  const humanText",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "every background notification spends a call and sends the session's intent to fetch a pointer nobody prompted",
+  },
+  {
+    label: "the connector sends the harness's words beside the human's",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const promptQuery = hasSearchableWord(humanText)\n    ? humanText.slice(0, MAX_SEARCH_QUERY_CHARS)",
+    to: "  const promptQuery = hasSearchableWord(input.prompt)\n    ? input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS)",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "a notification's task ids and status words go on the wire and top up a human prompt's count",
+  },
+  {
+    label: "the hub lets the intent stand in for a harness turn",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  if (isHarnessTurn(input.query)) {\n    return [];\n  }\n",
+    to: "",
+    test: `${SERVER}/test/hint-harness-turn.test.ts`,
+    because: "every installed connector's background notification earns an intent-matched pointer",
+  },
+  {
+    label: "the hub scores the harness's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    text: humanPromptText(input.query),\n",
+    to: "    text: input.query,\n",
+    test: `${SERVER}/test/hint-harness-turn.test.ts`,
+    because: "a 0.10.0 connector's notification turn points at the automation tree it shares four words with",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18018,6 +18082,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
@@ -18095,6 +18160,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
+ * PRINTS: packages/schema/test/harness-turn.test.ts 4
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
@@ -18130,6 +18196,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
+ * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7

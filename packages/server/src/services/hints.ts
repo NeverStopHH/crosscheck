@@ -52,7 +52,12 @@ import {
 } from "./search.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
-import { SUBSTANCE_MAX_CHARS, substanceSentence } from "@crosscheck/schema";
+import {
+  SUBSTANCE_MAX_CHARS,
+  humanPromptText,
+  isHarnessTurn,
+  substanceSentence,
+} from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
@@ -707,8 +712,16 @@ export const listHintCandidates = async (
   callerDeveloperId: string,
   input: HintCandidatesQuery,
 ): Promise<readonly HintContextCandidate[]> => {
+  // A TURN THE HARNESS WROTE is nobody's prompt: a background task's
+  // notification or another agent's message, which an installed connector
+  // still sends as the query. Only the human text outside the wrappers is
+  // scored, and a turn that is all harness gets nothing — not the intent
+  // either, since nobody typed anything for it to stand in for.
+  if (isHarnessTurn(input.query)) {
+    return [];
+  }
   const fromPrompt = await matchCandidates(deps, callerDeveloperId, {
-    text: input.query,
+    text: humanPromptText(input.query),
     repo: input.repo,
     on: "prompt",
   });

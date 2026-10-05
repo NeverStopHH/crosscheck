@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1588
+    # PRINTS: 1596
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -280,7 +280,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
-    # PRINTS: flows/hint.ts 14
+    # PRINTS: flows/hint.ts 16
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
@@ -371,6 +371,7 @@ jobs:
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
     # PRINTS: packages/schema/src/file-ref.ts 5
+    # PRINTS: packages/schema/src/harness-turn.ts 4
     # PRINTS: packages/schema/src/landed-context.ts 3
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
@@ -419,7 +420,7 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
-    # PRINTS: packages/server/src/services/hints.ts 14
+    # PRINTS: packages/server/src/services/hints.ts 16
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
@@ -552,10 +553,11 @@ jobs:
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
+    # PRINTS: harness-turn.ts 4
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
-    # PRINTS: hint.ts 15
-    # PRINTS: hints.ts 17
+    # PRINTS: hint.ts 17
+    # PRINTS: hints.ts 19
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 13
     # PRINTS: index.ts 4

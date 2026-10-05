@@ -46,7 +46,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { substanceSentence } from "@crosscheck/schema";
+import { humanPromptText, isHarnessTurn, substanceSentence } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
   renderAnswerHint,
@@ -280,13 +280,21 @@ const selectNotice = (
 export const selectAndRenderHint = async (
   input: SelectAndRenderHintInput,
 ): Promise<string> => {
+  // A TURN THE HARNESS WROTE — a background task's notification, another
+  // agent's or session's message, delivered as a user turn — is nobody's
+  // prompt: no call, not even the intent in its place. Around a wrapper,
+  // only the human text is a query (@crosscheck/schema harness-turn.ts).
+  if (isHarnessTurn(input.prompt)) {
+    return "";
+  }
+  const humanText = humanPromptText(input.prompt);
   // A prompt with no searchable word is not a query, and it is not SENT: it
   // stays on this machine, and only the session's intent can travel in its
   // place (below). Whether a prompt WITH words carries anything task-bearing
   // is the hub's call — only the hub holds the team's words to count against
   // (server services/hints.ts, the content floor).
-  const promptQuery = hasSearchableWord(input.prompt)
-    ? input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS)
+  const promptQuery = hasSearchableWord(humanText)
+    ? humanText.slice(0, MAX_SEARCH_QUERY_CHARS)
     : "";
   // SECRET GATE — the capture scan's sibling, on the QUERY. The prompt goes
   // on the wire as a GET string (into a shared hub's request path and access
