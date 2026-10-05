@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1465
+    # PRINTS: 1468
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -181,10 +181,10 @@ jobs:
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-io.ts 8
-    # PRINTS: packages/cli/src/cli/init-remove-plan.ts 5
+    # PRINTS: packages/cli/src/cli/init-remove-plan.ts 6
     # PRINTS: packages/cli/src/cli/init-remove-report.ts 8
     # PRINTS: packages/cli/src/cli/init-remove.ts 6
-    # PRINTS: packages/cli/src/cli/init.ts 5
+    # PRINTS: packages/cli/src/cli/init.ts 6
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
@@ -203,7 +203,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
     # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 2
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
-    # PRINTS: packages/cli/src/cli/wiring-scope.ts 2
+    # PRINTS: packages/cli/src/cli/wiring-scope.ts 3
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
     # PRINTS: packages/connector-acp/src/capture/engine.ts 18
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
@@ -554,10 +554,10 @@ jobs:
     # PRINTS: index.ts 4
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 8
-    # PRINTS: init-remove-plan.ts 5
+    # PRINTS: init-remove-plan.ts 6
     # PRINTS: init-remove-report.ts 8
     # PRINTS: init-remove.ts 6
-    # PRINTS: init.ts 6
+    # PRINTS: init.ts 7
     # PRINTS: injector.ts 5
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
@@ -699,7 +699,7 @@ jobs:
     # PRINTS: webauthn.ts 11
     # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
-    # PRINTS: wiring-scope.ts 2
+    # PRINTS: wiring-scope.ts 3
     # PRINTS: work-contexts.ts 1
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7

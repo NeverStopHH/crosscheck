@@ -43,7 +43,9 @@ import { doubleWiringRemedy, readProjectCopy } from "./project-copy.ts";
 import { wiringPaths } from "./wiring-removal.ts";
 import {
   collisionSentence,
+  findOutsideRepo,
   findUserLevelCollision,
+  outsideRepoSentence,
   projectWiringFiles,
 } from "./wiring-scope.ts";
 
@@ -203,13 +205,24 @@ export const runInit = async (
   // A project copy that IS the user-level install ($HOME as the work tree,
   // or a link into ~/.claude) would be written as one — and $HOME connected
   // as a repo (review 2026-10-05). The same check `init --remove` makes.
-  const collision = await findUserLevelCollision(
-    await wiringPaths(await projectWiringFiles(identity.root, options.cursor)),
-    env,
-  );
+  const targetPaths = await wiringPaths(await projectWiringFiles(identity.root, options.cursor));
+  const collision = await findUserLevelCollision(targetPaths, env);
   if (collision !== null) {
     return {
       stdout: `${collisionSentence(collision, identity.root)}; run \`crosscheck init\` inside the project's own repository, or \`crosscheck init --global\` to wire this machine\n`,
+      exitCode: EXIT_ABORTED,
+    };
+  }
+  // Nor through a link out of the repo — `.claude` or `.cursor` symlinked to
+  // a shared directory would be written for every checkout that shares it
+  // (review 2026-10-05). The same check `init --remove` makes per file.
+  const outside = await findOutsideRepo(
+    [...targetPaths, repoConfigPath(identity.root)],
+    identity.root,
+  );
+  if (outside !== null) {
+    return {
+      stdout: `${outsideRepoSentence(outside, identity.root)}; init writes only this repo's own files — replace the link with a real directory, or run crosscheck init where ${outside.realPath} belongs\n`,
       exitCode: EXIT_ABORTED,
     };
   }

@@ -16801,6 +16801,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-backups.test.ts`,
     because: "the team's files are merged over with no copy of what they held",
   },
+  {
+    label: "a target symlinked out of the repo passes as the repo's own",
+    file: `${CLI}/src/cli/wiring-scope.ts`,
+    from: "      ({ realPath }) => realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`),",
+    to: "      () => false,",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "a .claude or .cursor linked to a shared directory is edited for every checkout that shares it",
+  },
+  {
+    label: "init --remove strips a shared file through a symlinked .claude directory",
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
+    from: "    const outside = await findOutsideRepo([plan.path], root);\n    if (outside !== null) {",
+    to: "    const outside = await findOutsideRepo([plan.path], root);\n    if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "another checkout's settings lose their hooks and this run reports sessions here load none",
+  },
+  {
+    label: "crosscheck init writes into a shared directory through a symlinked .claude",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "  if (outside !== null) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "every checkout sharing the linked directory is wired by one repo's install",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16878,7 +16902,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
  * PRINTS: packages/cli/test/init-backups.test.ts 7
  * PRINTS: packages/cli/test/init-global.test.ts 3
- * PRINTS: packages/cli/test/init-remove-safety.test.ts 11
+ * PRINTS: packages/cli/test/init-remove-safety.test.ts 14
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
