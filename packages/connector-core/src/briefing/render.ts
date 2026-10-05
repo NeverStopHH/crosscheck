@@ -45,6 +45,7 @@ import type {
   WorkContextEntry,
 } from "../http/hub.ts";
 import { groupContextsByDeveloper } from "./context-group.ts";
+import { backlogOf, backlogSize, oldestAgeMs } from "./draft-backlog.ts";
 import { formatAge } from "./age.ts";
 import { fitEntries } from "./fit.ts";
 import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
@@ -117,6 +118,14 @@ export interface BriefingInput {
   readonly solvedMatches?: readonly SolvedMatchEntry[] | undefined;
   /** The reader's OWN unreviewed drafts; omitted or empty renders no section. */
   readonly drafts?: readonly DraftEntry[] | undefined;
+  /**
+   * The backlog those capped rows are cut from, as a current hub reports it
+   * (http/hub.ts DraftListing); omitted from an older hub, whose listing at
+   * its cap then reads as a floor.
+   */
+  readonly draftTotals?:
+    | { readonly total: number | null; readonly oldestCreatedAt: string | null }
+    | undefined;
   /** Open questions addressed to the reader; omitted or empty renders none. */
   readonly questions?: readonly InboxQuestion[] | undefined;
   /**
@@ -877,16 +886,31 @@ export const formatDraftLine = (
  * absences give way before them.
  */
 const renderDraftSection = (input: BriefingInput): Section => {
-  const rendered = (input.drafts ?? []).flatMap((entry) => {
+  const drafts = input.drafts ?? [];
+  const rendered = drafts.flatMap((entry) => {
     const line = formatDraftLine(entry, input.now);
     return line === null ? [] : [line];
   });
+  // The backlog the rows are cut from (briefing/draft-backlog.ts): exact
+  // from a hub that counts it, a floor from an older one at its cap.
+  const backlog = backlogOf({
+    drafts,
+    total: input.draftTotals?.total ?? null,
+    oldestCreatedAt: input.draftTotals?.oldestCreatedAt ?? null,
+  });
+  const size = backlogSize(backlog);
+  const oldest = oldestAgeMs(backlog, input.now);
+  const inAll =
+    size.floor || oldest === null
+      ? ""
+      : ` — ${String(size.count)} in all, the oldest ${formatAge(oldest)} old`;
   return {
     header:
-      "Your own unreviewed draft claims, auto-captured " +
+      `Your own unreviewed draft claims, auto-captured${inAll} ` +
       "(review_draft confirms, edits or discards):",
     lines: rendered.slice(0, MAX_DRAFT_POINTERS),
-    total: rendered.length,
+    total: size.floor ? rendered.length : size.count,
+    ...(size.floor ? { more: (count: number) => `(+at least ${String(count)} more not shown)` } : {}),
   };
 };
 

@@ -11,7 +11,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { listOwnDrafts } from "../services/drafts.ts";
+import { listOwnDrafts, summarizeOwnDrafts } from "../services/drafts.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 export const draftsRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -23,12 +23,14 @@ export const draftsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const drafts = await listOwnDrafts(
-      deps.db,
-      c.get("developer").id,
-      parsed.data.repo,
-    );
-    return ok(c, { drafts });
+    const developerId = c.get("developer").id;
+    const [drafts, backlog] = await Promise.all([
+      listOwnDrafts(deps.db, developerId, parsed.data.repo),
+      summarizeOwnDrafts(deps.db, developerId, parsed.data.repo),
+    ]);
+    // Additive: `total` and `oldestCreatedAt` describe the whole backlog the
+    // capped, newest-first rows are cut from; an older client ignores them.
+    return ok(c, { drafts, ...backlog });
   });
 
   return router;

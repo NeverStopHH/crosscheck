@@ -167,6 +167,8 @@ export const RENDER_BARREL_MODULES: readonly string[] = [
 
 const NOW = new Date("2026-08-18T12:00:00.000Z");
 const ISO = "2026-08-18T11:55:00.000Z";
+/** Three days before NOW: a draft old enough for the review nudge to name it. */
+const DRAFT_DUE_ISO = "2026-08-15T12:00:00.000Z";
 const NO_DRIFT: CommitDrift | null = null;
 
 /**
@@ -550,7 +552,7 @@ const draftsWith = (payload: string): readonly DraftEntry[] => [
     body: payload,
     status: "proposed",
     confidence: 0.3,
-    createdAt: ISO,
+    createdAt: DRAFT_DUE_ISO,
   },
   {
     id: payload,
@@ -559,9 +561,12 @@ const draftsWith = (payload: string): readonly DraftEntry[] => [
     body: "The reaper closes a session whose spool is still flushing",
     status: "proposed",
     confidence: 0.3,
-    createdAt: ISO,
+    createdAt: DRAFT_DUE_ISO,
   },
 ];
+
+/** A backlog bigger than its rows, so the corpus also reaches the exact-total clause. */
+const DRAFT_CORPUS_BACKLOG = 35;
 
 const diagnosisWith = (payload: string): Diagnosis => ({
   workContext: {
@@ -1000,7 +1005,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     delivery: "unsolicited",
     module: "src/briefing/draft-nudge.ts",
     framing: "framed",
-    render: (payload) => renderDraftNudge({ due: draftsWith(payload), listedAtCap: false, now: NOW }),
+    render: (payload) =>
+      renderDraftNudge({
+        backlog: { listed: draftsWith(payload), total: DRAFT_CORPUS_BACKLOG, oldestCreatedAt: DRAFT_DUE_ISO },
+        now: NOW,
+      }),
   },
   {
     kind: "corpus",

@@ -27,17 +27,11 @@
  * unchanged — is the only writer, and a discarded draft is superseded on the
  * hub, so it never comes back into this count.
  */
-import {
-  DRAFT_LISTING_CAP,
-  DRAFT_NUDGE_MIN_AGE_HOURS,
-  DRAFT_NUDGE_MIN_FINISHED_TURNS,
-  DRAFT_NUDGE_MIN_SPARE_MS,
-  MS_PER_DAY,
-  HOURS_PER_DAY,
-} from "../constants.ts";
+import { DRAFT_NUDGE_MIN_FINISHED_TURNS, DRAFT_NUDGE_MIN_SPARE_MS } from "../constants.ts";
+import { backlogOf } from "../briefing/draft-backlog.ts";
 import { renderDraftNudge } from "../briefing/draft-nudge.ts";
-import { getDrafts } from "../http/hub.ts";
-import type { DraftEntry, HubContext } from "../http/hub.ts";
+import { getDraftListing } from "../http/hub.ts";
+import type { HubContext } from "../http/hub.ts";
 import { readSessionState, updateSessionState } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
 
@@ -53,15 +47,6 @@ export interface DeliverDraftNudgeInput {
   /** What the caller's budget still spares; absent, the hub timeout alone bounds the GET. */
   readonly spareMs?: () => number;
 }
-
-const MIN_AGE_MS = (DRAFT_NUDGE_MIN_AGE_HOURS * MS_PER_DAY) / HOURS_PER_DAY;
-
-/** Due: captured at least DRAFT_NUDGE_MIN_AGE_HOURS before `now`. */
-export const dueDrafts = (drafts: readonly DraftEntry[], now: Date): readonly DraftEntry[] =>
-  drafts.filter((entry) => {
-    const created = Date.parse(entry.createdAt);
-    return !Number.isNaN(created) && now.getTime() - created >= MIN_AGE_MS;
-  });
 
 /** The lockless pre-check: every prompt after the slot is spent costs one state read. */
 export const isDraftNudgeOpen = (state: SessionState | null): state is SessionState =>
@@ -101,15 +86,11 @@ export const deliverDraftNudge = async (input: DeliverDraftNudgeInput): Promise<
   if (hub === null) {
     return "";
   }
-  const drafts = await getDrafts(hub, input.repoId);
-  if (!drafts.ok) {
+  const listing = await getDraftListing(hub, input.repoId);
+  if (!listing.ok) {
     return "";
   }
-  const text = renderDraftNudge({
-    due: dueDrafts(drafts.data, input.now),
-    listedAtCap: drafts.data.length >= DRAFT_LISTING_CAP,
-    now: input.now,
-  });
+  const text = renderDraftNudge({ backlog: backlogOf(listing.data), now: input.now });
   const claimed = await claimSlot(input, text.length === 0 ? "nothing_due" : "delivered");
   return claimed ? text : "";
 };

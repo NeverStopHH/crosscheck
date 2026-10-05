@@ -33,6 +33,8 @@ import {
   resolveDeriveBackend,
 } from "../model/backend.ts";
 import { SPAWN_FAILURE_LABEL } from "../model/runner.ts";
+import { amountOf } from "../briefing/draft-backlog.ts";
+import type { DraftCount } from "../briefing/draft-backlog.ts";
 import { isDisabled, isSummarizerChild } from "../config/config.ts";
 import type { Env } from "../config/paths.ts";
 import {
@@ -43,6 +45,7 @@ import {
   DRAFT_NUDGE_MIN_AGE_HOURS,
   DRAFT_RETENTION_HORIZON_DAYS,
   INTENT_MIN_PROMPT_CHARS,
+  MS_PER_DAY,
   SUMMARIZER_CHILD_ENV,
 } from "../constants.ts";
 import type { SessionState } from "../state/session-state.ts";
@@ -85,15 +88,19 @@ export const digestOf = (state: SessionState): DeriveDigest => ({
   intentLastFailure: state.intentLastFailure,
 });
 
-/** The developer's own unreviewed drafts on this repo, as the hub listed them. */
+/**
+ * The developer's own unreviewed drafts on this repo, counted over the WHOLE
+ * backlog the hub reports (briefing/draft-backlog.ts) — exact from a hub that
+ * counts it, floors from an older one whose listing stopped at its cap.
+ */
 export interface OwnDraftsFact {
-  readonly listed: number;
+  readonly size: DraftCount;
   /** Of those, the ones that waited DRAFT_NUDGE_MIN_AGE_HOURS. */
-  readonly due: number;
-  /** The listing filled DRAFT_LISTING_CAP: `listed` is a floor. */
-  readonly atCap: boolean;
+  readonly due: DraftCount;
   /** Of those, the ones past DRAFT_RETENTION_HORIZON_DAYS — said, and kept. */
-  readonly pastHorizon: number;
+  readonly pastHorizon: DraftCount;
+  /** The oldest draft's age, when known. */
+  readonly oldestAgeMs: number | null;
 }
 
 export interface SharingInput {
@@ -292,21 +299,24 @@ const intentQuietRule: Rule = (_input, totals) =>
       )
     : null;
 
+const oldestClause = (ageMs: number | null): string =>
+  ageMs === null ? "" : `, the oldest captured ${String(Math.floor(ageMs / MS_PER_DAY))} days ago`;
+
 const draftsUnreviewedRule: Rule = (input) => {
   const drafts = input.drafts;
-  if (drafts === null || drafts.due === 0) {
+  if (drafts === null || drafts.due.count === 0) {
     return null;
   }
-  const amount = `${drafts.atCap ? "at least " : ""}${String(drafts.listed)}`;
   const old =
-    drafts.pastHorizon === 0
+    drafts.pastHorizon.count === 0
       ? ""
-      : ` and ${String(drafts.pastHorizon)} past ${String(DRAFT_RETENTION_HORIZON_DAYS)} days (kept: crosscheck never deletes a draft)`;
+      : ` and ${amountOf(drafts.pastHorizon)} past ${String(DRAFT_RETENTION_HORIZON_DAYS)} days (kept: crosscheck never deletes a draft)`;
   return finding(
     "drafts_unreviewed",
-    `teammates see none of your agent's findings because ${amount} of your own drafts on this repo await review, ${String(drafts.due)} of them for over ${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h${old} — a draft is shown to nobody until it is confirmed; ` +
+    `teammates see none of your agent's findings because ${amountOf(drafts.size)} of your own drafts on this repo await review${oldestClause(drafts.oldestAgeMs)}, ` +
+      `${amountOf(drafts.due)} of them for over ${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h${old} — a draft is shown to nobody until it is confirmed; ` +
       "fix: ask your agent to settle them with review_draft (it is asked once per session, and must ask you before anything is published)",
-    `${amount} own drafts await review — teammates see none of them (review_draft)`,
+    `${amountOf(drafts.size)} own drafts await review — teammates see none of them (review_draft)`,
   );
 };
 
@@ -340,7 +350,7 @@ export const sharingSummary = (input: SharingInput): string => {
     return "no session on this repo has been recorded on this machine yet — open one, then run doctor again";
   }
   const unreviewed =
-    input.drafts === null ? "" : `, ${input.drafts.atCap ? "at least " : ""}${String(input.drafts.listed)} own drafts unreviewed`;
+    input.drafts === null ? "" : `, ${amountOf(input.drafts.size)} own drafts unreviewed`;
   return (
     `${String(input.live.length)} live and ${String(input.ended.length)} recently ended session${totals.sessions === 1 ? "" : "s"}: ` +
     `${String(totals.drafts)} drafts and ${String(totals.intentsSet)} intents derived${unreviewed} — nothing found that keeps this agent from sharing`

@@ -14,7 +14,7 @@ import {
   DRAFT_LISTING_CAP,
 } from "../src/constants.ts";
 import { digestOf, sharingFindings, sharingSummary } from "../src/derive/sharing.ts";
-import type { DeriveDigest, SharingCause, SharingInput } from "../src/derive/sharing.ts";
+import type { DeriveDigest, OwnDraftsFact, SharingCause, SharingInput } from "../src/derive/sharing.ts";
 import { deriveSessionState } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
@@ -35,11 +35,28 @@ const session = (overrides: Partial<SessionState> = {}): DeriveDigest =>
     ...overrides,
   });
 
+const DAY_MS = 86_400_000;
+
+/** The doctor's view of the hub's listing: exact unless an older hub cut it at its cap. */
+const ownDrafts = (
+  size: number,
+  due: number,
+  options: { floor?: boolean; pastHorizon?: number; oldestDays?: number } = {},
+): OwnDraftsFact => {
+  const floor = options.floor ?? false;
+  return {
+    size: { count: size, floor },
+    due: { count: due, floor: floor && due > 0 },
+    pastHorizon: { count: options.pastHorizon ?? 0, floor: false },
+    oldestAgeMs: floor ? null : (options.oldestDays ?? 2) * DAY_MS,
+  };
+};
+
 const input = (overrides: Partial<SharingInput> = {}): SharingInput => ({
   env: WITH_OVERRIDE,
   live: [],
   ended: [],
-  drafts: { listed: 0, due: 0, atCap: false, pastHorizon: 0 },
+  drafts: ownDrafts(0, 0, { floor: false, pastHorizon: 0 }),
   ...overrides,
 });
 
@@ -208,34 +225,44 @@ describe("sharingFindings — what the workers booked", () => {
 
 describe("sharingFindings — the drafts nobody reviewed", () => {
   test("due drafts are why teammates see nothing, and the fix is review_draft", () => {
-    const value = input({ live: [productive], drafts: { listed: 7, due: 5, atCap: false, pastHorizon: 0 } });
+    const value = input({ live: [productive], drafts: ownDrafts(7, 5, { floor: false, pastHorizon: 0 }) });
 
     expect(causes(value)).toEqual(["drafts_unreviewed"]);
     expect(detailFor(value, "drafts_unreviewed")).toContain("7 of your own drafts");
+    expect(detailFor(value, "drafts_unreviewed")).toContain("the oldest captured 2 days ago");
     expect(detailFor(value, "drafts_unreviewed")).toContain("review_draft");
   });
 
+  test("a backlog the hub counted past its listing is told exactly", () => {
+    const value = input({ drafts: ownDrafts(35, 35, { pastHorizon: 15, oldestDays: 41 }) });
+
+    expect(detailFor(value, "drafts_unreviewed")).toContain(
+      "35 of your own drafts on this repo await review, the oldest captured 41 days ago, 35 of them for over 24h and 15 past 30 days",
+    );
+    expect(detailFor(value, "drafts_unreviewed")).not.toContain("at least");
+  });
+
   test("a listing at the hub's cap is a floor", () => {
-    const value = input({ drafts: { listed: DRAFT_LISTING_CAP, due: DRAFT_LISTING_CAP, atCap: true, pastHorizon: 0 } });
+    const value = input({ drafts: ownDrafts(DRAFT_LISTING_CAP, DRAFT_LISTING_CAP, { floor: true, pastHorizon: 0 }) });
 
     expect(detailFor(value, "drafts_unreviewed")).toContain(`at least ${String(DRAFT_LISTING_CAP)}`);
   });
 
   test("drafts past the retention horizon are said to be kept, never dropped", () => {
-    const value = input({ drafts: { listed: 6, due: 6, atCap: false, pastHorizon: 2 } });
+    const value = input({ drafts: ownDrafts(6, 6, { floor: false, pastHorizon: 2 }) });
 
     expect(detailFor(value, "drafts_unreviewed")).toContain("2 past 30 days");
     expect(detailFor(value, "drafts_unreviewed")).toContain("never deletes");
   });
 
   test("only young drafts are work in progress, not a backlog", () => {
-    expect(causes(input({ drafts: { listed: 2, due: 0, atCap: false, pastHorizon: 0 } }))).not.toContain("drafts_unreviewed");
+    expect(causes(input({ drafts: ownDrafts(2, 0, { floor: false, pastHorizon: 0 }) }))).not.toContain("drafts_unreviewed");
   });
 });
 
 describe("sharingSummary", () => {
   test("says what was read when nothing stops the agent", () => {
-    const summary = sharingSummary(input({ live: [productive], ended: [productive], drafts: { listed: 1, due: 0, atCap: false, pastHorizon: 0 } }));
+    const summary = sharingSummary(input({ live: [productive], ended: [productive], drafts: ownDrafts(1, 0, { floor: false, pastHorizon: 0 }) }));
 
     expect(summary).toContain("1 live and 1 recently ended session");
     expect(summary).toContain("2 drafts and 2 intents derived");

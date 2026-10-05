@@ -115,6 +115,34 @@ describe("doctor: why does my agent share nothing", () => {
     expect(lines.join("\n")).toContain("review_draft");
   });
 
+  test("a backlog of 35 behind the hub's 20-row listing is counted exactly", async () => {
+    // Arrange: a hub of its own holding 35 due drafts, the oldest 41 days old
+    const own = await bootDraftHub({ label: "doctor-sharing-35", repoId: REPO_ID, sessionId: SESSION_ID, workContextId: `wc_${SESSION_ID}` });
+    try {
+      for (let i = 0; i < 35; i += 1) {
+        const ageMs = i === 34 ? 41 * MS_PER_DAY : OLD_MS + i * 60_000;
+        await own.seedDraft({ kind: "decision", body: `Backlog decision ${String(i)}`, ageMs });
+      }
+      const m = await machine("sharing-35", {
+        CROSSCHECK_HUB_URL: own.hubUrl,
+        CROSSCHECK_API_KEY: own.apiKey,
+        CROSSCHECK_SUMMARIZER_CMD: "/opt/model/wrapper.sh",
+      });
+
+      // Act
+      const { stdout } = await runCli(["doctor"], m.env, m.repo);
+
+      // Assert
+      const line = sharingLines(stdout).find((entry) => entry.includes("await review")) ?? "";
+      expect(line).toContain("35 of your own drafts on this repo await review, the oldest captured 41 days ago, 35 of them for over 24h");
+      expect(line).not.toMatch(/at least \d+ of your own/);
+      // Only the 30-day count stays a floor: the hub counts the backlog, not its ages.
+      expect(line).toContain("and at least 1 past 30 days");
+    } finally {
+      await own.close();
+    }
+  });
+
   test("an ended session's spawn failure still explains the silence after it closed", async () => {
     // Arrange: no live session at all — only what the history kept
     const m = await machine("sharing-history", { CROSSCHECK_SUMMARIZER_CMD: "/opt/model/wrapper.sh" });

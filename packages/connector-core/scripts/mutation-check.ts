@@ -17409,25 +17409,25 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a draft minted minutes ago is nudged as a backlog",
-    file: `${CORE}/src/flows/draft-nudge.ts`,
-    from: "now.getTime() - created >= MIN_AGE_MS;",
-    to: "now.getTime() - created >= 0;",
+    file: `${CORE}/src/briefing/draft-backlog.ts`,
+    from: "    return ms !== null && now.getTime() - ms >= ageMs;",
+    to: "    return ms !== null;",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "the work in progress is interrupted to review what the Stop hook just wrote",
   },
   {
     label: "a listing the hub cut at its cap is printed as an exact count",
-    file: `${CORE}/src/flows/draft-nudge.ts`,
-    from: "    listedAtCap: drafts.data.length >= DRAFT_LISTING_CAP,",
-    to: "    listedAtCap: false,",
+    file: `${CORE}/src/briefing/draft-backlog.ts`,
+    from: "        : complete\n          ? listing.drafts.length\n          : null,",
+    to: "        : listing.drafts.length,",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "\"20 drafts\" is said of a backlog the hub stopped listing at 20",
   },
   {
     label: "an unreachable hub spends the session's draft nudge",
     file: `${CORE}/src/flows/draft-nudge.ts`,
-    from: "  if (!drafts.ok) {\n    return \"\";\n  }",
-    to: "  if (!drafts.ok) {\n    await claimSlot(input, \"nothing_due\");\n    return \"\";\n  }",
+    from: "  if (!listing.ok) {\n    return \"\";\n  }",
+    to: "  if (!listing.ok) {\n    await claimSlot(input, \"nothing_due\");\n    return \"\";\n  }",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "one prompt during a hub blip costs the whole session its nudge, and the drafts rot another day",
   },
@@ -17450,7 +17450,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "drafts past the retention horizon go unmentioned",
     file: `${CORE}/src/briefing/draft-nudge.ts`,
-    from: "  old === 0\n    ? \"\"",
+    from: "  old.count === 0\n    ? \"\"",
     to: "  true\n    ? \"\"",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "month-old drafts read like fresh ones, and nothing says crosscheck keeps them rather than letting them lapse",
@@ -17602,7 +17602,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "drafts nobody reviewed read as shared",
     file: `${CORE}/src/derive/sharing.ts`,
-    from: "  if (drafts === null || drafts.due === 0) {",
+    from: "  if (drafts === null || drafts.due.count === 0) {",
     to: "  if (true) {",
     test: `${CORE}/test/sharing.test.ts`,
     because: "twenty unreviewed drafts are invisible to the team and doctor calls the agent's sharing fine",
@@ -17610,7 +17610,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor's drafts line hides drafts past the retention horizon",
     file: `${CORE}/src/derive/sharing.ts`,
-    from: "    drafts.pastHorizon === 0\n      ? \"\"",
+    from: "    drafts.pastHorizon.count === 0\n      ? \"\"",
     to: "    true\n      ? \"\"",
     test: `${CORE}/test/sharing.test.ts`,
     because: "month-old drafts are counted like fresh ones and nothing says crosscheck keeps them",
@@ -17654,6 +17654,102 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${CLI}/test/doctor-sharing.test.ts`,
     because: "the one-line answer is fetched and never shown",
+  },
+  {
+    label: "the backlog total counts drafts already reviewed",
+    file: `${SERVER}/src/services/drafts.ts`,
+    from: "    .where(ownUnreviewed(db, developerId, repo));",
+    to: "    .where(eq(agentSessions.developerId, developerId));",
+    test: `${SERVER}/test/drafts.test.ts`,
+    because: "a confirmed or discarded draft keeps swelling the backlog the developer is told to settle",
+  },
+  {
+    label: "the hub stops sending the backlog behind its draft listing",
+    file: `${SERVER}/src/routes/drafts.ts`,
+    from: "    return ok(c, { drafts, ...backlog });",
+    to: "    return ok(c, { drafts });",
+    test: `${SERVER}/test/drafts.test.ts`,
+    because: "35 drafts read as \"at least 20\" again, with no word on how old the oldest is",
+  },
+  {
+    label: "the connector drops the hub's backlog total",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      total: totals.total ?? null,",
+    to: "      total: null,",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the hub counts 35 and every surface still prints \"at least 20\"",
+  },
+  {
+    label: "the hub's backlog total is ignored",
+    file: `${CORE}/src/briefing/draft-backlog.ts`,
+    from: "      listing.total !== null\n        ? Math.max(listing.total, listing.drafts.length)\n        : complete",
+    to: "      false\n        ? 0\n        : complete",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "an exact count in hand is printed as a floor of the 20 rows listed",
+  },
+  {
+    label: "the hub's oldest draft instant is ignored",
+    file: `${CORE}/src/briefing/draft-backlog.ts`,
+    from: "    oldestCreatedAt: listing.oldestCreatedAt ?? (complete ? oldestListed(listing.drafts) : null),",
+    to: "    oldestCreatedAt: complete ? oldestListed(listing.drafts) : null,",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "a 41-day-old draft behind the listing goes unnamed, and the backlog's age is never told",
+  },
+  {
+    label: "drafts behind the listing are left out of the due count",
+    file: `${CORE}/src/briefing/draft-backlog.ts`,
+    from: "    return { count: listed + unlisted, floor: false };",
+    to: "    return { count: listed, floor: false };",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "35 due drafts are reported as 20, exactly, which is a wrong number stated as a fact",
+  },
+  {
+    label: "the nudge stops telling the backlog's size and age",
+    file: `${CORE}/src/briefing/draft-nudge.ts`,
+    from: "    : ` ${String(size.count)} await review in all, the oldest captured ${formatAge(oldest)} ago.`;",
+    to: "    : \"\";",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the person is asked to settle drafts without hearing how many there are or how stale",
+  },
+  {
+    label: "the nudge's kind counts read as the whole backlog's",
+    file: `${CORE}/src/briefing/draft-nudge.ts`,
+    from: "  dueListed.length < due.count || due.floor\n    ?",
+    to: "  false\n    ?",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "\"20 root_cause\" sits beside a count of 35, as if it described all of them",
+  },
+  {
+    label: "the briefing hides the draft backlog's size and age",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "      : ` — ${String(size.count)} in all, the oldest ${formatAge(oldest)} old`;",
+    to: "      : \"\";",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "SessionStart lists two drafts of 35 and never says how many or how old",
+  },
+  {
+    label: "an older hub's capped draft list reads as complete in the briefing",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    ...(size.floor ? { more: (count: number) => `(+at least ${String(count)} more not shown)` } : {}),",
+    to: "    ...({}),",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "\"+18 more\" is stated exactly of a listing an older hub cut at its cap",
+  },
+  {
+    label: "the SessionStart briefing drops the hub's draft totals",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "    draftTotals,\n    questions,",
+    to: "    questions,",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the hub counts the backlog and the briefing still says only what it listed",
+  },
+  {
+    label: "doctor counts only the listed drafts",
+    file: `${CLI}/src/cli/doctor-sharing.ts`,
+    from: "    size: backlogSize(backlog),",
+    to: "    size: { count: listing.data.drafts.length, floor: false },",
+    test: `${CLI}/test/doctor-sharing.test.ts`,
+    because: "doctor tells a developer with 35 drafts they have exactly 20",
   },
 ];
 
@@ -17725,7 +17821,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 6
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
- * PRINTS: packages/cli/test/doctor-sharing.test.ts 3
+ * PRINTS: packages/cli/test/doctor-sharing.test.ts 4
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
@@ -17859,7 +17955,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 2
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 9
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 18
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
@@ -17973,6 +18069,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
+ * PRINTS: packages/server/test/drafts.test.ts 2
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4

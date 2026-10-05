@@ -925,16 +925,54 @@ export const DraftEntrySchema = z.looseObject({
 
 export type DraftEntry = z.infer<typeof DraftEntrySchema>;
 
+/**
+ * The whole answer of `GET /api/drafts`: the capped, newest-first rows, plus —
+ * from a hub that sends them — the size of the backlog they are cut from and
+ * when its oldest draft was captured. Both null from an older hub, which is
+ * what keeps "at least N" on every surface that reads a listing at its cap.
+ * A malformed total or instant reads as absent, never as a number.
+ */
+export interface DraftListing {
+  readonly drafts: readonly DraftEntry[];
+  readonly total: number | null;
+  readonly oldestCreatedAt: string | null;
+}
+
+const BacklogTotalsSchema = z.looseObject({
+  total: z.number().int().min(0).nullable().optional().catch(null),
+  oldestCreatedAt: z.string().min(1).nullable().optional().catch(null),
+});
+
+const DraftListingAnswerSchema = z
+  .looseObject({ drafts: z.array(z.unknown()) })
+  .transform((value): DraftListing => {
+    const totals = BacklogTotalsSchema.parse(value);
+    return {
+      drafts: tolerantList("drafts", DraftEntrySchema).parse(value),
+      total: totals.total ?? null,
+      oldestCreatedAt: totals.oldestCreatedAt ?? null,
+    };
+  });
+
 /** One more parallel GET inside the SessionStart fetch block (fail open). */
-export const getDrafts = (
+export const getDraftListing = (
   ctx: HubContext,
   repo: string,
-): Promise<HubResult<readonly DraftEntry[]>> =>
+): Promise<HubResult<DraftListing>> =>
   hubRequest(ctx, {
     method: "GET",
     path: `/api/drafts${encodeRepo(repo)}`,
-    schema: tolerantList("drafts", DraftEntrySchema),
+    schema: DraftListingAnswerSchema,
   });
+
+/** The rows alone, for a caller that needs no backlog totals (review_draft). */
+export const getDrafts = async (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly DraftEntry[]>> => {
+  const listing = await getDraftListing(ctx, repo);
+  return listing.ok ? { ...listing, data: listing.data.drafts } : listing;
+};
 
 /**
  * One claim of a diagnosis tree.

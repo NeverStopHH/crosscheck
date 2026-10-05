@@ -12,8 +12,14 @@
  * One WARN line per cause found, every one of them pasteable on its own; one
  * PASS line saying what was read when nothing was.
  */
-import { countPastRetentionHorizon } from "@crosscheck/connector-core/briefing/draft-nudge.ts";
-import { DRAFT_LISTING_CAP } from "@crosscheck/connector-core/constants.ts";
+import {
+  DRAFT_DUE_AGE_MS,
+  DRAFT_HORIZON_AGE_MS,
+  backlogOf,
+  backlogSize,
+  countAtLeastAged,
+  oldestAgeMs,
+} from "@crosscheck/connector-core/briefing/draft-backlog.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   digestOf,
@@ -21,9 +27,8 @@ import {
   sharingSummary,
 } from "@crosscheck/connector-core/derive/sharing.ts";
 import type { OwnDraftsFact, SharingInput } from "@crosscheck/connector-core/derive/sharing.ts";
-import { dueDrafts } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
-import { getDrafts } from "@crosscheck/connector-core/http/hub.ts";
+import { getDraftListing } from "@crosscheck/connector-core/http/hub.ts";
 import { readDeriveHistory } from "@crosscheck/connector-core/state/derive-history.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
@@ -46,15 +51,17 @@ const readOwnDrafts = async (
   repoId: string,
   now: Date,
 ): Promise<OwnDraftsFact | null> => {
-  const drafts = await getDrafts(hub, repoId);
-  return drafts.ok
-    ? {
-        listed: drafts.data.length,
-        due: dueDrafts(drafts.data, now).length,
-        atCap: drafts.data.length >= DRAFT_LISTING_CAP,
-        pastHorizon: countPastRetentionHorizon(drafts.data, now),
-      }
-    : null;
+  const listing = await getDraftListing(hub, repoId);
+  if (!listing.ok) {
+    return null;
+  }
+  const backlog = backlogOf(listing.data);
+  return {
+    size: backlogSize(backlog),
+    due: countAtLeastAged(backlog, DRAFT_DUE_AGE_MS, now),
+    pastHorizon: countAtLeastAged(backlog, DRAFT_HORIZON_AGE_MS, now),
+    oldestAgeMs: oldestAgeMs(backlog, now),
+  };
 };
 
 export const readSharingInput = async (sources: SharingSources): Promise<SharingInput> => {

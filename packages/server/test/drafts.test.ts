@@ -18,6 +18,7 @@ import {
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { MAX_DRAFTS_LISTED } from "../src/constants.ts";
 
 const SECOND_SESSION_ID = "ses_02";
 
@@ -45,6 +46,25 @@ const fetchDrafts = async (
   }
   const body = (await response.json()) as { data: { drafts: DraftView[] } };
   return { status: response.status, drafts: body.data.drafts };
+};
+
+const BACKLOG = 35;
+
+interface DraftListing {
+  readonly drafts: readonly DraftView[];
+  readonly total?: number;
+  readonly oldestCreatedAt?: string | null;
+}
+
+const fetchListing = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+): Promise<DraftListing> => {
+  const response = await harness.app.request(
+    `/api/drafts?repo=${encodeURIComponent(VALID_SESSION_BODY.repo)}`,
+    jsonRequest("GET", developer.apiKey),
+  );
+  return ((await response.json()) as { data: DraftListing }).data;
 };
 
 const draftBody = (
@@ -87,6 +107,45 @@ describe("GET /api/drafts", () => {
     expect(status).toBe(200);
     expect(drafts.map((draft) => draft.id)).toEqual(["clm_d2", "clm_d1"]);
     expect(drafts[0]?.status).toBe("proposed");
+  });
+
+  test("a backlog past the listing cap says its exact size and its oldest age", async () => {
+    // Arrange: 35 drafts, one minute apart, the oldest first; one reviewed
+    const { harness, developer } = await createHarnessWithSession();
+    const at = (i: number): string =>
+      new Date(Date.parse("2026-07-01T00:00:00.000Z") + i * 60_000).toISOString();
+    const backlog = Array.from({ length: BACKLOG }, (_, i) =>
+      recordEnvelope("claim", draftBody(`clm_b${String(i)}`, { createdAt: at(i) })),
+    );
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        ...backlog,
+        recordEnvelope("claim", validClaimBody({ id: "clm_promoted_b", body: "Promoted" })),
+        recordEnvelope(
+          "claim_edge",
+          validClaimEdgeBody({ id: "edge_b", fromClaimId: "clm_promoted_b", toClaimId: "clm_b34", kind: "supersedes" }),
+        ),
+      ],
+    });
+
+    // Act
+    const listing = await fetchListing(harness, developer);
+
+    // Assert: the rows stay capped and newest-first; the totals do not
+    expect(listing.drafts).toHaveLength(MAX_DRAFTS_LISTED);
+    expect(listing.drafts[0]?.id).toBe("clm_b33");
+    expect(listing.total).toBe(BACKLOG - 1);
+    expect(listing.oldestCreatedAt).toBe(at(0));
+  });
+
+  test("an empty backlog says zero and no oldest", async () => {
+    const { harness, developer } = await createHarnessWithSession();
+
+    const listing = await fetchListing(harness, developer);
+
+    expect(listing.total).toBe(0);
+    expect(listing.oldestCreatedAt).toBeNull();
   });
 
   test("never lists a teammate's drafts — own drafts only", async () => {
