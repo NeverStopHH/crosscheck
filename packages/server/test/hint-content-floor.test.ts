@@ -38,7 +38,7 @@ const SESSION_INTENT = "Make the practice video upload survive the gateway body 
 
 interface CandidateView {
   readonly matchedOn?: string;
-  readonly workContext: { readonly id: string };
+  readonly workContext: { readonly id: string; readonly matchedTerms?: number };
   readonly claims: readonly { readonly id: string; readonly matchedTerms?: number }[];
 }
 
@@ -210,6 +210,20 @@ describe("each claim carries how many distinct words of the matched query it sha
     const observation = candidate?.claims.find((claim) => claim.id === "clm_obs");
     expect(decision?.matchedTerms).toBe(5);
     expect(observation?.matchedTerms).toBe(1);
+  });
+
+  test("the context carries its OWN statement's count beside its claims'", async () => {
+    // Arrange
+    const { harness, robin } = await setup();
+
+    // Act
+    const [candidate] = await fetchCandidates(harness, robin, {
+      query: "why does the practice upload hit the body limit",
+    });
+
+    // Assert — "Practice video upload stalls" / "Uploads continue only after
+    // a manual retry": practice and upload, counted once each
+    expect(candidate?.workContext.matchedTerms).toBe(2);
   });
 
   test("a claim matched through the intent is counted against the intent", async () => {

@@ -31,12 +31,15 @@ import {
 } from "@crosscheck/schema";
 
 import {
+  HINT_SUBSTANCE_MAX_CHARS,
   LANDED_RECENT_WORKING_DAYS,
   MAX_LANDED_COMMITS_SHOWN,
   MAX_LANDED_WHY_SHOWN,
   MAX_WORK_CONTEXT_TITLE_CHARS,
+  SUBSTANCE_MATCH_KIND,
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
+import { firstSentence } from "./sentence.ts";
 import type { LandedChanges, LandedCommit } from "../landed-changes/probe.ts";
 import { namedLandedCommits } from "../landed-changes/named-commits.ts";
 import { renderIntent } from "../briefing/intent.ts";
@@ -53,7 +56,6 @@ import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
 import type { CoverageRecord } from "../http/coverage.ts";
 import {
   QUOTED_DATA_NOTICE,
-  SUBSTANCE_MATCH_KIND,
   UNKNOWN_AUTHOR,
   formatAge,
   formatSolvedAge,
@@ -245,7 +247,23 @@ export interface ClaimHintInput {
   readonly now: Date;
   /** What the hub matched it on; absent is the prompt, as it always was. */
   readonly matchedOn?: HintMatchedOn;
+  /** The teammate claims the substance leaves behind; absent counts none. */
+  readonly restCount?: number;
 }
+
+/**
+ * The pointer to the rest (§4): how many claims stay behind, and the id the
+ * next call takes — a tool named without its argument sends an agent off to
+ * invent one (the answer hint learned that first).
+ */
+const restLine = (context: HintContext, restCount: number): string => {
+  const rest =
+    restCount > 0 ? ` beside ${String(restCount)} more claim${restCount === 1 ? "" : "s"}` : "";
+  return (
+    `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}${rest} — ` +
+    `the full tree is readable with get_diagnosis ${safeId(context.id)}.`
+  );
+};
 
 const validityWordFact = (
   claim: HintClaimCandidate,
@@ -301,12 +319,17 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     // history nobody asked about. They are one get_diagnosis away.
     ...validityWordFact(claim),
   ];
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, UNSOLICITED_CLAIM_BODY_MAX_CHARS)}`;
-  const contextLine =
-    `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} — ` +
-    "the full tree is readable with get_diagnosis.";
+  // ONE SENTENCE OF IT, bounded (§4, revised): the hint says what the finding
+  // IS and points at the rest. Cut first, then framed — the BODY class runs
+  // on exactly what is shown (hints/sentence.ts says why that order is safe).
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(firstSentence(claim.body), HINT_SUBSTANCE_MAX_CHARS)}`;
   const header = input.matchedOn === "intent" ? CLAIM_INTENT_HEADER : CLAIM_HEADER;
-  return fitHint([header, factsLine, contextLine, ...intentLines(context.intent)]);
+  return fitHint([
+    header,
+    factsLine,
+    restLine(context, input.restCount ?? 0),
+    ...intentLines(context.intent),
+  ]);
 };
 
 export interface PointerHintInput {

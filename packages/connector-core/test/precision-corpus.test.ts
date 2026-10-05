@@ -17,7 +17,7 @@
  * Corpus size, derived from the data so this header cannot rot:
  *
  * VERIFY: bun -e 'const {loadCorpus}=await import("./packages/connector-core/test/fixtures/precision-corpus/format.ts");const c=await loadCorpus();const p=c.scenarios.flatMap(s=>s.probes);const by=k=>p.filter(x=>x.expect===k).length;console.log(c.scenarios.length,p.length,by("substance"),by("pointer"),by("silence"))'
- * PRINTS: 11 33 10 4 19
+ * PRINTS: 11 33 9 4 20
  *
  * THE HARNESS CAN FAIL — proven, not assumed. Continuously:
  * scripts/mutation-check.ts sets SOLVED_DECAY_FLOOR = 0 in

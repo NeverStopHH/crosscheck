@@ -872,6 +872,26 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       }),
   },
   {
+    // THE SUBSTANCE SLOT (DESIGN.md §4, 2026-10): a prompt hint shows only the
+    // FIRST SENTENCE of the body, cut before the sanitizer runs
+    // (hints/sentence.ts). The payload is planted twice, back to back, so the
+    // cut lands inside it, after it, or across the seam — every side of the
+    // boundary the corpus can reach — with the rest pointer rendered too.
+    kind: "corpus",
+    name: "substance-hint-sentence",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderClaimHint({
+        claim: { ...hintClaimWith(payload), body: `${payload} ${payload}` },
+        context: hintContextWith(payload),
+        drift: NO_DRIFT,
+        now: NOW,
+        restCount: 2,
+      }),
+  },
+  {
     // The same two hints when the hub matched the session's INTENT in place
     // of a content-free prompt (DESIGN.md §4): a header of their own, the
     // same untrusted slots under it.

@@ -216,6 +216,14 @@ export interface HintContextCandidate {
     readonly solvedAt: string | null;
     readonly createdAt: string;
     readonly updatedAt: string | null;
+    /**
+     * How many distinct words of the matched query the context's OWN
+     * statement — title, description, intent — shares: the tree is clearly
+     * about the query when this reaches HINT_MIN_SHARED_TERMS, which lets a
+     * claim of it that shares a single word count as a strong match
+     * (connector hints/select.ts).
+     */
+    readonly matchedTerms: number;
   };
   readonly claims: readonly HintClaimCandidate[];
   /**
@@ -541,6 +549,7 @@ const matchCandidates = async (
   ]);
   return eligible.map((row) => {
     const contextClaims = claimsByContext.get(row.id) ?? [];
+    const ownTerms = statementTerms.get(row.id) ?? 0;
     return {
       candidate: {
         workContext: {
@@ -556,6 +565,7 @@ const matchCandidates = async (
           solvedAt: row.solvedAt,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
+          matchedTerms: ownTerms,
         },
         claims: contextClaims,
         matchedTargets: matchedTargets.get(row.id) ?? [],
@@ -564,10 +574,7 @@ const matchCandidates = async (
       // The claims counted are the ones the window returned — mutes and
       // retractions already applied in its WHERE — so a hidden author's words
       // can never decide that a prompt carried a task.
-      sharedTerms: Math.max(
-        statementTerms.get(row.id) ?? 0,
-        ...contextClaims.map((claim) => claim.matchedTerms),
-      ),
+      sharedTerms: Math.max(ownTerms, ...contextClaims.map((claim) => claim.matchedTerms)),
     };
   });
 };

@@ -1473,6 +1473,13 @@ export const HintClaimCandidateSchema = z.looseObject({
    * unsolicited surface.
    */
   axes: EvidenceAxesSchema.optional(),
+  /**
+   * How many distinct words of the matched query THIS claim shares — the
+   * relevance half of the substance gate (hints/select.ts isStrongMatch).
+   * OPTIONAL, and absent fails closed: an older hub never measured it, and a
+   * claim whose relevance nobody measured is a pointer, not substance.
+   */
+  matchedTerms: z.number().int().min(0).optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1501,6 +1508,13 @@ const HintContextSchema = z.looseObject({
   solvedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /**
+   * How many distinct words of the matched query the context's OWN statement
+   * (title, description, intent) shares — a tree clearly about the query
+   * lends its strength to a claim of it that shares one (hints/select.ts).
+   * Optional: absent from an older hub, and then it lends nothing.
+   */
+  matchedTerms: z.number().int().min(0).optional(),
 });
 
 /**

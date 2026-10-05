@@ -79,6 +79,10 @@ export const rejectedApproachCandidate = (): Record<string, unknown> => ({
       authorDeveloperId: TEAMMATE_DEVELOPER_ID,
       authorDeveloperName: "Nick",
       body: CANDIDATE_BODY,
+      // What a current hub counts for the canned prompt ("why does
+      // src/auth/refresh.ts still 500 after the key rotation") against this
+      // body: "refresh" and "key" — a strong match, so this stays substance.
+      matchedTerms: 2,
       createdAt: "2026-08-10T08:00:00.000Z",
     },
   ],

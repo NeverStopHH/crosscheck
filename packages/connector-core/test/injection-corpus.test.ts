@@ -96,7 +96,7 @@
  *    1516, is 2200 - 684 and follows from the two below it.
  *
  * VERIFY: bun -e 'const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(INJECTION_CORPUS.length)'
- * PRINTS: 61
+ * PRINTS: 65
  *
  * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
  * PRINTS: 10
@@ -452,10 +452,13 @@ const assertInvariants = (output: string, label: string): void => {
  */
 const CORPUS_SHAPE: Readonly<Record<InjectionCategory, number>> = {
   instruction: 12,
-  "frame-escape": 4,
-  "boundary-forgery": 4,
-  invisible: 21,
-  homoglyph: 3,
+  // Each of the next four +1 for the substance hint's sentence cut (2026-10):
+  // a forged line after the break, a frame close riding the terminator, a
+  // U+2028 break, a fullwidth stop NFKC folds only after the cut.
+  "frame-escape": 5,
+  "boundary-forgery": 5,
+  invisible: 22,
+  homoglyph: 4,
   // 2 → 6 when the wire cap rose: four cases attack at the new maximum body
   // length (a phrase buried deep, a frame escape at the tail, astral pairs
   // across the cut, and the exact boundary), because room a corpus never
@@ -577,17 +580,20 @@ const payloadOf = (id: string): string => {
  * exception, and was wrong about the row directly above that carve-out. Seven of
  * the nine branches do have exactly one dependent payload. Two do not:
  * `system-reminder` has two, which the COMBINED_ATTACKS note below already
- * explains, and `ignore (all |the )?(previous|above)` has TEN, because most of
- * the invisible-character payloads are built by splitting the words "ignore
+ * explains, and `ignore (all |the )?(previous|above)` has TWELVE, because most
+ * of the invisible-character payloads are built by splitting the words "ignore
  * previous" with a zero-width character — that phrase is the corpus's standard
  * carrier for a rejoining attack, so the branch that catches it carries them
  * all. It gained its tenth when the oversize cases grew to the raised body cap
- * and one of them buries that same phrase deep inside a maximum-length body.
+ * and one of them buries that same phrase deep inside a maximum-length body,
+ * and its eleventh and twelfth when the substance hint's sentence cut gained
+ * two cases that hide the phrase just past the cut (a U+2028 break, a
+ * fullwidth stop).
  * Counted per branch, against the real branch list and the real cleaning
  * pipeline rather than a re-typed copy of either:
  *
  * VERIFY: bun -e 'const S=await import("./packages/connector-core/src/briefing/sanitize.ts");const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");const B=S.INJECTION_BRANCHES;const f=new RegExp("("+B.join("|")+")","i");for(const b of B){const w=new RegExp("("+B.filter(x=>x!==b).join("|")+")","i");console.log(INJECTION_CORPUS.filter(e=>{const c=S.cleanUntrusted(e.payload);return f.test(c)&&!w.test(c)}).length,b)}'
- * PRINTS: 10 ignore (all |the )?(previous|above)
+ * PRINTS: 12 ignore (all |the )?(previous|above)
  * PRINTS: 1 disregard
  * PRINTS: 1 system prompt
  * PRINTS: 2 system-reminder
@@ -611,19 +617,20 @@ const payloadOf = (id: string): string => {
  * branch gone, this table has a row for a branch the implementation no longer
  * carries.
  *
- * Ten corpus payloads depend on the branch but only seven tests name one
- * individually; the other three (`fullwidth-homoglyph`,
- * `oversize-payload-past-the-cap`, `oversize-instruction-buried-deep`) are
- * carried by the corpus-wide loops, which stay green because redaction is not
- * what they assert. That is why growing the corpus to the raised body cap did
- * not move the eleven above: the new oversize cases are loop-carried, and the
- * count of individually-named pins is what decides it.
+ * Twelve corpus payloads depend on the branch but only seven tests name one
+ * individually; the other five (`fullwidth-homoglyph`,
+ * `oversize-payload-past-the-cap`, `oversize-instruction-buried-deep`,
+ * `sentence-cut-line-separator`, `sentence-cut-fullwidth-stop`) are carried
+ * by the corpus-wide loops, which stay green because redaction is not what
+ * they assert. That is why growing the corpus — to the raised body cap, then
+ * to the sentence cut — did not move the eleven above: the new cases are
+ * loop-carried, and the count of individually-named pins is what decides it.
  *
  * Dependent payloads, and how many of them this file names individually — the
  * second number is the one that decides the eleven:
  *
  * VERIFY: bun -e 'const S=await import("./packages/connector-core/src/briefing/sanitize.ts");const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");const B=S.INJECTION_BRANCHES;const b="ignore (all |the )?(previous|above)";const f=new RegExp("("+B.join("|")+")","i");const w=new RegExp("("+B.filter(x=>x!==b).join("|")+")","i");const dep=INJECTION_CORPUS.filter(e=>{const c=S.cleanUntrusted(e.payload);return f.test(c)&&!w.test(c)});const t=await Bun.file("packages/connector-core/test/injection-corpus.test.ts").text();console.log(dep.length, dep.filter(e=>t.includes(JSON.stringify(e.id))).length)'
- * PRINTS: 10 7
+ * PRINTS: 12 7
  *
  * Two ids — `disregard-bare` and `system-prompt-bare` — had to be ADDED to the
  * corpus to reach one-apiece on their rows, because the payload already named

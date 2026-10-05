@@ -23,6 +23,7 @@ import {
   SOLVED_AGE_MONTHS_THRESHOLD_DAYS,
   SOLVED_AGE_YEARS_THRESHOLD_MONTHS,
   SOLVED_ROOT_CAUSE_MAX_CHARS,
+  SUBSTANCE_MATCH_KIND,
 } from "../constants.ts";
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
@@ -580,26 +581,6 @@ const solvedRepoFragment = (
   const label = bareUntrusted(entry.repo);
   return label.length === 0 ? null : ` · in ${label}`;
 };
-
-/**
- * THE ONE MATCH KIND THAT MAY CARRY SUBSTANCE, named here rather than
- * inferred: a fingerprint is derived from the failure TEXT, so it says the
- * old answer is about the NEW problem. A shared file says only that two
- * people were near each other, and "solved before, here is the cause" on
- * that evidence is the anchoring §4 forbids. Checked again on this side,
- * although the hub already applies it, because a body arriving beside a
- * weaker kind is exactly what a newer hub with different rules — or a
- * hostile one — would send.
- *
- * EXPORTED because the failure-time hint needs the same constant for a
- * second reason: its header ASSERTS this kind ("the same error fingerprint
- * as a diagnosis that was solved"), so a row of any other kind makes the
- * header a false sentence about the row printed under it — the same defect
- * one level up from the body this constant was written for. One name, two
- * checks (hints/render.ts, flows/solved-hint.ts); a second literal would be
- * a second rule.
- */
-export const SUBSTANCE_MATCH_KIND = "error_fingerprint";
 
 /**
  * Decimals on a printed confidence — the same 2 the MCP renderer, the hint

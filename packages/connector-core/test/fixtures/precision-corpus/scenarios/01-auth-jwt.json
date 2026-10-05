@@ -78,9 +78,9 @@
       "reader": "Riley",
       "prompt": "why does src/auth/refresh.ts still 500 after the key rotation",
       "expect": "substance",
-      "expectClaimId": "clm_auth_neg",
+      "expectClaimId": "clm_auth_root",
       "expectContextId": "wc_auth",
-      "rationale": "Negatives are privileged (DESIGN.md 4): the evidence-backed rejected_approach is scanned before the settled positive inside the same context, and negative knowledge cannot anchor a wrong theory."
+      "rationale": "The ONE most relevant claim (DESIGN.md 4, revised 2026-10): the evidence-backed root cause shares 'key' and 'rotation' with the prompt, the rejected approach ('Reverting the edge proxy config does not stop the login 500s') shares none of its words — so the root cause is the substance. Negatives are still privileged, on a tie (pr_auth_fingerprint, where content identity makes every claim equally relevant)."
     },
     {
       "id": "pr_auth_fingerprint",
@@ -97,11 +97,9 @@
       "kind": "prompt",
       "reader": "Riley",
       "prompt": "why does src/auth/refresh.ts still 500 after the key rotation",
-      "expect": "substance",
-      "expectClaimId": "clm_auth_root",
-      "expectContextId": "wc_auth",
-      "seenClaimIds": ["clm_auth_neg"],
-      "rationale": "Seen-set dedup: the already-delivered negative is skipped and the next unseen injectable claim (the evidence-backed root cause) arrives instead of a repeat."
+      "expect": "silence",
+      "seenClaimIds": ["clm_auth_root"],
+      "rationale": "Seen-set dedup: the already-delivered root cause is never repeated, and what remains of the tree is a weak match — the rejected approach shares no word of the prompt, so it is not substance — while the pointer pass never re-surfaces a tree whose claim was delivered. Silence, not a repeat and not a downgrade to noise."
     },
     {
       "id": "pr_auth_cap",

@@ -44,8 +44,7 @@
  * leaves this machine on this path; the prompt-style hint that does send
  * text has its own gate in flows/hint.ts.
  */
-import { MAX_HINTS_PER_SESSION } from "../constants.ts";
-import { SUBSTANCE_MATCH_KIND } from "../briefing/render.ts";
+import { MAX_HINTS_PER_SESSION, SUBSTANCE_MATCH_KIND } from "../constants.ts";
 import { getSolvedMatchesForFingerprint } from "../http/hub.ts";
 import type { HubContext } from "../http/hub.ts";
 import { rememberHintDelivery } from "../hints/delivery.ts";
