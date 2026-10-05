@@ -85,8 +85,9 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // SCOPED TO THE FILES THE QUESTION IS ABOUT: "were we watching this
     // surface" is the question principle 1 actually asks, and a repo-wide
     // gap would make every answer here INDETERMINATE for ever.
-    // In sequence, not in parallel: the order block folds over the sessions
-    // this answer names (review H3), so the candidates come first.
+    // In sequence, not in parallel: the agent_event rung and the order block
+    // fold over the sessions this answer names (review H3), so the
+    // candidates come first.
     const view = await suspectSessions(deps, c.get("developer").id, {
       repo: parsed.data.repo,
       scope: scope.scope,
@@ -102,7 +103,7 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
       // 04's verdict carries explanationTimingFor's answer: an edit against
       // intent versions (services/coverage-order.ts).
       orderKinds: EXPLANATION_TIMING_KINDS,
-      orderSessionIds: view.candidates.map((candidate) => candidate.sessionId),
+      answerSessionIds: view.candidates.map((candidate) => candidate.sessionId),
     });
     // THE VERDICT RIDES AS A SIBLING FIELD (04 §5), the shape 03 §3.5 uses for
     // coverage — never folded into the suspect view, because the five

@@ -6,7 +6,11 @@ import { WorkContextsQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readCoverage } from "../services/coverage.ts";
 import { countCoverageAnswer } from "../services/pilot.ts";
-import { getDiagnosis, listWorkContextsByRepo } from "../services/diagnosis.ts";
+import {
+  diagnosisSessionIds,
+  getDiagnosis,
+  listWorkContextsByRepo,
+} from "../services/diagnosis.ts";
 import { markHintsPulled } from "../services/hint-deliveries.ts";
 import { parseSinceWindow } from "../services/time-window.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -106,11 +110,13 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // phrasings a reader acts on — "no claims recorded yet" and "no targets
     // were captured" — and both are claims about the WORK that are only true
     // if the work was being watched. A SIBLING field, because the service
-    // object is sent directly as `data`.
+    // object is sent directly as `data`. It folds over the sessions the tree
+    // names (review H3), wherever their heartbeat sits.
     const coverage = await readCoverage(
       deps,
       c.get("developer").id,
       diagnosis.repo,
+      { answerSessionIds: diagnosisSessionIds(diagnosis) },
     );
     // 07 §3.5, proof 5: this answer carried a coverage record, and
     // whether it did is what 03 made mandatory and nobody counted.

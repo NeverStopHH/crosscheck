@@ -6476,10 +6476,12 @@ export const MUTATIONS: readonly Mutation[
     // in a fortnight would make every verdict INDETERMINATE for ever.
     label: "a gap somewhere else is read as a gap about this surface",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: `        ...(paths.length === 0
-          ? []
-          : [touchedScope(deps, repo, since, cutoff, paths)]),`,
-    to: "        ...[],",
+    // Re-pointed by review H3's agent_event half: the rung's scope moved into
+    // sessionScope, the one definition the order block reads too.
+    from: `      ...(paths.length === 0
+        ? []
+        : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),`,
+    to: "      ...[],",
     test: `${SERVER}/test/coverage.test.ts`,
     because:
       "every scoped question answers repo-wide, so a pin nobody stopped " +
@@ -15321,8 +15323,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the order block folds over the heartbeat window only",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      orderScope(deps, now, repo, since, paths, options.orderSessionIds ?? []),",
-    to: "      orderScope(deps, now, repo, since, paths, []),",
+    // Re-pointed by review H3's agent_event half: orderScope became sessionScope.
+    from: "  const scope = sessionScope(deps, now, repo, since, paths, options.answerSessionIds ?? []);",
+    to: "  const scope = sessionScope(deps, now, repo, since, paths, []);",
     test: `${SERVER}/test/coverage-order.test.ts`,
     because:
       "suspect names an undeclared session whose work context a successor kept in the window, and the order block reads the declared session beside it alone",
@@ -15330,7 +15333,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "suspect folds order without the sessions it names",
     file: `${SERVER}/src/routes/suspect.ts`,
-    from: "      orderSessionIds: view.candidates.map((candidate) => candidate.sessionId),\n",
+    // Re-pointed by review H3's agent_event half: the option is answerSessionIds.
+    from: "      answerSessionIds: view.candidates.map((candidate) => candidate.sessionId),\n",
     to: "",
     test: `${SERVER}/test/coverage-order.test.ts`,
     because: "the candidate list and the order block beside it are about two different sets of sessions",
@@ -16456,6 +16460,99 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "the refusal names a rule this developer replaced and never says why it still applies",
   },
+  // Review H3, the agent_event half: the rung folds over the sessions the
+  // answer names, and a named session can only weaken it.
+  {
+    label: "the agent_event rung folds over the heartbeat window only",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    .where(inScope(scope));",
+    to: "    .where(scope.window);",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because:
+      "trace names a candidate reaped twenty days ago and the rung beside it reads complete / sessions_reported, isJudgeable yes",
+  },
+  {
+    label: "a named session counts as somebody reporting",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      reporting: sql`count(*) filter (where ${scope.window})`,",
+    to: "      reporting: sql`count(*)`,",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because:
+      "an answer naming one session that ended cleanly weeks ago turns an empty window from unknown to complete",
+  },
+  {
+    label: "a named session's loss is read through the window",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    : sql`(${term(since)} or (${named} and ${term(NO_FLOOR)}))`;",
+    to: "    : term(since);",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because:
+      "the session the answer cites lost records before the window and the rung beside the answer reads complete",
+  },
+  {
+    label: "a named session's ignored kind is read through the window",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      ignored: sql`count(*) filter (where ${isLost} and ${isIgnored})`,",
+    to: "      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because: "a named session's ignored kinds read telemetry_lost, and the one remedy that fixes them, upgrade the hub, goes unsaid",
+  },
+  {
+    label: "the order block folds over the window alone",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      inScope(scope),\n",
+    to: "      scope.window,\n",
+    test: `${SERVER}/test/coverage-order.test.ts`,
+    because: "the order line describes the sessions in the window, not the candidates the answer beside it names",
+  },
+  {
+    label: "trace's agent_event rung folds without the candidates it names",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "      answerSessionIds: view.candidates.map((candidate) => candidate.sessionId),\n",
+    to: "",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because: "the H3 finding itself: a candidate the rung never looked at sits beside complete / sessions_reported",
+  },
+  {
+    label: "get_diagnosis reads coverage without the sessions its tree names",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "      { answerSessionIds: diagnosisSessionIds(diagnosis) },\n",
+    to: "",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because: "an old tree whose session was reaped says 'no targets were captured' beside a complete rung",
+  },
+  {
+    label: "a tree's owning session is not among the sessions it names",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    diagnosis.workContext.sessionId,\n",
+    to: "",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because: "the session that created the tree is the one its coverage never reads",
+  },
+  {
+    label: "a claim's author is not among the sessions its tree names",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    ...diagnosis.claims.map((claim) => claim.authorSessionId),\n",
+    to: "",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because: "an extend_diagnosis author that went quiet leaves the tree's coverage complete",
+  },
+  {
+    label: "an edge's author is not among the sessions its tree names",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    ...diagnosis.edges.map((edge) => edge.authorSessionId),\n",
+    to: "",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because: "a session that linked two claims and went quiet leaves the tree's coverage complete",
+  },
+  {
+    label: "the tripwire reads coverage without the sessions it names",
+    file: `${SERVER}/src/routes/hints.ts`,
+    from: "      answerSessionIds: sessions.map((session) => session.sessionId),\n",
+    to: "",
+    test: `${SERVER}/test/coverage-answer-sessions.test.ts`,
+    because: "the tripwire names a teammate's session that reported a loss and calls the path watched",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16743,10 +16840,11 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
+ * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
- * PRINTS: packages/server/test/coverage-order.test.ts 10
+ * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync.test.ts 11

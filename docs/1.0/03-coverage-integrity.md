@@ -150,6 +150,14 @@ An unscoped call is unchanged, so nothing that reads coverage today changes mean
 thing you asked about"*, which is what principle 1 actually says. **No state is softened:** a reaped session that touched the
 scope is still `incomplete`, and the reason enum still names it.
 
+**Status, 2026-10-05: the answer's own sessions (review H3, 01a §13.9).** A caller whose answer names sessions passes them as
+`answerSessionIds`: trace its candidates, `get_diagnosis` the tree's owner and its claim and edge authors, the tripwire its
+sessions. `agent_event` folds over the scope's sessions **and** those, wherever their heartbeat sits, because trace picks
+candidates by work-context activity and a named session can sit outside the heartbeat window. The `order` block reads the same
+scope (`sessionScope`, `server/src/services/coverage.ts`). A named session can only weaken the rung: its reap, its silence and
+every loss it reported count, and it never counts as a session reporting, so it cannot turn `unknown` into `complete`
+(`server/test/coverage-answer-sessions.test.ts`).
+
 **And the distribution is measured before merge, not argued about** — COV-11. If `complete` proves unreachable even scoped, §5.1
 and §10.4 are re-decided **with data**, not by the noise argument, whose premise this section inverts.
 
