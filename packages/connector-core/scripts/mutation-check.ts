@@ -16704,6 +16704,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/user-level-unreadable.test.ts`,
     because: "a locked user-level mcp.json is reported missing and the remedy is to install again",
   },
+  // ── final review (2026-10-05) ──
+  {
+    label: "doctor calls one install read under two names double wiring",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  if (oneInstall !== null && wiring.hooksInstalled) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "a dotfiles user is told to remove a 'side' — init --remove refuses, init --global --remove deletes the only install",
+  },
+  {
+    label: "doctor tells a home work tree to run the init that refuses there",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (userScopeRegistered && oneInstall !== null) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "the mcp line sends the user to `crosscheck init`, which refuses to write a project copy into $HOME",
+  },
+  {
+    label: "doctor calls a home work tree's own install a link",
+    file: `${CLI}/src/cli/wiring-scope.ts`,
+    from: "  return { root, collision, homeRoot: (await canonicalPath(root)) === home };",
+    to: "  return { root, collision, homeRoot: false };",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "the one fact the reader needs — the repo root IS the home directory — is replaced by a sentence about symlinks",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16766,6 +16791,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
+ * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2

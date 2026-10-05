@@ -90,6 +90,38 @@ export const findUserLevelCollision = async (
   return { projectPath, userPath };
 };
 
+/**
+ * The repo's Claude pair IS the user-level install — $HOME as the work tree,
+ * or a project file linked into ~/.claude. There is then ONE install read
+ * under two names (review 2026-10-05: doctor called it double wiring and
+ * offered remedies the commands refuse, or that delete the only install).
+ */
+export interface OneInstall {
+  readonly root: string;
+  readonly collision: ScopeCollision;
+  /** True = the repo root is the home directory itself. */
+  readonly homeRoot: boolean;
+}
+
+/** The same question `init` and `init --remove` ask before they touch anything. */
+export const readOneInstall = async (root: string, env: Env): Promise<OneInstall | null> => {
+  const collision = await findUserLevelCollision(
+    await wiringPaths(await projectWiringFiles(root, false)),
+    env,
+  );
+  if (collision === null) {
+    return null;
+  }
+  const home = await canonicalPath(env["HOME"] ?? homedir());
+  return { root, collision, homeRoot: (await canonicalPath(root)) === home };
+};
+
+/** Why the project copy is the user-level install, in words. */
+export const oneInstallReason = (one: OneInstall): string =>
+  one.homeRoot
+    ? `this repo's root ${one.root} is your home directory`
+    : `${one.collision.projectPath} is ${one.collision.userPath} by another name`;
+
 /** The refusal's shared half: which file, and that nothing changed. */
 export const collisionSentence = (collision: ScopeCollision, root: string): string =>
   `${collision.projectPath} is your user-level wiring (${collision.userPath}), not a project copy — the git repo here is ${root} — so nothing was changed`;
