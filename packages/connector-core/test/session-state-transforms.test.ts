@@ -18,6 +18,7 @@ import {
   withBriefingSolvedRefs,
   withKnownWorktreeRoot,
   withProbedFingerprint,
+  withRecordedIntent,
 } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
@@ -92,6 +93,19 @@ const baseState = (): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+});
+
+describe("withRecordedIntent remembers who wrote the intent", () => {
+  test.each([["declared"], ["derived"]] as const)(
+    "a %s intent is recorded with its provenance",
+    (provenance) => {
+      // The prompt hint says "derived intent" or "intent" from this field,
+      // the way every intent surface labels the sentence it shows.
+      const next = withRecordedIntent(baseState(), "Fix the refresh 500s", provenance);
+      expect(next.workContextIntent).toBe("Fix the refresh 500s");
+      expect(next.workContextIntentProvenance).toBe(provenance);
+    },
+  );
 });
 
 describe("withBriefingSolvedRefs", () => {

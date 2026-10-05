@@ -17450,7 +17450,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an intent-matched hint claims to relate to the prompt",
     file: `${CORE}/src/hints/render.ts`,
-    from: "  const header = input.matchedOn === \"intent\" ? CLAIM_INTENT_HEADER : CLAIM_HEADER;",
+    from: "  const header = claimHeader(input.matchedOn, input.intentProvenance);",
     to: "  const header = CLAIM_HEADER;",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "the agent reads a finding as related to \"weiter\" when it was matched on the session's stated intent",
@@ -17647,6 +17647,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "the words that made a claim relevant sit behind the ellipsis the reader is shown",
   },
+  {
+    label: "a derived intent is called the session's own in the hint header",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  provenance === \"declared\" ? \"intent\" : \"derived intent\";",
+    to: "  \"intent\";",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "a model's guess at the session's task is presented with the weight of what the developer declared",
+  },
+  {
+    label: "set_intent's sentence is remembered as derived",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "    ...withRecordedIntent(fresh, parsed.value.summary, \"declared\"),",
+    to: "    ...withRecordedIntent(fresh, parsed.value.summary, \"derived\"),",
+    test: `${CORE}/test/ghost-declare.test.ts`,
+    because: "the developer's own declared plan is labelled a model's guess on every hint matched on it",
+  },
+  {
+    label: "the intent worker's sentence is remembered as declared",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "    withIntentSet(withRecordedIntent(state, sentence, \"derived\")),",
+    to: "    withIntentSet(withRecordedIntent(state, sentence, \"declared\")),",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "a model's one-sentence guess is presented as the session's declared intent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17800,7 +17824,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 3
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
@@ -17850,7 +17874,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
- * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
+ * PRINTS: packages/connector-core/test/ghost-declare.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
@@ -17858,7 +17882,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
- * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
+ * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2

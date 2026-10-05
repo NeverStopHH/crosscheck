@@ -124,11 +124,19 @@ interface Delivery {
   readonly channel: DeliveryChannel;
 }
 
+/** What every rendering of one selection shares. */
+interface RenderScope {
+  readonly repoRoot: string;
+  readonly now: Date;
+  /** Who wrote the session intent a candidate may have been matched on. */
+  readonly intentProvenance: string | null;
+}
+
 const renderSelection = async (
-  repoRoot: string,
+  scope: RenderScope,
   selection: HintSelection,
-  now: Date,
 ): Promise<Delivery | null> => {
+  const { repoRoot, now, intentProvenance } = scope;
   if (selection.kind === "silence") {
     return null;
   }
@@ -157,6 +165,7 @@ const renderSelection = async (
         drift,
         now,
         matchedOn,
+        intentProvenance,
         restCount: selection.restCount,
       }),
     };
@@ -169,6 +178,7 @@ const renderSelection = async (
     text: renderPointerHint({
       context,
       matchedOn,
+      intentProvenance,
       claimCount: selection.claimCount,
       // #19: present only for a targets-only pointer, absent for the
       // claim-count one — the renderer branches on it, still no body either way.
@@ -342,7 +352,14 @@ export const selectAndRenderHint = async (
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,
   });
-  const delivery = await renderSelection(input.repoRoot, selection, input.now);
+  const delivery = await renderSelection(
+    {
+      repoRoot: input.repoRoot,
+      now: input.now,
+      intentProvenance: state.workContextIntentProvenance ?? null,
+    },
+    selection,
+  );
   if (delivery === null || delivery.text.length === 0) {
     return "";
   }

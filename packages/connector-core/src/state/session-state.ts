@@ -411,6 +411,15 @@ const SessionStateObjectSchema = z.looseObject({
    */
   workContextIntent: z.string().min(1).nullable().default(null),
   /**
+   * WHO WROTE that sentence: `declared` by `set_intent`, `derived` by the
+   * intent worker's model. The prompt hint matched on it says "this
+   * session's intent" or "this session's derived intent" from this field,
+   * by positive equality on `declared` like every intent surface
+   * (briefing/intent.ts) — so absent, as in a state file older than the
+   * field, reads as derived, never as vouched for.
+   */
+  workContextIntentProvenance: z.enum(["declared", "derived"]).nullable().optional(),
+  /**
    * A ghost check is OWED (VISION.md §3): an intent was recorded and nothing
    * has compared it against the team's live plans yet. The DEBT shape, not a
    * spawn: `set_intent` runs inside an MCP call in connector-core, which
@@ -1298,9 +1307,11 @@ export const withTripwireAsked = (
 export const withRecordedIntent = (
   state: SessionState,
   summary: string,
+  provenance: "declared" | "derived",
 ): SessionState => ({
   ...state,
   workContextIntent: summary,
+  workContextIntentProvenance: provenance,
   ghostPending: true,
 });
 
@@ -1480,6 +1491,7 @@ export const deriveSessionState = (
     intentFailCount: 0,
     intentLastFailure: null,
     workContextIntent: null,
+    workContextIntentProvenance: null,
     ghostPending: false,
     gitTouchCount: 0,
     gitLaneSkipped: 0,

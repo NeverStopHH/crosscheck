@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1568
+    # PRINTS: 1571
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -266,7 +266,7 @@ jobs:
     # PRINTS: derive/ghost/cost.ts 1
     # PRINTS: derive/ghost/worker.ts 5
     # PRINTS: derive/intent/prompt.ts 1
-    # PRINTS: derive/intent/worker.ts 2
+    # PRINTS: derive/intent/worker.ts 3
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 2
@@ -295,7 +295,7 @@ jobs:
     # PRINTS: guarantees/doctor.ts 3
     # PRINTS: hints/delivery.ts 7
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 21
+    # PRINTS: hints/render.ts 22
     # PRINTS: hints/select.ts 21
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
@@ -322,7 +322,7 @@ jobs:
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
-    # PRINTS: mcp/tools/set-intent.ts 4
+    # PRINTS: mcp/tools/set-intent.ts 5
     # PRINTS: mcp/tools/shared.ts 2
     # PRINTS: model/gates.ts 1
     # PRINTS: model/parse.ts 2
@@ -638,7 +638,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 86
+    # PRINTS: render.ts 87
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9
@@ -663,7 +663,7 @@ jobs:
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 15
-    # PRINTS: set-intent.ts 4
+    # PRINTS: set-intent.ts 5
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
     # PRINTS: skeleton-identity.ts 8
@@ -710,7 +710,7 @@ jobs:
     # PRINTS: wiring-scope.ts 2
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
-    # PRINTS: worker.ts 7
+    # PRINTS: worker.ts 8
     # PRINTS: working-days.ts 3
     name: Mutation proof
     runs-on: ubuntu-latest

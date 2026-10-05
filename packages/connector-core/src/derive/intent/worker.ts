@@ -242,7 +242,7 @@ const appendIntent = async (
   // compares it against the team's — this worker deliberately does NOT run
   // that check itself, so one detached process stays one model call.
   await updateSessionState(home, claudeSessionId, (state) =>
-    withIntentSet(withRecordedIntent(state, sentence)),
+    withIntentSet(withRecordedIntent(state, sentence, "derived")),
   );
 };
 

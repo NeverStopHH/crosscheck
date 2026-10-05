@@ -53,7 +53,11 @@ interface Fixture {
   readonly key: string;
 }
 
-const fixture = async (label: string, intent: string | null): Promise<Fixture> => {
+const fixture = async (
+  label: string,
+  intent: string | null,
+  provenance: "declared" | "derived" | null = "derived",
+): Promise<Fixture> => {
   const home = await makeHome(label);
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   paths.push(home, repo);
@@ -77,6 +81,7 @@ const fixture = async (label: string, intent: string | null): Promise<Fixture> =
     landedAskedFiles: [],
     landedCleanKeys: [],
     workContextIntent: intent,
+    workContextIntentProvenance: provenance,
   });
   return {
     home,
@@ -162,17 +167,43 @@ describe("what goes on the wire", () => {
 });
 
 describe("what the hint then says", () => {
-  test("a candidate matched on the intent says so, not that it relates to the prompt", async () => {
-    // Arrange
-    const f = await fixture("if-header", SESSION_INTENT);
+  test("a candidate matched on a DERIVED intent says so, as every intent surface does", async () => {
+    // Arrange — the intent worker's sentence: a model wrote it
+    const f = await fixture("if-header", SESSION_INTENT, "derived");
     f.hub.setCandidates([intentMatchedCandidate()]);
 
     // Act
     const text = await selectAndRenderHint(flowInput(f, "mache weiter"));
 
     // Assert
-    expect(text).toContain("this session's stated intent");
+    expect(text).toContain("may relate to this session's derived intent.");
     expect(text).not.toContain("this prompt");
+    expect(text).not.toContain("stated");
+  });
+
+  test("a DECLARED intent (set_intent) is called the session's intent", async () => {
+    // Arrange
+    const f = await fixture("if-header-declared", SESSION_INTENT, "declared");
+    f.hub.setCandidates([intentMatchedCandidate()]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f, "mache weiter"));
+
+    // Assert
+    expect(text).toContain("may relate to this session's intent.");
+    expect(text).not.toContain("derived intent");
+  });
+
+  test("an intent whose writer nobody recorded is labelled derived — positive equality on declared", async () => {
+    // Arrange — a state file older than the provenance field
+    const f = await fixture("if-header-unknown", SESSION_INTENT, null);
+    f.hub.setCandidates([intentMatchedCandidate()]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f, "mache weiter"));
+
+    // Assert
+    expect(text).toContain("this session's derived intent");
   });
 
   test("a candidate matched on the prompt keeps the prompt header", async () => {
@@ -186,7 +217,7 @@ describe("what the hint then says", () => {
 
     // Assert
     expect(text).toContain("this prompt");
-    expect(text).not.toContain("stated intent");
+    expect(text).not.toContain("intent.");
   });
 });
 
@@ -201,7 +232,7 @@ describe("PRIVACY: the prompt text never leaves the machine on this path either"
     const text = await selectAndRenderHint(flowInput(f, `${marker} weiter`));
 
     // Assert — delivered (so the files were written), and the prompt is in none
-    expect(text).toContain("this session's stated intent");
+    expect(text).toContain("this session's derived intent");
     const spool = await readSessionSpool(f.home, f.key, sessionSlug(HOST_KEY));
     expect(spool.lines.length).toBeGreaterThan(0);
     expect(spool.lines.join("\n")).not.toContain(marker);

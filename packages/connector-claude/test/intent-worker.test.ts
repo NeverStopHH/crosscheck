@@ -220,6 +220,10 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(state?.intentSetCount).toBe(1);
     expect(state?.intentNoneCount).toBe(0);
     expect(state?.intentFailCount).toBe(0);
+    // …and remembered as the MODEL's sentence, which a prompt hint matched
+    // on it then calls "this session's derived intent"
+    expect(state?.workContextIntent).toBe(SENTENCE);
+    expect(state?.workContextIntentProvenance).toBe("derived");
   });
 
   test("the raw prompt reaches the model on stdin and NEVER the spool; the prompt file is gone", async () => {

@@ -336,7 +336,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   // ghost worker will compare (`workContextIntent`), and the debt that makes
   // it run (`ghostPending`). Best-effort like every state update on this path.
   await updateSessionState(ctx.config.home, own.hostSessionKey, (fresh) => ({
-    ...withRecordedIntent(fresh, parsed.value.summary),
+    ...withRecordedIntent(fresh, parsed.value.summary, "declared"),
     workContextStatus: parsed.value.status === undefined ? fresh.workContextStatus : status,
   }));
   const ghost = await deliverGhostNotice(ctx, own);

@@ -86,10 +86,23 @@ const POINTER_HEADER = `crosscheck pointer: a teammate has notes that may relate
  * The same two headers when the hub matched the session's INTENT in place of
  * a prompt that carried nothing task-bearing (DESIGN.md §4). "This prompt"
  * would then be false — the reader typed "weiter" — so the sentence names
- * what was actually matched.
+ * what was actually matched, and labels it the way every intent surface does
+ * (briefing/intent.ts): "intent" only for one `set_intent` declared, "derived
+ * intent" otherwise — positive equality, so an unknown writer is never
+ * presented as vouched for.
  */
-const CLAIM_INTENT_HEADER = `crosscheck hint: a teammate's recorded finding may relate to this session's stated intent. ${QUOTED_DATA_NOTICE}`;
-const POINTER_INTENT_HEADER = `crosscheck pointer: a teammate has notes that may relate to this session's stated intent. ${QUOTED_DATA_NOTICE}`;
+const sessionIntentWord = (provenance: string | null | undefined): string =>
+  provenance === "declared" ? "intent" : "derived intent";
+
+const claimHeader = (matchedOn: HintMatchedOn | undefined, provenance: string | null | undefined): string =>
+  matchedOn === "intent"
+    ? `crosscheck hint: a teammate's recorded finding may relate to this session's ${sessionIntentWord(provenance)}. ${QUOTED_DATA_NOTICE}`
+    : CLAIM_HEADER;
+
+const pointerHeader = (matchedOn: HintMatchedOn | undefined, provenance: string | null | undefined): string =>
+  matchedOn === "intent"
+    ? `crosscheck pointer: a teammate has notes that may relate to this session's ${sessionIntentWord(provenance)}. ${QUOTED_DATA_NOTICE}`
+    : POINTER_HEADER;
 /**
  * The ANSWER header, and the one word in it that matters is "asked": this is
  * the §4 solicited exception, so the sentence states out loud that the
@@ -247,6 +260,8 @@ export interface ClaimHintInput {
   readonly now: Date;
   /** What the hub matched it on; absent is the prompt, as it always was. */
   readonly matchedOn?: HintMatchedOn;
+  /** Who wrote the session intent it was matched on (declared / derived). */
+  readonly intentProvenance?: string | null;
   /** The teammate claims the substance leaves behind; absent counts none. */
   readonly restCount?: number;
 }
@@ -329,7 +344,7 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     return "";
   }
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(sentence, HINT_SUBSTANCE_MAX_CHARS)}`;
-  const header = input.matchedOn === "intent" ? CLAIM_INTENT_HEADER : CLAIM_HEADER;
+  const header = claimHeader(input.matchedOn, input.intentProvenance);
   return fitHint([
     header,
     factsLine,
@@ -358,6 +373,8 @@ export interface PointerHintInput {
   readonly now: Date;
   /** What the hub matched it on; absent is the prompt, as it always was. */
   readonly matchedOn?: HintMatchedOn;
+  /** Who wrote the session intent it was matched on (declared / derived). */
+  readonly intentProvenance?: string | null;
 }
 
 /**
@@ -413,7 +430,7 @@ export const renderPointerHint = (input: PointerHintInput): string => {
           `readable with get_diagnosis ${safeId(context.id)}.`;
   // The intent BEFORE the tail: fitHint drops from the end, and of the two
   // the tail is the droppable one — the intent is what says WHAT they do.
-  const header = input.matchedOn === "intent" ? POINTER_INTENT_HEADER : POINTER_HEADER;
+  const header = pointerHeader(input.matchedOn, input.intentProvenance);
   return fitHint([header, factsLine, ...intentLines(context.intent), tailLine]);
 };
 
