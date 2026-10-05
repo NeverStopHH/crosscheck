@@ -556,7 +556,7 @@ describe("renderPilot", () => {
     // Assert — one line, descriptive, the fixed month named, nobody named
     const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
     expect(lines).toEqual([
-      "   hint outcomes per 100 interventions, July 2026 — the last whole month, fixed (8 reached someone): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 · unmarked 12.5 — a FLOOR: only what agents and people chose to record; no target, nobody named",
+      "   hint outcomes per 100 interventions, July 2026 — the last whole month, fixed (8 reached someone): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 (FLOORS: only what agents and people chose to record) · unmarked 12.5 (a CEILING: some of it was acted on and never recorded) — no target, nobody named",
     ]);
   });
 

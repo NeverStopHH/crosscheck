@@ -1014,6 +1014,9 @@ call the hook already makes.
    hint outcomes per 100 interventions that reached someone (8 since 2026-07-20): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 · unmarked 12.5 — a FLOOR: only what agents and people chose to record; no target, nobody named
 ```
 
+*(The form of this line and its window are superseded by §13.10: #4 for the closed month and the disclosure
+minimums, LOW for the qualifier per figure.)*
+
 Per repo, over every unasked delivery that reached someone (the report's `outcomes` block: counts and one
 instant, nothing that names a recipient or a source — tested); noise is the label, the same state the
 per-person view reads, from the same query. **No target** is declared and none is compared. **A floor**, said
@@ -1068,7 +1071,7 @@ rolling window at all (`services/outcome-population.ts`, `pilot-outcome-figures.
   Above them:
 
 ```
-   hint outcomes per 100 interventions, July 2026 — the last whole month, fixed (11 reached someone): followed 54.5 · overrode 18.2 · not relevant now 9.1 · noise 9.1 · unmarked 9.1 — a FLOOR: only what agents and people chose to record; no target, nobody named
+   hint outcomes per 100 interventions, July 2026 — the last whole month, fixed (11 reached someone): followed 54.5 · overrode 18.2 · not relevant now 9.1 · noise 9.1 (FLOORS: only what agents and people chose to record) · unmarked 9.1 (a CEILING: some of it was acted on and never recorded) — no target, nobody named
 ```
 
   The sources minimum is what keeps an author from reading the overrides of their own work out of the
@@ -1145,3 +1148,9 @@ you". The lookup now reads every channel and ranks an unasked delivery first (th
 the newest), so a ref that only arrived because the reader asked resolves to that pulled delivery and is
 refused as `not_unsolicited` — "that was an answer somebody asked for" — while a ref that also arrived unasked
 still records against the unasked delivery, even when the pulled one is newer.
+
+*LOW — "a FLOOR" covered `unmarked`, which is a ceiling.* A recorded word exists only where an agent or a
+person chose to say it, so followed, overrode, not relevant now and noise can only be under-counted; unmarked
+is everything nobody spoke about, some of which was acted on, so it can only be over-counted. The line now
+words the qualifier per figure: `noise 9.1 (FLOORS: only what agents and people chose to record) · unmarked 9.1
+(a CEILING: some of it was acted on and never recorded) — no target, nobody named`.

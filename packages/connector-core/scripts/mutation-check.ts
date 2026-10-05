@@ -17709,10 +17709,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the outcomes line stops saying it is a floor",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: " — a FLOOR: only what agents and people chose to record; no target, nobody named`",
-    to: "`",
+    from: 'const RECORDED_ARE_FLOORS = " (FLOORS: only what agents and people chose to record)";',
+    to: 'const RECORDED_ARE_FLOORS = "";',
     test: `${CLI}/test/pilot-render.test.ts`,
-    because: "an unmarked share reads as hints nobody followed, when it is only hints nobody recorded",
+    because: "a followed share reads as how often hints were followed, when it is only how often somebody said so",
   },
   // ── 07 §13.9, D-O6: outcomes under the pilot's retention ──────────────────
   {
@@ -17986,6 +17986,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "asking about work a hint already pointed at makes that hint's outcome unrecordable",
   },
+  // ── 07 §13.10, review LOW: each figure's direction ───────────────────────
+  {
+    label: "the outcomes line stops calling unmarked a ceiling",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: 'const UNMARKED_IS_A_CEILING = " (a CEILING: some of it was acted on and never recorded)";',
+    to: 'const UNMARKED_IS_A_CEILING = "";',
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "an unmarked share reads as hints nobody followed, when it is only hints nobody recorded",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18077,7 +18086,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 2
- * PRINTS: packages/cli/test/pilot-render.test.ts 24
+ * PRINTS: packages/cli/test/pilot-render.test.ts 25
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1

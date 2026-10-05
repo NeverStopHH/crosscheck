@@ -378,6 +378,15 @@ const withheldOutcomeLine = (block: OutcomeBlock, month: string, withheld: strin
 };
 
 /**
+ * EACH FIGURE'S DIRECTION (review, LOW): a recorded word exists only where an
+ * agent or a person chose to say it, so followed, overrode, not relevant now
+ * and noise can only be under-counted; unmarked is everything nobody spoke
+ * about, some of which was acted on, so it can only be over-counted.
+ */
+const RECORDED_ARE_FLOORS = " (FLOORS: only what agents and people chose to record)";
+const UNMARKED_IS_A_CEILING = " (a CEILING: some of it was acted on and never recorded)";
+
+/**
  * 07 §13.9 (D-O5, review #4): WHAT THE INTERVENTIONS LED TO, one per-repo
  * line over ONE FIXED, CLOSED MONTH — descriptive, so no target; only what an
  * agent or a person chose to record; and only above the disclosure minimums,
@@ -398,7 +407,7 @@ const outcomeLine = (report: PilotReport): string => {
   return (
     `${INDENT}hint outcomes per 100 interventions, ${month} — the last whole month, fixed (${count(block.interventions)} reached someone${clippedFrom(block)}): ` +
     `followed ${per100(figures.followed)} · overrode ${per100(figures.overrode)} · not relevant now ${per100(figures.notRelevantNow)} · ` +
-    `noise ${per100(figures.noise)} · unmarked ${per100(figures.unmarked)} — a FLOOR: only what agents and people chose to record; no target, nobody named`
+    `noise ${per100(figures.noise)}${RECORDED_ARE_FLOORS} · unmarked ${per100(figures.unmarked)}${UNMARKED_IS_A_CEILING} — no target, nobody named`
   );
 };
 

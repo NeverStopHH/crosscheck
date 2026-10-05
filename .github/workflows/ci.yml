@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1609
+    # PRINTS: 1610
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -194,7 +194,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
     # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 3
     # PRINTS: packages/cli/src/cli/pilot-mine.ts 1
-    # PRINTS: packages/cli/src/cli/pilot-render.ts 27
+    # PRINTS: packages/cli/src/cli/pilot-render.ts 28
     # PRINTS: packages/cli/src/cli/pilot.ts 3
     # PRINTS: packages/cli/src/cli/pin-observability.ts 14
     # PRINTS: packages/cli/src/cli/pin-render.ts 7
@@ -627,7 +627,7 @@ jobs:
     # PRINTS: pilot-mine-render.ts 3
     # PRINTS: pilot-mine.ts 1
     # PRINTS: pilot-outcome-figures.ts 2
-    # PRINTS: pilot-render.ts 27
+    # PRINTS: pilot-render.ts 28
     # PRINTS: pilot-report.ts 20
     # PRINTS: pilot-session-set.ts 9
     # PRINTS: pilot.ts 38
