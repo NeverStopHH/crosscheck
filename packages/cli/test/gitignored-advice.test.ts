@@ -19,7 +19,10 @@ import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
 import { runDoctor } from "../src/cli/doctor.ts";
-import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
+import {
+  isPathIgnored,
+  isPathTracked,
+} from "@crosscheck/connector-core/git/check-ignore.ts";
 import { git, makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** Unreachable on purpose: none of these lines needs a hub. */
@@ -125,17 +128,39 @@ describe("isPathIgnored", () => {
   });
 });
 
+describe("isPathTracked", () => {
+  test("answers true for a committed file, false for an ignored one and null outside a repo", async () => {
+    // Arrange: one repo commits .mcp.json, the other ignores it
+    const ignored = await fixture(true);
+    const committed = await fixture(false);
+    await git(committed.repo, ["add", ".mcp.json"]);
+    await git(committed.repo, ["commit", "-m", "share the mcp server"]);
+    const notARepo = await makeHome("gitignored-advice-tracked-not-a-repo");
+    paths.push(notARepo);
+
+    // Act + Assert
+    expect(await isPathTracked(committed.repo, ".mcp.json")).toBe(true);
+    expect(await isPathTracked(ignored.repo, ".mcp.json")).toBe(false);
+    // An untracked file that is NOT ignored is still not shared with anybody.
+    expect(await isPathTracked(committed.repo, ".claude/settings.json")).toBe(false);
+    expect(await isPathTracked(notARepo, ".mcp.json")).toBeNull();
+  });
+});
+
 describe("doctor's advice under a .gitignore", () => {
-  test("the double-wiring remedy never says --remove when the project copy is ignored", async () => {
+  test("the double-wiring remedy names crosscheck init --remove, never --global --remove, when the project copy is ignored", async () => {
     // Arrange
     const { repo, env } = await fixture(true);
 
     // Act
     const result = await runDoctor(env, repo, async () => null);
 
-    // Assert
+    // Assert: the command that removes the ignored project copy (pilot,
+    // 2026-10: "how to fix?" had no answer) — and still never the one that
+    // removes the user-level install, the only side covering worktrees here
     expect(result.stdout).toContain("WARN  global install");
     expect(result.stdout).toContain("keep the global install");
+    expect(result.stdout).toContain("`crosscheck init --remove`");
     expect(result.stdout).not.toContain("crosscheck init --global --remove");
   });
 
@@ -219,5 +244,33 @@ describe("init's advice under a .gitignore", () => {
 
     // Assert
     expect(result.stdout).toContain("so teammates get the mcp tools on git pull");
+  });
+
+  test("the double-wiring note names crosscheck init --remove, never --global --remove, when the project copy is ignored", async () => {
+    // Arrange: the pilot's shape — an ignored project copy on a machine that
+    // already has the user-level install
+    const { repo, env } = await fixture(true);
+
+    // Act
+    const result = await runCli(["init", "--command-prefix", "crosscheck"], env, repo);
+
+    // Assert: the same remedy doctor gives, never the one that removes the
+    // only side covering this repo's worktrees
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("wired twice");
+    expect(result.stdout).toContain("`crosscheck init --remove`");
+    expect(result.stdout).not.toContain("crosscheck init --global --remove");
+  });
+
+  test("the double-wiring note keeps --global --remove when the project copy is shared", async () => {
+    // Arrange
+    const { repo, env } = await fixture(false);
+
+    // Act
+    const result = await runCli(["init", "--command-prefix", "crosscheck"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("wired twice");
+    expect(result.stdout).toContain("crosscheck init --global --remove");
   });
 });

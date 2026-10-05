@@ -172,10 +172,13 @@ export const globalInstallChecks = (
     // monorepo shape — `crosscheck init --global --remove` is the exactly
     // wrong instruction: it deletes the only wiring that covers worktrees and
     // parent workspaces, and leaves a project install nobody else will ever
-    // receive. So that branch never names it.
+    // receive. So that branch never names it. It names the PROJECT-side
+    // `crosscheck init --remove` instead: "delete the gitignored project copy"
+    // left a pilot teammate asking how (2026-10), and that command strips
+    // exactly the ignored copy — never .crosscheck.json, never the user level.
     const remedy =
       projectSettingsIgnored === true
-        ? "keep the global install and delete the gitignored project copy instead — .claude/settings.json is ignored in this repo, so it never reaches teammates and only the user-level install covers your worktrees"
+        ? "keep the global install and remove the gitignored project copy with `crosscheck init --remove` — .claude/settings.json is ignored in this repo, so it never reaches teammates and only the user-level install covers your worktrees"
         : "remove one side: `crosscheck init --global --remove`, or strip the repo's .claude/settings.json entries";
     return [
       check(

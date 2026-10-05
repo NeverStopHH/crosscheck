@@ -60,10 +60,16 @@ export const RESTART_HINT_LINE =
 
 export const INIT_USAGE = [
   `usage: crosscheck init [${INIT_COMMAND_PREFIX_FLAG} <prefix>] [${INIT_HUB_FLAG} <url>] [${INIT_FORCE_STATUSLINE_FLAG}] [${INIT_CURSOR_FLAG}]`,
+  `       crosscheck init --remove [${INIT_CURSOR_FLAG}]`,
   "       crosscheck init --global [--remove] [--force-statusline] [--cursor]",
   "",
   "  wires this repo: hooks and statusline into .claude/settings.json, the",
   "  mcp server into .mcp.json, and the hub url into .crosscheck.json",
+  "",
+  "  --remove (without --global) unwires THIS repo's project copy: crosscheck's",
+  "  entries leave .claude/settings.json and .mcp.json (with --cursor, the",
+  "  .cursor pair too); .crosscheck.json, everything else in those files and",
+  "  the user-level install stay",
   "",
   "  --global wires the MACHINE instead — once per machine, into",
   "  ~/.claude/settings.json + user-scope mcp (~/.claude.json) — covering",
@@ -255,6 +261,13 @@ export const runInit = async (
   // the cleanup command, never left for someone to discover via doctor.
   const globalWiring = await readGlobalWiring(env);
   const mcpIgnored = await isPathIgnored(identity.root, MCP_CONFIG_FILE);
+  // The fact doctor's double-wiring remedy keys on: an ignored project copy
+  // never reaches a teammate, so the side to remove is THIS one, never the
+  // user-level install that covers every worktree (pilot, 2026-10).
+  const settingsIgnored = await isPathIgnored(
+    identity.root,
+    `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE}`,
+  );
 
   const notes = [
     ...(merged.statuslineInstalled
@@ -283,7 +296,11 @@ export const runInit = async (
       : []),
     ...(globalWiring.hooksInstalled
       ? [
-          `note: a user-level (global) crosscheck install exists (${globalWiring.settingsPath}) — this repo is now wired twice on your machine; identical commands run once (Claude Code dedups them) and capture stays exactly-once either way, but doctor will flag the redundancy; \`crosscheck init --global --remove\` removes the user-level side if the committed install should stand alone`,
+          `note: a user-level (global) crosscheck install exists (${globalWiring.settingsPath}) — this repo is now wired twice on your machine; identical commands run once (Claude Code dedups them) and capture stays exactly-once either way, but doctor will flag the redundancy; ${
+            settingsIgnored === true
+              ? `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE} is ignored in this repo, so keep the user-level install and remove this project copy with \`crosscheck init --remove\``
+              : "`crosscheck init --global --remove` removes the user-level side if the committed install should stand alone"
+          }`,
         ]
       : []),
   ];

@@ -45,10 +45,7 @@ import {
 import { normalizeHubUrl, readStoredConfig } from "@crosscheck/connector-core/config/config.ts";
 import { crosscheckHome } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import {
-  mergeMcpConfig,
-  removeMcpConfig,
-} from "@crosscheck/connector-core/config/mcp-config.ts";
+import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import {
   isVersionManagerPath,
@@ -61,7 +58,6 @@ import {
   claudeUserMcpPath,
   claudeUserSettingsPath,
   mergeClaudeSettings,
-  removeClaudeSettings,
 } from "@crosscheck/connector-claude";
 import {
   INIT_COMMAND_PREFIX_FLAG,
@@ -75,7 +71,8 @@ import {
   skippedMessage,
   writeIfChanged,
 } from "./init-io.ts";
-import type { ReadJson, ReadRefusal } from "./init-io.ts";
+import type { ReadRefusal } from "./init-io.ts";
+import { REMOVE_RESTART_LINE, removalTargets } from "./wiring-removal.ts";
 import type { CliResult } from "./login.ts";
 
 export const INIT_GLOBAL_FLAG = "--global";
@@ -300,69 +297,37 @@ const applyCursorInstall = async (
  * own, say) must never make the rest of the wiring un-uninstallable.
  */
 const runGlobalRemove = async (env: Env): Promise<CliResult> => {
-  const settingsPath = claudeUserSettingsPath(env);
-  const mcpPath = claudeUserMcpPath(env);
-  const { CURSOR_HOOKS_FILE, CURSOR_MCP_FILE, removeCursorHooks } = await import(
-    "@crosscheck/connector-cursor"
+  // The same table `init --remove` walks for a repo (wiring-removal.ts), so
+  // both uninstalls recognise exactly the same entries.
+  const targets = await removalTargets({
+    claudeSettingsPath: claudeUserSettingsPath(env),
+    mcpPath: claudeUserMcpPath(env),
+    cursorDir: cursorUserDir(env),
+  });
+  const reads = await Promise.all(
+    targets.map(async (target) => ({ target, read: await readJsonConfig(target.path) })),
   );
-  const dir = cursorUserDir(env);
-  const cursorHooksPath = join(dir, CURSOR_HOOKS_FILE);
-  const cursorMcpPath = join(dir, CURSOR_MCP_FILE);
-
-  const lines: string[] = [];
-  const reads = new Map<string, ReadJson & { readonly ok: true }>();
-  for (const path of [settingsPath, mcpPath, cursorHooksPath, cursorMcpPath]) {
-    const read = await readJsonConfig(path);
-    if (!read.ok) {
-      lines.push(skippedMessage(path, read.reason));
+  const skipped = reads.flatMap(({ target, read }) =>
+    read.ok ? [] : [skippedMessage(target.path, read.reason)],
+  );
+  const removals: string[] = [];
+  for (const { target, read } of reads) {
+    if (!read.ok || read.raw === null) {
       continue;
     }
-    reads.set(path, read);
-  }
-
-  const removeFrom = async (
-    path: string,
-    changed: boolean,
-    value: Record<string, unknown>,
-  ): Promise<void> => {
-    const read = reads.get(path);
-    if (read === undefined || read.raw === null) {
-      return;
+    const stripped = target.strip(read.value);
+    if (!stripped.changed) {
+      removals.push(`no crosscheck entries in ${target.path}`);
+      continue;
     }
-    if (!changed) {
-      lines.push(`no crosscheck entries in ${path}`);
-      return;
-    }
-    await writeIfChanged(path, read.raw, renderJsonFile(value));
-    lines.push(`removed crosscheck entries from ${path}`);
-  };
-
-  const settingsRead = reads.get(settingsPath);
-  if (settingsRead !== undefined && settingsRead.raw !== null) {
-    const removed = removeClaudeSettings(settingsRead.value);
-    await removeFrom(settingsPath, removed.changed, removed.settings);
+    await writeIfChanged(target.path, read.raw, renderJsonFile(stripped.value));
+    removals.push(`removed crosscheck entries from ${target.path}`);
   }
-  const mcpRead = reads.get(mcpPath);
-  if (mcpRead !== undefined && mcpRead.raw !== null) {
-    const removed = removeMcpConfig(mcpRead.value);
-    await removeFrom(mcpPath, removed.changed, removed.config);
-  }
-  const cursorHooksRead = reads.get(cursorHooksPath);
-  if (cursorHooksRead !== undefined && cursorHooksRead.raw !== null) {
-    const removed = removeCursorHooks(cursorHooksRead.value);
-    await removeFrom(cursorHooksPath, removed.changed, removed.hooks);
-  }
-  const cursorMcpRead = reads.get(cursorMcpPath);
-  if (cursorMcpRead !== undefined && cursorMcpRead.raw !== null) {
-    const removed = removeMcpConfig(cursorMcpRead.value);
-    await removeFrom(cursorMcpPath, removed.changed, removed.config);
-  }
+  const lines = [...skipped, ...removals];
   return {
     stdout: [
       ...(lines.length === 0 ? ["no user-level crosscheck install found"] : lines),
-      // The mirror of the install-side restart hint: hooks already loaded
-      // by a running agent stay loaded until that process restarts.
-      "agents already running keep the removed hooks loaded until they are restarted",
+      REMOVE_RESTART_LINE,
       "",
     ].join("\n"),
     exitCode: EXIT_OK,

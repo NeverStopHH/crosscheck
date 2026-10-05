@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1392
+    # PRINTS: 1415
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -171,13 +171,17 @@ jobs:
     # PRINTS: packages/cli/src/ci-report/report.ts 4
     # PRINTS: packages/cli/src/ci-report/run.ts 4
     # PRINTS: packages/cli/src/cli/conference.ts 15
+    # PRINTS: packages/cli/src/cli/doctor-global.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 3
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor.ts 44
-    # PRINTS: packages/cli/src/cli/index.ts 2
+    # PRINTS: packages/cli/src/cli/index.ts 3
+    # PRINTS: packages/cli/src/cli/init-global.ts 2
+    # PRINTS: packages/cli/src/cli/init-remove.ts 10
+    # PRINTS: packages/cli/src/cli/init.ts 2
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
@@ -193,6 +197,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
+    # PRINTS: packages/cli/src/cli/wiring-removal.ts 5
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
     # PRINTS: packages/connector-acp/src/capture/engine.ts 18
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
@@ -270,6 +275,7 @@ jobs:
     # PRINTS: flows/hint.ts 5
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
+    # PRINTS: git/check-ignore.ts 1
     # PRINTS: git/claim-drift.ts 5
     # PRINTS: git/fix-diff.ts 7
     # PRINTS: git/git.ts 4
@@ -461,6 +467,7 @@ jobs:
     # PRINTS: capture-targets.ts 5
     # PRINTS: capture-touched-files.ts 3
     # PRINTS: causal-guarantees.ts 21
+    # PRINTS: check-ignore.ts 1
     # PRINTS: check.ts 17
     # PRINTS: ci-coverage.ts 3
     # PRINTS: ci-delta.ts 4
@@ -492,6 +499,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 10
     # PRINTS: diagnosis.ts 3
+    # PRINTS: doctor-global.ts 2
     # PRINTS: doctor-landed-authors.ts 3
     # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-landing-fetch.ts 6
@@ -535,7 +543,10 @@ jobs:
     # PRINTS: hints.ts 4
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 9
-    # PRINTS: index.ts 2
+    # PRINTS: index.ts 3
+    # PRINTS: init-global.ts 2
+    # PRINTS: init-remove.ts 10
+    # PRINTS: init.ts 2
     # PRINTS: injector.ts 5
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
@@ -673,6 +684,7 @@ jobs:
     # PRINTS: waivers.ts 5
     # PRINTS: waivers.tsx 2
     # PRINTS: webauthn.ts 11
+    # PRINTS: wiring-removal.ts 5
     # PRINTS: work-contexts.ts 1
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7

@@ -22,6 +22,7 @@ import {
   INIT_REMOVE_FLAG,
   runInitGlobal,
 } from "./init-global.ts";
+import { runProjectRemove } from "./init-remove.ts";
 import { LOGIN_USAGE, readSecretFromStdin, runLogin } from "./login.ts";
 import type { CliResult, SecretReader } from "./login.ts";
 import {
@@ -72,6 +73,8 @@ const USAGE = [
   "  init [--command-prefix <p>] [--hub <url>] [--force-statusline] [--cursor]",
   "                            --cursor additionally merges .cursor/hooks.json +",
   "                            .cursor/mcp.json (Cursor IDE capture, same one-PR install)",
+  "  init --remove [--cursor]  unwire this repo's project copy; keeps .crosscheck.json",
+  "                            and the user-level install (init --global --remove)",
   "  status                    hub, repo, teammates, spool, last sync",
   "  doctor                    diagnose the local install",
   "  conference [--publish]    read this repo's open work, run ONE bounded",
@@ -260,11 +263,10 @@ export const runCli = async (
           env,
         );
       }
+      // The project-side uninstall (pilot, 2026-10): THIS repo's copy only —
+      // .crosscheck.json, foreign entries and the user-level install stay.
       if (rest.includes(INIT_REMOVE_FLAG)) {
-        return {
-          stdout: `${INIT_REMOVE_FLAG} applies to the user-level install: run \`crosscheck init ${INIT_GLOBAL_FLAG} ${INIT_REMOVE_FLAG}\`\n${INIT_USAGE}`,
-          exitCode: EXIT_USAGE,
-        };
+        return runProjectRemove({ cursor: rest.includes(INIT_CURSOR_FLAG) }, env, cwd);
       }
       return runInit(rest, env, cwd);
     }

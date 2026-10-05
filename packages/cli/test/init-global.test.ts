@@ -268,6 +268,27 @@ describe("crosscheck init --global", () => {
     expect(await readFile(cursorMcpPath, "utf8")).toBe("{ not json");
   });
 
+  test("--remove leaves a user file without crosscheck entries byte-identical, with no backup", async () => {
+    // Arrange: a Claude-only install beside the user's own ~/.cursor/mcp.json,
+    // in a 4-space layout no crosscheck writer produces
+    const { home, env } = await fixture();
+    await runCli(GLOBAL_ARGS, env, "/");
+    const cursorDir = join(home, ".cursor");
+    const cursorMcpPath = join(cursorDir, "mcp.json");
+    const own = `${JSON.stringify({ mcpServers: { docs: { command: "docs-mcp", args: [] } } }, null, 4)}\n`;
+    await mkdir(cursorDir, { recursive: true });
+    await writeFile(cursorMcpPath, own, "utf8");
+
+    // Act
+    const removal = await runCli(["init", "--global", "--remove"], env, "/");
+
+    // Assert
+    expect(removal.exitCode).toBe(0);
+    expect(removal.stdout).toContain(`no crosscheck entries in ${cursorMcpPath}`);
+    expect(await readFile(cursorMcpPath, "utf8")).toBe(own);
+    expect(await backupsIn(cursorDir)).toEqual([]);
+  });
+
   test("requires a login first — inert machine-wide wiring helps nobody", async () => {
     const home = await makeHome("init-global-nologin");
     paths.push(home);
@@ -291,10 +312,8 @@ describe("crosscheck init --global", () => {
     expect(result.stdout).toContain("--hub does not apply to --global");
   });
 
-  test("--remove without --global points at the global spelling", async () => {
-    const { env } = await fixture();
-    const result = await runCli(["init", "--remove"], env, "/");
-    expect(result.exitCode).toBe(64);
-    expect(result.stdout).toContain("crosscheck init --global --remove");
-  });
+  // `init --remove` WITHOUT --global used to be refused here with a pointer
+  // to this spelling. It is now the project-side uninstall, and the promise
+  // that it never touches these user-level files lives with it, in
+  // init-remove.test.ts ("leaves the user-level install byte-identical").
 });
