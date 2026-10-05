@@ -999,6 +999,16 @@ const checkMcpRegistration = async (
         `via global install (user scope) — ${oneInstallReason(oneInstall)}, where crosscheck init refuses to write a project copy; the user-level install covers this repo`,
       );
     }
+    // Committed but gone from this checkout — `init --remove` deletes a
+    // tracked .mcp.json it emptied. "Run crosscheck init" would recreate the
+    // ignored settings copy and the double wiring with it; the team's file is
+    // one restore away (review 2026-10-05).
+    if ((await isPathTracked(repoRoot, MCP_CONFIG_FILE)) === true) {
+      const restore = `${path} is committed but deleted from this checkout — \`git restore -- ${MCP_CONFIG_FILE}\` brings the team's copy back, or commit the deletion if the team should stop using it`;
+      return userScopeRegistered
+        ? check("PASS", "mcp tools registered", `via global install (user scope, this machine only) — ${restore}`)
+        : check("FAIL", "mcp tools registered", restore);
+    }
     // Finding #13: a missing PROJECT file is not a broken install when the
     // user scope registers the tools — but user scope covers only THIS
     // machine, so the committed-file advice survives as a note instead of

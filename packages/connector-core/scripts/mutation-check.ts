@@ -16761,6 +16761,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/cursor-init.test.ts`,
     because: "the Claude files and .crosscheck.json are written, then the Cursor write fails with EACCES: a half-installed repo",
   },
+  {
+    label: "doctor tells a checkout that deleted the committed .mcp.json to run init",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if ((await isPathTracked(repoRoot, MCP_CONFIG_FILE)) === true) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "init recreates the ignored settings copy and the double wiring the removal just undid, while git restore was the fix",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16835,7 +16843,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
  * PRINTS: packages/cli/test/init-backups.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 3
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
