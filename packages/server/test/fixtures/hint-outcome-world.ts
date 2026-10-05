@@ -7,7 +7,7 @@
  * Mike has received one, pointing at Ken's context. Every id is the one ingest
  * requires (`hintDeliveryId`), and nothing here reaches a real hub.
  */
-import { hintDeliveryId } from "@crosscheck/schema";
+import { deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
 
 import {
   TEST_ADMIN_TOKEN,
@@ -75,7 +75,7 @@ export const deliveryRecord = (
 ): Record<string, unknown> =>
   recordEnvelope(
     "hint_delivery",
-    { id: hintDeliveryId(sessionId, refId), sessionId, refKind, refId, channel, deliveredAt },
+    { id: deliveryIdFor(sessionId, refId, channel), sessionId, refKind, refId, channel, deliveredAt },
     { sessionId },
   );
 

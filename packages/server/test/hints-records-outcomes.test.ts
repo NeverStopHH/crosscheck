@@ -38,3 +38,35 @@ describe("GET /api/hints/candidates — recordsOutcomes", () => {
     expect(data["recordsOutcomes"]).toBe(false);
   });
 });
+
+/** The answer one GET gives, on an enrolled or an unenrolled world. */
+const answerOf = async (enrolled: boolean, path: string): Promise<Record<string, unknown>> => {
+  const world = await createOutcomeWorld({ enrolled });
+  const response = await world.harness.app.request(path, jsonRequest("GET", world.nick.apiKey));
+  return ((await response.json()) as { data: Record<string, unknown> }).data;
+};
+
+const TRIPWIRE = `/api/hints/tripwire?repo=${encodeURIComponent(REPO)}&value=${encodeURIComponent("src/filters.ts")}`;
+const SOLVED = `/api/solved-matches?repo=${encodeURIComponent(REPO)}`;
+
+describe("the tripwire and the briefing's solved pointers say it too (07 §13, D-O3)", () => {
+  test("the tripwire answer carries recordsOutcomes on the call PreToolUse already makes", async () => {
+    // Act
+    const enrolled = await answerOf(true, TRIPWIRE);
+    const unenrolled = await answerOf(false, TRIPWIRE);
+
+    // Assert
+    expect(enrolled["recordsOutcomes"]).toBe(true);
+    expect(unenrolled["recordsOutcomes"]).toBe(false);
+  });
+
+  test("the solved-match listing carries it on the call SessionStart already makes", async () => {
+    // Act
+    const enrolled = await answerOf(true, SOLVED);
+    const unenrolled = await answerOf(false, SOLVED);
+
+    // Assert
+    expect(enrolled["recordsOutcomes"]).toBe(true);
+    expect(unenrolled["recordsOutcomes"]).toBe(false);
+  });
+});

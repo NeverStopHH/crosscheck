@@ -30,7 +30,7 @@ export interface HintHub {
   readonly calls: HintHubCalls;
   readonly latency: HintHubLatency;
   readonly setCandidates: (candidates: readonly unknown[]) => void;
-  /** Whether the candidates answer says this repo records hint outcomes (07 §13); undefined omits it. */
+  /** Whether the candidates, tripwire and solved-match answers say this repo records hint outcomes (07 §13); undefined omits it. */
   readonly setRecordsOutcomes: (recordsOutcomes: boolean | undefined) => void;
   /** Answers to the CALLER's own questions, on the same bounded response. */
   readonly setAnswers: (answers: readonly unknown[]) => void;
@@ -255,12 +255,18 @@ export const startHintHub = (
         lastSolvedFingerprint = new URL(request.url).searchParams.get(
           "fingerprint",
         );
-        return Response.json({ ok: true, data: { matches: solvedMatches } });
+        return Response.json({
+          ok: true,
+          data: { matches: solvedMatches, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+        });
       }
       if (pathname === "/api/hints/tripwire") {
         calls.tripwire += 1;
         await sleep(latency.tripwire);
-        return Response.json({ ok: true, data: { sessions: tripwireSessions } });
+        return Response.json({
+          ok: true,
+          data: { sessions: tripwireSessions, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+        });
       }
       if (pathname === "/api/records") {
         const body = (await request.json()) as { records: readonly unknown[] };

@@ -137,7 +137,10 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       surface: "api-hints-tripwire",
       coverage,
     });
-    return ok(c, { sessions, coverage });
+    // 07 §13 (D-O3): the ask ends with the outcome clause only where the
+    // repo records outcomes — the "stop, Ken built it this way" moment.
+    const settings = await readTeamSettings(deps, parsed.data.repo);
+    return ok(c, { sessions, coverage, recordsOutcomes: settings.pilotEnrolled });
   });
 
   /**

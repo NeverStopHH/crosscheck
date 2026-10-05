@@ -14,7 +14,7 @@
  *     hit drops the whole outcome rather than a redacted derivative.
  */
 import { describe, expect, test } from "bun:test";
-import { hintDeliveryId } from "@crosscheck/schema";
+import { deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
 
 import { hintOutcomes, pilotMarks } from "../src/db/schema.ts";
 import {
@@ -65,6 +65,28 @@ describe("POST /api/hint-outcomes", () => {
       repo: REPO,
       reason: null,
     });
+  });
+
+  test("a tripwire ask and a briefing pointer take an outcome by the ref they printed (D-O3)", async () => {
+    // Arrange — the tripwire ask has its own delivery-id namespace
+    const world = await createOutcomeWorld();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "claim", KEN_CLAIM, "tripwire")],
+    });
+
+    // Act — the tripwire's delivery is named by its own id; the briefing's by the ref it printed
+    const tripwire = await recordOutcome(world, world.nick, {
+      ref: deliveryIdFor(NICK_SESSION, KEN_CLAIM, "tripwire"),
+      outcome: "overrode",
+      reason: "kept my own cache key after the stop",
+    });
+    const briefing = await recordOutcome(world, world.nick, { ref: MIKE_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(tripwire.status).toBe(201);
+    expect(await bodyOf(tripwire)).toMatchObject({ deliveryId: deliveryIdFor(NICK_SESSION, KEN_CLAIM, "tripwire") });
+    expect(briefing.status).toBe(201);
+    expect(await bodyOf(briefing)).toMatchObject({ deliveryId: world.delivered.mikeContext });
   });
 
   test("a delivery id names the delivery directly", async () => {

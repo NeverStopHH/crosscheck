@@ -17,6 +17,7 @@ import {
   recordBriefingDeliveries,
 } from "../src/flows/briefing.ts";
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import { BRIEFING_OUTCOME_CLAUSE } from "../src/hints/outcome-clause.ts";
 import { hintDeliveryId } from "../src/capture/records.ts";
 import { repoKey, sessionSlug } from "../src/config/paths.ts";
 import type { HubContext } from "../src/http/client.ts";
@@ -42,6 +43,8 @@ interface CannedData {
   ghostChecks: readonly unknown[];
   /** The coverage block on /api/absences; undefined = an un-upgraded hub. */
   coverage: unknown;
+  /** 07 §13's flag on /api/solved-matches; undefined = a hub from before it. */
+  recordsOutcomes: boolean | undefined;
 }
 
 /** Minimal canned hub for the six GETs — the hint-hub.ts philosophy. */
@@ -52,6 +55,7 @@ const startBriefingHub = () => {
     matches: [],
     ghostChecks: [],
     coverage: undefined,
+    recordsOutcomes: undefined,
   };
   const server = Bun.serve({
     port: 0,
@@ -64,7 +68,13 @@ const startBriefingHub = () => {
         return Response.json({ ok: true, data: { workContexts: data.workContexts } });
       }
       if (pathname === "/api/solved-matches") {
-        return Response.json({ ok: true, data: { matches: data.matches } });
+        return Response.json({
+          ok: true,
+          data: {
+            matches: data.matches,
+            ...(data.recordsOutcomes === undefined ? {} : { recordsOutcomes: data.recordsOutcomes }),
+          },
+        });
       }
       if (pathname === "/api/ghost-checks") {
         return Response.json({ ok: true, data: { ghostChecks: data.ghostChecks } });
@@ -96,6 +106,7 @@ const paths: string[] = [];
 afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   paths.length = 0;
+  hub.data.recordsOutcomes = undefined;
 });
 afterAll(() => {
   hub.server.stop(true);
@@ -181,6 +192,54 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
 
     expect(assembled.shownSolvedIds).toEqual(["wc_solved_1"]);
     expect(assembled.briefing).toContain("wc_solved_1");
+  });
+
+  test("solved pointers on a repo that records outcomes end the briefing with ONE clause (07 §13)", async () => {
+    // Arrange
+    const home = await makeHome("bf-outcome");
+    const repo = await makeRepo("bf-outcome");
+    paths.push(home, repo);
+    hub.data.sessions = [];
+    hub.data.workContexts = [];
+    hub.data.matches = [solvedMatch("wc_solved_1")];
+    hub.data.recordsOutcomes = true;
+
+    // Act
+    const assembled = await assembleBriefing({
+      hub: hubContext(home),
+      repoId: REPO_ID,
+      repoRoot: repo,
+      selfDeveloperId: SELF,
+      now: NOW,
+    });
+
+    // Assert — the pointer is still shown, and the clause is the last line
+    expect(assembled.shownSolvedIds).toEqual(["wc_solved_1"]);
+    expect(assembled.briefing.split("\n").at(-1)).toBe(BRIEFING_OUTCOME_CLAUSE);
+    expect(assembled.briefing.split("mark_hint_outcome").length).toBe(2);
+  });
+
+  test("no solved pointer shown, or a hub that does not say it records outcomes, means no clause", async () => {
+    // Arrange
+    const home = await makeHome("bf-outcome-none");
+    const repo = await makeRepo("bf-outcome-none");
+    paths.push(home, repo);
+    hub.data.sessions = [presenceWith("Nick", "feat/rotation", "implementing")];
+    hub.data.workContexts = [];
+    hub.data.matches = [];
+    hub.data.recordsOutcomes = true;
+    const input = { hub: hubContext(home), repoId: REPO_ID, repoRoot: repo, selfDeveloperId: SELF, now: NOW };
+
+    // Act
+    const noPointer = await assembleBriefing(input);
+    hub.data.matches = [solvedMatch("wc_solved_1")];
+    hub.data.recordsOutcomes = undefined;
+    const olderHub = await assembleBriefing(input);
+
+    // Assert
+    expect(noPointer.briefing).not.toContain("mark_hint_outcome");
+    expect(olderHub.shownSolvedIds).toEqual(["wc_solved_1"]);
+    expect(olderHub.briefing).not.toContain("mark_hint_outcome");
   });
 
   test("the collectLanded rider sees the fetched contexts and its result rides back", async () => {

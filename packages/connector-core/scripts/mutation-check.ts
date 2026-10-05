@@ -17467,8 +17467,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub says it records outcomes on a repo nobody enrolled",
     file: `${SERVER}/src/routes/hints.ts`,
-    from: "recordsOutcomes: settings.pilotEnrolled",
-    to: "recordsOutcomes: true",
+    from: "    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: true });",
     test: `${SERVER}/test/hints-records-outcomes.test.ts`,
     because: "every hint on an unenrolled repo invites a call the hub then refuses",
   },
@@ -17515,16 +17515,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the outcome clause costs the hint",
     file: `${CORE}/src/hints/outcome-clause.ts`,
-    from: "  return joined.length <= MAX_HINT_TEXT_LENGTH ? joined : hint;",
-    to: "  return joined;",
+    from: "  appendWithin(hint, outcomeClause(refId), MAX_HINT_TEXT_LENGTH);",
+    to: "  appendWithin(hint, outcomeClause(refId), Number.POSITIVE_INFINITY);",
     test: `${CORE}/test/outcome-clause.test.ts`,
     because: "a full hint is pushed past the wire cap by a request to talk about the hint",
   },
   {
     label: "an older hub's candidates answer reads as recording outcomes",
     file: `${CORE}/src/http/hub.ts`,
-    from: "    recordsOutcomes: z.boolean().default(false),",
-    to: "    recordsOutcomes: z.boolean().default(true),",
+    from: "    notices: z.array(z.unknown()).default([]),\n    recordsOutcomes: z.boolean().default(false),",
+    to: "    notices: z.array(z.unknown()).default([]),\n    recordsOutcomes: z.boolean().default(true),",
     test: `${CORE}/test/hint-flow.test.ts`,
     because: "a connector ahead of its hub invites a call the hub answers 404, on every hint",
   },
@@ -17599,6 +17599,63 @@ export const MUTATIONS: readonly Mutation[
     to: "${said.reason}",
     test: `${CORE}/test/render-surface-registry.test.ts`,
     because: "an agent-written sentence reaches the reader as crosscheck's own text, unframed and uncleaned",
+  },
+  // ── 07 §13.9, D-O3: the tripwire and the briefing ─────────────────────────
+  {
+    label: "the tripwire answer says it records outcomes on a repo nobody enrolled",
+    file: `${SERVER}/src/routes/hints.ts`,
+    from: "    return ok(c, { sessions, coverage, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { sessions, coverage, recordsOutcomes: true });",
+    test: `${SERVER}/test/hints-records-outcomes.test.ts`,
+    because: "every stop on an unenrolled repo invites a call the hub then refuses",
+  },
+  {
+    label: "the solved-match listing says it records outcomes on a repo nobody enrolled",
+    file: `${SERVER}/src/routes/solved-matches.ts`,
+    from: "    return ok(c, { matches, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { matches, recordsOutcomes: true });",
+    test: `${SERVER}/test/hints-records-outcomes.test.ts`,
+    because: "every briefing with a solved pointer on an unenrolled repo ends with an invitation the hub refuses",
+  },
+  {
+    label: "an older hub's tripwire answer reads as recording outcomes",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    coverage: z.unknown().optional(),\n    recordsOutcomes: z.boolean().default(false),",
+    to: "    coverage: z.unknown().optional(),\n    recordsOutcomes: z.boolean().default(true),",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because: "a connector ahead of its hub ends every stop with a call the hub answers 404",
+  },
+  {
+    label: "an older hub's solved-match listing reads as recording outcomes",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    matches: z.array(z.unknown()),\n    recordsOutcomes: z.boolean().default(false),",
+    to: "    matches: z.array(z.unknown()),\n    recordsOutcomes: z.boolean().default(true),",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "a connector ahead of its hub ends the briefing with a call the hub answers 404",
+  },
+  {
+    label: "the tripwire ask ends with the outcome clause on a repo that records none",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    won.teammate !== null && found.recordsOutcomes",
+    to: "    won.teammate !== null",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because: "the stop invites a call the hub refuses, on exactly the moment a person is reading it",
+  },
+  {
+    label: "the briefing's outcome clause rides with no solved pointer shown",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "      recordsOutcomes && shownSolvedIds.length > 0 ? withBriefingOutcomeClause(briefing) : briefing,",
+    to: "      recordsOutcomes ? withBriefingOutcomeClause(briefing) : briefing,",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "every briefing ends with a sentence about solved lines it does not contain",
+  },
+  {
+    label: "the briefing's outcome clause pushes it past its cap",
+    file: `${CORE}/src/hints/outcome-clause.ts`,
+    from: "  appendWithin(briefing, BRIEFING_OUTCOME_CLAUSE, MAX_BRIEFING_CHARS);",
+    to: "  appendWithin(briefing, BRIEFING_OUTCOME_CLAUSE, Number.POSITIVE_INFINITY);",
+    test: `${CORE}/test/outcome-clause.test.ts`,
+    because: "a full briefing grows past the bound every teammate's lines are budgeted against",
   },
 ];
 
@@ -17772,12 +17829,12 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
- * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
+ * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
- * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-flow.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
@@ -17843,7 +17900,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/outcome-clause.test.ts 1
+ * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
@@ -17922,7 +17979,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 5
  * PRINTS: packages/server/test/hint-outcomes.test.ts 5
- * PRINTS: packages/server/test/hints-records-outcomes.test.ts 1
+ * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7

@@ -981,13 +981,28 @@ clause and a tally line.
   are not shown to them, though an override's reason is often exactly what the author would want to read.
   On a team of two, "teammates followed your work N times" names the other person by elimination — stated,
   not solved.
-- **D-O3 — the clause on the briefing and the tripwire ask.** Not in this revision: the briefing's solved
-  pointers and the tripwire's ask are deliveries too, but neither response carries `recordsOutcomes` yet.
-  The tool's description names both, so an agent that acted on one can still record it.
+- **D-O3 — the clause on the briefing and the tripwire ask.** *Decided by the owner, built — §13.9.*
 - **D-O4 — an agent recording noise.** Refused (D3 kept). If the owner wants the agent's view of
   off-target hints, it would be a separate, agent-attributed figure, never the label.
 - **D-O5 — outcomes in the team report.** Not added. An aggregated "followed / overrode per 100
   interventions" beside proof 4 is the obvious companion; it is a new figure and wants its own target.
 - **D-O6 — enrolment gate and retention.** Outcomes need `pilot_enrolled`; they have no age limit.
 - **D-O7 — ties.** When an outcome and the noise label carry the same instant, the label stands.
+
+**13.9 — The owner's decisions (2026-10-05).** D-O1, D-O2 (with the team-of-two elimination stated, above),
+D-O4 and D-O7 are kept as written. The rest were decided, and built as follows.
+
+*D-O3 — the tripwire and the briefing are outcome-recordable too.* The tripwire is exactly the "stop, Ken
+built it this way" moment, and both it and the briefing's solved pointers already were deliveries with ids
+(`tripwire` in its own id namespace, written at the claim; `briefing`, one row per solved pointer the text
+really shows), so no new id was needed and `mark_hint_outcome` already resolved them by ref — now pinned by a
+test. What was missing was the invitation. `GET /api/hints/tripwire` and `GET /api/solved-matches` now carry
+`recordsOutcomes` (additive; absent reads as false), and the clause is appended where each channel's budget
+allows: the **tripwire ask** has no cap, so its live half ends with `mark_hint_outcome <their work context>
+records whether you followed it or deliberately went another way.` in both the ask and the notice mode — the
+landed half is no delivery and names nothing; the **briefing** ends with one sentence for all its solved
+pointers — `mark_hint_outcome with the work context id a solved line names records whether you followed it or
+deliberately went another way.` — appended after the rendered text, only when a solved pointer is shown and
+only while the whole briefing still fits `MAX_BRIEFING_CHARS`. Neither costs a round trip: both flags ride the
+call the hook already makes.
 

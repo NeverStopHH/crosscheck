@@ -34,7 +34,11 @@ import {
   renderTripwireReason,
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
-import { withOutcomeClause } from "./hints/outcome-clause.ts";
+import {
+  appendOutcomeClause,
+  withBriefingOutcomeClause,
+  withOutcomeClause,
+} from "./hints/outcome-clause.ts";
 import {
   quotingText,
   renderDiagnosis,
@@ -1172,7 +1176,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "briefing-flow",
     delivery: "unsolicited",
     module: "src/flows/briefing.ts",
-    note: "emits renderBriefing output verbatim (registered above); formatSolvedLine only re-derives lines the rendered text already contains",
+    note: "emits renderBriefing output verbatim, plus withBriefingOutcomeClause (both registered above); formatSolvedLine only re-derives lines the rendered text already contains",
     corpusCoveredBy: ["test/briefing-flow.test.ts"],
   },
   {
@@ -1305,10 +1309,15 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     delivery: "unsolicited",
     module: "src/hints/outcome-clause.ts",
     framing: "framed",
-    render: (payload) =>
-      withOutcomeClause(
-        renderPointerHint({ context: hintContextWith(payload), claimCount: 2, drift: NO_DRIFT, now: NOW }),
-        payload,
-      ),
+    // D-O3: the same clause on the tripwire ask (no cap) and the briefing's
+    // own sentence for its solved pointers (within the briefing's cap).
+    render: (payload) => {
+      const pointer = renderPointerHint({ context: hintContextWith(payload), claimCount: 2, drift: NO_DRIFT, now: NOW });
+      return [
+        withOutcomeClause(pointer, payload),
+        appendOutcomeClause(renderTripwireReason(tripwireSessionWith(payload), "src/app.ts", NOW), payload),
+        withBriefingOutcomeClause(pointer),
+      ].join("\n");
+    },
   },
 ];

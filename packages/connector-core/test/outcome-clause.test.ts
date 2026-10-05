@@ -11,7 +11,14 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_HINT_TEXT_LENGTH } from "@crosscheck/schema";
 
-import { outcomeClause, withOutcomeClause } from "../src/hints/outcome-clause.ts";
+import { MAX_BRIEFING_CHARS } from "../src/constants.ts";
+import {
+  BRIEFING_OUTCOME_CLAUSE,
+  appendOutcomeClause,
+  outcomeClause,
+  withBriefingOutcomeClause,
+  withOutcomeClause,
+} from "../src/hints/outcome-clause.ts";
 
 describe("withOutcomeClause", () => {
   test("appends one factual sentence that names the ref and the tool", () => {
@@ -37,6 +44,29 @@ describe("withOutcomeClause", () => {
   test("silence stays silence", () => {
     // Act & Assert
     expect(withOutcomeClause("", "wc_1")).toBe("");
+  });
+
+  test("the tripwire ask has no cap, so its clause is appended outright — and silence stays silence", () => {
+    // Arrange — a PreToolUse ask is a handful of lines with no wire cap (render.ts EditWarningInput)
+    const long = "x".repeat(MAX_HINT_TEXT_LENGTH * 2);
+
+    // Act
+    const appended = appendOutcomeClause(long, "wc_1");
+
+    // Assert
+    expect(appended.split("\n").at(-1)).toBe(outcomeClause("wc_1"));
+    expect(appendOutcomeClause("", "wc_1")).toBe("");
+  });
+
+  test("the briefing clause rides only while the briefing still fits its own cap", () => {
+    // Arrange
+    const roomy = "crosscheck briefing\n- a solved pointer · get_diagnosis wc_1";
+    const full = "y".repeat(MAX_BRIEFING_CHARS - 10);
+
+    // Act & Assert
+    expect(withBriefingOutcomeClause(roomy).split("\n").at(-1)).toBe(BRIEFING_OUTCOME_CLAUSE);
+    expect(withBriefingOutcomeClause(full)).toBe(full);
+    expect(withBriefingOutcomeClause("")).toBe("");
   });
 
   test("a ref that is not an id cannot carry text into the clause", () => {

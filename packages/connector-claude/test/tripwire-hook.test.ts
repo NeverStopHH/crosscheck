@@ -16,6 +16,7 @@ import type { SessionState } from "@crosscheck/connector-core/state/session-stat
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { readSpoolLines } from "@crosscheck/connector-core/spool/files.ts";
+import { outcomeClause } from "@crosscheck/connector-core/hints/outcome-clause.ts";
 import {
   hintDeliveryId,
   tripwireDeliveryId,
@@ -253,6 +254,51 @@ describe("the tripwire asks — once — on live teammate overlap", () => {
     // Assert — the DECISION field is ask; the word may only ever appear
     // inside sanitized quoted data, never as the decision
     expect(decisionOf(stdout)?.permissionDecision).toBe("ask");
+  });
+});
+
+describe("the ask ends with the outcome clause where the hub records outcomes (07 §13)", () => {
+  test("the ask and the model's context both end with ONE clause naming the teammate's context", async () => {
+    // Arrange — the "stop, Ken built it this way" moment
+    const { repo, hub, env } = await fixture("outcome-ask");
+    hub.setRecordsOutcomes(true);
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+
+    // Assert
+    const decision = decisionOf(stdout);
+    expect(decision?.permissionDecision).toBe("ask");
+    expect(decision?.permissionDecisionReason?.split("\n").at(-1)).toBe(outcomeClause(CANDIDATE_CONTEXT_ID));
+    expect(decision?.additionalContext).toBe(decision?.permissionDecisionReason);
+    expect(decision?.additionalContext?.split("mark_hint_outcome").length).toBe(2);
+  });
+
+  test("notice mode carries the clause too — the model was told", async () => {
+    // Arrange
+    const { repo, hub, env } = await fixture("outcome-notice");
+    hub.setRecordsOutcomes(true);
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), {
+      ...env,
+      CROSSCHECK_TRIPWIRE: "notice",
+    });
+
+    // Assert
+    expect(decisionOf(stdout)?.additionalContext?.split("\n").at(-1)).toBe(outcomeClause(CANDIDATE_CONTEXT_ID));
+  });
+
+  test("a hub that does not say it records outcomes gets the ask without the clause", async () => {
+    // Arrange — the fixture's default: the field absent, as every older hub sends it
+    const { repo, env } = await fixture("outcome-older");
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+
+    // Assert
+    expect(decisionOf(stdout)?.permissionDecision).toBe("ask");
+    expect(stdout).not.toContain("mark_hint_outcome");
   });
 });
 
