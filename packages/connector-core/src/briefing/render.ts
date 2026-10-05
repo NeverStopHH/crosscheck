@@ -27,6 +27,7 @@ import {
 } from "../constants.ts";
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
+import { isDetachedBranch } from "../git/detached-branch.ts";
 import { repoLabel } from "../git/repo-label.ts";
 import {
   NO_AXES_FROM_HUB,
@@ -151,6 +152,13 @@ interface Section {
   readonly more?: (count: number) => string;
 }
 
+/**
+ * The ONE topic every detached-HEAD session of this repo shares, on every
+ * teammate listing. Keyed by its sha, each worktree session would be a topic
+ * of its own — exactly the shape the topic grouping exists to fold.
+ */
+export const DETACHED_TOPIC = "detached";
+
 /** A live session as the topic grouping reads it (briefing/topic-group.ts). */
 export interface PresenceTopicRow extends TopicRow {
   readonly entry: PresenceEntry;
@@ -185,7 +193,7 @@ const toPresenceRow = (
 ): PresenceTopicRow | null => {
   const ageMs = ageMsFrom(entry.lastHeartbeatAt, now);
   const name = clean(entry.developerName);
-  const branch = clean(entry.branch);
+  const branch = isDetachedBranch(entry.branch) ? DETACHED_TOPIC : clean(entry.branch);
   if (ageMs === null || name.length === 0 || branch.length === 0) {
     return null;
   }
@@ -432,6 +440,8 @@ const hasRecordedWork = (context: WorkContextEntry): boolean =>
 /** A work context as the topic grouping reads it (briefing/topic-group.ts). */
 interface ContextTopicRow extends TopicRow {
   readonly context: WorkContextEntry;
+  /** The topic its TITLE names (titleTopic) — the label when a topic agrees. */
+  readonly titleLabel: string;
 }
 
 /**
@@ -451,12 +461,30 @@ const titleTopic = (title: string, repoId: string): string => {
   return sanitizeUntrusted(head);
 };
 
+/**
+ * The topic a work context belongs to: its session's OWN branch, which the
+ * hub sends with the row (server services/diagnosis.ts) — a host-supplied
+ * title ("Fix the login 500s") does not carry it, so free-form titles on one
+ * branch would otherwise be separate topics. The title is the fallback only
+ * where that branch says nothing: an older hub that sends none, or a detached
+ * HEAD, whose session-start title may still have resolved the branch it sits
+ * on (flows/work-context-title.ts). Whatever is still detached after that is
+ * the one DETACHED_TOPIC, never keyed by sha.
+ */
+const contextTopic = (context: WorkContextEntry, repoId: string): string => {
+  if (context.branch !== undefined && !isDetachedBranch(context.branch)) {
+    return sanitizeUntrusted(context.branch);
+  }
+  const fromTitle = titleTopic(context.title, repoId);
+  return isDetachedBranch(fromTitle) ? DETACHED_TOPIC : fromTitle;
+};
+
 const toContextRow = (
   context: WorkContextEntry,
   input: BriefingInput,
 ): ContextTopicRow | null => {
   const ageMs = ageMsFrom(contextTimestamp(context), input.now);
-  const topic = titleTopic(context.title, input.repoId);
+  const topic = contextTopic(context, input.repoId);
   if (
     ageMs === null ||
     ageMs > CONTEXT_MAX_AGE_DAYS * MS_PER_DAY ||
@@ -473,8 +501,25 @@ const toContextRow = (
     status: sanitizeUntrusted(context.status),
     ageMs,
     hasRecordedWork: hasRecordedWork(context),
+    titleLabel: titleTopic(context.title, input.repoId),
     context,
   };
+};
+
+/**
+ * What a topic is CALLED on its line, which is not always what it is KEYED
+ * by. When every session in it says the same title, that title — a host's
+ * own session title ("Login 500s on staging") tells a reader more than the
+ * branch it runs on, and a fallback title IS the branch. When they disagree,
+ * the branch they were grouped by: never one session's title speaking for
+ * sessions that said something else.
+ */
+const topicLabel = (topic: Topic<ContextTopicRow>): string => {
+  const titles = new Set(topic.rows.map((row) => row.titleLabel));
+  const [shared] = titles;
+  return titles.size === 1 && shared !== undefined && shared.length > 0
+    ? shared
+    : topic.label;
 };
 
 /**
@@ -539,7 +584,7 @@ const singleTopicEntry = (
 ): string => {
   const sessions =
     topic.sessions === 1 ? "" : `${countOf(topic.sessions, "session", false)}, `;
-  return framedTopicLine(`- ${author}, ${sessions}${topicFacts(topic)}`, topic.label);
+  return framedTopicLine(`- ${author}, ${sessions}${topicFacts(topic)}`, topicLabel(topic));
 };
 
 /**
@@ -559,7 +604,7 @@ const topicListEntry = (
   const topicLines = shown.flatMap((topic, index) => {
     const line = framedTopicLine(
       `  - ${countOf(topic.sessions, "session", atLeast)}, ${topicFacts(topic)}`,
-      topic.label,
+      topicLabel(topic),
     );
     return index === 0 && leadIntent !== null ? [line, `    ${leadIntent}`] : [line];
   });

@@ -62,6 +62,18 @@ describe("a teammate's live sessions, grouped by topic", () => {
     ]);
   });
 
+  test("live sessions on a detached HEAD are one branch, never one per sha", () => {
+    const lines = presenceLines([
+      live(0, "detached@abc1234"),
+      live(1, "detached@def5678"),
+      live(2, "HEAD"),
+    ]);
+
+    expect(lines).toEqual([
+      "- Nick · branch detached · status analyzing · heartbeat 10s ago",
+    ]);
+  });
+
   test("the status shown is the highest-ranked one on the freshest branch", () => {
     // The freshest session on feat/x is analyzing; an older one on the same
     // branch is implementing. A session on another branch says testing, and

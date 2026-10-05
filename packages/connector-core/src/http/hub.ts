@@ -145,6 +145,13 @@ export const WorkContextEntrySchema = z.looseObject({
    * undercount that hub always had, never a fabricated one.
    */
   developerContextCount: z.number().int().min(0).optional().catch(undefined),
+  /**
+   * The owning session's own branch (server services/diagnosis.ts) — the key
+   * the briefing groups a teammate's work by, because a host-supplied title
+   * does not carry it. Tolerant: an older hub sends none, and the briefing
+   * falls back to the title (briefing/render.ts contextTopic).
+   */
+  branch: z.string().min(1).optional().catch(undefined),
 });
 
 export type WorkContextEntry = z.infer<typeof WorkContextEntrySchema>;

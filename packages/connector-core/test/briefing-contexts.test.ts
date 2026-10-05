@@ -203,6 +203,65 @@ describe("a teammate's work is grouped by topic", () => {
   });
 });
 
+describe("the topic is the session's own branch when the hub sends it", () => {
+  test("distinct free-form titles on one branch fold into one topic", () => {
+    // Host-supplied session titles say what each session was asked to do;
+    // the branch is what the three of them are working on.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "feat/auth", title: "Fix the login 500s", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "feat/auth", title: "Investigate the refresh path", createdAt: minutesAgo(6) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "feat/auth", title: "Review the token rotation", createdAt: minutesAgo(9) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 3 sessions, 1m ago, status analyzing: «feat/auth»",
+    ]);
+  });
+
+  test("a topic whose sessions all share one host title is called by that title", () => {
+    // The branch is the KEY; the line still says what the sessions say when
+    // they agree — "Login 500s on staging" tells a reader more than "main".
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "main", title: "Login 500s on staging", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "main", title: "Login 500s on staging", createdAt: minutesAgo(7) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 1m ago, status analyzing: «Login 500s on staging»",
+    ]);
+  });
+
+  test("sessions on a detached HEAD are one topic for the repo, never one per sha", () => {
+    // Worktree sessions sit on detached HEADs; grouping by sha would make
+    // every one of them its own topic. An older hub's row without a branch
+    // falls back to its title, and a detached title is never keyed by sha either.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached@abc1234", title: "detached@abc1234 · Fix flaky test @ api", createdAt: minutesAgo(2) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached@def5678", title: "detached@def5678 · Try the other fix @ api", createdAt: minutesAgo(4) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "HEAD", title: "HEAD @ api", createdAt: minutesAgo(6) }),
+      context({ id: "wc_4", sessionId: "cc_4", title: "detached@0a1b2c3 · Older hub row @ api", createdAt: minutesAgo(8) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 4 sessions, 2m ago, status analyzing: «detached»",
+    ]);
+  });
+
+  test("a detached session whose title names the branch it sits on groups under that branch", () => {
+    // The session-start title builder resolves a detached worktree to the
+    // branch whose tip it sits on (flows/work-context-title.ts); that title
+    // is better than "detached" and is the fallback the session itself chose.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "feat/x", title: "Some host title", createdAt: minutesAgo(2) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached@abc1234", title: "feat/x @ api", createdAt: minutesAgo(5) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 2m ago, status analyzing: «feat/x»",
+    ]);
+  });
+});
+
 describe("the status a topic shows", () => {
   test("the most advanced status in a topic is the one shown", () => {
     // The freshest session on the branch is still analyzing; an older one on

@@ -12,12 +12,15 @@
  * 471 contexts, 470 of them `analyzing`, many under the identical title minutes
  * apart. His line read "469 other pieces of work": true, and useless.
  *
- * A TOPIC IS WHAT A READER RECOGNISES: the branch, which is what the honest
- * fallback title `<branch> @ <repo>` carries (flows/register-session.ts) and
- * what a presence row names outright. The caller derives the label; this
- * module only keys on it. Many sessions on one branch are ONE topic with a
- * session count and its newest activity, so identical titles minutes apart
- * collapse by construction.
+ * A TOPIC IS WHAT A READER RECOGNISES: the session's own branch — sent with
+ * every work-context row (server services/diagnosis.ts) and named by every
+ * presence row — so free-form titles on one branch are one topic. The title
+ * (`<branch> @ <repo>`, flows/register-session.ts) is the fallback only where
+ * the branch says nothing: an older hub that sends none, or a detached HEAD;
+ * and every detached session of a repo shares ONE topic, never one per sha.
+ * The caller derives the label (briefing/render.ts); this module only keys on
+ * it. Many sessions on one branch are ONE topic with a session count and its
+ * newest activity, so identical titles minutes apart collapse by construction.
  *
  * SUBAGENTS ARE GROUPED BY BRANCH ONLY, because nothing records a parent: an
  * `agent_sessions` row carries no parent or subagent field, and 1.0 spec 00

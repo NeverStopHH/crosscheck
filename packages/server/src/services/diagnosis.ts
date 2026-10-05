@@ -103,6 +103,13 @@ export interface WorkContextListEntry extends WorkContextView {
    * teammate is a floor and it says "at least" (briefing/render.ts).
    */
   readonly developerContextCount: number;
+  /**
+   * The owning session's branch, as its connector registered it — the key
+   * the connector groups a teammate's work by. A host-supplied title ("Fix
+   * the login 500s") does not carry it, so free-form titles on one branch
+   * would otherwise read as separate pieces of work.
+   */
+  readonly branch: string;
 }
 
 export interface WorkContextListWindow {
@@ -389,6 +396,7 @@ export const listWorkContextsByRepo = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
+      branch: agentSessions.branch,
       // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
       // to carry: the join multiplied every context by its claims (100,000
       // rows aggregated to answer about 10,000) and could only ever count ONE
@@ -445,6 +453,7 @@ export const listWorkContextsByRepo = async (
     claimCount: row.claimCount,
     targetCount: row.targetCount,
     developerContextCount: row.developerContextCount,
+    branch: row.branch,
   }));
 };
 

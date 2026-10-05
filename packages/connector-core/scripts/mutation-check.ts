@@ -17562,6 +17562,89 @@ export const MUTATIONS: readonly Mutation[
       "a stuck session disappears behind a sibling that is testing, and the " +
       "one fact a teammate most needs about the topic is not on the line",
   },
+  {
+    // Host-supplied session titles do not carry the branch; the session row does.
+    label: "the briefing groups by title even when the hub sent the session's branch",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  if (context.branch !== undefined && !isDetachedBranch(context.branch)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "three sessions on one branch with three free-form titles read as three " +
+      "pieces of work, the unreadable count this grouping exists to fold",
+  },
+  {
+    label: "detached sessions are one topic per sha again",
+    file: `${CORE}/src/git/detached-branch.ts`,
+    from: "  branch === UNNAMED_HEAD_BRANCH || branch.startsWith(DETACHED_BRANCH_PREFIX);",
+    to: "  false;",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "every worktree session on a detached HEAD is a topic of its own, and a " +
+      "teammate's line lists shas nobody can recognise",
+  },
+  {
+    label: "a detached title is keyed by its sha",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  return isDetachedBranch(fromTitle) ? DETACHED_TOPIC : fromTitle;",
+    to: "  return fromTitle;",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "an older hub's detached rows, and detached sessions whose title could " +
+      "not name a branch, split into one `detached@<sha> · subject` topic each",
+  },
+  {
+    label: "presence keys a detached session by its sha",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const branch = isDetachedBranch(entry.branch) ? DETACHED_TOPIC : clean(entry.branch);",
+    to: "  const branch = clean(entry.branch);",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "a teammate live in three detached worktrees prints three shas as three " +
+      "branches on the presence line",
+  },
+  {
+    label: "the hub drops the session's branch from the listing",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    branch: row.branch,\n",
+    to: "",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "the connector has only the titles to group by, and free-form titles on " +
+      "one branch read as separate pieces of work",
+  },
+  {
+    // The session branch is a new untrusted slot on the briefing: whatever a
+    // teammate's connector registered, a hostile hub can rewrite.
+    label: "the session's branch reaches the briefing unsanitized",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    return sanitizeUntrusted(context.branch);",
+    to: "    return context.branch;",
+    test: `${CORE}/test/injection-corpus.test.ts`,
+    because:
+      "a branch carrying « » or a newline closes the topic frame early and " +
+      "mints a line of its own in the reader's context",
+  },
+  {
+    label: "a topic is called by its branch even when every session shares one title",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  return titles.size === 1 && shared !== undefined && shared.length > 0",
+    to: "  return false",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "Alice's one session titled «Login 500s on staging» reads as «main», and " +
+      "the briefing drops the one fact that says what she is doing",
+  },
+  {
+    label: "one session's title speaks for a topic whose sessions disagree",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const titles = new Set(topic.rows.map((row) => row.titleLabel));",
+    to: "  const titles = new Set(topic.rows.slice(0, 1).map((row) => row.titleLabel));",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "three subagents with three different tasks on one branch are labelled " +
+      "by whichever spoke first, as if the others were doing that too",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17739,9 +17822,9 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
- * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 12
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 17
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
- * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 2
+ * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
@@ -17779,7 +17862,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
- * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
+ * PRINTS: packages/connector-core/test/injection-corpus.test.ts 7
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
@@ -17937,7 +18020,7 @@ interface Outcome {
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
- * PRINTS: packages/server/test/work-context-listing.test.ts 5
+ * PRINTS: packages/server/test/work-context-listing.test.ts 6
  */
 const greenGuards = new Map<string, boolean>();
 

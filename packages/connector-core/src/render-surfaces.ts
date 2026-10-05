@@ -682,7 +682,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
             branch,
           }),
         ),
-        workContexts: [payload, payload, "feat/a", "feat/b", "feat/c", "feat/d"].map(
+        // The first two rows carry the payload as their SESSION branch — the
+        // key a topic is grouped by when the hub sends one — under two
+        // different titles, so the topic is CALLED by that branch; the rest
+        // take the older hub's title fallback.
+        workContexts: [payload, "A second session", "feat/a", "feat/b", "feat/c", "feat/d"].map(
           (title, index) => ({
             ...workContextWith(payload),
             id: `wc_topics_${String(index)}`,
@@ -690,6 +694,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
             title: `${title} @ api`,
             status: payload,
             developerContextCount: 9,
+            ...(index < 2 ? { branch: payload } : {}),
           }),
         ),
         now: NOW,

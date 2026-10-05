@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1552
+    # PRINTS: 1560
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -245,7 +245,7 @@ jobs:
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 24
+    # PRINTS: briefing/render.ts 30
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: briefing/topic-group.ts 8
     # PRINTS: capture/commit-evidence.ts 1
@@ -285,6 +285,7 @@ jobs:
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
     # PRINTS: git/claim-drift.ts 5
+    # PRINTS: git/detached-branch.ts 1
     # PRINTS: git/fix-diff.ts 7
     # PRINTS: git/git.ts 4
     # PRINTS: git/pin-paths.ts 8
@@ -414,7 +415,7 @@ jobs:
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developer-settings.ts 1
     # PRINTS: packages/server/src/services/developers.ts 13
-    # PRINTS: packages/server/src/services/diagnosis.ts 8
+    # PRINTS: packages/server/src/services/diagnosis.ts 9
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
@@ -507,11 +508,12 @@ jobs:
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
     # PRINTS: derive.ts 2
+    # PRINTS: detached-branch.ts 1
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developer-settings.ts 1
     # PRINTS: developers.ts 13
-    # PRINTS: diagnosis.ts 8
+    # PRINTS: diagnosis.ts 9
     # PRINTS: doctor-global.ts 4
     # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
@@ -636,7 +638,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 88
+    # PRINTS: render.ts 94
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9

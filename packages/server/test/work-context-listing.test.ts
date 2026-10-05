@@ -35,6 +35,8 @@ interface ListEntry {
   readonly targetCount: number;
   readonly sessionId: string;
   readonly developerContextCount: number;
+  readonly title: string;
+  readonly branch: string;
 }
 
 const list = async (
@@ -439,5 +441,27 @@ describe("GET /api/work-contexts says when its bound cut a teammate short", () =
     // context the reader was never going to see as missing.
     expect(windowed.map((row) => row.developerContextCount)).toEqual([1]);
     expect(everything.map((row) => row.developerContextCount)).toEqual([2, 2]);
+  });
+});
+
+describe("GET /api/work-contexts names each context's branch", () => {
+  test("every row carries its session's own branch, whatever its title says", async () => {
+    // The connector groups a teammate's work by branch. A host-supplied title
+    // ("Fix the login 500s") does not carry it, so the session row has to.
+    const setup = await createHarnessWithSession({ branch: "feat/auth" });
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ title: "Fix the login 500s on staging" }),
+      ),
+    );
+
+    const rows = await list(setup, `${REPO_QUERY}&since=14d`);
+
+    expect(rows.map((row) => [row.title, row.branch])).toEqual([
+      ["Fix the login 500s on staging", "feat/auth"],
+    ]);
   });
 });

@@ -75,7 +75,7 @@
  *
  *    THE CAP IS THE ONE INVARIANT THE CORPUS CANNOT EXERCISE, and saying so is
  *    the point. One payload in one slot is three lines of briefing: the longest
- *    all 57 payloads across all 10 slots can produce is 684 characters against
+ *    all 61 payloads across all 11 slots can produce is 684 characters against
  *    the 2200 cap, 1516 short of ever reaching the assertion. So until the
  *    `saturating briefings` block below existed, the per-line budget in
  *    render.ts's appendSection could be deleted with the whole suite green —
@@ -99,7 +99,7 @@
  * PRINTS: 61
  *
  * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
- * PRINTS: 10
+ * PRINTS: 11
  *
  * VERIFY: grep -c '^const LONGEST_CORPUS_BRIEFING = 684;$' packages/connector-core/test/injection-corpus.test.ts
  * PRINTS: 1
@@ -292,6 +292,7 @@ const SPACED_SEPARATORS: readonly (readonly [string, number])[] = [
  */
 type Slot =
   | "workContextTitle"
+  | "workContextBranch"
   | "workContextIntent"
   | "presenceName"
   | "presenceIntent"
@@ -304,6 +305,7 @@ type Slot =
 
 const SLOTS: readonly Slot[] = [
   "workContextTitle",
+  "workContextBranch",
   "workContextIntent",
   "presenceName",
   "presenceIntent",
@@ -330,9 +332,10 @@ const intentWith = (slot: Slot, wanted: Slot, payload: string) => ({
 });
 
 /**
- * The slots the renderer prints WITHOUT the « » frame. `workContextTitle` and
- * the two intent slots are the framed ones, and `repoId` goes in the header
- * rather than a bullet.
+ * The slots the renderer prints WITHOUT the « » frame. `workContextTitle`,
+ * `workContextBranch` (the session branch a topic is keyed by) and the two
+ * intent slots are the framed ones, and `repoId` goes in the header rather
+ * than a bullet.
  * A semantic forgery needs no special character, so it is reachable from every
  * slot in this list — which is why the known-not-caught tests loop over it
  * rather than naming a single field.
@@ -384,8 +387,14 @@ const contextAuthorFor = (slot: Slot, payload: string): string | undefined => {
   return slot === "contextAuthorFallback" ? undefined : "Robin";
 };
 
+/**
+ * Only the `workContextBranch` slot sends the session's branch: every other
+ * slot attacks the row an older hub sends, whose topic falls back to the
+ * TITLE — so the title slot stays the one the topic label prints.
+ */
 const attackerContext = (slot: Slot, payload: string): WorkContextEntry => ({
   id: "wc_attacker",
+  ...(slot === "workContextBranch" ? { branch: payload } : {}),
   developerId: "dev_attacker",
   developerName: contextAuthorFor(slot, payload),
   title: slot === "workContextTitle" ? payload : "Rate limiter drops burst traffic",
@@ -420,6 +429,9 @@ const renderTopicsWith = (slot: Slot, payload: string): string => {
     id: `wc_clean_${String(index)}`,
     sessionId: `cc_clean_${String(index)}`,
     title: `Importer retries forever ${String(index)}`,
+    // Their own branches, so a payload planted in the branch slot stays on
+    // the planted rows and these remain topics of their own.
+    branch: `feat/importer-${String(index)}`,
   }));
   return renderBriefing({
     repoId: slot === "repoId" ? payload : REPO_ID,
@@ -427,7 +439,16 @@ const renderTopicsWith = (slot: Slot, payload: string): string => {
     presence: [CLEAN_TEAMMATE, attackerPresence(slot, payload)],
     workContexts: [
       { ...planted, sessionId: "cc_attacker_1" },
-      { ...planted, id: "wc_attacker_2", sessionId: "cc_attacker_2" },
+      {
+        ...planted,
+        id: "wc_attacker_2",
+        sessionId: "cc_attacker_2",
+        // Under the branch slot the two sessions disagree on their title, so
+        // the topic is CALLED by its branch and the payload is what prints.
+        ...(slot === "workContextBranch"
+          ? { title: "A second session on the same branch" }
+          : {}),
+      },
       ...clean,
     ].map((row) => ({ ...row, developerContextCount: 9 })),
     now: NOW,
