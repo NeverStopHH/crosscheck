@@ -15463,9 +15463,11 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a re-register keeps the stronger reason of one state",
-    file: `${SCHEMA}/src/causal-guarantees.ts`,
-    from: "  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
-    to: "  stateOfOrderReason(candidate) !== stateOfOrderReason(held) &&\n  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    // The re-register's weaken moved into SQL with review L2; the schema fold
+    // this entry first mutated only folds one declaration (the entry above).
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "sql`${reasonRankSql(sessionCausalGuarantees.reason)} > ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`",
+    to: "sql`${reasonRankSql(sessionCausalGuarantees.reason)} < ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a session that re-registers with derived_after_the_fact keeps reading ambiguous_session_possible",
   },
