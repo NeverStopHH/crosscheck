@@ -17,7 +17,11 @@
  * connector too old to know about it cannot print the branch anyway.
  */
 import { and, eq, ne } from "drizzle-orm";
-import { WITHHELD_TITLE, isFallbackTitle } from "@crosscheck/schema";
+import {
+  LOCATION_WITHHELD,
+  WITHHELD_TITLE,
+  isFallbackTitle,
+} from "@crosscheck/schema";
 
 import { developers } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
@@ -78,6 +82,17 @@ export const commitSeenBy = (
  * commits on the default branch stay, so the claim is still judged; this
  * reader just cannot revalidate it against their own clone.
  */
+/**
+ * A live field the wire demands as a non-empty string — a session's branch,
+ * its last-active instant — as this viewer may read it: LOCATION_WITHHELD
+ * for a hidden owner, which every shipped reader still parses.
+ */
+export const locationSeenBy = (
+  hidden: HiddenLocations,
+  ownerDeveloperId: string,
+  value: string,
+): string => (hidden.has(ownerDeveloperId) ? LOCATION_WITHHELD : value);
+
 export const validitySeenBy = <V extends { readonly observedAtCommit: string | null }>(
   hidden: HiddenLocations,
   authorDeveloperId: string,

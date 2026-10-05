@@ -53,7 +53,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import { locationHiddenFrom, locationSeenBy, titleSeenBy } from "./live-location.ts";
 import { readPin } from "./pins.ts";
 import { explanationTimingOf } from "./intent-ledger.ts";
 import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
@@ -603,11 +603,13 @@ export const suspectSessions = async (
       return {
         sessionId: row.sessionId,
         agentKind: row.agentKind,
-        branch: row.branch,
+        // The row stays — it is the collision — and where its author is now,
+        // and when they last were, goes (services/live-location.ts).
+        branch: locationSeenBy(hidden, row.developerId, row.branch),
         workContextId: row.workContextId,
         workContextTitle: titleSeenBy(hidden, row.developerId, row.workContextTitle, input.repo),
         intent: row.intent,
-        lastActiveAt: row.lastActiveAt.toISOString(),
+        lastActiveAt: locationSeenBy(hidden, row.developerId, row.lastActiveAt.toISOString()),
         overlap: row.overlap,
         authorTouches,
         lift: row.overlap / authorTouches,

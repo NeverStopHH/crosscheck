@@ -299,6 +299,7 @@ export {
 
 export { containsSecret } from "./secret-scan.ts";
 export {
+  LOCATION_WITHHELD,
   WITHHELD_TITLE,
   isFallbackTitle,
   repoLabel,

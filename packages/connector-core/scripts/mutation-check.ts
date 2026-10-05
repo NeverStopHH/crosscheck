@@ -3942,8 +3942,8 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/sessions.ts`,
     from:
       "        lt(agentSessions.lastHeartbeatAt, cutoff)," + "\n" +
-      "        ...(options.mine === true",
-    to: "        ...(options.mine === true",
+      "        // Another developer's row with its branch, commit and heartbeat",
+    to: "        // Another developer's row with its branch, commit and heartbeat",
     test: `${SERVER}/test/session-reaper.test.ts`,
     because:
       "doctor's `unclosed sessions` line WARNs from a developer's first " +
@@ -17765,6 +17765,37 @@ export const MUTATIONS: readonly Mutation[
       "get_diagnosis tells the reader a teammate's claim was never bound to the " +
       "code when it was, and its commit was only withheld from them",
   },
+  {
+    // Review M3: suspect keeps the colliding row and drops its live fields.
+    label: "suspect names an opted-out teammate's live branch and last activity",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "): string => (hidden.has(ownerDeveloperId) ? LOCATION_WITHHELD : value);",
+    to: "): string => value;",
+    test: `${SERVER}/test/presence-optout.test.ts`,
+    because:
+      "GET /api/suspect with the path-only falsifier hands any colleague the " +
+      "branch an opted-out developer is on and when they were last there",
+  },
+  {
+    label: "the open-session listing shows an opted-out teammate's live session",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "          : visiblePresenceCondition(developerId, agentSessions.developerId),",
+    to: "          : undefined,",
+    test: `${SERVER}/test/presence-optout.test.ts`,
+    because:
+      "GET /api/sessions?open=1 lists every developer's branch and heartbeat, " +
+      "the presence block's content under another route",
+  },
+  {
+    label: "a withheld last-active reads as a hub that lost it",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from: "  iso === LOCATION_WITHHELD ? LOCATION_WITHHELD : ageOf(iso, now);",
+    to: "  ageOf(iso, now);",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "crosscheck suspect prints `last active unknown` for a teammate who chose " +
+      "not to share it, so the reader distrusts the hub instead",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17858,7 +17889,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 5
+ * PRINTS: packages/cli/test/pins-cli.test.ts 6
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
@@ -18107,6 +18138,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
  * PRINTS: packages/server/test/pilot-sessions.test.ts 11
  * PRINTS: packages/server/test/pins.test.ts 4
+ * PRINTS: packages/server/test/presence-optout.test.ts 2
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2

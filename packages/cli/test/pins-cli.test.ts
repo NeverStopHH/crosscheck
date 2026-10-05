@@ -26,7 +26,7 @@ import type { Db } from "@crosscheck/server";
 
 import { sweepPins } from "@crosscheck/connector-core/http/hub.ts";
 import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
-import { MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
+import { LOCATION_WITHHELD, MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
 import { EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import type { PinEntry as PinRow } from "@crosscheck/connector-core/http/hub.ts";
@@ -524,6 +524,54 @@ describe("crosscheck suspect at scale", () => {
     // Assert
     expect(rendered).toContain("305 session(s) touched this surface");
     expect(rendered).toContain("scored 50 of 305");
+  });
+
+  test("a candidate whose author opted out says its location is withheld, not unknown", () => {
+    // Arrange: the hub keeps the row — it is the collision — and withholds
+    // where its author is now and when they last were (server
+    // services/live-location.ts). "unknown" would read as a hub that lost it.
+    const view = {
+      outcome: "no_separation",
+      falsifier: { kind: "recorded_break", at: new Date().toISOString(), check: null },
+      scope: {
+        kind: "pin",
+        pinId: "pin_playback",
+        surface: "Play button plays/pauses",
+        files: [PINNED],
+        missingFiles: [],
+        rewrittenPaths: 0,
+        rewrittenAt: null,
+      },
+      totals: { sessionsTouching: 1, sessionsScored: 1, windowDays: 14 },
+      attribution: "sessions",
+      coverage: UNKNOWN_COVERAGE,
+      verdict: null,
+      candidates: [
+        {
+          sessionId: "cc_one",
+          agentKind: "claude-code",
+          branch: LOCATION_WITHHELD,
+          workContextId: "wc_one",
+          workContextTitle: "Playback transport rework",
+          intent: null,
+          lastActiveAt: LOCATION_WITHHELD,
+          overlap: 2,
+          authorTouches: 8,
+          lift: 0.25,
+          sources: ["tool_edit"],
+          intentTiming: null,
+          readerMuted: false,
+          isSelf: false,
+        },
+      ],
+    };
+
+    // Act
+    const rendered = renderSuspect(view, new Date());
+
+    // Assert
+    expect(rendered).toContain(`last active ${LOCATION_WITHHELD}`);
+    expect(rendered).not.toContain("last active unknown");
   });
 
   test("the intent line says whether the plan preceded the change", () => {

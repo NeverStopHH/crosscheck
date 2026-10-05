@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1571
+    # PRINTS: 1574
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -198,7 +198,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 13
-    # PRINTS: packages/cli/src/cli/suspect-render.ts 3
+    # PRINTS: packages/cli/src/cli/suspect-render.ts 4
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
     # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 2
@@ -423,7 +423,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
-    # PRINTS: packages/server/src/services/live-location.ts 3
+    # PRINTS: packages/server/src/services/live-location.ts 4
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
@@ -443,7 +443,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 11
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 13
+    # PRINTS: packages/server/src/services/sessions.ts 14
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
@@ -583,7 +583,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
-    # PRINTS: live-location.ts 3
+    # PRINTS: live-location.ts 4
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
@@ -664,7 +664,7 @@ jobs:
     # PRINTS: session-start.ts 6
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 15
+    # PRINTS: sessions.ts 16
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
@@ -680,7 +680,7 @@ jobs:
     # PRINTS: status.ts 13
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
-    # PRINTS: suspect-render.ts 3
+    # PRINTS: suspect-render.ts 4
     # PRINTS: suspect.ts 7
     # PRINTS: sweep.ts 3
     # PRINTS: target-paths.ts 1

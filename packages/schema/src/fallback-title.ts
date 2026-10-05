@@ -41,3 +41,13 @@ export const isFallbackTitle = (title: string, repoId: string): boolean => {
  * would treat as anything but a label.
  */
 export const WITHHELD_TITLE = "untitled work";
+
+/**
+ * What a withheld branch or last-active time reads as where the wire demands
+ * a non-empty string (the suspect candidate's `branch` and `lastActiveAt`,
+ * read by every shipped CLI through `z.string().min(1)`). It carries a space,
+ * which git does not allow in a branch name, so no real branch can print the
+ * same; an older CLI prints "branch withheld (presence opt-out) · last active
+ * unknown" — honest, and nothing it could have learned.
+ */
+export const LOCATION_WITHHELD = "withheld (presence opt-out)";
