@@ -154,25 +154,39 @@ const coolDown = (input: DeliverDraftNudgeInput): Promise<boolean> =>
     draftNudgeRetryAt: new Date(input.now.getTime() + DRAFT_NUDGE_RETRY_COOLDOWN_MS).toISOString(),
   }));
 
-/** "" whenever nothing is owed or the slot was not this caller's to spend. */
-export const deliverDraftNudge = async (input: DeliverDraftNudgeInput): Promise<string> => {
+/**
+ * A nudge ready to show, and the act that spends the slot on it — kept apart
+ * so a caller whose budget can abandon the work (the ACP proxy races it and
+ * lets the loser run on) spends the slot only once the text is certainly
+ * going out. `text` "" means nothing is due; committing then spends the slot
+ * as `nothing_due`, which shows nothing and so can never be lost.
+ */
+export interface PreparedDraftNudge {
+  readonly text: string;
+  readonly commit: () => Promise<boolean>;
+}
+
+/** Null whenever nothing is owed, nothing can be fetched now, or a due draft is unnameable. */
+export const prepareDraftNudge = async (
+  input: DeliverDraftNudgeInput,
+): Promise<PreparedDraftNudge | null> => {
   if (!input.personReads) {
-    return "";
+    return null;
   }
   const state = await readSessionState(input.home, input.hostSessionKey);
   if (!isDraftNudgeOpen(state) || isCoolingDown(state, input.now) || (await spentEarlier(input))) {
-    return "";
+    return null;
   }
   const fetched = await fetchBacklog(input);
   if (fetched.kind !== "backlog") {
     if (fetched.kind === "failed") {
       await coolDown(input);
     }
-    return "";
+    return null;
   }
   const text = renderDraftNudge({ backlog: fetched.backlog, now: input.now });
   if (text.length > 0) {
-    return (await claimSlot(input, "delivered")) ? text : "";
+    return { text, commit: () => claimSlot(input, "delivered") };
   }
   // NEVER SPENT WHILE A DUE DRAFT EXISTS: a draft this fetch could not name
   // (the oldest-first page failed, or the hub could not say) is still owed a
@@ -181,8 +195,20 @@ export const deliverDraftNudge = async (input: DeliverDraftNudgeInput): Promise<
     if (fetched.oldestFailed) {
       await coolDown(input);
     }
+    return null;
+  }
+  return { text: "", commit: () => claimSlot(input, "nothing_due") };
+};
+
+/**
+ * Prepare and spend at once, for a caller that emits what this returns
+ * before anything can abandon it (a hook's own handler). "" whenever nothing
+ * is owed or the slot was not this caller's to spend.
+ */
+export const deliverDraftNudge = async (input: DeliverDraftNudgeInput): Promise<string> => {
+  const prepared = await prepareDraftNudge(input);
+  if (prepared === null) {
     return "";
   }
-  await claimSlot(input, "nothing_due");
-  return "";
+  return (await prepared.commit()) ? prepared.text : "";
 };

@@ -43,7 +43,8 @@ import { loadReportableConfig, resolveTimeoutMs } from "@crosscheck/connector-co
 import { hookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
-import { deliverDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
+import { prepareDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
+import type { DeliverDraftNudgeInput, PreparedDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 
@@ -89,6 +90,8 @@ export interface AcpInjectorOptions {
   readonly now?: () => number;
   /** Injectable stderr for the one version-mismatch notice. */
   readonly notify?: (line: string) => void;
+  /** The draft review nudge's preparation; the core flow unless a test swaps it. */
+  readonly prepareNudge?: (input: DeliverDraftNudgeInput) => Promise<PreparedDraftNudge | null>;
 }
 
 export interface AcpInjectorCounters {
@@ -153,6 +156,7 @@ const raceBudget = async <T>(
 export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
   const { env, logger, capture } = options;
   const now = options.now ?? ((): number => Date.now());
+  const prepareNudge = options.prepareNudge ?? prepareDraftNudge;
   const notify =
     options.notify ??
     ((line: string): void => {
@@ -394,9 +398,14 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
     // A prompt neither the briefing nor a hint spoke on may carry the
     // once-per-session draft review nudge (core flows/draft-nudge.ts), within
     // what is left of the same budget.
+    //
+    // PREPARED under the race, SPENT only after it: a preparation the budget
+    // abandons runs on in the background (this proxy is never killed), and
+    // spending the slot there would mark a nudge delivered that no prompt
+    // carried.
     const nudgeBudget = hookBudget(deadline, resolveTimeoutMs(env, null), now);
-    const nudge = await raceBudget(
-      deliverDraftNudge({
+    const prepared = await raceBudget(
+      prepareNudge({
         home: view.home,
         hub: view.hub,
         hostSessionKey: view.hostSessionKey,
@@ -407,15 +416,20 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
       }),
       deadline - now(),
     );
-    if (nudge === null || nudge.length === 0) {
+    const shown = prepared === null || prepared.text.length === 0 ? null : prepared;
+    if (shown === null || !(await shown.commit())) {
+      // Nothing due shows nothing, so spending the slot on it cannot be lost.
+      if (prepared !== null && prepared.text.length === 0) {
+        await prepared.commit();
+      }
       // Silence is not a skip worth logging per prompt — it is the normal
       // no-candidates outcome; count it, no log noise.
       counters.skips += 1;
       return null;
     }
     counters.nudges += 1;
-    logger.line(`inject draft-nudge session=${sessionId} chars=${nudge.length}`);
-    return appendBlock(nudge);
+    logger.line(`inject draft-nudge session=${sessionId} chars=${shown.text.length}`);
+    return appendBlock(shown.text);
   };
 
   return {

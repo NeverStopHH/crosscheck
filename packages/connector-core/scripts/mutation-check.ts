@@ -17482,8 +17482,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the ACP prompt block never carries the draft nudge",
     file: `${ACP}/src/inject/injector.ts`,
-    from: "    if (nudge === null || nudge.length === 0) {",
-    to: "    if (true) {",
+    from: "    const shown = prepared === null || prepared.text.length === 0 ? null : prepared;",
+    to: "    const shown = null;",
     test: `${ACP}/test/draft-nudge-inject.test.ts`,
     because: "an ACP session spends the slot and its agent is never asked to settle the drafts",
   },
@@ -17991,6 +17991,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "the cooldown exists and nothing ever starts it",
   },
+  {
+    label: "the ACP proxy spends the nudge slot inside the budget race",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "  const prepareNudge = options.prepareNudge ?? prepareDraftNudge;",
+    to: "  const prepareNudge = async (input: DeliverDraftNudgeInput): Promise<PreparedDraftNudge | null> => {\n    const ready = await (options.prepareNudge ?? prepareDraftNudge)(input);\n    if (ready !== null) {\n      await ready.commit();\n    }\n    return ready;\n  };",
+    test: `${ACP}/test/draft-nudge-inject.test.ts`,
+    because: "a preparation the budget abandoned runs on and marks a nudge delivered that no prompt carried",
+  },
+  {
+    label: "the ACP proxy shows a nudge whose slot it could not spend",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "    if (shown === null || !(await shown.commit())) {",
+    to: "    if (shown === null) {",
+    test: `${ACP}/test/draft-nudge-inject.test.ts`,
+    because: "a slot another prompt already spent is shown a second time",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18105,7 +18121,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
- * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 2
+ * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 4
  * PRINTS: packages/connector-acp/test/injector.test.ts 6
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1

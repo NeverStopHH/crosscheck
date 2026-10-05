@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1611
+    # PRINTS: 1613
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -210,7 +210,7 @@ jobs:
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 2
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
-    # PRINTS: packages/connector-acp/src/inject/injector.ts 6
+    # PRINTS: packages/connector-acp/src/inject/injector.ts 8
     # PRINTS: packages/connector-acp/src/proxy.ts 1
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: packages/connector-acp/src/report.ts 1
@@ -582,7 +582,7 @@ jobs:
     # PRINTS: init-remove-report.ts 8
     # PRINTS: init-remove.ts 6
     # PRINTS: init.ts 6
-    # PRINTS: injector.ts 6
+    # PRINTS: injector.ts 8
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
