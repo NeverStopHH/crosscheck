@@ -16387,8 +16387,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "init's double-wiring note reads the ignore verdict backwards",
     file: `${CLI}/src/cli/project-copy.ts`,
-    from: "copy !== null && copy.settingsIgnored === true",
-    to: "copy !== null && copy.settingsIgnored !== true",
+    from: "  return copy.settingsIgnored === true\n    ? `keep",
+    to: "  return copy.settingsIgnored !== true\n    ? `keep",
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "the pilot's wrong advice at install time: an ignored copy is told to remove the global side, a shared one the reverse",
   },
@@ -16545,6 +16545,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "a developer cleaning up a purely local copy is told to commit or restore a file nobody shares",
   },
+  {
+    label: "doctor's shared-copy remedy says to hand-edit .claude/settings.json",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "  const both = `remove one side: \\`crosscheck init --global --remove\\`, or ${projectRemoveCommand(copy)}`;",
+    to: "  const both = `remove one side: \\`crosscheck init --global --remove\\`, or strip the repo's .claude/settings.json entries`;",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "the command that removes the project side exists, and the WARN sends people to edit JSON by hand instead",
+  },
+  {
+    label: "doctor calls a never-committed project copy a change for the whole team",
+    file: `${CLI}/src/cli/project-copy.ts`,
+    from: "  if (copy.settingsTracked === true) {",
+    to: "  if (copy.settingsTracked !== true) {",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "a copy only one developer has is treated as the team's install, and its owner keeps the double wiring",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16617,7 +16633,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/gitignored-advice.test.ts 8
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
  * PRINTS: packages/cli/test/init-global.test.ts 2
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6

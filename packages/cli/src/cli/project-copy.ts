@@ -27,6 +27,8 @@ import { projectCursorDir, projectWiringFiles } from "./wiring-scope.ts";
 export interface ProjectCopy {
   /** M11: `true` = .claude/settings.json is gitignored here (null = git could not say). */
   readonly settingsIgnored: boolean | null;
+  /** `true` = .claude/settings.json is committed — removing it is a team change. */
+  readonly settingsTracked: boolean | null;
   /** `.cursor/` holds crosscheck's entries — only `init --remove --cursor` removes them. */
   readonly cursorWired: boolean;
   /**
@@ -42,6 +44,7 @@ export const readProjectCopy = async (root: string): Promise<ProjectCopy> => {
   const claudePair = await readWiringState(await removalTargets(files));
   return {
     settingsIgnored: await isPathIgnored(root, `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE}`),
+    settingsTracked: await isPathTracked(root, `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE}`),
     cursorWired:
       (await readWiringState(await cursorTargets(await projectCursorDir(root)))).wired.length > 0,
     sharedMcp:
@@ -60,8 +63,28 @@ const sharedMcpClause = (copy: ProjectCopy): string =>
     ? `; ${MCP_CONFIG_FILE} is committed, though, and holds crosscheck's server — the same command changes it for the whole team: commit that change, or \`git restore -- ${MCP_CONFIG_FILE}\` to keep their mcp tools`
     : "";
 
+/**
+ * Where the project copy is NOT ignored, either side may go — and both are
+ * commands now, never a hand-edit (review 2026-10-05). Whether removing the
+ * project side is a team change is git's answer, not an assumption: a copy
+ * `init` wrote and nobody committed is not shared with anyone yet.
+ */
+const eitherSideRemedy = (copy: ProjectCopy): string => {
+  const both = `remove one side: \`crosscheck init --global --remove\`, or ${projectRemoveCommand(copy)}`;
+  if (copy.settingsTracked === true) {
+    return `${both} — .claude/settings.json is committed here, so removing the project side changes it for the whole team`;
+  }
+  return copy.settingsTracked === false
+    ? `${both} for this repo's copy — it is not committed, so nobody else has it yet${sharedMcpClause(copy)}`
+    : `${both} for this repo's copy${sharedMcpClause(copy)}`;
+};
+
 /** The double-wiring remedy; `null` = the project copy's facts were not read. */
-export const doubleWiringRemedy = (copy: ProjectCopy | null): string =>
-  copy !== null && copy.settingsIgnored === true
+export const doubleWiringRemedy = (copy: ProjectCopy | null): string => {
+  if (copy === null) {
+    return "remove one side: `crosscheck init --global --remove`, or `crosscheck init --remove` for this repo's copy";
+  }
+  return copy.settingsIgnored === true
     ? `keep the global install and remove the gitignored project copy with ${projectRemoveCommand(copy)} — .claude/settings.json is ignored in this repo, so it never reaches teammates and only the user-level install covers your worktrees${sharedMcpClause(copy)}`
-    : "remove one side: `crosscheck init --global --remove`, or strip the repo's .claude/settings.json entries";
+    : eitherSideRemedy(copy);
+};

@@ -210,6 +210,35 @@ describe("doctor's advice under a .gitignore", () => {
     expect(result.stdout).toContain("`git restore -- .mcp.json`");
   });
 
+  test("a committed project copy's remedy names crosscheck init --remove as a change for the whole team", async () => {
+    // Arrange
+    const { repo, env } = await fixture(false);
+    await git(repo, ["add", ".claude/settings.json"]);
+    await git(repo, ["commit", "-m", "wire crosscheck for the team"]);
+
+    // Act
+    const result = await runDoctor(env, repo, async () => null);
+
+    // Assert: a command for both sides, never a hand-edit
+    expect(result.stdout).toContain("crosscheck init --global --remove");
+    expect(result.stdout).toContain("`crosscheck init --remove`");
+    expect(result.stdout).toContain("committed here");
+    expect(result.stdout).not.toContain("strip the repo's");
+  });
+
+  test("an uncommitted project copy's remedy never calls it shared", async () => {
+    // Arrange: written by init, not ignored, never added
+    const { repo, env } = await fixture(false);
+
+    // Act
+    const result = await runDoctor(env, repo, async () => null);
+
+    // Assert
+    expect(result.stdout).toContain("`crosscheck init --remove`");
+    expect(result.stdout).toContain("not committed");
+    expect(result.stdout).not.toContain("committed here");
+  });
+
   test("without a .gitignore the original remedy stands", async () => {
     // Arrange
     const { repo, env } = await fixture(false);
