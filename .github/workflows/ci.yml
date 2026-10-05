@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1415
+    # PRINTS: 1426
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -377,17 +377,17 @@ jobs:
     # PRINTS: packages/server/src/routes/absences.ts 2
     # PRINTS: packages/server/src/routes/events.ts 1
     # PRINTS: packages/server/src/routes/fence-waivers.ts 1
-    # PRINTS: packages/server/src/routes/hints.ts 1
+    # PRINTS: packages/server/src/routes/hints.ts 2
     # PRINTS: packages/server/src/routes/landed.ts 3
     # PRINTS: packages/server/src/routes/passkeys.ts 1
     # PRINTS: packages/server/src/routes/pilot-marks.ts 2
     # PRINTS: packages/server/src/routes/pins.ts 3
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 2
-    # PRINTS: packages/server/src/routes/suspect.ts 4
+    # PRINTS: packages/server/src/routes/suspect.ts 5
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
-    # PRINTS: packages/server/src/routes/work-contexts.ts 1
+    # PRINTS: packages/server/src/routes/work-contexts.ts 2
     # PRINTS: packages/server/src/services/absences.ts 4
     # PRINTS: packages/server/src/services/calibration.ts 1
     # PRINTS: packages/server/src/services/causal-guarantees.ts 11
@@ -399,10 +399,10 @@ jobs:
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
-    # PRINTS: packages/server/src/services/coverage.ts 23
+    # PRINTS: packages/server/src/services/coverage.ts 28
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 10
-    # PRINTS: packages/server/src/services/diagnosis.ts 3
+    # PRINTS: packages/server/src/services/diagnosis.ts 6
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
@@ -489,7 +489,7 @@ jobs:
     # PRINTS: cost.ts 2
     # PRINTS: counts.ts 1
     # PRINTS: coverage-order.ts 5
-    # PRINTS: coverage.ts 26
+    # PRINTS: coverage.ts 31
     # PRINTS: crosscheck.ts 1
     # PRINTS: declarations.ts 5
     # PRINTS: delivery-id.ts 2
@@ -498,7 +498,7 @@ jobs:
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 10
-    # PRINTS: diagnosis.ts 3
+    # PRINTS: diagnosis.ts 6
     # PRINTS: doctor-global.ts 2
     # PRINTS: doctor-landed-authors.ts 3
     # PRINTS: doctor-landed.ts 2
@@ -540,7 +540,7 @@ jobs:
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 6
-    # PRINTS: hints.ts 4
+    # PRINTS: hints.ts 5
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 9
     # PRINTS: index.ts 3
@@ -659,7 +659,7 @@ jobs:
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
     # PRINTS: suspect-render.ts 3
-    # PRINTS: suspect.ts 6
+    # PRINTS: suspect.ts 7
     # PRINTS: sweep.ts 3
     # PRINTS: target-paths.ts 1
     # PRINTS: team-settings.ts 2
@@ -685,7 +685,7 @@ jobs:
     # PRINTS: waivers.tsx 2
     # PRINTS: webauthn.ts 11
     # PRINTS: wiring-removal.ts 5
-    # PRINTS: work-contexts.ts 1
+    # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7
     # PRINTS: working-days.ts 3
