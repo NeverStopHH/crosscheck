@@ -7,7 +7,7 @@
  * output — the same mechanism `init --remove` uses.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
@@ -77,6 +77,37 @@ describe("crosscheck init's originals", () => {
     expect(saved.startsWith(join(env["CROSSCHECK_HOME"] ?? "", "backups"))).toBe(true);
     expect(await read(saved)).toBe(hooksBefore);
   });
+
+  test.skipIf(process.getuid?.() === 0)(
+    "an unwritable CROSSCHECK_HOME refuses init --cursor before any file is written — the Cursor original is saved first too",
+    async () => {
+      // Arrange: only the Cursor file has an original to save, so a saver
+      // run late (after the Claude writes) would leave the repo half-installed
+      const { repo, env, settingsPath, repoConfigPath } = await fixture("init-backup-locked");
+      const hooksPath = join(repo, ".cursor", "hooks.json");
+      const hooksBefore = await writeJson(hooksPath, {
+        version: 1,
+        hooks: { sessionStart: [{ command: "./scripts/cursor-audit.sh" }] },
+      });
+      const crosscheckHome = env["CROSSCHECK_HOME"] ?? "";
+      await mkdir(crosscheckHome, { recursive: true });
+      await chmod(crosscheckHome, 0o500);
+
+      // Act
+      const result = await runCli([...INIT_ARGS, "--cursor"], env, repo).finally(() =>
+        chmod(crosscheckHome, 0o700),
+      );
+
+      // Assert
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain(`could not save the original of ${hooksPath}`);
+      expect(result.stdout).toContain("nothing was changed");
+      expect(await read(hooksPath)).toBe(hooksBefore);
+      expect(await isDirectory(join(repo, ".claude"))).toBe(false);
+      expect(await Bun.file(settingsPath).exists()).toBe(false);
+      expect(await Bun.file(repoConfigPath).exists()).toBe(false);
+    },
+  );
 
   test("a re-run that changes nothing saves no original at all", async () => {
     // Arrange: one install, so the second run finds its own files unchanged

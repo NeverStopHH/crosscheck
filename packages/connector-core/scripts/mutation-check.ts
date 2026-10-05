@@ -16601,9 +16601,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --cursor rewrites .cursor/hooks.json without saving its original",
-    file: `${CURSOR}/src/init/init.ts`,
-    from: "      const hooksBackup = await saveOriginal(hooksPath, hooksRead.raw, hooksNext);",
-    to: "      const hooksBackup = null;",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "      ...cursorFiles,\n",
+    to: "",
     test: `${CLI}/test/init-backups.test.ts`,
     because: "the team's own Cursor hooks file is merged over with no recoverable copy anywhere",
   },
@@ -16769,6 +16769,38 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/gitignored-advice.test.ts`,
     because: "init recreates the ignored settings copy and the double wiring the removal just undid, while git restore was the fix",
   },
+  {
+    label: "an unwritable CROSSCHECK_HOME crashes init with a bare EACCES",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "    } catch (error) {\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    to: "    } catch (error) {\n      throw error;\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "\"crosscheck failed: EACCES … mkdir …/backups\" says nothing about whether the repo was changed",
+  },
+  {
+    label: "an unwritable CROSSCHECK_HOME crashes init --remove with a bare EACCES",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "    } catch (error) {\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    to: "    } catch (error) {\n      throw error;\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "the removal dies with a bare EACCES and nothing tells the developer the repo is untouched",
+  },
+  {
+    label: "init --remove carries on after failing to save an original",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (!saved.ok) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "a rewrite whose original could not be saved goes ahead with no recovery copy anywhere",
+  },
+  {
+    label: "crosscheck init writes the repo after failing to save an original",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "  if (!saved.ok) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "the team's files are merged over with no copy of what they held",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16844,9 +16876,9 @@ interface Outcome {
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
- * PRINTS: packages/cli/test/init-backups.test.ts 5
+ * PRINTS: packages/cli/test/init-backups.test.ts 7
  * PRINTS: packages/cli/test/init-global.test.ts 3
- * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
+ * PRINTS: packages/cli/test/init-remove-safety.test.ts 11
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/key-rotate.test.ts 6

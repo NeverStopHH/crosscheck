@@ -36,7 +36,7 @@ import {
   readJsonConfig,
   refusalMessage,
   renderJsonFile,
-  saveProjectOriginal,
+  saveProjectOriginals,
 } from "./init-io.ts";
 import type { CliResult } from "./login.ts";
 import { doubleWiringRemedy, readProjectCopy } from "./project-copy.ts";
@@ -239,12 +239,6 @@ export const runInit = async (
   }
   const prefix = resolveCommandPrefix(launcher);
   const mcpEntry = resolveMcpLauncher(launcher);
-  // Every original this run rewrites is saved OUT of the work tree and named
-  // in the output (init-io.ts `saveProjectOriginal` says why) — the Cursor
-  // pair's too, through the saver handed to its plan.
-  const backupDir = projectBackupDir(env, identity.root, "init");
-  const saveOriginal = (path: string, raw: string | null, next: string) =>
-    saveProjectOriginal(backupDir, identity.root, path, raw, next);
   // DYNAMIC import like the bin's cursor-hook branch: hooks and the
   // statusline must not pay connector-cursor's load. Prepare/apply split so
   // the Cursor files are validated HERE, written only after the Claude
@@ -254,7 +248,7 @@ export const runInit = async (
         const { prepareCursorInit } = await import(
           "@crosscheck/connector-cursor"
         );
-        return prepareCursorInit(identity.root, prefix, mcpEntry, saveOriginal);
+        return prepareCursorInit(identity.root, prefix, mcpEntry);
       })()
     : null;
   if (cursorPlan !== null && !cursorPlan.ok) {
@@ -263,6 +257,7 @@ export const runInit = async (
       exitCode: EXIT_ABORTED,
     };
   }
+  const cursorFiles = cursorPlan !== null && cursorPlan.ok ? cursorPlan.files : [];
 
   const merged = mergeClaudeSettings(
     settingsRead.value,
@@ -270,8 +265,23 @@ export const runInit = async (
   );
   const settingsNext = renderJsonFile(merged.settings);
   const mcpNext = renderJsonFile(mergeMcpConfig(mcpRead.value, mcpEntry));
-  const settingsBackup = await saveOriginal(settingsPath, settingsRead.raw, settingsNext);
-  const mcpBackup = await saveOriginal(mcpPath, mcpRead.raw, mcpNext);
+  // Every original this run rewrites — the Cursor pair's too — is saved OUT
+  // of the work tree before ANY file is written (init-io.ts says why), so a
+  // save that fails (an unwritable CROSSCHECK_HOME) changes nothing.
+  const saved = await saveProjectOriginals(
+    projectBackupDir(env, identity.root, "init"),
+    identity.root,
+    [
+      { path: settingsPath, raw: settingsRead.raw, next: settingsNext },
+      { path: mcpPath, raw: mcpRead.raw, next: mcpNext },
+      ...cursorFiles,
+    ],
+  );
+  if (!saved.ok) {
+    return { stdout: `${saved.refusal}\n`, exitCode: EXIT_ABORTED };
+  }
+  const savedSuffix = (path: string): string =>
+    originalSavedSuffix(saved.backups.get(path) ?? null);
   await ensureDir(settingsDir);
   await writeFile(settingsPath, settingsNext, "utf8");
   await writeFile(mcpPath, mcpNext, "utf8");
@@ -280,8 +290,9 @@ export const runInit = async (
     renderRepoConfig(hubUrl),
     "utf8",
   );
-  const cursorWrites =
-    cursorPlan !== null && cursorPlan.ok ? await cursorPlan.apply() : [];
+  if (cursorPlan !== null && cursorPlan.ok) {
+    await cursorPlan.apply();
+  }
   // Honest, not blocking (finding #11): the project install proceeds — it
   // is the team's committed mechanism, and one developer's user-level
   // install must not veto it — but the double wiring is said out loud with
@@ -337,9 +348,9 @@ export const runInit = async (
   return {
     stdout: [
       `wrote ${repoConfigPath(identity.root)}`,
-      `wrote ${settingsPath}${originalSavedSuffix(settingsBackup)}`,
-      `wrote ${mcpPath}${originalSavedSuffix(mcpBackup)}`,
-      ...cursorWrites.map((write) => `wrote ${write.path}${originalSavedSuffix(write.backup)}`),
+      `wrote ${settingsPath}${savedSuffix(settingsPath)}`,
+      `wrote ${mcpPath}${savedSuffix(mcpPath)}`,
+      ...cursorFiles.map((file) => `wrote ${file.path}${savedSuffix(file.path)}`),
       `hooks use launcher: ${prefix}`,
       // Said explicitly because it is the ONLY delivery mechanism: a teammate
       // gets the tools from this file arriving in their checkout, and nowhere
@@ -355,7 +366,7 @@ export const runInit = async (
       // The same one-PR rule for the Cursor pair — and the gitignore warning
       // the design's rules-file rejection earned: an ignored .cursor/ is an
       // install that silently works for one person only.
-      ...(cursorWrites.length > 0
+      ...(cursorFiles.length > 0
         ? [
             "commit the .cursor files too (Cursor loads project hooks from version control in trusted workspaces) — if .cursor/ is gitignored, unignore hooks.json + mcp.json or teammates never get them",
           ]

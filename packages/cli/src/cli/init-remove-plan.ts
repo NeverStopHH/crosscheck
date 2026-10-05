@@ -13,7 +13,7 @@ import {
   readJsonConfig,
   refusalMessage,
   renderJsonFile,
-  saveProjectOriginal,
+  saveProjectOriginals,
   writeConfigAtomically,
 } from "./init-io.ts";
 import type { RemovalTarget, Stripped } from "./wiring-removal.ts";
@@ -109,23 +109,29 @@ export const saveOriginals = async (
   plans: readonly FilePlan[],
   root: string,
   backupDir: string,
-): Promise<readonly FilePlan[]> =>
-  Promise.all(
-    plans.map(async (plan) =>
+): Promise<
+  | { readonly ok: true; readonly plans: readonly FilePlan[] }
+  | { readonly ok: false; readonly refusal: string }
+> => {
+  const saved = await saveProjectOriginals(
+    backupDir,
+    root,
+    plans.flatMap((plan) =>
       plan.kind === "strip"
-        ? {
-            ...plan,
-            backup: await saveProjectOriginal(
-              backupDir,
-              root,
-              plan.path,
-              plan.raw,
-              renderJsonFile(plan.stripped.value),
-            ),
-          }
-        : plan,
+        ? [{ path: plan.path, raw: plan.raw, next: renderJsonFile(plan.stripped.value) }]
+        : [],
     ),
   );
+  if (!saved.ok) {
+    return saved;
+  }
+  return {
+    ok: true,
+    plans: plans.map((plan) =>
+      plan.kind === "strip" ? { ...plan, backup: saved.backups.get(plan.path) ?? null } : plan,
+    ),
+  };
+};
 
 const applyPlan = async (plan: FilePlan): Promise<void> => {
   if (plan.kind === "strip") {
