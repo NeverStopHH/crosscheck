@@ -30,7 +30,9 @@ import { readDropDetail } from "../src/spool/drops.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { reapSpool } from "../src/spool/reap.ts";
 import { readUnclosedSummary } from "../src/spool/unclosed.ts";
-import { allocateSeq, readSessionState } from "../src/state/session-state.ts";
+import { allocateSeq, readSessionState, sessionStateLockPath } from "../src/state/session-state.ts";
+import { readSessionSpool } from "../src/spool/files.ts";
+import { withLock } from "../src/spool/lock.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
 const ADMIN_TOKEN = "lives-admin";
@@ -49,6 +51,13 @@ const WALK_HEAD_START_MS = 30;
 const RACE_DELAY_MS = 50;
 /** Any position: the point is that it is withheld when another life delivers it. */
 const COMMIT_POSITION = 7;
+/**
+ * How long a test holds the state lock against a walk's switch: well inside
+ * the switch's own patience (SESSION_STATE_LOCK_RETRIES × the retry delay,
+ * 400 ms), so the switch still lands once the lock goes.
+ */
+const SWAP_WAIT_MS = 200;
+const SWAP_POLL_MS = 5;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -732,5 +741,55 @@ describe("a heal that moves the state while SessionEnd runs", () => {
     }
     expect(await targetsOf(resumed.workContextId)).toEqual(["src/after-resume.ts"]);
     expect(await pendingEnds(fx)).toEqual([]);
+  });
+});
+
+/**
+ * THE WORK CONTEXT BEFORE THE SWAP (review-2 LOW-4). The heal switched the
+ * state to the next life and only then spooled its work context. In between,
+ * a parallel hook could capture a target of the new life ahead of it — the
+ * hub refuses a target whose work context it has not seen — and a SessionEnd
+ * could compare the state, find the new life, count an empty backlog and end
+ * it while the heal's re-send was still to go under it. With the work context
+ * on disk before the state can name the life, the target lands behind it and
+ * SessionEnd counts it and defers.
+ */
+describe("a heal that lands the next life", () => {
+  test("has its work context on disk before the state can name it", async () => {
+    // Arrange: a life the hub ended; the state's lock held, so the walk's
+    // switch to the next life has to wait for it
+    const fx = await fixture("wc-before-swap");
+    const k = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, k.crosscheckSessionId);
+    const next = `${k.crosscheckSessionId}~r1`;
+    const isSpooled = async (): Promise<boolean> =>
+      (await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines.some(
+        (line) => line.includes('"work_context"') && line.includes(`"wc_${next}"`),
+      );
+    let healing: Promise<unknown> = Promise.resolve();
+
+    // Act: start the heal while the lock is held; watch the spool until the
+    // walk can only be waiting on the switch, then let it go
+    const spooledBeforeSwap = await withLock(
+      sessionStateLockPath(fx.home, fx.hostSessionKey),
+      false,
+      async () => {
+        healing = healerFor(fx)({ sessionId: k.crosscheckSessionId, cause: "session_ended" }, Date.now() + BUDGET_MS);
+        for (let waited = 0; waited < SWAP_WAIT_MS; waited += SWAP_POLL_MS) {
+          if (await isSpooled()) {
+            return true;
+          }
+          await Bun.sleep(SWAP_POLL_MS);
+        }
+        return false;
+      },
+    );
+    const healed = await healing;
+
+    // Assert
+    expect(spooledBeforeSwap).toBe(true);
+    expect(healed).toMatchObject({ outcome: "healed", sessionId: next });
+    expect((await stateOf(fx))?.crosscheckSessionId).toBe(next);
   });
 });

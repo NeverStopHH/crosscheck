@@ -17546,8 +17546,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heal that loses the state race answers a dead end",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  if (ladder",
-    to: "    return FAILED;\n  }\n  if (ladder",
+    from: "    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  return healedTo(",
+    to: "    return FAILED;\n  }\n  return healedTo(",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review P4: the loser of two concurrent heals throws its batch away although the winner registered the very life it walked to",
   },
@@ -17682,8 +17682,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a heal onto the same id spools no work context",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  return healedTo(",
-    to: "  if (ladder.sessionId !== refusal.sessionId) {\n    await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  }\n  return healedTo(",
+    from: "  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  if (!(await switchState(",
+    to: "  if (ladder.sessionId !== refusal.sessionId) {\n    await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  }\n  if (!(await switchState(",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 finding 1: a work context another conversation's flush spent is never sent again, and the life's edits are refused for good",
   },
@@ -17830,6 +17830,14 @@ export const MUTATIONS: readonly Mutation[
     to: "    : null;",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "a resumed life's deferred end is never delivered and never ages into doctor's unclosed count",
+  },
+  {
+    label: "a heal swaps the state before the next life's work context is on disk",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  if (!(await switchState(input, refusal.sessionId, ladder.sessionId, ladder.developerId))) {\n    // Lost the compare-and-swap: a sibling moved the state first. Its life is\n    // the answer \u2014 usually the very one this walk just registered (review P4).\n    const moved = await movedLife(input, refusal.sessionId);\n    if (moved !== ladder.sessionId) {\n      // ...and when it is not \u2014 SessionEnd deleted the state mid-walk, or a\n      // sibling landed elsewhere \u2014 the life this walk registered belongs to\n      // nobody. Left open, the next resume would land on it under a fresh\n      // epoch and split its order (review finding 6).\n      await retireOrphan(input, ladder.sessionId, now);\n    }\n    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  return healedTo(refusal.sessionId, ladder.sessionId, workContext);",
+    to: "  if (!(await switchState(input, refusal.sessionId, ladder.sessionId, ladder.developerId))) {\n    // Lost the compare-and-swap: a sibling moved the state first. Its life is\n    // the answer \u2014 usually the very one this walk just registered (review P4).\n    const moved = await movedLife(input, refusal.sessionId);\n    if (moved !== ladder.sessionId) {\n      // ...and when it is not \u2014 SessionEnd deleted the state mid-walk, or a\n      // sibling landed elsewhere \u2014 the life this walk registered belongs to\n      // nobody. Left open, the next resume would land on it under a fresh\n      // epoch and split its order (review finding 6).\n      await retireOrphan(input, ladder.sessionId, now);\n    }\n    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  return healedTo(refusal.sessionId, ladder.sessionId, workContext);",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 LOW-4: a parallel capture lands ahead of the work context and is refused, and a SessionEnd in the window ends the life the heal is about to re-send under",
   },
 ];
 
@@ -18090,7 +18098,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 20
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 20
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 21
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

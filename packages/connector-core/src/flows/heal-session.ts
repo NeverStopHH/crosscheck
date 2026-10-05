@@ -284,6 +284,28 @@ const walk = async (
   if (ladder.outcome !== "registered") {
     return FAILED;
   }
+  if (ladder.sessionId !== refusal.sessionId) {
+    // The refused life's stragglers are withheld from every later flush on
+    // this repo (spool/refused-lives.ts).
+    await recordRefusedLife(input.home, input.repoKey, refusal.sessionId, now);
+  }
+  // Then the life's work context — a heal onto the SAME id too (review-2
+  // finding 1): the one it spooled when the hub had not registered it may
+  // have been spent by then, by an older connector's flush, and every later
+  // record of the life names it. A second copy costs the hub a duplicate. It
+  // also goes back to the caller, which sends it AHEAD of the batch it
+  // re-sends: spooled, it lands behind the very edit that names it.
+  //
+  // BEFORE THE SWAP (review-2 LOW-4). The moment the state names the life,
+  // its work context is on disk: a parallel hook that captures for it lands
+  // behind it, never ahead — the hub refuses a target whose work context it
+  // has not seen — and a SessionEnd that compares the state and finds this
+  // life counts it as undelivered and defers both ends, so the re-send below
+  // never goes under a life SessionEnd already ended. A swap that is lost
+  // leaves the work context of a life no state names; the orphan's retirement
+  // ends that life, and the record costs the hub an unpositioned row.
+  const workContext = nextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
+  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);
   if (!(await switchState(input, refusal.sessionId, ladder.sessionId, ladder.developerId))) {
     // Lost the compare-and-swap: a sibling moved the state first. Its life is
     // the answer — usually the very one this walk just registered (review P4).
@@ -297,19 +319,6 @@ const walk = async (
     }
     return moved === null ? FAILED : healedTo(refusal.sessionId, moved);
   }
-  if (ladder.sessionId !== refusal.sessionId) {
-    // The refused life's stragglers are withheld from every later flush on
-    // this repo (spool/refused-lives.ts).
-    await recordRefusedLife(input.home, input.repoKey, refusal.sessionId, now);
-  }
-  // Then the life's work context — a heal onto the SAME id too (review-2
-  // finding 1): the one it spooled when the hub had not registered it may
-  // have been spent by then, by an older connector's flush, and every later
-  // record of the life names it. A second copy costs the hub a duplicate. It
-  // also goes back to the caller, which sends it AHEAD of the batch it
-  // re-sends: spooled, it lands behind the very edit that names it.
-  const workContext = nextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
-  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);
   return healedTo(refusal.sessionId, ladder.sessionId, workContext);
 };
 

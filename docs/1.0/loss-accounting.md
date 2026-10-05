@@ -333,6 +333,10 @@ in-memory session still names the old life. The delete now runs under the state 
 names (`closeSessionState`): the state goes either way, and a life other than the one being ended is ended with
 it — its own position past the counter, its own marker, written to the lineage — so the next resume starts above
 it. The backlog is counted after the state goes, so a work context the heal spooled meanwhile holds both ends back.
+And the heal spools that work context BEFORE it switches the state (review-2 LOW-4): switched first, a SessionEnd
+in between found the new life with nothing on disk, ended it, and the heal's re-send then went under an ended
+life — another conversation's backlog spent as `session_ended`, against P7 — while a parallel capture could put a
+target ahead of the work context it names. Now the state never names a life whose work context is not on disk.
 
 **A batch a walk leaves on disk is counted once** (review-2 finding 4). What a batch has lost whatever comes next
 — torn lines, withheld stragglers, refusals no heal can carry — is written before the walk's register (review P3),
