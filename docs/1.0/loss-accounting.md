@@ -104,6 +104,7 @@ export const LOSS_KINDS = [
   "spool_refused",        // append refused: file at MAX_SPOOL_BYTES, a short write, a write that failed
   "spool_torn",           // a complete line on disk that is not JSON, counted at flush
   "spool_expired",        // undelivered records of a dead session past MAX_SPOOL_AGE_DAYS
+  "spool_withheld",       // records of a life the hub had ended, held back and never sent (review-2)
   "hub_rejected",         // the hub answered 200 and refused the record
   "hub_ignored",          // the hub answered 200 and ignored the record's kind
   "capture_capped",       // paths past MAX_TARGETS_PER_INVOCATION in one tool call
@@ -337,6 +338,14 @@ left to re-send. Every later walk wrote the same lines again — one torn line a
 `loss_total`. The flush now notes on the cursor which lines' losses are in the ledger (`spool/batch-losses.ts`,
 by each line's end offset in that data file; the cursor write that moves past the batch drops the note), and
 writes only lines not on it — one line, one loss, whatever it was first counted as.
+
+**`withheld` travels as its own kind, `spool_withheld`** (review-2 honesty residual). The ledger kept `withheld`
+apart from `rejected` from the start, but the loss report mapped both to `hub_rejected` — *"the hub answered 200
+and refused the record"*, a sentence about a request that never happened. The kind is additive: this hub stores
+it by name, and a hub that knows the loss report but not this kind folds it into `unattributed` by the rule it
+already runs (`foldLossKinds`, unchanged since the report shipped), so the loss is still counted and the rung
+still reads `incomplete / telemetry_lost`. `MAX_LOSS_KIND_ENTRIES` follows the vocabulary (`LOSS_KINDS.length × 2`,
+now 26), as `MAX_GUARANTEE_TRIPLES` already did.
 
 ### 4.4 The hub — six columns, derived on read
 

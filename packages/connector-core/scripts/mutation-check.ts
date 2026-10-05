@@ -13501,8 +13501,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the loss-kind fold keeps a key the hub does not know",
     file: `${SCHEMA}/src/telemetry-loss.ts`,
-    from: "    const kind: LossKind = isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
-    to: "    const kind = key as LossKind;",
+    from: "      const kind: LossKind = vocabulary.has(key) && isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
+    to: "      const kind = key as LossKind;",
     test: `${SCHEMA}/test/telemetry-loss.test.ts`,
     because: "the fold every hub write goes through passes a connector's free-text key straight onto the row",
   },
@@ -17751,6 +17751,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 finding 4: the next walk meets the same lines with nothing to say they were counted, and counts them again",
   },
+  {
+    label: "withheld records reach the hub as records it refused",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: '  withheld: "spool_withheld",',
+    to: '  withheld: "hub_rejected",',
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "review-2 honesty: the hub's loss kinds say it answered 200 and refused records that were never sent",
+  },
+  {
+    label: "the hub stores the withheld kind as unattributed",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: '  "spool_withheld",\n',
+    to: "",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because: "review-2 honesty: a loss the connector named arrives at its own hub unnamed",
+  },
+  {
+    label: "an older hub's fold is stated against this hub's vocabulary",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "      const kind: LossKind = vocabulary.has(key) && isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
+    to: "      const kind: LossKind = isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
+    test: `${SCHEMA}/test/telemetry-loss.test.ts`,
+    because: "the test that says what a hub from before spool_withheld does with it would pass whatever that hub does",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17982,7 +18006,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
- * PRINTS: packages/connector-core/test/loss-report.test.ts 33
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 34
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -18042,7 +18066,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
+ * PRINTS: packages/schema/test/telemetry-loss.test.ts 3
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
@@ -18055,7 +18079,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
- * PRINTS: packages/server/test/coverage-losses.test.ts 15
+ * PRINTS: packages/server/test/coverage-losses.test.ts 16
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3

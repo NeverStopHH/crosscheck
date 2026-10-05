@@ -13,6 +13,7 @@ import {
   TelemetryLossReportSchema,
   UNATTRIBUTED_LOSS_KIND,
   foldLossKinds,
+  foldLossKindsFor,
   isLossKind,
 } from "../src/telemetry-loss.ts";
 
@@ -23,6 +24,7 @@ describe("LOSS_KINDS", () => {
       "spool_refused",
       "spool_torn",
       "spool_expired",
+      "spool_withheld",
       "hub_rejected",
       "hub_ignored",
       "capture_capped",
@@ -66,6 +68,17 @@ describe("foldLossKinds — an unknown kind still counts and never keeps its nam
 
     // Assert
     expect(folded.unattributed).toBe(5);
+  });
+
+  test("a hub from before `spool_withheld` folds it into unattributed and still counts it", () => {
+    // Arrange: the vocabulary such a hub was built with
+    const before = new Set<string>(LOSS_KINDS.filter((kind) => kind !== "spool_withheld"));
+
+    // Act
+    const folded = foldLossKindsFor(before)({ spool_withheld: 2, hub_rejected: 1 });
+
+    // Assert
+    expect(folded).toEqual({ hub_rejected: 1, unattributed: 2 });
   });
 
   test("zero counts are dropped so the stored object names only real losses", () => {

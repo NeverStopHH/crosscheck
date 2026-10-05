@@ -275,6 +275,25 @@ describe("LOSS-5: an unknown kind still counts and is never stored as text", () 
   });
 });
 
+describe("review-2 honesty: records the connector withheld are not the hub's refusals", () => {
+  test("a withheld count is stored under its own kind, and the rung is incomplete", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey, {
+      losses: lossReport({ total: 3, kinds: { spool_withheld: 2, hub_rejected: 1 } }),
+    });
+
+    // Act
+    const stored = await sessionRow(harness);
+    const row = await agentEventOf(harness, developer);
+
+    // Assert
+    expect(stored.lossKinds).toEqual({ spool_withheld: 2, hub_rejected: 1 });
+    expect(stored.lossTotal).toBe(3);
+    expect(row.reason).toBe("telemetry_lost");
+  });
+});
+
 describe("C1 (review 2026-10-01): one report can break neither the repo's coverage nor the call it rides", () => {
   test("PROBE A: a hub_ignored count past int4 leaves another developer's coverage readable, and counts the loss", async () => {
     // Arrange: an honest session beside one whose report carries 3e9

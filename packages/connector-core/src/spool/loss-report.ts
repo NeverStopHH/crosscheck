@@ -54,8 +54,11 @@ const DROP_REASON_KINDS: Readonly<Record<string, LossKind>> = {
   unparsable: "spool_torn",
   expired: "spool_expired",
   rejected: "hub_rejected",
-  // Never sent, but lost to the same refusal: the hub had ended their life.
-  withheld: "hub_rejected",
+  // Never sent, so never the hub's refusal — "the hub answered 200 and
+  // refused the record" would be a sentence about a request that did not
+  // happen. A hub from before this kind folds it into `unattributed`, still
+  // counted (schema telemetry-loss.ts foldLossKindsFor).
+  withheld: "spool_withheld",
   ignored: "hub_ignored",
   "capture-capped": "capture_capped",
   "secret-path": "capture_secret_path",

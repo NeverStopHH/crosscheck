@@ -30,6 +30,11 @@ export const LOSS_KINDS = [
   "spool_torn",
   /** Undelivered records of a dead session past MAX_SPOOL_AGE_DAYS. */
   "spool_expired",
+  /**
+   * Records a life the hub had ended, held back and never sent: any live
+   * session's delivery would file them into that life past its end.
+   */
+  "spool_withheld",
   /** The hub answered 200 and refused the record. */
   "hub_rejected",
   /** The hub answered 200 and ignored the record's kind. */
@@ -60,12 +65,12 @@ export const isLossKind = (value: string): value is LossKind =>
   LOSS_KIND_SET.has(value);
 
 /**
- * The largest `kinds` map a hub accepts: the twelve kinds above, doubled, so
- * a connector two vocabularies ahead of this hub still parses while a client
+ * The largest `kinds` map a hub accepts: the kinds above, doubled, so a
+ * connector two vocabularies ahead of this hub still parses while a client
  * sending thousands of keys is refused at the schema rather than folded one
  * by one.
  */
-export const MAX_LOSS_KIND_ENTRIES = 24;
+export const MAX_LOSS_KIND_ENTRIES = LOSS_KINDS.length * 2;
 
 /** A key longer than this is nobody's enum value. */
 export const MAX_LOSS_KIND_CHARS = 64;
@@ -119,20 +124,26 @@ export const EMPTY_LOSS_REPORT: TelemetryLossReport = {
 export type FoldedLossKinds = Partial<Record<LossKind, number>>;
 
 /**
- * Keys this hub knows pass through; every other key's count is added to
+ * Keys a hub knows pass through; every other key's count is added to
  * `unattributed` — on top of one the connector sent itself, never over it.
  * Zero counts are dropped so the stored object names only real losses.
+ *
+ * The vocabulary is a parameter so the fold an OLDER hub runs can be stated:
+ * a kind added after it — `spool_withheld` — is still counted there, under
+ * `unattributed`. This hub folds against its own (`foldLossKinds`).
  */
-export const foldLossKinds = (
-  kinds: Readonly<Record<string, number>>,
-): FoldedLossKinds =>
-  Object.entries(kinds).reduce<FoldedLossKinds>((folded, [key, count]) => {
-    if (count <= 0) {
-      return folded;
-    }
-    const kind: LossKind = isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;
-    return { ...folded, [kind]: (folded[kind] ?? 0) + count };
-  }, {});
+export const foldLossKindsFor =
+  (vocabulary: ReadonlySet<string>) =>
+  (kinds: Readonly<Record<string, number>>): FoldedLossKinds =>
+    Object.entries(kinds).reduce<FoldedLossKinds>((folded, [key, count]) => {
+      if (count <= 0) {
+        return folded;
+      }
+      const kind: LossKind = vocabulary.has(key) && isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;
+      return { ...folded, [kind]: (folded[kind] ?? 0) + count };
+    }, {});
+
+export const foldLossKinds = foldLossKindsFor(LOSS_KIND_SET);
 
 /**
  * WHAT A HUB STORES FOR A REPORT IT CANNOT READ (review M2): a count past

@@ -82,6 +82,20 @@ describe("LOSS-7: the report folds every ledger", () => {
     expect(local.drops.ignoredRecordKinds["claim_revalidation"]).toBe(2);
   });
 
+  test("a withheld record reaches the wire as its own kind, never as the hub's refusal", async () => {
+    // Arrange: one record the hub refused, two the connector never sent
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 1, "rejected", T0, { target: 1 }, { session_ended: 1 });
+    await recordDrop(path, KEY, SLUG, 2, "withheld", T1, { target: 2 }, { session_ended: 2 });
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(local.report.kinds).toEqual({ hub_rejected: 1, spool_withheld: 2 });
+    expect(local.report.total).toBe(3);
+  });
+
   test("a clean machine reports zero, as a statement rather than a silence", async () => {
     // Act
     const local = await readLocalLosses(await home(), KEY);

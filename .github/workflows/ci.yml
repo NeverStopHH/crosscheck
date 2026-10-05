@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1582
+    # PRINTS: 1585
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -337,7 +337,7 @@ jobs:
     # PRINTS: spool/flush.ts 7
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
-    # PRINTS: spool/loss-report.ts 16
+    # PRINTS: spool/loss-report.ts 17
     # PRINTS: spool/reap.ts 3
     # PRINTS: spool/refused-lives.ts 1
     # PRINTS: spool/reject-cause.ts 1
@@ -384,7 +384,7 @@ jobs:
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
-    # PRINTS: packages/schema/src/telemetry-loss.ts 6
+    # PRINTS: packages/schema/src/telemetry-loss.ts 8
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 17
     # PRINTS: packages/server/src/db/client.ts 8
@@ -593,7 +593,7 @@ jobs:
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
-    # PRINTS: loss-report.ts 16
+    # PRINTS: loss-report.ts 17
     # PRINTS: manifest-doc.ts 2
     # PRINTS: noise.ts 7
     # PRINTS: normalized-doc.ts 2
@@ -694,7 +694,7 @@ jobs:
     # PRINTS: sweep.ts 3
     # PRINTS: target-paths.ts 1
     # PRINTS: team-settings.ts 2
-    # PRINTS: telemetry-loss.ts 6
+    # PRINTS: telemetry-loss.ts 8
     # PRINTS: terminal.ts 3
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 2

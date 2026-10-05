@@ -369,6 +369,7 @@ export {
   UNREADABLE_LOSS_REPORT,
   clampLossCount,
   foldLossKinds,
+  foldLossKindsFor,
   isLossKind,
   settleLossReport,
 } from "./telemetry-loss.ts";
