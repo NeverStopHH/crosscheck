@@ -177,14 +177,15 @@ export interface ReadCoverageOptions {
   /** The kinds this question's order depends on; all nine when omitted (coverage-order.ts). */
   readonly orderKinds?: readonly GuaranteeKind[];
   /**
-   * THE SESSIONS THE ANSWER ITSELF NAMES (review H3), folded into `order`
-   * beside the rung's scope. An answer picks its sessions by its own predicate
-   * — suspect's by work-context activity, which an update from a successor
-   * session keeps inside the window — while the rung reads heartbeats. A
-   * named session the rung left out could only be missing from the minimum,
-   * and a minimum over fewer sessions can only be stronger.
+   * THE SESSIONS THE ANSWER ITSELF NAMES (review H3), folded into the
+   * `agent_event` rung and into `order` beside the rung's scope. An answer
+   * picks its sessions by its own predicate — suspect's by work-context
+   * activity, which an update from a successor session keeps inside the
+   * window — while the rung reads heartbeats. A named session the rung left
+   * out could only be missing from its gaps and from the order minimum, and
+   * a fold over fewer sessions can only read stronger.
    */
-  readonly orderSessionIds?: readonly string[];
+  readonly answerSessionIds?: readonly string[];
 }
 
 const sourceRecord = (
@@ -333,7 +334,7 @@ const gapCondition = (
  */
 const lossCondition = (
   table: typeof agentSessions | typeof scopeSessions,
-  since: Date,
+  since: Date | SQL,
 ): SQL =>
   sql`(${table.lossReportedAt} is not null and ${table.lossTotal} > 0 and (${table.lossNewestAt} is null or ${table.lossNewestAt} > ${since}))`;
 
@@ -345,7 +346,7 @@ const lossCondition = (
  */
 const ignoredKindCondition = (
   table: typeof agentSessions | typeof scopeSessions,
-  since: Date,
+  since: Date | SQL,
 ): SQL => sql`${table.lossIgnoredAt} > ${since}`;
 
 /**
@@ -466,53 +467,118 @@ const agentGapReason = (
   return reaped > 0 ? "session_reaped" : "session_silent";
 };
 
-const readAgentEventCoverage = async (
+/**
+ * THE SESSIONS ONE ANSWER'S COVERAGE FOLDS OVER — one definition, read by the
+ * `agent_event` rung and by the `order` block alike (review H3), so the two
+ * cannot describe different sessions.
+ *
+ * `window` is the rung's own scope: this repo, a heartbeat inside the window,
+ * and `touchedScope` under a path scope. `named` is the sessions the answer
+ * itself names (ReadCoverageOptions.answerSessionIds), wherever their
+ * heartbeat sits, and null when it names none.
+ *
+ * A NAMED SESSION MAY ONLY WEAKEN THE RUNG. It joins the fold, so its reap,
+ * its silence and its losses count; it never counts as somebody reporting —
+ * only the window can say that — so a clean named session cannot turn an
+ * empty window `complete`. The order minimum needs no such rule: one more
+ * session can only lower it.
+ */
+interface SessionScope {
+  readonly window: SQL;
+  readonly named: SQL | null;
+}
+
+const sessionScope = (
   deps: Deps,
   now: Date,
   repo: string,
   since: Date,
   paths: readonly string[],
+  answerSessionIds: readonly string[],
+): SessionScope => {
+  const window =
+    and(
+      eq(agentSessions.repo, repo),
+      gt(agentSessions.lastHeartbeatAt, since),
+      ...(paths.length === 0
+        ? []
+        : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),
+    ) ?? sql`false`;
+  return {
+    window,
+    named:
+      answerSessionIds.length === 0
+        ? null
+        : inArray(agentSessions.id, [...answerSessionIds]),
+  };
+};
+
+/** Every session in the scope: the window's, and the named ones beside it. */
+const inScope = (scope: SessionScope): SQL =>
+  scope.named === null ? scope.window : sql`(${scope.window} or ${scope.named})`;
+
+/** Earlier than any instant: a loss term over it holds for every loss reported. */
+const NO_FLOOR = sql`'-infinity'::timestamptz`;
+
+/**
+ * A LOSS TERM, ITS WINDOW LIFTED FOR THE SESSIONS THE ANSWER NAMES. The
+ * window reads a loss older than `since` as out of scope because the question
+ * is about newer records (lossCondition). An answer that names a session
+ * cites that session's records whenever they were written — trace's
+ * candidate is a work context created before the window and touched inside
+ * it — so every loss a named session reported is about the answer. Lifting a
+ * floor can only count more losses, never fewer.
+ */
+const lossTerm = (
+  term: (floor: Date | SQL) => SQL,
+  since: Date,
+  named: SQL | null,
+): SQL =>
+  named === null
+    ? term(since)
+    : sql`(${term(since)} or (${named} and ${term(NO_FLOOR)}))`;
+
+const readAgentEventCoverage = async (
+  deps: Deps,
+  now: Date,
+  since: Date,
+  scope: SessionScope,
 ): Promise<CoverageSourceRecord> => {
-  const cutoff = presenceCutoff(now);
-  const isGap = gapCondition(agentSessions, cutoff);
-  const isLost = lossCondition(agentSessions, since);
+  const isGap = gapCondition(agentSessions, presenceCutoff(now));
+  const isLost = lossTerm((floor) => lossCondition(agentSessions, floor), since, scope.named);
+  const isIgnored = lossTerm(
+    (floor) => ignoredKindCondition(agentSessions, floor),
+    since,
+    scope.named,
+  );
   const rows = await deps.db
     .select({
-      total: sql`count(*)`,
+      // The window alone can say somebody was reporting (sessionScope).
+      reporting: sql`count(*) filter (where ${scope.window})`,
       reaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,
       gaps: sql`count(*) filter (where ${isGap})`,
       gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
       lost: sql`count(*) filter (where ${isLost})`,
-      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,
+      ignored: sql`count(*) filter (where ${isLost} and ${isIgnored})`,
       lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
       observedAt: sql`max(${agentSessions.lastHeartbeatAt})`,
     })
     .from(agentSessions)
-    .where(
-      and(
-        eq(agentSessions.repo, repo),
-        gt(agentSessions.lastHeartbeatAt, since),
-        ...(paths.length === 0
-          ? []
-          : [touchedScope(deps, repo, since, cutoff, paths)]),
-      ),
-    );
+    .where(inScope(scope));
   const row = rows[0];
-  const total = toCount(row?.total);
-  if (total === 0) {
-    return sourceRecord("agent_event", "unknown", "no_session_in_window");
-  }
   const observedAt = toIso(row?.observedAt);
   const gaps = toCount(row?.gaps);
   const lost = toCount(row?.lost);
   if (gaps === 0 && lost === 0) {
-    return sourceRecord(
-      "agent_event",
-      "complete",
-      "sessions_reported",
-      null,
-      observedAt,
-    );
+    return toCount(row?.reporting) === 0
+      ? sourceRecord("agent_event", "unknown", "no_session_in_window")
+      : sourceRecord(
+          "agent_event",
+          "complete",
+          "sessions_reported",
+          null,
+          observedAt,
+        );
   }
   return sourceRecord(
     "agent_event",
@@ -661,33 +727,6 @@ export const isJudgeable = (record: CoverageRecord): boolean =>
  * told — the same rule every other answer on these routes already follows.
  * Coverage that ignored an opt-out would be a side channel around it.
  */
-/**
- * THE SESSIONS THE `order` BLOCK FOLDS OVER — the agent_event rung's own
- * scope (repo, window, and `touchedScope` under a path scope), restated here
- * rather than threaded out of `readAgentEventCoverage` so the loss-reading
- * code stays untouched; coverage-order.test.ts holds the two to one scope.
- */
-const orderScope = (
-  deps: Deps,
-  now: Date,
-  repo: string,
-  since: Date,
-  paths: readonly string[],
-  answerSessionIds: readonly string[],
-): SQL => {
-  const rung =
-    and(
-      eq(agentSessions.repo, repo),
-      gt(agentSessions.lastHeartbeatAt, since),
-      ...(paths.length === 0
-        ? []
-        : [touchedScope(deps, repo, since, presenceCutoff(now), paths)]),
-    ) ?? sql`false`;
-  return answerSessionIds.length === 0
-    ? rung
-    : sql`(${rung} or ${inArray(agentSessions.id, [...answerSessionIds])})`;
-};
-
 export const readCoverage = async (
   deps: Deps,
   viewerDeveloperId: string,
@@ -697,12 +736,13 @@ export const readCoverage = async (
   const now = deps.now();
   const since = effectiveSince(now, options.scope);
   const paths = scopePaths(options.scope);
+  const scope = sessionScope(deps, now, repo, since, paths, options.answerSessionIds ?? []);
   const [agentEvent, git, order] = await Promise.all([
-    readAgentEventCoverage(deps, now, repo, since, paths),
+    readAgentEventCoverage(deps, now, since, scope),
     readGitCoverage(deps, now, viewerDeveloperId, repo),
     readCoverageOrder(
       deps.db,
-      orderScope(deps, now, repo, since, paths, options.orderSessionIds ?? []),
+      inScope(scope),
       options.orderKinds ?? ALL_ORDER_KINDS,
     ),
   ]);
