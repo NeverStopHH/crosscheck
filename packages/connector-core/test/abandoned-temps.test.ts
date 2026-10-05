@@ -12,8 +12,9 @@
  * Temp homes only (helpers.ts makeHome); the clock is injected, and every
  * age below is set on the file with `utimes` against that clock.
  */
-import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as fsPromises from "node:fs/promises";
+import { chmod, lstat, lutimes, mkdir, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import {
@@ -88,6 +89,61 @@ describe("writePrivateFile when a step after creating the temp fails", () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as NodeJS.ErrnoException).syscall).toBe("rename");
     expect(await readdir(dirname(target))).toEqual([basename(target)]);
+  });
+
+  /**
+   * The two failures no filesystem state can arrange on demand — a write that
+   * dies part-way (ENOSPC) and a refused chmod — injected at the module
+   * boundary. `spyOn` on node:fs/promises reaches paths.ts's named imports
+   * in bun; each spy is restored in `finally`, so no other test sees it.
+   */
+  test("removes its temp when the write itself dies part-way, and rethrows", async () => {
+    // Arrange: the temp is created and half-written, then the disk fills
+    const home = await tempHome("temp-cleanup-write");
+    const target = syncStatePath(home, KEY);
+    await mkdir(dirname(target), { recursive: true });
+    const realWriteFile = fsPromises.writeFile;
+    const spy = spyOn(fsPromises, "writeFile").mockImplementation(async (path, data) => {
+      await realWriteFile(path, String(data).slice(0, 1));
+      throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+    });
+
+    try {
+      // Act
+      const error: unknown = await writePrivateFile(target, "{}\n").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+
+      // Assert: the write's own error, and no temp left behind
+      expect((error as NodeJS.ErrnoException).code).toBe("ENOSPC");
+      expect(await readdir(dirname(target))).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("removes its temp when chmod is refused, and rethrows", async () => {
+    // Arrange: the temp is written whole, then chmod fails
+    const home = await tempHome("temp-cleanup-chmod");
+    const target = syncStatePath(home, KEY);
+    const spy = spyOn(fsPromises, "chmod").mockImplementation(async () => {
+      throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    });
+
+    try {
+      // Act
+      const error: unknown = await writePrivateFile(target, "{}\n").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+
+      // Assert
+      expect((error as NodeJS.ErrnoException).code).toBe("EPERM");
+      expect(await readdir(dirname(target))).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -220,6 +276,9 @@ describe("sweepAbandonedTemps deletes only what is certainly abandoned", () => {
       "notes.tmp-123-abc_def",
       "notes.bak-123-abcdefgh",
       ".tmp-123-abcdefgh",
+      // The dot before `tmp-` is literal: an unescaped `.` would take these
+      "notesXtmp-123-abcdefgh",
+      "notes-tmp-123-abcdefgh",
     ];
     for (const name of names) {
       await seed(join(state, name), 100 * ABANDONED_MS);
@@ -236,6 +295,27 @@ describe("sweepAbandonedTemps deletes only what is certainly abandoned", () => {
     expect((await readdir(state)).sort()).toEqual(
       [...names, basename(shapedDirectory)].sort(),
     );
+  });
+});
+
+describe("sweepAbandonedTemps never touches a symlink", () => {
+  test("a temp-shaped symlink stays, and so does the file it points at, however old", async () => {
+    // Arrange: an old symlink named exactly like a temp, pointing at an old
+    // file outside every swept directory
+    const home = await tempHome("sweep-symlink");
+    const victim = await seed(join(home, "elsewhere", "victim.json"), 100 * ABANDONED_MS);
+    const link = join(dirname(syncStatePath(home, KEY)), `${KEY}.json.tmp-9-link`);
+    await mkdir(dirname(link), { recursive: true });
+    await symlink(victim, link);
+    const when = new Date(NOW.getTime() - 100 * ABANDONED_MS);
+    await lutimes(link, when, when);
+
+    // Act
+    await sweepAbandonedTemps(home, NOW, ROOM);
+
+    // Assert: writePrivateFile never makes a link, so a link is never its temp
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await exists(victim)).toBe(true);
   });
 });
 

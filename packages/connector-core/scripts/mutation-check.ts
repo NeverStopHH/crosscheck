@@ -17611,6 +17611,40 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/capture-engine.test.ts`,
     because: "one unwritable spool directory and the ACP-only machine's only sweep never runs again",
   },
+  {
+    // Review 2026-10-06 (L3): only a failing rename was tested, so moving
+    // the write and the chmod out of the try survived.
+    label: "a write that dies part-way leaves its temp behind",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  try {\n    await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });\n",
+    to: "  await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });\n  try {\n",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a disk that fills mid-write leaves a torn `<path>.tmp-…` beside every file it was writing",
+  },
+  {
+    label: "a refused chmod leaves its temp behind",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  try {\n    await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });\n    await chmod(temp, PRIVATE_FILE_MODE);\n",
+    to: "  await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });\n  await chmod(temp, PRIVATE_FILE_MODE);\n  try {\n",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a whole temp — content and all — stays on disk whenever the mode cannot be set",
+  },
+  {
+    label: "the temp sweep removes a temp-shaped symlink",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "      if (!entry.isFile() || !isTempSiblingName(entry.name)) {",
+    to: "      if (!isTempSiblingName(entry.name)) {",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a link somebody placed in the crosscheck home is deleted because its NAME looks like ours, though writePrivateFile never makes one",
+  },
+  {
+    label: "the temp shape's dot matches any character",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "const TEMP_SIBLING_NAME = /^.+\\.tmp-[0-9]+-[0-9a-z]{1,8}$/;",
+    to: "const TEMP_SIBLING_NAME = /^.+.tmp-[0-9]+-[0-9a-z]{1,8}$/;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "`notes-tmp-123-abcdefgh` is not a temp of anything and is deleted once a day old",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17785,7 +17819,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 17
+ * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 21
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
