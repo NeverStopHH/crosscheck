@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1596
+    # PRINTS: 1603
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -378,6 +378,7 @@ jobs:
     # PRINTS: packages/schema/src/pin.ts 2
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
+    # PRINTS: packages/schema/src/session-control.ts 5
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/substance-sentence.ts 3
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
@@ -420,7 +421,7 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
-    # PRINTS: packages/server/src/services/hints.ts 16
+    # PRINTS: packages/server/src/services/hints.ts 18
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
@@ -557,7 +558,7 @@ jobs:
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 17
-    # PRINTS: hints.ts 19
+    # PRINTS: hints.ts 21
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 13
     # PRINTS: index.ts 4
@@ -658,6 +659,7 @@ jobs:
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 24
     # PRINTS: seq-cost.ts 8
+    # PRINTS: session-control.ts 5
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2

@@ -56,6 +56,7 @@ import {
   SUBSTANCE_MAX_CHARS,
   humanPromptText,
   isHarnessTurn,
+  isSessionControlOnly,
   substanceSentence,
 } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
@@ -166,6 +167,35 @@ const sharedTermsSql = (document: SQL, tokens: readonly string[]): SQL<number> =
         WHERE numnode(term.lexeme) > 0
           AND numnode(term.german) > 0
           AND ${document} @@ term.lexeme)`;
+
+/**
+ * The query's words that are TERMS — the ones neither stop list drops, the
+ * same two `sharedTermsSql` applies — in one bounded query, so the
+ * session-control rule below judges exactly the words the floor would count.
+ */
+const listContentWords = async (db: Db, tokens: readonly string[]): Promise<readonly string[]> => {
+  if (tokens.length === 0) {
+    return [];
+  }
+  const result = await db.execute<{ word: string }>(sql`
+    SELECT word FROM unnest(ARRAY[${sql.join(
+      tokens.map((token) => sql`${token}`),
+      sql`, `,
+    )}]::text[]) AS words(word)
+    WHERE numnode(plainto_tsquery('english', word)) > 0
+      AND numnode(plainto_tsquery('german', word)) > 0`);
+  return result.rows.map((row) => row.word);
+};
+
+/**
+ * A prompt made only of words that steer the session — continue, limit,
+ * reset, bitte, typos or not (@crosscheck/schema session-control.ts) —
+ * carries no task, so the intent stands in for it as for any content-free
+ * prompt. Live on 0.10.0, "mache weiter, limit zuruckgesetzt. bitte alles
+ * wiederuafnhemen" cleared the floor on a German claim sharing three words.
+ */
+const isSessionControlPrompt = async (db: Db, text: string): Promise<boolean> =>
+  isSessionControlOnly(await listContentWords(db, ftsTokens(text)));
 
 /**
  * The context's own statement — what its owner said the work is — as one
@@ -720,11 +750,14 @@ export const listHintCandidates = async (
   if (isHarnessTurn(input.query)) {
     return [];
   }
-  const fromPrompt = await matchCandidates(deps, callerDeveloperId, {
-    text: humanPromptText(input.query),
-    repo: input.repo,
-    on: "prompt",
-  });
+  const humanText = humanPromptText(input.query);
+  const fromPrompt = (await isSessionControlPrompt(deps.db, humanText))
+    ? []
+    : await matchCandidates(deps, callerDeveloperId, {
+        text: humanText,
+        repo: input.repo,
+        on: "prompt",
+      });
   if (fromPrompt.length > 0) {
     return fromPrompt;
   }

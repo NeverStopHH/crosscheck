@@ -33,6 +33,7 @@ const MIKE_CONTEXT = "wc_mike";
 interface CandidateView {
   readonly workContext: { readonly id: string };
   readonly sharedTerms?: number;
+  readonly matchedOn?: string;
 }
 
 const fetchCandidates = async (
@@ -183,6 +184,74 @@ describe("German and English function words are never task words (finding 2)", (
 
     // Assert
     expect(candidates).toEqual([]);
+  });
+});
+
+describe("a prompt of session-steering words only matches nothing, typos or not (live pilot, 0.10.0)", () => {
+  /** A German tree whose claim shares mach, limit and bitt with the live prompt. */
+  const germanLimitTree = () =>
+    seedTree({ title: "Upload-Limit der Trainingsvideos", description: "Chunked Upload statt PUT" }, [
+      { id: "clm_de_limit", body: "Mache das Limit-Handling im Upload robuster, bitte nach dem Reset wiederaufnehmen." },
+    ]);
+  /** An English tree whose claim shares please, continue, limit and reset. */
+  const englishLimitTree = () =>
+    seedTree({ title: "Import pauses at the provider quota", description: "Nightly provider import" }, [
+      { id: "clm_en_limit", body: "Please continue the import once the limit reset has gone through." },
+    ]);
+
+  test.each([
+    ["mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen"],
+    ["mache weiter, limit zurückgesetzt, bitte"],
+    ["macxhe weiter, limit ist zurukgsetz"],
+  ])("German %p points at no tree that shares those words", async (prompt) => {
+    // Arrange
+    const { harness, robin } = await germanLimitTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: prompt });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test("English \"please continue, the limit was reset\" points at no tree that shares those words", async () => {
+    // Arrange
+    const { harness, robin } = await englishLimitTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: "please continue, the limit was reset" });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test("the session's intent still stands in for such a prompt", async () => {
+    // Arrange
+    const { harness, robin } = await germanLimitTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, {
+      query: "mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen",
+      intent: "Das Limit-Handling im Upload robuster machen",
+    });
+
+    // Assert
+    expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+    expect(candidates[0]?.matchedOn).toBe("intent");
+  });
+
+  test("the control: one task word beside them makes it a prompt that matches", async () => {
+    // Arrange
+    const { harness, robin } = await germanLimitTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, {
+      query: "bitte das Limit-Handling im Upload robuster machen",
+    });
+
+    // Assert
+    expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+    expect(candidates[0]?.matchedOn).toBe("prompt");
   });
 });
 

@@ -310,6 +310,7 @@ export {
   humanPromptText,
   isHarnessTurn,
 } from "./harness-turn.ts";
+export { isSessionControlOnly } from "./session-control.ts";
 export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,

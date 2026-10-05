@@ -17866,10 +17866,66 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub scores the harness's words",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "    text: humanPromptText(input.query),\n",
-    to: "    text: input.query,\n",
+    from: "  const humanText = humanPromptText(input.query);",
+    to: "  const humanText = input.query;",
     test: `${SERVER}/test/hint-harness-turn.test.ts`,
     because: "a 0.10.0 connector's notification turn points at the automation tree it shares four words with",
+  },
+  {
+    label: "one session-steering word silences a whole task prompt",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  words.length > 0 && words.every(isControlWord);",
+    to: "  words.length > 0 && words.some(isControlWord);",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"rate limit headers missing\" is treated as \"limit reset, continue\" and earns no hint",
+  },
+  {
+    label: "a typo makes a session command a task again",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "    const allowed = editsAllowed(Math.max(folded.length, control.length));",
+    to: "    const allowed = 0;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"wiederuafnhemen\" is a word nobody's tree has, so the rest of the live prompt is scored as a task",
+  },
+  {
+    label: "an umlaut or a capital makes a session command a task again",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  const folded = fold(word);",
+    to: "  const folded = word;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"zurückgesetzt\" and \"Bitte\" stop matching the words they are",
+  },
+  {
+    label: "a five-letter word one letter off a session command counts as it",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  [5, 0],\n",
+    to: "  [5, 1],\n",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"cache limit\" reads as \"mache limit\" and a real two-word task earns nothing",
+  },
+  {
+    label: "a swapped pair of letters costs two edits",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "        return [...built, swapped ? Math.min(best, twoBack[j - 2]! + 1) : best];",
+    to: "        return [...built, best];",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"contineu\" and \"wiederuafnhemen\" — a typist's commonest slip — stop being the words they are",
+  },
+  {
+    label: "the hub scores a prompt of session commands as a task",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const fromPrompt = (await isSessionControlPrompt(deps.db, humanText))\n",
+    to: "  const fromPrompt = false\n",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"mache weiter, limit zuruckgesetzt, bitte\" points at a German tree on mach, limit and bitte — the live pilot",
+  },
+  {
+    label: "the session-command rule judges stop words too",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  isSessionControlOnly(await listContentWords(db, ftsTokens(text)));",
+    to: "  isSessionControlOnly(ftsTokens(text));",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"weiter\" and \"alles\" are not session commands, so no real prompt of them is ever content-free",
   },
 ];
 
@@ -18164,6 +18220,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
+ * PRINTS: packages/schema/test/session-control.test.ts 5
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/substance-sentence.test.ts 3
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
@@ -18193,7 +18250,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-candidate-floor.test.ts 2
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 4
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
