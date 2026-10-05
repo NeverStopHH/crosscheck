@@ -17631,6 +17631,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "the life a raced heal registered stays open on the hub until the reaper guesses it dead",
   },
+  {
+    label: "a heal binds the next life to the hook's repo",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    const result = await walk(boundToSession(input, state), state, refusal, deadlineMs, now);",
+    to: "    const result = await walk(input, state, refusal, deadlineMs, now);",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review finding 7: a Stop in another repo of a multi-repo workspace re-homes the session to that repo on the hub",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17890,7 +17898,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 11
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
- * PRINTS: packages/connector-core/test/session-lives.test.ts 14
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 15
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

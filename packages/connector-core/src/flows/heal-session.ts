@@ -37,6 +37,7 @@ import type { CausalGuaranteeTriple } from "@crosscheck/schema";
 import { HEAL_COOLDOWN_MS, HEAL_MIN_ROOM_MS } from "../constants.ts";
 import {
   readJsonOrNull,
+  repoKey,
   sessionHealPathForSlug,
   sessionSlug,
   writePrivateFile,
@@ -240,6 +241,18 @@ const retireOrphan = async (input: SessionHealerInput, sessionId: string, now: D
   }
 };
 
+/**
+ * The heal binds to the SESSION's repo, never the hook's (review finding 7): a
+ * hook that resolved another repo — a Stop in a multi-repo workspace — must
+ * not re-home the session. The next life's registration, the loss report it
+ * carries, the refused-life note and the next work context all follow the
+ * binding the state file holds; the hub connection stays the hook's.
+ */
+const boundToSession = (input: SessionHealerInput, state: SessionState): SessionHealerInput => {
+  const key = repoKey(state.hubUrl, state.repoId);
+  return { ...input, repoId: state.repoId, repoKey: key, hub: { ...input.hub, repoKey: key } };
+};
+
 /** The walk itself, once `mayWalk` allowed it and the attempt is stamped. */
 const walk = async (
   input: SessionHealerInput,
@@ -315,7 +328,7 @@ export const sessionHealer =
       return FAILED;
     }
     await beforeWalk?.();
-    const result = await walk(input, state, refusal, deadlineMs, now);
+    const result = await walk(boundToSession(input, state), state, refusal, deadlineMs, now);
     await writeStamp(input, now, "done", deadlineMs);
     return result;
   };

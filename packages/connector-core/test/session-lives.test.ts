@@ -520,3 +520,40 @@ describe("a heal racing a SessionEnd (review finding 6)", () => {
     expect(await targetsOf(resumed.workContextId)).toEqual(["src/after-resume.ts"]);
   });
 });
+
+describe("a heal asked from a hook in another repo (review finding 7)", () => {
+  test("binds the next life to the session's repo, and spools its work context there", async () => {
+    // Arrange: a session bound to acme/api, ended by the hub; the hook that
+    // heals it resolved a different repo (a Stop with no foreign-repo guard)
+    const fx = await fixture("foreign-hook");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    const foreignRepoId = "github.com/acme/web";
+    const foreignKey = repoKey(hubUrl, foreignRepoId);
+    const healer = sessionHealer({
+      home: fx.home,
+      repoKey: foreignKey,
+      hub: { ...fx.hub, repoKey: foreignKey },
+      agentKind: "acp:test",
+      hostSessionKey: fx.hostSessionKey,
+      repoId: foreignRepoId,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+      now: () => new Date(),
+    });
+
+    // Act
+    const healed = await healer({ sessionId: life.crosscheckSessionId, cause: "session_ended" }, Date.now() + BUDGET_MS);
+    await flushAsHook(fx);
+
+    // Assert: the hub binds the next life to the session's repo, where its work context landed
+    const next = `${life.crosscheckSessionId}~r1`;
+    expect(healed).toEqual({ outcome: "healed", refusedSessionId: life.crosscheckSessionId, sessionId: next });
+    const rows = await raw<{ repo: string }>("select repo from agent_sessions where id = $1", [next]);
+    expect(rows).toEqual([{ repo: REPO_ID }]);
+    const contexts = await raw<{ id: string }>("select id from work_contexts where session_id = $1", [next]);
+    expect(contexts).toEqual([{ id: `wc_${next}` }]);
+  });
+});
