@@ -10,8 +10,21 @@ import {
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
-export const crosscheckHome = (env: Env): string =>
-  env["CROSSCHECK_HOME"] ?? join(homedir(), ".crosscheck");
+/**
+ * An EMPTY or whitespace-only CROSSCHECK_HOME is unset, not a path (review
+ * 2026-10-06). `""` is not nullish, so it used to come back as the home
+ * itself, and every path joined under it — state/, spool/, config.json, the
+ * temp sweep's deletions — resolved against whatever directory the process
+ * ran in, which for a hook is the developer's repo. A shell that exports the
+ * variable empty is not asking for that. Any other value is used verbatim:
+ * a path with spaces in it is still a path.
+ */
+export const crosscheckHome = (env: Env): string => {
+  const configured = env["CROSSCHECK_HOME"];
+  return configured === undefined || configured.trim() === ""
+    ? join(homedir(), ".crosscheck")
+    : configured;
+};
 
 /**
  * Path-safe and hub-scoped: the same repo on two hubs never shares a spool,

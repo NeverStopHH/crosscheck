@@ -17689,6 +17689,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/abandoned-temps.test.ts`,
     because: "one directory whose listing is refused throws inside SessionStart's raced handler, and the hook answers \"\" — the briefing lost to a cleanup",
   },
+  {
+    // Review 2026-10-06 (L6): `""` is not nullish.
+    label: "an empty CROSSCHECK_HOME puts the home in the working directory",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  return configured === undefined || configured.trim() === \"\"\n",
+    to: "  return configured === undefined\n",
+    test: `${CORE}/test/crosscheck-home.test.ts`,
+    because: "state/, spool/ and config.json are written into the developer's repo, and the temp sweep deletes from it",
+  },
+  {
+    label: "a whitespace CROSSCHECK_HOME is taken as a path",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  return configured === undefined || configured.trim() === \"\"\n",
+    to: "  return configured === undefined || configured === \"\"\n",
+    test: `${CORE}/test/crosscheck-home.test.ts`,
+    because: "an export with a stray space makes a directory named ' ' in the repo and keeps the home there",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17891,6 +17908,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
+ * PRINTS: packages/connector-core/test/crosscheck-home.test.ts 2
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
