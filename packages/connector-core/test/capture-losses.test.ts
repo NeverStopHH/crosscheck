@@ -157,6 +157,9 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
       denylist: null,
       since: new Date(0),
       now: NOW,
+      // 2005 dirty files can outlast the lane's 250 ms on a loaded machine;
+      // what this case pins is the bound's count, not git's speed
+      gitTimeoutMs: GIT_LANE_BOUND_TEST_TIMEOUT_MS,
     });
 
     // Assert: the 5 cut before the freshness check, plus the ones the per-call
@@ -203,6 +206,9 @@ const laneAfterTheDirt = (fx: { home: string; repo: string }) =>
     denylist: null,
     since: new Date(Date.now() + 60_000),
     now: NOW,
+    // Thousands of dirty files can outlast the lane's 250 ms on a loaded
+    // machine; these cases pin the bound's count, not git's speed
+    gitTimeoutMs: GIT_LANE_BOUND_TEST_TIMEOUT_MS,
   });
 
 describe("loss-accounting §10 item 8: the git lane books only the dirty paths it never examined", () => {
