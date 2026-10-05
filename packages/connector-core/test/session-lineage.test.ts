@@ -57,12 +57,14 @@ describe("the walk", () => {
     expect(ladderRungs(0).length).toBe(REGISTER_LADDER_MAX_ATTEMPTS);
   });
 
-  test("starts at the newer of the live life and the last ended one", () => {
+  test("starts on the live life, or above an end written at or above it — never on an ended rung", () => {
     expect(ladderStart(BASE, null, null)).toBe(0);
     expect(ladderStart(BASE, `${BASE}~r4`, null)).toBe(4);
     expect(ladderStart(BASE, `${BASE}~r4`, 2)).toBe(4);
-    expect(ladderStart(BASE, null, 6)).toBe(6);
-    expect(ladderStart(BASE, "cc_somebody-else", 1)).toBe(1);
+    expect(ladderStart(BASE, `${BASE}~r4`, 4)).toBe(5);
+    expect(ladderStart(BASE, null, 6)).toBe(7);
+    expect(ladderStart(BASE, null, 0)).toBe(1);
+    expect(ladderStart(BASE, "cc_somebody-else", 1)).toBe(2);
   });
 });
 

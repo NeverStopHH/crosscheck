@@ -20,7 +20,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 
-import { createDb, createServer, readCoverage } from "@crosscheck/server";
+import { createDb, createServer, readCoverage, readSessionCausalOrder } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 // By path: the reaper is the hub's own timer and has no export; a test that
 // reaps the way it does has to reach it where it lives.
@@ -62,8 +62,9 @@ let hubUrl: string;
 let proxyUrl: string;
 let apiKey: string;
 let registerCalls = 0;
-/** The proxy's dial: hold every register this long. */
+/** The proxy's dials: hold every register this long; refuse every end. */
 let registerDelayMs = 0;
+let refuseEnds = false;
 const cleanups: string[] = [];
 
 interface Fixture {
@@ -197,6 +198,9 @@ beforeAll(async () => {
           await Bun.sleep(registerDelayMs);
         }
       }
+      if (request.method === "POST" && pathname.endsWith("/end") && refuseEnds) {
+        return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
+      }
       return fetch(`${hubUrl}${pathname}${search}`, {
         method: request.method,
         headers: request.headers,
@@ -285,7 +289,7 @@ describe("a conversation resumed after SessionEnd", () => {
     expect((epochs.rows as { epochs: number }[]).map((row) => row.epochs)).toEqual([1, 1, 1, 1]);
   });
 
-  test("a resume costs two register calls however many lives came before", async () => {
+  test("a resume costs one register call however many lives came before", async () => {
     // Arrange: four ended lives, behind the counting proxy
     const fx = await fixture("resume-cost", { url: proxyUrl });
     const sessionId = "resume-cost-uuid";
@@ -295,8 +299,8 @@ describe("a conversation resumed after SessionEnd", () => {
     const before = registerCalls;
     await sessionStart(fx, sessionId, "resume");
 
-    // Assert: the ended life the last end wrote down, then the next rung
-    expect(registerCalls - before).toBe(2);
+    // Assert: straight to the rung above the life the last end wrote down
+    expect(registerCalls - before).toBe(1);
     expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(
       `cc_${sessionId}~r${String(OLD_LADDER_RUNGS + 1)}`,
     );
@@ -539,5 +543,46 @@ describe("a session the hub ends while the conversation keeps going", () => {
     // Assert: inside the budget, and the hook's own last state write landed
     expect(elapsed).toBeLessThan(TIGHT_POST_TOOL_USE_BUDGET_MS + BUDGET_SLACK_MS);
     expect((await readSessionState(fx.home, sessionId))?.editToolFires).toBe(firesBefore + 1);
+  });
+});
+
+/**
+ * `claude --resume` AFTER A SessionEnd WHOSE END NEVER REACHED THE HUB (review
+ * E2E-1). The end is deferred to a marker, the hub still holds the life open,
+ * and the resume's SessionStart registers before it reaps. Re-entering that
+ * life under the fresh state's new epoch split its order for good.
+ */
+describe("a conversation resumed after a SessionEnd the hub never heard", () => {
+  test("resumes on the next life, ends the old one from its marker, both orders intact", async () => {
+    // Arrange
+    const fx = await fixture("end-lost", { url: proxyUrl });
+    const sessionId = "end-lost-uuid";
+    await sessionStart(fx, sessionId, "startup");
+    await edit(fx, sessionId, "src/end-lost/a.ts");
+    refuseEnds = true;
+    await sessionEnd(fx, sessionId);
+    refuseEnds = false;
+
+    // Act
+    await sessionStart(fx, sessionId, "resume");
+    await edit(fx, sessionId, "src/end-lost/b.ts");
+
+    // Assert
+    const base = `cc_${sessionId}`;
+    expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(`${base}~r1`);
+    expect(await sessionRows(sessionId)).toEqual([
+      { id: base, ended: true, reaped: false },
+      { id: `${base}~r1`, ended: false, reaped: false },
+    ]);
+    for (const id of [base, `${base}~r1`]) {
+      expect(await readSessionCausalOrder(db, id)).toMatchObject({ state: "usable", epochs: 1 });
+    }
+    const byContext = await db.execute(sql`
+      select work_context_id, value from work_context_targets
+       where value like 'src/end-lost/%' order by value`);
+    expect(byContext.rows).toEqual([
+      { work_context_id: `wc_${base}`, value: "src/end-lost/a.ts" },
+      { work_context_id: `wc_${base}~r1`, value: "src/end-lost/b.ts" },
+    ]);
   });
 });

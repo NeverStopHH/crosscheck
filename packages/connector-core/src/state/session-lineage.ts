@@ -87,16 +87,25 @@ export const ladderRungs = (start: number): readonly number[] =>
   );
 
 /**
- * Where the walk starts: the newer of the life the state file is on and the
- * life the last end wrote down. Both are hints — a rung below them is ended
- * or somebody else's — and neither is required: with no hint the walk starts
- * at the base id, as it always did.
+ * Where the walk starts: the life the state file is on, unless an END at or
+ * above it was written down — then the life above that end. Both are hints, and
+ * neither is required: with no hint the walk starts at the base id.
+ *
+ * NEVER ON THE ENDED RUNG. A life the host ended is over whether or not the
+ * hub heard it: when SessionEnd's `end` failed or was deferred, the hub still
+ * holds that life open and answers a register on it `updated`, and the resume
+ * — whose state file was deleted with the end, so it mints a fresh epoch —
+ * would then file a second epoch into it and break its order for good. The
+ * deferred end still closes it from its marker (spool/reap.ts).
  */
 export const ladderStart = (
   baseId: string,
   liveSessionId: string | null,
   endedRung: number | null,
-): number => Math.max(lifeRungOf(baseId, liveSessionId) ?? 0, endedRung ?? 0);
+): number => {
+  const live = lifeRungOf(baseId, liveSessionId);
+  return endedRung !== null && (live === null || endedRung >= live) ? endedRung + 1 : (live ?? 0);
+};
 
 const lineagePath = (home: string, hostSessionKey: string): string =>
   sessionLineagePathForSlug(home, sessionSlug(hostSessionKey));

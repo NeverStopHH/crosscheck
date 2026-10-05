@@ -101,6 +101,26 @@ const NOTHING_REAPED: ReapResult = { delivered: 0, expired: 0, dropped: 0 };
 const isSessionLive = async (home: string, slug: string): Promise<boolean> =>
   Bun.file(sessionStatePathForSlug(home, slug)).exists();
 
+/**
+ * Whether the LIFE a pending end names is the one still running under its
+ * host session. A host keeps one session id across lives (state/session-lineage.ts):
+ * when the end of life K was deferred and the conversation resumed, the state
+ * file now names life K+1, and K — which the hub may still hold open — must
+ * still be ended from its marker. Any state with an unreadable id, or a marker
+ * whose id could not be read, keeps the old reading: a state file is a live
+ * writer.
+ */
+const isLifeLive = async (home: string, slug: string, lifeId: string | null): Promise<boolean> => {
+  if (!(await isSessionLive(home, slug))) {
+    return false;
+  }
+  const state = (await readJsonOrNull(sessionStatePathForSlug(home, slug))) as {
+    crosscheckSessionId?: unknown;
+  } | null;
+  const liveId = state?.crosscheckSessionId;
+  return lifeId === null || typeof liveId !== "string" || liveId === lifeId;
+};
+
 const isOlderThanMaxAge = async (path: string, now: Date): Promise<boolean> => {
   try {
     const { mtimeMs } = await stat(path);
@@ -429,12 +449,13 @@ const endDeferredSession = async (
   ender: DeferredEnder | undefined,
   now: Date,
 ): Promise<void> => {
-  // A state file again means the same session id came back: it will end itself.
-  if (await isSessionLive(home, slug)) {
-    return;
-  }
   const path = spoolPendingEndPath(home, key, slug);
   const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
+  // A state file naming THIS life again means it came back: it will end
+  // itself. A state file naming the NEXT life does not — this one is over.
+  if (await isLifeLive(home, slug, parsed.success ? parsed.data.crosscheckSessionId : null)) {
+    return;
+  }
   if (!parsed.success) {
     // Nothing can be ended from an id that cannot be read, and a marker nobody
     // can act on would otherwise sit in the spool directory for good.
@@ -510,11 +531,11 @@ export const hasSpendablePendingEnd = async (
   now: Date,
 ): Promise<boolean> => {
   for (const slug of await pendingEndSlugs(home, key)) {
-    if (await isSessionLive(home, slug)) {
-      continue;
-    }
     const path = spoolPendingEndPath(home, key, slug);
     const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
+    if (await isLifeLive(home, slug, parsed.success ? parsed.data.crosscheckSessionId : null)) {
+      continue;
+    }
     if (!parsed.success) {
       continue;
     }

@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1547
+    # PRINTS: 1549
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -337,7 +337,7 @@ jobs:
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 15
-    # PRINTS: spool/reap.ts 1
+    # PRINTS: spool/reap.ts 2
     # PRINTS: spool/reject-cause.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
@@ -346,7 +346,7 @@ jobs:
     # PRINTS: state/loss-ledger.ts 10
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
-    # PRINTS: state/session-lineage.ts 1
+    # PRINTS: state/session-lineage.ts 2
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 20
     # PRINTS: state/tool-window-key.ts 2
@@ -632,7 +632,7 @@ jobs:
     # PRINTS: publish.yml 2
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
-    # PRINTS: reap.ts 1
+    # PRINTS: reap.ts 2
     # PRINTS: record-handlers.ts 22
     # PRINTS: records.ts 3
     # PRINTS: recover.ts 4
@@ -663,7 +663,7 @@ jobs:
     # PRINTS: select.ts 10
     # PRINTS: seq-cost.ts 8
     # PRINTS: session-events.ts 9
-    # PRINTS: session-lineage.ts 1
+    # PRINTS: session-lineage.ts 2
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 6

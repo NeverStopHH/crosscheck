@@ -1619,8 +1619,9 @@ export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
  * the hub had just refused. Every record of that conversation was then
  * rejected as a late write, for a month (docs/1.0/loss-accounting.md §4.3).
  *
- * The walk starts at the newest life this machine knows and gallops from
- * there (+0, +1, +2, +4, …), so a resume costs two calls and a re-fire one;
+ * The walk starts at the newest life this machine knows — above it when that
+ * life was ended — and gallops from there (+0, +1, +2, +4, …), so a resume
+ * costs one call and a re-fire one;
  * twelve attempts reach 1024 lives past the start when nothing is known —
  * a lost lineage file, or one past its age — and a wrong guess about which
  * rungs are taken costs a skipped rung name, never a refused record.

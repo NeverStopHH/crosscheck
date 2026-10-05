@@ -17471,6 +17471,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/resumed-session.test.ts`,
     because: "every capture after the heal still names the refused life's work context and is withheld",
   },
+  {
+    label: "a resume starts on the rung its last end wrote down",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  return endedRung !== null && (live === null || endedRung >= live) ? endedRung + 1 : (live ?? 0);",
+    to: "  return Math.max(live ?? 0, endedRung ?? 0);",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review E2E-1: a life whose end never reached the hub is re-entered under the resume's fresh epoch, and its order reads epoch_split for good",
+  },
+  {
+    label: "a deferred end is skipped whenever its host session has a state file",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '  return lifeId === null || typeof liveId !== "string" || liveId === lifeId;',
+    to: "  return true;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the life the host ended stays open on the hub for good once the conversation resumes, because the next life's state file hides its marker",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17730,6 +17746,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 10
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 2
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
