@@ -42,7 +42,11 @@ const MOVED_FROM = "src/core/engine.ts";
 const MOVED_TO = "src/generated/engine.ts";
 const SECOND_FROM = "src/core/renderer.ts";
 const SECOND_TO = "src/generated/renderer.ts";
-const WHY = "no session's touch of these files is ever recorded, so a guard over them could never say who broke them";
+/** The reason for a file this machine AND every machine on the shipped list skip. */
+const WHY = "no session here, nor on any machine that keeps the shipped denylist, records touching them";
+/** The reason for a file only this machine's own rule skips. */
+const WHY_HERE = "this machine's own denylist skips them; teammates who kept the shipped denylist record them";
+const HERE_ONLY = "on this machine only";
 const CONFIG_REMEDY = "or change the denylist in the crosscheck config";
 const SHIPPED_NOTE = "on crosscheck's shipped default list";
 /** How a rule is named when this machine records the file and the shipped list does not. */
@@ -158,10 +162,28 @@ describe("the pin door refuses a file no capture can observe (loss-accounting §
     // Act
     const refused = await pin(home, [LEGACY]);
 
-    // Assert
+    // Assert: named as this machine's rule alone, and never as unrecorded by
+    // everyone — a teammate on the shipped list does record the file
     expect(refused.exitCode).toBe(EXIT_USAGE);
-    expect(refused.stdout).toContain(`${LEGACY} (excluded by ${LEGACY_RULE})`);
+    expect(refused.stdout).toContain(`${LEGACY} (excluded by ${LEGACY_RULE} ${HERE_ONLY})`);
+    expect(refused.stdout).toContain(`${LEGACY}: ${WHY_HERE}`);
+    expect(refused.stdout).not.toContain(WHY);
     expect(await pinCount()).toBe(before);
+  });
+
+  test("a refusal over files of different reach gives each its own reason, naming the files", async () => {
+    // Arrange: the lockfile is skipped here and on the shipped list, the
+    // legacy file only by this machine's own extend line
+    const home = await homeWith("mixed-reach", { mode: "extend", patterns: [LEGACY_RULE] });
+
+    // Act
+    const refused = await pin(home, [LOCKFILE, LEGACY]);
+
+    // Assert: two reason lines, each about its own file, never one sentence
+    // that is false of the other
+    expect(refused.stdout).toContain(`${LOCKFILE}: ${WHY}`);
+    expect(refused.stdout).toContain(`${LEGACY}: ${WHY_HERE}`);
+    expect(refused.stdout).not.toContain(`${LOCKFILE}, ${LEGACY}: `);
   });
 
   test("a rule only this machine's config adds keeps the config remedy", async () => {

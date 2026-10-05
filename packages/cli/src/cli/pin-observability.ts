@@ -143,6 +143,8 @@ export interface PinShadow {
 
 /** How a rule that binds only OTHER machines is named, after the rule itself. */
 const ELSEWHERE = "on machines that keep the shipped denylist";
+/** How a rule that binds only THIS machine is named, after the rule itself. */
+const HERE_ONLY = "on this machine only";
 
 /**
  * Every LIVE pinned path the effective denylist suppresses, with the pattern
@@ -197,24 +199,63 @@ export const deniedPinPaths = (
       : [{ path, pattern, here: localPattern !== undefined, shippedPattern: shippedPattern ?? null }];
   });
 
-/** Why a pin over an excluded file is refused, in one sentence (loss-accounting §10 item 4). */
+/**
+ * WHERE an excluded file goes unrecorded — the three reaches a match can
+ * have, because the denylist is per-machine config. Every sentence below
+ * says only what is true of its reach: a file this machine's own rule skips
+ * IS recorded by a teammate on the shipped list, and a file only the shipped
+ * list skips IS recorded here.
+ */
+type ShadowReach = "everywhere" | "here" | "elsewhere";
+
+interface Reachable {
+  readonly here: boolean;
+  readonly shippedPattern: string | null;
+}
+
+const reachOf = (shadow: Reachable): ShadowReach =>
+  !shadow.here ? "elsewhere" : shadow.shippedPattern === null ? "here" : "everywhere";
+
+const REACHES: readonly ShadowReach[] = ["everywhere", "here", "elsewhere"];
+
+/** Why a pin over a file is refused, by reach (loss-accounting §10 item 4). */
 export const DENYLIST_REFUSAL_WHY =
-  "no session's touch of these files is ever recorded, so a guard over them could never say who broke them";
-
-/** The same reason for a file THIS machine records and the shipped list does not. */
+  "no session here, nor on any machine that keeps the shipped denylist, records touching them";
+export const DENYLIST_REFUSAL_WHY_HERE =
+  "this machine's own denylist skips them; teammates who kept the shipped denylist record them";
 export const DENYLIST_REFUSAL_WHY_ELSEWHERE =
-  "this machine records touching them, but no machine that keeps the shipped denylist does, so a guard over them could never say who broke them";
+  "this machine records touching them, but no machine that keeps the shipped denylist does";
 
-const excludedBy = (shadow: { readonly here: boolean; readonly pattern: string }): string =>
-  shadow.here
-    ? `excluded by ${token(shadow.pattern)}`
-    : `excluded by ${token(shadow.pattern)} ${ELSEWHERE}`;
+const WHY_BY_REACH: Readonly<Record<ShadowReach, string>> = {
+  everywhere: DENYLIST_REFUSAL_WHY,
+  here: DENYLIST_REFUSAL_WHY_HERE,
+  elsewhere: DENYLIST_REFUSAL_WHY_ELSEWHERE,
+};
 
-/** The reason line(s) true of `shadows`: one per kind present, never one that is false of them. */
-const refusalWhyLines = (shadows: readonly { readonly here: boolean }[]): readonly string[] => [
-  ...(shadows.some((shadow) => shadow.here) ? [DENYLIST_REFUSAL_WHY] : []),
-  ...(shadows.some((shadow) => !shadow.here) ? [DENYLIST_REFUSAL_WHY_ELSEWHERE] : []),
-];
+/** The consequence every reach shares, said once after its reasons. */
+const GUARD_COST = "a guard over a file some sessions never record could never say who broke it";
+
+const capitalised = (sentence: string): string =>
+  `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`;
+
+const excludedBy = (shadow: Reachable & { readonly pattern: string }): string => {
+  const reach = reachOf(shadow);
+  const rule = `excluded by ${token(shadow.pattern)}`;
+  return reach === "everywhere" ? rule : `${rule} ${reach === "here" ? HERE_ONLY : ELSEWHERE}`;
+};
+
+/**
+ * One reason line per reach present, each NAMING the files it is about — never
+ * one sentence over the whole list that is false of some of them.
+ */
+const refusalWhyLines = <T extends Reachable>(
+  items: readonly T[],
+  pathOf: (item: T) => string,
+): readonly string[] =>
+  REACHES.flatMap((reach) => {
+    const files = items.filter((item) => reachOf(item) === reach).map(pathOf);
+    return files.length === 0 ? [] : [`${files.map(token).join(", ")}: ${WHY_BY_REACH[reach]}`];
+  });
 
 /**
  * WHAT THE PIN DOOR PRINTS when the denylist excludes a file (loss-accounting
@@ -234,7 +275,8 @@ export const pinDenylistRefusal = (denied: readonly PinShadow[]): string => {
   return [
     `nothing was pinned — the hot-file denylist excludes ${String(denied.length)} of these file(s) from capture:`,
     ...denied.map((shadow) => `  ${token(shadow.path)} (${excludedBy(shadow)})`),
-    ...refusalWhyLines(denied).map((why) => `${why}.`),
+    ...refusalWhyLines(denied, (shadow) => shadow.path).map((why) => `${why}.`),
+    `${capitalised(GUARD_COST)}.`,
     ...(shipped.length === 0
       ? []
       : [
@@ -254,6 +296,8 @@ export interface DeniedMove {
   readonly pattern: string;
   /** As on PinShadow: false = only machines that keep the shipped list exclude the new path. */
   readonly here: boolean;
+  /** As on PinShadow: the shipped rule matching the new path, or null. */
+  readonly shippedPattern: string | null;
 }
 
 /**
@@ -268,7 +312,8 @@ export const sweepDenylistLines = (moves: readonly DeniedMove[]): readonly strin
     : [
         `${String(moves.length)} renamed path(s) recorded as missing — git followed each into a file the hot-file denylist excludes from capture:`,
         ...moves.map((move) => `  ${token(move.path)} moved to ${token(move.newPath)} (${excludedBy(move)})`),
-        `${refusalWhyLines(moves).join("; ")}. Re-pin the surface on files capture records, or retire the pin: crosscheck pin --broke with the pin id.`,
+        ...refusalWhyLines(moves, (move) => move.newPath).map((why) => `${why}.`),
+        `${capitalised(GUARD_COST)}. Re-pin the surface on files capture records, or retire the pin: crosscheck pin --broke with the pin id.`,
       ];
 
 /**
@@ -293,25 +338,25 @@ export const shadowSentence = (
   if (shadows.length === 0) {
     return `no pinned file is shadowed by the ${String(patternCount)} effective hot-file pattern(s)`;
   }
-  const here = shadows.filter((shadow) => shadow.here);
-  // A file THIS machine records is not "never captured": said as what it is,
-  // a blind spot on every machine that kept the shipped list.
-  const elsewhere = shadows.filter((shadow) => !shadow.here);
-  return [
-    ...(here.length === 0
-      ? []
-      : [
-          `${String(here.length)} pinned file(s) are never captured — the hot-file denylist matches them: ` +
-            `${namedShadows(here)} — ` +
-            'no session records touching them, so crosscheck trace answers "no session touched this surface" no matter who did',
-        ]),
-    ...(elsewhere.length === 0
-      ? []
-      : [
-          `${String(elsewhere.length)} pinned file(s) are never captured ${ELSEWHERE}: ${namedShadows(elsewhere)} — ` +
-            "this machine records touching them, but crosscheck trace cannot name a session on those machines",
-        ]),
-  ].join("; ");
+  // One clause per reach, each true only of its own files: a file this
+  // machine records is never called unrecorded, and a file a teammate records
+  // is never called unrecorded by anyone.
+  return REACHES.flatMap((reach) => {
+    const own = shadows.filter((shadow) => reachOf(shadow) === reach);
+    return own.length === 0 ? [] : [SHADOW_CLAUSE[reach](own)];
+  }).join("; ");
+};
+
+const SHADOW_CLAUSE: Readonly<Record<ShadowReach, (own: readonly PinShadow[]) => string>> = {
+  everywhere: (own) =>
+    `${String(own.length)} pinned file(s) are never captured here or ${ELSEWHERE}: ${namedShadows(own)} — ` +
+    'no session on those machines records touching them, so crosscheck trace answers "no session touched this surface" for every one of them',
+  here: (own) =>
+    `${String(own.length)} pinned file(s) are never captured on this machine: ${namedShadows(own)} — ` +
+    "its own denylist skips them; teammates who kept the shipped denylist record them, so crosscheck trace cannot name a session run here",
+  elsewhere: (own) =>
+    `${String(own.length)} pinned file(s) are never captured ${ELSEWHERE}: ${namedShadows(own)} — ` +
+    "this machine records touching them, but crosscheck trace cannot name a session on those machines",
 };
 
 /**
