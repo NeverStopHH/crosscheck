@@ -251,6 +251,36 @@ when a connected repo (a `.git` boundary that commits `.crosscheck.json`, or the
 sits above one of its paths (`config/connected-repo.ts mayBeConnectedRepo`), and not at all otherwise — where no
 run of the hook would have captured for any repo. Unkeyed charges still over-report; they are never exact.
 
+**`rejected` keeps its cause** (pilot, 2026-10-05). Nick's machine held 433 dropped records, every 0.10 line
+`{"at","count":1,"reason":"rejected"}`, 225 of them from ONE Claude Code conversation resumed over a month. The
+cause: a host keeps one session id for a conversation's whole life, every SessionEnd ends its crosscheck session
+for good (`server/src/services/records.ts` checkProducerSession refuses later writes; only a REAPED end revives),
+and the next life registers one rung up — `cc_<id>`, `~r1`, `~r2`. That ladder had three rungs. The fourth life
+found all three ended, registered nothing, kept the base id the hub had just refused (`flows/register-session.ts`
+before this fix), and every record it captured was rejected while the cursor moved past it — for the rest of the
+conversation. Cursor (`conversation_id`) and ACP (`session/load`) shared the flow and the defect; Claude's
+state-less recovery took the same 409 for "nothing to recover" and captured nothing, silently.
+
+The fix keeps every end final and every order inside one `(session, epoch)` (01 §3.4): a life after an end is a
+NEW crosscheck session on the next rung, with its own epoch and its own `session.started`, the ended ones kept
+as they were. The walk is unbounded in practice and cheap: it starts at the newest life the machine knows — the
+state file's, or the one `endSessionFlow` writes down in `sessions/<slug>.lineage` — and gallops from there
+(`state/session-lineage.ts`, `REGISTER_LADDER_MAX_ATTEMPTS`). Nothing reopens an ended session, so a write after
+a final end with no resume stays rejected. Records already rejected are gone; after the upgrade the next
+SessionStart of a deaf conversation registers a live life and capture resumes. Coverage follows the evidence: a
+deaf life touched no session row (register and heartbeat answered 409, every record refused), so its author read
+as `commit authors with no reported session` on the git rung; the new life's register closes that, while the
+rejected records travel in the loss report and keep the agent rung `incomplete / telemetry_lost` inside the window.
+A deaf conversation's flush also stamped OTHER sessions' backlogs with its ended id (`spool/flush.ts` stamps the
+flushing session; the drop is filed under the writer's ledger) — the likely source of the short sessions' one to
+four `rejected` records each, which the new `causes` field will name from now on.
+
+A `rejected` line now carries `causes`, the hub's refusal as a word from a closed list
+(`spool/reject-cause.ts`: `session_ended`, `session_unknown`, `session_foreign`, `developer_mismatch`, `other`),
+matched against the hub's own sentence and never storing it; the archive folds it as `rejectedCauses`. Readers
+from before the field parse the line unchanged (their schema is a loose object), and doctor's `hub rejected
+records` line and `status`'s `losses:` say why — counting the lines that carry no cause as "cause not recorded".
+
 ### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a
