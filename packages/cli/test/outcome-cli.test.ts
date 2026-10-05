@@ -25,9 +25,12 @@ import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.t
 import { EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { RecordedOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
 import {
+  DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
@@ -50,6 +53,8 @@ const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
 
 let server: ReturnType<typeof Bun.serve>;
 let oldHub: ReturnType<typeof Bun.serve>;
+/** A hub that cannot take records yet and knows no delivery — a spooled hint's view of the world. */
+let stuckHub: ReturnType<typeof Bun.serve>;
 let hubUrl: string;
 let repo: string;
 let nick: { apiKey: string; id: string };
@@ -95,7 +100,7 @@ const deliver = async (sessionId: string, refId: string): Promise<string> => {
   return id;
 };
 
-const homeWithLive = async (sessionId: string): Promise<string> => {
+const homeWithLive = async (sessionId: string, hub: string = hubUrl): Promise<string> => {
   const home = await makeHome("outcome-cli");
   homes.push(home);
   await writeSessionState(home, {
@@ -104,11 +109,24 @@ const homeWithLive = async (sessionId: string): Promise<string> => {
     workContextId: `wc_${sessionId}`,
     repoId: REPO_ID,
     repoRoot: repo,
-    hubUrl,
+    hubUrl: hub,
     startedAt: new Date().toISOString(),
     lastHeartbeatAt: new Date().toISOString(),
   });
   return home;
+};
+
+/** A delivery the prompt hook booked into the spool — not yet sent, no tool has run since. */
+const spoolDelivery = async (home: string, hub: string, sessionId: string, refId: string): Promise<void> => {
+  const delivery = envelope(nick.id, sessionId, "hint_delivery", {
+    id: hintDeliveryId(sessionId, refId),
+    sessionId,
+    refKind: "work_context",
+    refId,
+    channel: "prompt_hint",
+    deliveredAt: new Date().toISOString(),
+  });
+  await appendRecords(home, repoKey(hub, REPO_ID), sessionId.replace("cc_", ""), [delivery], new Date());
 };
 
 const cli = (
@@ -138,6 +156,22 @@ beforeAll(async () => {
   oldHub = Bun.serve({
     port: 0,
     fetch: () => Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
+  });
+  stuckHub = Bun.serve({
+    port: 0,
+    fetch: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/records") {
+        return Response.json({ ok: false, error: { code: "unavailable", message: "try later" } }, { status: 503 });
+      }
+      if (path === "/api/hint-outcomes") {
+        return Response.json(
+          { ok: false, error: { code: "unknown_ref", message: "no hint with that id reached you on this repo" } },
+          { status: 422 },
+        );
+      }
+      return Response.json({ ok: true, data: { candidates: [], more: false } });
+    },
   });
   repo = await makeRepo("outcome-cli", { remote: "git@github.com:acme/api.git" });
   nick = await createDeveloper("Nick", "nick-outcome-cli@example.com");
@@ -176,6 +210,7 @@ beforeAll(async () => {
 afterAll(async () => {
   server.stop(true);
   oldHub.stop(true);
+  stuckHub.stop(true);
   await Promise.all([repo, ...homes].map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -254,6 +289,45 @@ describe("crosscheck followed / overrode", () => {
     expect(result.stdout).toStartWith(`recorded: ${hintDeliveryId(SOLO, KEN_THIRD_CONTEXT)} — followed`);
   });
 
+  test("review #14: an id still on this machine is sent before the outcome, which is then recorded", async () => {
+    // Arrange — Ken's context is known; Nick's delivery of it is still in the spool
+    const ref = "wc_ken_spooled";
+    await send("POST", "/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Ken's spooled context",
+          status: "implementing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    const home = await homeWithLive(LIVE);
+    await spoolDelivery(home, hubUrl, LIVE, ref);
+
+    // Act
+    const result = await cli(home, ["followed", ref]);
+
+    // Assert — "no hint with that id reached you" would be false: it reached Nick
+    expect(result.stdout).toStartWith(`recorded: ${ref} — followed`);
+  });
+
+  test("review #14: a hint the hub has not received yet is never answered 'never reached you'", async () => {
+    // Arrange — the hub cannot take the spooled delivery yet
+    const stuck = `http://127.0.0.1:${String(stuckHub.port)}`;
+    const home = await homeWithLive(LIVE, stuck);
+    await spoolDelivery(home, stuck, LIVE, "wc_ken_held");
+
+    // Act
+    const byId = await cli(home, ["followed", "wc_ken_held"], { hub: stuck });
+    const recent = await cli(home, ["followed"], { hub: stuck });
+
+    // Assert
+    expect(byId.stdout).toBe(DELIVERY_STILL_ON_THIS_MACHINE_LINE);
+    expect(recent.stdout).toBe(DELIVERY_STILL_ON_THIS_MACHINE_LINE);
+  });
+
   test("a hub that predates outcomes says so", async () => {
     // Arrange
     const home = await homeWithLive(LIVE);
@@ -270,7 +344,7 @@ describe("crosscheck followed / overrode", () => {
 
 describe("crosscheck pilot --mine", () => {
   test("shows the caller's own outcomes by source teammate, the reason quoted as data", async () => {
-    // Arrange — after the cases above: Ken's context overrode, the third followed
+    // Arrange — after the cases above: Ken's context overrode, the third and the spooled one followed
     const home = await homeWithLive(LIVE);
 
     // Act
@@ -279,8 +353,8 @@ describe("crosscheck pilot --mine", () => {
     // Assert
     expect(result.exitCode).toBe(EXIT_OK);
     expect(result.stdout).toContain(QUOTED_DATA_NOTICE);
-    expect(result.stdout).toContain("hints that reached you unasked: 3 — followed 1 · overrode 1 · not relevant now 0 · noise 0 · unmarked 1");
-    expect(result.stdout).toContain("from Ken: 3 — followed 1 · overrode 1");
+    expect(result.stdout).toContain("hints that reached you unasked: 4 — followed 2 · overrode 1 · not relevant now 0 · noise 0 · unmarked 1");
+    expect(result.stdout).toContain("from Ken: 4 — followed 2 · overrode 1");
     expect(result.stdout).toContain(`overrode, from Ken: «${OVERRIDE_REASON}»`);
   });
 

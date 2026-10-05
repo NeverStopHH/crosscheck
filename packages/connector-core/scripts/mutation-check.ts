@@ -17920,6 +17920,55 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "a word about a hint from four months ago is answered 'recorded' and never shown anywhere",
   },
+  // ── 07 §13.10, review #14: a hint this machine holds is not "never reached you" ─
+  {
+    label: "mark_hint_outcome posts before the hint it names has been sent",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  await sendHeldRecords(ctx.hub, senderOf(own), OUTCOME_FLUSH_BUDGET_MS);",
+    to: "  senderOf(own);",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "recording right after a prompt hint or a denied edit's tripwire fails until some later tool runs",
+  },
+  {
+    label: "mark_hint_outcome says 'never reached you' for a hint this machine holds",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx.hub, ref))",
+    to: "  posted.code === UNKNOWN_REF && false",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent is told the hint it just read never reached it, and gives up on recording it",
+  },
+  {
+    label: "a held delivery is not recognised by the ref the hint printed",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "    return [parsed.body?.id, parsed.body?.refId].filter(",
+    to: "    return [parsed.body?.id].filter(",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the work-context id a hint prints is what a reader names, and it would never match",
+  },
+  {
+    label: "crosscheck followed posts before the hint it names has been sent",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  await sendHeldRecords(ctx, senderOf(live.states), OUTCOME_FLUSH_BUDGET_MS);",
+    to: "  senderOf(live.states);",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person typing followed right after the hint is told it never reached them",
+  },
+  {
+    label: "crosscheck followed <id> says 'never reached you' for a hint this machine holds",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  return posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx, ref)) ? STILL_HERE : failed(posted);",
+    to: "  return failed(posted);",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the hub's honest sentence is false from where the person sits",
+  },
+  {
+    label: "crosscheck followed with no id says nothing reached you while the spool holds a hint",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "    return (await holdsUnsentDelivery(ctx, null))",
+    to: "    return false",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18005,7 +18054,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 5
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 9
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
@@ -18154,7 +18203,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 6
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 8
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

@@ -13,6 +13,11 @@
  * is the one recent delivery to a session live on this machine (several are
  * listed, never guessed); an id is what the hint printed, or a delivery id.
  *
+ * A DELIVERY STILL ON THIS MACHINE (07 §13.10, review #14) is sent first,
+ * bounded, in a live session's name; and "no hint with that id reached you"
+ * is never repeated for a delivery the spool still holds — it reached the
+ * person, not yet the hub.
+ *
  * NO TERMINAL GATE, and that is a decision rather than an omission. The gate
  * on `noise` keeps an agent from grading the product by default (07 D3); an
  * outcome is the record an agent is ASKED to write, so a person typing it
@@ -25,6 +30,7 @@ import {
   EXIT_UNREACHABLE,
   EXIT_USAGE,
   NOISE_MARK_WINDOW_MINUTES,
+  OUTCOME_FLUSH_BUDGET_MS,
 } from "@crosscheck/connector-core/constants.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
@@ -34,11 +40,15 @@ import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identit
 import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
 import { isOutcomesNotServed, postHintOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { getMarkCandidates } from "@crosscheck/connector-core/http/pilot.ts";
+import { holdsUnsentDelivery, sendHeldRecords } from "@crosscheck/connector-core/spool/held-deliveries.ts";
+import type { FlushInput } from "@crosscheck/connector-core/spool/flush.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { MAX_HINT_OUTCOME_REASON_CHARS, SAFE_ID_PATTERN, reasonLength } from "@crosscheck/schema";
 import type { HintOutcome } from "@crosscheck/schema";
 
 import {
+  DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
@@ -90,6 +100,8 @@ export const OVERRODE_USAGE = usageFor(
 
 const NOT_CONFIGURED = "not configured — run `crosscheck login <hubUrl>`\n";
 const NOT_A_REPO = "not a git repository — outcomes are repo-scoped\n";
+/** The hub's refusal for a ref it has no delivery of, for this caller. */
+const UNKNOWN_REF = "unknown_ref";
 
 interface OutcomeArgs {
   readonly id: string | undefined;
@@ -122,6 +134,8 @@ const failed = (result: Extract<HubResult<unknown>, { ok: false }>): CliResult =
     ? { stdout: OUTCOMES_NOT_SERVED_LINE, exitCode: EXIT_FAIL }
     : { stdout: markFailureLine(result.kind, result.message), exitCode: result.kind === "network" ? EXIT_UNREACHABLE : EXIT_FAIL };
 
+const STILL_HERE: CliResult = { stdout: DELIVERY_STILL_ON_THIS_MACHINE_LINE, exitCode: EXIT_FAIL };
+
 const record = async (
   ctx: HubContext,
   repo: string,
@@ -130,19 +144,27 @@ const record = async (
   reason: string | undefined,
 ): Promise<CliResult> => {
   const posted = await postHintOutcome(ctx, { repo, ref, outcome, ...(reason === undefined ? {} : { reason }) });
-  return posted.ok ? { stdout: outcomeRecordedLine(ref, posted.data), exitCode: EXIT_OK } : failed(posted);
+  if (posted.ok) {
+    return { stdout: outcomeRecordedLine(ref, posted.data), exitCode: EXIT_OK };
+  }
+  return posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx, ref)) ? STILL_HERE : failed(posted);
+};
+
+/** The newest live session, in whose name held records are sent; null when none is live. */
+const senderOf = (states: readonly SessionState[]): FlushInput | null => {
+  const [newest] = [...states].sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+  return newest === undefined ? null : { sessionId: newest.crosscheckSessionId, developerId: newest.developerId };
 };
 
 /** No id: the one recent delivery to a session live on this machine, as `noise` finds it. */
 const recordRecent = async (
   ctx: HubContext,
   repo: string,
+  states: readonly SessionState[],
   command: OutcomeCommand,
   reason: string | undefined,
 ): Promise<CliResult> => {
-  const now = ctx.now();
-  const scan = await readLiveSessionStates(ctx.home, ctx.hubUrl, repo, now);
-  const sessions = scan.states.map((state) => state.crosscheckSessionId);
+  const sessions = states.map((state) => state.crosscheckSessionId);
   if (sessions.length === 0) {
     return { stdout: noLiveSessionLine(command), exitCode: EXIT_OK };
   }
@@ -153,10 +175,15 @@ const recordRecent = async (
   const { candidates, more } = found.data;
   const [only] = candidates;
   if (only === undefined) {
-    return { stdout: nothingRecentLine(NOISE_MARK_WINDOW_MINUTES, command), exitCode: EXIT_OK };
+    return (await holdsUnsentDelivery(ctx, null))
+      ? STILL_HERE
+      : { stdout: nothingRecentLine(NOISE_MARK_WINDOW_MINUTES, command), exitCode: EXIT_OK };
   }
   if (candidates.length > 1 || more) {
-    return { stdout: candidateListLines(candidates, more, NOISE_MARK_WINDOW_MINUTES, now, command), exitCode: EXIT_OK };
+    return {
+      stdout: candidateListLines(candidates, more, NOISE_MARK_WINDOW_MINUTES, ctx.now(), command),
+      exitCode: EXIT_OK,
+    };
   }
   return record(ctx, repo, only.id, COMMAND_OUTCOME[command], reason);
 };
@@ -195,8 +222,10 @@ const runOutcome = async (
     repoKey: repoKey(config.hubUrl, identity.repoId),
     now: () => new Date(),
   };
+  const live = await readLiveSessionStates(ctx.home, ctx.hubUrl, identity.repoId, ctx.now());
+  await sendHeldRecords(ctx, senderOf(live.states), OUTCOME_FLUSH_BUDGET_MS);
   return args.id === undefined
-    ? recordRecent(ctx, identity.repoId, command, args.reason)
+    ? recordRecent(ctx, identity.repoId, live.states, command, args.reason)
     : record(ctx, identity.repoId, args.id, COMMAND_OUTCOME[command], args.reason);
 };
 

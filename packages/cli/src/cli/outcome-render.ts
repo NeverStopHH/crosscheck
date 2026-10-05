@@ -64,6 +64,9 @@ export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): str
   );
 };
 
+export const DELIVERY_STILL_ON_THIS_MACHINE_LINE =
+  "that hint reached you, but its delivery is still on this machine — it is sent after the session's next tool call, and it could not be sent just now; nothing was recorded, so run this again after that\n";
+
 export const OUTCOMES_NOT_SERVED_LINE =
   "this hub does not record hint outcomes — it predates them, so nothing was recorded; upgrade the hub to use crosscheck followed / overrode\n";
 

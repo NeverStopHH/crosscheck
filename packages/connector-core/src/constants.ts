@@ -1740,6 +1740,15 @@ export const MCP_PROTOCOL_VERSIONS = [
 export const MCP_TIMEOUT_MS = 10_000;
 
 /**
+ * How long recording an outcome may spend sending this repo's spooled records
+ * first (07 §13.10, review #14). A prompt hint's delivery is spooled and sent
+ * after the next tool runs, so an outcome recorded right after the hint names a
+ * delivery the hub has not seen; this bounded drain is what lets the outcome
+ * find it. Well inside MCP_TIMEOUT_MS, so the outcome's own call keeps its room.
+ */
+export const OUTCOME_FLUSH_BUDGET_MS = 3_000;
+
+/**
  * Rendering caps for the two tools that put OTHER developers' text into the
  * reader's context. The briefing's caps cannot be reused: MAX_BRIEFING_CHARS is
  * sized for unsolicited injection at every SessionStart, whereas a tree is

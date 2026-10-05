@@ -1126,3 +1126,15 @@ hint reached you before this repo began recording outcomes, so no outcome figure
 nothing was recorded"). The same lie had a second door — a delivery older than the widest window any figure
 reads (`PILOT_RETENTION_DAYS`, 90) — refused the same way (`past_window`). A delivery at the enrolment instant
 itself counts and is accepted.
+
+*#14 — recording right after a tripwire ask or a prompt hint answered "no hint with that id reached you".*
+The delivery was still in this machine's spool: it is sent after the next tool runs, and a denied edit runs no
+after-tool hook at all — so the one moment D-O3 is about ("stop, Ken built it this way") was the moment the
+outcome could not be recorded. Both recorders now send this repo's held records first, bounded
+(`OUTCOME_FLUSH_BUDGET_MS`, 3 s, well inside the MCP timeout), in the name of a live session
+(`spool/held-deliveries.ts`, `sendHeldRecords`), and the outcome then finds its delivery. If the hub still
+does not know the ref and the spool still holds a delivery of it (by the id the hint printed or the delivery's
+own id), neither says "never reached you": `mark_hint_outcome` answers that the hint reached the reader but its
+delivery is still on this machine, sent after the next tool call, nothing recorded, call again then; `crosscheck
+followed / overrode` says the same, with an id and — when no recent delivery is listed while the spool holds
+one — without.

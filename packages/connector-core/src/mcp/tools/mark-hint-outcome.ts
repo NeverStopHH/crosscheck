@@ -18,6 +18,12 @@
  * An ambiguous session sends none and the hub takes the newest — the same
  * rule `get_diagnosis` follows for the pulls it stamps.
  *
+ * A DELIVERY STILL ON THIS MACHINE (review #14). A prompt hint's delivery
+ * is spooled and sent after the next tool runs, so the tool sends what is
+ * held first, bounded, and never repeats the hub's "no hint with that id
+ * reached you" for a ref the spool still holds — it reached the reader, not
+ * yet the hub.
+ *
  * NOTHING WRITTEN BY ANYONE ELSE IS ECHOED. The answer carries the caller's
  * own ref through `safeId` and fixed words; a hub refusal goes through
  * `hubFailure`, whose message is framed like every hub-sent string.
@@ -26,6 +32,8 @@ import { z } from "zod";
 import { HINT_OUTCOMES, MAX_HINT_OUTCOME_REASON_CHARS } from "@crosscheck/schema";
 
 import { containsSecret } from "../../capture/secret-scan.ts";
+import { OUTCOME_FLUSH_BUDGET_MS } from "../../constants.ts";
+import type { HubResult } from "../../http/client.ts";
 import { isOutcomesNotServed, postHintOutcome } from "../../http/hint-outcomes.ts";
 import type { RecordedOutcome } from "../../http/hint-outcomes.ts";
 import { toolFailure, toolText } from "../protocol.ts";
@@ -33,10 +41,15 @@ import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { safeId } from "../render.ts";
 import { resolveOwnWorkContext } from "../session.ts";
+import type { OwnWorkContext } from "../session.ts";
+import type { FlushInput } from "../../spool/flush.ts";
+import { holdsUnsentDelivery, sendHeldRecords } from "../../spool/held-deliveries.ts";
 import { hubFailure, idArg, parseArgs } from "./shared.ts";
 
 /** The word an agent may NOT record — the person's label (crosscheck noise). */
 const NOISE_WORD = "noise";
+/** The hub's refusal for a ref it has no delivery of, for this caller. */
+const UNKNOWN_REF = "unknown_ref";
 
 export const ArgsSchema = z.object({
   ref: idArg(
@@ -88,6 +101,11 @@ export const REASON_SECRET_REFUSAL =
   "That reason matches a secret pattern (key, token or credential), so nothing was sent — " +
   "crosscheck never redacts, it drops. Say it again without the credential material.";
 
+export const DELIVERY_STILL_ON_THIS_MACHINE =
+  "That hint reached you, but its delivery is still on this machine: crosscheck sends it to the hub " +
+  "after your next tool call, and it could not be sent just now — nothing was recorded. Call " +
+  "mark_hint_outcome again after your next tool call.";
+
 export const OUTCOMES_NOT_SERVED =
   "This hub does not record hint outcomes — it predates them, so nothing was recorded. " +
   "Whoever runs it can upgrade it; the hint itself is unaffected.";
@@ -124,6 +142,20 @@ const recordedText = (ref: string, recorded: RecordedOutcome): string => {
   );
 };
 
+/** The live session the held records are sent in the name of, or null when there is none. */
+const senderOf = (own: OwnWorkContext | null): FlushInput | null =>
+  own === null ? null : { sessionId: own.crosscheckSessionId, developerId: own.developerId };
+
+/** The hub's refusal — unless the hub does not know a ref this machine still holds (review #14). */
+const refusalText = async (
+  ctx: McpContext,
+  posted: Extract<HubResult<RecordedOutcome>, { ok: false }>,
+  ref: string,
+): Promise<ToolResult> =>
+  posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx.hub, ref))
+    ? toolFailure(DELIVERY_STILL_ON_THIS_MACHINE)
+    : hubFailure(ctx, posted);
+
 const isNoise = (args: unknown): boolean =>
   typeof args === "object" && args !== null && (args as { outcome?: unknown }).outcome === NOISE_WORD;
 
@@ -143,6 +175,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     return toolFailure(REASON_SECRET_REFUSAL);
   }
   const own = await resolveOwnWorkContext(ctx.config.home, ctx.identity, ctx.config.hubUrl);
+  await sendHeldRecords(ctx.hub, senderOf(own), OUTCOME_FLUSH_BUDGET_MS);
   const session = own === null || own.sessionAmbiguous ? undefined : own.crosscheckSessionId;
   const posted = await postHintOutcome(ctx.hub, {
     repo: ctx.identity.repoId,
@@ -154,5 +187,5 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   if (isOutcomesNotServed(posted)) {
     return toolFailure(OUTCOMES_NOT_SERVED);
   }
-  return posted.ok ? toolText(recordedText(ref, posted.data)) : hubFailure(ctx, posted);
+  return posted.ok ? toolText(recordedText(ref, posted.data)) : refusalText(ctx, posted, ref);
 };

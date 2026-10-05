@@ -25,6 +25,7 @@ import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import {
+  DELIVERY_STILL_ON_THIS_MACHINE,
   NOISE_IS_THE_PERSONS_LABEL,
   OUTCOMES_NOT_SERVED,
   OVERRIDE_NEEDS_REASON,
@@ -32,6 +33,8 @@ import {
 } from "../src/mcp/tools/mark-hint-outcome.ts";
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
+import { appendRecords } from "../src/spool/append.ts";
+import { repoKey } from "../src/config/paths.ts";
 import type { Env } from "../src/index.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
 import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
@@ -56,6 +59,8 @@ let hostileAnswer: () => Response = () => Response.json({}, { status: 500 });
 let hubUrl: string;
 let nickEnv: Env;
 let nickApiKey: string;
+let nickId: string;
+let nickHome: string;
 let nickRepo: string;
 const cleanups: string[] = [];
 
@@ -103,6 +108,29 @@ const seat = async (who: { id: string; apiKey: string }, sessionId: string, titl
   });
 };
 
+const developerKeys = new Map<string, { id: string; apiKey: string }>();
+
+const developerKey = async (name: string): Promise<{ id: string; apiKey: string }> => {
+  const known = developerKeys.get(name);
+  if (known === undefined) {
+    throw new Error(`no developer ${name}`);
+  }
+  return known;
+};
+
+/** A delivery booked into Nick's spool the way the prompt hook books one — not yet sent. */
+const spoolDelivery = async (hub: string, ref: string): Promise<void> => {
+  const delivery = envelope(nickId, NICK_SESSION, "hint_delivery", {
+    id: hintDeliveryId(NICK_SESSION, ref),
+    sessionId: NICK_SESSION,
+    refKind: "work_context",
+    refId: ref,
+    channel: "prompt_hint",
+    deliveredAt: new Date().toISOString(),
+  });
+  await appendRecords(nickHome, repoKey(hub, REPO_ID), "outcome-nick-uuid", [delivery], new Date());
+};
+
 const contextFor = async (env: Env): Promise<McpContext> => {
   const setup = await prepareMcp(env, nickRepo);
   if (!setup.ok) {
@@ -143,6 +171,7 @@ beforeAll(async () => {
   hostileHub = Bun.serve({ port: 0, fetch: () => hostileAnswer() });
   const nick = await developer("Nick", "nick-outcome-tool@example.com");
   const ken = await developer("Ken", "ken-outcome-tool@example.com");
+  developerKeys.set("Ken", ken);
   await seat(ken, KEN_SESSION, "Widen the filter row");
   await seat(nick, NICK_SESSION, "Rework the importer");
   // Enrolled BEFORE the hint arrives: a delivery from before the repo could
@@ -180,6 +209,8 @@ beforeAll(async () => {
   });
   nickEnv = { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hubUrl, CROSSCHECK_API_KEY: nick.apiKey };
   nickApiKey = nick.apiKey;
+  nickId = nick.id;
+  nickHome = home;
 });
 
 afterAll(async () => {
@@ -251,6 +282,49 @@ describe("mark_hint_outcome", () => {
     // Assert
     expect(tied.text).toContain("A noise label made at the same instant still stands: a label wins a tie.");
     expect(tied.text).not.toContain("It supersedes");
+  });
+
+  test("review #14: a hint still on this machine is sent before the outcome, which is then recorded", async () => {
+    // Arrange — a prompt hint booked its delivery into the spool; no tool has run since
+    const ref = "wc_ken_second";
+    await send("/api/records", (await developerKey("Ken")).apiKey, {
+      records: [
+        envelope((await developerKey("Ken")).id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Batch the uploads",
+          status: "analyzing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    await spoolDelivery(hubUrl, ref);
+
+    // Act
+    const result = await call({ ref, outcome: "followed" });
+
+    // Assert — "no hint with that id reached you" would be false: it reached Nick
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain(`Recorded: the hint at ${ref}`);
+  });
+
+  test("review #14: a hint the hub has not received yet is never answered 'never reached you'", async () => {
+    // Arrange — the hub cannot take the spooled delivery and does not know the ref
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
+    hostileAnswer = () =>
+      Response.json(
+        { ok: false, error: { code: "unknown_ref", message: "no hint with that id reached you on this repo" } },
+        { status: 422 },
+      );
+    await spoolDelivery(`http://127.0.0.1:${String(hostileHub.port)}`, "wc_ken_held");
+
+    // Act
+    const result = await call({ ref: "wc_ken_held", outcome: "followed" }, env);
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain(DELIVERY_STILL_ON_THIS_MACHINE);
+    expect(result.text).not.toContain("reached you on this repo");
   });
 
   test("an override without its reason is refused before any round trip", async () => {
