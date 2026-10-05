@@ -95,6 +95,14 @@ export interface WorkContextListEntry extends WorkContextView {
    * claims would cross-multiply claimCount.
    */
   readonly targetCount: number;
+  /**
+   * How many contexts this row's developer has inside the WHERE — the repo,
+   * the viewer's mutes and the caller's window — counted BEFORE the row bound.
+   * The connector groups a teammate's work by topic from the rows that
+   * arrive; when fewer arrive than this, every count it prints for that
+   * teammate is a floor and it says "at least" (briefing/render.ts).
+   */
+  readonly developerContextCount: number;
 }
 
 export interface WorkContextListWindow {
@@ -354,6 +362,15 @@ const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts
  */
 const contextRankPerDeveloper = sql`row_number() over (partition by ${agentSessions.developerId} order by ${contextActivityAt} desc)`;
 
+/**
+ * How many contexts this row's developer has in the answer BEFORE the bound.
+ * A window aggregate over the same partition as the rank above, so Postgres
+ * evaluates it after the WHERE and before the LIMIT — the count of what the
+ * bound may have cut, not of what it kept — in the same pass, with no second
+ * query. ::int because count() is bigint, which arrives as a string.
+ */
+const contextCountPerDeveloper = sql<number>`(count(*) over (partition by ${agentSessions.developerId}))::int`;
+
 export const listWorkContextsByRepo = async (
   db: Db,
   viewerDeveloperId: string,
@@ -384,6 +401,7 @@ export const listWorkContextsByRepo = async (
       // claim yet is real work, and the briefing prefers it over an empty
       // shell when it picks which context speaks for a teammate.
       targetCount: sql<number>`(select count(*)::int from ${workContextTargets} where ${workContextTargets.workContextId} = ${workContexts.id})`,
+      developerContextCount: contextCountPerDeveloper,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -426,6 +444,7 @@ export const listWorkContextsByRepo = async (
     developerName: row.developerName,
     claimCount: row.claimCount,
     targetCount: row.targetCount,
+    developerContextCount: row.developerContextCount,
   }));
 };
 

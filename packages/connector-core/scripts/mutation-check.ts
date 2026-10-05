@@ -17488,6 +17488,28 @@ export const MUTATIONS: readonly Mutation[
       "the presence line and the work contexts below it disagree about what " +
       "the same branch's status is",
   },
+  {
+    // The hub is the only party that knows how many rows its bound cut; the
+    // connector says "at least" from this count and from nothing else.
+    label: "the hub counts the whole answer instead of each developer's share",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "const contextCountPerDeveloper = sql<number>`(count(*) over (partition by ${agentSessions.developerId}))::int`;",
+    to: "const contextCountPerDeveloper = sql<number>`(count(*) over ())::int`;",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "every teammate reads as cut short by the busiest one's rows, and a " +
+      "colleague whose two contexts all arrived is announced as `at least`",
+  },
+  {
+    label: "the hub drops the per-developer count from the listing",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    developerContextCount: row.developerContextCount,\n",
+    to: "",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "the connector cannot tell a teammate the row bound cut short from one " +
+      "it listed whole, and prints the floor as the exact count",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17861,7 +17883,7 @@ interface Outcome {
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
- * PRINTS: packages/server/test/work-context-listing.test.ts 3
+ * PRINTS: packages/server/test/work-context-listing.test.ts 5
  */
 const greenGuards = new Map<string, boolean>();
 
