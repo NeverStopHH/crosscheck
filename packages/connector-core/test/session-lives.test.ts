@@ -437,7 +437,7 @@ describe("the heal never throws away what it should re-send (review P4, P5, P6)"
 
     // Assert: the record waited and went under the healed life
     const next = `${life.crosscheckSessionId}~r1`;
-    expect(walked).toEqual({ outcome: "healed", refusedSessionId: life.crosscheckSessionId, sessionId: next });
+    expect(walked).toMatchObject({ outcome: "healed", refusedSessionId: life.crosscheckSessionId, sessionId: next });
     expect(await observedUnder(life.crosscheckSessionId)).toEqual([
       { session_id: next, seq_reason: "foreign_session_delivery" },
     ]);
@@ -556,7 +556,7 @@ describe("a heal asked from a hook in another repo (review finding 7)", () => {
 
     // Assert: the hub binds the next life to the session's repo, where its work context landed
     const next = `${life.crosscheckSessionId}~r1`;
-    expect(healed).toEqual({ outcome: "healed", refusedSessionId: life.crosscheckSessionId, sessionId: next });
+    expect(healed).toMatchObject({ outcome: "healed", refusedSessionId: life.crosscheckSessionId, sessionId: next });
     const rows = await raw<{ repo: string }>("select repo from agent_sessions where id = $1", [next]);
     expect(rows).toEqual([{ repo: REPO_ID }]);
     const contexts = await raw<{ id: string }>("select id from work_contexts where session_id = $1", [next]);
@@ -691,7 +691,7 @@ describe("a heal that moves the state while SessionEnd runs", () => {
 
     // Assert: the healed life closed, the resume a fresh one, both orders whole
     const healedLife = `${k.crosscheckSessionId}~r1`;
-    expect(healed).toEqual({ outcome: "healed", refusedSessionId: k.crosscheckSessionId, sessionId: healedLife });
+    expect(healed).toMatchObject({ outcome: "healed", refusedSessionId: k.crosscheckSessionId, sessionId: healedLife });
     expect(await isEnded(healedLife)).toBe(true);
     expect(resumed.crosscheckSessionId).toBe(`${k.crosscheckSessionId}~r2`);
     for (const id of [healedLife, resumed.crosscheckSessionId]) {

@@ -156,8 +156,12 @@ const mayWalk = async (
 /**
  * The state's switch to the life the walk registered, compare-and-swap on the
  * refused id. The capture counters, the epoch and its counter stay — one host
- * session, one counter — and a NEW life's seen-set starts empty, because it
- * deduplicates targets per WORK CONTEXT and the next life has a new one.
+ * session, one counter — and the life is registered now.
+ *
+ * THE SEEN-SET STARTS EMPTY ON EVERY HEAL, the same id's too (review-2
+ * MEDIUM-1). It deduplicates targets per work context the HUB holds, and a
+ * refused life's records may never have reached it: a file in the set would
+ * never be captured again, with no further loss counted.
  */
 const switchState = (
   input: SessionHealerInput,
@@ -173,46 +177,43 @@ const switchState = (
           crosscheckSessionId: sessionId,
           workContextId: workContextIdFor(sessionId),
           developerId: developerId ?? fresh.developerId,
-          seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],
+          seenTargets: [],
+          unregistered: false,
         },
   );
 
-/** The next life's work context, spooled before any record that names it. */
-const spoolNextWorkContext = async (
+/** The work context of the life the walk registered — the record every later one of it names. */
+const nextWorkContext = (
   input: SessionHealerInput,
   state: SessionState,
   sessionId: string,
   developerId: string | null,
   now: Date,
-): Promise<void> => {
-  await appendRecords(
-    input.home,
-    input.repoKey,
-    input.hostSessionKey,
-    [
-      workContextRecord(
-        {
-          workContextId: workContextIdFor(sessionId),
-          sessionId,
-          title: state.workContextTitle ?? fallbackWorkContextTitle(input.branch, input.repoId),
-          status: state.workContextStatus ?? HEAL_STATUS,
-        },
-        {
-          developerId: developerId ?? state.developerId ?? UNKNOWN_DEVELOPER_ID,
-          agentKind: input.agentKind,
-          sessionId,
-        },
-        now,
-      ),
-    ],
+): Record<string, unknown> =>
+  workContextRecord(
+    {
+      workContextId: workContextIdFor(sessionId),
+      sessionId,
+      title: state.workContextTitle ?? fallbackWorkContextTitle(input.branch, input.repoId),
+      status: state.workContextStatus ?? HEAL_STATUS,
+    },
+    {
+      developerId: developerId ?? state.developerId ?? UNKNOWN_DEVELOPER_ID,
+      agentKind: input.agentKind,
+      sessionId,
+    },
     now,
   );
-};
 
-const healedTo = (refusedSessionId: string, sessionId: string): HealResult => ({
+const healedTo = (
+  refusedSessionId: string,
+  sessionId: string,
+  workContext?: Record<string, unknown>,
+): HealResult => ({
   outcome: "healed",
   refusedSessionId,
   sessionId,
+  ...(workContext === undefined ? {} : { workContext }),
 });
 
 /**
@@ -303,11 +304,13 @@ const walk = async (
   }
   // Then the life's work context — a heal onto the SAME id too (review-2
   // finding 1): the one it spooled when the hub had not registered it may
-  // have been spent by then, by another conversation's flush or an older
-  // connector, and every later record of the life names it. A second copy
-  // costs the hub a duplicate.
-  await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
-  return healedTo(refusal.sessionId, ladder.sessionId);
+  // have been spent by then, by an older connector's flush, and every later
+  // record of the life names it. A second copy costs the hub a duplicate. It
+  // also goes back to the caller, which sends it AHEAD of the batch it
+  // re-sends: spooled, it lands behind the very edit that names it.
+  const workContext = nextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
+  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);
+  return healedTo(refusal.sessionId, ladder.sessionId, workContext);
 };
 
 export const sessionHealer =

@@ -308,7 +308,7 @@ describe("an ACP proxy that exits while a heal has moved its session on", () => 
 
     // Assert: the healed life was ended by the exit, the load took a fresh one
     const healedLife = `${base}~r1`;
-    expect(healed).toEqual({ outcome: "healed", refusedSessionId: base, sessionId: healedLife });
+    expect(healed).toMatchObject({ outcome: "healed", refusedSessionId: base, sessionId: healedLife });
     const rows = await hub.db
       .select({ workContextId: workContextTargets.workContextId, value: workContextTargets.value })
       .from(workContextTargets);

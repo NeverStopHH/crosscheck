@@ -730,3 +730,47 @@ describe("a conversation resumed while the hub refuses its register", () => {
     expect(await rejectedDrops(fx)).toBe(0);
   });
 });
+
+/**
+ * AN UNREGISTERED LIFE BESIDE A LIVE CONVERSATION IN THE SAME REPO (review-2
+ * MEDIUM-1, the reviewer's probe). The live conversation's flush drained the
+ * deaf life's records and the hub refused every one — its session and work
+ * context were unknown — so they were spent. The heal that later registered
+ * the deaf life as itself spooled its work context at the tail, behind the
+ * edit that named it, and the seen-set kept every lost file from being
+ * captured again: of a, b, c, d only c and d ever reached the hub.
+ */
+describe("a conversation whose register the hub refused, beside a live one in the same repo", () => {
+  test("every file it edits reaches the hub once the hub takes its register", async () => {
+    // Arrange: a live conversation; the deaf one's register and heal refused
+    const fx = await fixture("two-conversations", { url: proxyUrl });
+    const live = "two-conv-live-uuid";
+    const deaf = "two-conv-deaf-uuid";
+    await sessionStart(fx, live, "startup");
+    refuseRegisters = true;
+    await sessionStart(fx, deaf, "startup");
+    refuseRegisters = false;
+
+    // Act: an edit inside the cooldown, the live conversation's flush, the
+    // cooldown over, then every file edited again after the heal
+    await edit(fx, deaf, "src/two-conv/a.ts");
+    await edit(fx, live, "src/two-conv/live-1.ts");
+    await rm(sessionHealPathForSlug(fx.home, sessionSlug(deaf)), { force: true });
+    for (const file of ["b", "c", "a", "b", "c", "d"]) {
+      await edit(fx, deaf, `src/two-conv/${file}.ts`);
+    }
+
+    // Assert
+    const byContext = await db.execute(sql`
+      select work_context_id, value from work_context_targets
+       where value like 'src/two-conv/%' order by value`);
+    expect(byContext.rows).toEqual([
+      { work_context_id: `wc_cc_${deaf}`, value: "src/two-conv/a.ts" },
+      { work_context_id: `wc_cc_${deaf}`, value: "src/two-conv/b.ts" },
+      { work_context_id: `wc_cc_${deaf}`, value: "src/two-conv/c.ts" },
+      { work_context_id: `wc_cc_${deaf}`, value: "src/two-conv/d.ts" },
+      { work_context_id: `wc_cc_${live}`, value: "src/two-conv/live-1.ts" },
+    ]);
+    expect(await rejectedDrops(fx)).toBe(0);
+  });
+});

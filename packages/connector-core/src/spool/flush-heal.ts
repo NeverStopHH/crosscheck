@@ -59,7 +59,11 @@ export interface SessionRefusal {
  * cooldown; the refusal stands.
  */
 export type HealResult =
-  | ({ readonly outcome: "healed" } & SessionHeal)
+  | ({
+      readonly outcome: "healed";
+      /** The life's work context, when the walk registered it: sent ahead of a re-send. */
+      readonly workContext?: Record<string, unknown>;
+    } & SessionHeal)
   | { readonly outcome: "pending" }
   | { readonly outcome: "failed" };
 
@@ -123,7 +127,8 @@ const countOf = (results: readonly RecordResult[], status: string): number =>
   results.filter((result) => result.status === status).length;
 
 /**
- * The first answer with the re-sent records' answers in their places. A hub
+ * The first answer with the re-sent records' answers in their places — the
+ * re-send's first `ahead` answers are for records sent before them. A hub
  * that sends no per-record results the second time leaves the first answer
  * standing — counted as refused, the direction a loss may err in.
  */
@@ -131,8 +136,9 @@ const merged = (
   first: IngestSummary,
   resent: readonly number[],
   again: IngestSummary,
+  ahead: number,
 ): IngestSummary => {
-  const byIndex = new Map(resent.map((index, position) => [index, again.results?.[position]]));
+  const byIndex = new Map(resent.map((index, position) => [index, again.results?.[ahead + position]]));
   const results = (first.results ?? []).map((result) => {
     const replacement = byIndex.get(result.index);
     return replacement === undefined ? result : { ...replacement, index: result.index };
@@ -282,13 +288,22 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   if (roomMs <= 0) {
     return null;
   }
+  // THE LIFE'S WORK CONTEXT GOES FIRST (review-2 MEDIUM-1). Every record
+  // re-sent here names it, and the copy the heal spooled sits at the TAIL,
+  // behind them: a life whose work context was spent before the heal —
+  // refused while the hub did not know the life — had every re-sent edit
+  // refused again. Ahead of them it is a duplicate at worst.
+  const ahead = result.workContext === undefined
+    ? []
+    : [withProducer(result.workContext, input.developerId, heal.sessionId)];
   const again = await postRecords(
     { ...input.ctx, timeoutMs: Math.min(input.ctx.timeoutMs, roomMs) },
-    resent.map((index) =>
-      withProducer(input.spooled[index] ?? {}, input.developerId, heal.sessionId),
-    ),
+    [
+      ...ahead,
+      ...resent.map((index) => withProducer(input.spooled[index] ?? {}, input.developerId, heal.sessionId)),
+    ],
   );
   return again.ok
-    ? { summary: merged(input.first, resent, again.data), heal, asked: true, counted }
+    ? { summary: merged(input.first, resent, again.data, ahead.length), heal, asked: true, counted }
     : null;
 };

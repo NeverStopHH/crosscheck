@@ -46,6 +46,8 @@ import { recordDrop } from "./drops.ts";
 import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
 import { healAndResend, isRefusedLifeRecord } from "./flush-heal.ts";
+import { deliverableOf } from "./held-lives.ts";
+import type { Deliverable } from "./held-lives.ts";
 import type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 import { lineTimestampMs } from "./lines.ts";
 import { withLock } from "./lock.ts";
@@ -172,8 +174,9 @@ const flushOneBatch = async (
   spool: SessionSpool,
   deadlineMs: number,
   refusedLives: ReadonlySet<string>,
+  limit: number,
 ): Promise<BatchOutcome | null> => {
-  const batch = spool.lines.slice(0, MAX_INGEST_BATCH);
+  const batch = spool.lines.slice(0, Math.min(MAX_INGEST_BATCH, limit));
   const consumed = spool.offset + bytesOfLines(spool.pending, batch.length);
   const ends = lineEnds(spool.pending, batch.length, spool.offset);
   const lines: readonly BatchLine[] = batch.map((line, index) => ({
@@ -330,6 +333,27 @@ const withinRoom = (ctx: HubContext, roomMs: number): HubContext => ({
   timeoutMs: Math.min(ctx.timeoutMs, roomMs),
 });
 
+/** The first spool, oldest backlog first, with something this flusher may do. */
+const nextDeliverable = async (
+  ctx: HubContext,
+  spools: readonly SessionSpool[],
+  flusherSessionId: string,
+): Promise<Deliverable | null> => {
+  for (const spool of spools) {
+    const deliverable = await deliverableOf(ctx.home, spool, flusherSessionId, ctx.now(), MAX_INGEST_BATCH);
+    if (deliverable.lines > 0 || deliverable.expired > 0) {
+      return deliverable;
+    }
+  }
+  return null;
+};
+
+/** Held records past the age bound: counted before the cursor passes them. */
+const expireHeld = async (ctx: HubContext, spool: SessionSpool, count: number): Promise<void> => {
+  await recordDrop(ctx.home, ctx.repoKey, spool.slug, count, "expired", ctx.now());
+  await writeCursorOffset(spool.dataPath, spool.cursorPath, spool.offset + bytesOfLines(spool.pending, count), spool);
+};
+
 /**
  * Keeps sending the oldest pending batch until the spool is empty, the hub
  * refuses, or the budget runs out. Draining inside the one lock acquisition is
@@ -355,18 +379,29 @@ const drain = async (
     // Re-read every round: the cursor moved, and appends land lock-free while
     // this loop runs, so the oldest backlog may not be the one it started with.
     const spools = await pendingSpools(ctx);
-    const target = spools[0];
-    if (target === undefined) {
+    if (spools.length === 0) {
       return batch === 0
         ? { outcome: "empty" }
         : { outcome: "flushed", sent, remaining: 0 };
     }
+    // The oldest backlog this flusher may touch: another live life the hub
+    // has not registered is held where it is (spool/held-lives.ts), and the
+    // drain goes on past it.
+    const target = await nextDeliverable(ctx, spools, producer.sessionId);
+    if (target === null) {
+      return { outcome: "flushed", sent, remaining: pendingTotal(spools) };
+    }
+    if (target.expired > 0) {
+      await expireHeld(ctx, target.spool, target.expired);
+      continue;
+    }
     const delivered = await flushOneBatch(
       withinRoom(ctx, roomMs),
       producer,
-      target,
+      target.spool,
       deadlineMs,
       refusedLives,
+      target.lines,
     );
     if (delivered === null) {
       return { outcome: "failed", remaining: pendingTotal(spools) };

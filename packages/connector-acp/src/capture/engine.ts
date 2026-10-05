@@ -890,9 +890,12 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     });
     return async (refusal, deadlineMs, beforeWalk) => {
       const healed = await heal(refusal, deadlineMs, beforeWalk);
-      if (healed.outcome === "healed" && healed.sessionId !== session.crosscheckSessionId) {
+      if (healed.outcome === "healed") {
         session.crosscheckSessionId = healed.sessionId;
         session.workContextId = workContextIdFor(healed.sessionId);
+        // A heal onto the same id too (review-2 MEDIUM-1): a refused life's
+        // records may never have reached the hub, and a file in the set would
+        // never be captured again.
         session.seenTargets.clear();
       }
       return healed;

@@ -140,6 +140,9 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     briefingPending: true,
     workContextTitle: title,
     workContextStatus: IMPLEMENTING_STATUS,
+    // Another conversation's flush leaves an unregistered life's records on
+    // disk for its own heal (core spool/held-lives.ts).
+    ...(ladder.outcome === "registered" ? {} : { unregistered: true }),
   };
   // BEFORE the first append, always: `reap` infers "no writer left" from the
   // absence of a session state file, so a hook that appends without publishing

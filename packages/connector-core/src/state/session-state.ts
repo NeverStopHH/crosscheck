@@ -270,6 +270,15 @@ const SessionStateObjectSchema = z.looseObject({
    */
   briefingPending: z.boolean().default(false),
   /**
+   * True while the hub has not registered the life this state names: its
+   * register did not land, and no heal has registered it since (review-2
+   * MEDIUM-1). Another conversation's flush leaves such a life's records on
+   * disk (spool/held-lives.ts) instead of delivering them into a session the
+   * hub does not know. Optional, so every state file before it parses — and
+   * reads as registered, the old reading.
+   */
+  unregistered: z.boolean().optional(),
+  /**
    * Tier-1 summarizer bookkeeping (DESIGN.md §3 Tier 1): the Stop-turn
    * counter the debounce is measured against, the fires already spent
    * against SUMMARIZER_MAX_FIRES_PER_SESSION, and the rough token estimate

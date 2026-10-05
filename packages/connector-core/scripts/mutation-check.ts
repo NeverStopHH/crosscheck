@@ -17418,7 +17418,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heal registers the next life and spools no work context for it",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "  await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n",
+    from: "  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n",
     to: "",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "every target of the healed life names a work context the hub never heard of and is rejected",
@@ -17426,8 +17426,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the healed life keeps the refused life's seen-set",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "          seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],",
-    to: "          seenTargets: fresh.seenTargets,",
+    from: "          seenTargets: [],\n          unregistered: false,",
+    to: "          seenTargets: fresh.seenTargets,\n          unregistered: false,",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "a file the ended life had captured is never captured into the next life's work context",
   },
@@ -17682,8 +17682,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a heal onto the same id spools no work context",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "  await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n  return healedTo(",
-    to: "  if (ladder.sessionId !== refusal.sessionId) {\n    await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n  }\n  return healedTo(",
+    from: "  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  return healedTo(",
+    to: "  if (ladder.sessionId !== refusal.sessionId) {\n    await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  }\n  return healedTo(",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 finding 1: a work context another conversation's flush spent is never sent again, and the life's edits are refused for good",
   },
@@ -17774,6 +17774,46 @@ export const MUTATIONS: readonly Mutation[
     to: "      const kind: LossKind = isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
     test: `${SCHEMA}/test/telemetry-loss.test.ts`,
     because: "the test that says what a hub from before spool_withheld does with it would pass whatever that hub does",
+  },
+  {
+    label: "a heal re-sends a batch without the life's work context ahead of it",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "      ...ahead,\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 MEDIUM-1: a life whose work context was spent before its heal has every re-sent edit refused again, the work context spooled behind them",
+  },
+  {
+    label: "a heal onto the same id keeps the seen-set",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "          seenTargets: [],\n          unregistered: false,",
+    to: "          seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],\n          unregistered: false,",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 MEDIUM-1 (M18): a file whose records the refused life lost is never captured again, and no further loss is counted",
+  },
+  {
+    label: "a successor flush spends a live life the hub has not registered",
+    file: `${CORE}/src/spool/held-lives.ts`,
+    from: "state?.unregistered === true && lifeId !== flusherSessionId",
+    to: "false",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 MEDIUM-1: another conversation's flush delivers that life's work context and edits into a session the hub does not know, and they are refused and spent before its own heal",
+  },
+  {
+    label: "a register that did not land leaves its life unmarked",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    ...(isUnregisteredLife(registration !== null, previous, crosscheckSessionId) ? { unregistered: true } : {}),\n",
+    to: "",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "review-2 MEDIUM-1: the live conversation beside it spends its first edits, and of a, b, c, d only c and d reach the hub",
+  },
+  {
+    label: "a held record past the age bound is kept for good",
+    file: `${CORE}/src/spool/held-lives.ts`,
+    from: "  return { spool, lines: 0, expired: young === -1 ? head.length : young };",
+    to: "  return { spool, lines: 0, expired: 0 };",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 MEDIUM-1: a life that never registers and never ends pins its records past the bound every spool obeys, counted nowhere",
   },
 ];
 
@@ -17935,7 +17975,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
+ * PRINTS: packages/connector-claude/test/resumed-session.test.ts 11
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
@@ -18032,7 +18072,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 16
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 20
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 18
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4

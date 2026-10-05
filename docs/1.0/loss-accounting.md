@@ -347,6 +347,18 @@ already runs (`foldLossKinds`, unchanged since the report shipped), so the loss 
 still reads `incomplete / telemetry_lost`. `MAX_LOSS_KIND_ENTRIES` follows the vocabulary (`LOSS_KINDS.length × 2`,
 now 26), as `MAX_GUARANTEE_TRIPLES` already did.
 
+**An unregistered life beside a live conversation keeps its first window** (review-2 MEDIUM-1). The fix above
+held while the unregistered life flushed alone. With a second live conversation in the repo, that conversation's
+flush drained the deaf life's spool under its own name, the hub refused its work context ("session not found")
+and its targets ("work context not found"), and they were spent as someone else's refusals; the heal five
+minutes later registered the life as itself and spooled its work context at the TAIL, behind the very edit that
+named it, and the seen-set kept every lost file from being captured again — of a, b, c, d edited, the hub held c
+and d. Three changes, each needed: the state records `unregistered` for a life whose register did not land, and a
+successor flush leaves that life's records where they are while it is live (`spool/held-lives.ts`) — the drain
+goes on past it, its heal clears the flag, its end lifts the hold, and a held record past `MAX_SPOOL_AGE_DAYS` is
+counted `expired`; a heal sends the life's work context AHEAD of the batch it re-sends (`flush-heal.ts`), the
+spooled copy a duplicate at worst; and every heal clears the seen-set, the same id's too.
+
 ### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a
