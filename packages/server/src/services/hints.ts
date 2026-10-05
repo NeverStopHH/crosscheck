@@ -10,6 +10,12 @@
  * everything a trust label needs (author, age, status, confidence, provenance,
  * the context session's base commit for drift) in ONE round trip.
  *
+ * AND THE ONE THING IT DOES DECIDE: whether the query carried a task at all
+ * (HINT_MIN_SHARED_TERMS, the content floor). It is decided here because only
+ * the hub holds the team's words to count against, and when the prompt
+ * carried nothing the session's intent is searched in its place inside the
+ * same call — a second round trip would not fit the hook budget.
+ *
  * THE VECTOR TIER NEVER RUNS HERE. Its embed deadline alone (2 s,
  * SEARCH_EMBED_DEADLINE_MS) is wider than the whole hook budget this endpoint
  * serves, so the search below is forced lexical by passing `embedder: null`
@@ -25,6 +31,7 @@
  * FTS) is the one the design names normative for the sync budget.
  */
 import { and, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -40,6 +47,7 @@ import { presenceCutoff } from "./presence.ts";
 import {
   exactTargetTokenConditions,
   exactTokens,
+  ftsTokens,
   searchWorkContexts,
 } from "./search.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
@@ -91,8 +99,54 @@ export const HINT_MAX_MATCHED_TARGETS_PER_CONTEXT = 5;
  */
 const SEARCH_POOL_LIMIT = 10;
 
+/**
+ * THE CONTENT FLOOR (DESIGN.md §4): how many distinct words of a query must
+ * agree on ONE statement of a teammate's work — the context's own title,
+ * description and intent, or one claim — before the query counts as carrying
+ * a task at all. A prompt naming a target that work touched (the exact tier)
+ * carries one without this count: a path is a fact.
+ *
+ * Derived from the team's own work rather than from a word list, so no
+ * language needs one: a word that matches nothing — a typo, chatter in a
+ * language nobody here writes — and a word that matches only by itself is
+ * filler. One shared word is how "macxhe weiter, limit ist zurukgsetz" found a
+ * rate-limit tree in the pilot, and how the golden corpus's
+ * pr_limits_oneword_debatable found a header bug; two agreeing on the same
+ * statement is a topic.
+ *
+ * COUNTED IN LEXEMES, after the english configuration's own stemming and stop
+ * words, so "limit limits limiting" is one word and "the" is none.
+ */
+export const HINT_MIN_SHARED_TERMS = 2;
+
+/** What a candidate was matched on: the prompt, or the session's intent in its place. */
+export type HintMatchedOn = "prompt" | "intent";
+
 /** Same-author revision edge (DESIGN.md §5); its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
+
+/**
+ * How many distinct LEXEMES of `tokens` the document matches — the count
+ * HINT_MIN_SHARED_TERMS is stated in. One subquery, bounded by
+ * SEARCH_MAX_QUERY_TOKENS; a stop word becomes an empty tsquery and is dropped
+ * by `numnode` rather than counted as a free hit on every row.
+ */
+const sharedTermsSql = (document: SQL, tokens: readonly string[]): SQL<number> =>
+  tokens.length === 0
+    ? sql<number>`0`
+    : sql<number>`(SELECT count(DISTINCT term.lexeme::text)::int
+        FROM (SELECT plainto_tsquery('english', word) AS lexeme
+              FROM unnest(ARRAY[${sql.join(
+                tokens.map((token) => sql`${token}`),
+                sql`, `,
+              )}]::text[]) AS words(word)) AS term
+        WHERE numnode(term.lexeme) > 0 AND ${document} @@ term.lexeme)`;
+
+/**
+ * The context's own statement — what its owner said the work is — as one
+ * document, so its words are counted apart from any one claim's.
+ */
+const contextStatement = sql`to_tsvector('english', concat_ws(' ', ${workContexts.title}, ${workContexts.description}, ${workContexts.intent}->>'summary'))`;
 
 /** Most sessions one tripwire response names — one is enough to ask. */
 export const TRIPWIRE_MAX_SESSIONS = 5;
@@ -119,6 +173,15 @@ export interface HintClaimCandidate {
    * is exactly why the selector keeps its own check as defence in depth.
    */
   readonly validity: ClaimValidity;
+  /**
+   * How many distinct words of the matched query THIS claim shares (in
+   * lexemes, HINT_MIN_SHARED_TERMS's unit) — what lets the connector tell a
+   * finding the prompt is about from one that merely sits in a tree the
+   * prompt brushed (DESIGN.md §4: substance needs a strong match). Counted
+   * against the query the candidate was matched on — the session's intent
+   * when that stood in for the prompt.
+   */
+  readonly matchedTerms: number;
   readonly createdAt: string;
 }
 
@@ -153,6 +216,14 @@ export interface HintContextCandidate {
     readonly solvedAt: string | null;
     readonly createdAt: string;
     readonly updatedAt: string | null;
+    /**
+     * How many distinct words of the matched query the context's OWN
+     * statement — title, description, intent — shares: the tree is clearly
+     * about the query when this reaches HINT_MIN_SHARED_TERMS, which lets a
+     * claim of it that shares a single word count as a strong match
+     * (connector hints/select.ts).
+     */
+    readonly matchedTerms: number;
   };
   readonly claims: readonly HintClaimCandidate[];
   /**
@@ -163,6 +234,12 @@ export interface HintContextCandidate {
    * context matched on FTS alone.
    */
   readonly matchedTargets: readonly MatchedTargetView[];
+  /**
+   * What the candidate was matched on — the prompt, or the session's intent
+   * standing in for a prompt that carried nothing task-bearing — so the hint
+   * says which of the two it relates to.
+   */
+  readonly matchedOn: HintMatchedOn;
 }
 
 /**
@@ -190,18 +267,29 @@ export const notSuperseded = (db: Db) =>
       ),
   );
 
+/** The claim window's inputs that are the same for every context of one call. */
+interface ClaimWindowScope {
+  readonly db: Db;
+  readonly now: Date;
+  readonly readerDeveloperId: string;
+  readonly repo: string;
+  /** The matched query's FTS tokens — what `matchedTerms` counts against. */
+  readonly tokens: readonly string[];
+}
+
 const listClaimsForContext = async (
-  db: Db,
-  now: Date,
-  readerDeveloperId: string,
+  scope: ClaimWindowScope,
   workContextId: string,
-  repo: string,
 ): Promise<readonly HintClaimCandidate[]> => {
+  const { db, now, readerDeveloperId, repo } = scope;
   const rows = await db
     .select({
       claim: claims,
       authorDeveloperId: agentSessions.developerId,
       authorDeveloperName: developers.name,
+      // In the same row read, never a second query: the count rides the
+      // window this one bounded query already selects.
+      matchedTerms: sharedTermsSql(sql`${claims.tsv}`, scope.tokens),
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
@@ -286,6 +374,7 @@ const listClaimsForContext = async (
     // rung, never omitted: an absent field reads as "this hub does not report
     // one", which would send the reader to the wrong remedy.
     axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
+    matchedTerms: Number(row.matchedTerms),
     createdAt: row.claim.createdAt.toISOString(),
   }));
 };
@@ -297,18 +386,34 @@ const listClaimsForContext = async (
  * context's claim window").
  */
 const listContextClaims = async (
-  db: Db,
-  now: Date,
-  readerDeveloperId: string,
+  scope: ClaimWindowScope,
   workContextIds: readonly string[],
-  repo: string,
 ): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
   const lists = await Promise.all(
-    workContextIds.map((id) =>
-      listClaimsForContext(db, now, readerDeveloperId, id, repo),
-    ),
+    workContextIds.map((id) => listClaimsForContext(scope, id)),
   );
   return new Map(workContextIds.map((id, index) => [id, lists[index] ?? []]));
+};
+
+/**
+ * How many distinct query words each context's OWN statement shares — the
+ * other half of the content floor beside its claims' counts. One bounded
+ * query for every candidate id.
+ */
+const listStatementTerms = async (
+  db: Db,
+  workContextIds: readonly string[],
+  tokens: readonly string[],
+): Promise<ReadonlyMap<string, number>> => {
+  if (workContextIds.length === 0 || tokens.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({ id: workContexts.id, terms: sharedTermsSql(contextStatement, tokens) })
+    .from(workContexts)
+    .where(inArray(workContexts.id, workContextIds))
+    .limit(workContextIds.length);
+  return new Map(rows.map((row) => [row.id, Number(row.terms)]));
 };
 
 /** The base commit of each context's owning session, for the drift label. */
@@ -377,20 +482,45 @@ const listMatchedTargets = async (
 export interface HintCandidatesQuery {
   readonly query: string;
   readonly repo: string;
+  /**
+   * The session's stated intent (`set_intent`, or the intent worker's
+   * sentence), matched IN PLACE OF a prompt that carries nothing
+   * task-bearing — never beside one that does. Already the session's own
+   * published sentence, so it costs the prompt nothing to send.
+   */
+  readonly intent?: string;
 }
 
-export const listHintCandidates = async (
+interface MatchedCandidate {
+  readonly candidate: HintContextCandidate;
+  /** Most distinct query words one statement of it shares — the content floor's input. */
+  readonly sharedTerms: number;
+}
+
+/**
+ * A query carries a task when something it would surface is backed by a fact
+ * or by agreement: an exact target, or HINT_MIN_SHARED_TERMS words on one
+ * statement. Anything less is filler, however many single words it matched.
+ */
+const carriesContent = (matched: readonly MatchedCandidate[]): boolean =>
+  matched.some(
+    ({ candidate, sharedTerms }) =>
+      candidate.workContext.tier === "exact" || sharedTerms >= HINT_MIN_SHARED_TERMS,
+  );
+
+/** One query's candidates, as the prompt path has always built them, plus their counts. */
+const matchCandidates = async (
   deps: Deps,
   callerDeveloperId: string,
-  input: HintCandidatesQuery,
-): Promise<readonly HintContextCandidate[]> => {
+  query: { readonly text: string; readonly repo: string; readonly on: HintMatchedOn },
+): Promise<readonly MatchedCandidate[]> => {
   const searched = await searchWorkContexts(
     // Lexical by construction — see the header. The hub's real embedder must
     // not be reachable from this path.
     { db: deps.db, now: deps.now, embedder: null },
     {
-      query: input.query,
-      repo: input.repo,
+      query: query.text,
+      repo: query.repo,
       // In the search's own WHERE, before its bounds — a busy caller's own
       // contexts must not crowd teammates out of the pool (SEARCH_POOL_LIMIT).
       excludeDeveloperId: callerDeveloperId,
@@ -407,29 +537,76 @@ export const listHintCandidates = async (
     .filter((row) => row.developerId !== callerDeveloperId)
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
-  const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
-    listContextClaims(deps.db, deps.now(), callerDeveloperId, ids, input.repo),
+  const tokens = ftsTokens(query.text);
+  const [claimsByContext, baseCommits, matchedTargets, statementTerms] = await Promise.all([
+    listContextClaims(
+      { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens },
+      ids,
+    ),
     listBaseCommits(deps.db, ids),
-    listMatchedTargets(deps.db, ids, exactTokens(input.query)),
+    listMatchedTargets(deps.db, ids, exactTokens(query.text)),
+    listStatementTerms(deps.db, ids, tokens),
   ]);
-  return eligible.map((row) => ({
-    workContext: {
-      id: row.id,
-      title: row.title,
-      status: row.status,
-      intent: row.intent,
-      tier: row.tier,
-      developerId: row.developerId,
-      developerName: row.developerName,
-      baseCommit: baseCommits.get(row.id) ?? "",
-      resultKind: row.resultKind,
-      solvedAt: row.solvedAt,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    },
-    claims: claimsByContext.get(row.id) ?? [],
-    matchedTargets: matchedTargets.get(row.id) ?? [],
-  }));
+  return eligible.map((row) => {
+    const contextClaims = claimsByContext.get(row.id) ?? [];
+    const ownTerms = statementTerms.get(row.id) ?? 0;
+    return {
+      candidate: {
+        workContext: {
+          id: row.id,
+          title: row.title,
+          status: row.status,
+          intent: row.intent,
+          tier: row.tier,
+          developerId: row.developerId,
+          developerName: row.developerName,
+          baseCommit: baseCommits.get(row.id) ?? "",
+          resultKind: row.resultKind,
+          solvedAt: row.solvedAt,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          matchedTerms: ownTerms,
+        },
+        claims: contextClaims,
+        matchedTargets: matchedTargets.get(row.id) ?? [],
+        matchedOn: query.on,
+      },
+      // The claims counted are the ones the window returned — mutes and
+      // retractions already applied in its WHERE — so a hidden author's words
+      // can never decide that a prompt carried a task.
+      sharedTerms: Math.max(ownTerms, ...contextClaims.map((claim) => claim.matchedTerms)),
+    };
+  });
+};
+
+/**
+ * The prompt first; the session's intent in its place only when the prompt
+ * carried nothing task-bearing, held to the same floor — and silence when
+ * neither does. At most two lexical searches, both inside the one call.
+ */
+export const listHintCandidates = async (
+  deps: Deps,
+  callerDeveloperId: string,
+  input: HintCandidatesQuery,
+): Promise<readonly HintContextCandidate[]> => {
+  const fromPrompt = await matchCandidates(deps, callerDeveloperId, {
+    text: input.query,
+    repo: input.repo,
+    on: "prompt",
+  });
+  if (carriesContent(fromPrompt)) {
+    return fromPrompt.map((matched) => matched.candidate);
+  }
+  const intent = input.intent?.trim() ?? "";
+  if (intent.length === 0) {
+    return [];
+  }
+  const fromIntent = await matchCandidates(deps, callerDeveloperId, {
+    text: intent,
+    repo: input.repo,
+    on: "intent",
+  });
+  return carriesContent(fromIntent) ? fromIntent.map((matched) => matched.candidate) : [];
 };
 
 export interface TargetSessionView {

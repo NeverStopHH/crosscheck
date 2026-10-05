@@ -24,6 +24,10 @@ const claim = (
   authorDeveloperId: TEAMMATE,
   authorDeveloperName: "Nick",
   body: "Retrying the refresh call does not help; the key is gone",
+  // A STRONG match by default — "refresh" and "key", as the canned prompt
+  // shares them — because every rule below is about trust, and relevance is
+  // pinned on its own in hint-substance-select.test.ts.
+  matchedTerms: 2,
   createdAt: "2026-08-10T08:00:00.000Z",
   ...overrides,
 });
@@ -47,6 +51,7 @@ const context = (
   },
   claims,
   matchedTargets,
+  matchedOn: "prompt",
 });
 
 const fileTarget = (

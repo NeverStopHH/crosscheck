@@ -1495,6 +1495,13 @@ export const HintClaimCandidateSchema = z.looseObject({
    * unsolicited surface.
    */
   axes: EvidenceAxesSchema.optional(),
+  /**
+   * How many distinct words of the matched query THIS claim shares — the
+   * relevance half of the substance gate (hints/select.ts isStrongMatch).
+   * OPTIONAL, and absent fails closed: an older hub never measured it, and a
+   * claim whose relevance nobody measured is a pointer, not substance.
+   */
+  matchedTerms: z.number().int().min(0).optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1523,6 +1530,13 @@ const HintContextSchema = z.looseObject({
   solvedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /**
+   * How many distinct words of the matched query the context's OWN statement
+   * (title, description, intent) shares — a tree clearly about the query
+   * lends its strength to a claim of it that shares one (hints/select.ts).
+   * Optional: absent from an older hub, and then it lends nothing.
+   */
+  matchedTerms: z.number().int().min(0).optional(),
 });
 
 /**
@@ -1542,25 +1556,48 @@ export const MatchedTargetSchema = z.looseObject({
 
 export type MatchedTarget = z.infer<typeof MatchedTargetSchema>;
 
+/**
+ * What a candidate was matched on (DESIGN.md §4): the prompt, or the
+ * session's intent standing in for a prompt that carried nothing
+ * task-bearing. The hint states which, so a teammate's finding never claims
+ * to relate to a prompt it was not matched on.
+ */
+export const HINT_MATCHED_ON = ["prompt", "intent"] as const;
+export type HintMatchedOn = (typeof HINT_MATCHED_ON)[number];
+
 export const HintContextCandidateSchema = z
   .looseObject({
     workContext: HintContextSchema,
     claims: z.array(z.unknown()).default([]),
     matchedTargets: z.array(z.unknown()).default([]),
+    // An older hub matches on the prompt alone and sends no field — so
+    // absent IS "prompt", the one honest reading. An unknown word from a
+    // newer hub drops the candidate rather than mislabelling it.
+    matchedOn: z.enum(HINT_MATCHED_ON).default("prompt"),
   })
   .transform((value) => ({
     workContext: value.workContext,
     // Tolerant rows, silent drop — candidates are advisory, like search rows.
     claims: parseRows(value.claims, HintClaimCandidateSchema).rows,
     matchedTargets: parseRows(value.matchedTargets, MatchedTargetSchema).rows,
+    matchedOn: value.matchedOn,
   }));
 
 export type HintContextCandidate = z.infer<typeof HintContextCandidateSchema>;
 
 export interface HintCandidatesRequest {
+  /**
+   * The EPHEMERAL prompt query — "" when the prompt has no searchable word,
+   * and then it is not sent at all.
+   */
   readonly query: string;
   /** Relevance filter, never a boundary (DESIGN.md §2.1). */
   readonly repo: string;
+  /**
+   * The session's own stated intent, for the hub to match IN PLACE OF a
+   * prompt that carries nothing task-bearing — inside this one call.
+   */
+  readonly intent?: string;
 }
 
 /** The UserPromptSubmit fast path's ONE bounded hub call (DESIGN.md §4). */
@@ -1681,9 +1718,12 @@ export const getHintCandidates = (
   ctx: HubContext,
   request: HintCandidatesRequest,
 ): Promise<HubResult<HintCandidatesResult>> => {
+  // Only what carries something goes on the wire: an empty query is the
+  // prompt that had no searchable word, and it stays on this machine.
   const params = new URLSearchParams({
-    query: request.query,
+    ...(request.query.length === 0 ? {} : { query: request.query }),
     repo: request.repo,
+    ...(request.intent === undefined ? {} : { intent: request.intent }),
   });
   return hubRequest(ctx, {
     method: "GET",

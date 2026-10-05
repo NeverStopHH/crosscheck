@@ -86,7 +86,14 @@ const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
     surfaced: 312,
     opened: 74,
     converged: 31,
-    byChannel: { unknown: 0, briefing: 208, prompt_hint: 96, tripwire: 8, suspect: 0 },
+    byChannel: {
+      unknown: 0,
+      briefing: 208,
+      prompt_hint: 96,
+      prompt_substance: 0,
+      tripwire: 8,
+      suspect: 0,
+    },
     priorWork: [
       { workContextId: "wc_8f21", title: "Widen the filter row", openedBySessions: 2 },
     ],
@@ -195,7 +202,7 @@ describe("renderPilot", () => {
 
     // Assert
     expect(out).toContain(
-      "by channel: briefing 208 · prompt_hint 96 · tripwire 8 · suspect 0 · unknown 0",
+      "by channel: briefing 208 · prompt_hint 96 · prompt_substance 0 · tripwire 8 · suspect 0 · unknown 0",
     );
   });
 

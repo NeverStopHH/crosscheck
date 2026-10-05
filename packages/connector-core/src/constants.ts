@@ -89,6 +89,41 @@ export const MAX_HINTS_PER_SESSION = 5;
  */
 export const HINT_MIN_EVIDENCE_REFS = 1;
 /**
+ * Substance also requires RELEVANCE (§4, revised after the 2026-10 pilot:
+ * 95 prompt hints, 0 opened): the claim ITSELF must share this many distinct
+ * words (lexemes, counted by the hub against the query it matched) — or the
+ * match must be an error fingerprint, which is content identity. A claim
+ * that merely sits in a tree the prompt brushed is a pointer, however well
+ * evidenced. The hub's content floor counts in the same unit with the same
+ * number, across an HTTP boundary no import can reach, so the two literals
+ * are pinned rather than assumed:
+ *
+ * VERIFY: grep -c 'MIN_SHARED_TERMS = [2];' packages/server/src/services/hints.ts packages/connector-core/src/constants.ts
+ * PRINTS: packages/server/src/services/hints.ts:1
+ * PRINTS: packages/connector-core/src/constants.ts:1
+ */
+export const HINT_MIN_SHARED_TERMS = 2;
+
+/**
+ * THE ONE MATCH KIND THAT MAY CARRY SUBSTANCE, named here rather than
+ * inferred: a fingerprint is derived from the failure TEXT, so it says the
+ * old answer is about the NEW problem. A shared file says only that two
+ * people were near each other, and "solved before, here is the cause" on
+ * that evidence is the anchoring §4 forbids. Checked again on this side,
+ * although the hub already applies it, because a body arriving beside a
+ * weaker kind is exactly what a newer hub with different rules — or a
+ * hostile one — would send.
+ *
+ * SHARED because three readers need it, each for its own reason: the
+ * briefing's solved line (the body), the failure-time hint, whose header
+ * ASSERTS this kind ("the same error fingerprint as a diagnosis that was
+ * solved"), and the prompt hint's selector, for which content identity is a
+ * strong match without a shared word (hints/select.ts). One name; a second
+ * literal would be a second rule. Lives HERE rather than in briefing/render.ts
+ * (which re-exports it) so the selector need not import the render layer.
+ */
+export const SUBSTANCE_MATCH_KIND = "error_fingerprint";
+/**
  * Words shorter than this carry grammar, not meaning — the same floor the hub
  * search applies (SEARCH_MIN_TOKEN_CHARS). Checked BEFORE the hub call: a
  * prompt with no searchable word costs zero HTTP.
@@ -1802,6 +1837,19 @@ export const MAX_DIAGNOSIS_CHARS = 48_000;
  * PRINTS: true true
  */
 export const UNSOLICITED_CLAIM_BODY_MAX_CHARS = 400;
+
+/**
+ * The substance a PROMPT HINT carries: the claim's first sentence, cut at
+ * this width (DESIGN.md §4, revised after the 2026-10 pilot). Half the
+ * unsolicited body cap, the width the briefing gives a recorded root cause
+ * (SOLVED_ROOT_CAUSE_MAX_CHARS) — enough for one sentence that says what the
+ * finding IS, with the rest one get_diagnosis away. A longer first sentence
+ * is cut with the sanitizer's visible ellipsis, never silently.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.HINT_SUBSTANCE_MAX_CHARS === c.SOLVED_ROOT_CAUSE_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS < c.UNSOLICITED_CLAIM_BODY_MAX_CHARS)'
+ * PRINTS: true true
+ */
+export const HINT_SUBSTANCE_MAX_CHARS = 200;
 
 /**
  * A body quoted back to the AUTHOR who just wrote it — the receipt on

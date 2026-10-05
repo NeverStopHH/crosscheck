@@ -266,9 +266,11 @@ describe("the claim-hint corpus sees the state word, in every package", () => {
       (surface) => surface.kind === "corpus" && surface.name.includes("claim-hint"),
     );
 
-    // Assert: three of them, and each renders a state word under the corpus's
-    // own payload rather than skipping the line.
-    expect(hints.length).toBe(3);
+    // Assert: four of them — this package's twice (matched on the prompt, and
+    // on the session's intent in a content-free prompt's place), the Cursor
+    // mirror and the ACP mirror — and each renders a state word under the
+    // corpus's own payload rather than skipping the line.
+    expect(hints.length).toBe(4);
     for (const surface of hints) {
       expect(
         surface.kind === "corpus" ? surface.render("rate limit fix") : "",

@@ -4,12 +4,21 @@
  *
  * Proactively injectable substance is exactly:
  *   (a) a rejected_approach claim WITH evidence — negative knowledge cannot
- *       anchor a wrong theory, only save a dead end; and
- *   (b) a likely_root_cause / partially_confirmed claim WITH evidence.
- * Everything else — bare proposed hypotheses above all — reaches the reader
- * only as a POINTER: context id + title, no body. The pointer variant of the
- * return type carries no claim at all, so a body cannot leak through it by
- * construction; test/hint-select.test.ts pins every branch and
+ *       anchor a wrong theory, only save a dead end;
+ *   (b) a likely_root_cause / partially_confirmed claim WITH evidence; and
+ *   (c) a stated DECISION or ROOT CAUSE, still proposed, WITH evidence (the
+ *       2026-10 pilot: 95 hints, 0 opened — a decision can never reach a
+ *       settled status, so it was pointer-only forever, behind a
+ *       get_diagnosis no agent made) —
+ * and all three ONLY ON A STRONG MATCH: the claim itself shares
+ * HINT_MIN_SHARED_TERMS words with what was matched, or the match is an error
+ * fingerprint. Trust and relevance are both required to assert something
+ * unasked (§4 "Solved before" states the same narrowing for the briefing).
+ * Everything else — bare proposed hypotheses above all, and any claim on a
+ * weak match — reaches the reader only as a POINTER: context id + title, no
+ * body. The pointer variant of the return type carries no claim at all, so a
+ * body cannot leak through it by construction; test/hint-select.test.ts and
+ * test/hint-substance-select.test.ts pin every branch and
  * scripts/mutation-check.ts re-breaks the load-bearing ones.
  *
  * ONE selection per call, never a list — that is MAX_HINTS_PER_PROMPT enforced
@@ -19,7 +28,9 @@
  */
 import {
   HINT_MIN_EVIDENCE_REFS,
+  HINT_MIN_SHARED_TERMS,
   MAX_HINTS_PER_SESSION,
+  SUBSTANCE_MATCH_KIND,
 } from "../constants.ts";
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
@@ -53,6 +64,8 @@ export type HintSelection =
       readonly kind: "claim";
       readonly context: HintContextCandidate;
       readonly claim: HintClaimCandidate;
+      /** The teammate claims the substance leaves behind — the pointer to the rest. */
+      readonly restCount: number;
     }
   | {
       readonly kind: "pointer";
@@ -93,6 +106,64 @@ const isNegativeKnowledge = (claim: HintClaimCandidate): boolean =>
 
 const isSettled = (claim: HintClaimCandidate): boolean =>
   INJECTABLE_STATUSES.has(claim.status);
+
+/** Kinds that STATE something — what was decided, what caused it — rather than guess. */
+const STATED_KINDS: ReadonlySet<string> = new Set(["decision", "root_cause"]);
+
+/**
+ * (c) of the header: a decision or root cause its author stated and nobody
+ * has taken back. Positive equality on `proposed`, the status such a claim is
+ * born with, so `rejected` — the claim itself turned down — and any status
+ * this build does not know stay out (fail closed); the settled statuses are
+ * (b)'s already.
+ */
+const isStatedFinding = (claim: HintClaimCandidate): boolean =>
+  STATED_KINDS.has(claim.kind) && claim.status === "proposed";
+
+/**
+ * THE RELEVANCE HALF OF THE GATE, counted by the hub against the query that
+ * matched (the prompt, or the session's intent standing in for it). Strong
+ * is one of three things:
+ *
+ *   - the CLAIM shares HINT_MIN_SHARED_TERMS words with the query — the
+ *     finding is about it, wherever its tree ranked;
+ *   - the TREE's own statement (title, description, intent) shares that many
+ *     AND the claim shares at least one — the tree is clearly about the
+ *     query, and this finding touches it. Never the tree alone: a tree the
+ *     prompt matched can hold a dozen findings about something else;
+ *   - the match is an error fingerprint — content identity needs no words,
+ *     exactly as the briefing's solved line rules (SUBSTANCE_MATCH_KIND).
+ *
+ * A shared FILE is none of them: it says two pieces of work are near each
+ * other (§4 Solved before). An older hub sends no counts, and a relevance
+ * nobody measured fails closed to the pointer.
+ */
+const isStrongMatch = (
+  claim: HintClaimCandidate,
+  context: HintContextCandidate,
+): boolean => {
+  const claimTerms = claim.matchedTerms ?? 0;
+  const treeTerms = context.workContext.matchedTerms ?? 0;
+  return (
+    claimTerms >= HINT_MIN_SHARED_TERMS ||
+    (claimTerms > 0 && treeTerms >= HINT_MIN_SHARED_TERMS) ||
+    context.matchedTargets.some((target) => target.kind === SUBSTANCE_MATCH_KIND)
+  );
+};
+
+/**
+ * The ONE most relevant claim first: more shared words, then negatives
+ * (privileged, §4), then the hub's own claim order — a stable sort over a
+ * copy, so the hub's order survives every tie.
+ */
+const mostRelevantFirst = (
+  claims: readonly HintClaimCandidate[],
+): readonly HintClaimCandidate[] =>
+  [...claims].sort(
+    (left, right) =>
+      (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0) ||
+      Number(isNegativeKnowledge(right)) - Number(isNegativeKnowledge(left)),
+  );
 
 /**
  * Machine-derived claims are never substance (DESIGN.md §3: Tier-1 drafts
@@ -155,7 +226,7 @@ const isInjectable = (claim: HintClaimCandidate): boolean =>
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
   isCodeCurrent(claim) &&
-  (isNegativeKnowledge(claim) || isSettled(claim));
+  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedFinding(claim));
 
 const isEligibleContext = (context: HintContextCandidate): boolean =>
   context.workContext.tier !== undefined &&
@@ -211,17 +282,18 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
   // Substance pass over ALL eligible contexts first: an evidence-backed claim
   // in the second-ranked context beats a pointer at the first-ranked one.
   for (const context of eligible) {
-    // Negatives are privileged (§4): scan rejected approaches before settled
-    // positives within a context, in the hub's claim order otherwise.
+    // The most relevant claim first; negatives are privileged (§4) on a tie.
     const foreign = context.claims.filter((claim) =>
       isForeignClaim(claim, selfDeveloperId),
     );
-    const injectable = [
-      ...foreign.filter(isNegativeKnowledge),
-      ...foreign.filter((claim) => !isNegativeKnowledge(claim)),
-    ].find((claim) => isInjectable(claim) && !seen.has(claim.id));
+    const injectable = mostRelevantFirst(foreign).find(
+      (claim) =>
+        isInjectable(claim) && isStrongMatch(claim, context) && !seen.has(claim.id),
+    );
     if (injectable !== undefined) {
-      return { kind: "claim", context, claim: injectable };
+      // The rest are the OTHER teammate claims of the tree — what the hint's
+      // pointer line says is one get_diagnosis away.
+      return { kind: "claim", context, claim: injectable, restCount: foreign.length - 1 };
     }
   }
 

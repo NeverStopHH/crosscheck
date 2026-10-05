@@ -53,6 +53,9 @@ const claim = (
   authorDeveloperName: "Nick",
   body: "Retrying the refresh call does not help; the key is gone",
   validity: validity(),
+  // A strong match by default: this file is about the CODE axis, and the
+  // relevance half is pinned on its own (hint-substance-select.test.ts).
+  matchedTerms: 2,
   createdAt: ISO,
   ...overrides,
 });
@@ -73,6 +76,7 @@ const context = (
   },
   claims,
   matchedTargets: [],
+  matchedOn: "prompt",
 });
 
 const select = (claims: readonly HintClaimCandidate[]) =>

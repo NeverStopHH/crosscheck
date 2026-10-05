@@ -38,13 +38,19 @@ debatable probes:
   a deadlock one side is wrong). `services/solved.ts`'s own header rule ("a
   dispute must not read settled on any surface") argues for the gate; when it
   lands, this probe relabels to silence with the gate's change.
+
+Settled, and kept under its old id so the history stays findable:
+
 - `pr_limits_oneword_debatable` (04): a prompt sharing exactly ONE
-  mid-frequency word with one claim body receives full substance. Today's
-  precision floor is tier membership alone (exact/fts), with no
-  matched-token minimum and no rank floor. Building this corpus surfaced the
-  same single-token path three times before the fixture vocabulary was
-  disciplined ("key", "across", "retries" each delivered cross-domain
-  hints), so this probe pins the behavior openly rather than hiding it.
+  mid-frequency word with one claim body USED TO receive full substance,
+  because the precision floor was tier membership alone. Building this corpus
+  surfaced that single-token path three times ("key", "across", "retries"
+  each delivered cross-domain hints), and the 7-day pilot settled it: 95
+  prompt hints, 0 opened, and every pointer of one session fired on a
+  content-free prompt through one stray word. The probe now expects SILENCE —
+  the content floor (`server/src/services/hints.ts` `HINT_MIN_SHARED_TERMS`)
+  demands two words agreeing on one statement of the work, or an exact
+  target.
 
 ## Harness-can-fail proof
 

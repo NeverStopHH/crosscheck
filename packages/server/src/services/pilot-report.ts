@@ -53,6 +53,7 @@ import {
   DELIVERY_CHANNELS,
   PILOT_COHORTS,
   PULLED_DELIVERY_CHANNEL,
+  SUBSTANCE_DELIVERY_CHANNEL,
   TRIPWIRE_ASKING_HOSTS,
 } from "@crosscheck/schema";
 import type { DeliveryChannel } from "@crosscheck/schema";
@@ -258,7 +259,16 @@ const POINTED = POINTED_WORK_CONTEXT;
 const OPENED_AT = sql`CASE WHEN hd.pulled_at IS NOT NULL
   AND hd.pulled_at >= hd.delivered_at
   AND hd.pulled_at <= COALESCE(s.ended_at, s.reaped_at, 'infinity'::timestamptz)
+  AND hd.channel <> ${SUBSTANCE_DELIVERY_CHANNEL}
   THEN hd.pulled_at END`;
+
+/**
+ * Deliveries a pointer figure may count at all. An inline finding
+ * (SUBSTANCE_DELIVERY_CHANNEL) carried its answer, so the agent doing the
+ * work afterwards is neither "converged" nor "opened anyway" — those two
+ * measure what a POINTER led to. It stays in `surfaced` and its own bucket.
+ */
+const POINTER_DELIVERY = sql`hd.channel <> ${SUBSTANCE_DELIVERY_CHANNEL}`;
 
 const readDuplicateWork = async (
   deps: Deps,
@@ -301,7 +311,7 @@ const readDuplicateWork = async (
              ${POINTED} AS pointed
       FROM hint_deliveries hd
       JOIN agent_sessions s ON s.id = hd.session_id
-      WHERE ${windowed}
+      WHERE ${windowed} AND ${POINTER_DELIVERY}
     ),
     shared AS (
       SELECT d.delivery_id, d.pulled_at, mine.work_context_id AS mine_context,

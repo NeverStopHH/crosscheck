@@ -18,6 +18,10 @@
  * the one hub call: `containsSecret` on the whole prompt, a hit means the
  * attempt is dropped — the query is the one place this text goes on the
  * wire, and the wire-level pin lives in connector-cursor/test/privacy.test.ts.
+ * A prompt with no searchable word is not even that: it never goes on the
+ * wire, and the session's intent — its own already-published sentence, held
+ * to the same two gates — is the only text that can travel in its place
+ * (test/hint-intent-fallback.test.ts).
  *
  * ORDER AT THE END IS THE CONTRACT: telemetry spool append, then session
  * state (seen-set + echo hash), then the caller emits. A crash — or a
@@ -42,6 +46,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
+import { firstSentence } from "../hints/sentence.ts";
 import {
   renderAnswerHint,
   renderClaimHint,
@@ -49,6 +54,7 @@ import {
   renderPointerHint,
   withCoverageNote,
 } from "../hints/render.ts";
+import { SUBSTANCE_DELIVERY_CHANNEL } from "@crosscheck/schema";
 import type { DeliveryChannel } from "@crosscheck/schema";
 import { selectHint } from "../hints/select.ts";
 import type { HintSelection } from "../hints/select.ts";
@@ -62,6 +68,18 @@ const hasSearchableWord = (prompt: string): boolean =>
   prompt
     .split(/[^\p{L}\p{N}]+/u)
     .some((token) => token.length >= HINT_MIN_TOKEN_CHARS);
+
+/**
+ * The session's intent as the hub may match it IN PLACE OF a prompt that
+ * carries nothing task-bearing (DESIGN.md §4) — the session's own published
+ * sentence (`set_intent`, or the intent worker's), never the prompt. Held to
+ * the prompt's own two gates: a sentence with no searchable word is not a
+ * query, and one that looks like a credential never goes on the wire.
+ */
+const intentQuery = (intent: string | null): string | undefined =>
+  intent === null || !hasSearchableWord(intent) || containsSecret(intent)
+    ? undefined
+    : intent.slice(0, MAX_SEARCH_QUERY_CHARS);
 
 export interface SelectAndRenderHintInput {
   readonly home: string;
@@ -121,13 +139,26 @@ const renderSelection = async (
     context.baseCommit === undefined || context.baseCommit.length === 0
       ? null
       : await resolveCommitDrift(repoRoot, context.baseCommit);
+  // What the hub matched this candidate on — the hint says which (§4).
+  const matchedOn = selection.context.matchedOn;
   if (selection.kind === "claim") {
     return {
       refKind: "claim",
       refId: selection.claim.id,
-      channel: "prompt_hint",
-      bodyHash: hintBodyHash(selection.claim.body),
-      text: renderClaimHint({ claim: selection.claim, context, drift, now }),
+      // The finding rides INSIDE this hint, so a later read of its tree is
+      // the agent pulling more, never "the pointer was opened" (07 §3.1).
+      channel: SUBSTANCE_DELIVERY_CHANNEL,
+      // The echo mark covers what was SHOWN — the first sentence — so that
+      // sentence coming back as the reader's own observation is caught.
+      bodyHash: hintBodyHash(firstSentence(selection.claim.body)),
+      text: renderClaimHint({
+        claim: selection.claim,
+        context,
+        drift,
+        now,
+        matchedOn,
+        restCount: selection.restCount,
+      }),
     };
   }
   return {
@@ -137,6 +168,7 @@ const renderSelection = async (
     bodyHash: null,
     text: renderPointerHint({
       context,
+      matchedOn,
       claimCount: selection.claimCount,
       // #19: present only for a targets-only pointer, absent for the
       // claim-count one — the renderer branches on it, still no body either way.
@@ -201,9 +233,14 @@ const selectNotice = (
 export const selectAndRenderHint = async (
   input: SelectAndRenderHintInput,
 ): Promise<string> => {
-  if (!hasSearchableWord(input.prompt)) {
-    return "";
-  }
+  // A prompt with no searchable word is not a query, and it is not SENT: it
+  // stays on this machine, and only the session's intent can travel in its
+  // place (below). Whether a prompt WITH words carries anything task-bearing
+  // is the hub's call — only the hub holds the team's words to count against
+  // (server services/hints.ts, the content floor).
+  const promptQuery = hasSearchableWord(input.prompt)
+    ? input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS)
+    : "";
   // SECRET GATE — the capture scan's sibling, on the QUERY. The prompt goes
   // on the wire as a GET string (into a shared hub's request path and access
   // logs), and on the Cursor connector it is captured tool output — a failing
@@ -224,9 +261,16 @@ export const selectAndRenderHint = async (
   if (state.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION) {
     return "";
   }
+  // ON THE SAME CALL, never a second one: the 800 ms budget has room for one
+  // bounded round trip, so the hub falls back to the intent itself.
+  const intent = intentQuery(state.workContextIntent);
+  if (promptQuery.length === 0 && intent === undefined) {
+    return "";
+  }
   const result = await getHintCandidates(input.hub, {
-    query: input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS),
+    query: promptQuery,
     repo: input.repoId,
+    ...(intent === undefined ? {} : { intent }),
   });
   if (!result.ok) {
     return "";

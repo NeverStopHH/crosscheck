@@ -263,9 +263,24 @@ export const DELIVERY_CHANNELS = [
   "unknown",
   "briefing",
   "prompt_hint",
+  "prompt_substance",
   "tripwire",
   "suspect",
 ] as const;
+
+/**
+ * THE CHANNEL THAT CARRIES ITS OWN ANSWER (DESIGN.md §4, revised 2026-10). A
+ * prompt hint that delivers a claim's substance — its first sentence, inline —
+ * hands the reader the finding itself; a later read of its tree is the agent
+ * pulling more, never "the pointer was opened". So it is its own channel:
+ * surfaced and counted like every delivery, and kept out of every figure that
+ * measures a POINTER being followed (the pilot report's opened, converged,
+ * opened anyway, opened per hundred sessions) — folded in, the pilot's one
+ * behavioural precision signal would rise by construction the day hints
+ * started carrying their answer.
+ */
+export const SUBSTANCE_DELIVERY_CHANNEL = "prompt_substance" as const satisfies
+  (typeof DELIVERY_CHANNELS)[number];
 
 /**
  * THE CHANNEL A READER ASKED FOR. Every other channel arrives unasked; this

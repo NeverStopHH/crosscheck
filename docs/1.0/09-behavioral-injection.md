@@ -588,3 +588,29 @@ shape, used a tool or added a plan item that no control run did.
   addressed-question surface only (A1.1). Never "the model alone resists
   injection".
 - *Never* "injection is impossible" (§5).
+
+## 10. What the prompt-hint substance adds to this surface (2026-10-05, not a measurement)
+
+After the 2026-10 pilot (95 prompt hints, 0 opened) a prompt hint on a strong,
+evidence-backed match carries one teammate claim's kind and **first sentence**
+(at most `HINT_SUBSTANCE_MAX_CHARS` = 200 characters) instead of only a
+pointer, for a class wider than before: a stated `decision` or `root_cause`
+still `proposed`, beside the rejected approaches and settled causes that could
+already arrive (DESIGN.md §4). That **adds to the injection surface**: more
+teammate-written body text now reaches an agent's context unasked, and it
+arrives mid-task, at UserPromptSubmit, rather than at SessionStart. It is the
+class §9 measured — a teammate's body field, unasked, in the agent's context —
+and §9's verdict on it is **FAIL** (5 of 20 runs echoed an injected
+instruction, 0 of 20 followed one), so nothing here may be read as making it
+safer than that verdict says. What bounds it: one sentence rather than the 400
+characters a question body or the old claim hint could carry; only a declared,
+evidence-backed, current claim that shares two words with the prompt (or one
+while its tree shares two, or an error fingerprint); at most one per prompt and
+five per session. And it is **the same quoting the briefing uses** — the
+`QUOTED_DATA_NOTICE` header, the « » BODY class with span redaction, the
+renderer-owned `bareUntrusted` fields, cut first and sanitized after
+(`hints/sentence.ts`) — registered as `substance-hint-sentence` and attacked
+by four `INJECTION_CORPUS` cases aimed at the cut. The prompt hint is **not
+measured** by §9 (A1.1 measured the addressed-question surface only); a
+behavioural run with the hint as carrier is the honest next measurement, and
+until it exists this surface inherits §9's FAIL, not a PASS.

@@ -47,6 +47,7 @@ export interface WalkTally {
 const CHANNEL_WORD: Readonly<Record<DeliveryChannel, string>> = {
   briefing: "session briefing",
   prompt_hint: "mid-prompt hint",
+  prompt_substance: "mid-prompt finding",
   tripwire: "tripwire ask before an edit",
   suspect: "suspect answer",
   unknown: "channel not recorded",
