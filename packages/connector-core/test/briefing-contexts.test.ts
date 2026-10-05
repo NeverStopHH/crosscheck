@@ -243,7 +243,7 @@ describe("the topic is the session's own branch when the hub sends it", () => {
     ]);
 
     expect(sectionLines(rendered)).toEqual([
-      "- Ken, 4 sessions, 2m ago, status analyzing: «detached»",
+      "- Ken, 4 sessions, 2m ago, status analyzing: «detached HEAD»",
     ]);
   });
 
@@ -258,6 +258,64 @@ describe("the topic is the session's own branch when the hub sends it", () => {
 
     expect(sectionLines(rendered)).toEqual([
       "- Ken, 2 sessions, 2m ago, status analyzing: «feat/x»",
+    ]);
+  });
+});
+
+describe("topics are keyed by the RAW branch, sanitized only for display", () => {
+  test("two branches whose names both redact stay two topics, each with its own status", () => {
+    // Both names trip the phrase filter and print as the same redaction —
+    // grouped on that label they were ONE topic, and the blocked one's status
+    // spoke for the other.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "feat/config-override", title: "feat/config-override @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "fix/override-cache", title: "fix/override-cache @ api", status: "blocked", createdAt: minutesAgo(5) }),
+    ]);
+
+    const lines = sectionLines(rendered);
+    expect(lines[0]).toBe("- Ken, 2 topics, 2 sessions:");
+    expect(lines.filter((line) => line.startsWith("  - "))).toEqual([
+      "  - 1 session, 1m ago, status analyzing: «[redacted: title looked like an instruction]»",
+      "  - 1 session, 5m ago, status blocked: «[redacted: title looked like an instruction]»",
+    ]);
+  });
+
+  test("two long branches that differ only past the title cap stay two topics", () => {
+    const stem = `cursor/implement-the-briefing-topic-bundles-for-teammate-work-contexts-${"a".repeat(10)}`;
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: `${stem}-1111`, title: "t1", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: `${stem}-2222`, title: "t2", status: "blocked", createdAt: minutesAgo(5) }),
+    ]);
+
+    expect(contextLines(rendered)).toEqual(["- Ken, 2 topics, 2 sessions:"]);
+    expect(topicLines(rendered)).toHaveLength(2);
+  });
+
+  test("two titles that redact alike do not agree: the topic is called by its branch", () => {
+    // Compared after sanitizing, both titles read as the same redaction and
+    // the topic printed it as if the sessions agreed on what they were doing.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "feat/cache", title: "Fix the override path", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "feat/cache", title: "Override the stale cache", createdAt: minutesAgo(4) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 1m ago, status analyzing: «feat/cache»",
+    ]);
+  });
+
+  test("a branch literally named detached is not the detached-HEAD topic", () => {
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached", title: "a", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached", title: "b", createdAt: minutesAgo(2) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "detached@abc1234", title: "detached@abc1234 · Fix it @ api", createdAt: minutesAgo(3) }),
+      context({ id: "wc_4", sessionId: "cc_4", branch: "detached@def5678", title: "detached@def5678 · Try again @ api", createdAt: minutesAgo(4) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 topics, 4 sessions:",
+      "  - 2 sessions, 1m ago, status analyzing: «detached»",
+      "  - 2 sessions, 3m ago, status analyzing: «detached HEAD»",
     ]);
   });
 });
@@ -494,7 +552,20 @@ describe("the grouping rules themselves", () => {
     hasRecordedWork = false,
     sessionKey = `${developerId}:${topic}:${String(ageMs)}`,
     status = "analyzing",
-  ) => ({ developerId, topic, ageMs, hasRecordedWork, sessionKey, status });
+  ) => ({ developerId, topicKey: topic, label: topic, ageMs, hasRecordedWork, sessionKey, status });
+
+  test("rows that print alike but are keyed apart stay two topics", () => {
+    // The label is display only; the KEY decides what is one piece of work.
+    const groups = groupTopicsByDeveloper([
+      { ...row("dev_a", "x", 1_000), topicKey: "branch:feat/config-override", label: "[redacted]" },
+      { ...row("dev_a", "y", 2_000), topicKey: "branch:fix/override-cache", label: "[redacted]" },
+    ]);
+
+    expect(groups[0]?.topics.map((topic) => [topic.key, topic.label])).toEqual([
+      ["branch:feat/config-override", "[redacted]"],
+      ["branch:fix/override-cache", "[redacted]"],
+    ]);
+  });
 
   test("the answer does not depend on the order the rows arrived in", () => {
     const rows = [

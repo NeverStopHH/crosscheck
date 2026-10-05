@@ -70,7 +70,21 @@ describe("a teammate's live sessions, grouped by topic", () => {
     ]);
 
     expect(lines).toEqual([
-      "- Nick · branch detached · status analyzing · heartbeat 10s ago",
+      "- Nick · branch detached HEAD · status analyzing · heartbeat 10s ago",
+    ]);
+  });
+
+  test("two live branches whose names sanitize alike stay two branches", () => {
+    // Grouped on the sanitized label, both redacted names were one branch
+    // with one status; keyed raw, they are two.
+    const [nick] = groupTeammates(
+      [live(0, "feat/config-override"), live(1, "fix/override-cache", { status: "blocked" })],
+      NOW,
+    );
+
+    expect(nick?.topics.map((topic) => [topic.sessions, topic.status])).toEqual([
+      [1, "analyzing"],
+      [1, "blocked"],
     ]);
   });
 

@@ -17391,7 +17391,7 @@ export const MUTATIONS: readonly Mutation[
     // one branch minutes apart. A topic is the branch, not the session.
     label: "every session on one branch is its own topic again",
     file: `${CORE}/src/briefing/topic-group.ts`,
-    from: "  topics: [...bucket(rows, (row) => row.topic)]",
+    from: "  topics: [...bucket(rows, (row) => row.topicKey)]",
     to: "  topics: [...bucket(rows, (row) => row.sessionKey)]",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
@@ -17461,8 +17461,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "every topic keeps the repo label the whole listing repeats",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "    suffix !== null && title.endsWith(suffix)",
-    to: "    false",
+    from: "  return suffix !== null && title.endsWith(suffix)",
+    to: "  return false",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "each topic line spends the title cap on ` @ monorepo`, the one word the " +
@@ -17586,8 +17586,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a detached title is keyed by its sha",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  return isDetachedBranch(fromTitle) ? DETACHED_TOPIC : fromTitle;",
-    to: "  return fromTitle;",
+    from: "  return isDetachedBranch(head)",
+    to: "  return false",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "an older hub's detached rows, and detached sessions whose title could " +
@@ -17596,8 +17596,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "presence keys a detached session by its sha",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  const branch = isDetachedBranch(entry.branch) ? DETACHED_TOPIC : clean(entry.branch);",
-    to: "  const branch = clean(entry.branch);",
+    from: "  const detached = isDetachedBranch(entry.branch);",
+    to: "  const detached = false;",
     test: `${CORE}/test/briefing-presence-topics.test.ts`,
     because:
       "a teammate live in three detached worktrees prints three shas as three " +
@@ -17618,8 +17618,8 @@ export const MUTATIONS: readonly Mutation[
     // teammate's connector registered, a hostile hub can rewrite.
     label: "the session's branch reaches the briefing unsanitized",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "    return sanitizeUntrusted(context.branch);",
-    to: "    return context.branch;",
+    from: "    return { key: branchKey(context.branch), label: sanitizeUntrusted(context.branch) };",
+    to: "    return { key: branchKey(context.branch), label: context.branch };",
     test: `${CORE}/test/injection-corpus.test.ts`,
     because:
       "a branch carrying « » or a newline closes the topic frame early and " +
@@ -17628,7 +17628,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a topic is called by its branch even when every session shares one title",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  return titles.size === 1 && shared !== undefined && shared.length > 0",
+    from: "  return titles.size === 1 && shared.length > 0",
     to: "  return false",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
@@ -17638,8 +17638,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "one session's title speaks for a topic whose sessions disagree",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  const titles = new Set(topic.rows.map((row) => row.titleLabel));",
-    to: "  const titles = new Set(topic.rows.slice(0, 1).map((row) => row.titleLabel));",
+    from: "  const titles = new Set(topic.rows.map((row) => row.titleHead));",
+    to: "  const titles = new Set(topic.rows.slice(0, 1).map((row) => row.titleHead));",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "three subagents with three different tasks on one branch are labelled " +
@@ -17656,6 +17656,37 @@ export const MUTATIONS: readonly Mutation[
     because:
       "a teammate who opted out of presence re-registers on feat/acquisition-talks " +
       "and every colleague's briefing says so, while presence shows nothing",
+  },
+  {
+    // Review finding 9: grouping ran on the SANITIZED label.
+    label: "topics are grouped on their sanitized label again",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  topics: [...bucket(rows, (row) => row.topicKey)]",
+    to: "  topics: [...bucket(rows, (row) => row.label)]",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "feat/config-override and fix/override-cache merge under one redaction, and " +
+      "the blocked one's status speaks for the branch that is not blocked",
+  },
+  {
+    label: "a branch literally named detached joins the detached-HEAD topic",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "const DETACHED_KEY = \"detached-head\";",
+    to: "const DETACHED_KEY = \"branch:detached\";",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "a real branch's sessions are folded into the anonymous worktree pile and " +
+      "the branch disappears from the teammate's entry",
+  },
+  {
+    label: "a topic's title rule compares sanitized titles instead of raw ones",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const titles = new Set(topic.rows.map((row) => row.titleHead));",
+    to: "  const titles = new Set(topic.rows.map((row) => row.titleLabel));",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "two sessions whose different titles both redact read as agreeing, and the " +
+      "topic prints the redaction instead of the branch they share",
   },
 ];
 
@@ -17834,7 +17865,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
- * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 17
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 20
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
