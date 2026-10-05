@@ -17618,7 +17618,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SessionEnd forgets why nothing was drafted",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  await foldDeriveHistory(input.home, input.repoKey, input.hostSessionKey, input.now());\n",
+    from: "  await foldDeriveHistory(input.home, input.hostSessionKey, input.now());\n",
     to: "",
     test: `${CORE}/test/derive-history.test.ts`,
     because: "a doctor run after the editor closed reads no live session and explains nothing",
@@ -17935,6 +17935,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/sharing.test.ts`,
     because: "a host update that broke the transcript reader is told to the developer as healthy quiet work",
   },
+  {
+    label: "the derive history is filed under the ending hook's cwd repo",
+    file: `${CORE}/src/state/derive-history.ts`,
+    from: "    const key = repoKey(state.hubUrl, state.repoId);",
+    to: "    const key = repoKey(state.hubUrl, \"github.com/acme/web\");",
+    test: `${CORE}/test/derive-history.test.ts`,
+    because: "a SessionEnd fired from a sibling checkout files one repo's evidence under another",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18139,7 +18147,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
- * PRINTS: packages/connector-core/test/derive-history.test.ts 3
+ * PRINTS: packages/connector-core/test/derive-history.test.ts 4
  * PRINTS: packages/connector-core/test/draft-nudge.test.ts 29
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1

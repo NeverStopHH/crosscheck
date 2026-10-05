@@ -290,8 +290,8 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   never opened with a substantive prompt, and drafts that wait for your
   review. It reads the live sessions AND the last 20 ended ones: SessionEnd
   folds each session's derive counters into
-  `~/.crosscheck/state/<repo>-derive-history.json` before it deletes the
-  session file, so the answer survives closing the editor. `crosscheck
+  `~/.crosscheck/state/<repo>-derive-history.json` — the session's own
+  repo — before it deletes the session file, so the answer survives closing the editor. `crosscheck
   status` prints the first cause as its `sharing:` line.
 
 ## Cursor IDE (≥ 1.7)

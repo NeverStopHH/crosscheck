@@ -24,6 +24,7 @@ import {
   deriveHistoryLockPath,
   deriveHistoryPath,
   readJsonOrNull,
+  repoKey,
   writePrivateFile,
 } from "../config/paths.ts";
 import { digestOf } from "../derive/sharing.ts";
@@ -78,10 +79,14 @@ const withSession = (history: DeriveHistory, digest: DeriveDigest): DeriveHistor
   sessions: [digest, ...history.sessions].slice(0, DERIVE_HISTORY_MAX_SESSIONS),
 });
 
-/** Folds the session's digest in; a session with no state file folds nothing. */
+/**
+ * Folds the session's digest in; a session with no state file folds nothing.
+ * Filed under the SESSION'S OWN repo and hub — read off its state — never
+ * the repo of whatever cwd the ending hook resolved: a SessionEnd fired from
+ * a sibling checkout would otherwise file this repo's evidence under another.
+ */
 export const foldDeriveHistory = async (
   home: string,
-  key: string,
   hostSessionKey: string,
   endedAt: Date,
 ): Promise<void> => {
@@ -90,6 +95,7 @@ export const foldDeriveHistory = async (
     if (state === null) {
       return;
     }
+    const key = repoKey(state.hubUrl, state.repoId);
     await withLock(deriveHistoryLockPath(home, key), undefined, async () => {
       const next = withSession(await readDeriveHistory(home, key), digestOf(state, endedAt));
       await writePrivateFile(deriveHistoryPath(home, key), JSON.stringify(next));
