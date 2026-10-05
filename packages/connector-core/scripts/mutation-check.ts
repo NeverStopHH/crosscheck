@@ -16729,6 +16729,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-home-repo.test.ts`,
     because: "the one fact the reader needs — the repo root IS the home directory — is replaced by a sentence about symlinks",
   },
+  {
+    label: "a user-level backup is written wider than its original",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  await writeFile(`${path}.bak-${String(Date.now())}`, raw, { encoding: \"utf8\", mode });",
+    to: "  await writeFile(`${path}.bak-${String(Date.now())}`, raw, \"utf8\");",
+    test: `${CLI}/test/init-global.test.ts`,
+    because: "the 0600 ~/.claude.json's OAuth account and mcp tokens sit in a 0644 copy beside it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16804,7 +16812,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
  * PRINTS: packages/cli/test/init-backups.test.ts 5
- * PRINTS: packages/cli/test/init-global.test.ts 2
+ * PRINTS: packages/cli/test/init-global.test.ts 3
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6
  * PRINTS: packages/cli/test/init-remove.test.ts 17

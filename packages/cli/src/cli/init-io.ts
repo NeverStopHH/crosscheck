@@ -26,6 +26,7 @@ import {
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { PRIVATE_FILE_MODE } from "@crosscheck/connector-core/constants.ts";
 
 /** Under CROSSCHECK_HOME: where project files' originals are kept. */
 const PROJECT_BACKUP_DIR = "backups";
@@ -136,9 +137,18 @@ export const readJsonConfig = async (path: string): Promise<ReadJson> => {
  * through `saveProjectOriginal`.
  */
 const backUp = async (path: string, raw: string | null): Promise<void> => {
-  if (raw !== null) {
-    await writeFile(`${path}.bak-${String(Date.now())}`, raw, "utf8");
+  if (raw === null) {
+    return;
   }
+  // At most the original's mode, never the 0644 default (review 2026-10-05):
+  // a 0600 ~/.claude.json holds an OAuth account and mcp env tokens, and its
+  // backup was left world-readable. The umask can only narrow this further.
+  // A vanished original gets the private mode.
+  const mode = await stat(path).then(
+    (info) => info.mode & 0o777,
+    () => PRIVATE_FILE_MODE,
+  );
+  await writeFile(`${path}.bak-${String(Date.now())}`, raw, { encoding: "utf8", mode });
 };
 
 /**
