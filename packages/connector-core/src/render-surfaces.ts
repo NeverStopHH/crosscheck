@@ -177,6 +177,8 @@ const CORPUS_COVERAGE: CoverageRecord = {
   repo: "github.com/acme/api",
   computedAt: NOW.toISOString(),
   scope: { sinceIso: "2026-08-04T12:00:00.000Z" },
+  // 01a §3.7: the partial shape, whose reason is the longest renderer word.
+  order: { state: "partial", reason: "ambiguous_session_possible" },
   sources: [
     {
       source: "agent_event",

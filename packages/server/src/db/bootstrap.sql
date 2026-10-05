@@ -37,6 +37,21 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 -- databases and ones created before the column.
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reaped_at timestamptz;
 
+-- The connector's own account of what it lost (docs/1.0/loss-accounting.md
+-- §4.4): a snapshot of its ledgers at its last register, heartbeat or end.
+-- NULL loss_reported_at means "never reported" — not zero, not a gap. ALTER
+-- so one statement covers fresh databases and ones created before the
+-- columns; loss_kinds carries LOSS_KINDS keys only, folded by the service.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_reported_at timestamptz;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_total integer NOT NULL DEFAULT 0;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_kinds jsonb;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_oldest_at timestamptz;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;
+-- What coverage needs about the ignored kind, decided on write (review C1):
+-- an upper bound on its newest loss, so the read compares an instant instead
+-- of casting loss_kinds JSON to int4, which one large count made throw.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);
 CREATE INDEX IF NOT EXISTS agent_sessions_heartbeat_idx
@@ -191,6 +206,12 @@ UPDATE work_contexts SET normalized_doc = title || ' ' || status
 -- the owning session's base commit onto the default branch. ALTER so one
 -- statement covers fresh databases and ones created before this column.
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS landed_at timestamptz;
+
+-- The producer of the update that last set updated_at (review of H3, finding
+-- 3): a successor that drained a spool moves a context into a window, and
+-- coverage's path scope reads it beside the creating session. Null until the
+-- first update. ALTER so an existing hub gets it too.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text REFERENCES agent_sessions(id);
 
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
@@ -610,6 +631,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS pin_file_refs_unresolved_idx
 CREATE INDEX IF NOT EXISTS pin_file_refs_file_ref_idx
   ON pin_file_refs (file_ref);
 
+-- WHAT A SESSION'S CONNECTOR DECLARED IT COULD ORDER (01a §3.6): enums only,
+-- at most nine rows a session. No row means undeclared, never guaranteed. A
+-- contradicting row rewrites a guaranteed one to partial /
+-- declaration_contradicted in place, so the cap outlives the rows that caused
+-- it. A non-retaining edge (retention registry): never swept.
+CREATE TABLE IF NOT EXISTS session_causal_guarantees (
+  session_id text NOT NULL REFERENCES agent_sessions(id),
+  kind text NOT NULL,
+  guarantee text NOT NULL,
+  reason text NOT NULL,
+  PRIMARY KEY (session_id, kind)
+);
+
 -- THE SKELETON SWEEP'S PROBES (01a §3.3g): the candidate sessions by end, and
 -- one index per root the sweep asks about once per candidate. Postgres does
 -- not index a foreign key's referencing side on its own, so without these the
@@ -645,6 +679,9 @@ CREATE TABLE IF NOT EXISTS team_settings (
   -- and an absent row means the same thing: this table's rule is that a
   -- missing row is defaults, so the two paths into "not enrolled" agree.
   pilot_enrolled boolean NOT NULL DEFAULT false,
+  -- 07 12 (second review): when enrolment last turned on, so when a person
+  -- could first label this repo's interventions. NULL until it is enrolled.
+  pilot_labels_since timestamptz,
   updated_at timestamptz NOT NULL,
   updated_by text REFERENCES developers(id)
 );
@@ -1080,6 +1117,20 @@ ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAU
 -- section depends on had no way to reach an existing hub.
 ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NULL DEFAULT false;
 
+-- 07 12, second review (H1, M4, M5): WHEN LABELS BECAME AVAILABLE on a repo
+-- — the moment enrolment last turned on, set by services/team-settings.ts.
+-- The labelled figures and the cohorts count only sessions that started at
+-- or after it, because nothing earlier could be labelled helpful.
+ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_labels_since timestamptz;
+
+-- A repo enrolled before the column existed was enrolled under a hub that
+-- could store only off_target, so labels became available on it NOW: the
+-- first start of a hub that has them. Only those rows match, so every later
+-- start writes nothing (the full-table-write trap claim-binding-backfill
+-- names does not apply).
+UPDATE team_settings SET pilot_labels_since = now()
+  WHERE pilot_enrolled AND pilot_labels_since IS NULL;
+
 -- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
 
 -- WHICH BROKEN PIN THIS ONE REPAIRS (07 3.4), and at which version of that
@@ -1109,8 +1160,33 @@ CREATE TABLE IF NOT EXISTS pilot_marks (
   mark text NOT NULL,
   marked_by text NOT NULL REFERENCES developers(id),
   capture_mode text NOT NULL,
-  created_at timestamptz NOT NULL
+  created_at timestamptz NOT NULL,
+  -- 07 12: one optional bounded sentence beside a label. Null is the
+  -- ordinary case. Keep in sync with MAX_PILOT_LABEL_REASON_CHARS in
+  -- @crosscheck/schema; a hub that already has the table gets the column
+  -- from the ALTER below and the bound from the guarded block.
+  reason text,
+  CONSTRAINT pilot_marks_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200)
 );
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS reason text;
+
+-- The reason's bound on a hub whose pilot_marks predates the column. Guarded
+-- the way the body length constraints are guarded: an unconditional DROP +
+-- ADD takes ACCESS EXCLUSIVE on every hub start and revalidates the table.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'pilot_marks_reason_length_check'
+      AND conrelid = 'pilot_marks'::regclass
+  ) THEN
+    ALTER TABLE pilot_marks ADD CONSTRAINT pilot_marks_reason_length_check
+      CHECK (reason IS NULL OR char_length(reason) <= 200);
+  END IF;
+END
+$$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
   ON pilot_marks (ref_kind, ref_id, marked_by);
@@ -1187,8 +1263,43 @@ CREATE TABLE IF NOT EXISTS pilot_sessions (
   seq_last integer,
   seq_gaps integer,
   seq_null_records integer,
-  seq_epochs integer
+  seq_epochs integer,
+  -- 07 12: the first fifty sessions of a repo are 'discovery', the next
+  -- hundred and fifty 'replication'; set on insert, never updated. DEFAULT
+  -- 'legacy' is the truthful backfill (second review, H1): every row that
+  -- exists when this column is ADDED was written by a 0.10 hub, before
+  -- anybody could label an intervention helpful, so it is in neither cohort.
+  cohort text NOT NULL DEFAULT 'legacy',
+  slot integer,
+  CONSTRAINT pilot_sessions_cohort_check
+    CHECK (cohort IN ('discovery', 'replication', 'legacy'))
 );
+ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'legacy';
+
+-- 07 12, second review (M1, M4): a session's SLOT is its start position among
+-- the repo's sessions since labels became available — 0..49 discovery,
+-- 50..199 replication. NULL on a 0.10 row. UNIQUE, so two sessions can never
+-- hold one slot, whatever order or concurrency they end in.
+ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS slot integer;
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_sessions_repo_slot_idx
+  ON pilot_sessions (repo, slot);
+
+-- The cohort CHECK on a hub whose pilot_sessions predates the column (second
+-- review, L3: the CREATE's constraint never reaches an upgraded hub). Guarded
+-- like the reason bound, so no hub start takes ACCESS EXCLUSIVE twice.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'pilot_sessions_cohort_check'
+      AND conrelid = 'pilot_sessions'::regclass
+  ) THEN
+    ALTER TABLE pilot_sessions ADD CONSTRAINT pilot_sessions_cohort_check
+      CHECK (cohort IN ('discovery', 'replication', 'legacy'));
+  END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS pilot_sessions_repo_observed_idx
   ON pilot_sessions (repo, observed_at DESC);
@@ -1204,7 +1315,9 @@ CREATE TABLE IF NOT EXISTS fence_waivers (
   pin_id text NOT NULL REFERENCES pins(id),
   pin_version integer NOT NULL,
   kind text NOT NULL,
-  granted_by text NOT NULL REFERENCES developers(id),
+  -- Null only on the hub's own closure (04a D-PK-1); the authority CHECK
+  -- below holds it, and the ALTER below reaches a hub that has this table.
+  granted_by text REFERENCES developers(id),
   -- Hub-stamped "human", never taken from a body: here that assertion would
   -- be a permission.
   capture_mode text NOT NULL,
@@ -1237,3 +1350,112 @@ BEGIN
   END IF;
 END
 $$;
+
+-- 1.0 spec 04a — the human waiver authority.
+--
+-- The public half of each enrolled passkey; the private key never leaves the
+-- person's device. Never deleted: a passkey grant names its credential.
+-- Created BEFORE the fence_waivers columns below, which reference it.
+CREATE TABLE IF NOT EXISTS passkeys (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  credential_id text NOT NULL,
+  public_key text NOT NULL,
+  sign_count bigint NOT NULL CONSTRAINT passkeys_sign_count_check CHECK (sign_count >= 0),
+  transports jsonb NOT NULL,
+  rp_id text NOT NULL,
+  aaguid text NOT NULL,
+  backed_up boolean NOT NULL,
+  -- keep in sync with MAX_PASSKEY_LABEL_CHARS in @crosscheck/schema
+  label text NOT NULL CONSTRAINT passkeys_label_length_check CHECK (char_length(label) <= 60),
+  -- keep in sync with ENROLMENT_SOURCES and PASSKEY_REVOKERS in @crosscheck/schema
+  enrolled_via text NOT NULL CONSTRAINT passkeys_enrolled_via_check CHECK (enrolled_via IN ('admin', 'passkey')),
+  created_at timestamptz NOT NULL,
+  -- created_at plus the cool-off, stored so a later constant change cannot
+  -- shorten the wait of a passkey enrolled under the old one.
+  usable_from timestamptz NOT NULL CONSTRAINT passkeys_cooloff_check CHECK (usable_from >= created_at),
+  revoked_at timestamptz,
+  revoked_by_kind text CONSTRAINT passkeys_revoked_by_kind_check
+    CHECK (revoked_by_kind IS NULL OR revoked_by_kind IN ('owner', 'admin', 'passkey')),
+  revoked_by text,
+  CONSTRAINT passkeys_revocation_shape_check
+    CHECK ((revoked_at IS NULL AND revoked_by_kind IS NULL)
+        OR (revoked_at IS NOT NULL AND revoked_by_kind IS NOT NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS passkeys_credential_id_idx ON passkeys (credential_id);
+CREATE INDEX IF NOT EXISTS passkeys_developer_idx ON passkeys (developer_id);
+
+-- Every fence_waivers row written before 04a was opened with an api key plus a
+-- presence literal any agent could send, so the DEFAULT labels exactly those
+-- rows 'terminal' (the weaker authority). The drizzle schema declares NO
+-- default: every new insert must name its authority.
+ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS authority text NOT NULL DEFAULT 'terminal';
+ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS credential_id text REFERENCES passkeys(credential_id);
+ALTER TABLE fence_waivers ADD COLUMN IF NOT EXISTS request_id text;
+
+-- 04a D-PK-1 (Nick, 2026-10-02): revoking a passkey closes every live grant it
+-- authorised, as a new revoke row the HUB writes. No person wrote that row, so
+-- granted_by may be null — and the CHECK below allows the null only there.
+ALTER TABLE fence_waivers ALTER COLUMN granted_by DROP NOT NULL;
+
+-- A person's row names the person; a passkey row names its credential; the
+-- hub's own closure ('system') is valid only as a revoke, for the one reason,
+-- naming the revoked credential and no person. Replaced ONCE: a hub whose
+-- CHECK predates the third authority gets this one, and a restart (which runs
+-- this file in full) finds the new definition and leaves it alone, so no start
+-- pays a full-table revalidation.
+-- keep in sync with SYSTEM_WAIVER_AUTHORITY and AUTHORIZING_CREDENTIAL_REVOKED in @crosscheck/schema
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'fence_waivers_authority_check'
+      AND conrelid = 'fence_waivers'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%authorizing_credential_revoked%'
+  ) THEN
+    ALTER TABLE fence_waivers DROP CONSTRAINT IF EXISTS fence_waivers_authority_check;
+    ALTER TABLE fence_waivers ADD CONSTRAINT fence_waivers_authority_check
+      CHECK ((authority = 'terminal' AND granted_by IS NOT NULL)
+          OR (authority = 'passkey' AND credential_id IS NOT NULL AND granted_by IS NOT NULL)
+          OR (authority = 'system' AND kind = 'revoke' AND credential_id IS NOT NULL
+              AND granted_by IS NULL AND reason = 'authorizing_credential_revoked'));
+  END IF;
+END
+$$;
+
+-- One row per permission to enrol: an admin-minted code or the internal code
+-- an assertion by an existing passkey mints. Only the hash is kept.
+CREATE TABLE IF NOT EXISTS passkey_enrollments (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  code_hash text NOT NULL,
+  source text NOT NULL,
+  created_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  used_at timestamptz
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS passkey_enrollments_code_hash_idx ON passkey_enrollments (code_hash);
+CREATE INDEX IF NOT EXISTS passkey_enrollments_developer_idx ON passkey_enrollments (developer_id);
+
+-- What an api key may still do about a fence: ask. Pending until a passkey
+-- approval writes a grant, the requester withdraws it, or its expiry passes.
+CREATE TABLE IF NOT EXISTS waiver_requests (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  pin_id text NOT NULL REFERENCES pins(id),
+  pin_version integer NOT NULL,
+  requested_by text NOT NULL REFERENCES developers(id),
+  -- keep in sync with MAX_WAIVER_REASON_CHARS in @crosscheck/schema
+  reason text NOT NULL CONSTRAINT waiver_requests_reason_length_check CHECK (char_length(reason) <= 200),
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL,
+  withdrawn_at timestamptz,
+  approved_waiver_id text,
+  CONSTRAINT waiver_requests_resolution_check
+    CHECK (withdrawn_at IS NULL OR approved_waiver_id IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS waiver_requests_repo_idx ON waiver_requests (repo, created_at DESC);

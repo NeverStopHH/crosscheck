@@ -39,7 +39,8 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { listSolvedInfo } from "./solved.ts";
+import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
+import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
@@ -144,6 +145,19 @@ const MIN_VECTOR_SIMILARITY = 0.3;
  * a similarity guess, and boosting stale guesses is how a ranking loses the
  * trust the floor exists to protect. Mutation-guarded like the other ranking
  * constants (scripts/mutation-check.ts → test/solved-ranking.test.ts).
+ *
+ * AND ONLY WHILE THE CAUSE MAY STILL BE ASSERTED about the code (1.0 spec 02
+ * §5, `isAssertableCause` in services/claim-validity.ts): the tree's newest
+ * standing root cause must be bound to a commit, and nothing may have measured
+ * against it. A cause the code has moved past (`stale`), one taken back or
+ * replaced, and one with no observation point get no floor. Such a tree is
+ * still found and still labelled solved; it only decays like any other row,
+ * so an answer about code that no longer exists stops outranking current
+ * work. `unknown` (bound, never revalidated) keeps the floor, exactly as the
+ * hint lanes' substance gate lets it through: most causes were never
+ * revalidated, and refusing a boost to all of them is not neutral — it buried
+ * the March answer under fresh noise in the golden corpus (substance recall
+ * 1.0 → 0.91 when the floor required `current`).
  *
  * THE FLOOR IS PER-ROW, NOT CAPPED PER PAGE — accepted deliberately: enough
  * stale solved trees owning the queried target can fill a page ahead of a
@@ -690,12 +704,45 @@ const tryVectorTier = async (
   }
 };
 
+/**
+ * The solved trees the floor may lift: those whose newest standing root
+ * cause — the claim `listSolvedRootCauses` names, the same one `solvedAt`
+ * dates — may still be asserted (see SOLVED_DECAY_FLOOR). Two bounded reads,
+ * and none at all when no candidate is solved. A tree whose cause falls past
+ * the root-cause row cap gets no floor, which is the direction every gap here
+ * must fail in.
+ */
+const floorEligibleIds = async (
+  db: Db,
+  now: Date,
+  solvedIds: readonly string[],
+): Promise<ReadonlySet<string>> => {
+  if (solvedIds.length === 0) {
+    return new Set();
+  }
+  const causes = await listSolvedRootCauses(db, solvedIds);
+  const validities = await loadClaimValidities(
+    db,
+    now,
+    [...causes.values()].map((cause) => cause.claimId),
+  );
+  return new Set(
+    [...causes]
+      .filter(([, cause]) => {
+        const validity = validities.get(cause.claimId);
+        return validity !== undefined && isAssertableCause(validity);
+      })
+      .map(([contextId]) => contextId),
+  );
+};
+
 export const searchWorkContexts = async (
   deps: SearchDeps,
   input: SearchQuery,
 ): Promise<SearchResponse> => {
   const limit = Math.min(Math.max(1, input.limit), SEARCH_MAX_LIMIT);
-  const nowMs = deps.now().getTime();
+  const now = deps.now();
+  const nowMs = now.getTime();
   // Clamped even though the route already rejects: this service is the layer
   // whose queries can fault the embedded database, so the bound lives here too.
   const query = input.query.slice(0, SEARCH_MAX_QUERY_CHARS);
@@ -744,6 +791,7 @@ export const searchWorkContexts = async (
     ),
   ];
   const solvedInfo = await listSolvedInfo(deps.db, candidateIds);
+  const floorIds = await floorEligibleIds(deps.db, now, [...solvedInfo.keys()]);
 
   const fused = fuseTiers(
     [
@@ -752,7 +800,7 @@ export const searchWorkContexts = async (
       { tier: "vector", weight: TEXT_TIER_WEIGHT, rows: vector.rows },
     ],
     nowMs,
-    new Set(solvedInfo.keys()),
+    floorIds,
   );
   return {
     results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),

@@ -17,10 +17,12 @@ import { describe, expect, test } from "bun:test";
 import { fenceWaivers, pins } from "../src/db/schema.ts";
 import {
   grantWaiver,
+  listOpenFences,
   readLiveWaiver,
   readLiveWaivers,
   revokeWaiver,
 } from "../src/services/waivers.ts";
+import { seedPasskey } from "./fixtures/passkeys.ts";
 import { createTestDeveloper, createTestHarness } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 
@@ -72,6 +74,8 @@ const seedWaiver = async (
     kind: row.kind,
     grantedBy: developerId,
     captureMode: "human",
+    // Seeded rows stand for any authority; the liveness rule ignores it.
+    authority: "terminal",
     reason: "Rollout is blocked; the fix lands Monday",
     expiresAt: row.expiresAt,
     supersedes: row.supersedes,
@@ -91,12 +95,54 @@ const live = async (harness: TestHarness, pinVersion = 1) =>
 const setup = async (): Promise<{
   harness: TestHarness;
   developerId: string;
+  /** The credential every grant and revoke below is recorded as signed by (04a §6). */
+  credentialId: string;
 }> => {
   const harness = await createTestHarness();
   const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
   await seedPin(harness, nick.developerId);
-  return { harness, developerId: nick.developerId };
+  const { credentialId } = await seedPasskey(harness.db, nick.developerId);
+  return { harness, developerId: nick.developerId, credentialId };
 };
+
+describe("listOpenFences — the approval page's list (04a §6)", () => {
+  test("a live grant is listed once with its pin; a revoked one is not", async () => {
+    // Arrange
+    const { harness, developerId, credentialId } = await setup();
+    const granted = await grantWaiver({
+      db: harness.db,
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      credentialId,
+      requestId: null,
+      reason: "Rollout is blocked; the fix lands Monday",
+      expiresAt: hourAfter,
+      now: NOW,
+    });
+    const grantId = "id" in granted ? granted.id : "";
+
+    // Act
+    const open = await listOpenFences({ db: harness.db, now: NOW });
+    await revokeWaiver({
+      db: harness.db,
+      repo: REPO,
+      waiverId: grantId,
+      grantedBy: developerId,
+      credentialId,
+      reason: "The fix landed early",
+      now: NOW,
+    });
+    const afterRevoke = await listOpenFences({ db: harness.db, now: NOW });
+
+    // Assert
+    expect(open).toEqual([
+      expect.objectContaining({ id: grantId, repo: REPO, pinId: PIN, authority: "passkey" }),
+    ]);
+    expect(afterRevoke).toEqual([]);
+  });
+});
 
 describe("readLiveWaiver", () => {
   test("no grant at all leaves the fence closed", async () => {
@@ -110,7 +156,7 @@ describe("readLiveWaiver", () => {
 
   test("a grant that has not expired is live", async () => {
     // Arrange
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     await seedWaiver(harness, developerId, {
       id: "fw_grant",
       kind: "grant",
@@ -127,7 +173,7 @@ describe("readLiveWaiver", () => {
     // Arrange — the point of a bounded waiver: it lapses on its own. Expiry is
     // a comparison rather than a swept state, so a hub that was offline for a
     // week does not leave fences open behind it.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     await seedWaiver(harness, developerId, {
       id: "fw_expired",
       kind: "grant",
@@ -144,7 +190,7 @@ describe("readLiveWaiver", () => {
     // Arrange — append-only: the revoke is a second row naming the first, not
     // an edit. The grant row survives, which is what lets a team see that the
     // fence WAS open for those two hours.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     await seedWaiver(harness, developerId, {
       id: "fw_grant",
       kind: "grant",
@@ -169,7 +215,7 @@ describe("readLiveWaiver", () => {
     // it was ever revoked" this answers CLOSED, which is wrong in the direction
     // that confuses a team: they opened the fence and the product says they did
     // not. Newest decision first is what gets it right.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     await seedWaiver(harness, developerId, {
       id: "fw_first",
       kind: "grant",
@@ -201,7 +247,7 @@ describe("readLiveWaiver", () => {
     // watched paths, so this is a different invariant, and consent does not
     // cross that boundary. Without it a rename silently widens what a human
     // agreed to.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     await seedWaiver(harness, developerId, {
       id: "fw_v1",
       kind: "grant",
@@ -220,7 +266,7 @@ describe("readLiveWaiver", () => {
     // Arrange — the shape CHECK, not a service rule. A grant that never expires
     // is a permanent permission nobody agreed to, and the way to make that
     // unavailable is to make the row unwritable.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
 
     // Act
     const write = seedWaiver(harness, developerId, {
@@ -238,7 +284,7 @@ describe("readLiveWaiver", () => {
   test("the database refuses a revoke that supersedes nothing", async () => {
     // Arrange — the other half of the shape. A revoke naming no grant is a
     // closure with no account of what it closed.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
 
     // Act
     const write = seedWaiver(harness, developerId, {
@@ -257,7 +303,7 @@ describe("readLiveWaiver", () => {
 describe("granting and revoking (04 §3.6)", () => {
   test("a grant inside the ceiling is written, and stamped human by the HUB", async () => {
     // Arrange
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
 
     // Act
     const result = await grantWaiver({
@@ -266,6 +312,8 @@ describe("granting and revoking (04 §3.6)", () => {
       pinId: PIN,
       pinVersion: 1,
       grantedBy: developerId,
+      credentialId,
+      requestId: null,
       reason: "Rollout is blocked; the fix lands Monday",
       expiresAt: hourAfter,
       now: NOW,
@@ -284,7 +332,7 @@ describe("granting and revoking (04 §3.6)", () => {
     // Arrange — ninety days, against a fourteen-day ceiling. Clamping silently
     // would tell somebody they had ninety and let them find out otherwise when
     // the fence closed.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
 
     // Act
     const result = await grantWaiver({
@@ -293,6 +341,8 @@ describe("granting and revoking (04 §3.6)", () => {
       pinId: PIN,
       pinVersion: 1,
       grantedBy: developerId,
+      credentialId,
+      requestId: null,
       reason: "Long rollout",
       expiresAt: new Date(NOW.getTime() + 90 * 24 * HOUR),
       now: NOW,
@@ -306,7 +356,7 @@ describe("granting and revoking (04 §3.6)", () => {
   test("an expiry in the PAST is its own refusal", async () => {
     // Arrange — a different mistake from the one above, and a different
     // sentence: this one would be closed on arrival.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
 
     // Act
     const result = await grantWaiver({
@@ -315,6 +365,8 @@ describe("granting and revoking (04 §3.6)", () => {
       pinId: PIN,
       pinVersion: 1,
       grantedBy: developerId,
+      credentialId,
+      requestId: null,
       reason: "Typo in the date",
       expiresAt: hourBefore,
       now: NOW,
@@ -327,7 +379,7 @@ describe("granting and revoking (04 §3.6)", () => {
   test("a fence in ANOTHER repo cannot be opened from this one", async () => {
     // Arrange — a waiver names one behaviour in one repo. Without this a key
     // with access to one repo opens a fence in another.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
 
     // Act
     const result = await grantWaiver({
@@ -336,6 +388,8 @@ describe("granting and revoking (04 §3.6)", () => {
       pinId: PIN,
       pinVersion: 1,
       grantedBy: developerId,
+      credentialId,
+      requestId: null,
       reason: "Not mine to grant",
       expiresAt: hourAfter,
       now: NOW,
@@ -347,13 +401,15 @@ describe("granting and revoking (04 §3.6)", () => {
 
   test("a revoke closes the fence and leaves the grant standing", async () => {
     // Arrange
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     const granted = await grantWaiver({
       db: harness.db,
       repo: REPO,
       pinId: PIN,
       pinVersion: 1,
       grantedBy: developerId,
+      credentialId,
+      requestId: null,
       reason: "Rollout is blocked",
       expiresAt: hourAfter,
       now: NOW,
@@ -366,6 +422,7 @@ describe("granting and revoking (04 §3.6)", () => {
       repo: REPO,
       waiverId: grantId,
       grantedBy: developerId,
+      credentialId,
       reason: "The fix landed early",
       now: new Date(NOW.getTime() + 60_000),
     });
@@ -388,13 +445,15 @@ describe("granting and revoking (04 §3.6)", () => {
   test("revoking twice is refused rather than accepted as a no-op", async () => {
     // Arrange — two closures of one grant would leave a team unable to tell
     // which was the real decision.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     const granted = await grantWaiver({
       db: harness.db,
       repo: REPO,
       pinId: PIN,
       pinVersion: 1,
       grantedBy: developerId,
+      credentialId,
+      requestId: null,
       reason: "Rollout is blocked",
       expiresAt: hourAfter,
       now: NOW,
@@ -405,6 +464,7 @@ describe("granting and revoking (04 §3.6)", () => {
       repo: REPO,
       waiverId: grantId,
       grantedBy: developerId,
+      credentialId,
       reason: "The fix landed",
       now: NOW,
     });
@@ -415,6 +475,7 @@ describe("granting and revoking (04 §3.6)", () => {
       repo: REPO,
       waiverId: grantId,
       grantedBy: developerId,
+      credentialId,
       reason: "Again",
       now: NOW,
     });
@@ -426,13 +487,15 @@ describe("granting and revoking (04 §3.6)", () => {
   test("a waiver in another repo is 'unknown', not 'forbidden'", async () => {
     // Arrange — telling a caller that a waiver EXISTS in a repo they cannot
     // see is itself a disclosure, so both cases answer the same way.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     const granted = await grantWaiver({
       db: harness.db,
       repo: REPO,
       pinId: PIN,
       pinVersion: 1,
       grantedBy: developerId,
+      credentialId,
+      requestId: null,
       reason: "Rollout is blocked",
       expiresAt: hourAfter,
       now: NOW,
@@ -445,6 +508,7 @@ describe("granting and revoking (04 §3.6)", () => {
       repo: "github.com/acme/other",
       waiverId: grantId,
       grantedBy: developerId,
+      credentialId,
       reason: "Reaching across",
       now: NOW,
     });
@@ -475,7 +539,7 @@ describe("readLiveWaivers — many pins, one query", () => {
 
   test("agrees with the single reader on a live grant", async () => {
     // Arrange
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     await seedWaiver(harness, developerId, {
       id: "fw_grant",
       kind: "grant",
@@ -498,7 +562,7 @@ describe("readLiveWaivers — many pins, one query", () => {
   test("a REVOKE closes the fence here too", async () => {
     // Arrange — the case the grouping could lose: if a revoke row were
     // dropped or bucketed under another pin, its grant would read live again.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     await seedWaiver(harness, developerId, {
       id: "fw_grant",
       kind: "grant",
@@ -521,7 +585,7 @@ describe("readLiveWaivers — many pins, one query", () => {
   test("a waiver does NOT travel to the next version of the invariant", async () => {
     // Arrange — a sweep moved the watched paths, so the pin is at version 2.
     // The grant was consent to a DIFFERENT invariant.
-    const { harness, developerId } = await setup();
+    const { harness, developerId, credentialId } = await setup();
     await seedWaiver(harness, developerId, {
       id: "fw_grant",
       kind: "grant",

@@ -45,7 +45,9 @@
 // VERIFY: for f in $(grep -rl --include='*.ts' 'captureFileTargets({' packages/*/src | sort); do grep -q 'resolveRoot' "$f" && echo "$f ok" || echo "$f MISSING"; done
 // PRINTS: packages/connector-core/src/flows/capture-git-touches.ts ok
 // PRINTS: packages/connector-core/src/flows/capture-touched-files.ts ok
+import { sessionSlug } from "../config/paths.ts";
 import { resolveTouchedRoots } from "../capture/touched-root.ts";
+import { recordDrop } from "../spool/drops.ts";
 import type {
   KnownWorktreeRoot,
   TouchedRootsResolution,
@@ -112,5 +114,26 @@ export const captureTouchedFiles = async (
             resolution.rootByPath.get(path) ?? null,
         }),
   });
+  // AN EDIT OUTSIDE EVERY ROOT OF THIS REPO IS A COUNTED DROP
+  // (docs/1.0/loss-accounting.md §3 row 10): the session-state counter
+  // `outsideRootDrops` keeps doctor's diagnosis line, and this ledger line is
+  // what reaches the hub. Edits only — an ACP read outside the repo is not a
+  // lost edit — on the argument `withCaptureBookkeeping` makes for the
+  // counter. Foreign-repo drops are NOT ledgered here: they are another
+  // repo's loss, and that repo is not told (§4.8.1).
+  if (
+    resolution !== null &&
+    targets.editFired !== false &&
+    resolution.outsideDrops > 0
+  ) {
+    await recordDrop(
+      targets.home,
+      targets.repoKey,
+      sessionSlug(targets.hostSessionKey),
+      resolution.outsideDrops,
+      "outside-root",
+      targets.now,
+    );
+  }
   return { captured, resolution };
 };

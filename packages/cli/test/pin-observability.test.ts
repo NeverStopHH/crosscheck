@@ -173,7 +173,7 @@ describe("crosscheck status: the coverage denominator", () => {
     // Assert: everybody the feature is ABOUT can read what it does.
     expect(result.stdout).toContain("guard settings: anyone may pin");
     expect(result.stdout).toContain(
-      "suspect names sessions and their declared intents",
+      "trace names sessions and their declared intents",
     );
     expect(result.stdout).toContain("shipped defaults");
   });
@@ -319,12 +319,15 @@ describe("crosscheck doctor: the pin checks", () => {
     // Act
     const result = await runFor(["doctor"]);
 
-    // Assert: the count, the path, the pattern AND the consequence.
+    // Assert: the count, the path, the pattern AND the consequence — as THIS
+    // machine's blind spot, since only its own line excludes the files and a
+    // teammate on the shipped list records them.
     expect(result.stdout).toContain("WARN  pin denylist");
-    expect(result.stdout).toContain("2 pinned file(s) are never captured");
+    expect(result.stdout).toContain("2 pinned file(s) are never captured on this machine");
     expect(result.stdout).toContain(PINNED);
     expect(result.stdout).toContain("**/workbench/**");
-    expect(result.stdout).toContain("no session touched this surface");
+    expect(result.stdout).toContain("crosscheck trace cannot name a session run here");
+    expect(result.stdout).not.toContain("no matter who did");
 
     // Cleanup: the remaining tests are about other failures.
     await writeDenylist([]);

@@ -41,6 +41,8 @@ import { join } from "node:path";
 
 import { GIT_TOUCHES_TIMEOUT_MS, MAX_GIT_TOUCH_CANDIDATES } from "../constants.ts";
 import { runGitOutcome } from "../git/git.ts";
+import { sessionSlug } from "../config/paths.ts";
+import { recordDrop } from "../spool/drops.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
@@ -65,6 +67,13 @@ export interface CaptureGitTouchesInput {
    * `withGitTouches` write happens after them.
    */
   readonly seq?: SeqRange | null;
+  /**
+   * How long `git diff` may take. Absent = GIT_TOUCHES_TIMEOUT_MS, the bound
+   * the Stop hook's budget needs. Only a test that builds thousands of dirty
+   * files passes more, so a loaded machine cannot turn its bound check into
+   * "git did not answer".
+   */
+  readonly gitTimeoutMs?: number;
 }
 
 /** True when the file changed after the session began. Unreadable = no. */
@@ -111,18 +120,31 @@ export const captureGitTouches = async (
     // `git add` mid-turn has not made its work invisible.
     ["diff", "--name-only", "HEAD"],
     input.repoRoot,
-    GIT_TOUCHES_TIMEOUT_MS,
+    input.gitTimeoutMs ?? GIT_TOUCHES_TIMEOUT_MS,
   );
   if (!outcome.ok) {
     return UNAVAILABLE;
   }
-  const candidates = outcome.stdout
+  const changed = outcome.stdout
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    // Bounded BEFORE the stat calls: a 200-file rebase in the worktree must
-    // not cost 200 filesystem round trips inside a hook budget.
-    .slice(0, MAX_GIT_TOUCH_CANDIDATES);
+    .filter((line) => line.length > 0);
+  // Bounded BEFORE the stat calls: thousands of dirty files must not cost
+  // thousands of filesystem round trips inside the Stop hook's budget
+  // (constants.ts says where the bound's number comes from).
+  const candidates = changed.slice(0, MAX_GIT_TOUCH_CANDIDATES);
+  // REVIEW M5, NARROWED BY §10 ITEM 8: only the paths past the bound are
+  // never examined, so only whether this session touched THEM is unknown —
+  // counted as `capture-capped`, the per-call cap's word. A path within the
+  // bound is examined below, and a stale one is no loss.
+  await recordDrop(
+    input.home,
+    input.repoKey,
+    sessionSlug(input.hostSessionKey),
+    changed.length - candidates.length,
+    "capture-capped",
+    input.now,
+  );
   const fresh: string[] = [];
   for (const path of candidates) {
     if (await changedSince(input.repoRoot, path, input.since)) {

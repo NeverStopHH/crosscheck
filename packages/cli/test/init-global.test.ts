@@ -10,7 +10,7 @@
  * needing --cursor remembered.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
@@ -268,6 +268,50 @@ describe("crosscheck init --global", () => {
     expect(await readFile(cursorMcpPath, "utf8")).toBe("{ not json");
   });
 
+  test("--remove leaves a user file without crosscheck entries byte-identical, with no backup", async () => {
+    // Arrange: a Claude-only install beside the user's own ~/.cursor/mcp.json,
+    // in a 4-space layout no crosscheck writer produces
+    const { home, env } = await fixture();
+    await runCli(GLOBAL_ARGS, env, "/");
+    const cursorDir = join(home, ".cursor");
+    const cursorMcpPath = join(cursorDir, "mcp.json");
+    const own = `${JSON.stringify({ mcpServers: { docs: { command: "docs-mcp", args: [] } } }, null, 4)}\n`;
+    await mkdir(cursorDir, { recursive: true });
+    await writeFile(cursorMcpPath, own, "utf8");
+
+    // Act
+    const removal = await runCli(["init", "--global", "--remove"], env, "/");
+
+    // Assert
+    expect(removal.exitCode).toBe(0);
+    expect(removal.stdout).toContain(`no crosscheck entries in ${cursorMcpPath}`);
+    expect(await readFile(cursorMcpPath, "utf8")).toBe(own);
+    expect(await backupsIn(cursorDir)).toEqual([]);
+  });
+
+  test("a 0600 ~/.claude.json's backups stay 0600 through install and --remove — never wider than the original", async () => {
+    // Arrange: Claude Code's own state file, private, with an account and a token
+    const { home, env, mcpPath } = await fixture();
+    await writeFile(
+      mcpPath,
+      `${JSON.stringify({ oauthAccount: { emailAddress: "dev@example.com" }, mcpServers: { docs: { command: "docs", env: { DOCS_TOKEN: "synthetic-secret" } } } }, null, 2)}\n`,
+      "utf8",
+    );
+    await chmod(mcpPath, 0o600);
+
+    // Act
+    await runCli(GLOBAL_ARGS, env, "/");
+    await Bun.sleep(5);
+    await runCli(["init", "--global", "--remove"], env, "/");
+
+    // Assert: one backup per rewrite, each exactly as private as the original
+    const backups = (await readdir(home)).filter((name) => name.startsWith(".claude.json.bak-"));
+    expect(backups.length).toBe(2);
+    for (const name of backups) {
+      expect((await stat(join(home, name))).mode & 0o777).toBe(0o600);
+    }
+  });
+
   test("requires a login first — inert machine-wide wiring helps nobody", async () => {
     const home = await makeHome("init-global-nologin");
     paths.push(home);
@@ -291,10 +335,8 @@ describe("crosscheck init --global", () => {
     expect(result.stdout).toContain("--hub does not apply to --global");
   });
 
-  test("--remove without --global points at the global spelling", async () => {
-    const { env } = await fixture();
-    const result = await runCli(["init", "--remove"], env, "/");
-    expect(result.exitCode).toBe(64);
-    expect(result.stdout).toContain("crosscheck init --global --remove");
-  });
+  // `init --remove` WITHOUT --global used to be refused here with a pointer
+  // to this spelling. It is now the project-side uninstall, and the promise
+  // that it never touches these user-level files lives with it, in
+  // init-remove.test.ts ("leaves the user-level install byte-identical").
 });

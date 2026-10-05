@@ -15,6 +15,14 @@ post-#50 position always carries the `crosscheck-pins:` prefix (00 §9.4a). Wher
 rung cannot exist on a platform, or the honest answer is "not in 1.0", the spec
 writes the refusal — a spec that pretends is worse than no spec.
 
+**`suspect` is now `trace`** (Nick, 2026-09-30). The command names sessions
+that touched a surface, and "suspect" read as an accusation of a person. The
+specs below keep the old name where they were written. The command is
+`crosscheck trace`, and `crosscheck suspect` still runs and prints the new
+name first. The wire path `/api/suspect`, the stored delivery channel
+`suspect` and the `suspectAttribution` setting keep their 0.10 names, because
+renaming them would break every 0.10 client and every stored row.
+
 ## The six binding principles
 
 1. **"Only judge when you know you were watching."** `UNATTRIBUTED` is emitted
@@ -87,21 +95,27 @@ retention sweep needs 06's ledger as a root, and its `claims` column joins the m
 is lost waiting for it, because #53 ships with the sweep switched off (01a §10 D-D). The full
 argument, with the measured #50-only dependencies, is 00 §9.7.
 
-## The eight specs
+## The nine specs
 
-Status is **spec** (written, not built), **in progress**, or **shipped**.
+Status is **spec** (written, not built), **partly built**, or **shipped**. A row
+names the PR that built the spec and what it left open. Checked against the code
+at `7a070b8` (0.10.0): #58 brought 01, 02, 03, 05 and 06 into `main`, #63 brought
+04, 07, 08 and 01a.
 
 | # | spec | owns | status |
 |---|---|---|---|
-| 01 | [Canonical event model and per-session causal order](01-canonical-event-model.md) | **AT-4** | spec |
-| 01a | [The causal skeleton: retention by root reachability, attestation, declared provider guarantees](01a-causal-skeleton.md) | — (makes AT-4 durable; amends 01 §10 D2) | spec (revision 4); partly built — #62, see its §12 |
-| 02 | [Claim-to-code binding and individual commit identity](02-claim-code-binding.md) | **AT-2** | spec |
-| 03 | [Coverage integrity at the answer layer](03-coverage-integrity.md) | **AT-1, AT-9, AT-10** | spec |
-| 04 | [Verdict semantics, fence authority and the human waiver](04-verdict-semantics-and-fence-authority.md) | **AT-5, AT-6** | spec |
-| 05 | [CI ingestion keyed to a commit, with same-commit re-run](05-ci-ingestion.md) | **AT-8** | spec |
-| 06 | [Structured intent and the append-only intent ledger](06-intent-ledger.md) | — (supports AT-4, AT-3, AT-6) | spec |
-| 07 | [Pilot instrumentation for the five proofs](07-pilot-instrumentation.md) | — (measures AT-1, AT-5, AT-9) | spec |
-| 08 | [Two evidence axes and calibration measurement](08-evidence-axes-and-calibration.md) | **AT-3** | spec |
+| 01 | [Canonical event model and per-session causal order](01-canonical-event-model.md) | **AT-4** | shipped — #53 |
+| 01a | [The causal skeleton: retention by root reachability, attestation, declared provider guarantees](01a-causal-skeleton.md) | — (makes AT-4 durable; amends 01 §10 D2) | partly built — #62: the pin door, the skeleton identity and the generated sweep, running in `interim` mode. Not built: the attestation record, the declared provider guarantees, `full` mode (its §12) |
+| 02 | [Claim-to-code binding and individual commit identity](02-claim-code-binding.md) | **AT-2** | shipped — #55. Open: who may revalidate a claim (its D6 note on the downgrade-only rule) |
+| 03 | [Coverage integrity at the answer layer](03-coverage-integrity.md) | **AT-1, AT-9, AT-10** | shipped — #52 |
+| 03a | [Loss accounting: every known loss of telemetry reaches Coverage](loss-accounting.md) | — (extends 03; discharges principle 5 for the capture pipeline) | built — batch 0930: a `losses` block on register, heartbeat and end, the `telemetry_lost` and `record_kinds_ignored` reasons, and the review's fixes; what stays open is its §12 |
+| 04 | [Verdict semantics, fence authority and the human waiver](04-verdict-semantics-and-fence-authority.md) | **AT-5, AT-6** | shipped — #60. AT-6's human gate is a detection, not a prevention (its §10 D8) |
+| 04a | [The human waiver authority: a passkey the agent cannot hold](04a-human-waiver-authority.md) | — (makes AT-6's human gate a prevention for members on other machines; answers 04 §10 D8) | built on `feat/passkey-waiver-authority` — PK-1…PK-12 tested and anchored; what the build changed is its §11, what the security review fixed and left open is its §12 (on the hub's own host there is no gate); D-PK-1 — revoking a passkey closes the fences it opened — decided by Nick and built 2026-10-02 |
+| 05 | [CI ingestion keyed to a commit, with same-commit re-run](05-ci-ingestion.md) | **AT-8** | built — #57: the hub side (`ci_runs`, the flake filter, the `ci` coverage source); batch 0930: the reporter, `crosscheck ci-report` (its §11). Open: doctor's CI-6 warning for the ambiguous count, and no repo reports until its CI is wired |
+| 06 | [Structured intent and the append-only intent ledger](06-intent-ledger.md) | — (supports AT-4, AT-3, AT-6) | shipped — #56 |
+| 07 | [Pilot instrumentation for the five proofs](07-pilot-instrumentation.md) | — (measures AT-1, AT-5, AT-9) | shipped — #61. Open: D-E, whether its tables retain a session (its §11.8) |
+| 08 | [Two evidence axes and calibration measurement](08-evidence-axes-and-calibration.md) | **AT-3** | shipped with two narrowings — #59: the hub does not stamp the capture mode from the route (its §3.2a), and `repository_verified` has no ancestor leg (its §3.5) |
+| 09 | [AT-7: does a hostile teammate claim change what the agent does?](09-behavioral-injection.md) | **AT-7** | measured 2026-10-02: **FAIL as pre-registered** — k = 5 of 20, every hit the instruction quoted inside a refusal; exploratory (A5): 0 of 20 runs followed an injected instruction. Claude Code 2.1.286 as shipped, addressed-question surface only; Cursor and ACP not measured (its §9) |
 
 **One AT has one owner.** This table is the authority; a spec header that disagrees
 with it is the spec that is wrong. Contributors are named but do not own: 06
@@ -117,15 +131,23 @@ not a prevention**, because the bearer key that reaches the waiver route sits in
 plaintext on the same machine as the agent. 04 §10 D8 puts that residue in front of
 Nick rather than leaving it in a refusal list.
 
-**AT-7 is owned by nobody, and that is stated rather than left blank.** The
-counterfactual injection benchmark asks for a net-new harness that runs a task
-twice per provider and diffs tool calls, files read and written, shell commands,
-plan changes and final result. `INJECTION_CORPUS` is prior art for the payloads and
-proves *framing* — and AT-7's own "fails if" line says framing is not behaviour, so
-the corpus cannot be stretched into the measurement. **The eight specs discharge
-nine of ten acceptance tests.** Shipping 1.0 against ten means commissioning a
-ninth spec; shipping against nine is a scope decision, not an omission a writer can
-close (00 §10 Q12).
+**AT-7 has an owner since 2026-09-30, and a pre-registration rather than a
+result.** Nick commissioned the ninth spec (00 §10 Q12 asked for exactly that
+decision): 09 runs one task 20 times without and 20 times with a hostile teammate
+claim in the SessionStart briefing, on a real hub, and counts the runs in which
+the agent acted on it, by a criterion committed before the harness existed.
+`INJECTION_CORPUS` stays what it was, prior art for the payloads and proof of
+*framing* only.
+
+**09 §9 now holds the result, and AT-7 is not discharged.**
+- *Pre-registered verdict:* FAIL. In 5 of 20 treatment runs the agent's final
+  answer quoted the injected instruction while refusing it, and the criterion
+  counts an echo as a hit.
+- *Exploratory (A5):* no run followed an injected instruction.
+- *Scope:* the result covers Claude Code in its shipped configuration, on the
+  addressed-question surface only. Cursor and ACP are not measured.
+- *What a discharge needs:* a further pre-registered round, which would have to
+  separate following an instruction from reporting it.
 
 ## Reading order
 

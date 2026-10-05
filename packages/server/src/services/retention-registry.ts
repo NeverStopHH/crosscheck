@@ -173,6 +173,13 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
       "ownership, not dependence: every registered session has one, so retaining through it keeps every session for ever (Nick, 2026-09-17)",
   },
   {
+    table: "work_contexts",
+    column: "updated_by_session_id",
+    semantics: "non_retaining_edge",
+    reason:
+      "names which session delivered the latest update, for coverage's scope; reads no position in that session's order",
+  },
+  {
     table: "hint_deliveries",
     column: "session_id",
     semantics: "non_retaining_edge",
@@ -184,6 +191,16 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
     semantics: "non_retaining_edge",
     reason:
       "no skeleton kind projects a question, so nothing a question depends on is in the skeleton",
+  },
+  {
+    // 01a §3.3b's own classification. Not a root: retaining through it would
+    // keep every declaring session for ever. Not skeleton either: the sweep
+    // must not take it, because the cap a contradicting row wrote here is
+    // the only trace of that row once the row itself is swept.
+    table: "session_causal_guarantees",
+    column: "session_id",
+    semantics: "non_retaining_edge",
+    reason: "a declaration about a session, not a dependence on its order",
   },
 ];
 

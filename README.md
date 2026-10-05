@@ -64,6 +64,14 @@ curl -sX POST http://localhost:7100/api/developers/<developerId>/emails \
 # unlink with DELETE /api/developers/<developerId>/emails/alice@gmail.com
 ```
 
+`Claude <noreply@anthropic.com>` cannot be linked — the hub answers 400
+`cloud_agent_identity`, as an alias or as a new developer's email: it is the
+identity every Claude Code on the web session commits under, whoever started
+it, so its absence line names that identity instead of asking for an account,
+its commits still count as a coverage gap, and a link an older hub already
+holds is ignored for attribution and stays a `crosscheck doctor` WARN — until
+an admin removes it if it is an alias; no route removes a primary email.
+
 The id is shown exactly once, above, and every admin route after that takes it
 as a path parameter — so if it is lost, list the team back out. This is the
 only surface that prints ids and linked addresses together, which is why it
@@ -92,7 +100,7 @@ crosscheck doctor                                      # verifies config, hooks,
 
 **4. One teammate connects each repo:** `crosscheck init` inside the repo writes `.crosscheck.json` (the hub URL), which is meant to be committed. Wiring travels with the machine, trust travels with the repo: sessions report ONLY in repos carrying that committed file — every other directory stays silent no matter how the machine is wired. The API key never enters the repo.
 
-Plain `crosscheck init` (no flag) remains the narrower alternative: besides connecting the repo it wires that one checkout's `.claude/settings.json` + `.mcp.json`, committable so teammates are wired on `git pull`. It covers exactly that checkout — fresh worktrees and editor workspaces rooted at the repo's parent folder are only covered by `--global`. Running both is harmless (identical hook commands run once; `doctor` flags the redundancy); `crosscheck init --global --remove` uninstalls the user-level side.
+Plain `crosscheck init` (no flag) remains the narrower alternative: besides connecting the repo it wires that one checkout's `.claude/settings.json` + `.mcp.json`, committable so teammates are wired on `git pull`. It covers exactly that checkout — fresh worktrees and editor workspaces rooted at the repo's parent folder are only covered by `--global`. Running both is harmless (identical hook commands run once; `doctor` flags the redundancy); `crosscheck init --global --remove` uninstalls the user-level side, and `crosscheck init --remove` the project side (it keeps `.crosscheck.json`, so the repo stays connected).
 
 ### What you actually see
 
@@ -163,16 +171,17 @@ and must carry a check recipe; up to 30 files are allowed for briefing-only
 pins. `crosscheck pin --broke <id>` retracts one, and `crosscheck pin --sweep`
 asks git where the pinned paths went after a rename.
 
-When the surface stops working, `crosscheck suspect <pin-id>` intersects the
+When the surface stops working, `crosscheck trace <pin-id>` intersects the
 pin's files with every recorded touch across every person and connector in the
-last 14 days and prints the sessions that were in there. Ranking is by how
+last 14 days and prints the sessions that were in there. (Its 0.10 name,
+`crosscheck suspect`, still works and says the new one.) Ranking is by how
 concentrated a session's author's work was on those files, not by how much
-they commit, so the busiest person is not the default suspect. Nothing is
+they commit, so the busiest person is not the default answer. Nothing is
 named until somebody has run the pin's check and recorded it failing. It reads
 two labelled evidence lanes — the edits the host tool reported, and a bounded
 `git diff --name-only` at Stop, because `sed -i` and codemods produce no edit
 event at all. Three outcomes exist rather than two: a ranked answer, "no
-separated suspect" when the top scores are too close to call, and "no session
+session stands out" when the top scores are too close to call, and "no session
 touched these files". A session whose author you have muted is labelled as
 suppressed by your own mute, never as unanswered.
 
@@ -184,12 +193,64 @@ why they behave identically for Claude Code, Cursor and ACP sessions.
 (12 files, oldest verified 9d ago) — nothing else is watched" — plus any pin
 whose files a rename left behind, and a warning when your hot-file denylist
 matches a pinned path. That last one matters because a denied path is never
-captured at all, so `suspect` would otherwise answer "no session touched this
+captured at all, so `trace` would otherwise answer "no session touched this
 surface" about a file everybody touched.
+
+#### Opening a fence takes a person's passkey
+
+Sometimes a pinned surface is broken on purpose for a while — a rollout, a
+migration. A **waiver** keeps that conflict quiet for at most fourteen days,
+with a reason on the record. An agent can only *ask* for one:
+
+```bash
+crosscheck pin --waive <pin-id> --expires 2d --reason "rollout is blocked; the fix lands Monday"
+# requested wr_…: open pin_… until 2026-10-03T12:00:00.000Z.
+# the fence stays closed until a person approves it with a passkey at:
+#   https://hub.example.ts.net/ui/waivers
+```
+
+A person approves it on that page with a **passkey** — Touch ID, Windows Hello
+or a phone. The passkey signs exactly the expiry and reason shown; the hub
+refuses any other terms. The API key cannot open or close a fence at all: it
+sits in `~/.crosscheck/config.json`, where every agent on your machine can read
+it, and a passkey is the one credential an agent cannot use.
+
+**Setting it up.** The admin mints a one-time enrolment code for each person
+and hands it over out of band:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$HUB_URL/api/developers/<developer-id>/passkey-enrollments"
+```
+
+The person opens `/ui/passkeys`, enters the code, and enrols the passkey. A new
+passkey can approve only after 24 hours. Until then `crosscheck status`,
+`crosscheck doctor` and every member's `/ui/passkeys` announce it. A passkey
+nobody expected is seen before it can act, and its owner can revoke it with
+nothing more than a login.
+
+Browsers allow passkeys only over https, or on `localhost`. On the hub's own
+machine `http://localhost:7100` works, and it is accepted only from that
+machine. Teammates on a tailnet need the hub behind https, for example
+`tailscale serve --bg 7100`. List every address people open it at, then restart
+the hub:
+
+```bash
+CROSSCHECK_WEBAUTHN_ORIGINS=http://localhost:7100,https://hub.example.ts.net
+```
+
+A passkey works only at the address it was enrolled at.
+
+**The hub's own machine is the exception.** An agent running there as the same
+OS user can read the hub's database and bypass all of this. It can also put its
+own page in front of `localhost`. If agents run on the hub's machine, run the
+hub under its own OS user or on another machine. There, list only the https
+address. Everything this still leaves open is stated in
+[spec 04a §8 and §12](docs/1.0/04a-human-waiver-authority.md).
 
 #### What this makes visible about people
 
-`crosscheck suspect` prints session identifiers, the agent that ran each
+`crosscheck trace` prints session identifiers, the agent that ran each
 session, its branch, its work-context title and its declared intent, together
 with a score and the two file counts the score was computed from. It does not
 print a developer's name or id; opening the work context it names is a
@@ -204,11 +265,65 @@ that is a formal matter: in Germany, technical systems from which individual
 performance or behaviour data can be derived fall under works-council
 co-determination (§ 87(1) no. 6 BetrVG), and the processing engages the GDPR.
 Whether sessions are named at all is therefore a per-repository setting.
-`suspectAttribution` is `sessions` by default; `counts_only` prints the counts
-and no rows. The second setting, `pinPolicy`, is `anyone` by default, meaning
+`suspectAttribution` (the setting keeps the command's 0.10 name) is `sessions`
+by default; `counts_only` prints the counts and no rows. The second setting, `pinPolicy`, is `anyone` by default, meaning
 any member may pin any surface. `crosscheck status` prints both effective
 values, so everyone on the repository can see which are in force without being
 told.
+
+### What CI saw, keyed to the commit
+
+A test that was green and is now red, in an area no active intent covers, is
+an unexplained change — but only if the hub knows the test was green at a
+named commit, and only if a re-run of that same commit says it is still red.
+The **CI reporter** feeds that. It is one step of the `test` job, after
+the tests wrote a junit file, on every matrix leg, with `if: always()` so a
+red suite is reported too. In your repository it runs from the published
+package, so the job needs Bun (`oven-sh/setup-bun@v2`) and nothing else:
+
+```yaml
+- name: Report what CI saw to the crosscheck hub
+  if: always()
+  run: >-
+    bunx crosscheck-hub ci-report
+    --junit junit.xml --job test --leg ${{ matrix.os }}
+    --ref ${{ github.head_ref || github.ref_name }}
+    --attempt ${{ github.run_attempt }}
+    --run-id ${{ github.run_id }}
+    --sha ${{ github.event.pull_request.head.sha || github.sha }}
+  env:
+    CROSSCHECK_HUB_URL: ${{ secrets.CROSSCHECK_HUB_URL }}
+    CROSSCHECK_CI_TOKEN: ${{ secrets.CROSSCHECK_CI_TOKEN }}
+```
+
+Any runner that writes JUnit XML works; `bun test --reporter=junit
+--reporter-outfile=junit.xml` is what this repository uses, and it runs the
+same reporter from source (`packages/cli/scripts/ci-report.ts`) so its own CI
+proves the code before it ships.
+
+The hub takes `CROSSCHECK_CI_TOKEN` in its own environment — a token of its
+own, deliberately not the admin token — and the workflow holds the same value
+plus the hub URL as repository secrets. What travels is the lane
+`(repo, workflow, job, leg, ref)`, the commit, the attempt, the totals and
+**only the non-green tests**: `file::describe chain::name`, a status and a
+duration. Never a failure message, a stack, console output or the runner's
+hostname. When the suite is red the reporter re-runs the failed files once on
+the same runner and posts that as a `same_job` re-run, which is what lets the
+hub tell a flake (green again) from a regression (red again) — one lane at a
+time; an `ubuntu-latest` green never vouches for a `macos-latest` red.
+`crosscheck status` prints one line per non-green lane at your checkout's
+commit; `crosscheck doctor` prints the coverage state and every refusal.
+
+**It never turns a green job red.** A fork pull request has no repository
+secrets, so the reporter prints one line and exits 0; an unreachable hub, a
+refused token or a hub answer of the wrong shape do the same. A junit file
+that is missing or half-written is filed as a `crashed` run — a lane that ran
+and said nothing, which is a different fact from a lane that never reported.
+`--sha` must be the head sha: on a `pull_request` event `github.sha` is the
+merge commit, which no developer's history contains, and a row keyed on it
+would join nothing while looking exactly like "CI has not run yet". `--ref`
+is the branch for the same reason: `github.ref_name` on a pull request is
+`<n>/merge`.
 
 ### Asking a teammate something they never wrote down
 

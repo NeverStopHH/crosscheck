@@ -343,6 +343,7 @@ describe("crosscheck suspect carries the qualifier", () => {
       repo: "github.com/acme/api",
       computedAt: GAP_ISO,
       scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+      order: { state: "undeclared", reason: "hub_did_not_report" },
       sources: [
         {
           source: "agent_event",

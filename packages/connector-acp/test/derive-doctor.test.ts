@@ -209,15 +209,19 @@ describe("the ACP derive section says every rung and every refusal", () => {
       expect(line?.level).toBe("PASS");
       expect(line?.detail).toBe(refusal.sentence);
     }
-    // No unexplained extras: every declared rung, every declared refusal, and
-    // the one line that is not declared by the manifest because it is not
-    // about ACP at all — whether this machine can run a model (backendCheck).
+    // No unexplained extras: every declared rung, every declared refusal, the
+    // line that is not about ACP at all — whether this machine can run a
+    // model (backendCheck) — and this connector's declared causal guarantees
+    // (01a §5), which the derive manifest does not hold.
     expect(checks).toHaveLength(
       ACP_CAPABILITY_MANIFEST.capabilities.length +
         ACP_CAPABILITY_MANIFEST.refusals.length +
-        1,
+        2,
     );
     expect(named(checks, "derive backend (acp)")).toBeDefined();
+    expect(named(checks, "causal guarantees (acp:*)")?.detail).toContain(
+      "commit.observed unavailable (no_emitter)",
+    );
   });
 
   test("the summarizer rung says what makes it reduced, and where to measure it", async () => {

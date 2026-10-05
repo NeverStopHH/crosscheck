@@ -13,7 +13,11 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
 import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
-import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import {
+  formatAbsenceLine,
+  formatAge,
+  formatCloudAgentLink,
+} from "@crosscheck/connector-core/briefing/render.ts";
 import {
   HUB_UNREACHABLE_CLAUSE,
   coverageClause,
@@ -31,6 +35,7 @@ import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identit
 import {
   getAbsences,
   getHintStats,
+  getPasskeyAnnouncements,
   getPins,
   getPresence,
   getPrivacySettings,
@@ -42,9 +47,14 @@ import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts"
 import { readCaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import type { HintStats, HubResult } from "@crosscheck/connector-core/http/hub.ts";
+import { announcementAnswerOf, passkeyStatusLines } from "./passkey-status.ts";
 import { pinStatusLines } from "./pin-observability.ts";
 import { presenceStateLine } from "./privacy.ts";
-import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import {
+  formatLossLines,
+  readLocalLosses,
+} from "@crosscheck/connector-core/spool/loss-report.ts";
+import type { LocalLosses } from "@crosscheck/connector-core/spool/loss-report.ts";
 import {
   formatForeignDropLine,
   readForeignRepoDrops,
@@ -81,6 +91,19 @@ const ageOrNever = (iso: string | null, now: Date): string => {
 
 const plural = (count: number, noun: string): string =>
   `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/**
+ * ONE `losses:` LINE, ABOVE ZERO ONLY (docs/1.0/loss-accounting.md §5.1),
+ * beside `spool:`, which already carries the dropped count: the record kinds
+ * an older hub ignored and the losses upstream of any record, in `doctor`'s
+ * own fragments (connector-core spool/loss-report.ts formatLossLines) so the
+ * two commands cannot describe one loss two ways.
+ */
+const statusLossLines = (local: LocalLosses, now: Date): readonly string[] => {
+  const { ignored, capture } = formatLossLines(local, now);
+  const parts = [ignored, capture].filter((part): part is string => part !== null);
+  return parts.length === 0 ? [] : [`losses: ${parts.join(" · ")}`];
+};
 
 /**
  * Capture visibility (trial findings #17/#18/#20): targets this repo's open
@@ -281,10 +304,14 @@ export const runStatus = async (
   // state: a conference is a command, often run from a scheduler at 03:00,
   // and its numbers must survive on a machine with no live session at all.
   const conferenceCost = await readConferenceCost(config.home, key);
-  const drops = await readDropSummary(config.home, key);
-  // A batch the ledger itself could not take is recorded as a marker, not a count,
-  // so the summed total understates it. `doctor` says the same; both must agree.
-  const unrecorded = await readUnrecordedDrop(config.home, key);
+  // ONE read of the machine's loss ledgers (docs/1.0/loss-accounting.md
+  // §5.1) for both lines below. A batch the ledger itself could not take is
+  // recorded as a marker, not a count, so the summed total understates it.
+  // `doctor` says the same, from the same formatter; both must agree.
+  const local = await readLocalLosses(config.home, key);
+  const drops = local.drops.summary;
+  const unrecorded = local.unrecorded;
+  const lossLines = statusLossLines(local, now);
   // Foreign-repo drops (trial finding #9): a multi-repo workspace's second
   // connected repo goes silent under first-wins, and this line is where a
   // human finds out. Machine-wide (the dropping session is bound to the
@@ -370,7 +397,8 @@ export const runStatus = async (
         pins.data,
         // The EFFECTIVE list, defaults included — the shadowing question is
         // about what actually suppresses capture, not about what this
-        // developer added to it.
+        // developer added to it. The shipped defaults a teammate who kept
+        // them applies are added inside, the same as at the pin door.
         resolveDenylist(config.denylist ?? undefined),
         teamSettings.ok ? teamSettings.data : null,
         now,
@@ -378,6 +406,10 @@ export const runStatus = async (
     : [
         "pins: coverage UNKNOWN — the hub did not answer, so nothing here says what is watched",
       ];
+  // 04a §4.3: a passkey nobody expected is announced HERE, inside its
+  // cool-off, where a person already looks — the announcement is the control.
+  const announcements = await getPasskeyAnnouncements(hubCtx);
+  const passkeyLines = passkeyStatusLines(announcementAnswerOf(announcements), config.hubUrl, now);
   const privacy = await getPrivacySettings(hubCtx);
   const privacyLines = privacy.ok
     ? [
@@ -406,6 +438,11 @@ export const runStatus = async (
       const line = formatAbsenceLine(entry, now);
       return line === null ? [] : [`  ${line}`];
     });
+  // Its own line, not one under the absence heading: it is about a stale
+  // link the hub ignores, not about an author. Doctor's WARN, verbatim.
+  const cloudAgentLinkLines = (
+    absences.ok ? (absences.data.linkedCloudAgents ?? []) : []
+  ).map((link) => `cloud agent identity: ${formatCloudAgentLink(link)}`);
 
   // Teammate lines through the render layer: name, branch and status are
   // hub-served, teammate-written short fields printed BARE on a ·-separated
@@ -463,11 +500,14 @@ export const runStatus = async (
       ...(absenceLines.length === 0
         ? []
         : ["commit authors without a recent session:", ...absenceLines]),
+      ...cloudAgentLinkLines,
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
+      ...lossLines,
       ...foreignDropLines,
       ...questionLines,
       ...solvedLines,
       ...pinLines,
+      ...passkeyLines,
       ...ciStatusLines,
       targetsLine(captureHealth, now),
       hintsLine(captureHealth, hintStats),

@@ -51,6 +51,7 @@ import {
   fallbackWorkContextTitle,
   registerSessionFlow,
 } from "../src/flows/register-session.ts";
+import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declarations.ts";
 import {
   captureFailure,
   captureFileTargets,
@@ -121,6 +122,7 @@ const registerInput = (
   title: fallbackWorkContextTitle("main", REPO_ID),
   status: "analyzing",
   now: new Date(),
+  guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
   ...overrides,
 });
 

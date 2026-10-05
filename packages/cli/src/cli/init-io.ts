@@ -7,11 +7,101 @@
  * repo: a half-written file there breaks every session on the machine, and
  * a backup for a byte-identical no-op re-run would litter a directory the
  * user lives in.
+ *
+ * Backups split by SCOPE (review 2026-10-05). A user-level file's backup sits
+ * beside it (`writeIfChanged`) — those directories are the user's own, no
+ * work tree. A PROJECT file's original never does: a `.mcp.json.bak-…`
+ * beside an ignored `.mcp.json` is a new file `git status` offers to commit,
+ * holding every other server's env, API keys included. Project originals go
+ * to a private directory under CROSSCHECK_HOME (`saveProjectOriginal`), and
+ * the command names each one.
  */
 import { rename, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
-import { ensureDir } from "@crosscheck/connector-core/config/paths.ts";
+import {
+  crosscheckHome,
+  ensureDir,
+  readText,
+  writePrivateFile,
+} from "@crosscheck/connector-core/config/paths.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { PRIVATE_FILE_MODE } from "@crosscheck/connector-core/constants.ts";
+
+/** Under CROSSCHECK_HOME: where project files' originals are kept. */
+const PROJECT_BACKUP_DIR = "backups";
+
+/** One private directory per run, named for the command and the repo. */
+export const projectBackupDir = (env: Env, root: string, command: string): string =>
+  join(
+    crosscheckHome(env),
+    PROJECT_BACKUP_DIR,
+    `${command}-${String(Date.now())}-${basename(root)}`,
+  );
+
+/**
+ * Saves a PROJECT file's original before it is rewritten, at its path relative
+ * to the repo inside `backupDir` (0700, file 0600 — it may hold secrets), and
+ * returns where; null when there is nothing to save — no original, or a
+ * rewrite that changes nothing (a re-run must not pile up copies).
+ */
+export const saveProjectOriginal = async (
+  backupDir: string,
+  root: string,
+  path: string,
+  raw: string | null,
+  next: string,
+): Promise<string | null> => {
+  if (raw === null || raw === next) {
+    return null;
+  }
+  const backup = join(backupDir, relative(root, path));
+  await writePrivateFile(backup, raw);
+  return backup;
+};
+
+/** A file a run will write: its original (null = none) and its new content. */
+export interface PlannedWrite {
+  readonly path: string;
+  readonly raw: string | null;
+  readonly next: string;
+}
+
+export type SavedOriginals =
+  | { readonly ok: true; readonly backups: ReadonlyMap<string, string> }
+  | { readonly ok: false; readonly refusal: string };
+
+/**
+ * Every original a run will rewrite, saved BEFORE any file is written — so a
+ * failure here (an unwritable CROSSCHECK_HOME) is a refusal that changed
+ * nothing, never a bare EACCES out of a half-written repo (review
+ * 2026-10-05). `backups` maps each saved file's path to its copy.
+ */
+export const saveProjectOriginals = async (
+  backupDir: string,
+  root: string,
+  writes: readonly PlannedWrite[],
+): Promise<SavedOriginals> => {
+  const backups = new Map<string, string>();
+  for (const write of writes) {
+    try {
+      const backup = await saveProjectOriginal(backupDir, root, write.path, write.raw, write.next);
+      if (backup !== null) {
+        backups.set(write.path, backup);
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        refusal: `could not save the original of ${write.path} to ${backupDir} (${error instanceof Error ? error.message : String(error)}) — nothing was changed`,
+      };
+    }
+  }
+  return { ok: true, backups };
+};
+
+/** The output's name for a saved original, appended to the line about its file. */
+export const originalSavedSuffix = (backup: string | null): string =>
+  backup === null ? "" : ` (original saved to ${backup})`;
 
 export const renderJsonFile = (value: Record<string, unknown>): string =>
   `${JSON.stringify(value, null, 2)}\n`;
@@ -30,9 +120,13 @@ const REFUSAL_CLAUSE: Readonly<Record<ReadRefusal, string>> = {
   "not-object": "is not a json object",
 };
 
+/** The bare fact — "<path> is not valid json" — for a sentence of a caller's own. */
+export const unreadableClause = (path: string, reason: ReadRefusal): string =>
+  `${path} ${REFUSAL_CLAUSE[reason]}`;
+
 /** Install's abort sentence — the JSON IS valid in the not-object case. */
 export const refusalMessage = (path: string, reason: ReadRefusal): string =>
-  `${path} ${REFUSAL_CLAUSE[reason]} — nothing was changed`;
+  `${unreadableClause(path, reason)} — nothing was changed`;
 
 /**
  * Remove's per-file skip sentence: a file crosscheck cannot parse is, by
@@ -41,7 +135,7 @@ export const refusalMessage = (path: string, reason: ReadRefusal): string =>
  * aborting the whole uninstall over an unrelated editor's broken file.
  */
 export const skippedMessage = (path: string, reason: ReadRefusal): string =>
-  `${path} ${REFUSAL_CLAUSE[reason]} — skipped`;
+  `${unreadableClause(path, reason)} — skipped`;
 
 /**
  * Reads a JSON config init is going to rewrite, or refuses.
@@ -56,16 +150,14 @@ export const skippedMessage = (path: string, reason: ReadRefusal): string =>
  * stopped it, and why.
  */
 export const readJsonConfig = async (path: string): Promise<ReadJson> => {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
+  const read = await readText(path);
+  if (read.kind === "absent") {
     return { ok: true, value: {}, raw: null };
   }
-  let raw: string;
-  try {
-    raw = await file.text();
-  } catch {
+  if (read.kind === "unreadable") {
     return { ok: false, reason: "unreadable" };
   }
+  const raw = read.text;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
@@ -78,11 +170,24 @@ export const readJsonConfig = async (path: string): Promise<ReadJson> => {
   return { ok: true, value: parsed as Record<string, unknown>, raw };
 };
 
-/** Timestamped backup beside the original, so a bad merge is recoverable. */
-export const backUp = async (path: string, raw: string | null): Promise<void> => {
-  if (raw !== null) {
-    await writeFile(`${path}.bak-${String(Date.now())}`, raw, "utf8");
+/**
+ * Timestamped backup beside the original, so a bad merge is recoverable —
+ * for USER-level files only (see the header); a project file's original goes
+ * through `saveProjectOriginal`.
+ */
+const backUp = async (path: string, raw: string | null): Promise<void> => {
+  if (raw === null) {
+    return;
   }
+  // At most the original's mode, never the 0644 default (review 2026-10-05):
+  // a 0600 ~/.claude.json holds an OAuth account and mcp env tokens, and its
+  // backup was left world-readable. The umask can only narrow this further.
+  // A vanished original gets the private mode.
+  const mode = await stat(path).then(
+    (info) => info.mode & 0o777,
+    () => PRIVATE_FILE_MODE,
+  );
+  await writeFile(`${path}.bak-${String(Date.now())}`, raw, { encoding: "utf8", mode });
 };
 
 /**

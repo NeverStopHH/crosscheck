@@ -67,6 +67,7 @@ const LEDGER_READERS = new Set([
   "explanationTimingFor",
   "explanationTimingOf",
   "countIntentPositions",
+  "hasIntentPositionPast",
 ]);
 
 /**
@@ -95,6 +96,13 @@ const READER_CALLERS = new Map<string, string>([
     "serves the doctor ratio (§5) — two integers about whether this hub can " +
       "answer AT-4 at all, with no work context, no session and no sentence, " +
       "and no predicate anywhere reads them",
+  ],
+  [
+    "packages/server/src/services/sessions.ts",
+    "asks whether a version's POSITION lies past a reported end (01a §3.6, " +
+      "review M1) — a boolean from the ledger's clock, never its content, and " +
+      "its only effect is to LOWER a session.ended declaration; no verdict, " +
+      "fence or hint reads the answer",
   ],
 ]);
 

@@ -49,6 +49,7 @@ import {
 } from "../ui/route-helpers.tsx";
 import { LoginPage } from "../ui/pages/login.tsx";
 import { uiPagesRoutes } from "./ui-pages.tsx";
+import { uiPasskeyRoutes } from "./ui-passkeys.tsx";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const MS_PER_SECOND = 1000;
@@ -215,6 +216,9 @@ export const uiRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.route("/", uiPagesRoutes(deps));
+  // 04a: passkeys, waiver approvals and the ceremony endpoints — behind the
+  // same session middleware, with their own CSP on the two pages.
+  router.route("/", uiPasskeyRoutes(deps));
 
   return router;
 };

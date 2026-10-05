@@ -140,28 +140,32 @@ describe("prepareCursorInit", () => {
     expect(plan.reason).toContain("nothing was changed");
   });
 
-  test("apply writes both files, backs up preexisting ones, and lands the shared mcp entry", async () => {
-    // Arrange: a preexisting hooks.json that must be preserved AND backed up.
+  test("the plan names each file with its original and new content, and apply writes exactly that content", async () => {
+    // Arrange: a preexisting hooks.json that must be preserved — its original
+    // is the CALLER's to save (out of the work tree, before any write).
     const repo = await makeRepo("init-apply");
     cleanups.push(repo);
     await mkdir(join(repo, ".cursor"), { recursive: true });
-    await writeFile(
-      join(repo, ".cursor", "hooks.json"),
-      JSON.stringify(HOOKS_JSON_EXAMPLE),
-      "utf8",
-    );
+    const original = JSON.stringify(HOOKS_JSON_EXAMPLE);
+    await writeFile(join(repo, ".cursor", "hooks.json"), original, "utf8");
 
     // Act
     const plan = await prepareCursorInit(repo, "crosscheck", MCP_ENTRY);
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
-    const written = await plan.apply();
+    await plan.apply();
 
     // Assert
-    expect(written).toEqual([
-      join(repo, ".cursor", "hooks.json"),
-      join(repo, ".cursor", "mcp.json"),
+    const hooksPath = join(repo, ".cursor", "hooks.json");
+    const mcpPath = join(repo, ".cursor", "mcp.json");
+    expect(plan.files.map((file) => ({ path: file.path, raw: file.raw }))).toEqual([
+      { path: hooksPath, raw: original },
+      // Created from nothing: there is no original to save.
+      { path: mcpPath, raw: null },
     ]);
+    for (const file of plan.files) {
+      expect(await Bun.file(file.path).text()).toBe(file.next);
+    }
     const hooksFile = JSON.parse(
       await Bun.file(join(repo, ".cursor", "hooks.json")).text(),
     ) as { hooks: Record<string, readonly { command: string }[]> };
@@ -174,10 +178,11 @@ describe("prepareCursorInit", () => {
       await Bun.file(join(repo, ".cursor", "mcp.json")).text(),
     ) as { mcpServers: Record<string, unknown> };
     expect(mcpFile.mcpServers["crosscheck"]).toEqual(MCP_ENTRY);
-    // Timestamped backup beside the original it rewrote.
+    // Nothing beside the original: a `.bak` in the work tree is a new file
+    // git offers to commit (review 2026-10-05).
     const backups = (await readdir(join(repo, ".cursor"))).filter((name) =>
-      name.startsWith("hooks.json.bak-"),
+      name.includes(".bak-"),
     );
-    expect(backups.length).toBe(1);
+    expect(backups).toEqual([]);
   });
 });

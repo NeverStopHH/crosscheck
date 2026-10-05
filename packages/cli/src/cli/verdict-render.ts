@@ -49,6 +49,8 @@ import { quotedBody, safeId } from "@crosscheck/connector-core/mcp/render.ts";
 import { MAX_WAIVER_REASON_CHARS } from "@crosscheck/schema";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
+import { closedWaiverSentence } from "./pin-render.ts";
+
 /**
  * What a reader is told when no verdict arrived.
  *
@@ -203,7 +205,15 @@ const protectionLines = (
       ? []
       : [`  ${unknownWord("protection", verdict.protection)}`];
   }
-  return [`  ${sentence}`, ...waiverLines(verdict, now)];
+  // A fence the hub closed on a passkey revocation (04a D-PK-1) is said beside
+  // the conflict it reopened, so "no waiver covers it" is not read as "nobody
+  // ever opened this fence".
+  const closed = verdict.closedWaiver ?? null;
+  return [
+    `  ${sentence}`,
+    ...waiverLines(verdict, now),
+    ...(closed === null ? [] : [`  ${closedWaiverSentence(closed, now)}`]),
+  ];
 };
 
 /**

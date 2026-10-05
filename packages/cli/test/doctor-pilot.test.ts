@@ -36,7 +36,10 @@ type Counters = Readonly<Record<string, number>> | null;
 
 interface ReportShape {
   readonly enrolled?: boolean;
+  readonly used?: number;
   readonly refused?: number;
+  readonly legacyRefused?: number;
+  readonly beforeLabels?: number;
   readonly integrity?: readonly { surface: string; counters: Counters }[];
   readonly ciReason?: string;
 }
@@ -44,13 +47,21 @@ interface ReportShape {
 const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
   repo: "github.com/acme/api",
   enrolled: shape.enrolled ?? true,
+  labelsSinceIso: "2026-09-01T00:00:00.000Z",
   sinceIso: "2026-09-23T00:00:00.000Z",
   untilIso: "2026-09-24T00:00:00.000Z",
   days: 1,
   sessionSet: {
-    used: 31,
-    cap: 50,
+    used: shape.used ?? 31,
+    cap: 200,
     refused: shape.refused ?? 0,
+    legacyRefused: shape.legacyRefused ?? 0,
+    beforeLabels: shape.beforeLabels ?? 0,
+    discovery: 31,
+    discoveryCap: 50,
+    replication: 0,
+    replicationCap: 150,
+    legacy: 0,
     spanned: 30,
     restarted: 1,
     notRecorded: 0,
@@ -82,16 +93,40 @@ const pilotReport = (shape: ReportShape): Record<string, unknown> => ({
     answersAfterRepair: 0,
   },
   precision: {
-    sessions: 0,
+    ...unlabelled(),
+    labelledSinceIso: "2026-09-23T00:00:00.000Z",
+    legacyNoise: 0,
+    precisionTarget: 0.5,
     openedPer100: { kind: "unavailable", reason: "no_sessions" },
     openedTargetPer100: 8,
-    offTargetMarks: 0,
-    offTargetPer100: { kind: "unavailable", reason: "no_sessions" },
-    offTargetCeilingPer100: 20,
+    noisySessionsPer100: { kind: "unavailable", reason: "no_sessions" },
+    noisySessionsCeilingPer100: 20,
     surfaceOkMarks: 0,
+    reasons: [],
+    reasonsBeyondList: 0,
   },
+  cohorts: [
+    { cohort: "discovery", cap: 50, ...unlabelled() },
+    { cohort: "replication", cap: 150, ...unlabelled() },
+  ],
   integrity: shape.integrity ?? [{ surface: "api-suspect", counters: null }],
 });
+
+/** A population with no sessions: every labelled figure says so. */
+function unlabelled(): Record<string, unknown> {
+  return {
+    sessions: 0,
+    interventions: 0,
+    helpful: 0,
+    noise: 0,
+    unclear: 0,
+    labelled: 0,
+    benefitPer100: { kind: "unavailable", reason: "no_sessions" },
+    burdenPer100: { kind: "unavailable", reason: "no_sessions" },
+    precision: { kind: "unavailable", reason: "no_labels" },
+    labelCoverage: { kind: "unavailable", reason: "no_interventions" },
+  };
+}
 
 const hubWith = (answer: () => Response): string => {
   const server = Bun.serve({
@@ -128,6 +163,10 @@ const doctor = async (answer: () => Response): Promise<string> => {
 const serving = (shape: ReportShape) => (): Response =>
   Response.json({ ok: true, data: pilotReport(shape) });
 
+/** The one doctor line about the session set. */
+const pilotLine = (stdout: string): string =>
+  stdout.split("\n").find((line) => line.includes("PASS  pilot  enrolled")) ?? "";
+
 describe("the pilot doctor lines", () => {
   test("a repo nobody enrolled is said to be unmeasured", async () => {
     // Arrange & Act
@@ -143,16 +182,39 @@ describe("the pilot doctor lines", () => {
     const stdout = await doctor(serving({}));
 
     // Assert
-    expect(stdout).toContain("PASS  pilot  enrolled · session set 31 of 50");
+    expect(stdout).toContain(
+      "PASS  pilot  enrolled · session set 31 of 200 (discovery 31 of 50 · replication 0 of 150)",
+    );
     expect(stdout).not.toContain("refused at the cap");
   });
 
-  test("a full set says what happened to the sessions after it", async () => {
-    // Arrange & Act
-    const stdout = await doctor(serving({ refused: 4 }));
+  test("a full set says so, and what happened to the sessions after it", async () => {
+    // Arrange & Act — all two hundred slots hold a row
+    const stdout = await doctor(serving({ used: 200, refused: 4 }));
 
     // Assert — counted, never dropped
-    expect(stdout).toContain("4 later session(s) refused at the cap and counted");
+    expect(stdout).toContain("— full: 4 later session(s) refused at the cap and counted, never dropped");
+  });
+
+  test("a set with room never reads as full, even beside refusals (M2)", async () => {
+    // Arrange — the second review: refusals were read as "full" whatever the
+    // set held. Here 31 of 200 rows exist and four later sessions were
+    // refused (their slots past 200 — sessions still running hold the rest)
+    const stdout = await doctor(serving({ used: 31, refused: 4 }));
+
+    // Assert
+    expect(pilotLine(stdout)).not.toContain("full");
+    expect(pilotLine(stdout)).toContain("— 4 later session(s) refused at the cap and counted");
+  });
+
+  test("refusals under the 0.10 fifty-session cap are said apart and never make the set full (M2)", async () => {
+    // Arrange — a hub that ran the 0.10 pilot refused thirty under its old cap
+    const stdout = await doctor(serving({ used: 0, legacyRefused: 30, beforeLabels: 3 }));
+
+    // Assert
+    expect(pilotLine(stdout)).not.toContain("full");
+    expect(pilotLine(stdout)).toContain("30 refused under the 0.10 fifty-session cap, before labels");
+    expect(pilotLine(stdout)).toContain("3 started before labels, not in the set");
   });
 
   test("qualifier emission is NOT counted, and the line says why", async () => {

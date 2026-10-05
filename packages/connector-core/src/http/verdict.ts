@@ -26,6 +26,7 @@
  * the arrangement http/coverage.ts already runs.
  */
 import { z } from "zod";
+import { WAIVER_GRANT_AUTHORITIES } from "@crosscheck/schema";
 
 export const ATTRIBUTIONS = [
   "ATTRIBUTED",
@@ -115,6 +116,8 @@ export interface VerdictView {
   readonly timingReason: string;
   readonly invariant: InvariantRef | null;
   readonly waiver: WaiverRef | null;
+  /** A fence the hub closed on a passkey revocation (04a D-PK-1); absent reads as none. */
+  readonly closedWaiver?: ClosedWaiverRef | null;
   readonly computedAt: string | null;
 }
 
@@ -138,7 +141,33 @@ export const WaiverRefSchema = z.looseObject({
   // unsafe direction. The empty string renders as "no reason recorded".
   reason: z.string().default(""),
   grantedByName: z.string().default(""),
+  /**
+   * Which authority opened it (04a §6). An absent or unknown value reads as
+   * `terminal`, the WEAKER one: a hub from before 04a only ever wrote that
+   * kind, and reading an unknown authority as a passkey would claim a person
+   * signed what nobody can show was signed. Only the GRANT authorities are
+   * accepted: `system` names a closure (04a D-PK-1), which never holds a
+   * fence open, so a live waiver that claims it reads as the weaker kind too.
+   */
+  authority: z.enum(WAIVER_GRANT_AUTHORITIES).catch("terminal"),
 });
+
+/**
+ * A fence the HUB closed because the passkey that approved it was revoked
+ * (04a D-PK-1), on `pin list` and on the verdict. `reason` is the hub's
+ * machine word and is NEVER printed: a renderer maps the word it knows to its
+ * own sentence and any other to a fixed one. Unreadable as a whole, it is
+ * dropped (`.catch(null)` where it is used) — that costs the reader an
+ * explanation of a closed fence, never makes a fence read open.
+ */
+export const ClosedWaiverRefSchema = z.looseObject({
+  id: z.string().min(1),
+  closedAt: z.string().min(1),
+  heldUntil: z.string().min(1),
+  reason: z.string().default(""),
+});
+
+export type ClosedWaiverRef = z.infer<typeof ClosedWaiverRefSchema>;
 
 const VerdictSchema = z
   .looseObject({
@@ -153,6 +182,7 @@ const VerdictSchema = z
     timingReason: z.string().min(1).default("no_intent"),
     invariant: InvariantSchema.nullish(),
     waiver: WaiverRefSchema.nullish(),
+    closedWaiver: ClosedWaiverRefSchema.nullish().catch(null),
     computedAt: z.string().nullish(),
   })
   .transform(
@@ -168,6 +198,7 @@ const VerdictSchema = z
       timingReason: value.timingReason,
       invariant: value.invariant ?? null,
       waiver: value.waiver ?? null,
+      closedWaiver: value.closedWaiver ?? null,
       computedAt: value.computedAt ?? null,
     }),
   );

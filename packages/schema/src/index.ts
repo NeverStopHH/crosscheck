@@ -5,9 +5,14 @@ export {
   CLAIM_CAPTURE_MODES,
   DELIVERY_CHANNELS,
   DeliveryChannelSchema,
+  PILOT_COHORTS,
+  PILOT_LEGACY_COHORT,
+  PILOT_SESSION_COHORTS,
   PILOT_END_REASONS,
+  PILOT_INTERVENTION_LABELS,
+  PILOT_LEGACY_NOISE_MARK,
   PILOT_MARKS,
-  PILOT_MARK_BY_REF_KIND,
+  PILOT_MARKS_BY_REF_KIND,
   PILOT_MARK_REF_KINDS,
   PILOT_RUNG_REFUSALS,
   PILOT_UNAVAILABLE_REASONS,
@@ -45,7 +50,9 @@ export type {
   ArtifactSensitivity,
   CaptureMode,
   DeliveryChannel,
+  PilotCohort,
   PilotEndReason,
+  PilotInterventionLabel,
   PilotMark,
   PilotMarkRefKind,
   PilotUnavailableReason,
@@ -134,13 +141,32 @@ export type {
 } from "./pin.ts";
 
 export {
+  AUTHORIZING_CREDENTIAL_REVOKED,
   MAX_WAIVER_REASON_CHARS,
+  SYSTEM_WAIVER_AUTHORITY,
+  WAIVER_AUTHORITIES,
+  WAIVER_GRANT_AUTHORITIES,
   WAIVER_KINDS,
-  WaiverGrantSchema,
-  WaiverRevokeSchema,
+  WaiverRequestSchema,
 } from "./waiver.ts";
-export type { WaiverGrant, WaiverKind, WaiverRevoke } from "./waiver.ts";
-export { PilotMarkSchema } from "./pilot-mark.ts";
+export type {
+  WaiverAuthority,
+  WaiverGrantAuthority,
+  WaiverKind,
+  WaiverRequestInput,
+} from "./waiver.ts";
+export {
+  ENROLMENT_SOURCES,
+  MAX_PASSKEY_LABEL_CHARS,
+  PASSKEY_REVOKERS,
+} from "./passkey.ts";
+export type { EnrolmentSource, PasskeyRevoker } from "./passkey.ts";
+export {
+  MAX_PILOT_LABEL_REASON_CHARS,
+  MAX_PILOT_LABEL_REASON_UTF16_UNITS,
+  PilotMarkSchema,
+  reasonLength,
+} from "./pilot-mark.ts";
 export type { PilotMarkInput } from "./pilot-mark.ts";
 
 export {
@@ -164,12 +190,18 @@ export {
 export type { Hint, HintDelivery, HintTrust } from "./hint.ts";
 
 export {
+  CLOUD_AGENT_IDENTITIES,
   CommitAuthorEvidenceSchema,
   CommitEvidenceSchema,
   MAX_COMMIT_CLOCK_SKEW_MS,
   MAX_COMMIT_EVIDENCE_AUTHORS,
+  cloudAgentByEmail,
+  cloudAgentById,
+  cloudAgentForEmail,
 } from "./commit-evidence.ts";
 export type {
+  CloudAgentId,
+  CloudAgentIdentity,
   CommitAuthorEvidence,
   CommitEvidence,
 } from "./commit-evidence.ts";
@@ -282,6 +314,7 @@ export {
   CiTestStatusSchema,
   MAX_CI_LANE_FIELD_CHARS,
   MAX_CI_TEST_ID_CHARS,
+  MAX_EXTERNAL_RUN_ID_CHARS,
 } from "./ci-run.ts";
 export type { CiLane, CiRunReport, CiTestResult } from "./ci-run.ts";
 export {
@@ -325,3 +358,49 @@ export {
   hintDeliveryId,
   tripwireDeliveryId,
 } from "./delivery-id.ts";
+export {
+  EMPTY_LOSS_REPORT,
+  LOSS_KINDS,
+  MAX_LOSS_COUNT,
+  MAX_LOSS_KIND_CHARS,
+  MAX_LOSS_KIND_ENTRIES,
+  TelemetryLossReportSchema,
+  UNATTRIBUTED_LOSS_KIND,
+  UNREADABLE_LOSS_REPORT,
+  clampLossCount,
+  foldLossKinds,
+  isLossKind,
+  settleLossReport,
+} from "./telemetry-loss.ts";
+export type {
+  FoldedLossKinds,
+  LossKind,
+  SettledLossCounts,
+  TelemetryLossReport,
+} from "./telemetry-loss.ts";
+export {
+  BRACKETABLE_KINDS,
+  CAUSAL_GUARANTEES,
+  CAUSAL_GUARANTEE_REASONS,
+  GUARANTEE_KINDS,
+  GUARANTEE_OF_REASON,
+  MAX_GUARANTEE_FIELD_CHARS,
+  MAX_GUARANTEE_TRIPLES,
+  ORDER_REASONS,
+  ORDER_REASON_STRENGTH,
+  STORED_GUARANTEE_REASONS,
+  foldGuaranteeDeclaration,
+  isAdmissibleReason,
+  isWeakerReason,
+  stateOfOrderReason,
+  weakerGuarantee,
+} from "./causal-guarantees.ts";
+export type {
+  CausalGuarantee,
+  CausalGuaranteeReason,
+  CausalGuaranteeTriple,
+  CoverageOrder,
+  GuaranteeKind,
+  OrderReason,
+  StoredGuaranteeReason,
+} from "./causal-guarantees.ts";

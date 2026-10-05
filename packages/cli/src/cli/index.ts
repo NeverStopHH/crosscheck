@@ -22,6 +22,7 @@ import {
   INIT_REMOVE_FLAG,
   runInitGlobal,
 } from "./init-global.ts";
+import { runProjectRemove } from "./init-remove.ts";
 import { LOGIN_USAGE, readSecretFromStdin, runLogin } from "./login.ts";
 import type { CliResult, SecretReader } from "./login.ts";
 import {
@@ -31,8 +32,19 @@ import {
   runPresence,
   runUnmute,
 } from "./privacy.ts";
-import { PIN_FLAG_BROKE, PIN_FLAG_CHECK, PIN_FLAG_FILES, PIN_FLAG_OK, PIN_FLAG_SWEEP, PIN_USAGE, runPin } from "./pin.ts";
-import { NOISE_USAGE, runNoise } from "./noise.ts";
+import {
+  PIN_FLAG_BROKE,
+  PIN_FLAG_CHECK,
+  PIN_FLAG_FILES,
+  PIN_FLAG_OK,
+  PIN_FLAG_REASON,
+  PIN_FLAG_SWEEP,
+  PIN_FLAG_EXPIRES,
+  PIN_FLAG_WAIVE,
+  PIN_USAGE,
+  runPin,
+} from "./pin.ts";
+import { HELPFUL_USAGE, NOISE_USAGE, runHelpful, runNoise } from "./noise.ts";
 import { KEY_FLAG_PRINT, KEY_USAGE, runKey } from "./key.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { SUSPECT_USAGE, runSuspect } from "./suspect.ts";
@@ -43,11 +55,20 @@ import {
   PILOT_USAGE,
   runPilot,
 } from "./pilot.ts";
+import { PILOT_LABEL_SUBCOMMAND, runPilotLabel } from "./pilot-label.ts";
+import type { LabelTerminal } from "./terminal.ts";
 import { REVALIDATE_USAGE, runRevalidate } from "./revalidate.ts";
 import { runStatus } from "./status.ts";
 import { resolveVersion } from "./version.ts";
 
 export type { CliResult, SecretReader } from "./login.ts";
+
+/** Flags that only shape an INSTALL — a removal reads none of them. */
+const INSTALL_ONLY_FLAGS = [
+  INIT_HUB_FLAG,
+  INIT_COMMAND_PREFIX_FLAG,
+  INIT_FORCE_STATUSLINE_FLAG,
+] as const;
 
 const USAGE = [
   "usage: crosscheck <command>",
@@ -59,6 +80,8 @@ const USAGE = [
   "  init [--command-prefix <p>] [--hub <url>] [--force-statusline] [--cursor]",
   "                            --cursor additionally merges .cursor/hooks.json +",
   "                            .cursor/mcp.json (Cursor IDE capture, same one-PR install)",
+  "  init --remove [--cursor]  unwire this repo's project copy; keeps .crosscheck.json",
+  "                            and the user-level install (init --global --remove)",
   "  status                    hub, repo, teammates, spool, last sync",
   "  doctor                    diagnose the local install",
   "  conference [--publish]    read this repo's open work, run ONE bounded",
@@ -68,12 +91,15 @@ const USAGE = [
   "  pin list | pin --broke <id> | pin --ok <id> | pin --sweep",
   "                            the registry and its coverage · retract a pin ·",
   "                            say its check passed · re-resolve pinned paths",
-  "  suspect <pin-id|path…>    which sessions touched a broken surface, and what",
+  "  trace <pin-id|path…>      which sessions touched a broken surface, and what",
   "                            they said they were doing",
   "  pilot [--days N] [--json] the five proofs for this repo, each measured",
   "                            or saying why not (per repo, never per person)",
+  "  pilot label               label what reached you unasked, one key each:",
+  "                            helpful, noise or unclear (humans only)",
   "  noise [<id>]              one word: the intervention a session just got",
-  "                            was off-target (no text, no question)",
+  "                            was noise (pilot label's n key, as a command)",
+  "  helpful [<id>]            one word: it helped (pilot label's h key)",
   "  revalidate                ask whether the code under this repo's recorded",
   "                            claims has moved, and record what this clone saw",
   "  presence [off|on]         hide/show your live presence to teammates",
@@ -90,6 +116,9 @@ const USAGE = [
   "  acp-report <record-file>  which capture signals an agent emitted, from",
   "                            an `acp --record` transcript (per-agent",
   "                            capture-quality measurement)",
+  "  ci-report --junit <file> --job <name> --ref <branch> --sha <sha> …",
+  "                            a CI step, not a developer's command: send what",
+  "                            this run's tests saw to the hub (ci-report --help)",
   "",
 ].join("\n");
 
@@ -106,6 +135,18 @@ const DOCTOR_USAGE = [
   "  diagnoses the local install; exit 0 healthy, 1 warnings, 2 failures",
   "",
 ].join("\n");
+
+/**
+ * `suspect` IS NOW `trace` (Nick, 2026-09-30). The answer names SESSIONS that
+ * touched a surface, and "suspect" read as an accusation of a person — the one
+ * thing the command refuses to make. The 0.10 name still runs, so scripts and
+ * habits keep working, and says the new name first. Internally the module
+ * keeps its 0.10 name, and so do the wire path (`/api/suspect`) and the stored
+ * delivery channel: renaming those would break every 0.10 client and every
+ * stored row for a word nobody reads.
+ */
+export const TRACE_RENAME_NOTICE =
+  "note: `crosscheck suspect` is now `crosscheck trace`; the old name still works\n";
 
 /**
  * Every user-facing subcommand and what its argv may carry. The gate
@@ -133,11 +174,22 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   },
   pin: {
     usage: PIN_USAGE,
-    valueFlags: [PIN_FLAG_CHECK, PIN_FLAG_BROKE, PIN_FLAG_OK, PIN_FLAG_FILES],
+    valueFlags: [
+      PIN_FLAG_CHECK,
+      PIN_FLAG_BROKE,
+      PIN_FLAG_OK,
+      PIN_FLAG_FILES,
+      PIN_FLAG_WAIVE,
+      PIN_FLAG_EXPIRES,
+      PIN_FLAG_REASON,
+    ],
     booleanFlags: [PIN_FLAG_SWEEP],
   },
+  trace: { usage: SUSPECT_USAGE },
+  // The 0.10 name, kept as an alias (see TRACE_RENAME_NOTICE).
   suspect: { usage: SUSPECT_USAGE },
   noise: { usage: NOISE_USAGE },
+  helpful: { usage: HELPFUL_USAGE },
   pilot: {
     usage: PILOT_USAGE,
     valueFlags: [PILOT_FLAG_DAYS],
@@ -160,6 +212,12 @@ export interface CliOptions {
    * agent must not be able to vouch for a human (cli/pin.ts).
    */
   readonly isInteractive?: InteractiveProbe;
+  /**
+   * The one conversation this CLI holds — `crosscheck pilot label` reads a
+   * key per intervention (cli/terminal.ts). A parameter for the same reason
+   * as `isInteractive`; omitted, it is this process's own terminal.
+   */
+  readonly terminal?: LabelTerminal;
 }
 
 export const runCli = async (
@@ -192,6 +250,18 @@ export const runCli = async (
     case "login":
       return runLogin(rest, env, readSecret);
     case "init": {
+      // "Refusing beats ignoring", the --global --hub rule below, for removal
+      // (review 2026-10-05): an install-only flag on `--remove` was dropped
+      // silently, so `init --remove --hub x` read as having used it.
+      const refusedFlag = rest.includes(INIT_REMOVE_FLAG)
+        ? INSTALL_ONLY_FLAGS.find((flag) => rest.includes(flag))
+        : undefined;
+      if (refusedFlag !== undefined) {
+        return {
+          stdout: `${refusedFlag} does not apply to ${INIT_REMOVE_FLAG} — a removal takes no install options (${INIT_CURSOR_FLAG} is the only flag it reads)\n${INIT_USAGE}`,
+          exitCode: EXIT_USAGE,
+        };
+      }
       if (rest.includes(INIT_GLOBAL_FLAG)) {
         const parsed = parseInitArgs(rest);
         // --hub has no meaning at machine scope: each repo's committed
@@ -212,11 +282,10 @@ export const runCli = async (
           env,
         );
       }
+      // The project-side uninstall (pilot, 2026-10): THIS repo's copy only —
+      // .crosscheck.json, foreign entries and the user-level install stay.
       if (rest.includes(INIT_REMOVE_FLAG)) {
-        return {
-          stdout: `${INIT_REMOVE_FLAG} applies to the user-level install: run \`crosscheck init ${INIT_GLOBAL_FLAG} ${INIT_REMOVE_FLAG}\`\n${INIT_USAGE}`,
-          exitCode: EXIT_USAGE,
-        };
+        return runProjectRemove({ cursor: rest.includes(INIT_CURSOR_FLAG) }, env, cwd);
       }
       return runInit(rest, env, cwd);
     }
@@ -235,18 +304,31 @@ export const runCli = async (
       return options.isInteractive === undefined
         ? runPin(rest, env, cwd)
         : runPin(rest, env, cwd, options.isInteractive);
-    case "suspect":
+    case "trace":
       return runSuspect(rest, env, cwd);
+    case "suspect": {
+      const result = await runSuspect(rest, env, cwd);
+      return { ...result, stdout: `${TRACE_RENAME_NOTICE}${result.stdout}` };
+    }
     // 07 §5. A pull like the two above: one hub read, then the fix diffs run
-    // on this clone, because the hub holds no repository.
+    // on this clone, because the hub holds no repository. 07 §12's label
+    // walk is the one subcommand: a person's verdicts, gated like `noise`.
     case "pilot":
-      return runPilot(rest, env, cwd);
-    // 07 §3.2. The pilot's one human input: typed beside a session, gated on
-    // a person at a terminal exactly as `pin` is.
+      return rest[0] === PILOT_LABEL_SUBCOMMAND
+        ? runPilotLabel(rest.slice(1), env, cwd, options.isInteractive, options.terminal)
+        : runPilot(rest, env, cwd);
+    // 07 §3.2. The one-word shortcut for `pilot label`'s `n` key: typed beside
+    // a session, gated on a person at a terminal exactly as `pin` is.
     case "noise":
       return options.isInteractive === undefined
         ? runNoise(rest, env, cwd)
         : runNoise(rest, env, cwd, options.isInteractive);
+    // Second review, M6: the same gesture for the other verdict, so the
+    // in-the-moment word is not only the negative one.
+    case "helpful":
+      return options.isInteractive === undefined
+        ? runHelpful(rest, env, cwd)
+        : runHelpful(rest, env, cwd, options.isInteractive);
     // D5's manual trigger: the same bounded check `get_diagnosis` runs, typed
     // by a person, so a repo nobody pulls a diagnosis from stops reading
     // `unknown` forever. A pull like the two above — no hook, no injection.

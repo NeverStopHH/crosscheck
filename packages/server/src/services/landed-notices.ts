@@ -63,6 +63,7 @@ import {
 import { agentSessions, developerEmails, developers, landedNotices } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
+import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { storedSpelling } from "./landed-context.ts";
 import { checkOwnedSession, rejectedOutcome } from "./record-handlers.ts";
 import type { HandlerOutcome } from "./record-handlers.ts";
@@ -95,7 +96,10 @@ const toldCommits = async (
   const known = await deps.db
     .select({ email: developerEmails.email, developerId: developerEmails.developerId })
     .from(developerEmails)
-    .where(inArray(developerEmails.email, emails));
+    // A cloud agent's commit identity is nobody's, whatever row is held
+    // (services/cloud-agent-identity.ts): a stop naming someone for it is
+    // naming a person git never did.
+    .where(and(inArray(developerEmails.email, emails), resolvesToDeveloper(developerEmails.email)));
   const owner = new Map(known.map((row) => [row.email, row.developerId]));
   const seen = new Set<string>();
   return commits.filter((commit) => {

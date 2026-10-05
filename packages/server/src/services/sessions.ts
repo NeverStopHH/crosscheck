@@ -1,5 +1,11 @@
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
-import type { SeqField, SessionStatus } from "@crosscheck/schema";
+import { isSeqStamp, settleLossReport } from "@crosscheck/schema";
+import type {
+  SeqField,
+  SessionStatus,
+  SettledLossCounts,
+  TelemetryLossReport,
+} from "@crosscheck/schema";
 
 import {
   EVENT_KINDS,
@@ -11,6 +17,12 @@ import { pruneLandedNotices } from "./landed-notices.ts";
 import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
 import { agentSessions, sessionEvents } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
+import {
+  capContradictedGuarantee,
+  storeDeclaredGuarantees,
+  weakenDeclaredGuarantees,
+} from "./causal-guarantees.ts";
+import { hasIntentPositionPast } from "./intent-ledger.ts";
 import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -73,6 +85,69 @@ const requireWrittenRow = (rows: SessionRow[]): SessionRow => {
   return row;
 };
 
+type LossColumns = Pick<
+  typeof agentSessions.$inferInsert,
+  | "lossReportedAt"
+  | "lossTotal"
+  | "lossKinds"
+  | "lossOldestAt"
+  | "lossNewestAt"
+  | "lossIgnoredAt"
+>;
+
+const toInstant = (iso: string | null): Date | null =>
+  iso === null ? null : new Date(iso);
+
+/**
+ * WHAT COVERAGE NEEDS ABOUT THE IGNORED KIND, DECIDED ONCE, ON WRITE (review
+ * C1). The rung used to cast `loss_kinds->>'hub_ignored'` to int4 at read
+ * time, and one report carrying 3e9 made every read of the repo throw. The
+ * read now compares an instant: the newest ignored loss when the report
+ * dates it (`ignoredNewestAt`, review M3), else an UPPER BOUND on it — the
+ * report's newest, which no single loss in it postdates, or `now` when the
+ * report could not date it, since nothing reported now happened later.
+ * An upper bound errs towards "still in the window", the weakening side.
+ */
+const ignoredUpperBound = (
+  settled: SettledLossCounts,
+  report: TelemetryLossReport,
+  now: Date,
+): Date | null =>
+  (settled.kinds.hub_ignored ?? 0) > 0
+    ? (toInstant(report.ignoredNewestAt ?? null) ?? toInstant(report.newestAt) ?? now)
+    : null;
+
+const reportedColumns = (
+  report: TelemetryLossReport,
+  settled: SettledLossCounts,
+  now: Date,
+): LossColumns => ({
+  lossReportedAt: now,
+  lossTotal: settled.total,
+  lossKinds: settled.kinds,
+  lossOldestAt: toInstant(report.oldestAt),
+  lossNewestAt: toInstant(report.newestAt),
+  lossIgnoredAt: ignoredUpperBound(settled, report, now),
+});
+
+/**
+ * THE CONNECTOR'S REPORT, FOLDED ONTO ITS ROW (docs/1.0/loss-accounting.md
+ * §4.4). Absent = touch nothing: a connector from before the field is read as
+ * "never reported", which is not zero and not a gap (§4.7). Present = last
+ * report wins, all six columns at once, so a row never carries the total of
+ * one report beside the span of another. `settleLossReport` folds every key
+ * this hub does not know into `unattributed` — no connector-chosen string
+ * reaches the row — and stores the larger of the sent total and the folded
+ * kinds' sum, saturated at int4.
+ */
+const lossColumns = (
+  report: TelemetryLossReport | undefined,
+  now: Date,
+): Partial<LossColumns> =>
+  report === undefined
+    ? {}
+    : reportedColumns(report, settleLossReport(report), now);
+
 export type RegisterSessionResult =
   | { readonly outcome: "created" | "updated"; readonly session: SessionView }
   | { readonly outcome: "foreign_session" }
@@ -97,6 +172,7 @@ export const registerSession = async (
       status: input.status,
       startedAt: timestamp,
       lastHeartbeatAt: timestamp,
+      ...lossColumns(input.losses, timestamp),
     })
     .onConflictDoNothing()
     .returning();
@@ -108,6 +184,10 @@ export const registerSession = async (
       repo: insertedRow.repo,
       branch: insertedRow.branch,
     });
+    // THE DECLARATION BEFORE THE FIRST ROW (01a §3.6): `session.started` is
+    // itself a row that can overrule it — a recovery that could not mint an
+    // epoch sends a refusal at n = 0 — and a cap needs a declaration to cap.
+    await storeDeclaredGuarantees(deps.db, insertedRow.id, input.guarantees);
     // `session.started` — position n = 0 by construction, not by allocation:
     // the state file the allocator reads does not exist yet when this call is
     // made. A SessionStart RE-FIRE re-registers the same id and is answered by
@@ -159,9 +239,13 @@ export const registerSession = async (
       branch: input.branch,
       baseCommit: input.baseCommit,
       lastHeartbeatAt: timestamp,
+      ...lossColumns(input.losses, timestamp),
     })
     .where(eq(agentSessions.id, input.id))
     .returning();
+  // A RE-REGISTER ONLY WEAKENS (01a §3.6): the rows already stored were
+  // produced under the first declaration.
+  await weakenDeclaredGuarantees(deps.db, input.id, input.guarantees);
   return {
     outcome: "updated",
     session: toSessionView(requireWrittenRow(updated)),
@@ -179,6 +263,7 @@ export const heartbeatSession = async (
   developerId: string,
   sessionId: string,
   status?: SessionStatus,
+  losses?: TelemetryLossReport,
 ): Promise<HeartbeatResult> => {
   const existing = await findSessionById(deps.db, sessionId);
   if (existing === undefined) {
@@ -191,11 +276,16 @@ export const heartbeatSession = async (
     return { outcome: "already_ended" };
   }
 
+  const now = deps.now();
   const updated = await deps.db
     .update(agentSessions)
     .set({
-      lastHeartbeatAt: deps.now(),
+      lastHeartbeatAt: now,
       ...(status === undefined ? {} : { status }),
+      // The connector's ledgers as of this beat (loss-accounting §4.2): the
+      // most frequent of the three carriers, so a loss mid-session reaches
+      // coverage within HEARTBEAT_MIN_INTERVAL_MS rather than at the end.
+      ...lossColumns(losses, now),
     })
     .where(eq(agentSessions.id, sessionId))
     .returning();
@@ -213,6 +303,7 @@ export const endSession = async (
   sessionId: string,
   status?: SessionStatus,
   seq?: SeqField,
+  losses?: TelemetryLossReport,
 ): Promise<EndSessionResult> => {
   const existing = await findSessionById(deps.db, sessionId);
   if (existing === undefined) {
@@ -223,6 +314,7 @@ export const endSession = async (
   }
 
   const finalStatus = status ?? DEFAULT_END_STATUS;
+  const now = deps.now();
   // A REAPED END IS AN INFERENCE; THIS ONE IS REPORTED. The reaper closes a
   // session it only presumes dead (`reaped_at`), and the session's own
   // SessionEnd is exactly the fact that settles it — so it replaces the
@@ -231,7 +323,13 @@ export const endSession = async (
   // eligible for 01a's sweep, and its `session.ended` position never written.
   const updated = await deps.db
     .update(agentSessions)
-    .set({ endedAt: deps.now(), status: finalStatus, reapedAt: null })
+    .set({
+      endedAt: now,
+      status: finalStatus,
+      reapedAt: null,
+      // The session's last word about its own ledgers (loss-accounting §4.2).
+      ...lossColumns(losses, now),
+    })
     .where(
       and(
         eq(agentSessions.id, sessionId),
@@ -292,6 +390,12 @@ export const endSession = async (
     refKind: "session",
     refId: row.id,
   });
+  // The ledger half of "the end is the terminal position" (review M1): an
+  // intent version positioned past this end overrules its `lifecycle`.
+  // recordSessionEvent asked the skeleton; only the ledger may ask the ledger.
+  if (isSeqStamp(seq) && (await hasIntentPositionPast(deps.db, row.id, seq))) {
+    await capContradictedGuarantee(deps.db, row.id, "session.ended");
+  }
   // 07 §3.6: this session's residue, at the moment it ended. HUB-SIDE and
   // AFTER the ledger write, so the sequence statistic includes the position
   // this end just allocated — reading it first would report every session as

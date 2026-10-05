@@ -37,6 +37,7 @@ const COMPLETE: CoverageRecord = {
   repo: "github.com/acme/api",
   computedAt: NOW.toISOString(),
   scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+  order: { state: "undeclared", reason: "hub_did_not_report" },
   sources: [
     { source: "agent_event", state: "complete", reason: "sessions_reported", gapSince: null, observedAt: NOW.toISOString() },
     { source: "git", state: "complete", reason: "commits_reported", gapSince: null, observedAt: NOW.toISOString() },
@@ -251,6 +252,28 @@ describe("protection is printed only when it says something", () => {
     // Assert
     expect(reasonLine).toContain("«Rollout is blocked»");
     expect(reasonLine?.split("«").length).toBe(2);
+  });
+
+  test("D-PK-1: a conflict whose fence the hub closed says the passkey that approved it was revoked", () => {
+    // Arrange & Act
+    const lines = verdictLines(
+      verdict({
+        protection: "PROTECTED_CONFLICT",
+        closedWaiver: {
+          id: "fw_11111111-2222-4333-8444-555555555555",
+          closedAt: "2026-09-12T08:00:00.000Z",
+          heldUntil: EXPIRY_ISO,
+          reason: "authorizing_credential_revoked",
+        },
+      }),
+      NOW,
+    ).join("\n");
+
+    // Assert
+    expect(lines).toContain("no waiver covers it");
+    expect(lines).toContain(
+      "waiver fw_11111111-2222-4333-8444-555555555555 CLOSED by the hub 1h ago — the passkey that approved it was revoked; it would have held until 2026-09-13T09:00:00.000Z",
+    );
   });
 
   test("a waiver with no reason says so rather than framing a blank", () => {

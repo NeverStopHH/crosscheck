@@ -35,6 +35,7 @@ import {
   recordBriefingDeliveries,
 } from "@crosscheck/connector-core/flows/briefing.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
@@ -118,6 +119,7 @@ export const handleCursorSessionStart = async (
     title: await resolveFallbackWorkContextTitle(ctx.identity),
     status: INITIAL_STATUS,
     now,
+    guarantees: guaranteeDeclarationFor("cursor-ide"),
   });
 
   // The observed Cursor build, for doctor's ≥1.7 evidence (design §3.2).

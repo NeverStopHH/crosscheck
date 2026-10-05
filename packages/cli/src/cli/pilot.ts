@@ -41,6 +41,7 @@ export const PILOT_FLAG_BY_DEVELOPER = "--by-developer";
 
 export const PILOT_USAGE = [
   "usage: crosscheck pilot [--days N] [--json]",
+  "   or: crosscheck pilot label    label what reached you unasked, one key each",
   "",
   "  The five proofs for this repo, each measured or saying why not:",
   "  duplicate work surfaced, collisions flagged before merge, attribution",

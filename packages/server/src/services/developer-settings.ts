@@ -12,9 +12,10 @@
  * No outbox events are appended here on purpose: broadcasting "X just opted
  * out" would itself be a presence signal about X.
  */
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
 import { developerEmails, developerMutes, developers } from "../db/schema.ts";
+import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { listDeveloperEmails } from "./developers.ts";
 import type { DeveloperEmailView } from "./developers.ts";
 import type { Db } from "../db/client.ts";
@@ -173,7 +174,14 @@ export const resolveDeveloperRef = async (
     .select({ id: developers.id, name: developers.name })
     .from(developerEmails)
     .innerJoin(developers, eq(developers.id, developerEmails.developerId))
-    .where(eq(developerEmails.email, trimmed.toLowerCase()))
+    .where(
+      and(
+        eq(developerEmails.email, trimmed.toLowerCase()),
+        // A cloud agent's commit identity names nobody, whatever row is held
+        // (services/cloud-agent-identity.ts).
+        resolvesToDeveloper(developerEmails.email),
+      ),
+    )
     .limit(1);
   if (byEmail[0] !== undefined) {
     return { outcome: "resolved", developer: byEmail[0] };

@@ -56,6 +56,8 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
               <a href="/ui/feed">Feed</a>
               <a href="/ui/members">Members</a>
               <a href="/ui/approvals">Approvals</a>
+              <a href="/ui/waivers">Waivers</a>
+              <a href="/ui/passkeys">Passkeys</a>
             </nav>
             <span class="viewer">
               {viewer.name}

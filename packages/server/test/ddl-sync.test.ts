@@ -6,6 +6,7 @@ import {
   MAX_CLAIM_BODY_LENGTH,
   MAX_INTENT_AMEND_REASON_CHARS,
   MAX_INTENT_SUMMARY_CHARS,
+  MAX_PILOT_LABEL_REASON_CHARS,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
@@ -14,9 +15,12 @@ import {
   NO_COMMIT_SHA,
 } from "@crosscheck/schema";
 
+import { getTableConfig } from "drizzle-orm/pg-core";
+
+import { sessionCausalGuarantees } from "../src/db/schema.ts";
+import { BOOTSTRAP_SQL_URL, guardedBlockNamed } from "./fixtures/bootstrap-sql.ts";
 import { createTestHarness } from "./helpers.ts";
 
-const BOOTSTRAP_SQL_URL = new URL("../src/db/bootstrap.sql", import.meta.url);
 const CLAIMS_BODY_CHECK_PATTERN =
   /claims_body_length_check CHECK \(char_length\(body\) <= (\d+)\)/;
 const QUESTIONS_BODY_CHECK_PATTERN =
@@ -25,23 +29,6 @@ const PINS_SURFACE_CHECK_PATTERN =
   /pins_surface_length_check CHECK \(char_length\(surface\) <= (\d+)\)/;
 const PINS_CHECK_RECIPE_PATTERN =
   /pins_check_length_check\s+CHECK \(check_recipe IS NULL OR char_length\(check_recipe\) <= (\d+)\)/;
-/**
- * The one guarded `DO $$ … $$;` block that mentions a given constraint.
- *
- * bootstrap.sql holds several, and it runs top to bottom on every hub start;
- * picking one by its own name is the only extraction that stays correct as
- * blocks are appended below it.
- */
-const guardedBlockNamed = (sql: string, constraintName: string): string => {
-  const blocks = sql.match(/DO \$\$[\s\S]*?END\s*\n\$\$;/g) ?? [];
-  const matching = blocks.filter((block) => block.includes(constraintName));
-  if (matching.length !== 1) {
-    throw new Error(
-      `expected exactly 1 guarded block naming ${constraintName}, found ${String(matching.length)}`,
-    );
-  }
-  return matching[0] ?? "";
-};
 
 const WAIVER_REASON_CHECK_PATTERN =
   /fence_waivers_reason_length_check CHECK \(char_length\(reason\) <= (\d+)\)/;
@@ -53,6 +40,8 @@ const INTENT_SUMMARY_CHECK_PATTERN =
   /work_context_intents_summary_length_check CHECK \(char_length\(summary\) <= (\d+)\)/;
 const INTENT_REASON_CHECK_PATTERN =
   /work_context_intents_reason_length_check\s+CHECK \(reason IS NULL OR char_length\(reason\) <= (\d+)\)/;
+const PILOT_REASON_CHECK_PATTERN =
+  /pilot_marks_reason_length_check\s+CHECK \(reason IS NULL OR char_length\(reason\) <= (\d+)\)/;
 
 describe("bootstrap.sql DDL sync", () => {
   test("claims body CHECK matches MAX_CLAIM_BODY_LENGTH", async () => {
@@ -450,6 +439,40 @@ describe("bootstrap.sql DDL sync", () => {
     }
   });
 
+  test("the loss columns reach an EXISTING hub and really exist after a bootstrap", async () => {
+    // Arrange — the same trap as the case below: a column only in the CREATE
+    // never reaches a hub that already has the table. The loss columns are
+    // ALTER-only on purpose (the reaped_at pattern), so the text check is
+    // that each ALTER exists, and the database check is that they ran.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'agent_sessions' AND column_name LIKE 'loss\\_%' ORDER BY column_name`,
+    );
+
+    // Assert
+    for (const fragment of [
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_reported_at timestamptz;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_total integer NOT NULL DEFAULT 0;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_kinds jsonb;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_oldest_at timestamptz;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;",
+      "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+    expect(rows.rows.map((row) => String(row.c))).toEqual([
+      "loss_ignored_at",
+      "loss_kinds",
+      "loss_newest_at",
+      "loss_oldest_at",
+      "loss_reported_at",
+      "loss_total",
+    ]);
+  });
+
   test("07's two new columns reach an EXISTING hub, not only a fresh one", async () => {
     // The trap this case exists for: a column added only to the CREATE TABLE
     // is a column no hub that already has the table will ever get, because
@@ -515,6 +538,110 @@ describe("bootstrap.sql DDL sync", () => {
     ]) {
       expect(bootstrapSql, fragment).toContain(fragment);
     }
+  });
+
+  test("07 §12's two pilot columns are in BOTH authorities, with the reason bound", async () => {
+    // Arrange — `pilot_marks.reason` and `pilot_sessions.cohort` are ADDED
+    // columns: a hub that already has the table only ever gets them from the
+    // ALTER, and a fresh one only from the CREATE. Either alone is a
+    // deployment that differs from the other. The reason's bound is a
+    // database fact, held to the same constant the route applies.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const reasonCheck = guardedBlockNamed(bootstrapSql, "pilot_marks_reason_length_check").match(
+      PILOT_REASON_CHECK_PATTERN,
+    );
+
+    // Assert
+    for (const fragment of [
+      "ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS reason text",
+      "  reason text,",
+      // 'legacy', not 'discovery' (second review, H1): every row that exists
+      // when the column is added was written by a 0.10 hub, before anybody
+      // could label anything helpful, so it belongs to neither cohort.
+      "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS cohort text NOT NULL DEFAULT 'legacy'",
+      "cohort text NOT NULL DEFAULT 'legacy',",
+      "ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_labels_since timestamptz",
+      // The slot is a start position, unique per repo (second review, M1/M4).
+      "  slot integer,",
+      "ALTER TABLE pilot_sessions ADD COLUMN IF NOT EXISTS slot integer",
+      "CREATE UNIQUE INDEX IF NOT EXISTS pilot_sessions_repo_slot_idx",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+    expect(reasonCheck).not.toBeNull();
+    expect(Number(reasonCheck?.[1])).toBe(MAX_PILOT_LABEL_REASON_CHARS);
+  });
+
+  test("the reason column and its bound really exist after a bootstrap", async () => {
+    // Arrange — the text assertions above; this asks the database.
+    const harness = await createTestHarness();
+
+    // Act
+    const columns = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'pilot_marks' AND column_name = 'reason'`,
+    );
+    const cohort = await harness.db.execute(
+      sql`SELECT column_default AS d FROM information_schema.columns WHERE table_name = 'pilot_sessions' AND column_name = 'cohort'`,
+    );
+    const constraint = await harness.db.execute(
+      sql`SELECT conname AS n FROM pg_constraint WHERE conname = 'pilot_marks_reason_length_check'`,
+    );
+
+    // Assert
+    expect(columns.rows).toHaveLength(1);
+    expect(String(cohort.rows[0]?.d ?? "")).toContain("legacy");
+    expect(constraint.rows).toHaveLength(1);
+  });
+
+  test("a hub that ran the 0.10 pilot upgrades: old rows are `legacy`, enrolled repos get labels-since, the cohort CHECK exists", async () => {
+    // Arrange — the 0.10 shape: no `pilot_sessions.cohort`, no
+    // `team_settings.pilot_labels_since`; one enrolled repo and one recorded
+    // session. bootstrap.sql then runs IN FULL, as it does on every hub start.
+    const harness = await createTestHarness();
+    for (const statement of [
+      sql`ALTER TABLE pilot_sessions DROP COLUMN cohort`,
+      sql`ALTER TABLE pilot_sessions DROP COLUMN slot`,
+      sql`ALTER TABLE team_settings DROP COLUMN pilot_labels_since`,
+      sql`INSERT INTO developers (id, name, email, api_key_hash, created_at)
+          VALUES ('dev_old', 'Nick', 'nick-old@example.com', 'hash_old', now())`,
+      sql`INSERT INTO agent_sessions
+            (id, developer_id, agent_kind, repo, branch, base_commit, status, started_at, last_heartbeat_at)
+          VALUES ('ses_old', 'dev_old', 'claude-code', 'github.com/acme/api', 'main', 'a1b2c3d4', 'done', now(), now())`,
+      sql`INSERT INTO pilot_sessions (session_id, repo, observed_at, end_reason, coverage)
+          VALUES ('ses_old', 'github.com/acme/api', now(), 'reported', '[]'::jsonb)`,
+      sql`INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at)
+          VALUES ('github.com/acme/api', 'anyone', 'sessions', true, now()),
+                 ('github.com/acme/web', 'anyone', 'sessions', false, now())`,
+    ]) {
+      await harness.db.execute(statement);
+    }
+    const client = (harness.db as unknown as { $client: { exec: (text: string) => Promise<unknown> } }).$client;
+
+    // Act
+    await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
+
+    // Assert — the old row is outside both cohorts; only the enrolled repo
+    // learns when labels became available; and a cohort word nobody defined
+    // is refused on THIS hub too, not only on a fresh one (L3)
+    const row = await harness.db.execute(sql`SELECT cohort AS c FROM pilot_sessions WHERE session_id = 'ses_old'`);
+    const since = await harness.db.execute(
+      sql`SELECT repo AS r, pilot_labels_since IS NOT NULL AS s FROM team_settings ORDER BY repo`,
+    );
+    const check = await harness.db.execute(
+      sql`SELECT conname AS n FROM pg_constraint WHERE conname = 'pilot_sessions_cohort_check'`,
+    );
+    const slotIndex = await harness.db.execute(
+      sql`SELECT indexname AS n FROM pg_indexes WHERE indexname = 'pilot_sessions_repo_slot_idx'`,
+    );
+    expect(row.rows[0]?.c).toBe("legacy");
+    expect(slotIndex.rows).toHaveLength(1);
+    expect(since.rows).toEqual([
+      { r: "github.com/acme/api", s: true },
+      { r: "github.com/acme/web", s: false },
+    ]);
+    expect(check.rows).toHaveLength(1);
   });
 
   test("the four pilot tables really exist after a bootstrap", async () => {
@@ -719,5 +846,34 @@ describe("bootstrap.sql DDL sync", () => {
       "pilot_attributions_top_session_idx",
       "work_context_intents_session_idx",
     ]);
+  });
+
+  test("session_causal_guarantees has drizzle's columns and key on a real bootstrap, idempotently", async () => {
+    // Arrange — drizzle's columns are the authority every service writes by;
+    // a bootstrap that spelled one differently is a register that 500s on
+    // exactly the deployments that run bootstrap.sql.
+    const harness = await createTestHarness();
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const drizzleColumns = getTableConfig(sessionCausalGuarantees)
+      .columns.map((column) => column.name)
+      .sort();
+
+    // Act: the harness ran the whole file once; a restart runs this statement
+    // again (db.execute prepares one command, so it is cut out on its own).
+    const statement = /CREATE TABLE IF NOT EXISTS session_causal_guarantees \([\s\S]*?\);/.exec(
+      bootstrapSql,
+    )?.[0];
+    await harness.db.execute(sql.raw(statement ?? "SELECT missing_statement"));
+    const columns = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'session_causal_guarantees' ORDER BY column_name`,
+    );
+    const key = await harness.db.execute(
+      sql`SELECT a.attname AS c FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = 'session_causal_guarantees'::regclass AND i.indisprimary ORDER BY a.attname`,
+    );
+
+    // Assert
+    expect(bootstrapSql).toContain("CREATE TABLE IF NOT EXISTS session_causal_guarantees (");
+    expect(columns.rows.map((row) => String(row["c"]))).toEqual(drizzleColumns);
+    expect(key.rows.map((row) => String(row["c"]))).toEqual(["kind", "session_id"]);
   });
 });

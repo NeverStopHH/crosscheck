@@ -1828,6 +1828,28 @@ export const MAX_SEARCH_CHARS = 2400;
 export const HUB_MAX_DIAGNOSIS_TARGETS = 100;
 
 /**
+ * Mirrors the hub's COVERAGE_SESSION_WINDOW_DAYS (server src/constants.ts):
+ * how far back the `agent_event` rung looks, and therefore how old a loss in
+ * this machine's ledgers can be and still be one the hub's coverage should
+ * reflect (docs/1.0/loss-accounting.md §5.2). Mirrored rather than sent for
+ * the same reason as HUB_MAX_DIAGNOSIS_TARGETS above: doctor compares a local
+ * ledger with a hub record, and the record does not carry its own window.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.HUB_COVERAGE_WINDOW_DAYS === s.COVERAGE_SESSION_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const HUB_COVERAGE_WINDOW_DAYS = 14;
+
+/**
+ * The capture-loss ledger's byte cap (state/loss-ledger.ts): past it the
+ * detail stops and the count becomes a floor doctor says out loud, rather
+ * than a file that grows with every timed-out hook for ever. The same figure
+ * the Cursor connector's drift ledger uses (connector-cursor/src/constants.ts
+ * MAX_DRIFT_LEDGER_BYTES), for the same reason.
+ */
+export const MAX_LOSS_LEDGER_BYTES = 65_536;
+
+/**
  * Target rows one diagnosis SHOWS, of however many the hub sent.
  *
  * The section exists so a reader about to edit the same corner sees the
@@ -2171,6 +2193,17 @@ export const PILOT_FIX_DIFF_MAX_REPAIRS = 25;
 export const NOISE_MARK_WINDOW_MINUTES = 60;
 
 /**
+ * How far back `crosscheck pilot label` walks (07 §12): one day, in minutes.
+ *
+ * The walk is typed AFTER a session, not beside it, so the hour that bounds
+ * `crosscheck noise` is too short — and a person can only judge what they
+ * still remember, so a week is too long: a label on a pointer nobody can
+ * picture any more is a guess, and the walk exists to replace guesses. A day
+ * covers "at the end of the day" and "first thing the next morning".
+ */
+export const PILOT_LABEL_WINDOW_MINUTES = 1440;
+
+/**
  * The git evidence lane's deadline (regression-guard Stage 1). One `git diff
  * --name-only HEAD` inside the Stop hook's spare budget, at the same 250 ms
  * every other Stop-adjacent git call uses — well under one HTTP_TIMEOUT_MS,
@@ -2182,12 +2215,27 @@ export const NOISE_MARK_WINDOW_MINUTES = 60;
 export const GIT_TOUCHES_TIMEOUT_MS = 250;
 
 /**
- * How many changed paths the git lane will even consider. Bounded BEFORE the
- * per-file mtime stat, because a rebase or a vendored drop can leave hundreds
- * of files dirty and the lane runs inside a hook budget. The tool lane's
- * per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies afterwards.
+ * How many changed paths the git lane stats for freshness. Bounded BEFORE the
+ * per-file mtime stat, because a rebase or a vendored drop can leave thousands
+ * of files dirty and the lane runs inside the Stop hook's budget
+ * (STOP_BUDGET_RATIO × HTTP_TIMEOUT_MS = 800 ms by default). Every path past
+ * the bound is booked `capture-capped`, since nobody looked at it; every path
+ * within it is examined, so a stale one books nothing (loss-accounting §10
+ * item 8, decided by Nick 2026-10-02 — it was 60, and a worktree that stayed
+ * more than 60 files dirty read `incomplete` for as long as it did).
+ *
+ * WHERE 2000 COMES FROM: measured 2026-10-02 on an Apple M4 Max, Bun 1.3.13,
+ * the lane's own loop (one sequential `await stat()` per path) over files in
+ * nested directories — 2000 paths took 21.7 ms median and 22.7 ms worst of
+ * five runs (about 11 µs a stat; 60 took 0.5 ms, 5000 took 59 ms). The rule:
+ * the stat pass at the bound costs at most a tenth of the lane's own git
+ * deadline (GIT_TOUCHES_TIMEOUT_MS, 250 ms), which leaves a disk ten times
+ * slower than the measuring machine inside one git deadline.
+ *
+ * The per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies to the
+ * fresh paths afterwards, and counts what it cuts the same way.
  */
-export const MAX_GIT_TOUCH_CANDIDATES = 60;
+export const MAX_GIT_TOUCH_CANDIDATES = 2000;
 
 /**
  * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────
@@ -2206,3 +2254,13 @@ export const MAX_GIT_TOUCH_CANDIDATES = 60;
  * PRINTS: true 160
  */
 export const MAX_COVERAGE_LINE_CHARS = 160;
+
+/**
+ * At most this many lines (decided by Nick, 2026-10-02). The order block's
+ * reason is never dropped for length: a line too long is shortened first —
+ * the git rung's instant to its day, then the reaped/unclosed label, then the
+ * git rung's instant — and only as a last resort does the clause take a
+ * second line, each line within MAX_COVERAGE_LINE_CHARS. The agent rung's
+ * minute (COV-1) and the age beside it (COV-11) are never shed.
+ */
+export const MAX_COVERAGE_LINES = 2;

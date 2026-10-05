@@ -42,6 +42,7 @@ const completeCoverage = (): CoverageRecord => ({
   repo: REPO,
   computedAt: NOW.toISOString(),
   scope: { sinceIso: "2026-08-25T14:00:00.000Z" },
+  order: { state: "undeclared", reason: "no_session_in_scope" },
   sources: COVERAGE_SOURCES.map((source) => ({
     source,
     state: "complete" as const,

@@ -29,6 +29,7 @@ const recordWith = (
   repo: "github.com/acme/api",
   computedAt: "2026-07-24T09:00:00.000Z",
   scope: { sinceIso: "2026-07-10T09:00:00.000Z" },
+  order: { state: "undeclared", reason: "no_session_in_scope" },
   sources: [
     { source: "agent_event", state: agentEvent, reason: "sessions_reported", gapSince: null, observedAt: null },
     { source: "git", state: git, reason: "commits_reported", gapSince: null, observedAt: null },

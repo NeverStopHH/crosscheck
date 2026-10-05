@@ -82,29 +82,30 @@ export interface DeriveCapabilityManifest {
 }
 
 /**
- * THE REFUSAL THAT BELONGS TO EVERY HOST, PHRASED ONCE AND SHARED BY
+ * THE LIMIT THAT BELONGS TO EVERY HOST, PHRASED ONCE AND SHARED BY
  * REFERENCE.
  *
  * Two of the nine canonical kinds — `intent.declared` and `intent.amended`,
- * the two AT-4 is actually about — are projected by nobody.
- * `work_contexts.intent` is overwritten in place, so an amendment has no row
- * of its own to carry a position; projecting both kinds off that one mutable
- * row would give the declaration and every amendment ONE referent, and the
- * amendments would be discarded as duplicates of the sentence they replace.
- * Until the versioned ledger lands they are NOT PROJECTED AT ALL rather than
- * projected wrongly.
+ * the two AT-4 is actually about — are not projected into `session_events`.
+ * The versioned intent ledger (server services/intent-ledger.ts) positions
+ * each version on its own row instead, and both kinds have producers on every
+ * host: `set_intent` (MCP) and the derived intent worker. The declaration
+ * table (guarantees/declarations.ts) states them `partial /
+ * derived_after_the_fact` on all three hosts, and this line says the same —
+ * test/derive-capability-registry.test.ts reads the words off the table.
+ * (Until 2026-10-02 it said "no host emits" them, from before the ledger
+ * landed; decided by Nick, 2026-10-02.)
  *
  * IT IS A FACT ABOUT THE MODEL, NOT ABOUT A HOST, so it is not three
- * sentences. Two manifests named the kinds nowhere at all — the silent
+ * sentences. Two manifests once named the kinds nowhere at all — the silent
  * absence rule 2 above forbids — and the third scoped the absence to a
  * NON-DEFAULT flag, which told a default-mode reader the kinds worked for
- * them. Shared by reference so there is one line to delete on the day the
- * ledger lands.
+ * them.
  */
 export const UNPROJECTED_LEDGER_KINDS_REFUSAL: DeriveRefusal = {
   name: "intent timing events",
   sentence:
-    "no host emits `intent.declared` or `intent.amended` yet, on any platform and in any mode: `work_contexts.intent` is OVERWRITTEN in place, so an amendment has no row of its own to carry a position and projecting both kinds off that one mutable row would discard every amendment as a duplicate of the sentence it replaces — so `crosscheck` records WHAT this session says it is doing and cannot yet say whether an explanation was written before or after the change it excuses; the versioned intent ledger is what supplies the row, and this line goes away with it",
+    "`intent.declared` and `intent.amended` are positioned on the intent ledger's own rows, not in the session's events, and on every host they are partial / derived_after_the_fact: `set_intent` positions a version when the agent calls it, but the session picker can withhold that position, and the derived intent worker positions its version when it writes it down, after the turn it describes — which the hub stores as an upper bound, so whether an explanation came before or after the change it excuses is answered only where both positions were emitted",
 };
 
 /** Lookup that cannot silently miss: an undeclared capability is a bug. */

@@ -1154,3 +1154,392 @@ projections alone, so a session whose touch was never projected is sweepable (it
 the counts are hub-wide on a route every developer reads; and the cycle's cursor lives in memory, so a hub
 that restarts more often than one cycle takes (candidates ÷ 250 × 15 minutes) never judges its newest
 candidates — `doctor` then keeps saying the sweep has not finished a cycle, which is true.
+
+## 13. What the build found (minimal Provider Guarantees, 2026-10-01)
+
+Built on `feat/provider-guarantees`, stacked on `feat/loss-accounting`: §3.6 and §3.7 in full, and §5's
+coverage-line and doctor rows for them. Nothing of §3.5, §3.4 or the `full` sweep mode. Paths below are
+`packages/…`; line numbers are as of this section's commit.
+
+**13.1 — The declarations, derived from the code.** The table is
+`connector-core/src/guarantees/declarations.ts`. Each row lists its lanes and the modules that take its
+positions. The stated guarantee is the weakest-lane fold of those lanes (`foldLanes`), and the build check
+refuses any row whose statement differs from that fold.
+
+| kind | `claude-code` | `cursor-ide` | `acp:*` |
+|---|---|---|---|
+| `session.started` | guaranteed / `lifecycle` | guaranteed / `lifecycle` | guaranteed / `lifecycle` |
+| `file.modified` | partial / `unbracketed_lane` | partial / `unbracketed_lane` | partial / `unbracketed_lane` |
+| `tool.failed` | partial / `unbracketed_lane` | partial / `unbracketed_lane` | partial / `unbracketed_lane` |
+| `claim.created` | partial / `derived_after_the_fact` | partial / `derived_after_the_fact` | partial / `derived_after_the_fact` |
+| `claim.invalidated` | partial / `ambiguous_session_possible` | partial / `ambiguous_session_possible` | partial / `ambiguous_session_possible` |
+| `commit.observed` | partial / `observed_lane_only` | unavailable / `no_emitter` | unavailable / `no_emitter` |
+| `session.ended` | guaranteed / `lifecycle` | guaranteed / `lifecycle` | guaranteed / `lifecycle` |
+| `intent.declared`, `intent.amended` | partial / `derived_after_the_fact` | partial / `derived_after_the_fact` | partial / `derived_after_the_fact` |
+
+The evidence for each row:
+
+- **`session.started`**: the register flow sends `seq: { epoch, n: 0 }` and allocates nothing
+  (`connector-core/src/flows/register-session.ts:170`). Claude has a second origin that the first scan
+  missed: the mid-session recovery in PostToolUse, `{ epoch: derived.seqEpoch, n: 0 }`
+  (`connector-claude/src/hooks/post-tool-use.ts:78`).
+- **`session.ended`**: `end-session.ts:86` allocates the end before the state file is deleted. A
+  detached worker can still allocate past it in that gap, so "nothing can allocate after it", as this
+  line first said, was false (review L5). The hub now caps the declaration when such a row lands
+  (§13.9, M1). The deferred ender carries that same position on its marker. Until
+  review H4 that was true for Claude and Cursor only: ACP's shutdown ender dropped it (§13.9).
+- **Claude `file.modified`**:
+  - Edit-family calls are bracketed: `pre-tool-use.ts:188` opens the window and `post-tool-use.ts:284`
+    closes it.
+  - Bash is in `POST_TOOL_USE_MATCHER` and not in `PRE_TOOL_USE_MATCHER` (`constants.ts:1630-1632`).
+  - The Stop git lane observes (`stop.ts:186`).
+- **Cursor and ACP `file.modified`**: neither registers a pre-tool handler (`file-edit.ts:103`,
+  `engine.ts:718`).
+- **`tool.failed`**:
+  - Claude: a failed Edit's fingerprint rides the bracketed block (`post-tool-use.ts:284`), while
+    `post-tool-use-failure.ts:118` keeps the position and drops the bracket on purpose.
+  - Cursor: `post-tool-use.ts:125`, `shell.ts:45`, `tool-failure.ts:74`.
+  - ACP: `engine.ts:799`.
+- **`claim.created`**: the MCP tools `publish_claim`, `review_draft` and `extend_diagnosis`, plus the
+  summarizer (`derive/summarizer/derive.ts:190`) and the ghost worker (`derive/ghost/worker.ts:366`).
+- **`claim.invalidated`**: only `review_draft` (a `supersedes` edge) and `extend_diagnosis` (its edge
+  kind) write edges. No worker writes one.
+- **`commit.observed`**: Claude's SessionStart positions the aggregate (`session-start.ts:363`), and the
+  hub stores every commit row `observed` (`server/src/services/commit-evidence.ts:150`).
+  `collectCommitEvidence` has no other caller.
+- **The intent kinds**: `set_intent` (MCP) and the derived intent worker (`derive/intent/worker.ts:230`).
+  The ledger positions every version (`server/src/services/intent-ledger.ts:246`), and a derived intent
+  may amend a derived head (`record-handlers.ts:299`, `mergeIntent`).
+- **The MCP lane** is declared on all three hosts. The server is `crosscheck mcp`
+  (`connector-core/src/mcp/server.ts`), which no connector imports: Claude's install writes it, Cursor's
+  `init/init.ts` merges it, and ACP injects it in `--inject` mode.
+
+**13.2 — Where the table departs from §3.6's draft, and why.**
+
+- **Claude's `commit.observed` is partial / `observed_lane_only`, not guaranteed / `lifecycle`.** The hub
+  stores every commit row `observed`, so a lifecycle declaration would be overruled by the first commit
+  row. The draft read the lane, not the projection.
+- **The intent kinds are partial / `derived_after_the_fact`, not unavailable / `not_built`.** 06's ledger
+  has landed, and its two producers are live.
+  - `connector-core/src/derive/capabilities.ts`'s `UNPROJECTED_LEDGER_KINDS_REFUSAL` still printed "no
+    host emits `intent.declared` or `intent.amended` yet", beside a doctor line that said otherwise.
+  - It was first left as found (§13.8). It is now corrected, as decided by Nick, 2026-10-02 (§13.11).
+- **The "builder derives" cells are filled above**: ACP `tool.failed`, `claim.created` and
+  `claim.invalidated` everywhere, and ACP `session.ended`.
+- **One strength order resolves ties**, and it lives in the schema (`ORDER_REASON_STRENGTH`,
+  `schema/src/causal-guarantees.ts:108`):
+  - Inside `partial` the order, weakest first, is `declaration_contradicted` < `derived_after_the_fact` <
+    `unbracketed_lane` < `observed_lane_only` < `ambiguous_session_possible`.
+  - This follows §3.6's "the summarizer's claims are a weaker lane than MCP ambiguity".
+  - An observing lane beside a tool lane reads `unbracketed_lane`. `observed_lane_only` is kept for a
+    kind that only observing lanes produce, so the reason is true of the kind.
+- **ACP's edit position can come before the edit.** It is taken off the announcing `tool_call` row, so it
+  bounds the edit in neither direction. `unbracketed_lane`'s gloss ("positions only after the fact")
+  understates that, but the state is the same: the hub stores it `observed`.
+
+**13.3 — The build check** (`connector-core/src/guarantees/check.ts`, a pure judgement;
+`connector-core/test/guarantee-declarations.test.ts`, the scan).
+
+- **What the scan reads.** It covers the import graph of `connector-core`, `-claude`, `-cursor` and
+  `-acp` `src`, with comments stripped, and since Nick's decision of 2026-10-02 (§13.11.4) `cli` as well,
+  for `crosscheck conference`.
+- **Allocator identity is resolved through the import specifier.** A name from `state/session-state.ts`
+  is connector-core's allocator; a name from `mcp/tools/shared.ts` is the MCP helper.
+- **A connector can run** its own `src` import closure plus the closure of `mcp/server.ts`.
+- **The four §3.6 directions are checked, and two more are added**, because a table could satisfy the
+  first four with the right modules under the wrong kinds:
+  - A module may be listed under a kind only if its source builds that kind: a capture-flow import, a
+    `claim` / `claim_edge` envelope literal, `withRecordedIntent`, or the origin literal.
+  - A stated declaration must equal the fold of its lanes.
+- **The exceptions are data, not code paths.**
+  - `ALLOCATOR_WRAPPERS`: the MCP helper.
+  - Origin modules send n = 0 without allocating. They are held to the map as producers of
+    `session.started`, and the check found the recovery origin.
+- **Register call sites are pinned too.** Each one in a connector package must pass its own connector's
+  table (`connector-claude/src/hooks/session-start.ts:252`, `post-tool-use.ts:87`; Cursor
+  `session-start.ts:122`, `recover.ts:136`; ACP `engine.ts:532`). Without that, a Cursor handler could
+  type-check while sending Claude's table.
+- **Every `endSession` call forwards a position** (review H4). `session.ended` has no evidence
+  pattern, and a deferred ender forwards a marker's position without allocating one. So neither
+  check above can see an ender that drops it. The scan reads every `endSession(` call in the four
+  connector packages and refuses one without a third argument.
+
+**13.4 — Transport and storage.**
+
+- **The wire block.** `RegisterSessionBodySchema` gains `guarantees: z.unknown().optional()`
+  (`server/src/http/schemas.ts:53`). It is loose on purpose: a newer connector's words must not cost the
+  session its registration. `foldGuaranteeDeclaration` reads what it can, reads the rest as `undeclared`,
+  and stores a block it cannot read as nothing.
+- **The register flow.** The flow's `guarantees` input is required, so no host can omit it. The hub
+  client's is optional, so `crosscheck conference` can register with no lanes.
+- **The table.** `session_causal_guarantees` is defined in `server/src/db/schema.ts:1053` and
+  `bootstrap.sql:629` and covered by the DDL-sync case. The retention registry has it as the
+  `non_retaining_edge` §3.3b names (`services/retention-registry.ts:193`).
+- **Stored at creation, before the `session.started` row** (`services/sessions.ts:152`), because that row
+  can itself overrule it.
+- **A re-register only weakens** (`sessions.ts:210`). A kind the new block omits, or a missing block,
+  removes the row.
+- **Deviation: the cap is written, not derived on read.**
+  - A row with `seq_kind = observed`, or one with no position, rewrites a `guaranteed` declaration of its
+    kind to `partial / declaration_contradicted` in place. A reap is no longer an exception (§13.9, M1),
+    and positioned rows are now held to what `lifecycle` itself promises.
+  - This happens for `session_events` (`services/session-events.ts:222`) and for the ledger's two kinds
+    (`services/intent-ledger.ts:506`).
+  - So the `reason` column holds `STORED_GUARANTEE_REASONS` (§3.6's nine plus `declaration_contradicted`).
+  - The reason: a cap read from `session_events` would be lifted by the sweep deleting the row that
+    caused it, which is the strengthening direction. The test "the cap outlives the row" pins this.
+  - Only `guaranteed` is capped. Capping `unavailable` to `partial` would raise it.
+
+**13.5 — The `order` block (§3.7).**
+
+- **The fold** is `server/src/services/coverage-order.ts:71`. It runs over the agent_event rung's own
+  scope, `sessionScope` in `coverage.ts`, the one definition the rung reads too. Since the review
+  (§13.9, H3) it also includes the sessions the answer itself names, passed as `answerSessionIds`
+  (`orderSessionIds` until the rung joined the same fold, §13.10.4).
+- **Which kinds a question needs**, decided for the reads that exist (`coverage.ts:685` and the two
+  routes):
+  - `GET /api/suspect` computes 04's verdict, whose timing answer is `explanationTimingFor`, so it reads
+    `file.modified`, `intent.declared` and `intent.amended` (`routes/suspect.ts:103`).
+  - Search, hints, work contexts, the pilot snapshot and `GET /api/absences` ask no ordering question of
+    their own, so they read all nine. That is the weakest reading. Absences read `commit.observed` alone
+    until review L3 (§13.9).
+- **The edge cases:**
+  - An empty scope is `undeclared / no_session_in_scope`.
+  - A session missing any needed row makes the scope `undeclared / provider_undeclared`.
+  - A stored reason this hub cannot name ranks as `provider_undeclared`.
+  - Found while building: `Number(null)` is 0, so a NULL minimum and an unknown reason both read rank 0,
+    `no_session_in_scope`, for scopes that had sessions.
+- **The wire twin fails closed.** An absent block, an unreadable one, or one whose state is not its
+  reason's own reads `undeclared / hub_did_not_report` (`connector-core/src/http/coverage.ts:117`).
+- **Unchanged and still pinned:** `isJudgeable` does not read `order`, and `COVERAGE_REASONS` is not
+  extended. The parity test and both COV-6 no-aggregate tests cover the block.
+- **Deviation:** §5's `over <n> sessions` is not rendered. §3.7 removed the count, and the count lives in
+  doctor.
+
+**13.6 — Rendering.**
+
+- **The coverage line.** The fragment `order: <state> (<reason>)` sits after both judging rungs
+  (`orderFragment` in `connector-core/src/coverage/render.ts`).
+- **What a full line spends** (`coverageClause`, `LINE_FORMS`), as decided by Nick on 2026-10-02
+  (§13.11). The first build spent the order block's reason first, and H1 then reserved the state word.
+  Both rules are replaced: the reason is never spent, and neither is the state.
+  - The timestamp format goes first: the git rung's minute becomes its day.
+  - Then the less important metadata: the `reaped`/`unclosed` label, then the git rung's instant and
+    its age.
+  - As a last resort the clause takes a second line, each line within 160 (`MAX_COVERAGE_LINES = 2`).
+  - Never shed: any rung, the agent rung's minute (COV-1 pins it), its age (COV-11 rests on it), and
+    the order block's state and reason.
+  - So CSK-9's `order: partial (declaration_contradicted)` renders in full on every shape. COV-11's own
+    shape (a reaped rung, no commit evidence, the order block) takes two lines.
+- **Doctor.**
+  - `causal guarantees (<connector>)` is printed on every host: the CLI doctor's Claude section
+    (`cli/src/cli/doctor.ts:3833`) and Cursor's and ACP's own sections.
+  - `declaration_contradicted` is WARN above zero, and "not measured" when the hub sent nothing. Its count
+    comes from `GET /api/sessions/order`'s `declarations.contradicted` (`routes/sessions.ts:83`).
+  - Deviation: §5 does not say whose count. It is the caller's own sessions only, the scope that route
+    already has.
+
+**13.7 — Not built, and what that leaves.**
+
+- §3.5 attestation, §3.4 redaction and the `full` mode, as instructed.
+- CSK-13, which needs the attestation input.
+- **Per-session MCP-lane facts.** An ACP proxy in `--no-inject` mode has no MCP lane and still declares
+  one. A declaration that includes an extra lane can only be weaker than one without it.
+- **Sessions that predate the deploy** have no declaration and read `undeclared`. So does a scope
+  containing them, until they leave the window, along with sessions from older connectors and
+  `crosscheck conference`'s.
+
+**13.8 — For Nick.** (All four decided by Nick on 2026-10-02: §13.11.)
+
+1. `UNPROJECTED_LEDGER_KINDS_REFUSAL` is stale, and doctor now prints it beside a table that contradicts
+   it. Retiring it is 06's change to make.
+2. The coverage line spends the order block's reason before the ages. The alternative keeps CSK-9's full
+   text on every shape and loses COV-11's daily distinguishability.
+3. The `declaration_contradicted` count is per caller. A repo-wide or hub-wide count would need a scope the
+   order route does not have.
+4. Should `crosscheck conference` register sessions with a declaration of its own (every kind
+   `unavailable / no_emitter`)? Today they read `undeclared` and pull any scope containing them to
+   `undeclared`.
+
+**13.9 — What the review of 2026-10-02 changed.** Each entry names the direction its failure falls.
+
+- **H2 — a `guaranteed` reason must be one the kind can carry.** Coherence (reason ↔ state) was the only
+  check, so any client could store `commit.observed guaranteed / bracketed_by_pre_tool`, and
+  `GET /api/absences` read `order: guaranteed`. The fold now also asks `isAdmissibleReason`
+  (`schema/src/causal-guarantees.ts`):
+  - `lifecycle` only on `session.started` and `session.ended`;
+  - `bracketed_by_pre_tool` only on `BRACKETABLE_KINDS` (`file.modified`, `tool.failed`), which a server
+    test holds equal to `TARGET_EVENT_KINDS`;
+  - never on `commit.observed`, `claim.*` or `intent.*`.
+  - Every weaker reason stays admissible on every kind. An inadmissible pair reads `undeclared /
+    provider_undeclared`, so the failure falls toward the weakest reading. The caps for the kinds that
+    can no longer be stored `guaranteed` stay, as a second guard for a row that reaches the table
+    another way.
+- **H1 — the coverage line could cut the order block's state word.** §13.6 said it never did, and the
+  test beside the rule accepted the cut. `fit` stops at the first fragment that does not fit, and
+  with both rungs gapped and carrying an instant (up to 158 characters before the order block)
+  `; order: <state>` was that fragment. Under a path scope that showed `order: partial` and hid `undeclared`, the longer word.
+  - The plainest line now picks its rungs to leave the state word's room. The git rung keeps its words
+    and gives up its instant ("commit authors with no reported session"). The reserved rungs then get
+    what is left. (Superseded the same day by Nick's decision §13.11.2: the reason is kept as well, and
+    a second line is the last resort.)
+  - The failure falls on the git rung's instant, never on a rung or on the state.
+  - `coverage-render.test.ts` checks every shape (373,248: every rung state and reason for both
+    judging rungs, every ci state, both scopes, every order reason). The state word is present and the
+    line is within 160 in all of them. The reviewer's probe now counts 0 drops.
+- **H3 — the order block folded over other sessions than the ones the answer named.** Suspect picks
+  candidates by work-context activity, and an update from a successor session keeps an old work
+  context inside the window. The order scope reads heartbeats, so an undeclared candidate with a
+  20-day-old heartbeat was missing from the minimum. The answer named `ses_old` while `order` read the
+  declared session beside it (`partial`, or `guaranteed` when that session over-declared).
+  - `readCoverage` now takes `orderSessionIds` and folds over the rung's scope plus those sessions.
+    `GET /api/suspect` computes its candidates first and passes them.
+  - The failure falls toward the weaker minimum: a fold over more sessions can only be lower.
+  - Left as found: the agent_event rung itself still reads `complete / sessions_reported` for the same
+    scope. That is 03's predicate, and the order block no longer inherits it (§13.10).
+    **Closed 2026-10-05** (§13.10.4): the rung folds over the same sessions.
+- **H4 — ACP's deferred end sent no position.** `reapSpool` hands the ender the marker's seq. Claude
+  and Cursor forwarded it, but ACP's shutdown ender (`connector-acp/src/capture/engine.ts`) called
+  `endSession(hub, id)`.
+  - Every deferred ACP end arrived `pre_seq_connector`. That capped the `lifecycle` declaration and
+    made doctor's WARN blame a row of the session's own.
+  - ACP now forwards the seq. `capture-engine.test.ts` spends a marker at shutdown and reads the end
+    positioned at the marker's n.
+  - The scan rule in §13.3 refuses any `endSession(` call without a seq. The failure falls toward a
+    red build.
+- **M1 — nothing checked what `lifecycle` itself promises.** Only `observed` or unpositioned rows capped,
+  so an end below a stored row, a start at n = 7, an end in another epoch, and a reaped session all
+  stayed `guaranteed / lifecycle`. `capLifecycleContradictions` (`server/src/services/causal-guarantees.ts`)
+  now runs on every positioned row:
+  - `session.started` away from n = 0 caps `session.started`;
+  - a positioned row above the end, or in another epoch, caps `session.ended`. This is checked in both
+    orders, because a successor can flush a record the ended session stamped past its end. A producer
+    cannot write into its own ended session, so that is the late path that exists.
+  - A reap caps `session.ended`: the end was never observed.
+  - The intent ledger shares the session's counter. INT-7 lets only `services/intent-ledger.ts` read
+    it, so the end route asks the new reader `hasIntentPositionPast` (positions only). INT-7's registry
+    lists that reader and its one caller, `services/sessions.ts`, with the reason (§13.10).
+  - The failure falls toward `partial / declaration_contradicted`. A cap is never lifted, so a reaped
+    session that later revives and ends with a position keeps its cap.
+- **M2 — guards with no test that would fail if weakened.** Each now has a test and a proven anchor in
+  `server/test/causal-guarantees.test.ts`:
+  - the `intent.amended` branch of the ledger's cap (a second, amending version);
+  - the `epoch_conflict` path (a second event on a taken position);
+  - the cap from a derived `claim.created` row and from a `commit.observed` row. After H2 neither kind
+    can be stored `guaranteed` from the wire, so the tests write the row directly: the cap is the second
+    guard.
+  - ACP's seq forwarding and the render rule were covered under H4 and H1.
+- **L1 — a tie inside one state kept the stronger reason.** The wire fold kept the first triple of a
+  kind sent twice, and a re-register compared states only. Both now break the tie by
+  `ORDER_REASON_STRENGTH` (`isWeakerReason` in the schema), the order the hub's fold over a scope
+  already used. A kind sent as `ambiguous_session_possible` and `derived_after_the_fact` keeps the
+  latter in either order, and a re-register can lower the reason inside `partial`. A cap is the
+  weakest `partial` reason, so a re-register never lifts one. The failure falls on the weaker reason.
+- **L2 — a re-register's read decided its write.** `weakenDeclaredGuarantees` read the stored rows and
+  then wrote. Two concurrent re-registers both read `guaranteed`, and the later write of `partial`
+  lifted the other's `unavailable`, a state no serial order produces.
+  - Each kind is now one conditional UPDATE that compares the sent reason with the stored row's rank in
+    SQL (`reasonRankSql`, the CASE the scope fold uses). Kinds the block omits go in one DELETE.
+  - A cap that lands beside a re-register now leaves a serial outcome too.
+  - **Not fixed: two concurrent FIRST registers.** The second one's weaken can run before the first
+    one's store, which loses its weaker block. The fix is a transaction around the session insert and
+    the store. No in-process test can force a stall between those two statements, and both registers of
+    one session send one connector's table, which the review calls benign. Left for Nick (§13.10).
+- **L3 — the absence census folded order over `commit.observed` alone.** The census is wall-clock and
+  asks no ordering question, and the build's own rule for such a read is all nine kinds. The route now
+  passes no `orderKinds`, and the unused `COMMIT_KINDS` is gone. The failure falls toward the lower
+  minimum. For an honest Claude session the state was already `partial`; only the reason changes.
+- **L4 — the test reader trusted the stored `guarantee` column.** `readEffectiveGuarantees`, which every
+  cap test judges through, now derives the state from the reason the way the scope fold does. A reason
+  this hub cannot name reads `undeclared`. `TOUCH_KINDS`, which no route used, moved into the test
+  that does. The failure falls toward `undeclared`.
+- **L5 — three false claims.**
+  - §13.1's "the deferred ender carries that same position" was false for ACP. It is corrected there and
+    fixed (H4).
+  - §13.6 and `render.ts` said the state word was never spent while it could be cut. That is now true
+    by construction and checked over every shape (H1).
+  - "Nothing can allocate after" the end, in `declarations.ts` and §13.1, was false: a detached worker
+    can allocate between the end's allocation and the state delete. Both now say so, and M1 caps the
+    declaration when it happens.
+
+**13.10 — For Nick, after the review.**
+
+1. **Two concurrent first registers (L2, not fixed).** The fix is a transaction around the session
+   insert and `storeDeclaredGuarantees`. No in-process test can force the stall between them, and both
+   registers of one session send one connector's table.
+2. **INT-7 has a new reader caller.** `services/sessions.ts` calls `hasIntentPositionPast`, positions
+   only, to cap `session.ended` (M1). The registry entry states the reason. Your call whether the end
+   route may read the ledger's clock.
+3. **A cap is never lifted.** A reaped session that revives and ends with a position keeps `partial /
+   declaration_contradicted` on `session.ended` (M1). Lifting a cap on later evidence would need the
+   cap to remember what it replaced.
+4. **The agent_event rung's scope (H3).** The order block now folds over suspect's candidates. The
+   agent_event rung beside it still reads `complete / sessions_reported` over the heartbeat window,
+   which is 03's predicate.
+   **Closed 2026-10-05, on Nick's go-ahead:** the rung folds over the same scope (`sessionScope` in
+   `coverage.ts`), with the named sessions passed by trace, `get_diagnosis` and the tripwire as
+   `answerSessionIds`. A named session can only weaken the rung (03 §3.2a). The same day's review of
+   that fix closed four more gaps:
+   - A named session keeps the loss window, because a loss report is the machine's ledger.
+   - A named session must be on the question's repo.
+   - Under `paths` the scope reads the session that delivered a context's latest update
+     (`work_contexts.updated_by_session_id`), which is how a successor makes trace's candidate active.
+   - The rung's instants come only from sessions the viewer may be told about, and a hidden gap
+     or loss withholds `gapSince` rather than leave a later one standing.
+5. **03 §5.3 still says "one line"** (§13.11.2). The renderer and its tests now allow two. A longer
+   note also makes it more likely that a hint near `MAX_HINT_TEXT_LENGTH` drops the note. That
+   behaviour predates this round.
+6. **The conference's claims (§13.11.4).** `partial / derived_after_the_fact` becomes true only once
+   the conference positions its records, for example with a counter of its own minted with an epoch at
+   register. Also: the vocabulary has no reason for "produced, never positioned". `not_built` is the
+   nearest, and `no_emitter` is kept for what it literally says.
+
+**13.11 — Decided by Nick, 2026-10-02** (the four questions of §13.8).
+
+1. **The outdated intent-kinds sentence is corrected.** `UNPROJECTED_LEDGER_KINDS_REFUSAL` now says what
+   the declaration table says: both kinds live on the intent ledger's own rows, `partial /
+   derived_after_the_fact` on every host. It also says why: the picker can withhold `set_intent`'s
+   position, and the derived worker positions after the turn. `derive-capability-registry.test.ts`
+   reads the state and reason off `DECLARATION_TABLE` for every host, so the line cannot drift from the
+   table again.
+2. **The order reason is never dropped for line length.** This changes the build's choice in §13.8.2.
+   In Nick's words, the state says THAT something is missing, the reason says WHAT, and for doctor the
+   reason is more diagnostic than a fresh timestamp. The shortening order is in §13.6.
+   - How I read "timestamp format first, then less important metadata" against COV-1 and COV-11:
+     - COV-1 pins the agent rung's minute, so only the git rung's instant is shortened.
+     - COV-11 needs the age to tell an ageing caveat from a recurring one, so the age is not metadata to
+       shed. Its own shape is 162+ characters with the reason, so it takes the second line, and its
+       fourteen daily sentences stay distinct.
+   - Once a second line is taken there is room again, so the fullest form whose split fits is used.
+   - The exhaustive render test now asserts the state AND the reason in all 373,248 shapes, at most two
+     lines, and each line within 160. The five-rung sweep (1,024 shapes) carries the longest order block.
+   - 03 §5.3 still says the coverage line is "one line". This decision supersedes that for the order
+     block's sake; 03's text is left for Nick to amend (§13.10).
+3. **The `declaration_contradicted` count stays per caller, and doctor says so.** Every count the line
+   prints now opens with "counts your own sessions only, not your team's:". The scope comes before the
+   number, so the number is never read as the team's (`connector-core/src/guarantees/doctor.ts`,
+   `OWN_SESSIONS_ONLY`). The "not measured" line carries no count and is unchanged.
+4. **`crosscheck conference` declares an explicit profile.** `CONFERENCE_CONNECTOR`'s table sits in
+   `connector-core/src/guarantees/declarations.ts` beside the hosts'. The conference sends it on
+   register (`cli/src/cli/conference.ts`).
+   - **What the code shows it produces:** `session.started`, `claim.created` (the findings it publishes)
+     and `session.ended`. Nothing else: no targets, no edges, no commit aggregate, no intent.
+   - **What it positions: nothing.** It has no session state, so it has no counter. It registers with
+     the `allocation_failed` refusal, its claims carry no seq (`buildEnvelope` sets none), and it ended
+     with no seq at all. It now ends with the refusal too, so the hub records `allocation_failed`, not
+     `pre_seq_connector`.
+   - **So every row is `unavailable`.** That is the only statement the build check admits for a kind no
+     module positions, and the only one not stronger than the code. The three kinds it produces
+     unpositioned read `not_built` (their positions' producer does not exist). The six it never
+     produces read `no_emitter`.
+   - **Departure from Nick's example.** Nick named `claim.created` as `partial / derived_after_the_fact`.
+     That is the summarizer's row, and the summarizer positions its claims. The conference does not,
+     so `partial` would be stronger than the code, and the check refuses it (a test pins that refusal).
+     Making it true needs the conference to take positions (§13.10).
+   - **Held to the code by the same check:**
+     - its register call is pinned to its own table;
+     - its reachable set is `conference.ts`'s import closure;
+     - a table that claims a position, or maps it under a lane, fails the build;
+     - its `endSession` call is held to a seq by H4's rule.
+   - **Effect:** a scope containing a conference session now reads `unavailable (not_built)` rather than
+     `undeclared (provider_undeclared)`. That is still the weakest reading the sessions can support.

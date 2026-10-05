@@ -218,6 +218,36 @@ export const isCurrent = (validity: ClaimValidity): boolean =>
   validity.state === "current";
 
 /**
+ * The states that are a positive measurement AGAINST a claim: the code moved
+ * past it, its author took it back, or a later claim replaced it.
+ */
+export const NON_CURRENT_VALIDITY_STATES: ReadonlySet<string> = new Set([
+  "stale",
+  "invalidated",
+  "superseded",
+]);
+
+/**
+ * May search treat this cause as a settled answer worth lifting (the solved
+ * floor in services/search.ts)? The same two terms as the connector's
+ * substance gate (connector-core/src/claim-validity.ts `isAssertableValidity`),
+ * so a tree search lifts is a tree the hint lanes would assert, and a parity
+ * test (connector-core/test/claim-validity-parity.test.ts) pins the two to
+ * agree on every state and binding:
+ *   1. `commitBinding !== "none"` — a cause with no observation point can
+ *      never be revalidated, so it can never be shown to still hold.
+ *   2. `state ∉ NON_CURRENT_VALIDITY_STATES` — no positive measurement
+ *      against it.
+ * `unknown` passes, for the reason that gate states: most causes were never
+ * revalidated, and refusing them silences collective memory for every
+ * existing solved tree. Measured on 2026-09-30 with `current` alone as the
+ * rule: substance recall in the golden precision corpus fell from 1.0 to 0.91.
+ */
+export const isAssertableCause = (validity: ClaimValidity): boolean =>
+  validity.commitBinding !== "none" &&
+  !NON_CURRENT_VALIDITY_STATES.has(validity.state);
+
+/**
  * The latest reading for each of these claims, in ONE batched query.
  *
  * The diagnosis route does not need the edges half (it already holds every

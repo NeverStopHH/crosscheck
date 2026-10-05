@@ -20,6 +20,7 @@ import {
 import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { sql } from "drizzle-orm";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
@@ -646,6 +647,48 @@ describe("the conference command", () => {
     expect(CONFERENCE_DERIVED_CONFIDENCE).toBeLessThan(DERIVED_CONFIDENCE_CAP);
     expect(onAlice[0]?.body).toContain(SENTENCE);
     expect(onAlice[0]?.body).toContain(`get_diagnosis ${KEN_CONTEXT}`);
+  });
+
+  test("a published conference session declares what it can order, explicitly (decided by Nick, 2026-10-02)", async () => {
+    // Arrange
+    const model = await makeFakeModel({ output: `A+B: ${SENTENCE}` });
+
+    // Act: either this run files the finding, or the hub already holds an
+    // unreviewed conference draft on Alice's tree and the guard holds this
+    // one back — either way a conference session filed the draft asked about.
+    await runConferenceFor(["--publish"], { CROSSCHECK_SUMMARIZER_CMD: model });
+
+    // Assert: the session that filed the finding stored nine rows, none undeclared.
+    expect(
+      (await claimsOn(ALICE_CONTEXT)).some((entry) => entry.body.startsWith("Conference finding")),
+    ).toBe(true);
+    const authored = await db.execute(
+      sql`SELECT author_session_id AS id FROM claims WHERE body LIKE 'Conference finding%' ORDER BY created_at DESC LIMIT 1`,
+    );
+    const sessionId = String((authored.rows[0] as { id: string } | undefined)?.id);
+    const rows = await db.execute(
+      sql`SELECT kind, guarantee, reason FROM session_causal_guarantees WHERE session_id = ${sessionId} ORDER BY kind`,
+    );
+    const declared = new Map(
+      (rows.rows as { kind: string; guarantee: string; reason: string }[]).map((row) => [
+        row.kind,
+        `${row.guarantee} / ${row.reason}`,
+      ]),
+    );
+    expect(declared.size).toBe(9);
+    // What it produces but never positions: no counter exists for a state-less command.
+    for (const kind of ["session.started", "claim.created", "session.ended"]) {
+      expect(declared.get(kind), kind).toBe("unavailable / not_built");
+    }
+    // What it never produces.
+    for (const kind of ["file.modified", "tool.failed", "claim.invalidated", "commit.observed", "intent.declared", "intent.amended"]) {
+      expect(declared.get(kind), kind).toBe("unavailable / no_emitter");
+    }
+    // And its end says why it has no position, rather than "a connector from before the field".
+    const ended = await db.execute(
+      sql`SELECT seq_reason FROM session_events WHERE session_id = ${sessionId} AND kind = 'session.ended'`,
+    );
+    expect(ended.rows).toEqual([{ seq_reason: "allocation_failed" }]);
   });
 
   test("the report names the two sides freshest first whatever the model wrote", async () => {

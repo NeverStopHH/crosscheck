@@ -27,6 +27,8 @@
  */
 import { resolve } from "node:path";
 
+import { cloudAgentForEmail } from "@crosscheck/schema";
+
 import { MAX_LANDED_COMMITS_SCANNED } from "../constants.ts";
 import { runGitOutcome } from "../git/git.ts";
 import type { LandingRef } from "./landing-branches.ts";
@@ -60,9 +62,10 @@ export const gitStdout = (context: GitContext, args: readonly string[]): Promise
   context.isCancelled() ? Promise.resolve(null) : context.run(args);
 
 const FIELD = "\x00";
-/** full sha, short sha, author, email, committer time, subject */
-const COMMIT_FORMAT = "%H%x00%h%x00%aN%x00%aE%x00%ct%x00%s";
-const COMMIT_FIELDS = 6;
+/** full sha, short sha, author, email, committer time, subject, raw author, raw email */
+const COMMIT_FORMAT = "%H%x00%h%x00%aN%x00%aE%x00%ct%x00%s%x00%an%x00%ae";
+/** The raw pair, before .mailmap, decides one thing: whether the commit is a cloud agent's. */
+const COMMIT_FIELDS = 8;
 /** The landing commit's full sha and parents, then COMMIT_FORMAT for itself. */
 const LANDING_FORMAT = `%H%x00%P%x00${COMMIT_FORMAT}`;
 const LANDING_PREFIX_FIELDS = 2;
@@ -84,9 +87,12 @@ export const isFullSha = (value: string | null | undefined): value is string =>
 export interface ParsedCommit {
   readonly sha: string;
   readonly shortSha: string;
-  /** Mailmap-aware. Written by another developer: untrusted. */
+  /**
+   * Mailmap-aware — except a cloud agent's commit, which keeps its raw
+   * identity (isCloudAgentAuthor). Written by another developer: untrusted.
+   */
   readonly authorName: string;
-  /** Mailmap-aware. For matching only; never rendered. */
+  /** As authorName. For matching only; never rendered. */
   readonly authorEmail: string;
   /** Written by another developer: untrusted. */
   readonly subject: string;
@@ -107,13 +113,42 @@ const toDate = (epochSeconds: string): Date | null =>
     ? new Date(Math.min(Number(epochSeconds) * 1000, MAX_DATE_MS))
     : null;
 
+/**
+ * A commit whose RAW author address is a cloud agent's commit identity
+ * (schema CLOUD_AGENT_IDENTITIES). Nobody's, whatever `.mailmap` says: a line
+ * mapping it to a teammate would make every stop send that teammate's
+ * address for every cloud session's commits, and one mapping it to the
+ * reader would read them as the reader's own. Git does not name who started
+ * the session, so the raw identity is what travels — and the hub resolves it
+ * to nobody.
+ */
+const isCloudAgentAuthor = (rawEmail: string): boolean =>
+  cloudAgentForEmail(rawEmail.trim().toLowerCase()) !== null;
+
 const parseCommitFields = (fields: readonly string[]): ParsedCommit | null => {
-  const [sha = "", shortSha = "", authorName = "", authorEmail = "", time = "", subject = ""] = fields;
+  const [
+    sha = "",
+    shortSha = "",
+    mappedName = "",
+    mappedEmail = "",
+    time = "",
+    subject = "",
+    rawName = "",
+    rawEmail = "",
+  ] = fields;
   const committedAt = toDate(time);
   if (fields.length !== COMMIT_FIELDS || !isFullSha(sha) || committedAt === null) {
     return null;
   }
-  return { sha, shortSha, authorName, authorEmail, subject, committedAt };
+  const isCloudAgent = isCloudAgentAuthor(rawEmail);
+  return {
+    sha,
+    shortSha,
+    authorName: isCloudAgent ? rawName : mappedName,
+    authorEmail: isCloudAgent ? rawEmail : mappedEmail,
+    subject,
+    committedAt,
+  };
 };
 
 const parseCommits = (stdout: string): readonly ParsedCommit[] =>
@@ -310,18 +345,23 @@ const othersOnReaderSide = async (
 ): Promise<boolean | null> => {
   const stdout = await gitStdout(context, [
     ...LOG,
-    "--format=%aE",
+    "--format=%aE%x00%ae",
     `${range.base}..${range.headSha}`,
     "--",
     literalPath(context.file),
   ]);
   const self = selfEmail?.toLowerCase() ?? null;
+  // A cloud agent's commit is never the reader's own, whatever .mailmap
+  // maps it to (isCloudAgentAuthor).
   return stdout === null
     ? null
     : stdout
         .split("\n")
-        .filter((email) => email.length > 0)
-        .some((email) => email.toLowerCase() !== self);
+        .filter((line) => line.length > 0)
+        .some((line) => {
+          const [mapped = "", raw = ""] = line.split(FIELD);
+          return isCloudAgentAuthor(raw) || mapped.toLowerCase() !== self;
+        });
 };
 
 /**

@@ -1,4 +1,4 @@
-import { chmod, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -305,16 +305,40 @@ export const writePrivateFile = async (
   await rename(temp, path);
 };
 
-export const readTextOrNull = async (path: string): Promise<string | null> => {
+export type TextRead =
+  | { readonly kind: "absent" }
+  | { readonly kind: "unreadable" }
+  | { readonly kind: "text"; readonly text: string };
+
+/**
+ * A file's text with the state `readTextOrNull` folds away: one that EXISTS
+ * but cannot be read (EACCES) is not one that is absent. A reader that says
+ * whether something is INSTALLED must keep the two apart — an unreadable
+ * ~/.claude/settings.json read as absent made doctor report "no user-level
+ * install" about a file nobody had read (review 2026-10-05).
+ */
+export const readText = async (path: string): Promise<TextRead> => {
+  // `stat`, not `Bun.file().exists()`: exists() answers false on EACCES, so a
+  // file inside an untraversable directory (a mode-000 ~/.claude) read as
+  // absent (review 2026-10-05). Only "nothing there" is absent.
   try {
-    const file = Bun.file(path);
-    if (!(await file.exists())) {
-      return null;
-    }
-    return await file.text();
-  } catch {
-    return null;
+    await stat(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? { kind: "absent" } : { kind: "unreadable" };
   }
+  try {
+    // A directory where a file should be throws here: unreadable, not absent.
+    return { kind: "text", text: await Bun.file(path).text() };
+  } catch {
+    return { kind: "unreadable" };
+  }
+};
+
+/** The text, or null for absent AND unreadable alike — see `readText`. */
+export const readTextOrNull = async (path: string): Promise<string | null> => {
+  const read = await readText(path);
+  return read.kind === "text" ? read.text : null;
 };
 
 export const readJsonOrNull = async (path: string): Promise<unknown> => {

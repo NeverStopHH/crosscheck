@@ -339,6 +339,7 @@ const updateExistingWorkContext = async (
   developerId: string,
   body: WorkContext,
   seq: SeqField | undefined,
+  producerSessionId: string | undefined,
 ): Promise<HandlerOutcome> => {
   const rows = await deps.db
     .select({ workContext: workContexts, ownerId: agentSessions.developerId })
@@ -412,9 +413,16 @@ const updateExistingWorkContext = async (
         // the declared scope onto all of them in payload.
         : { ...changes, intent: appended.headWire };
   // session_id stays the creating session — updates never re-home a context.
+  // The session that DELIVERED this update is recorded beside it: the clock
+  // below is the hub's, so it is that session's delivery that moves the
+  // context into a window (review of H3, finding 3; services/coverage.ts).
   await deps.db
     .update(workContexts)
-    .set({ ...stored, updatedAt: deps.now() })
+    .set({
+      ...stored,
+      updatedAt: deps.now(),
+      ...(producerSessionId === undefined ? {} : { updatedBySessionId: producerSessionId }),
+    })
     .where(eq(workContexts.id, body.id));
   await refreshNormalizedDoc(deps.db, body.id);
   // Outbox discipline: ids and metadata only — WHICH fields changed, never
@@ -440,6 +448,7 @@ export const ingestWorkContext = async (
   developerId: string,
   body: WorkContext,
   seq?: SeqField,
+  producerSessionId?: string,
 ): Promise<HandlerOutcome> => {
   // One transaction so the conflict probe, the ownership check, and the
   // update all act on the same snapshot — no TOCTOU between them.
@@ -482,7 +491,7 @@ export const ingestWorkContext = async (
       .onConflictDoNothing()
       .returning({ id: workContexts.id });
     if (inserted[0] === undefined) {
-      return updateExistingWorkContext(txDeps, developerId, body, seq);
+      return updateExistingWorkContext(txDeps, developerId, body, seq, producerSessionId);
     }
     // THE FIRST VERSION CAN BE BORN ON THIS PATH, and an UPDATE-only ledger
     // would miss it. `set_intent` posts DIRECTLY over HTTP while the
@@ -528,7 +537,7 @@ export const ingestWorkContext = async (
  * inventing one for them would put a word in the shared vocabulary that means
  * nothing on any host.
  */
-const TARGET_EVENT_KINDS = {
+export const TARGET_EVENT_KINDS = {
   file: "file.modified",
   error_fingerprint: "tool.failed",
 } as const;

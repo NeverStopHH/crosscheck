@@ -1,6 +1,8 @@
 /**
  * What `crosscheck noise` and `crosscheck pin --ok` say back (1.0 spec 07
- * §3.2) — the pilot's two human gestures.
+ * §3.2) — two of the pilot's three human gestures. The third, `crosscheck
+ * pilot label` (§12), shows each intervention again and so quotes a title:
+ * its lines are framed, in pilot-label-render.ts, not here.
  *
  * EVERY GESTURE GETS AN ANSWER. "Recorded", "you had already said that",
  * "nothing reached you", "name the one you mean", or the hub's own refusal:
@@ -25,9 +27,12 @@ import type { PilotMarkRefKind } from "@crosscheck/schema";
 
 const INDENT = "  ";
 
+/** The two one-word label shortcuts (07 §12, second review M6), each printed as itself. */
+export type ShortcutCommand = "noise" | "helpful";
+
 /** What to type when this command cannot tell which delivery was meant. */
-const NAME_IT_INSTEAD =
-  "name what the hint printed instead, e.g. crosscheck noise wc_…";
+const nameItInstead = (command: ShortcutCommand): string =>
+  `name what the hint printed instead, e.g. crosscheck ${command} wc_…`;
 
 const ageOf = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
@@ -38,6 +43,7 @@ export const markRecordedLine = (
   refKind: PilotMarkRefKind,
   id: string,
   repeated: boolean,
+  word: ShortcutCommand = "noise",
 ): string => {
   const shown = safeId(id);
   if (refKind === "pin") {
@@ -45,9 +51,12 @@ export const markRecordedLine = (
       ? `already recorded: you had said ${shown}'s check passed — it still counts once, however often it is said\n`
       : `recorded: you ran ${shown}'s check and watched it pass — the pin's notice is now falsifiable in both directions\n`;
   }
+  // A REPEAT NAMES NO WORD: since 07 §12 the first label may have been
+  // `helpful` or `unclear` from `crosscheck pilot label`, and the first one
+  // stands — so "you had marked it noise" could be false.
   return repeated
-    ? `already recorded: you had marked ${shown} off-target — it still counts once, however often it is said\n`
-    : `recorded: ${shown} is off-target. It counts once toward this repo's noise figure, and it names nobody\n`;
+    ? `already recorded: you had labelled ${shown} — a label counts once, and a second one changes nothing\n`
+    : `recorded: ${shown} is ${word}. It counts once toward this repo's pilot figures, and it names nobody\n`;
 };
 
 /**
@@ -59,22 +68,23 @@ export const candidateListLines = (
   more: boolean,
   windowMinutes: number,
   now: Date,
+  command: ShortcutCommand = "noise",
 ): string =>
   [
     `${String(candidates.length)}${more ? "+" : ""} interventions reached a live session here in the last ${String(windowMinutes)} minutes — name the one you mean`,
     ...candidates.map(
       (candidate) =>
-        `${INDENT}crosscheck noise ${safeId(candidate.id)} · ${bareUntrusted(candidate.channel)} · points at ${safeId(candidate.refId)} · ${ageOf(candidate.deliveredAt, now)}`,
+        `${INDENT}crosscheck ${command} ${safeId(candidate.id)} · ${bareUntrusted(candidate.channel)} · points at ${safeId(candidate.refId)} · ${ageOf(candidate.deliveredAt, now)}`,
     ),
-    ...(more ? [`${INDENT}(more were not listed — ${NAME_IT_INSTEAD})`] : []),
+    ...(more ? [`${INDENT}(more were not listed — ${nameItInstead(command)})`] : []),
     "",
   ].join("\n");
 
-export const noLiveSessionLine = (): string =>
-  `no live crosscheck session for this repo on this machine — ${NAME_IT_INSTEAD}\n`;
+export const noLiveSessionLine = (command: ShortcutCommand = "noise"): string =>
+  `no live crosscheck session for this repo on this machine — ${nameItInstead(command)}\n`;
 
-export const nothingRecentLine = (windowMinutes: number): string =>
-  `nothing reached a live session here in the last ${String(windowMinutes)} minutes — ${NAME_IT_INSTEAD}\n`;
+export const nothingRecentLine = (windowMinutes: number, command: ShortcutCommand = "noise"): string =>
+  `nothing reached a live session here in the last ${String(windowMinutes)} minutes — ${nameItInstead(command)}\n`;
 
 export const refNeverReachedLine = (ref: string): string =>
   `no pointer at ${safeId(ref)} reached you on this repo — check the id the hint printed\n`;

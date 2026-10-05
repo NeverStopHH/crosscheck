@@ -70,7 +70,11 @@ import {
   spoolFlushLockPath,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import {
+  absenceCloudAgent,
+  formatAge,
+  formatCloudAgentLink,
+} from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
@@ -82,7 +86,10 @@ import {
   formatForeignDropLine,
   readForeignRepoDrops,
 } from "@crosscheck/connector-core/state/foreign-drops.ts";
-import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
+import {
+  isPathIgnored,
+  isPathTracked,
+} from "@crosscheck/connector-core/git/check-ignore.ts";
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
@@ -111,6 +118,7 @@ import {
   getSessionOrderReport,
   getHintStats,
   getOpenSessions,
+  getPasskeyAnnouncements,
   getPins,
   getSuspect,
   getIntentPositions,
@@ -126,6 +134,11 @@ import type {
   GhostCheckEntry,
   PinRegistry,
 } from "@crosscheck/connector-core/http/hub.ts";
+import { DEFAULT_AGENT_KIND } from "@crosscheck/connector-core/constants.ts";
+import {
+  contradictionDoctorLine,
+  declarationDoctorLine,
+} from "@crosscheck/connector-core/guarantees/doctor.ts";
 import {
   formatQuestionCounts,
   questionWarning,
@@ -155,10 +168,18 @@ import {
   shadowedPinPaths,
 } from "./pin-observability.ts";
 import { checkSkeletonRetention } from "./doctor-retention.ts";
+import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
-import { checkLandedAuthors } from "./doctor-landed-authors.ts";
-import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import {
+  checkCloudAgentMailmap,
+  checkLandedAuthors,
+} from "./doctor-landed-authors.ts";
+import { announcementAnswerOf, passkeyDoctorCheck } from "./passkey-status.ts";
+import {
+  readLocalLosses,
+  readTelemetryLossReport,
+} from "@crosscheck/connector-core/spool/loss-report.ts";
 import {
   countCursorIdentityMismatches,
   oldestSpoolLineMs,
@@ -219,8 +240,14 @@ import {
   ownedHookEntries,
   readGlobalWiring,
   readProjectWiring,
+  userMcpUnknown,
 } from "./doctor-global.ts";
+import { unreadableClause } from "./init-io.ts";
 import type { GlobalWiring } from "./doctor-global.ts";
+import { readProjectCopy } from "./project-copy.ts";
+import type { ProjectCopy } from "./project-copy.ts";
+import { oneInstallReason, readOneInstall } from "./wiring-scope.ts";
+import type { OneInstall } from "./wiring-scope.ts";
 import { getPilotReport } from "@crosscheck/connector-core/http/pilot.ts";
 import type {
   PilotFigure,
@@ -406,13 +433,28 @@ const hooksViaScopes = (wiring: GlobalWiring, projectDetail: string): Check => {
       `user-scope hooks in ${wiring.settingsPath} are missing: ${missing.join(", ")} — rerun crosscheck init --global`,
     );
   }
+  // A user settings file nobody could read may hold the very hooks this
+  // repo lacks: unknown, not missing (review 2026-10-05).
+  if (wiring.unreadable !== null) {
+    return check(
+      "WARN",
+      "hooks registered",
+      `${projectDetail}; ${unreadableClause(wiring.settingsPath, wiring.unreadable)} — whether user-scope hooks cover this repo is unknown`,
+    );
+  }
   return check("FAIL", "hooks registered", projectDetail);
 };
 
 /** The statusline line when the project scope sets none — user scope applies. */
 const statuslineViaGlobal = (wiring: GlobalWiring, noneDetail: string): Check =>
   wiring.statuslineCommand === null
-    ? check("WARN", "statusline registered", noneDetail)
+    ? check(
+        "WARN",
+        "statusline registered",
+        wiring.unreadable === null
+          ? noneDetail
+          : `${noneDetail}; ${unreadableClause(wiring.settingsPath, wiring.unreadable)} — whether a user-scope statusline applies is unknown`,
+      )
     : isOwnedCommand(wiring.statuslineCommand)
       ? check(
           "PASS",
@@ -933,14 +975,47 @@ const ignoredSuffix = (ignored: boolean | null, path: string): string =>
     ? ` — WARNING: ${path} is gitignored in this repo, so committing it is impossible and teammates never receive it; they need \`crosscheck init --global\` on their own machines`
     : "";
 
+interface McpRegistrationFacts {
+  readonly userScopeRegistered: boolean;
+  readonly mcpIgnored: boolean | null;
+  /** Set when ~/.claude.json could not be read (doctor-global `userMcpUnknown`). */
+  readonly userScopeUnknown: string | null;
+  /** The repo's project files ARE the user-level ones: init refuses a project copy here. */
+  readonly oneInstall: OneInstall | null;
+}
+
 const checkMcpRegistration = async (
   repoRoot: string,
-  userScopeRegistered: boolean,
-  mcpIgnored: boolean | null,
+  facts: McpRegistrationFacts,
 ): Promise<Check> => {
+  const { userScopeRegistered, mcpIgnored, userScopeUnknown, oneInstall } = facts;
   const path = join(repoRoot, MCP_CONFIG_FILE);
   const raw = await readTextOrNull(path);
   if (raw === null) {
+    // An unreadable user-scope file may register the tools: unknown, never
+    // the "not found" FAIL that says they are missing (review 2026-10-05).
+    if (!userScopeRegistered && userScopeUnknown !== null) {
+      return check("WARN", "mcp tools registered", `${path} not found, and ${userScopeUnknown}`);
+    }
+    // "run crosscheck init" is advice init refuses where the project files
+    // ARE the user-level ones ($HOME as the work tree, review 2026-10-05).
+    if (userScopeRegistered && oneInstall !== null) {
+      return check(
+        "PASS",
+        "mcp tools registered",
+        `via global install (user scope) — ${oneInstallReason(oneInstall)}, where crosscheck init refuses to write a project copy; the user-level install covers this repo`,
+      );
+    }
+    // Committed but gone from this checkout — `init --remove` deletes a
+    // tracked .mcp.json it emptied. "Run crosscheck init" would recreate the
+    // ignored settings copy and the double wiring with it; the team's file is
+    // one restore away (review 2026-10-05).
+    if ((await isPathTracked(repoRoot, MCP_CONFIG_FILE)) === true) {
+      const restore = `${path} is committed but deleted from this checkout — \`git restore -- ${MCP_CONFIG_FILE}\` brings the team's copy back, or commit the deletion if the team should stop using it`;
+      return userScopeRegistered
+        ? check("PASS", "mcp tools registered", `via global install (user scope, this machine only) — ${restore}`)
+        : check("FAIL", "mcp tools registered", restore);
+    }
     // Finding #13: a missing PROJECT file is not a broken install when the
     // user scope registers the tools — but user scope covers only THIS
     // machine, so the committed-file advice survives as a note instead of
@@ -1036,6 +1111,11 @@ export interface McpUsableFacts {
   readonly hub: { readonly ok: boolean; readonly status: number; readonly kind: HubFailureKind } | null;
   /** Registered in EITHER scope: an unregistered tool is never called. */
   readonly registered: boolean;
+  /**
+   * Set when ~/.claude.json exists and could not be read: `registered: false`
+   * is then unknown at user scope, not "in neither scope" (review 2026-10-05).
+   */
+  readonly userScopeUnknown?: string | null;
   readonly probe: McpProbeOutcome;
 }
 
@@ -1069,11 +1149,18 @@ export const mcpUsableCheck = (facts: McpUsableFacts): Check => {
     );
   }
   if (!facts.registered) {
-    return check(
-      "FAIL",
-      name,
-      "no mcp server is registered in either scope, so no agent can call the tools — run `crosscheck init` (or `crosscheck init --global`)",
-    );
+    const unknown = facts.userScopeUnknown ?? null;
+    return unknown === null
+      ? check(
+          "FAIL",
+          name,
+          "no mcp server is registered in either scope, so no agent can call the tools — run `crosscheck init` (or `crosscheck init --global`)",
+        )
+      : check(
+          "WARN",
+          name,
+          `no mcp server is registered in this repo, and ${unknown}`,
+        );
   }
   switch (facts.probe.kind) {
     case "failed":
@@ -1266,27 +1353,14 @@ const checkSpool = async (
         )
       : check("PASS", "spool age", oldestMs === null ? "empty" : "fresh");
 
-  // Counted from the append-only `.drops` ledger, not from a shared counter:
-  // the number is exact even when several hooks dropped at the same moment.
-  const drops = await readDropSummary(home, key);
-  // Exact for what reached a ledger, that is. A batch whose ledger append
-  // failed is in no sum, so while this marker exists the number above is a
-  // floor and has to be read as one (spool/drops.ts).
-  const unrecorded = await readUnrecordedDrop(home, key);
-  const droppedCheck =
-    drops.records > 0 || drops.malformed > 0 || unrecorded !== null
-      ? check(
-          "WARN",
-          "spool drops",
-          `${drops.records} records discarded in ${drops.entries} batches` +
-            (drops.malformed > 0
-              ? `, ${drops.malformed} ledger entries unreadable`
-              : "") +
-            (unrecorded === null
-              ? ""
-              : `, plus at least one batch its ledger could not take (${unrecorded.count} records, ${unrecorded.reason}, ${unrecorded.at}) — the total is a lower bound`),
-        )
-      : check("PASS", "spool drops", "none");
+  // Counted from the append-only ledgers, not from a shared counter: exact
+  // even when several hooks dropped at the same moment, and a floor — said
+  // so on the line — while a batch the ledger could not take is marked
+  // (spool/drops.ts). Three lines from one read, in the one spelling
+  // `status` prints too (docs/1.0/loss-accounting.md §5.1): records
+  // discarded by reason, record kinds an older hub ignored, and the losses
+  // upstream of any record (doctor-losses.ts).
+  const lossLines = lossChecks(await readLocalLosses(home, key), now);
 
   // A session the hub still believes is running, because the `end` for it aged
   // out of the spool before any hook had the spare budget to deliver it. The
@@ -1333,7 +1407,7 @@ const checkSpool = async (
   return [
     depthCheck,
     ageCheck,
-    droppedCheck,
+    ...lossLines,
     unclosedCheck,
     await checkFlushLock(home, key),
   ];
@@ -1510,9 +1584,15 @@ const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
     return check("PASS", "absence findings", "none");
   }
   const inactive = findings.filter((entry) => entry.kind === "inactive").length;
-  const unconnected = findings.filter(
-    (entry) => entry.kind === "unconnected",
+  // Still `unconnected` on the wire and still a gap; counted apart only
+  // because "without a crosscheck account" invites an account for something
+  // that is not a person — the same split the absence line makes.
+  const cloudAgents = findings.filter(
+    (entry) => absenceCloudAgent(entry) !== null,
   ).length;
+  const unconnected =
+    findings.filter((entry) => entry.kind === "unconnected").length -
+    cloudAgents;
   const parts = [
     ...(inactive > 0
       ? [`${inactive} hub member${inactive === 1 ? "" : "s"}`]
@@ -1520,12 +1600,44 @@ const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
     ...(unconnected > 0
       ? [`${unconnected} without a crosscheck account`]
       : []),
+    ...(cloudAgents > 0
+      ? [`${cloudAgents} cloud agent identit${cloudAgents === 1 ? "y" : "ies"}`]
+      : []),
   ];
   return check(
     "WARN",
     "absence findings",
     `${findings.length} recent commit author${findings.length === 1 ? "" : "s"} ` +
       `with no matching reported session (${parts.join(", ")}) — crosscheck status has the lines`,
+  );
+};
+
+/**
+ * A cloud agent's commit identity linked to a developer (the hub refuses new
+ * links; this is one it already held, and ignores for attribution). WARN, not
+ * FAIL: nothing on this machine is broken and no commit is misattributed, but
+ * the stale row says the address is someone's, and only an admin can remove
+ * it. An older hub that does not say is "not measured", never "none".
+ */
+const checkLinkedCloudAgents = (result: HubResult<AbsencesOutcome>): Check => {
+  if (!result.ok) {
+    return check("PASS", "cloud agent identity", "not measured");
+  }
+  const linked = result.data.linkedCloudAgents;
+  if (linked === null) {
+    return check(
+      "PASS",
+      "cloud agent identity",
+      "not measured (this hub does not report it)",
+    );
+  }
+  if (linked.length === 0) {
+    return check("PASS", "cloud agent identity", "none linked to a developer");
+  }
+  return check(
+    "WARN",
+    "cloud agent identity",
+    linked.map(formatCloudAgentLink).join("; "),
   );
 };
 
@@ -1541,9 +1653,19 @@ const absenceAndCoverageChecks = async (
   repoId: string,
 ): Promise<readonly Check[]> => {
   const result = await getAbsences(ctx, repoId);
+  // §5.2's cross-check: this machine's report beside the hub's agent rung,
+  // both already in hand — the one line that can name a hub that stripped
+  // the report with a 200 (doctor-losses.ts says why nothing else can).
+  const reporting = coverageReportingCheck(
+    await readTelemetryLossReport(ctx.home, ctx.repoKey),
+    result.ok ? result.data.coverage : null,
+    ctx.now(),
+  );
   return [
     checkAbsences(result),
+    checkLinkedCloudAgents(result),
     ...coverageChecks(result),
+    ...(reporting === null ? [] : [reporting]),
     ...coverageExemptionChecks(),
   ];
 };
@@ -2200,7 +2322,7 @@ const pilotFigures = (
   ["both landed", report.collisions.bothLanded],
   ["ci regressed", report.collisions.ciRegressed],
   ["opened per 100", report.precision.openedPer100],
-  ["off-target per 100", report.precision.offTargetPer100],
+  ["noisy sessions per 100", report.precision.noisySessionsPer100],
 ];
 
 const isRungRefusal = (reason: string): boolean =>
@@ -2221,6 +2343,31 @@ const pilotQualifierCheck = (): Check =>
     "pilot qualifiers",
     "not counted on the hub — every answer the hub builds carries its coverage record, so a count here could only equal the number required; whether a surface printed it is held by the render registry and its corpus",
   );
+
+/**
+ * THE SESSION SET IN ONE LINE. "Full" ONLY WHEN EVERY SLOT HOLDS A ROW (second
+ * review, M2): it used to follow any refusal, and a hub that ran the 0.10
+ * pilot carries refusals booked under the old fifty-session cap, so a set of
+ * fifty out of two hundred read as full. Those old refusals, and sessions
+ * that started before labels were available, are said apart: neither is a
+ * fact about this cap.
+ */
+const pilotSetSentence = (set: PilotReport["sessionSet"]): string => {
+  const fill = `enrolled · session set ${String(set.used)} of ${String(set.cap)} (discovery ${String(set.discovery)} of ${String(set.discoveryCap)} · replication ${String(set.replication)} of ${String(set.replicationCap)})`;
+  const refusals =
+    set.refused === 0
+      ? ""
+      : set.used >= set.cap
+        ? ` — full: ${String(set.refused)} later session(s) refused at the cap and counted, never dropped`
+        : ` — ${String(set.refused)} later session(s) refused at the cap and counted`;
+  const legacy =
+    set.legacyRefused === 0
+      ? ""
+      : ` · ${String(set.legacyRefused)} refused under the 0.10 fifty-session cap, before labels`;
+  const before =
+    set.beforeLabels === 0 ? "" : ` · ${String(set.beforeLabels)} started before labels, not in the set`;
+  return `${fill}${refusals}${legacy}${before}`;
+};
 
 const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
   if (!result.ok) {
@@ -2261,17 +2408,8 @@ const checkPilot = (result: HubResult<PilotReport>): readonly Check[] => {
       ),
     ];
   }
-  const set = report.sessionSet;
   return [
-    check(
-      "PASS",
-      "pilot",
-      `enrolled · session set ${String(set.used)} of ${String(set.cap)}${
-        set.refused > 0
-          ? ` — full: ${String(set.refused)} later session(s) refused at the cap and counted, never dropped`
-          : ""
-      }`,
-    ),
+    check("PASS", "pilot", pilotSetSentence(report.sessionSet)),
     pilotQualifierCheck(),
     ...pilotFigures(report).flatMap(([name, value]) =>
       value.kind === "unavailable" && isRungRefusal(value.reason)
@@ -2346,7 +2484,7 @@ const checkVerdictLegality = async (
     return check(
       "PASS",
       "verdict legality",
-      "not measured (this hub reports no verdict, so `suspect` answers a ranking without one)",
+      "not measured (this hub reports no verdict, so `trace` answers a ranking without one)",
     );
   }
   return verdict.basis === "legality_violation"
@@ -3295,38 +3433,26 @@ export const repoConnectedCheck = (
 };
 
 /**
- * `git ls-files --error-unmatch` exits non-zero for an untracked path, which
- * `runBoundedCommand` reports as null — the same null a missing git gives. So
- * the tracked answer is taken from the STDOUT of the plain listing instead:
- * the path echoed back means tracked, silence means either untracked or no
- * git, and the second `rev-parse` tells those apart (the check-ignore shape).
+ * The project copy's facts (project-copy.ts) — read only when the
+ * double-wiring remedy will actually print, because they cost git spawns and
+ * Cursor file reads every other doctor run would pay for nothing.
  */
-const isRepoConfigTracked = async (
-  repoRoot: string,
-): Promise<boolean | null> => {
-  const listed = await runBoundedCommand(
-    ["git", "ls-files", "--", REPO_CONFIG_FILE],
-    repoRoot,
-    GIT_TIMEOUT_MS,
-  );
-  if (listed !== null) {
-    return true;
-  }
-  const inWorkTree = await runBoundedCommand(
-    ["git", "rev-parse", "--is-inside-work-tree"],
-    repoRoot,
-    GIT_TIMEOUT_MS,
-  );
-  return inWorkTree === "true" ? false : null;
-};
+const projectCopyForRemedy = async (
+  root: string,
+  projectWired: boolean | null,
+  wiring: GlobalWiring,
+): Promise<ProjectCopy | null> =>
+  projectWired === true && wiring.hooksInstalled ? readProjectCopy(root) : null;
 
+// The tracked answer (and why it reads STDOUT, not an exit code) lives in
+// core's git/check-ignore.ts since `crosscheck init --remove` asks it too.
 const checkRepoConnected = async (
   repoRoot: string,
   present: boolean,
 ): Promise<Check> =>
   repoConnectedCheck(
     present,
-    present ? await isRepoConfigTracked(repoRoot) : null,
+    present ? await isPathTracked(repoRoot, REPO_CONFIG_FILE) : null,
   );
 
 /**
@@ -3475,7 +3601,16 @@ export const runDoctor = async (
   // install — lands in the early branch, and leaving the check out of it
   // would silence the one place it exists for.
   const globalWiring = await readGlobalWiring(env);
+  // The scope question the commands ask before touching anything: a repo
+  // whose project files ARE the user-level ones has ONE install.
+  const oneInstall = identity === null ? null : await readOneInstall(identity.root, env);
   if (config === null || identity === null) {
+    const projectWired =
+      identity === null
+        ? null
+        : await readProjectWiring(
+            join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
+          );
     // The MCP checks belong in THIS branch too, and leaving them out was the
     // first version's bug: a developer with no key would have been told the hub
     // was unconfigured and nothing at all about the tools, which is the exact
@@ -3486,21 +3621,22 @@ export const runDoctor = async (
       ...workspaceChecks,
       ...globalInstallChecks(
         globalWiring,
+        projectWired,
         identity === null
           ? null
-          : await readProjectWiring(
-              join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
-            ),
+          : await projectCopyForRemedy(identity.root, projectWired, globalWiring),
+        oneInstall,
       ),
       check("FAIL", "hub reachable", "no hub configured"),
       ...(identity === null
         ? []
         : [
-            await checkMcpRegistration(
-              identity.root,
-              globalWiring.mcpRegistered,
-              await isPathIgnored(identity.root, MCP_CONFIG_FILE),
-            ),
+            await checkMcpRegistration(identity.root, {
+              userScopeRegistered: globalWiring.mcpRegistered,
+              mcpIgnored: await isPathIgnored(identity.root, MCP_CONFIG_FILE),
+              userScopeUnknown: userMcpUnknown(globalWiring),
+              oneInstall,
+            }),
           ]),
       mcpUsableCheck({
         configured: config !== null,
@@ -3512,6 +3648,7 @@ export const runDoctor = async (
           globalWiring.mcpRegistered ||
           (identity !== null &&
             (await readRegisteredMcpEntry(identity.root, env)) !== null),
+        userScopeUnknown: userMcpUnknown(globalWiring),
         probe: { kind: "not-probed", why: "no hub configured" },
       }),
       bunfigCheck,
@@ -3588,6 +3725,7 @@ export const runDoctor = async (
     privacyCheck,
     intentLedgerCheck,
     pilotReport,
+    passkeyAnnouncements,
   ] = await Promise.all([
     // ONE GET for both: the absence findings and the coverage record ride
     // the same response (03 §3.5), so reading them twice would be a second
@@ -3623,6 +3761,9 @@ export const runDoctor = async (
       repo: identity.repoId,
       days: DOCTOR_PILOT_WINDOW_DAYS,
     }),
+    // 04a §4.3: an enrolment still cooling off is a WARN until a person has
+    // looked at it — counts here, names on `crosscheck status`.
+    getPasskeyAnnouncements(hubCtx),
   ]);
   // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
   // only known once the registry above has answered, so it cannot join the
@@ -3643,7 +3784,8 @@ export const runDoctor = async (
       pinRegistry,
       // The EFFECTIVE list, defaults included: the shadowing question is
       // about what actually suppresses capture, not about what this
-      // developer added on top of it.
+      // developer added on top of it. The shipped defaults a teammate who
+      // kept them applies are added inside, the same as at the pin door.
       resolveDenylist(config.denylist ?? undefined),
       now,
     ),
@@ -3655,6 +3797,7 @@ export const runDoctor = async (
     ghostOverlapCheck,
     privacyCheck,
     intentLedgerCheck,
+    passkeyDoctorCheck(announcementAnswerOf(passkeyAnnouncements), config.hubUrl),
   ];
 
   const skewCheck = ((): Check => {
@@ -3710,15 +3853,15 @@ export const runDoctor = async (
     : null;
   const eventRetention = orderReport.ok ? orderReport.data.retention : null;
   const skeletonRetention = orderReport.ok ? orderReport.data.skeleton : null;
-  // Whether the two PROJECT files this repo's advice keeps recommending can
-  // actually reach a teammate (trial finding M11). Resolved once, passed as
-  // data, so `globalInstallChecks` stays pure and testable.
+  const contradictedDeclarations = orderReport.ok
+    ? orderReport.data.contradictedDeclarations
+    : null;
+  // Whether the project .mcp.json this repo's advice keeps recommending can
+  // actually reach a teammate (trial finding M11), resolved once and passed as
+  // data. The settings file's verdict now travels inside the project copy's
+  // facts (project-copy.ts), read only when the double-wiring remedy prints.
   const ignoreVerdicts = {
     mcp: await isPathIgnored(identity.root, MCP_CONFIG_FILE),
-    projectSettings: await isPathIgnored(
-      identity.root,
-      `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE}`,
-    ),
   };
   const agentSettingsPaths = ((): readonly string[] => {
     const projectPath = join(
@@ -3763,7 +3906,12 @@ export const runDoctor = async (
     ...globalInstallChecks(
       globalWiring,
       settingsInspection.launcherCommand !== null,
-      ignoreVerdicts.projectSettings,
+      await projectCopyForRemedy(
+        identity.root,
+        settingsInspection.launcherCommand !== null,
+        globalWiring,
+      ),
+      oneInstall,
     ),
     hubCheck,
     timeoutCheck(config.timeoutMs, owner),
@@ -3778,11 +3926,12 @@ export const runDoctor = async (
       agentProbe ?? defaultAgentProbe(cwd),
       now.getTime(),
     ),
-    await checkMcpRegistration(
-      identity.root,
-      globalWiring.mcpRegistered,
-      ignoreVerdicts.mcp,
-    ),
+    await checkMcpRegistration(identity.root, {
+      userScopeRegistered: globalWiring.mcpRegistered,
+      mcpIgnored: ignoreVerdicts.mcp,
+      userScopeUnknown: userMcpUnknown(globalWiring),
+      oneInstall,
+    }),
     await checkMcpUsable(identity.root, env, {
       configured: true,
       hubUrl: config.hubUrl,
@@ -3792,6 +3941,7 @@ export const runDoctor = async (
       registered:
         globalWiring.mcpRegistered ||
         (await readRegisteredMcpEntry(identity.root, env)) !== null,
+      userScopeUnknown: userMcpUnknown(globalWiring),
     }),
     ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),
@@ -3801,6 +3951,7 @@ export const runDoctor = async (
     await checkLandedChanges(identity.root),
     await checkLandingFetch(identity.root, config.home, env, now),
     await checkLandedAuthors(identity.root, hubCtx),
+    await checkCloudAgentMailmap(identity.root),
     // ONE scan of the session-state directory for all three model-cost
     // checks (state/session-state.ts readLiveSessionStates says why).
     checkSummarizerCost(liveStates),
@@ -3822,6 +3973,7 @@ export const runDoctor = async (
     skewCheck,
     bunfigCheck,
     ...checkClaudeDerive(),
+    ...checkCausalGuarantees(contradictedDeclarations),
     ...(await checkCursor(
       identity.root,
       env,
@@ -3855,6 +4007,17 @@ export const runDoctor = async (
 const checkClaudeDerive = (): readonly Check[] =>
   claudeDoctorChecks().map((entry) =>
     check(entry.level, entry.name, entry.detail),
+  );
+
+/**
+ * 01a §5: what this connector's positions can support, per kind, and how many
+ * of the caller's declarations a row of their own overruled. Enum words from
+ * guarantees/declarations.ts and one count off the order report this command
+ * already read — no new hub round trip, and nothing a person or a hub wrote.
+ */
+const checkCausalGuarantees = (contradicted: number | null): readonly Check[] =>
+  [declarationDoctorLine(DEFAULT_AGENT_KIND), contradictionDoctorLine(contradicted)].map(
+    (line) => check(line.level, line.name, line.detail),
   );
 
 /**

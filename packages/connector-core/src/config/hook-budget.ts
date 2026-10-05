@@ -54,21 +54,46 @@ export const hookBudget = (
     Math.max(0, deadlineMs - now() - timeoutMs * HOOK_RESERVE_RATIO),
 });
 
-/** Total-hook budget: a slow hub must never hold the developer's session. */
-export const withBudget = async (
+/**
+ * What the race answered, and WHICH side answered it. "" alone cannot say:
+ * a handler that chose silence and a handler the budget abandoned return the
+ * same string, and only the second one lost telemetry
+ * (docs/1.0/loss-accounting.md §3 row 14).
+ */
+export interface BudgetOutcome {
+  readonly output: string;
+  /** True when the budget resolved the race: the work was abandoned unfinished. */
+  readonly timedOut: boolean;
+}
+
+const BUDGET_SPENT: BudgetOutcome = { output: "", timedOut: true };
+
+/**
+ * Total-hook budget: a slow hub must never hold the developer's session. The
+ * runners read `timedOut` to book the abandoned capture as a loss; the race
+ * itself is unchanged.
+ */
+export const raceHookBudget = async (
   work: Promise<string>,
   budgetMs: number,
-): Promise<string> => {
+): Promise<BudgetOutcome> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const budget = new Promise<string>((resolve) => {
-    timer = setTimeout(() => resolve(""), budgetMs);
+  const budget = new Promise<BudgetOutcome>((resolve) => {
+    timer = setTimeout(() => resolve(BUDGET_SPENT), budgetMs);
   });
+  const finished = work.then((output): BudgetOutcome => ({ output, timedOut: false }));
   try {
-    return await Promise.race([work, budget]);
+    return await Promise.race([finished, budget]);
   } finally {
     clearTimeout(timer);
   }
 };
+
+/** The race's answer alone, for callers that have nothing to book. */
+export const withBudget = async (
+  work: Promise<string>,
+  budgetMs: number,
+): Promise<string> => (await raceHookBudget(work, budgetMs)).output;
 
 export interface ResolvedHookBudget {
   readonly budgetMs: number;

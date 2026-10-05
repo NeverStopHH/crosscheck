@@ -8,15 +8,18 @@
  * connector-claude's registry when Block 8 extracted `packages/cli`.
  */
 import type { RenderSurface } from "@crosscheck/connector-core/render-surfaces.ts";
+import { AUTHORIZING_CREDENTIAL_REVOKED } from "@crosscheck/schema";
 import type {
   PinEntry,
   PinRegistry,
   SuspectCandidate,
   SuspectView,
+  WaiverRequestEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
 
-import { renderPinList } from "./cli/pin-render.ts";
-import { pinStatusLines } from "./cli/pin-observability.ts";
+import { noSuchPinLine, renderPinList, renderWaiverRequested } from "./cli/pin-render.ts";
+import { passkeyStatusLines } from "./cli/passkey-status.ts";
+import { pinDenylistRefusal, pinStatusLines, sweepDenylistLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
 import { verdictLines } from "./cli/verdict-render.ts";
 import { hubFailureLine } from "./cli/revalidate.ts";
@@ -30,6 +33,27 @@ import {
   nothingRecentLine,
   refNeverReachedLine,
 } from "./cli/pilot-mark.ts";
+import {
+  ciReportHubFailureLine,
+  ciReportNotReportedLine,
+  ciReportRunLine,
+} from "./ci-report/render.ts";
+import {
+  interventionLine,
+  labelRecordedLine,
+  labelRefusedLine,
+  nothingToLabelLine,
+  reasonSecretLine,
+  reasonTooLongLine,
+  skippedLine,
+  unknownKeyLine,
+  walkHeaderLines,
+  walkSummaryLines,
+  walkUnreachableLine,
+  decisionEchoLine,
+  keyPromptLine,
+  reasonPromptLine,
+} from "./cli/pilot-label-render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
@@ -67,7 +91,26 @@ const pinWith = (payload: string): PinEntry => ({
     expiresAt: ISO,
     reason: payload,
     grantedByName: payload,
+    // 04a: the WEAKER authority, so the corpus also renders the line that
+    // says a waiver was opened from a terminal before passkeys.
+    authority: "terminal",
   },
+  // 04a D-PK-1: a fence the hub closed, every slot planted — the id, both
+  // instants and the reason word, which takes the unknown-word branch here
+  // (verdictWith takes the known one).
+  closedWaiver: { id: payload, closedAt: payload, heldUntil: payload, reason: payload },
+  version: 1,
+});
+
+/** A pending waiver request on the fixture pin, every author-written slot planted (04a §6). */
+const requestWith = (payload: string): WaiverRequestEntry => ({
+  id: "wr_11111111-2222-4333-8444-555555555555",
+  pinId: "pin_11111111-2222-4333-8444-555555555555",
+  pinVersion: 1,
+  requestedByName: payload,
+  reason: payload,
+  expiresAt: ISO,
+  status: "pending",
 });
 
 /**
@@ -158,6 +201,9 @@ const verdictWith = (payload: string): VerdictView => ({
     reason: payload,
     grantedByName: payload,
   },
+  // 04a D-PK-1: the KNOWN reason word, so the corpus renders the revoked-
+  // passkey sentence with the payload in the id and both instants.
+  closedWaiver: { id: payload, closedAt: payload, heldUntil: payload, reason: AUTHORIZING_CREDENTIAL_REVOKED },
   computedAt: ISO,
 });
 
@@ -188,6 +234,7 @@ const suspectWith = (payload: string): SuspectView => ({
     repo: "github.com/acme/api",
     computedAt: NOW.toISOString(),
     scope: { sinceIso: ISO, paths: [payload] },
+    order: { state: "partial", reason: "ambiguous_session_possible" },
     sources: [
       {
         source: "agent_event",
@@ -215,15 +262,30 @@ const suspectWith = (payload: string): SuspectView => ({
 });
 
 /**
- * A pilot report with the payload in EVERY slot the wire can fill: the title
- * (the one author-written span), and also the repo, a channel key, every
- * reason word, a surface name, a counter key and the ids. Every figure is
+ * A pilot report with the payload in EVERY slot the wire can fill: the two
+ * author-written spans — a title and, since 07 §12, a label's reason — and
+ * also the repo, a channel key, every reason word, a label word, a cohort
+ * name, a surface name, a counter key and the ids. Every figure is
  * `unavailable` with the payload as its reason, so the "printed as the word"
  * branch — the one a newer hub reaches — is in the corpus rather than only
- * written.
+ * written. The second cohort is MEASURED, so the cohort line's figure branch
+ * is attacked too, not only its empty one.
  */
 const pilotWith = (payload: string): PilotView => {
   const unavailable = { kind: "unavailable" as const, reason: payload };
+  const labels = {
+    sessions: 1,
+    interventions: 1,
+    helpful: 1,
+    noise: 1,
+    unclear: 1,
+    labelled: 1,
+    benefitPer100: unavailable,
+    burdenPer100: unavailable,
+    precision: unavailable,
+    labelCoverage: unavailable,
+  };
+  const measured = { kind: "measured" as const, value: 0.5 };
   const repair = {
     pinId: payload,
     repairPinId: payload,
@@ -236,10 +298,25 @@ const pilotWith = (payload: string): PilotView => {
     report: {
       repo: payload,
       enrolled: true,
+      labelsSinceIso: payload,
       sinceIso: payload,
       untilIso: payload,
       days: 56,
-      sessionSet: { used: 1, cap: 50, refused: 1, spanned: 1, restarted: 1, notRecorded: 1 },
+      sessionSet: {
+        used: 1,
+        cap: 200,
+        refused: 1,
+        legacyRefused: 1,
+        beforeLabels: 1,
+        discovery: 1,
+        discoveryCap: 50,
+        replication: 0,
+        replicationCap: 150,
+        legacy: 1,
+        spanned: 1,
+        restarted: 1,
+        notRecorded: 1,
+      },
       duplicateWork: {
         surfaced: 3,
         opened: 1,
@@ -267,14 +344,32 @@ const pilotWith = (payload: string): PilotView => {
         answersAfterRepair: 1,
       },
       precision: {
-        sessions: 1,
+        ...labels,
+        // A real instant, unlike sinceIso's payload, so the "labelled
+        // figures count sessions from" line is in the corpus document.
+        labelledSinceIso: ISO,
+        legacyNoise: 1,
+        precisionTarget: 0.5,
         openedPer100: unavailable,
         openedTargetPer100: 8,
-        offTargetMarks: 1,
-        offTargetPer100: unavailable,
-        offTargetCeilingPer100: 20,
+        noisySessionsPer100: unavailable,
+        noisySessionsCeilingPer100: 20,
         surfaceOkMarks: 1,
+        reasons: [{ label: payload, reason: payload }],
+        reasonsBeyondList: 1,
       },
+      cohorts: [
+        { cohort: payload, cap: 50, ...labels },
+        {
+          cohort: payload,
+          cap: 150,
+          ...labels,
+          benefitPer100: measured,
+          burdenPer100: measured,
+          precision: measured,
+          labelCoverage: measured,
+        },
+      ],
       integrity: [
         { surface: payload, counters: { answers_emitted: 1, [payload]: 1 } },
         { surface: payload, counters: null },
@@ -324,7 +419,64 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // here" runs exactly this command through Bash. So unlike `status` it
     // carries the quoted-data notice, and the corpus holds it to the framed
     // class on every payload.
-    render: (payload) => renderPinList(payload, registryWith(payload), NOW),
+    // 04a: a PENDING waiver request rides along, so the requester's name and
+    // reason — the two new untrusted slots on this surface — are attacked too.
+    render: (payload) => renderPinList(payload, registryWith(payload), NOW, [requestWith(payload)]),
+  },
+  {
+    kind: "corpus",
+    name: "cli-passkey-status",
+    delivery: "pulled",
+    module: "src/cli/passkey-status.ts",
+    // BARE, like the rest of `status`: one line per enrolment naming who,
+    // which device and which authenticator — a developer's name, a device
+    // label somebody typed and an authenticator name derived from what the
+    // device sent. All three are planted; the doctor check prints counts.
+    framing: "bare",
+    render: (payload) =>
+      [
+        ...passkeyStatusLines(
+          {
+            enrolments: [
+              {
+                passkeyId: payload,
+                developerName: payload,
+                label: payload,
+                authenticator: payload,
+                createdAt: ISO,
+                usableFrom: ISO,
+                coolingOff: true,
+                revoked: false,
+              },
+            ],
+            usablePasskeys: 0,
+            enrolmentsTotal: 2,
+            coolingOff: 1,
+          },
+          "http://localhost:7100",
+          NOW,
+        ),
+        "",
+      ].join("\n"),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pin-waive",
+    delivery: "pulled",
+    module: "src/cli/pin-render.ts",
+    // BARE: what `crosscheck pin --waive` prints is two ids, an instant and
+    // the approval URL — no teammate's prose. The FOREIGN slots are planted:
+    // the request id the hub chose and the pin id from argv. The instant and
+    // the URL are built by the command itself (pin-render.ts says why the
+    // hub's path is never printed), so they carry fixed local values here.
+    framing: "bare",
+    render: (payload) =>
+      renderWaiverRequested({
+        requestId: payload,
+        pinId: payload,
+        expiresAt: ISO,
+        approveUrl: "http://localhost:7100/ui/waivers",
+      }) + noSuchPinLine(payload),
   },
   {
     kind: "corpus",
@@ -355,7 +507,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // command WRITES and false of the three it PASSES THROUGH. Taking either
     // side alone would have restored a claim the other branch had just proven
     // false.
-    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency, pilot and hub-reachable checks. The pilot lines' reason words are the shared vocabulary's own sentences (unavailableClause), never hub text. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts",
+    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency, pilot and hub-reachable checks. The pilot lines' reason words are the shared vocabulary's own sentences (unavailableClause), never hub text. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts. The loss lines (doctor-losses.ts, docs/1.0/loss-accounting.md §5: spool drops, hub ignored records, capture losses, coverage reporting) print counts, the drop ledger's own reason words (anything else as `other`), record kinds screened by /^[a-z][a-z0-9_]{0,40}$/, hook and host event names screened by the capture ledger's detail alphabet, and instants re-formatted from Date.parse — never a path; exercised in test/doctor-losses.test.ts, and the screening in connector-core's own loss-report suite. The two causal-guarantee lines (connector-core guarantees/doctor.ts, 01a §5) print this connector's own declaration table — kind, state and reason words from guarantees/declarations.ts — and one count of declaration_contradicted off the hub's order report, never a session id; exercised in test/seq-doctor-hub.test.ts. The cloud agent identity check prints formatCloudAgentLink: the schema table's own product name and address, or, for an id this client's table does not hold, that hub word through bareUntrusted; exercised in test/absence-cli.test.ts. The cloud agent mailmap check prints only that table's product name and address, never the .mailmap line it found; exercised in test/landed-authors-doctor.test.ts",
   },
   {
     kind: "composite",
@@ -371,7 +523,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/cli/status.ts",
     // COV-7, same shape as cli-doctor above: driven by named fixtures in
     // test/coverage-cli.test.ts rather than by a registry closure.
-    note: "formatAbsenceLine, formatAge and the coverage clause from the core render layer, the clause exercised in test/coverage-cli.test.ts; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window. The CI block (spec 05 §5) adds the one slot on this surface whose text comes from ANOTHER REPOSITORY rather than from a teammate: a fork pull request can name a test anything, so every `test_id` goes through bareUntrusted at MAX_CI_TEST_ID_CHARS and the list is capped at CI_STATUS_MAX_LINES with the cut printed",
+    note: "formatAbsenceLine, formatAge and the coverage clause from the core render layer, the clause exercised in test/coverage-cli.test.ts; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window. The CI block (spec 05 §5) adds the one slot on this surface whose text comes from ANOTHER REPOSITORY rather than from a teammate: a fork pull request can name a test anything, so every `test_id` goes through bareUntrusted at MAX_CI_TEST_ID_CHARS and the list is capped at CI_STATUS_MAX_LINES with the cut printed. The `losses:` line is doctor's own loss fragments (connector-core spool/loss-report.ts formatLossLines): counts, screened record kinds and screened hook/host event names, never a path. The `cloud agent identity:` line is doctor's own formatCloudAgentLink sentence, verbatim",
     corpusCoveredBy: ["test/ci-status-render.test.ts"],
   },
   {
@@ -399,11 +551,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/cli/verdict-render.ts",
     framing: "framed",
     // THE ARRAY TAIL, per 00 §9.1a — appended after `cli-claim-revalidate`
-    // (02), which is where 05's `cli-ci-report` would have gone had 05 added
-    // one. It did not: 05 rendered its CI block inside `cli/status.ts`, an
-    // already-registered module, and covered it with a probe in
-    // test/ci-status-render.test.ts. So this is the next tail slot, and 07's
-    // `cli-pilot` follows it.
+    // (02), which is where 05's `cli-ci-report` would have gone had 05's HUB
+    // side added one. It did not: that half rendered its CI block inside
+    // `cli/status.ts`, an already-registered module, and covered it with a
+    // probe in test/ci-status-render.test.ts. So this was the next tail slot,
+    // 07's `cli-pilot` follows it, and the REPORTER half of 05 — built after
+    // all eight — registers `cli-ci-report` at the tail below `cli-pilot-mark`.
     //
     // THE PAYLOAD IS PLANTED IN THE WAIVER REASON, not only in the labels.
     // That slot is the whole point of this registration: a verdict is enum
@@ -423,9 +576,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // names the prior work each opened pointer pointed at, and that is a
     // teammate's title — planted here in the title slot, the most exposed
     // one, and in every other slot the wire can fill: repo, channel key,
-    // reason word, surface name, counter key and ids. The document carries
-    // the not-enrolled form and all three failure lines too, so no sentence
-    // this module writes goes unattacked.
+    // reason word, surface name, counter key and ids. 07 §12 added a second
+    // author-written span, the sentence a person typed beside a label, and
+    // the label word and cohort name beside it; all three are planted. The
+    // document carries the not-enrolled form and all three failure lines
+    // too, so no sentence this module writes goes unattacked.
     render: (payload) => {
       const view = pilotWith(payload);
       return [
@@ -472,6 +627,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       return [
         markRecordedLine("hint_delivery", payload, false),
         markRecordedLine("hint_delivery", payload, true),
+        // `crosscheck helpful` (second review, M6): the same lines, its word.
+        markRecordedLine("hint_delivery", payload, false, "helpful"),
+        candidateListLines([candidate], true, 60, NOW, "helpful"),
+        noLiveSessionLine("helpful"),
+        nothingRecentLine(60, "helpful"),
         markRecordedLine("pin", payload, false),
         markRecordedLine("pin", payload, true),
         candidateListLines([candidate, candidate], true, 60, NOW),
@@ -482,6 +642,140 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         markFailureLine("http", payload),
       ].join("\n");
     },
+  },
+  {
+    kind: "corpus",
+    name: "cli-ci-report",
+    delivery: "pulled",
+    module: "src/ci-report/render.ts",
+    // 05 §5, THE ARRAY TAIL: the reporter runs on a CI runner and prints into
+    // the job log — counts, enum words, its own outcome, NEVER a test name.
+    // BARE for cli-claim-revalidate's reason: a log is a terminal-shaped
+    // surface with no QUOTED_DATA_NOTICE, so a « » pair would be a frame
+    // nothing explains.
+    //
+    // CORPUS, NOT THE `composite` 05 §5 NAMED, and the difference is a finding
+    // rather than a preference. The spec registered it composite on the
+    // premise that it "renders no untrusted text at all". The build found
+    // three slots the module does not write itself — the hub's failure
+    // sentence (bounded by MAX_HUB_MESSAGE_CHARS, the constant minted for
+    // "a string THE HUB chose, as a tool prints it back") and the workflow
+    // author's own `--job` and `--leg` — and a composite row for a module
+    // that imports nothing from the render layer is exactly the "decorative
+    // row" the meta-test refuses. So the three slots go through
+    // `bareUntrusted`, and the corpus attacks all of them at once.
+    framing: "bare",
+    render: (payload) =>
+      [
+        ciReportRunLine({
+          commitSha: "0123456789abcdef",
+          job: payload,
+          leg: payload,
+          runAttempt: 1,
+          stage: "same_job",
+          rerunFiles: 1,
+          tests: 3,
+          failures: 1,
+          skipped: 1,
+          rowsSent: 2,
+          nonGreen: 3,
+          ambiguousDropped: 1,
+          outcome: "truncated",
+          stored: { status: "accepted", id: "cir_0123456789abcdef0123456789abcdef" },
+        }),
+        ciReportHubFailureLine("0123456789abcdef", "primary", {
+          kind: "refused",
+          httpStatus: 401,
+          message: payload,
+        }),
+        ciReportHubFailureLine("0123456789abcdef", "same_job", {
+          kind: "network",
+          message: payload,
+        }),
+        ciReportHubFailureLine("0123456789abcdef", "primary", {
+          kind: "malformed",
+          message: payload,
+        }),
+        ciReportNotReportedLine("0123456789abcdef", "no_token"),
+      ].join(""),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot-label",
+    delivery: "pulled",
+    module: "src/cli/pilot-label-render.ts",
+    // 07 §12, THE ARRAY TAIL. `crosscheck pilot label` shows each
+    // intervention again AFTER the session, so it prints what was shown — a
+    // teammate's work-context title — and is FRAMED, with the notice in the
+    // walk's header. The payload is planted in the title (the exposed slot),
+    // the channel word, the ref id, the delivery time and the hub's refusal
+    // sentence; a title-less candidate and every line the walk can write are
+    // in the document, so no sentence of the walk goes unattacked.
+    framing: "framed",
+    render: (payload) => {
+      const candidate = {
+        id: payload,
+        sessionId: payload,
+        channel: payload,
+        refKind: payload,
+        refId: payload,
+        deliveredAt: payload,
+        title: payload,
+      };
+      const tally = {
+        total: 3,
+        helpful: 1,
+        noise: 1,
+        unclear: 1,
+        skipped: 1,
+        already: 1,
+        refused: 1,
+        notReached: 1,
+      };
+      return [
+        walkHeaderLines(3, true, 1440),
+        interventionLine(candidate, 0, 3, NOW),
+        interventionLine({ ...candidate, title: null }, 1, 3, NOW),
+        keyPromptLine(),
+        decisionEchoLine("noise"),
+        unknownKeyLine(),
+        reasonPromptLine(),
+        reasonTooLongLine(201),
+        reasonSecretLine(),
+        labelRecordedLine("helpful", true, false),
+        labelRecordedLine("noise", false, true),
+        skippedLine(),
+        labelRefusedLine(payload),
+        walkUnreachableLine(payload),
+        nothingToLabelLine(1440),
+        walkSummaryLines(tally, true),
+      ].join("\n");
+    },
+  },
+  {
+    kind: "corpus",
+    name: "cli-pin-denylist-door",
+    delivery: "pulled",
+    module: "src/cli/pin-observability.ts",
+    // loss-accounting §10 item 4, THE ARRAY TAIL. `crosscheck pin` and
+    // `crosscheck pin --sweep` name each file the denylist excludes and the
+    // rule that excludes it. BARE, for cli-pin-observability's reason: a
+    // repo-relative path and a glob pattern are bare tokens, never another
+    // person's prose. Every slot both sentences fill is planted — the path,
+    // the new path git followed it to, and the pattern.
+    framing: "bare",
+    render: (payload) =>
+      [
+        pinDenylistRefusal([
+          { path: payload, pattern: payload, here: true, shippedPattern: null },
+          { path: payload, pattern: payload, here: false, shippedPattern: payload },
+        ]),
+        ...sweepDenylistLines([
+          { path: payload, newPath: payload, pattern: payload, here: true, shippedPattern: null },
+          { path: payload, newPath: payload, pattern: payload, here: true, shippedPattern: payload },
+          { path: payload, newPath: payload, pattern: payload, here: false, shippedPattern: payload },
+        ]),
+      ].join("\n"),
   },
 ];
 

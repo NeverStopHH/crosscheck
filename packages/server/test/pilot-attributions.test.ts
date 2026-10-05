@@ -286,6 +286,7 @@ describe("an answer is kept as it was given", () => {
       repo: REPO,
       computedAt: now.toISOString(),
       scope: { sinceIso: now.toISOString() },
+      order: { state: "undeclared", reason: "no_session_in_scope" },
       sources: COVERAGE_SOURCES.map((source) => ({
         source,
         state: "unknown" as const,

@@ -609,3 +609,19 @@ export const getDiagnosis = async (
       edgeRows.length >= limits.maxEdges,
   };
 };
+
+/**
+ * The sessions a tree names (review H3): the one that owns it and every one
+ * that wrote a claim or an edge in it, each bounded by the tree's own limits.
+ * The route's coverage folds over them, because "no claims recorded yet" and
+ * "no targets were captured" are true of the work only if these sessions
+ * were being watched — and an old tree's sessions left the heartbeat window
+ * long ago.
+ */
+export const diagnosisSessionIds = (diagnosis: Diagnosis): readonly string[] => [
+  ...new Set([
+    diagnosis.workContext.sessionId,
+    ...diagnosis.claims.map((claim) => claim.authorSessionId),
+    ...diagnosis.edges.map((edge) => edge.authorSessionId),
+  ]),
+];

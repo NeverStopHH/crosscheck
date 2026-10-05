@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { MAX_PIN_CHECK_CHARS, PIN_PRESENCE_TERMINAL } from "./pin.ts";
+import { MAX_PIN_CHECK_CHARS } from "./pin.ts";
 
 /**
  * A FENCE WAIVER'S TWO KINDS (1.0 spec 04 §3.6).
@@ -51,25 +51,56 @@ export const MAX_WAIVER_REASON_CHARS = MAX_PIN_CHECK_CHARS;
 export type WaiverKind = (typeof WAIVER_KINDS)[number];
 
 /**
- * WHAT A PERSON SENDS TO OPEN A FENCE.
+ * WHO OPENED A FENCE, as the hub recorded it (1.0 spec 04a §6).
  *
- * `presence` IS EVIDENCE, NOT A VERDICT — #50's pin rule, copied with its
- * stated limit. The client says what it OBSERVED (a controlling terminal); the
- * hub stamps the stored `capture_mode` itself. A body that could say "human"
- * would be a caller asserting something about itself that only the hub may
- * decide, and here that assertion would be a PERMISSION.
+ * `terminal` — the pre-04a grant: an api key plus a body that said it saw a
+ * controlling terminal. Any agent holding the key could send both, so it is
+ * the WEAKER authority, and no new row of it can be written; the rows already
+ * live run out on their own expiry (at most `MAX_WAIVER_DAYS`).
  *
- * The literal makes the gate fail CLOSED: an absent or unknown value is a parse
- * failure, never a default.
+ * `passkey` — a WebAuthn assertion with user verification, by a passkey of the
+ * approving developer, over exactly the terms stored. The row names the
+ * credential, so "which device said yes" survives a later revocation of it.
  *
- * WHAT THE GATE IS WORTH, stated rather than implied. A bearer key that can
- * reach the route can also send this field, and that key sits in plaintext in
- * `~/.crosscheck/config.json`. This makes the claim explicit, required and
- * refusable AT THE HUB; it does not make it unforgeable by an attacker who
- * already holds the key. That is why every waiver row names who granted it —
- * a forged permission is at least an attributable one.
+ * These two are the only authorities a GRANT can carry, so they are what a
+ * live waiver on the wire may say; anything else reads as `terminal`.
  */
-export const WaiverGrantSchema = z.object({
+export const WAIVER_GRANT_AUTHORITIES = ["terminal", "passkey"] as const;
+
+export type WaiverGrantAuthority = (typeof WAIVER_GRANT_AUTHORITIES)[number];
+
+/**
+ * `system` — the HUB closed the waiver, not a person's ceremony (04a D-PK-1,
+ * decided by Nick 2026-10-02): the passkey that authorised a live grant was
+ * revoked, so the grant stops holding its fence open. The hub writes a new
+ * `revoke` row superseding it, in the transaction that revokes the passkey;
+ * nothing is deleted or overwritten. Valid ONLY on a revoke row that names
+ * the revoked credential and carries AUTHORIZING_CREDENTIAL_REVOKED as its
+ * reason, and its `granted_by` is null — the CHECK
+ * `fence_waivers_authority_check` makes each of these a database fact.
+ * Whoever revoked the passkey (owner, admin or another passkey) stays on the
+ * passkey's own row, reachable through the credential.
+ */
+export const SYSTEM_WAIVER_AUTHORITY = "system" as const;
+
+export const WAIVER_AUTHORITIES = [...WAIVER_GRANT_AUTHORITIES, SYSTEM_WAIVER_AUTHORITY] as const;
+
+export type WaiverAuthority = (typeof WAIVER_AUTHORITIES)[number];
+
+/** The reason a `system` closure records, as Nick specified it (04a D-PK-1). */
+export const AUTHORIZING_CREDENTIAL_REVOKED = "authorizing_credential_revoked" as const;
+
+/**
+ * WHAT AN AGENT — OR A PERSON AT A TERMINAL — SENDS TO ASK FOR A FENCE TO OPEN.
+ *
+ * A REQUEST, NOT A GRANT (04a §2). The api key that carries it is held by the
+ * developer AND by every agent on their machine, so it can only ask; a person
+ * approves with a passkey in the web UI, where the terms below are shown and
+ * signed. Nothing about a human is asserted here, which is why the old
+ * `presence: "controlling_terminal"` literal is gone: a field that proves
+ * nothing to the hub would only read as if it did.
+ */
+export const WaiverRequestSchema = z.object({
   repo: z.string().min(1),
   pinId: z.string().min(1),
   /**
@@ -77,28 +108,13 @@ export const WaiverGrantSchema = z.object({
    *
    * REQUIRED, and it is the sender's statement of what they looked at. A
    * waiver that defaulted to "whatever the pin is now" would let a sweep
-   * landing between reading and granting move the fence under the decision.
+   * landing between reading and granting move the fence under the decision —
+   * and an approval later signs this same version or nothing.
    */
   pinVersion: z.number().int().min(1),
   reason: z.string().min(1).max(MAX_WAIVER_REASON_CHARS),
+  /** The expiry ASKED for; the approver may shorten it before signing. */
   expiresAt: z.iso.datetime(),
-  presence: z.literal(PIN_PRESENCE_TERMINAL),
 });
 
-/**
- * WHAT A PERSON SENDS TO CLOSE ONE AGAIN.
- *
- * A REASON IS REQUIRED HERE TOO. It is easy to argue that taking a permission
- * back needs no justification, and that asymmetry is exactly what makes a
- * revocation read as an accusation. The grant being superseded comes from the
- * path, not the body: a revoke names one row, and letting the body choose it
- * would allow closing a fence the sender never looked at.
- */
-export const WaiverRevokeSchema = z.object({
-  repo: z.string().min(1),
-  reason: z.string().min(1).max(MAX_WAIVER_REASON_CHARS),
-  presence: z.literal(PIN_PRESENCE_TERMINAL),
-});
-
-export type WaiverGrant = z.infer<typeof WaiverGrantSchema>;
-export type WaiverRevoke = z.infer<typeof WaiverRevokeSchema>;
+export type WaiverRequestInput = z.infer<typeof WaiverRequestSchema>;

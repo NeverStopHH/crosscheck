@@ -16,6 +16,7 @@
 import { HEARTBEAT_MIN_INTERVAL_MS } from "../constants.ts";
 import { heartbeatSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
+import { readTelemetryLossReport } from "../spool/loss-report.ts";
 
 export interface HeartbeatMaybeInput {
   readonly hub: HubContext;
@@ -37,6 +38,12 @@ export const heartbeatMaybe = async (
       return false;
     }
   }
-  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status);
+  // THE LOSS REPORT RIDES EVERY BEAT (docs/1.0/loss-accounting.md §4.2): the
+  // most frequent of the three session carriers, so a loss mid-session
+  // reaches the hub's coverage within HEARTBEAT_MIN_INTERVAL_MS rather than
+  // at the end. Read AFTER the throttle decided a beat is due, so a hook that
+  // beats nothing pays nothing; a local read of the ledgers, no round trip.
+  const losses = await readTelemetryLossReport(input.hub.home, input.hub.repoKey);
+  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);
   return true;
 };

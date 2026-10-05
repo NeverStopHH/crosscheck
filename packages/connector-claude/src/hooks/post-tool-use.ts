@@ -14,8 +14,10 @@ import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSession } from "@crosscheck/connector-core/http/hub.ts";
+import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
+import { readTelemetryLossReport } from "@crosscheck/connector-core/spool/loss-report.ts";
 import {
   diagnosisPath,
   withCaptureBookkeeping,
@@ -81,6 +83,9 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     branch: ctx.identity.branch,
     baseCommit: ctx.identity.baseCommit,
     status: IMPLEMENTING_STATUS,
+    // A recovery CREATES the session, so it carries the declaration a
+    // SessionStart would have (01a §3.6) — the hub stores it only on create.
+    guarantees: guaranteeDeclarationFor("claude-code"),
     // A RECOVERY IS A CREATE, so it mints an epoch like SessionStart does and
     // `session.started` takes position 0 under it. Sending nothing would file
     // a current connector under `pre_seq_connector` — "a connector from
@@ -92,6 +97,10 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
       derived.seqEpoch === null
         ? ALLOCATION_FAILED
         : { epoch: derived.seqEpoch, n: 0 },
+    // Every register carries the machine's loss report, zeros included
+    // (loss-accounting §4.2; review LOW): an omitted one reads as "a connector
+    // from before the field" on exactly the session a recovery rebuilt.
+    losses: await readTelemetryLossReport(ctx.config.home, ctx.repoKey),
   });
   // A conflict means the id belongs to somebody else, OR to a live session
   // this developer already bound to ANOTHER repo (the hub's repo_mismatch,

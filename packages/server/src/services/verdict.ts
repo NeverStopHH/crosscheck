@@ -31,6 +31,7 @@
 import type { EvidenceAxes } from "@crosscheck/schema";
 
 import type { CiBehaviorDelta } from "./ci-delta.ts";
+import type { ClosedWaiver } from "./waiver-terminations.ts";
 import { isJudgeable } from "./coverage.ts";
 import type { CoverageRecord } from "./coverage.ts";
 import type { ExplanationTiming, TimingReason } from "./intent-ledger.ts";
@@ -138,6 +139,12 @@ export interface Verdict {
   readonly attribution: Attribution;
   readonly protection: Protection;
   readonly waiver: WaiverRef | null;
+  /**
+   * A fence the hub closed because the passkey that approved it was revoked
+   * (04a D-PK-1). CARRIED, NEVER WEIGHED: protection reads `waiver` alone, so
+   * this only tells the reader why a fence that was open reads closed.
+   */
+  readonly closedWaiver: ClosedWaiver | null;
   readonly falsifier: VerdictFalsifier;
   readonly evidence: EvidenceAxes;
   readonly basis: VerdictBasis;
@@ -406,6 +413,8 @@ export interface VerdictInput {
   readonly evidence: EvidenceAxes;
   readonly invariant: InvariantRef | null;
   readonly liveWaiver: WaiverRef | null;
+  /** Omitted where no pin is in scope, which reads as no closure. */
+  readonly closedWaiver?: ClosedWaiver | null;
   readonly now: Date;
 }
 
@@ -460,6 +469,7 @@ export const computeVerdict = (input: VerdictInput): Verdict => {
     attribution,
     protection,
     waiver: input.liveWaiver,
+    closedWaiver: input.closedWaiver ?? null,
     falsifier,
     evidence: input.evidence,
     basis,

@@ -5,10 +5,16 @@
  * query lexically matched must not decay into invisibility under fresh noise —
  * the answer from March is the point of retaining everything.
  *
+ * The floor lifts only a tree whose root cause is still CURRENT about the code
+ * (1.0 spec 02 §5): a cause the code has moved past, or one nobody ever
+ * revalidated, decays like any other row. The floor is a strengthening, and
+ * missing evidence may weaken a conclusion, never strengthen one.
+ *
  * The floor mutation (SOLVED_DECAY_FLOOR → 0 in scripts/mutation-check.ts)
  * re-breaks the ranking test here on every pull request.
  */
 import { describe, expect, test } from "bun:test";
+import { NO_COMMIT_SHA } from "@crosscheck/schema";
 import { sql } from "drizzle-orm";
 
 import {
@@ -26,6 +32,7 @@ import {
   recordEnvelope,
   registerTestSession,
   TEST_START_ISO,
+  VALID_SESSION_BODY,
   validClaimBody,
   validWorkContextBody,
 } from "./helpers.ts";
@@ -73,6 +80,40 @@ const seed = async (
   const posted = await postRecords(harness, developer, { records });
   if (posted.status !== 200 || (posted.data?.rejected ?? 1) > 0) {
     throw new Error(`seed failed: ${JSON.stringify(posted.data?.results)}`);
+  }
+};
+
+/**
+ * Records what a revalidation found under wc_solved's root cause — the reading
+ * the hub derives the claim's validity from (1.0 spec 02 §5): `unchanged`
+ * makes it current, `changed` makes it stale.
+ */
+const reviseRootCause = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+  result: "changed" | "unchanged",
+): Promise<void> => {
+  const touching = result === "changed" ? ["deadbee"] : [];
+  const response = await harness.app.request(
+    "/api/claim-revalidations",
+    jsonRequest("POST", developer.apiKey, {
+      repo: VALID_SESSION_BODY.repo,
+      entries: [
+        {
+          claimId: "clm_solved_root",
+          result,
+          basis: "context_targets",
+          refCommit: "ff00aa11",
+          touchingCommits: touching,
+          touchingTotal: touching.length,
+        },
+      ],
+      revalidated: 1,
+      total: 1,
+    }),
+  );
+  if (response.status !== 200) {
+    throw new Error(`revalidation failed: ${String(response.status)} ${await response.text()}`);
   }
 };
 
@@ -189,27 +230,32 @@ interface SolvedHarness {
 }
 
 const createSolvedHarness = async (
-  options: { readonly embedder?: unknown } = {},
+  options: { readonly embedder?: unknown; readonly solvedBaseCommit?: string } = {},
 ): Promise<SolvedHarness> => {
+  const { solvedBaseCommit, ...harnessOptions } = options;
   const harness = await createTestHarness(
-    options as Parameters<typeof createTestHarness>[0],
+    harnessOptions as Parameters<typeof createTestHarness>[0],
   );
   const developer = await createTestDeveloper(
     harness,
     "Nick",
     "nick@example.com",
   );
-  await registerTestSession(harness, developer.apiKey, { id: SOLVED_SESSION });
+  await registerTestSession(harness, developer.apiKey, {
+    id: SOLVED_SESSION,
+    ...(solvedBaseCommit === undefined ? {} : { baseCommit: solvedBaseCommit }),
+  });
   await registerTestSession(harness, developer.apiKey, { id: FRESH_SESSION });
   return { harness, developer };
 };
 
 describe("solved trees in search", () => {
-  test("a 60-day-old solved tree owning the exact target outranks fresh text noise", async () => {
+  test("a 60-day-old solved tree whose cause is still current outranks fresh text noise", async () => {
     // Arrange
     const { harness, developer } = await createSolvedHarness();
     await seed(harness, developer, solvedTreeRecords());
     await seed(harness, developer, freshNoiseRecords());
+    await reviseRootCause(harness, developer, "unchanged");
 
     // Act: "refresh.ts" hits wc_solved's file target, "login" hits wc_fresh's
     // title — without the floor, 60 days of decay bury the actual answer.
@@ -218,6 +264,53 @@ describe("solved trees in search", () => {
     // Assert
     expect(results[0]?.id).toBe("wc_solved");
     expect(results.map((entry) => entry.id)).toContain("wc_fresh");
+  });
+
+  test("a solved tree whose cause the code has moved past decays like any other row", async () => {
+    // Arrange: the files the root cause names changed after it was recorded.
+    const { harness, developer } = await createSolvedHarness();
+    await seed(harness, developer, solvedTreeRecords());
+    await seed(harness, developer, freshNoiseRecords());
+    await reviseRootCause(harness, developer, "changed");
+
+    // Act
+    const results = await search(harness, developer.apiKey, "refresh.ts login");
+
+    // Assert: still found and still labelled solved, but no longer lifted
+    // above fresh work.
+    expect(results[0]?.id).toBe("wc_fresh");
+    expect(results.find((entry) => entry.id === "wc_solved")?.resultKind).toBe("solved");
+  });
+
+  test("a solved tree whose cause nobody revalidated keeps the floor, as the hint gate does", async () => {
+    // Arrange: no revalidation row at all, so the cause's validity is unknown
+    // — the state of almost every cause ever recorded.
+    const { harness, developer } = await createSolvedHarness();
+    await seed(harness, developer, solvedTreeRecords());
+    await seed(harness, developer, freshNoiseRecords());
+
+    // Act
+    const results = await search(harness, developer.apiKey, "refresh.ts login");
+
+    // Assert
+    expect(results[0]?.id).toBe("wc_solved");
+  });
+
+  test("a solved tree whose cause is bound to no commit gets no floor", async () => {
+    // Arrange: the author session's base commit is the no-commit placeholder,
+    // so the cause has no observation point and can never be revalidated.
+    const { harness, developer } = await createSolvedHarness({
+      solvedBaseCommit: NO_COMMIT_SHA,
+    });
+    await seed(harness, developer, solvedTreeRecords());
+    await seed(harness, developer, freshNoiseRecords());
+
+    // Act
+    const results = await search(harness, developer.apiKey, "refresh.ts login");
+
+    // Assert
+    expect(results[0]?.id).toBe("wc_fresh");
+    expect(results.find((entry) => entry.id === "wc_solved")?.resultKind).toBe("solved");
   });
 
   test("solved results carry the solved result kind and when they were diagnosed", async () => {
@@ -339,6 +432,9 @@ describe("solved trees in search", () => {
         { sessionId: SOLVED_SESSION },
       ),
     ]);
+    // The surviving cause is still current, so the settled tree earns the
+    // floor back as well as the label.
+    await reviseRootCause(harness, developer, "unchanged");
 
     // Act
     const results = await search(harness, developer.apiKey, "refresh.ts login");

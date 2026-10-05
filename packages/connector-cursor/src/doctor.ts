@@ -34,7 +34,7 @@ import { join } from "node:path";
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { MCP_SERVER_KEY } from "@crosscheck/connector-core/constants.ts";
-import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
+import { readText } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { summarizeStateCosts } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 import { bareSummarizerLine } from "@crosscheck/connector-core/model/runner.ts";
@@ -55,6 +55,8 @@ import {
   resolveDeriveBackend,
 } from "@crosscheck/connector-core/model/backend.ts";
 import { NO_SLICE_NO_TRANSCRIPT } from "./derive/transcript.ts";
+import { declarationDoctorLine } from "@crosscheck/connector-core/guarantees/doctor.ts";
+import { CURSOR_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { readContractDrift } from "./drift.ts";
 import { readInjectionLedger } from "./inject/ledger.ts";
 import { isOwnedCursorCommand } from "./init/hooks-merge.ts";
@@ -431,8 +433,15 @@ const mcpCheck = async (
 ): Promise<CursorCheck> => {
   const path = join(cursorDir, CURSOR_MCP_FILE);
   const init = INIT_COMMAND[scope];
-  const raw = await readTextOrNull(path);
-  if (raw === null) {
+  const read = await readText(path);
+  if (read.kind === "unreadable") {
+    return check(
+      "WARN",
+      "cursor mcp tools",
+      `${path} could not be read — whether the crosscheck server is registered there is unknown`,
+    );
+  }
+  if (read.kind === "absent") {
     return check(
       "FAIL",
       "cursor mcp tools",
@@ -441,7 +450,7 @@ const mcpCheck = async (
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw) as unknown;
+    parsed = JSON.parse(read.text) as unknown;
   } catch {
     return check(
       "WARN",
@@ -475,6 +484,8 @@ const mcpCheck = async (
 /** One hooks file, read as far as this section needs it. */
 type HooksRead =
   | { readonly kind: "absent"; readonly path: string }
+  /** Exists but could not be read (EACCES): unknown, never "not installed". */
+  | { readonly kind: "unreadable"; readonly path: string }
   | { readonly kind: "unparseable"; readonly path: string }
   | { readonly kind: "unowned"; readonly path: string }
   | {
@@ -490,13 +501,15 @@ const readHooks = async (
   scope: InstallScope,
 ): Promise<HooksRead> => {
   const path = join(cursorDir, CURSOR_HOOKS_FILE);
-  const raw = await readTextOrNull(path);
-  if (raw === null) {
-    return { kind: "absent", path };
+  // `readText`, not `readTextOrNull`: a file that exists and cannot be read
+  // must not read as absent (review 2026-10-05).
+  const read = await readText(path);
+  if (read.kind !== "text") {
+    return { kind: read.kind, path };
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw) as unknown;
+    parsed = JSON.parse(read.text) as unknown;
   } catch {
     return { kind: "unparseable", path };
   }
@@ -518,17 +531,19 @@ const readHooks = async (
  * it always was, before the user's is consulted — it is what Cursor loads for
  * this repo, and nothing about a user-level install makes it readable.
  */
+/** A read this section reports on its own: an install, or a file it could not read. */
+const isReported = (read: HooksRead): boolean =>
+  read.kind === "installed" || read.kind === "unparseable" || read.kind === "unreadable";
+
 const resolveInstall = async (
   input: CursorDoctorInput,
 ): Promise<HooksRead> => {
   const project = await readHooks(join(input.repoRoot, CURSOR_DIR), "project");
-  if (project.kind === "installed" || project.kind === "unparseable") {
+  if (isReported(project)) {
     return project;
   }
   const user = await readHooks(cursorUserDir(input.env), "user");
-  return user.kind === "installed" || user.kind === "unparseable"
-    ? user
-    : project;
+  return isReported(user) ? user : project;
 };
 
 /**
@@ -552,6 +567,15 @@ export const cursorDoctorChecks = async (
   if (install.kind === "unparseable") {
     return [
       check("FAIL", "cursor hooks", `${install.path} is not valid json`),
+    ];
+  }
+  if (install.kind === "unreadable") {
+    return [
+      check(
+        "WARN",
+        "cursor hooks",
+        `${install.path} could not be read — whether crosscheck's Cursor hooks are installed there is unknown`,
+      ),
     ];
   }
   if (install.kind === "unowned") {
@@ -627,5 +651,12 @@ export const cursorDoctorChecks = async (
     ...capabilityChecks(cursorStates),
     ...transcriptRefusalCheck(cursorStates),
     ...refusalChecks(),
+    // 01a §5: what this connector's positions can support, per kind.
+    guaranteeCheck(),
   ];
+};
+
+const guaranteeCheck = (): CursorCheck => {
+  const line = declarationDoctorLine(CURSOR_AGENT_KIND);
+  return check(line.level, line.name, line.detail);
 };

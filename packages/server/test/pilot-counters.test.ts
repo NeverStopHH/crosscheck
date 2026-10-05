@@ -47,6 +47,7 @@ const coverageWith = (
   repo: REPO,
   computedAt: NOW.toISOString(),
   scope: { sinceIso: NOW.toISOString() },
+  order: { state: "undeclared", reason: "no_session_in_scope" },
   sources: COVERAGE_SOURCES.map((source) => ({
     source,
     state: (overrides[source] ?? "unknown") as "unknown",

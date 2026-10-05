@@ -55,7 +55,7 @@
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import {
-  isDenied,
+  DEFAULT_DENYLIST,
   matchesGlob,
 } from "@crosscheck/connector-core/capture/denylist.ts";
 import { MAX_PIN_PATH_CHARS } from "@crosscheck/schema";
@@ -129,8 +129,22 @@ export const orphanSentence = (
 
 export interface PinShadow {
   readonly path: string;
+  /** The rule named: this machine's first match, else the shipped list's. */
   readonly pattern: string;
+  /** This machine's capture excludes it too; false = only machines that keep the shipped list do. */
+  readonly here: boolean;
+  /**
+   * The first shipped rule that matches, whether or not a local one does:
+   * every teammate who kept the defaults applies it, so no config on this
+   * machine can lift the exclusion. Null = only this machine's list excludes it.
+   */
+  readonly shippedPattern: string | null;
 }
+
+/** How a rule that binds only OTHER machines is named, after the rule itself. */
+const ELSEWHERE = "on machines that keep the shipped denylist";
+/** How a rule that binds only THIS machine is named, after the rule itself. */
+const HERE_ONLY = "on this machine only";
 
 /**
  * Every LIVE pinned path the effective denylist suppresses, with the pattern
@@ -145,26 +159,162 @@ export interface PinShadow {
 export const shadowedPinPaths = (
   registry: PinRegistry,
   patterns: readonly string[],
-): readonly PinShadow[] => {
-  const shadows: PinShadow[] = [];
-  const seen = new Set<string>();
-  for (const pin of registry.pins) {
-    if (pin.brokeAt !== null) {
-      continue;
-    }
-    for (const file of pin.files) {
-      if (seen.has(file.path) || !isDenied(file.path, patterns)) {
-        continue;
-      }
-      seen.add(file.path);
-      const pattern = patterns.find((candidate) =>
-        matchesGlob(candidate, file.path),
-      );
-      shadows.push({ path: file.path, pattern: pattern ?? "(unknown)" });
-    }
-  }
-  return shadows;
+): readonly PinShadow[] =>
+  deniedPinPaths(
+    [
+      ...new Set(
+        registry.pins
+          .filter((pin) => pin.brokeAt === null)
+          .flatMap((pin) => pin.files.map((file) => file.path)),
+      ),
+    ],
+    patterns,
+  );
+
+/**
+ * Each of `paths` a pin cannot guard, with the rule that excludes it. One
+ * question with four askers — the pin door and the sweep over paths about to
+ * be pinned, the status and doctor shadow line over the registry
+ * (loss-accounting §10 item 4) — so they cannot disagree.
+ *
+ * TWO LISTS, because the denylist is per-machine config: `local` is the
+ * caller's `resolveDenylist` answer, what capture HERE applies, and the
+ * shipped defaults are what every teammate who kept them applies. A
+ * developer whose config replaces the defaults still has those teammates, and
+ * on each of their machines a pin over `yarn.lock` is blind while it reads
+ * as a guard. The shipped half is decided by a MATCH, never by comparing rule
+ * text, so a local `*.lock` backed by the shipped `**\/*.lock` is still known
+ * to be unliftable.
+ */
+export const deniedPinPaths = (
+  paths: readonly string[],
+  local: readonly string[],
+): readonly PinShadow[] =>
+  paths.flatMap((path) => {
+    const localPattern = local.find((candidate) => matchesGlob(candidate, path));
+    const shippedPattern = DEFAULT_DENYLIST.find((candidate) => matchesGlob(candidate, path));
+    const pattern = localPattern ?? shippedPattern;
+    return pattern === undefined
+      ? []
+      : [{ path, pattern, here: localPattern !== undefined, shippedPattern: shippedPattern ?? null }];
+  });
+
+/**
+ * WHERE an excluded file goes unrecorded — the three reaches a match can
+ * have, because the denylist is per-machine config. Every sentence below
+ * says only what is true of its reach: a file this machine's own rule skips
+ * IS recorded by a teammate on the shipped list, and a file only the shipped
+ * list skips IS recorded here.
+ */
+type ShadowReach = "everywhere" | "here" | "elsewhere";
+
+interface Reachable {
+  readonly here: boolean;
+  readonly shippedPattern: string | null;
+}
+
+const reachOf = (shadow: Reachable): ShadowReach =>
+  !shadow.here ? "elsewhere" : shadow.shippedPattern === null ? "here" : "everywhere";
+
+const REACHES: readonly ShadowReach[] = ["everywhere", "here", "elsewhere"];
+
+/** Why a pin over a file is refused, by reach (loss-accounting §10 item 4). */
+export const DENYLIST_REFUSAL_WHY =
+  "no session here, nor on any machine that keeps the shipped denylist, records touching them";
+export const DENYLIST_REFUSAL_WHY_HERE =
+  "this machine's own denylist skips them; teammates who kept the shipped denylist record them";
+export const DENYLIST_REFUSAL_WHY_ELSEWHERE =
+  "this machine records touching them, but no machine that keeps the shipped denylist does";
+
+const WHY_BY_REACH: Readonly<Record<ShadowReach, string>> = {
+  everywhere: DENYLIST_REFUSAL_WHY,
+  here: DENYLIST_REFUSAL_WHY_HERE,
+  elsewhere: DENYLIST_REFUSAL_WHY_ELSEWHERE,
 };
+
+/** The consequence every reach shares, said once after its reasons. */
+const GUARD_COST = "a guard over a file some sessions never record could never say who broke it";
+
+const capitalised = (sentence: string): string =>
+  `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`;
+
+const excludedBy = (shadow: Reachable & { readonly pattern: string }): string => {
+  const reach = reachOf(shadow);
+  const rule = `excluded by ${token(shadow.pattern)}`;
+  return reach === "everywhere" ? rule : `${rule} ${reach === "here" ? HERE_ONLY : ELSEWHERE}`;
+};
+
+/**
+ * One reason line per reach present, each NAMING the files it is about — never
+ * one sentence over the whole list that is false of some of them.
+ */
+const refusalWhyLines = <T extends Reachable>(
+  items: readonly T[],
+  pathOf: (item: T) => string,
+): readonly string[] =>
+  REACHES.flatMap((reach) => {
+    const files = items.filter((item) => reachOf(item) === reach).map(pathOf);
+    return files.length === 0 ? [] : [`${files.map(token).join(", ")}: ${WHY_BY_REACH[reach]}`];
+  });
+
+/**
+ * WHAT THE PIN DOOR PRINTS when the denylist excludes a file (loss-accounting
+ * §10 item 4). EVERY excluded file is named with its rule — not the first
+ * three the status line names — because each one has to leave the command,
+ * or its rule the config, before this pin can exist. A pin carries at most
+ * MAX_PIN_FILES paths, which bounds the list.
+ */
+export const pinDenylistRefusal = (denied: readonly PinShadow[]): string => {
+  const shipped = [
+    ...new Set(denied.flatMap((shadow) => (shadow.shippedPattern === null ? [] : [shadow.shippedPattern]))),
+  ];
+  // A shipped rule binds every teammate who kept the defaults, so no config
+  // on this machine can lift it — the config remedy is offered only when some
+  // file is excluded by this machine's list ALONE, the one case it can fix.
+  const configCanLift = denied.some((shadow) => shadow.shippedPattern === null);
+  return [
+    `nothing was pinned — the hot-file denylist excludes ${String(denied.length)} of these file(s) from capture:`,
+    ...denied.map((shadow) => `  ${token(shadow.path)} (${excludedBy(shadow)})`),
+    ...refusalWhyLines(denied, (shadow) => shadow.path).map((why) => `${why}.`),
+    `${capitalised(GUARD_COST)}.`,
+    ...(shipped.length === 0
+      ? []
+      : [
+          `${shipped.map(token).join(", ")} ${shipped.length === 1 ? "is" : "are"} on crosscheck's shipped default list, which every teammate who kept the defaults applies — changing this machine's config does not lift ${shipped.length === 1 ? "it" : "them"}.`,
+        ]),
+    configCanLift
+      ? "Pin the files they are made from instead, or change the denylist in the crosscheck config."
+      : "Pin the files they are made from instead.",
+    "",
+  ].join("\n");
+};
+
+/** A rename git followed into a path the denylist excludes. */
+export interface DeniedMove {
+  readonly path: string;
+  readonly newPath: string;
+  readonly pattern: string;
+  /** As on PinShadow: false = only machines that keep the shipped list exclude the new path. */
+  readonly here: boolean;
+  /** As on PinShadow: the shipped rule matching the new path, or null. */
+  readonly shippedPattern: string | null;
+}
+
+/**
+ * WHAT A SWEEP PRINTS for the renames it would not record (loss-accounting
+ * §10 item 4): git followed the file into an excluded path, and a pin there
+ * would watch a file whose touches are never recorded. The update went to the
+ * hub as `missing` instead, so the pin reads BROKEN rather than quietly blind.
+ */
+export const sweepDenylistLines = (moves: readonly DeniedMove[]): readonly string[] =>
+  moves.length === 0
+    ? []
+    : [
+        `${String(moves.length)} renamed path(s) recorded as missing — git followed each into a file the hot-file denylist excludes from capture:`,
+        ...moves.map((move) => `  ${token(move.path)} moved to ${token(move.newPath)} (${excludedBy(move)})`),
+        ...refusalWhyLines(moves, (move) => move.newPath).map((why) => `${why}.`),
+        `${capitalised(GUARD_COST)}. Re-pin the surface on files capture records, or retire the pin: crosscheck pin --broke with the pin id.`,
+      ];
 
 /**
  * The shadowing sentence. It says what the suppression COSTS — no target
@@ -172,6 +322,15 @@ export const shadowedPinPaths = (
  * rather than only that it happened, because the consequence is the part a
  * reader cannot derive from the fact.
  */
+const namedShadows = (shadows: readonly PinShadow[]): string => {
+  const named = shadows
+    .slice(0, MAX_NAMED_SHADOWS)
+    .map((shadow) => `${token(shadow.path)} (${token(shadow.pattern)})`)
+    .join(", ");
+  const rest = shadows.length - Math.min(shadows.length, MAX_NAMED_SHADOWS);
+  return `${named}${rest > 0 ? ` … and ${String(rest)} more` : ""}`;
+};
+
 export const shadowSentence = (
   shadows: readonly PinShadow[],
   patternCount: number,
@@ -179,16 +338,25 @@ export const shadowSentence = (
   if (shadows.length === 0) {
     return `no pinned file is shadowed by the ${String(patternCount)} effective hot-file pattern(s)`;
   }
-  const named = shadows
-    .slice(0, MAX_NAMED_SHADOWS)
-    .map((shadow) => `${token(shadow.path)} (${token(shadow.pattern)})`)
-    .join(", ");
-  const rest = shadows.length - Math.min(shadows.length, MAX_NAMED_SHADOWS);
-  return (
-    `${String(shadows.length)} pinned file(s) are never captured — the hot-file denylist matches them: ` +
-    `${named}${rest > 0 ? ` … and ${String(rest)} more` : ""} — ` +
-    'no session records touching them, so crosscheck suspect answers "no session touched this surface" no matter who did'
-  );
+  // One clause per reach, each true only of its own files: a file this
+  // machine records is never called unrecorded, and a file a teammate records
+  // is never called unrecorded by anyone.
+  return REACHES.flatMap((reach) => {
+    const own = shadows.filter((shadow) => reachOf(shadow) === reach);
+    return own.length === 0 ? [] : [SHADOW_CLAUSE[reach](own)];
+  }).join("; ");
+};
+
+const SHADOW_CLAUSE: Readonly<Record<ShadowReach, (own: readonly PinShadow[]) => string>> = {
+  everywhere: (own) =>
+    `${String(own.length)} pinned file(s) are never captured here or ${ELSEWHERE}: ${namedShadows(own)} — ` +
+    'no session on those machines records touching them, so crosscheck trace answers "no session touched this surface" for every one of them',
+  here: (own) =>
+    `${String(own.length)} pinned file(s) are never captured on this machine: ${namedShadows(own)} — ` +
+    "its own denylist skips them; teammates who kept the shipped denylist record them, so crosscheck trace cannot name a session run here",
+  elsewhere: (own) =>
+    `${String(own.length)} pinned file(s) are never captured ${ELSEWHERE}: ${namedShadows(own)} — ` +
+    "this machine records touching them, but crosscheck trace cannot name a session on those machines",
 };
 
 /**
@@ -204,8 +372,8 @@ export const guardSettingsSentence = (settings: TeamSettings): string => {
       : `pinning limited to ${token(settings.pinPolicy)}`;
   const names =
     settings.suspectAttribution === "sessions"
-      ? "suspect names sessions and their declared intents"
-      : "suspect prints counts only, naming nobody";
+      ? "trace names sessions and their declared intents"
+      : "trace prints counts only, naming nobody";
   const origin =
     settings.updatedAt === null ? "shipped defaults" : "set for this repo";
   return `guard settings: ${who} · ${names} (${origin})`;
@@ -238,13 +406,33 @@ export const guardSettingsSentence = (settings: TeamSettings): string => {
 const waiverSentence = (registry: PinRegistry): string | null => {
   const expiries = registry.pins
     .map((pin) => pin.liveWaiver?.expiresAt)
-    .filter((value): value is string => value !== undefined && value !== "")
-    .sort();
-  const next = expiries[0];
-  if (next === undefined) {
+    .filter((value): value is string => value !== undefined && value !== "");
+  if (expiries.length === 0) {
     return null;
   }
+  // Re-serialised, never echoed: the wire keeps an expiry it cannot read (a
+  // dropped waiver would read as a closed fence), so the string is the hub's
+  // choice until this process writes it.
+  const readable = expiries
+    .map((iso) => Date.parse(iso))
+    .filter((ms) => !Number.isNaN(ms))
+    .sort((a, b) => a - b);
+  const earliest = readable[0];
+  const next = earliest === undefined ? "an unreadable time" : new Date(earliest).toISOString();
   return `${String(expiries.length)} live waiver(s) — next expires ${next}; run crosscheck pin list to see who opened which, and why`;
+};
+
+/**
+ * HOW MANY FENCES THE HUB CLOSED on a passkey revocation (04a D-PK-1), as a
+ * count — this surface is bare, so the ids and instants stay on `pin list`.
+ * Without it, a repo whose waivers were just closed reads as one where nobody
+ * ever opened a fence.
+ */
+const closedFencesSentence = (registry: PinRegistry): string | null => {
+  const closed = registry.pins.filter((pin) => (pin.closedWaiver ?? null) !== null).length;
+  return closed === 0
+    ? null
+    : `${String(closed)} waiver(s) closed by the hub because the passkey that approved them was revoked — run crosscheck pin list to see which`;
 };
 
 export const pinStatusLines = (
@@ -256,6 +444,7 @@ export const pinStatusLines = (
   const orphans = orphanSentence(orphanedPins(registry));
   const shadows = shadowedPinPaths(registry, patterns);
   const waivers = waiverSentence(registry);
+  const closed = closedFencesSentence(registry);
   return [
     pinCoverageSentence(registry, now),
     ...(orphans === null ? [] : [`  ${orphans}`]),
@@ -263,6 +452,7 @@ export const pinStatusLines = (
       ? []
       : [`  ${shadowSentence(shadows, patterns.length)}`]),
     ...(waivers === null ? [] : [`  ${waivers}`]),
+    ...(closed === null ? [] : [`  ${closed}`]),
     ...(settings === null ? [] : [guardSettingsSentence(settings)]),
   ];
 };

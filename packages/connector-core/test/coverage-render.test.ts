@@ -13,8 +13,13 @@
  * briefing and MCP corpora use.
  */
 import { describe, expect, test } from "bun:test";
+import { stateOfOrderReason } from "@crosscheck/schema";
 
-import { MAX_BRIEFING_CHARS, MAX_COVERAGE_LINE_CHARS } from "../src/constants.ts";
+import {
+  MAX_BRIEFING_CHARS,
+  MAX_COVERAGE_LINE_CHARS,
+  MAX_COVERAGE_LINES,
+} from "../src/constants.ts";
 import { QUOTED_DATA_NOTICE, renderBriefing } from "../src/briefing/render.ts";
 import {
   coverageClause,
@@ -24,8 +29,11 @@ import {
 import {
   COVERAGE_REASONS,
   COVERAGE_SOURCES,
+  COVERAGE_ORDER_REASONS,
   COVERAGE_STATES,
+  ORDER_STATES,
   UNKNOWN_COVERAGE,
+  UNREPORTED_ORDER,
   coverageStateOf,
 } from "../src/http/coverage.ts";
 import type {
@@ -56,6 +64,7 @@ const recordOf = (
   repo: "github.com/acme/api",
   computedAt: NOW.toISOString(),
   scope: { sinceIso: "2026-09-01T10:00:00.000Z" },
+  order: UNREPORTED_ORDER,
   sources: [
     ...rows,
     ...COVERAGE_SOURCES.filter(
@@ -64,10 +73,209 @@ const recordOf = (
   ],
 });
 
+/**
+ * THE SEAT THE LINE MUST FIT (decided by Nick, 2026-10-02): at most
+ * MAX_COVERAGE_LINES lines, each within MAX_COVERAGE_LINE_CHARS. The second
+ * line is the last resort, taken only when no shortening fits one.
+ */
+const fitsTheSeat = (clause: string): boolean => {
+  const lines = clause.split("\n");
+  return (
+    lines.length <= MAX_COVERAGE_LINES &&
+    lines.every((line) => line.length > 0 && line.length <= MAX_COVERAGE_LINE_CHARS)
+  );
+};
+
+/** The longest order fragment the vocabulary admits: `order: partial (ambiguous_session_possible)`. */
+const LONGEST_ORDER: CoverageRecord["order"] = {
+  state: "partial",
+  reason: "ambiguous_session_possible",
+};
+
 const REAPED = recordOf([
   row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
   row("git", "complete", "commits_reported", null, "2026-09-15T09:00:00.000Z"),
 ]);
+
+describe("01a §3.7: the order block on the coverage line", () => {
+  const withOrder = (record: CoverageRecord, order: CoverageRecord["order"]): CoverageRecord => ({
+    ...record,
+    order,
+  });
+
+  test("a contradicted declaration renders order: partial (declaration_contradicted) (CSK-9)", () => {
+    // Arrange: a judgeable record — the order line is the only caveat on it.
+    const record = withOrder(
+      recordOf([
+        row("agent_event", "complete", "sessions_reported", null, GAP_ISO),
+        row("git", "complete", "commits_reported", null, GAP_ISO),
+      ]),
+      { state: "partial", reason: "declaration_contradicted" },
+    );
+    // Act
+    const clause = coverageClause(record, NOW);
+    // Assert
+    expect(clause).toBe(
+      "Coverage complete: agent sessions reported; git evidence reported; order: partial (declaration_contradicted).",
+    );
+  });
+
+  test("a full line keeps the order block's reason and the age, and gives up the reaped label (decided by Nick, 2026-10-02)", () => {
+    // Arrange: a reaped rung with its age, and the cap's reason with it.
+    const record = withOrder(REAPED, { state: "partial", reason: "declaration_contradicted" });
+    // Act
+    const clause = coverageClause(record, NOW);
+    // Assert
+    expect(clause).toBe(
+      `Coverage incomplete: agent sessions on this repo went quiet ${GAP_SHOWN} (10d ago); git evidence reported; order: partial (declaration_contradicted).`,
+    );
+    expect(fitsTheSeat(clause)).toBe(true);
+  });
+
+  test("an empty scope renders as undeclared, the word a reader cannot mistake for a pass", () => {
+    // Arrange
+    const record = withOrder(REAPED, { state: "undeclared", reason: "no_session_in_scope" });
+    // Act / Assert
+    expect(coverageClause(record, NOW)).toContain("order: undeclared (no_session_in_scope)");
+  });
+
+  test("a shape no shortening fits takes a second line, and nothing is dropped (decided by Nick, 2026-10-02)", () => {
+    // Arrange: both rungs gapped with an instant each, asked about a file set,
+    // and the longest order reason — 176 characters even with the git instant
+    // and the label gone.
+    const record: CoverageRecord = {
+      ...withOrder(
+        recordOf([
+          row("agent_event", "incomplete", "session_silent", GAP_ISO, GAP_ISO),
+          row("git", "incomplete", "commit_authors_unreported", GAP_ISO, GAP_ISO),
+        ]),
+        { state: "partial", reason: "ambiguous_session_possible" },
+      ),
+      scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+    };
+    // Act
+    const clause = coverageClause(record, NOW);
+    // Assert
+    expect(clause).toBe(
+      `Coverage incomplete: agent sessions on these files went quiet ${GAP_SHOWN} (10d ago, unclosed);\n` +
+        `commit authors with no reported session since ${GAP_SHOWN} (10d ago); order: partial (ambiguous_session_possible).`,
+    );
+    expect(fitsTheSeat(clause)).toBe(true);
+  });
+
+  test("the git rung's instant is shortened to its day before anything is dropped", () => {
+    // Arrange: 165 characters with the git rung's minute, the longest reason.
+    const record = withOrder(
+      recordOf([
+        row("agent_event", "complete", "sessions_reported", null, GAP_ISO),
+        row("git", "incomplete", "commit_authors_unreported", GAP_ISO, GAP_ISO),
+      ]),
+      { state: "partial", reason: "ambiguous_session_possible" },
+    );
+    // Act
+    const clause = coverageClause(record, NOW);
+    // Assert: the timestamp format goes first; the age and the reason stay.
+    expect(clause).toBe(
+      "Coverage incomplete: agent sessions reported; commit authors with no reported session since 2026-09-05 (10d ago); order: partial (ambiguous_session_possible).",
+    );
+  });
+
+  test("the order block's state AND reason survive every shape the line can take (decided by Nick, 2026-10-02)", () => {
+    // Arrange: every rung state and reason for both judging rungs, every ci
+    // state, both scopes, and every order reason with its own state.
+    const ci = (state: CoverageState): CoverageSourceRecord =>
+      row("ci", state, state === "incomplete" ? "ci_lanes_missing" : "ci_not_reported_yet");
+    const missing: string[] = [];
+    for (const agentState of COVERAGE_STATES)
+      for (const agentReason of COVERAGE_REASONS)
+        for (const gitState of COVERAGE_STATES)
+          for (const gitReason of COVERAGE_REASONS)
+            for (const ciState of ["complete", "incomplete", "unknown"] as const)
+              for (const paths of [undefined, ["src/a.ts"]])
+                for (const reason of COVERAGE_ORDER_REASONS) {
+                  const state = stateOfOrderReason(reason);
+                  const record: CoverageRecord = {
+                    ...recordOf([
+                      row("agent_event", agentState, agentReason, GAP_ISO, GAP_ISO),
+                      row("git", gitState, gitReason, GAP_ISO, GAP_ISO),
+                      ci(ciState),
+                    ]),
+                    scope: paths === undefined ? { sinceIso: GAP_ISO } : { sinceIso: GAP_ISO, paths },
+                    order: { state, reason },
+                  };
+                  // Act
+                  const clause = coverageClause(record, NOW);
+                  // Assert (collected: one failure line, not 373k)
+                  const silent = clause.startsWith("Coverage unknown: no coverage report");
+                  if (!fitsTheSeat(clause) || (!silent && !clause.includes(`order: ${state} (${reason})`))) {
+                    missing.push(clause);
+                  }
+                }
+    expect(missing.slice(0, 3)).toEqual([]);
+  });
+
+  test("every order state and reason fits the bound beside the commonest rungs", () => {
+    for (const state of ORDER_STATES) {
+      for (const reason of COVERAGE_ORDER_REASONS) {
+        // Arrange
+        const record = withOrder(REAPED, { state, reason });
+        // Act
+        const clause = coverageClause(record, NOW);
+        // Assert
+        expect(fitsTheSeat(clause), clause).toBe(true);
+        expect(clause, clause).toContain(`order: ${state} (${reason})`);
+      }
+    }
+  });
+});
+
+describe("LOSS-9: the two loss reasons render, without a count and without a path", () => {
+  const LOST = recordOf([
+    row("agent_event", "incomplete", "telemetry_lost", GAP_ISO, GAP_ISO),
+    row("git", "complete", "commits_reported", null, "2026-09-15T09:00:00.000Z"),
+  ]);
+  const IGNORED = recordOf([
+    row("agent_event", "incomplete", "record_kinds_ignored", GAP_ISO, GAP_ISO),
+    row("git", "complete", "commits_reported", null, "2026-09-15T09:00:00.000Z"),
+  ]);
+
+  test("a reported loss names the instant it has been unreliable since, and its age", () => {
+    // Act
+    const clause = coverageClause(LOST, NOW);
+
+    // Assert
+    expect(clause).toBe(
+      `Coverage incomplete: agent telemetry on this repo was lost since ${GAP_SHOWN} (10d ago); git evidence reported; order: undeclared (hub_did_not_report).`,
+    );
+    expect(clause.length).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
+    expect(coverageNote(LOST, NOW)).toBe(clause);
+  });
+
+  test("an ignored record kind gets its own sentence, because its remedy is the hub's version", () => {
+    // Act
+    const clause = coverageClause(IGNORED, NOW);
+
+    // Assert
+    // 166 characters on one line, and nothing here is shortenable: the
+    // order block moves to a second line whole (decided by Nick, 2026-10-02).
+    expect(clause).toBe(
+      `Coverage incomplete: the hub ignored agent record kinds on this repo since ${GAP_SHOWN} (10d ago); git evidence reported;\norder: undeclared (hub_did_not_report).`,
+    );
+    expect(clause).not.toContain("%");
+  });
+
+  test("a loss is repo-wide by construction: a file-set scope still says on this repo", () => {
+    // Arrange
+    const scoped: CoverageRecord = { ...LOST, scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] } };
+
+    // Act
+    const clause = coverageClause(scoped, NOW);
+
+    // Assert
+    expect(clause).toContain("on this repo");
+    expect(clause).not.toContain("on these files");
+  });
+});
 
 describe("COV-1's instant reaches the line", () => {
   test("a reaped agent_event names the minute observation stopped", () => {
@@ -77,6 +285,20 @@ describe("COV-1's instant reaches the line", () => {
     // Assert
     expect(clause).toContain(GAP_SHOWN);
     expect(clause.startsWith("Coverage incomplete")).toBe(true);
+  });
+
+  test("the instant carries its age where the line has room for it", () => {
+    // Arrange: one gapped rung and the order block — the age fits.
+    const record = recordOf([
+      row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
+      row("git", "complete", "commits_reported", null, "2026-09-15T09:00:00.000Z"),
+    ]);
+    // Act
+    const clause = coverageClause(record, NOW);
+    // Assert
+    expect(clause).toContain(GAP_SHOWN);
+    expect(clause).toContain("10d ago");
+    expect(clause).toContain("order: undeclared (hub_did_not_report)");
   });
 
   test("the instant carries its age, because every line beside it does", () => {
@@ -89,7 +311,9 @@ describe("COV-1's instant reaches the line", () => {
     // the most important on the page.
     //
     // The instant itself is spec-pinned — COV-1 requires the output to carry
-    // 2026-09-05T08:13Z — so the age is ADDED, never substituted.
+    // 2026-09-05T08:13Z — so the age is ADDED, never substituted. The order
+    // block (01a §3.7) shares the line now, and its REASON is what gives way
+    // to the ages; its state word stays.
     const record = recordOf([
       row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
       row("git", "incomplete", "evidence_stale", null, "2026-09-06T10:00:00.000Z"),
@@ -102,6 +326,7 @@ describe("COV-1's instant reaches the line", () => {
     expect(clause).toContain(GAP_SHOWN);
     expect(clause).toContain("10d ago");
     expect(clause).toContain("9d ago");
+    expect(clause).toContain("order: undeclared");
   });
 
   test("an age never costs a gap its place in the sentence", () => {
@@ -127,9 +352,7 @@ describe("COV-1's instant reaches the line", () => {
       const clause = coverageClause(record, NOW);
       expect(clause, clause).toContain("agent sessions");
       expect(clause, clause).toContain("commit authors");
-      expect(clause.length, clause).toBeLessThanOrEqual(
-        MAX_COVERAGE_LINE_CHARS,
-      );
+      expect(fitsTheSeat(clause), clause).toBe(true);
     }
   });
 
@@ -201,6 +424,7 @@ describe("the sentence is about the question that was asked", () => {
       repo: "github.com/acme/api",
       computedAt: NOW.toISOString(),
       scope: { sinceIso: new Date(NOW.getTime() - 3_600_000).toISOString() },
+      order: UNREPORTED_ORDER,
       sources: [
         row("agent_event", "unknown", "no_session_in_window"),
         row("git", "complete", "commits_reported", null, GAP_ISO),
@@ -227,6 +451,7 @@ describe("the sentence is about the question that was asked", () => {
       repo: "github.com/acme/api",
       computedAt: NOW.toISOString(),
       scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+      order: UNREPORTED_ORDER,
       sources: [
         row("agent_event", "unknown", "no_session_in_window"),
         row("git", "complete", "commits_reported", null, GAP_ISO),
@@ -249,6 +474,7 @@ describe("the sentence is about the question that was asked", () => {
       repo: "github.com/acme/api",
       computedAt: NOW.toISOString(),
       scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+      order: UNREPORTED_ORDER,
       sources: [
         row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
         row("git", "complete", "commits_reported", null, GAP_ISO),
@@ -385,16 +611,19 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
     }
   });
 
-  test("every clause fits MAX_COVERAGE_LINE_CHARS", () => {
-    // Arrange: 4 states x 16 reasons, squared — every shape the enum admits
+  test("every clause fits the seat: at most two lines, each within MAX_COVERAGE_LINE_CHARS", () => {
+    // Arrange: 4 states x 18 reasons, squared — every shape the enum admits
+    // (16 reasons before loss-accounting added `telemetry_lost` and
+    // `record_kinds_ignored`; the literal moves with the enum on purpose, so
+    // a reason added without a render case is a red line here, not a silent
+    // widening of the sweep)
     const shapes = everyShape();
 
     // Assert
-    expect(shapes.length).toBe(4096);
+    expect(shapes.length).toBe(5184);
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
-      expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
-      expect(clause.includes("\n"), clause).toBe(false);
+      expect(fitsTheSeat(clause), clause).toBe(true);
     }
   });
 
@@ -432,9 +661,7 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
     let dropped = 0;
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
-      expect(clause.length, clause).toBeLessThanOrEqual(
-        MAX_COVERAGE_LINE_CHARS,
-      );
+      expect(fitsTheSeat(clause), clause).toBe(true);
       const agentState = coverageStateOf(record, "agent_event");
       const gitState = coverageStateOf(record, "git");
       if (agentState === "incomplete" && !clause.includes("agent sessions")) {
@@ -461,15 +688,17 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
       COVERAGE_STATES.flatMap((git) =>
         COVERAGE_STATES.flatMap((ci) =>
           COVERAGE_STATES.flatMap((runtime) =>
-            COVERAGE_STATES.map((human) =>
-              recordOf([
+            COVERAGE_STATES.map((human) => ({
+              ...recordOf([
                 row("agent_event", agent, "session_reaped", GAP_ISO, GAP_ISO),
                 row("git", git, "commit_authors_unreported", GAP_ISO, GAP_ISO),
                 row("ci", ci, "ci_awaiting_rerun", GAP_ISO, GAP_ISO),
                 row("runtime", runtime, "out_of_scope_1_0", GAP_ISO, GAP_ISO),
                 row("human_edit", human, "no_platform_rung", GAP_ISO, GAP_ISO),
               ]),
-            ),
+              // The longest order block there is, so the second line's worst case is in the sweep.
+              order: LONGEST_ORDER,
+            })),
           ),
         ),
       ),
@@ -481,9 +710,11 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
     let contradictions = 0;
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
-      expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
+      expect(fitsTheSeat(clause), clause).toBe(true);
       expect(clause.includes("%"), clause).toBe(false);
-      expect(clause.includes("\n"), clause).toBe(false);
+      if (!clause.startsWith("Coverage unknown: no coverage report")) {
+        expect(clause, clause).toContain("order: partial (ambiguous_session_possible)");
+      }
       const readable = record.sources.filter(
         (entry) => entry.state !== "unavailable",
       );
@@ -509,13 +740,16 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
   });
 
   test("the record the renderer reads exposes no numeric aggregate", () => {
-    // Assert: every own value is a string, null, or the five-row array.
+    // Assert: every own value is a string, null, or the five-row array — and
+    // the order block (01a §3.7) is two strings, no count.
     for (const [key, value] of Object.entries(REAPED)) {
-      if (key === "sources" || key === "scope") {
+      if (key === "sources" || key === "scope" || key === "order") {
         continue;
       }
       expect(typeof value === "string" || value === null).toBe(true);
     }
+    expect(Object.keys(REAPED.order).sort()).toEqual(["reason", "state"]);
+    expect(Object.values(REAPED.order).every((value) => typeof value === "string")).toBe(true);
   });
 });
 
@@ -534,6 +768,27 @@ describe("§3.3's claim, attacked: the line has no untrusted slot", () => {
       // Assert
       assertUntrustedCharacters(clause, `coverage-note/${id}`);
       expect(clause.includes(payload), `coverage-note/${id}`).toBe(false);
+    }
+  });
+
+  test("LOSS-9: the two loss sentences hold the same invariants with the corpus in gapSince", () => {
+    for (const reason of ["telemetry_lost", "record_kinds_ignored"] as const) {
+      for (const { id, payload } of INJECTION_CORPUS) {
+        // Arrange: the loss reason on the agent rung, the hub-sent strings hostile
+        const record = recordOf([
+          row("agent_event", "incomplete", reason, payload, payload),
+          row("git", "complete", "commits_reported", null, payload),
+        ]);
+
+        // Act
+        const clause = coverageClause(record, NOW);
+
+        // Assert: the sentence opens as the loss sentence and carries nothing the hub wrote
+        assertUntrustedCharacters(clause, `coverage-note/${reason}/${id}`);
+        expect(clause.includes(payload), `coverage-note/${reason}/${id}`).toBe(false);
+        expect(clause).toContain("on this repo");
+        expect(clause).not.toContain("%");
+      }
     }
   });
 });

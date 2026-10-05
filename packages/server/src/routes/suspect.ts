@@ -22,11 +22,12 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readCoverage } from "../services/coverage.ts";
+import { EXPLANATION_TIMING_KINDS } from "../services/coverage-order.ts";
 import { resolveSuspectScope, suspectSessions } from "../services/suspect.ts";
 import { readTeamSettings } from "../services/team-settings.ts";
 import { computeVerdict } from "../services/verdict.ts";
 import { countCoverageAnswer, recordAttribution } from "../services/pilot.ts";
-import { readLiveWaiver } from "../services/waivers.ts";
+import { readPinFence } from "../services/waiver-terminations.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -62,7 +63,7 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
         c,
         400,
         "validation_failed",
-        "name a pin (pin=<id>) or at least one file (path=…) — suspect intersects a surface with recorded work, so it needs the surface",
+        "name a pin (pin=<id>) or at least one file (path=…) — trace intersects a surface with recorded work, so it needs the surface",
       );
     }
     const scope = await resolveSuspectScope(deps, parsed.data.repo, {
@@ -84,21 +85,26 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // SCOPED TO THE FILES THE QUESTION IS ABOUT: "were we watching this
     // surface" is the question principle 1 actually asks, and a repo-wide
     // gap would make every answer here INDETERMINATE for ever.
-    const [view, coverage] = await Promise.all([
-      suspectSessions(deps, c.get("developer").id, {
-        repo: parsed.data.repo,
-        scope: scope.scope,
-        attribution: settings.suspectAttribution,
-      }),
-      readCoverage(deps, c.get("developer").id, parsed.data.repo, {
-        scope: {
-          sinceIso: new Date(
-            deps.now().getTime() - SUSPECT_WINDOW_DAYS * MS_PER_DAY,
-          ).toISOString(),
-          paths: scope.scope.files,
-        },
-      }),
-    ]);
+    // In sequence, not in parallel: the agent_event rung and the order block
+    // fold over the sessions this answer names (review H3), so the
+    // candidates come first.
+    const view = await suspectSessions(deps, c.get("developer").id, {
+      repo: parsed.data.repo,
+      scope: scope.scope,
+      attribution: settings.suspectAttribution,
+    });
+    const coverage = await readCoverage(deps, c.get("developer").id, parsed.data.repo, {
+      scope: {
+        sinceIso: new Date(
+          deps.now().getTime() - SUSPECT_WINDOW_DAYS * MS_PER_DAY,
+        ).toISOString(),
+        paths: scope.scope.files,
+      },
+      // 04's verdict carries explanationTimingFor's answer: an edit against
+      // intent versions (services/coverage-order.ts).
+      orderKinds: EXPLANATION_TIMING_KINDS,
+      answerSessionIds: view.candidates.map((candidate) => candidate.sessionId),
+    });
     // THE VERDICT RIDES AS A SIBLING FIELD (04 §5), the shape 03 §3.5 uses for
     // coverage — never folded into the suspect view, because the five
     // dimensions are separate on purpose and a nested one invites a renderer
@@ -107,10 +113,12 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
       scope.scope.pinId === null || scope.scope.pinVersion === null
         ? null
         : { pinId: scope.scope.pinId, version: scope.scope.pinVersion };
-    const liveWaiver =
+    // Both halves of the fence: what holds it open, and a closure the hub
+    // wrote when the passkey that approved it was revoked (04a D-PK-1).
+    const fence =
       invariant === null
-        ? null
-        : await readLiveWaiver({
+        ? { liveWaiver: null, closedWaiver: null }
+        : await readPinFence({
             db: deps.db,
             repo: parsed.data.repo,
             pinId: invariant.pinId,
@@ -149,7 +157,8 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
         verifiedAtCommit: null,
       },
       invariant,
-      liveWaiver,
+      liveWaiver: fence.liveWaiver,
+      closedWaiver: fence.closedWaiver,
       now: deps.now(),
     });
     // 07 §3.3: the answer, kept as it was given. AWAITED, not detached — a

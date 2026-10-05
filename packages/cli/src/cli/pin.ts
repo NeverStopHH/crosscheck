@@ -23,6 +23,7 @@
  * NOTHING HERE INTERRUPTS ANYBODY. Every path is a command a person typed.
  */
 import { EXIT_FAIL, EXIT_OK, EXIT_UNREACHABLE, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
+import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -37,6 +38,8 @@ import {
   breakPin,
   createPin,
   getPins,
+  getWaiverRequests,
+  requestWaiver,
   sweepPins,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext, PinSweepUpdate } from "@crosscheck/connector-core/http/hub.ts";
@@ -49,7 +52,10 @@ import {
   PinSchema,
 } from "@crosscheck/schema";
 import { postPilotMark } from "@crosscheck/connector-core/http/pilot.ts";
-import { renderPinList } from "./pin-render.ts";
+import { hubSaid, noSuchPinLine, renderPinList, renderWaiverRequested } from "./pin-render.ts";
+import { deniedPinPaths, pinDenylistRefusal, sweepDenylistLines } from "./pin-observability.ts";
+import type { DeniedMove } from "./pin-observability.ts";
+import type { PinPathOutcome } from "@crosscheck/connector-core/git/pin-sweep.ts";
 import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
 import type { CliResult } from "./login.ts";
 
@@ -58,6 +64,14 @@ export const PIN_FLAG_CHECK = "--check";
 export const PIN_FLAG_BROKE = "--broke";
 export const PIN_FLAG_SWEEP = "--sweep";
 export const PIN_FLAG_OK = "--ok";
+export const PIN_FLAG_WAIVE = "--waive";
+/**
+ * NOT `--until`: that word is a git time flag, and CCB-2 keeps every src
+ * module free of them so staleness has one definition. The hub field is
+ * `expiresAt`, so the flag says the same.
+ */
+export const PIN_FLAG_EXPIRES = "--expires";
+export const PIN_FLAG_REASON = "--reason";
 
 export const PIN_USAGE = [
   'usage: crosscheck pin "<surface>" --files <path…> [--check "<30-second recipe>"]',
@@ -65,11 +79,14 @@ export const PIN_USAGE = [
   "   or: crosscheck pin --broke <id>   you ran the check and it failed",
   "   or: crosscheck pin --ok <id>      you ran the check and it passed",
   "   or: crosscheck pin --sweep        re-resolve pinned paths against git",
+  '   or: crosscheck pin --waive <id> --expires <2d|12h|date> --reason "<why>"',
+  "                                     ask a person to open this pin's fence",
   "",
   "  A pin says a named surface WORKS right now: the files behind it, the",
   "  commit you verified at, and a check anybody can run in 30 seconds.",
   `  At most ${String(MAX_SPEAKING_PIN_FILES)} files may ever speak; up to ${String(MAX_PIN_FILES)} are briefing-only.`,
   "  Pinning needs a person at a terminal — an agent cannot vouch for you.",
+  "  A waiver is only ASKED for here; a person approves it with a passkey.",
   "",
 ].join("\n");
 
@@ -91,7 +108,7 @@ const AGENT_REFUSAL = [
   "pinning needs a person at a terminal, and this process has none.",
   "",
   "A pin is a HUMAN's statement that a surface works — it carries your name",
-  "to everybody else on this repo, and `crosscheck suspect` can name sessions",
+  "to everybody else on this repo, and `crosscheck trace` can name sessions",
   "once somebody records its check failing. So an agent may not create one on",
   "your behalf, even at your request.",
   "",
@@ -104,6 +121,13 @@ interface Resolved {
   readonly repoId: string;
   readonly repoRoot: string;
   readonly baseCommit: string;
+  /**
+   * The denylist THIS MACHINE'S CAPTURE applies (loss-accounting §10 item 4):
+   * the stored config's `denylist` through the same `resolveDenylist` every
+   * capture flow calls — never a second copy of the rule. `deniedPinPaths`
+   * adds the shipped defaults every teammate who kept them applies.
+   */
+  readonly patterns: readonly string[];
 }
 
 const resolve = async (
@@ -130,16 +154,24 @@ const resolve = async (
     repoId: identity.repoId,
     repoRoot: identity.root,
     baseCommit: identity.baseCommit,
+    patterns: resolveDenylist(config.denylist ?? undefined),
   };
 };
 
+/**
+ * The hub's failure sentence, BOUNDED like doctor's `hubSaid`: `pin --waive`
+ * is the pin path agents are told to run, so a hub-chosen newline or
+ * instruction here would land in exactly the reader it should not reach.
+ */
 const failureResult = (result: {
   readonly kind: "network" | "http" | "malformed";
   readonly message: string;
-}): CliResult =>
-  result.kind === "network"
-    ? { stdout: `hub unreachable: ${result.message}\n`, exitCode: EXIT_UNREACHABLE }
-    : { stdout: `${result.message}\n`, exitCode: EXIT_FAIL };
+}): CliResult => {
+  const said = hubSaid(result.message);
+  return result.kind === "network"
+    ? { stdout: `hub unreachable: ${said}\n`, exitCode: EXIT_UNREACHABLE }
+    : { stdout: `${said}\n`, exitCode: EXIT_FAIL };
+};
 
 interface PinArgs {
   readonly surface: string | null;
@@ -149,6 +181,9 @@ interface PinArgs {
   readonly ok: string | null;
   readonly sweep: boolean;
   readonly list: boolean;
+  readonly waive: string | null;
+  readonly expires: string | undefined;
+  readonly reason: string | undefined;
 }
 
 /**
@@ -163,6 +198,9 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
   let ok: string | null = null;
   let sweep = false;
   let list = false;
+  let waive: string | null = null;
+  let expires: string | undefined;
+  let reason: string | undefined;
   let index = 0;
   while (index < argv.length) {
     const token = argv[index] as string;
@@ -194,6 +232,21 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
       index += 1;
       continue;
     }
+    if (token === PIN_FLAG_WAIVE) {
+      waive = argv[index + 1] ?? null;
+      index += 2;
+      continue;
+    }
+    if (token === PIN_FLAG_EXPIRES) {
+      expires = argv[index + 1];
+      index += 2;
+      continue;
+    }
+    if (token === PIN_FLAG_REASON) {
+      reason = argv[index + 1];
+      index += 2;
+      continue;
+    }
     if (token === "list") {
       list = true;
       index += 1;
@@ -204,7 +257,7 @@ export const parsePinArgs = (argv: readonly string[]): PinArgs => {
     }
     index += 1;
   }
-  return { surface, files, check, broke, ok, sweep, list };
+  return { surface, files, check, broke, ok, sweep, list, waive, expires, reason };
 };
 
 const listPins = async (
@@ -215,8 +268,82 @@ const listPins = async (
   if (!registry.ok) {
     return failureResult(registry);
   }
+  // A hub that cannot list requests (older than 04a, or failing) still lists
+  // its pins; the render says the requests are unknown rather than absent.
+  const requests = await getWaiverRequests(resolved.ctx, resolved.repoId);
   return {
-    stdout: renderPinList(resolved.repoId, registry.data, now),
+    stdout: renderPinList(resolved.repoId, registry.data, now, requests.ok ? requests.data : null),
+    exitCode: EXIT_OK,
+  };
+};
+
+const HOUR_MS = 3_600_000;
+const EXPIRY_PATTERN = /^(\d+)\s*([hd])$/;
+
+/** Where a person approves a waiver on the hub's web UI (server: routes/waiver-requests.ts). */
+const WAIVER_APPROVAL_PATH = "/ui/waivers";
+
+/** `2d`, `12h`, or a date the person typed; null when it is none of them. */
+export const parseExpiry = (value: string, now: Date): string | null => {
+  const relative = EXPIRY_PATTERN.exec(value.trim());
+  if (relative !== null) {
+    const amount = Number(relative[1]);
+    const hours = relative[2] === "d" ? amount * 24 : amount;
+    return amount > 0 ? new Date(now.getTime() + hours * HOUR_MS).toISOString() : null;
+  }
+  const absolute = /^\d{4}-\d{2}-\d{2}/.test(value.trim()) ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(absolute) ? null : new Date(absolute).toISOString();
+};
+
+const WAIVE_USAGE_ERROR = (detail: string): CliResult => ({
+  stdout: `${detail}\n${PIN_USAGE}`,
+  exitCode: EXIT_USAGE,
+});
+
+/**
+ * `--waive <id>` — ASK for a fence to open (04a §6).
+ *
+ * NO TERMINAL GATE, deliberately, and the inverse of every other `pin` path:
+ * an agent blocked by a protected conflict is exactly who should ask, and
+ * asking opens nothing. The request names the pin's CURRENT version, read
+ * from the registry, so a sweep that moves the paths before a person
+ * approves makes the approval fail rather than sign off on other files.
+ */
+const requestFenceWaiver = async (resolved: Resolved, args: PinArgs, pinId: string): Promise<CliResult> => {
+  if (args.reason === undefined || args.reason.trim() === "") {
+    return WAIVE_USAGE_ERROR("a waiver request needs --reason: a permission nobody can account for is one nobody should grant");
+  }
+  const expiresAt = args.expires === undefined ? null : parseExpiry(args.expires, new Date());
+  if (expiresAt === null) {
+    return WAIVE_USAGE_ERROR("a waiver request needs --expires as hours (12h), days (2d) or a date (2026-10-03)");
+  }
+  const registry = await getPins(resolved.ctx, resolved.repoId);
+  if (!registry.ok) {
+    return failureResult(registry);
+  }
+  const pin = registry.data.pins.find((entry) => entry.id === pinId);
+  if (pin === undefined) {
+    return { stdout: noSuchPinLine(pinId), exitCode: EXIT_FAIL };
+  }
+  const requested = await requestWaiver(resolved.ctx, {
+    repo: resolved.repoId,
+    pinId,
+    pinVersion: pin.version,
+    reason: args.reason.trim(),
+    expiresAt,
+  });
+  if (!requested.ok) {
+    return failureResult(requested);
+  }
+  return {
+    stdout: renderWaiverRequested({
+      requestId: requested.data.id,
+      pinId,
+      expiresAt,
+      // Built HERE, from the configured hub URL and a fixed path — never the
+      // hub's `approvePath`, which this command does not print (pin-render.ts).
+      approveUrl: `${resolved.ctx.hubUrl.replace(/\/+$/, "")}${WAIVER_APPROVAL_PATH}`,
+    }),
     exitCode: EXIT_OK,
   };
 };
@@ -227,6 +354,35 @@ const listPins = async (
  * — it spawns git processes per missing path, which no hook budget should pay
  * for, and a rename that goes unrecorded for an hour costs nothing.
  */
+/**
+ * One pinned path's sweep update. A rename INTO a path the denylist excludes
+ * (loss-accounting §10 item 4) goes to the hub as `missing`, never as the new
+ * path: a pin there would watch a file whose touches are never recorded, and
+ * `trace` would answer "nobody touched it" however many sessions did. A
+ * missing path reads BROKEN on every surface, which is the weakening side.
+ */
+const sweepUpdateFor = (
+  pinId: string,
+  path: string,
+  outcome: PinPathOutcome,
+  patterns: readonly string[],
+): { readonly update: PinSweepUpdate; readonly denied: DeniedMove | null } => {
+  const moved = outcome.status === "renamed" ? outcome.resolved : null;
+  const rule = moved === null ? undefined : deniedPinPaths([moved], patterns)[0];
+  return rule === undefined
+    ? { update: { pinId, path, newPath: outcome.resolved }, denied: null }
+    : {
+        update: { pinId, path, newPath: null },
+        denied: {
+          path,
+          newPath: rule.path,
+          pattern: rule.pattern,
+          here: rule.here,
+          shippedPattern: rule.shippedPattern,
+        },
+      };
+};
+
 const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   const registry = await getPins(resolved.ctx, resolved.repoId);
   if (!registry.ok) {
@@ -237,6 +393,7 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   const swept = await sweepPinPaths(resolved.repoRoot, paths);
   const byPath = new Map(swept.map((entry) => [entry.path, entry]));
   const updates: PinSweepUpdate[] = [];
+  const denied: DeniedMove[] = [];
   let unknown = 0;
   for (const pin of live) {
     for (const file of pin.files) {
@@ -247,11 +404,9 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
         unknown += 1;
         continue;
       }
-      updates.push({
-        pinId: pin.id,
-        path: file.path,
-        newPath: outcome.resolved,
-      });
+      const next = sweepUpdateFor(pin.id, file.path, outcome, resolved.patterns);
+      updates.push(next.update);
+      denied.push(...(next.denied === null ? [] : [next.denied]));
     }
   }
   if (updates.length === 0) {
@@ -264,32 +419,43 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   if (!reported.ok) {
     return failureResult(reported);
   }
-  const renamed = swept.filter((entry) => entry.status === "renamed").length;
-  const missing = swept.filter((entry) => entry.status === "missing").length;
-  return {
-    stdout: [
-      `pin sweep: ${String(reported.data.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} not answered, ${String(reported.data.ignored)} not recorded`,
-      // THE HUB'S REFUSALS ARE THE READER'S, TOO. git said one thing and the
-      // hub declined to write it — a sweep that printed only what git found
-      // would report the register as current while it is not, which is the
-      // fail-silent shape this whole command exists to remove.
-      ...(reported.data.ignored === 0
-        ? []
-        : [
-            "not recorded means the hub declined the update: the pin belongs to another repo, the path is not one the pin watches, or this team's pin policy covers the new path. Run crosscheck pin list to see what the register actually holds.",
-          ]),
-      ...(unknown === 0
-        ? []
-        : [
-            "not answered means nobody looked: git could not reply, or this sweep's call budget ran out before reaching the path. Neither is a verdict about the file.",
-          ]),
-      ...(missing === 0
-        ? []
-        : ["a pin with missing paths watches less than it says — `crosscheck pin list` shows which"]),
-      "",
-    ].join("\n"),
-    exitCode: EXIT_OK,
-  };
+  return { stdout: sweepReport(swept, reported.data, unknown, denied), exitCode: EXIT_OK };
+};
+
+/** What the sweep prints once the hub has answered. */
+const sweepReport = (
+  swept: readonly PinPathOutcome[],
+  answered: { readonly applied: number; readonly ignored: number },
+  unknown: number,
+  denied: readonly DeniedMove[],
+): string => {
+  // A rename into an excluded path was SENT as missing, so it is counted as
+  // missing here too — the summary says what the register now holds.
+  const deniedPaths = new Set(denied.map((move) => move.path));
+  const renamed = swept.filter((entry) => entry.status === "renamed" && !deniedPaths.has(entry.path)).length;
+  const missing = swept.filter((entry) => entry.status === "missing").length + deniedPaths.size;
+  return [
+    `pin sweep: ${String(answered.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} not answered, ${String(answered.ignored)} not recorded`,
+    ...sweepDenylistLines(denied),
+    // THE HUB'S REFUSALS ARE THE READER'S, TOO. git said one thing and the
+    // hub declined to write it — a sweep that printed only what git found
+    // would report the register as current while it is not, which is the
+    // fail-silent shape this whole command exists to remove.
+    ...(answered.ignored === 0
+      ? []
+      : [
+          "not recorded means the hub declined the update: the pin belongs to another repo, the path is not one the pin watches, or this team's pin policy covers the new path. Run crosscheck pin list to see what the register actually holds.",
+        ]),
+    ...(unknown === 0
+      ? []
+      : [
+          "not answered means nobody looked: git could not reply, or this sweep's call budget ran out before reaching the path. Neither is a verdict about the file.",
+        ]),
+    ...(missing === 0
+      ? []
+      : ["a pin with missing paths watches less than it says — `crosscheck pin list` shows which"]),
+    "",
+  ].join("\n");
 };
 
 /** Why the door refused a path, in the person's terms (01a §3.3d, CSK-28). */
@@ -337,6 +503,13 @@ const create = async (
   const door = await resolvePinPaths(resolved.repoRoot, cwd, args.files);
   if (!door.ok) {
     return refusedPaths(door.refused);
+  }
+  // THEN THE DENYLIST (loss-accounting §10 item 4): a file capture never
+  // records is a pin `trace` can never attribute — a permanent blind spot
+  // that reads as a guard. Asked on git's spelling, the one capture stores.
+  const denied = deniedPinPaths(door.paths, resolved.patterns);
+  if (denied.length > 0) {
+    return { stdout: pinDenylistRefusal(denied), exitCode: EXIT_USAGE };
   }
   // The SAME schema the hub applies, run locally first: a refusal a person
   // reads in their own terminal beats a 400 they have to decode.
@@ -430,6 +603,9 @@ export const runPin = async (
   if (args.sweep) {
     return runSweep(resolved);
   }
+  if (args.waive !== null) {
+    return requestFenceWaiver(resolved, args, args.waive);
+  }
   if (args.broke !== null) {
     // The retraction takes the human gate too: it is the falsifier
     // `crosscheck suspect` reads before it names any session, so an agent
@@ -454,7 +630,7 @@ export const runPin = async (
     return {
       stdout: [
         `retracted ${broken.data.id}: recorded as checked and failing, with your name and the time.`,
-        `crosscheck suspect ${broken.data.id} can now name the sessions that touched it.`,
+        `crosscheck trace ${broken.data.id} can now name the sessions that touched it.`,
         "",
       ].join("\n"),
       exitCode: EXIT_OK,

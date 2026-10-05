@@ -58,8 +58,16 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
  * catches them by NAME, which is the check that does not need a number at
  * all. The measured size is printed on every run so the next raise is a
  * decision somebody makes rather than a surprise.
+ *
+ * RAISED AGAIN, TO 2 000 000, on batch 0930 (Nick: as recommended, 2026-10-05),
+ * after the same question. The 1.0 cut (passkeys, loss accounting, provider
+ * guarantees, the CI reporter, init --remove) packed 1 498 109 bytes against
+ * 1 500 000: 461 files, ZERO under `test/`, `docs/`, `fixtures/` or `bench/`,
+ * 4.77 MB unpacked, of which `connector-core` is 1.76 MB and `server` 1.51 MB.
+ * A `node_modules` leak still trips this cap many times over; `docs` and every
+ * `test/` are refused by name below, whatever the number.
  */
-const TARBALL_SIZE_CAP_BYTES = 1_500_000;
+const TARBALL_SIZE_CAP_BYTES = 2_000_000;
 
 const nodeExe = Bun.which("node");
 const npmExe = Bun.which("npm");
@@ -346,6 +354,46 @@ describe("packed npm tarball", () => {
     expect(version.stderr).not.toContain("failed to start");
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("usage: crosscheck <command>");
+  }, DRIVE_TIMEOUT_MS);
+
+  test("`bunx crosscheck-hub ci-report` runs from the tarball: another repo's CI step, no hub → one line, exit 0", async () => {
+    // Arrange: what a stranger's workflow has — a junit file in the checkout
+    // and the runner's GITHUB_* variables, no secrets configured yet. The
+    // reporter's dynamic import must resolve inside the PACKED layout, which
+    // no source-tree test can show.
+    const installed = await getInstalled();
+    if (!installed.ok) {
+      return warnSkip(installed.reason);
+    }
+    const checkout = await mkdtemp(join(tmpdir(), "crosscheck-ci-report-"));
+    cleanups.push(checkout);
+    await writeFile(
+      join(checkout, "junit.xml"),
+      '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites tests="1" failures="0" time="0.01">' +
+        '<testsuite name="a.test.ts" file="a.test.ts" tests="1" failures="0" time="0.01">' +
+        '<testcase name="passes" classname="a" time="0.001" file="a.test.ts" /></testsuite></testsuites>\n',
+    );
+
+    // Act
+    const result = await run(
+      [process.execPath, installed.shimPath, "ci-report", "--junit", "junit.xml", "--job", "test",
+        "--ref", "main", "--attempt", "1", "--run-id", "1", "--sha", "0123456789abcdef0123456789abcdef01234567"],
+      {
+        cwd: checkout,
+        env: {
+          PATH: process.env["PATH"],
+          HOME: checkout,
+          GITHUB_REPOSITORY: "acme/api",
+          GITHUB_SERVER_URL: "https://github.com",
+          GITHUB_WORKFLOW: "CI",
+        },
+      },
+    );
+
+    // Assert
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("not reported");
+    expect(result.stdout).not.toContain("internal failure");
   }, DRIVE_TIMEOUT_MS);
 
   test("the package ROOT export keeps the full library surface: runCli AND the old connector-claude names", async () => {

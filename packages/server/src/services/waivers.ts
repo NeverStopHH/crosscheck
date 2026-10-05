@@ -30,7 +30,10 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
+
+import { SYSTEM_WAIVER_AUTHORITY } from "@crosscheck/schema";
+import type { WaiverAuthority, WaiverGrantAuthority } from "@crosscheck/schema";
 
 import { MAX_WAIVER_DAYS } from "../constants.ts";
 
@@ -54,6 +57,14 @@ const MAX_WAIVERS_LISTED = 50;
  * assertion would be the permission itself.
  */
 const HUMAN_CAPTURE_MODE = "human" as const;
+
+/**
+ * The only authority a NEW row may carry (04a §6). `terminal` survives in the
+ * enum solely to name the rows written before 04a; nothing in this module can
+ * write it, and the insert type requires an authority, so forgetting is a
+ * compile error rather than a silent weaker grant.
+ */
+const PASSKEY_AUTHORITY = "passkey" as const;
 
 /**
  * What a granter's name reads as when the hub cannot resolve one.
@@ -83,7 +94,21 @@ export interface LiveWaiver {
   readonly expiresAt: string;
   readonly reason: string;
   readonly grantedByName: string;
+  /**
+   * Which authority opened it (04a §6). A `terminal` grant written before 04a
+   * still holds until its own expiry, and every surface says it was the
+   * weaker kind — one any agent holding the api key could have sent.
+   */
+  readonly authority: WaiverGrantAuthority;
 }
+
+/**
+ * A grant row's authority as a live waiver may carry it. A grant is only ever
+ * `terminal` or `passkey` (the authority CHECK refuses a `system` grant), and
+ * anything else reads as the WEAKER kind, never as a passkey.
+ */
+const grantAuthorityOf = (authority: WaiverAuthority): WaiverGrantAuthority =>
+  authority === "passkey" ? "passkey" : "terminal";
 
 export interface LiveWaiverInput {
   readonly db: DbExecutor;
@@ -102,6 +127,7 @@ interface WaiverRow {
   readonly supersedes: string | null;
   readonly reason: string;
   readonly grantedByName: string | null;
+  readonly authority: WaiverAuthority;
 }
 
 /**
@@ -161,6 +187,7 @@ const pickLiveWaiver = (
       // The left join's null, spelled. A reader who cannot be given a name
       // must be told that rather than shown a blank where a person belongs.
       grantedByName: row.grantedByName ?? UNRESOLVED_GRANTER,
+      authority: grantAuthorityOf(row.authority),
     };
   }
   return null;
@@ -179,6 +206,7 @@ export const readLiveWaiver = async (
       supersedes: fenceWaivers.supersedes,
       reason: fenceWaivers.reason,
       grantedByName: developers.name,
+      authority: fenceWaivers.authority,
     })
     .from(fenceWaivers)
     // A LEFT JOIN, NOT THE INNER ONE THE LISTING USES, and the difference is
@@ -245,6 +273,7 @@ export const readLiveWaivers = async (
       supersedes: fenceWaivers.supersedes,
       reason: fenceWaivers.reason,
       grantedByName: developers.name,
+      authority: fenceWaivers.authority,
     })
     .from(fenceWaivers)
     // The left join, for `readLiveWaiver`'s reason: a revocation whose author
@@ -281,6 +310,49 @@ export const readLiveWaivers = async (
   return live;
 };
 
+/** How many open fences the approval page lists; a team with more has a different problem. */
+const MAX_LIVE_WAIVERS_LISTED = 100;
+
+/** One open fence as the approval page shows it (04a §6). */
+export interface OpenFence extends LiveWaiver {
+  readonly repo: string;
+  readonly pinId: string;
+  readonly surface: string;
+}
+
+/**
+ * EVERY FENCE OPEN RIGHT NOW, across the hub — what a person may amend or
+ * close on /ui/waivers. Each pin once, answered by the same rule `pin list`
+ * uses (`readLiveWaivers`, current version only), so the page cannot show a
+ * fence as open that a verdict would read as closed.
+ */
+export const listOpenFences = async (input: {
+  readonly db: DbExecutor;
+  readonly now: Date;
+}): Promise<readonly OpenFence[]> => {
+  const granted = await input.db
+    .selectDistinct({ repo: pins.repo, id: pins.id, version: pins.version, surface: pins.surface })
+    .from(fenceWaivers)
+    .innerJoin(pins, eq(fenceWaivers.pinId, pins.id))
+    .where(and(eq(fenceWaivers.kind, "grant"), gt(fenceWaivers.expiresAt, input.now)))
+    .limit(MAX_LIVE_WAIVERS_LISTED);
+  const byRepo = new Map<string, (typeof granted)[number][]>();
+  for (const pin of granted) {
+    byRepo.set(pin.repo, [...(byRepo.get(pin.repo) ?? []), pin]);
+  }
+  const open: OpenFence[] = [];
+  for (const [repo, repoPins] of byRepo) {
+    const live = await readLiveWaivers({ db: input.db, repo, pins: repoPins, now: input.now });
+    for (const pin of repoPins) {
+      const waiver = live.get(pin.id);
+      if (waiver !== undefined) {
+        open.push({ ...waiver, repo, pinId: pin.id, surface: pin.surface });
+      }
+    }
+  }
+  return open;
+};
+
 /** Why a write was refused — an enum, so a route never invents prose. */
 export type WaiverRefusal =
   | "unknown_pin"
@@ -300,6 +372,15 @@ export interface GrantInput {
   readonly reason: string;
   readonly expiresAt: Date;
   readonly now: Date;
+  /**
+   * The passkey credential whose assertion authorised this grant (04a §6).
+   * REQUIRED: there is no other authority a new grant may carry, so the type
+   * leaves no way to write one without it. The caller verified the assertion;
+   * this module records which device said yes.
+   */
+  readonly credentialId: string;
+  /** The request this grant answers; null for the grant half of an amendment. */
+  readonly requestId: string | null;
 }
 
 /**
@@ -359,6 +440,9 @@ export const grantWaiver = async (
     expiresAt: input.expiresAt,
     supersedes: null,
     createdAt: input.now,
+    authority: PASSKEY_AUTHORITY,
+    credentialId: input.credentialId,
+    requestId: input.requestId,
   });
   return { id };
 };
@@ -370,6 +454,8 @@ export interface RevokeInput {
   readonly grantedBy: string;
   readonly reason: string;
   readonly now: Date;
+  /** The passkey credential whose assertion authorised this revocation (04a §6). */
+  readonly credentialId: string;
 }
 
 /**
@@ -429,6 +515,9 @@ export const revokeWaiver = async (
     expiresAt: null,
     supersedes: target.id,
     createdAt: input.now,
+    authority: PASSKEY_AUTHORITY,
+    credentialId: input.credentialId,
+    requestId: null,
   });
   return { id };
 };
@@ -439,13 +528,20 @@ export interface WaiverView {
   readonly pinId: string;
   readonly pinVersion: number;
   readonly kind: string;
-  readonly grantedByName: string;
+  /**
+   * Who wrote the row. NULL on a `system` closure (04a D-PK-1), which no
+   * person wrote; a person this hub can no longer name reads as
+   * UNRESOLVED_GRANTER, so the two never look alike.
+   */
+  readonly grantedByName: string | null;
   readonly reason: string;
   readonly expiresAt: string | null;
   readonly supersedes: string | null;
   readonly createdAt: string;
   /** Derived, never stored: is THIS row the one holding a fence open now. */
   readonly live: boolean;
+  /** Which authority wrote the row (04a §6). */
+  readonly authority: WaiverAuthority;
 }
 
 export interface ListWaiversInput {
@@ -486,9 +582,12 @@ export const listWaivers = async (
       expiresAt: fenceWaivers.expiresAt,
       supersedes: fenceWaivers.supersedes,
       createdAt: fenceWaivers.createdAt,
+      authority: fenceWaivers.authority,
     })
     .from(fenceWaivers)
-    .innerJoin(developers, eq(fenceWaivers.grantedBy, developers.id))
+    // LEFT, so a hub closure (no person) is listed: the record must say who
+    // closed a fence even when the answer is "the hub, on a revocation".
+    .leftJoin(developers, eq(fenceWaivers.grantedBy, developers.id))
     .where(
       input.pinId === null
         ? eq(fenceWaivers.repo, input.repo)
@@ -522,11 +621,13 @@ export const listWaivers = async (
     pinId: row.pinId,
     pinVersion: row.pinVersion,
     kind: row.kind,
-    grantedByName: row.grantedByName,
+    grantedByName:
+      row.authority === SYSTEM_WAIVER_AUTHORITY ? null : (row.grantedByName ?? UNRESOLVED_GRANTER),
     reason: row.reason,
     expiresAt: row.expiresAt === null ? null : row.expiresAt.toISOString(),
     supersedes: row.supersedes,
     createdAt: row.createdAt.toISOString(),
     live: livePairs.get(`${row.pinId}@${String(row.pinVersion)}`) === row.id,
+    authority: row.authority,
   }));
 };

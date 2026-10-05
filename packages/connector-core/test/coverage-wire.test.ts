@@ -10,9 +10,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
 
 import {
+  COVERAGE_ORDER_REASONS,
   COVERAGE_REASONS,
   COVERAGE_SOURCES,
   COVERAGE_STATES,
+  ORDER_STATES,
   UNKNOWN_COVERAGE,
   parseCoverage,
 } from "../src/http/coverage.ts";
@@ -183,5 +185,71 @@ describe("the wire vocabulary matches the hub's own", () => {
     expect([...COVERAGE_SOURCES]).toEqual([...hubCoverage.COVERAGE_SOURCES]);
     expect([...COVERAGE_STATES]).toEqual([...hubCoverage.COVERAGE_STATES]);
     expect([...COVERAGE_REASONS]).toEqual([...hubCoverage.COVERAGE_REASONS]);
+  });
+
+  test("the order block's states and reasons are identical to the hub's (01a §3.7)", () => {
+    expect([...ORDER_STATES]).toEqual([...hubCoverage.ORDER_STATES]);
+    expect([...COVERAGE_ORDER_REASONS]).toEqual([...hubCoverage.COVERAGE_ORDER_REASONS]);
+  });
+
+  test("COVERAGE_REASONS gains no order word in either list", () => {
+    for (const reasons of [COVERAGE_REASONS, hubCoverage.COVERAGE_REASONS]) {
+      for (const word of ["declaration_contradicted", "no_session_in_scope", "provider_undeclared"]) {
+        expect((reasons as readonly string[]).includes(word)).toBe(false);
+      }
+    }
+  });
+});
+
+describe("the order block on the wire fails closed", () => {
+  const withOrder = (order: unknown): Record<string, unknown> => ({
+    repo: REPO,
+    computedAt: "2026-07-24T09:00:00.000Z",
+    scope: { sinceIso: "2026-07-10T09:00:00.000Z" },
+    sources: [],
+    ...(order === undefined ? {} : { order }),
+  });
+
+  test("a hub that sends no order block reads undeclared / hub_did_not_report", () => {
+    expect(parseCoverage(withOrder(undefined)).order).toEqual({
+      state: "undeclared",
+      reason: "hub_did_not_report",
+    });
+    expect(UNKNOWN_COVERAGE.order).toEqual({ state: "undeclared", reason: "hub_did_not_report" });
+  });
+
+  test("a readable block is kept as sent", () => {
+    expect(parseCoverage(withOrder({ state: "partial", reason: "declaration_contradicted" })).order).toEqual({
+      state: "partial",
+      reason: "declaration_contradicted",
+    });
+  });
+
+  test("a block this client cannot read is undeclared, never the state it carried", () => {
+    for (const order of [
+      { state: "guaranteed", reason: "vendor_magic" },
+      { state: "certain", reason: "lifecycle" },
+      { state: "guaranteed", reason: "no_emitter" },
+      "guaranteed",
+    ]) {
+      expect(parseCoverage(withOrder(order)).order).toEqual({
+        state: "undeclared",
+        reason: "hub_did_not_report",
+      });
+    }
+  });
+
+  test("the two loss reasons sit after hub_did_not_report and before 05's ci block, in both lists", () => {
+    // docs/1.0/loss-accounting.md §4.6: appended where 05's reserved block
+    // stays contiguous, so a later spec extending either end moves nothing.
+    for (const reasons of [COVERAGE_REASONS, hubCoverage.COVERAGE_REASONS]) {
+      const at = reasons.indexOf("hub_did_not_report");
+      expect(reasons.slice(at, at + 4)).toEqual([
+        "hub_did_not_report",
+        "telemetry_lost",
+        "record_kinds_ignored",
+        "ci_lanes_reported",
+      ]);
+    }
   });
 });

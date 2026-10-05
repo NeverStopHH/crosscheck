@@ -14,6 +14,7 @@ import {
   CONNECTED_ROOT_WALK_MAX_LEVELS,
   findConnectedRepoRootForFile,
   findConnectedRepoRootForPaths,
+  mayBeConnectedRepo,
 } from "../src/config/connected-repo.ts";
 import { renderRepoConfig } from "../src/config/repo-config.ts";
 
@@ -261,5 +262,36 @@ describe("findConnectedRepoRootForPaths", () => {
 
     // Assert
     expect(root).toBeNull();
+  });
+});
+
+describe("mayBeConnectedRepo (review M4): could a connected repo own a hook that never resolved one", () => {
+  test("a repo that commits a config owns its cwd and its files; a bare repo does not", async () => {
+    // Arrange
+    const connected = await makeDir("own-connected");
+    await makeBoundary(connected, { connected: true });
+    const bare = await makeDir("own-bare");
+    await makeBoundary(bare, { connected: false });
+
+    // Act
+    const byDir = await mayBeConnectedRepo({}, connected, [connected], []);
+    const byFile = await mayBeConnectedRepo({}, bare, [], [join(connected, "src", "a.ts")]);
+    const bareOnly = await mayBeConnectedRepo({}, bare, [bare], [join(bare, "a.ts")]);
+
+    // Assert
+    expect(byDir).toBe(true);
+    expect(byFile).toBe(true);
+    expect(bareOnly).toBe(false);
+  });
+
+  test("CROSSCHECK_HUB_URL makes any repo reportable, and still no plain directory", async () => {
+    // Arrange
+    const bare = await makeDir("own-override");
+    await makeBoundary(bare, { connected: false });
+    const plain = await makeDir("own-plain");
+
+    // Act + Assert
+    expect(await mayBeConnectedRepo({ CROSSCHECK_HUB_URL: HUB_URL }, bare, [bare], [])).toBe(true);
+    expect(await mayBeConnectedRepo({ CROSSCHECK_HUB_URL: HUB_URL }, plain, [plain], [])).toBe(false);
   });
 });

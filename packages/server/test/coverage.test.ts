@@ -132,17 +132,23 @@ describe("COV-2: five rows, in order, no scalar", () => {
       REPO,
     );
 
-    // Assert: every own value is a string, or the five-row array itself.
+    // Assert: every own value is a string, or the five-row array itself —
+    // and `order` (01a §3.7) is two strings and nothing else: it carried
+    // `sessions: number` in a draft, and a count here is exactly what COV-6
+    // exists to refuse.
     const scalars = Object.entries(record).filter(
-      ([key]) => key !== "sources" && key !== "scope",
+      ([key]) => key !== "sources" && key !== "scope" && key !== "order",
     );
     expect(scalars.every(([, value]) => typeof value === "string")).toBe(true);
     expect(Object.keys(record).sort()).toEqual([
       "computedAt",
+      "order",
       "repo",
       "scope",
       "sources",
     ]);
+    expect(Object.keys(record.order).sort()).toEqual(["reason", "state"]);
+    expect(Object.values(record.order).every((value) => typeof value === "string")).toBe(true);
   });
 });
 
@@ -433,6 +439,77 @@ describe("git: stale evidence is not the same answer as no evidence", () => {
     expect(row.reason).toBe("commit_authors_unreported");
     expect(row.gapSince).toBe(at(-2 * DAY_MS).toISOString());
     expect(row.observedAt).toBe(at(-1 * 60 * MINUTE_MS).toISOString());
+  });
+
+  test("a commit by Claude <noreply@anthropic.com> stays a gap, even beside a member's session that hour", async () => {
+    // Arrange: Claude Code on the web's commit identity, and a member who
+    // reported a session minutes after that commit. The absence line names
+    // the identity now; naming it must close nothing — git does not say who
+    // started the cloud session, so no member's session may be credited to it.
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_same_hour",
+      lastHeartbeatAt: at(-3 * DAY_MS + 10 * MINUTE_MS),
+      endedAt: at(-3 * DAY_MS + 10 * MINUTE_MS),
+    });
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "noreply@anthropic.com",
+      authorName: "Claude",
+      latestCommitAt: at(-3 * DAY_MS),
+      collectedAt: at(-1 * 60 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+    const census = await readAbsenceCensus(
+      { db: harness.db, now: harness.clock.now },
+      viewerId,
+      REPO,
+    );
+
+    // Assert: exactly the stranger's gap above
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("commit_authors_unreported");
+    expect(row.gapSince).toBe(at(-3 * DAY_MS).toISOString());
+    expect(census.unreportedAuthors).toBe(1);
+    expect(census.earliestSessionAt).toBeNull();
+  });
+
+  test("a held link to Claude's commit identity credits no session: the census still counts the gap", async () => {
+    // Arrange: the viewer holds noreply@anthropic.com from before the
+    // refusal, and reported a session ten minutes after the Claude commit
+    const { harness, viewerId } = await seed();
+    await harness.db.insert(developerEmails).values({
+      email: "noreply@anthropic.com",
+      developerId: viewerId,
+      isPrimary: false,
+      createdAt: at(-4 * DAY_MS),
+    });
+    await insertSession(harness, viewerId, {
+      id: "ses_held_link",
+      lastHeartbeatAt: at(-3 * DAY_MS + 10 * MINUTE_MS),
+      endedAt: at(-3 * DAY_MS + 10 * MINUTE_MS),
+    });
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "noreply@anthropic.com",
+      authorName: "Claude",
+      latestCommitAt: at(-3 * DAY_MS),
+      collectedAt: at(-1 * 60 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+    const census = await readAbsenceCensus(
+      { db: harness.db, now: harness.clock.now },
+      viewerId,
+      REPO,
+    );
+
+    // Assert: the viewer's session is not the cloud session's report
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("commit_authors_unreported");
+    expect(census.unreportedAuthors).toBe(1);
+    expect(census.earliestSessionAt).toBeNull();
   });
 
   test("fresh evidence whose authors all reported a session is complete", async () => {

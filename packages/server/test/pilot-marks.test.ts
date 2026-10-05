@@ -18,7 +18,11 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { PIN_PRESENCE_TERMINAL, hintDeliveryId } from "@crosscheck/schema";
+import {
+  MAX_PILOT_LABEL_REASON_CHARS,
+  PIN_PRESENCE_TERMINAL,
+  hintDeliveryId,
+} from "@crosscheck/schema";
 
 import { hintDeliveries, pilotMarks } from "../src/db/schema.ts";
 import {
@@ -101,7 +105,7 @@ const mark = async (
       repo: REPO,
       refKind: "hint_delivery",
       refId: DELIVERY,
-      mark: "off_target",
+      mark: "noise",
       presence: PIN_PRESENCE_TERMINAL,
       ...overrides,
     }),
@@ -110,7 +114,7 @@ const mark = async (
 const rows = (harness: TestHarness) => harness.db.select().from(pilotMarks);
 
 describe("POST /api/pilot-marks", () => {
-  test("a person at a terminal may mark an intervention off-target", async () => {
+  test("a person at a terminal may mark an intervention noise", async () => {
     // Arrange & Act
     const { harness, developer } = await setup();
     const response = await mark(harness, developer);
@@ -122,7 +126,7 @@ describe("POST /api/pilot-marks", () => {
     // STAMPED BY THE HUB. The body said what it OBSERVED; only the hub says
     // what that observation is worth.
     expect(stored[0]?.captureMode).toBe("human");
-    expect(stored[0]?.mark).toBe("off_target");
+    expect(stored[0]?.mark).toBe("noise");
   });
 
   test("marking the same thing twice is one mark, and SAYS so", async () => {
@@ -282,17 +286,175 @@ describe("POST /api/pilot-marks", () => {
     expect(await rows(harness)).toHaveLength(0);
   });
 
-  test("each ref kind takes its own mark, and the other pairing is refused", async () => {
-    // Arrange — `off_target` on a pin or `surface_ok` on a delivery has no
+  test("each ref kind takes its own marks, and a crossed pairing is refused", async () => {
+    // Arrange — `surface_ok` on a delivery or a label on a pin has no
     // gesture behind it: no command sends it, and the report counts marks by
     // their word, so a crossed pair would land in the wrong proof unseen.
     const { harness, developer } = await setup();
 
     // Act
     const crossed = await mark(harness, developer, { mark: "surface_ok" });
+    const labelledPin = await mark(harness, developer, {
+      refKind: "pin",
+      refId: "pin_any",
+      mark: "helpful",
+    });
 
     // Assert — refused at the boundary, before anything is looked up
     expect(crossed.status).toBe(400);
+    expect(labelledPin.status).toBe(400);
+    expect(await rows(harness)).toHaveLength(0);
+  });
+});
+
+/**
+ * THE THREE LABELS (07 §12, 2026-09-30). An intervention takes `helpful`,
+ * `noise` or `unclear`, each a human's verdict; `off_target` stays readable as
+ * the word an older hub stored for `noise`. A reason is optional, bounded,
+ * secret-scanned, and never required.
+ */
+describe("POST /api/pilot-marks — the three labels", () => {
+  test("a person may label an intervention helpful, with a reason, and both are stored", async () => {
+    // Arrange & Act
+    const { harness, developer } = await setup();
+    const response = await mark(harness, developer, {
+      mark: "helpful",
+      reason: "pointed me at the fix before I re-derived it",
+    });
+
+    // Assert
+    expect(response.status).toBe(201);
+    const stored = await rows(harness);
+    expect(stored[0]?.mark).toBe("helpful");
+    expect(stored[0]?.reason).toBe("pointed me at the fix before I re-derived it");
+  });
+
+  test("unclear is a label of its own, never folded into noise", async () => {
+    // Arrange & Act — "I could not tell" is an abstention, and the report
+    // keeps it out of the precision denominator; it has to survive as itself.
+    const { harness, developer } = await setup();
+    const response = await mark(harness, developer, { mark: "unclear" });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect((await rows(harness))[0]?.mark).toBe("unclear");
+    expect((await rows(harness))[0]?.reason).toBeNull();
+  });
+
+  test("an older client's off_target is stored as noise", async () => {
+    // Arrange & Act — the word means the same thing; storing one spelling
+    // forward keeps the table's vocabulary to three labels while every row a
+    // hub already holds stays readable.
+    const { harness, developer } = await setup();
+    const response = await mark(harness, developer, { mark: "off_target" });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect((await rows(harness))[0]?.mark).toBe("noise");
+  });
+
+  test("a reason that looks like a secret is refused, and nothing is stored", async () => {
+    // Arrange — the same rule every other writer follows: a hit drops the
+    // record, never "redact and store". The person is told, so they can say
+    // it again without the token.
+    const { harness, developer } = await setup();
+
+    // Act
+    const response = await mark(harness, developer, {
+      mark: "noise",
+      reason: "it printed ghp_abcdefghijklmnopqrstuvwxyz0123 in the hint",
+    });
+    const body = (await response.json()) as {
+      error: { code: string; message: string };
+    };
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(body.error.code).toBe("reason_secret");
+    expect(body.error.message).toContain("without it");
+    expect(await rows(harness)).toHaveLength(0);
+  });
+
+  test("a reason past the bound is refused at the boundary", async () => {
+    // Arrange — one sentence, the same cap as a pin's check recipe.
+    const { harness, developer } = await setup();
+
+    // Act
+    const response = await mark(harness, developer, {
+      mark: "noise",
+      reason: "x".repeat(MAX_PILOT_LABEL_REASON_CHARS + 1),
+    });
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(await rows(harness)).toHaveLength(0);
+  });
+
+  test("a reason beside `pin --ok` is refused at the boundary — the recipe is the whole message", async () => {
+    // Arrange — a second text slot on a gesture that never needed one would
+    // be a second thing to scan, bound and render, reachable by a raw POST
+    // even though no command sends it.
+    const { harness, developer } = await setup();
+
+    // Act
+    const response = await mark(harness, developer, {
+      refKind: "pin",
+      refId: "pin_any",
+      mark: "surface_ok",
+      reason: "ran it twice",
+    });
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(await rows(harness)).toHaveLength(0);
+  });
+
+  test("L2: a colleague's delivery named under another repo answers exactly as a missing id", async () => {
+    // Arrange — the repo check ran BEFORE the recipient check, so anybody on
+    // a second enrolled repo learned from `wrong_repo` that a computed
+    // delivery id exists — a colleague was shown that ref — while a missing
+    // id answered `unknown_ref`. §11.9 merged the codes; this path leaked.
+    const { harness } = await setup();
+    const ken = await createTestDeveloper(harness, "Ken", "ken-marks-l2@example.com");
+    await harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: OTHER_REPO, pilotEnrolled: true }),
+    );
+
+    // Act
+    const existing = await mark(harness, ken, { repo: OTHER_REPO });
+    const missing = await mark(harness, ken, {
+      repo: OTHER_REPO,
+      refId: hintDeliveryId(SESSION, "wc_nobody_was_shown"),
+    });
+    const codes = await Promise.all(
+      [existing, missing].map(async (response) => ((await response.json()) as { error: { code: string } }).error.code),
+    );
+
+    // Assert
+    expect(codes).toEqual(["unknown_ref", "unknown_ref"]);
+  });
+
+  test("L1: a reason with a NUL in it is refused at the boundary, not a 500", async () => {
+    // Arrange — Postgres cannot store U+0000 in text; the pins route already
+    // refuses it by name, and the second review found this route did not
+    const { harness, developer } = await setup();
+
+    // Act
+    const response = await mark(harness, developer, { mark: "noise", reason: "before\u0000after" });
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(await rows(harness)).toHaveLength(0);
+  });
+
+  test("a blank reason is no reason", async () => {
+    // Arrange & Act — an accidental space must not be stored as prose.
+    const { harness, developer } = await setup();
+    const response = await mark(harness, developer, { mark: "noise", reason: "   " });
+
+    // Assert
+    expect(response.status).toBe(400);
     expect(await rows(harness)).toHaveLength(0);
   });
 });

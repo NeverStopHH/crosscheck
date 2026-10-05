@@ -36,6 +36,8 @@ import {
   deriveBackendSentence,
   resolveDeriveBackend,
 } from "@crosscheck/connector-core/model/backend.ts";
+import { ACP_CONNECTOR } from "@crosscheck/connector-core/guarantees/declarations.ts";
+import { declarationDoctorLine } from "@crosscheck/connector-core/guarantees/doctor.ts";
 import { ACP_LOG_DIR_NAME } from "./constants.ts";
 
 /** Structurally the Claude doctor's Check — no cross-package type import. */
@@ -239,5 +241,12 @@ export const acpDoctorChecks = async (
     backendCheck(input.env),
     ...capabilityChecks(acpStates),
     ...refusalChecks(),
+    // 01a §5: what this connector's positions can support, per kind.
+    guaranteeCheck(),
   ];
+};
+
+const guaranteeCheck = (): AcpCheck => {
+  const line = declarationDoctorLine(ACP_CONNECTOR);
+  return check(line.level, line.name, line.detail);
 };
