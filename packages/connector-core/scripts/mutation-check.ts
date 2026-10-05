@@ -17710,6 +17710,27 @@ export const MUTATIONS: readonly Mutation[
       "a branch carrying « », a newline or ` · ` reaches the terminal raw and " +
       "mints a frame, a line or a field of its own",
   },
+  {
+    // Review LOW: the teammate notice rode every briefing unconditionally.
+    label: "the reader's own drafts count as teammate text for the notice",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    readersOwn: true,\n",
+    to: "",
+    test: `${CORE}/test/briefing-notice.test.ts`,
+    because:
+      "a briefing of nothing but the reader's own drafts tells the agent they " +
+      "were written by other developers",
+  },
+  {
+    label: "the teammate notice is said on every briefing again",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    (section) => section.readersOwn !== true && lines.includes(section.header),",
+    to: "    () => true,",
+    test: `${CORE}/test/briefing-notice.test.ts`,
+    because:
+      "a coverage line alone, or the reader's own drafts, are introduced as " +
+      "quoted text other developers wrote",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17890,6 +17911,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 20
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-notice.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 4
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
