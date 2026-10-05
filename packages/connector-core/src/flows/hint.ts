@@ -54,6 +54,7 @@ import {
   renderPointerHint,
   withCoverageNote,
 } from "../hints/render.ts";
+import { SUBSTANCE_DELIVERY_CHANNEL } from "@crosscheck/schema";
 import type { DeliveryChannel } from "@crosscheck/schema";
 import { selectHint } from "../hints/select.ts";
 import type { HintSelection } from "../hints/select.ts";
@@ -144,7 +145,9 @@ const renderSelection = async (
     return {
       refKind: "claim",
       refId: selection.claim.id,
-      channel: "prompt_hint",
+      // The finding rides INSIDE this hint, so a later read of its tree is
+      // the agent pulling more, never "the pointer was opened" (07 §3.1).
+      channel: SUBSTANCE_DELIVERY_CHANNEL,
       // The echo mark covers what was SHOWN — the first sentence — so that
       // sentence coming back as the reader's own observation is caught.
       bodyHash: hintBodyHash(firstSentence(selection.claim.body)),

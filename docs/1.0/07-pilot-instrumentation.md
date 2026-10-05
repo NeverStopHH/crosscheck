@@ -79,6 +79,15 @@ PostToolUse, and a closed session fires nothing (104 of 127 trial sessions never
 appended in PreToolUse itself, right after the atomic claim, in its own delivery-id namespace. Measured:
 0.11 ms p95 for the append, 34 ms for the whole tripping path against the 800 ms budget.*
 
+*Revised 2026-10-05 (DESIGN.md §4, after the pilot's 95 prompt hints / 0 opened): a sixth channel,
+`prompt_substance` (`SUBSTANCE_DELIVERY_CHANNEL`), for a prompt hint that carries a claim's first
+sentence inline. It is surfaced and bucketed like every channel, and excluded from every pointer figure —
+opened, prior work, converged, opened anyway, opened per 100 sessions (`OPENED_AT` and the overlap CTE in
+`services/pilot-report.ts`) — because the finding arrived with the hint, so a later read of its tree is
+the agent pulling more, not a pointer being followed. Pointers keep `prompt_hint`. The delivery id is
+unchanged (`hintDeliveryId(session, ref)`); a hub older than the value refuses the record (the channel is
+a closed enum), so upgrade the hub before the connectors.*
+
 ### 3.2 `pilot_marks` — the only human input, and it is never a question
 
 ```

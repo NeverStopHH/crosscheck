@@ -7,10 +7,12 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
+import { SUBSTANCE_DELIVERY_CHANNEL } from "@crosscheck/schema";
 
 import { selectAndRenderHint } from "../src/flows/hint.ts";
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
-import { repoKey } from "../src/config/paths.ts";
+import { repoKey, sessionSlug } from "../src/config/paths.ts";
+import { readSessionSpool } from "../src/spool/files.ts";
 import type { HubContext } from "../src/http/client.ts";
 import { hintBodyHash } from "../src/hints/echo.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
@@ -143,6 +145,43 @@ describe("a strong, evidence-backed match carries its substance", () => {
     // Assert
     const state = await readSessionState(f.home, HOST_KEY);
     expect(state?.deliveredHintHashes).toEqual([hintBodyHash(FIRST)]);
+  });
+});
+
+describe("an inline finding is still counted, on a channel of its own", () => {
+  /** The channel of the one hint_delivery record the flow spooled. */
+  const spooledChannel = async (f: Fixture): Promise<unknown> => {
+    const spool = await readSessionSpool(f.home, f.key, sessionSlug(HOST_KEY));
+    const record = JSON.parse(spool.lines[0] ?? "{}") as {
+      kind?: string;
+      body?: { channel?: unknown };
+    };
+    expect(record.kind).toBe("hint_delivery");
+    return record.body?.channel;
+  };
+
+  test("substance is booked as prompt_substance, so the pilot never counts it as opened", async () => {
+    // Arrange
+    const f = await fixture("sf-channel");
+    f.hub.setCandidates([decisionTree(4)]);
+
+    // Act
+    await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(await spooledChannel(f)).toBe(SUBSTANCE_DELIVERY_CHANNEL);
+  });
+
+  test("a pointer stays on prompt_hint", async () => {
+    // Arrange
+    const f = await fixture("sf-channel-pointer");
+    f.hub.setCandidates([decisionTree(1)]);
+
+    // Act
+    await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(await spooledChannel(f)).toBe("prompt_hint");
   });
 });
 

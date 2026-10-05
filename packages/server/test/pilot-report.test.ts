@@ -259,6 +259,7 @@ describe("proof 1 — duplicate work surfaced", () => {
     await context(world, "wc_b", "s_b", "prior work");
     await deliver(world, "hd_brief", "s_a", "wc_b", "briefing", 50, null);
     await deliver(world, "hd_hint", "s_a", "wc_b", "prompt_hint", 50, null);
+    await deliver(world, "hd_sub", "s_a", "wc_b", "prompt_substance", 50, null);
     await deliver(world, "hd_trip", "s_a", "wc_b", "tripwire", 50, null);
     await world.harness.db.insert(hintDeliveries).values({
       id: "hd_old",
@@ -276,10 +277,11 @@ describe("proof 1 — duplicate work surfaced", () => {
       unknown: 1,
       briefing: 1,
       prompt_hint: 1,
+      prompt_substance: 1,
       tripwire: 1,
       suspect: 0,
     });
-    expect(out.duplicateWork.surfaced).toBe(4);
+    expect(out.duplicateWork.surfaced).toBe(5);
   });
 
   test("PIL-2: an opened pointer names the prior work it pointed at", async () => {
