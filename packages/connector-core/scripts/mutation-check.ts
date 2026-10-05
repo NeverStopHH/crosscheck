@@ -5179,7 +5179,7 @@ export const MUTATIONS: readonly Mutation[
     // register call is the only place it can be sent from.
     label: "a session start is filed as a connector too old for the field",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "      seq: { epoch, n: 0 },\n",
+    from: "      seq: input.seq,\n",
     to: "",
     test: `${CORE}/test/register-seq.test.ts`,
     because:
@@ -5194,12 +5194,7 @@ export const MUTATIONS: readonly Mutation[
     // uses.
     label: "a re-fire registers under an epoch the session does not use",
     file: `${CORE}/src/flows/register-session.ts`,
-    from:
-      "  const seqEpoch = carriedSeqEpoch(\n" +
-      "    await readSessionState(input.home, input.hostSessionKey),\n" +
-      "    input,\n" +
-      "    mintedEpoch,\n" +
-      "  );",
+    from: "  const seqEpoch = carriedSeqEpoch(previous, input, mintedEpoch);",
     to: "  const seqEpoch = mintedEpoch;",
     test: `${CORE}/test/register-seq.test.ts`,
     because:
@@ -14039,10 +14034,11 @@ export const MUTATIONS: readonly Mutation[
     because: "a session/new whose answer arrives after its eviction never registers, and the proxy's only record of it is pending-evictions in the exit log",
   },
   {
-    // Review LOW: not every register carried the report.
+    // Review LOW: not every register carried the report. The recovery walks
+    // the shared life ladder now, which sends the report on every rung.
     label: "a recovered session registers without the loss report",
-    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: "    losses: await readTelemetryLossReport(ctx.config.home, ctx.repoKey),\n",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      losses,\n",
     to: "",
     test: `${CONNECTOR}/test/recovery-losses.test.ts`,
     because: "a hook installed mid-session rebuilds its row as 'never reported' until a heartbeat lands, and a recovered session that ends first never reports at all",
@@ -17267,6 +17263,102 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/landed-authors-doctor.test.ts`,
     because: "the commits are dropped silently again, which is what the review found",
   },
+  {
+    label: "the life ladder is three rungs long again",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const REGISTER_LADDER_MAX_ATTEMPTS = 12;",
+    to: "export const REGISTER_LADDER_MAX_ATTEMPTS = 3;",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "the pilot's defect: a conversation with no lineage note finds three ended rungs, registers nothing and has every record rejected as a late write",
+  },
+  {
+    label: "an end no longer writes down the life it closed",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  await recordEndedLife(input.home, input.hostSessionKey, input.crosscheckSessionId, input.now());\n",
+    to: "",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "every resume walks every ended life again from the base id, one register call each, on the hook whose latency the developer feels",
+  },
+  {
+    label: "the ladder no longer reads the life the last end wrote down",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    await readEndedLifeRung(input.home, input.hostSessionKey, baseId),",
+    to: "    null,",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "the lineage note is written and never consulted, so a resume pays for every ended life",
+  },
+  {
+    label: "the ladder ignores the life the state file is on",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    liveSessionId: previous?.crosscheckSessionId ?? null,",
+    to: "    liveSessionId: null,",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "every compact inside a live life re-walks the ended lives below it, a register call each",
+  },
+  {
+    label: "the ladder walks rung by rung instead of galloping",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    (_, attempt) => start + (attempt === 0 ? 0 : 2 ** (attempt - 1)),",
+    to: "    (_, attempt) => start + attempt,",
+    test: `${CORE}/test/session-lineage.test.ts`,
+    because: "with the lineage note gone the walk reaches twelve lives instead of a thousand, and a long-lived conversation is deaf again",
+  },
+  {
+    label: "Claude's recovery captures under the base id the hub ended",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: '    ladder.outcome === "registered" ? ladder.sessionId : derived.crosscheckSessionId;',
+    to: "    derived.crosscheckSessionId;",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "a conversation that SessionEnd closed and that continues without a SessionStart has every record rejected",
+  },
+  {
+    label: "a rejected ledger line forgets why the hub refused it",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "      rejectCauses(summary.results),\n",
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "the pilot's state: 433 records dropped and nothing on the machine that says why",
+  },
+  {
+    label: "the hub's late-write sentence is no longer recognised",
+    file: `${CORE}/src/spool/reject-cause.ts`,
+    from: '  [/^producer\\.sessionId: session has already ended/, "session_ended"],\n',
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "a refusal for an ended session is filed under `other`, and doctor sends the reader to the hub's response instead of the resume fix",
+  },
+  {
+    label: "the archive fold drops the rejection causes",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      rejectedCauses: total.rejectedCauses,\n",
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "a week after the loss the age sweep turns every named cause into 'no cause recorded'",
+  },
+  {
+    label: "the rejected line is never formatted",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  rejected: rejectedLine(local),",
+    to: "  rejected: null,",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "doctor and status count rejected records and say nothing about why",
+  },
+  {
+    label: "doctor drops its hub rejected records line",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: '    lineCheck("hub rejected records", lines.rejected),\n',
+    to: "",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the cause is kept in the ledger and printed nowhere a person runs",
+  },
+  {
+    label: "status's losses line leaves the rejection causes out",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  const parts = [rejected, ignored, capture].filter((part): part is string => part !== null);",
+    to: "  const parts = [ignored, capture].filter((part): part is string => part !== null);",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "status says '433 dropped' beside nothing that explains it, which is what the pilot read",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17333,7 +17425,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
- * PRINTS: packages/cli/test/doctor-losses.test.ts 6
+ * PRINTS: packages/cli/test/doctor-losses.test.ts 9
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
@@ -17426,6 +17518,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
+ * PRINTS: packages/connector-claude/test/resumed-session.test.ts 5
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
@@ -17515,12 +17608,14 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
+ * PRINTS: packages/connector-core/test/reject-cause.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
+ * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
