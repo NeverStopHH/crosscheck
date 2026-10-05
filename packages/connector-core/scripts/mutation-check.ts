@@ -17553,8 +17553,8 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the heal's register is sent before the refusal's loss is written",
-    file: `${CORE}/src/spool/flush-heal.ts`,
-    from: "    await recordSealed(input, sealed);\n",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "    await recordSealed(ctx, spool, refused.map((line) => line.record));\n",
     to: "",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review P3: the next life reports no loss from its first word, and coverage reads complete over the records the refusal just cost",
@@ -17562,8 +17562,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a refusal the walk already wrote down is counted again",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "  const uncounted = (summary.results ?? []).filter((result) => !healed.counted.has(result.index));",
-    to: "  const uncounted = summary.results ?? [];",
+    from: "    (result) => !healed.counted.has(result.index) && !earlier.has(",
+    to: "    (result) => !earlier.has(",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "every record a heal's refusal cost is booked twice in the drop ledger",
   },
@@ -17585,7 +17585,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a withheld straggler is booked as rejected by the hub",
-    file: `${CORE}/src/spool/flush.ts`,
+    file: `${CORE}/src/spool/batch-losses.ts`,
     from: '    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "withheld", ctx.now(), kindsOf(withheld), {',
     to: '    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "rejected", ctx.now(), kindsOf(withheld), {',
     test: `${CORE}/test/session-heal.test.ts`,
@@ -17726,6 +17726,30 @@ export const MUTATIONS: readonly Mutation[
     to: "  if (true) {\n    return null;\n  }\n",
     test: `${ACP}/test/resumed-session.test.ts`,
     because: "review-2 finding 2: an ACP proxy that exits while its in-memory session still names the life a heal moved off leaves the healed life open for the next session/load",
+  },
+  {
+    label: "every walk writes a stuck batch's torn lines again",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "    const torn = lines.filter((line) => line.record === null && isNew(line));",
+    to: "    const torn = lines.filter((line) => line.record === null);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 finding 4: one torn line reads as one more per cooldown for as long as the batch waits, and the hub's loss_total with it",
+  },
+  {
+    label: "every walk writes a stuck batch's withheld stragglers again",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      (line): line is SpooledLine => line.record !== null && isWithheld(line.record) && isNew(line),",
+    to: "      (line): line is SpooledLine => line.record !== null && isWithheld(line.record),",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 finding 4: one straggler reads as one more per cooldown for as long as the batch waits",
+  },
+  {
+    label: "a batch a walk leaves on disk never notes what the walk wrote down",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    await losses.keep();\n    return null;",
+    to: "    return null;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 finding 4: the next walk meets the same lines with nothing to say they were counted, and counts them again",
   },
 ];
 
@@ -17984,7 +18008,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 13
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 16
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 18
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4

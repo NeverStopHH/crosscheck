@@ -329,6 +329,15 @@ names (`closeSessionState`): the state goes either way, and a life other than th
 it — its own position past the counter, its own marker, written to the lineage — so the next resume starts above
 it. The backlog is counted after the state goes, so a work context the heal spooled meanwhile holds both ends back.
 
+**A batch a walk leaves on disk is counted once** (review-2 finding 4). What a batch has lost whatever comes next
+— torn lines, withheld stragglers, refusals no heal can carry — is written before the walk's register (review P3),
+and a walk can leave the batch on disk: no life registered with another conversation's records at stake, no room
+left to re-send. Every later walk wrote the same lines again — one torn line and one straggler read as
+`{unparsable: 3, withheld: 3}` after three cooldowns, up to the spool's seven-day bound, all of it in the hub's
+`loss_total`. The flush now notes on the cursor which lines' losses are in the ledger (`spool/batch-losses.ts`,
+by each line's end offset in that data file; the cursor write that moves past the batch drops the note), and
+writes only lines not on it — one line, one loss, whatever it was first counted as.
+
 ### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a

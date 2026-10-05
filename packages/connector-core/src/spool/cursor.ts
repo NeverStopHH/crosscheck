@@ -144,5 +144,75 @@ export const bytesOfLines = (pending: string, count: number): number => {
   return offset;
 };
 
+/** Where each of the first `count` complete, non-blank lines of `pending` ends, counted from `base`. */
+export const lineEnds = (pending: string, count: number, base: number): readonly number[] => {
+  const buffer = Buffer.from(pending, "utf8");
+  const ends: number[] = [];
+  let offset = 0;
+  while (ends.length < count) {
+    const newline = buffer.indexOf(NEWLINE, offset);
+    if (newline === -1) {
+      return ends;
+    }
+    const isBlank = buffer.subarray(offset, newline).toString("utf8").trim().length === 0;
+    offset = newline + 1;
+    if (!isBlank) {
+      ends.push(base + offset);
+    }
+  }
+  return ends;
+};
+
+/**
+ * WHAT A WALK ALREADY WROTE DOWN for a batch it left on disk (review-2
+ * finding 4): the end offset, in the data file, of every line whose loss —
+ * torn, withheld, or a refusal no heal can carry — is in the drop ledger. A
+ * flush that meets the batch again writes only lines not on this note, so a
+ * batch stuck for a week is counted once. ONE LINE, ONE LOSS, whatever it was
+ * counted as: a straggler a walk wrote down as refused is not counted again
+ * as withheld once its life is.
+ *
+ * It rides the CURSOR, never beside it: it belongs to one data file at one
+ * offset, which the cursor's identity already proves, and the cursor write
+ * that moves past the batch drops it.
+ */
+const CountedCursorSchema = z.looseObject({
+  ino: z.number().int().min(0),
+  firstLine: z.string().min(1),
+  offset: z.number().int().min(0),
+  counted: z.array(z.number().int().min(0)),
+});
+
+const NOTHING_COUNTED: ReadonlySet<number> = new Set();
+
+/** The note for the batch at `at`'s offset in that very file, or nothing counted. */
+export const readCountedLines = async (
+  cursorFile: string,
+  at: FileIdentity & { readonly offset: number },
+): Promise<ReadonlySet<number>> => {
+  const parsed = CountedCursorSchema.safeParse(await readJsonOrNull(cursorFile));
+  return !parsed.success || !isSameFile(at, parsed.data) || parsed.data.offset !== at.offset
+    ? NOTHING_COUNTED
+    : new Set(parsed.data.counted);
+};
+
+/** The cursor, unmoved, with the note — for the file the batch was read from only. */
+export const writeCountedLines = async (
+  spoolFile: string,
+  cursorFile: string,
+  offset: number,
+  counted: ReadonlySet<number>,
+  deliveredFrom: FileIdentity,
+): Promise<void> => {
+  const facts = await readFileFacts(spoolFile);
+  if (facts === null || facts.firstLine === null || !isSameFile(facts, deliveredFrom)) {
+    return;
+  }
+  await writePrivateFile(
+    cursorFile,
+    `${JSON.stringify({ ino: facts.ino, firstLine: facts.firstLine, offset, counted: [...counted] })}\n`,
+  );
+};
+
 export const sliceFrom = (raw: string, offset: number): string =>
   offset <= 0 ? raw : Buffer.from(raw, "utf8").subarray(offset).toString("utf8");

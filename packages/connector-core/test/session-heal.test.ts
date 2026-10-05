@@ -20,13 +20,13 @@
  * Those drop, counted with the cause `session_ended`, exactly as before.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { appendFile, rm } from "node:fs/promises";
 
 import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { HEAL_COOLDOWN_MS } from "../src/constants.ts";
-import { repoKey } from "../src/config/paths.ts";
+import { repoKey, sessionSlug, spoolDataPath } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
@@ -39,6 +39,7 @@ import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declar
 import { appendRecords } from "../src/spool/append.ts";
 import { readDropDetail } from "../src/spool/drops.ts";
 import { flushSpool } from "../src/spool/flush.ts";
+import { recordRefusedLife } from "../src/spool/refused-lives.ts";
 import { readSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -512,6 +513,59 @@ describe("the bounds", () => {
     expect(elapsed).toBeLessThan(TIGHT_BUDGET_MS + BUDGET_SLACK_MS);
     expect((await readDropDetail(fx.home, fx.key)).rejectedCauses).toEqual({ session_ended: 1 });
     expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+  });
+});
+
+/**
+ * A BATCH A WALK LEAVES ON DISK (review-2 finding 4). What the batch has lost
+ * whatever comes next — torn lines, withheld stragglers — is written down
+ * before the walk's register, so the next life reports it. A batch that then
+ * stayed on disk was written down again by every later walk: one torn line and
+ * one straggler read as three of each after three cooldowns, up to the
+ * spool's seven-day age, and flowed into the hub's `loss_total`.
+ */
+describe("a batch a walk leaves on disk", () => {
+  test("has its torn and withheld lines counted once, however many walks meet it", async () => {
+    // Arrange: an ended life behind another conversation's backlog — a
+    // straggler of a refused life, a record of its live one, a torn line —
+    // and a hub that refuses every register
+    const fx = await fixture("counted-once", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    const otherHost = `${fx.hostSessionKey}-other`;
+    const otherBase = `cc_${otherHost}`;
+    const older = new Date(Date.now() - 60_000);
+    await recordRefusedLife(fx.home, fx.key, otherBase, new Date());
+    await appendRecords(
+      fx.home,
+      fx.key,
+      otherHost,
+      [
+        targetRecord(`wc_${otherBase}`, "file", "src/withheld.ts", producerOf(otherBase), older),
+        targetRecord(`wc_${otherBase}~r1`, "file", "src/other-live.ts", producerOf(`${otherBase}~r1`), older),
+      ],
+      older,
+    );
+    await appendFile(spoolDataPath(fx.home, fx.key, sessionSlug(otherHost)), "{torn\n");
+    await endOnHub(life.crosscheckSessionId);
+    const clock = { ms: Date.now() };
+    const now = () => new Date(clock.ms);
+    refuseRegisters = true;
+
+    // Act: three walks the hub refuses, one per cooldown, then one it takes
+    for (let walk = 0; walk < 3; walk += 1) {
+      await flushAsHook(fx, GENEROUS_BUDGET_MS, now);
+      clock.ms += HEAL_COOLDOWN_MS + 1;
+    }
+    const whileStuck = (await readDropDetail(fx.home, fx.key)).byReason;
+    refuseRegisters = false;
+    await flushAsHook(fx, GENEROUS_BUDGET_MS, now);
+
+    // Assert: one of each while the batch waited, and none again once it went
+    expect(whileStuck).toEqual({ unparsable: 1, withheld: 1 });
+    const after = (await readDropDetail(fx.home, fx.key)).byReason;
+    expect(after["unparsable"]).toBe(1);
+    expect(after["withheld"]).toBe(1);
   });
 });
 

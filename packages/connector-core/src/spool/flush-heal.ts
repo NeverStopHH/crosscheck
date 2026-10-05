@@ -32,7 +32,6 @@ import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
-import { recordDrop } from "./drops.ts";
 import { conversationOf } from "../state/session-lineage.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
@@ -168,10 +167,12 @@ export interface HealInput {
   readonly first: IngestSummary;
   readonly healer: SessionHealer | undefined;
   readonly deadlineMs: number;
-  /** The spool the batch came from — the ledger its drops go to. */
-  readonly spoolSlug: string;
-  /** The caller's own certain losses, written before a walk's register. */
-  readonly beforeWalk?: () => Promise<void>;
+  /**
+   * The caller's certain losses, written before a walk's register — its own,
+   * and the `sealed` refusals (indices into `spooled`) no heal can carry
+   * (spool/batch-losses.ts).
+   */
+  readonly beforeWalk?: (sealed: readonly number[]) => Promise<void>;
 }
 
 /**
@@ -192,16 +193,6 @@ const sealedRefusals = (input: HealInput, refusals: readonly RecordResult[], cau
             writtenBy(record) === input.flusherSessionId
           );
         });
-
-const recordSealed = async (input: HealInput, sealed: readonly number[]): Promise<void> => {
-  if (sealed.length === 0) {
-    return;
-  }
-  const records = sealed.map((index) => input.spooled[index] ?? {});
-  await recordDrop(input.ctx.home, input.ctx.repoKey, input.spoolSlug, sealed.length, "rejected", input.ctx.now(), kindsOf(records), {
-    session_ended: sealed.length,
-  });
-};
 
 /**
  * Whether the refusal fell on ANOTHER conversation's records: a batch the
@@ -262,8 +253,7 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   // between (review P3). Only a walk that starts runs this.
   let walked = false;
   const result = await input.healer({ sessionId: input.flusherSessionId, cause }, input.deadlineMs, async () => {
-    await input.beforeWalk?.();
-    await recordSealed(input, sealed);
+    await input.beforeWalk?.(sealed);
     walked = true;
   });
   const counted: ReadonlySet<number> = walked ? new Set(sealed) : NONE_COUNTED;
@@ -287,8 +277,7 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   }
   // No room left to re-send after a walk: the batch waits for the next flush,
   // which sends it under the healed life. What the walk already wrote down is
-  // met again there and counted a second time — the one direction a drop
-  // count may err in, on a path that needs a walk to finish at the deadline.
+  // noted on the cursor, and that flush does not count it again.
   const roomMs = input.deadlineMs - Date.now();
   if (roomMs <= 0) {
     return null;

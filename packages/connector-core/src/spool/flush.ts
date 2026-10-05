@@ -37,13 +37,15 @@ import { withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
-import { bytesOfLines, writeCursorOffset } from "./cursor.ts";
+import { bytesOfLines, lineEnds, readCountedLines, writeCursorOffset } from "./cursor.ts";
+import { batchLosses } from "./batch-losses.ts";
+import type { BatchLine, SpooledLine } from "./batch-losses.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
 import { recordDrop } from "./drops.ts";
 import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
-import { healAndResend, isRefusedLifeRecord, kindsOf } from "./flush-heal.ts";
+import { healAndResend, isRefusedLifeRecord } from "./flush-heal.ts";
 import type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 import { lineTimestampMs } from "./lines.ts";
 import { withLock } from "./lock.ts";
@@ -142,15 +144,6 @@ const rejectCauses = (results: readonly RecordResult[] | undefined): Counts =>
     .filter((result) => result.status === "rejected")
     .reduce<Counts>((causes, result) => addCount(causes, rejectCauseOf(result.issues), 1), {});
 
-/** A write that runs at most once, however many paths ask for it. */
-const once = (run: () => Promise<void>): (() => Promise<void>) => {
-  let started: Promise<void> | null = null;
-  return () => {
-    started ??= run();
-    return started;
-  };
-};
-
 /** What one batch did: how many records went, and whether it healed the producer. */
 interface BatchOutcome {
   readonly sent: number;
@@ -158,25 +151,6 @@ interface BatchOutcome {
   /** The healer was asked — the flush's one walk is spent, whatever it answered. */
   readonly healAsked: boolean;
 }
-
-/**
- * WITHHELD, NOT SENT: records a refused life produced whose body names that
- * life (spool/flush-heal.ts). Counted under their own reason, `withheld` —
- * nothing was sent, so "rejected by the hub" would be false — with the cause
- * the hub gave for their life: it already ended it, and any live session's
- * delivery would file them into it past its end.
- */
-const recordWithheld = async (
-  ctx: HubContext,
-  spool: SessionSpool,
-  withheld: readonly Record<string, unknown>[],
-): Promise<void> => {
-  if (withheld.length > 0) {
-    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "withheld", ctx.now(), kindsOf(withheld), {
-      session_ended: withheld.length,
-    });
-  }
-};
 
 /**
  * Sends one batch and moves that spool's cursor past it. Returns how many
@@ -201,43 +175,50 @@ const flushOneBatch = async (
 ): Promise<BatchOutcome | null> => {
   const batch = spool.lines.slice(0, MAX_INGEST_BATCH);
   const consumed = spool.offset + bytesOfLines(spool.pending, batch.length);
-  const parsed = batch.map(parseLine);
-  const unparsable = parsed.filter((record) => record === null).length;
-  const spooled = parsed.filter((record): record is Record<string, unknown> => record !== null);
+  const ends = lineEnds(spool.pending, batch.length, spool.offset);
+  const lines: readonly BatchLine[] = batch.map((line, index) => ({
+    record: parseLine(line),
+    end: ends[index] ?? consumed,
+  }));
   const isWithheld = (record: Record<string, unknown>): boolean =>
     isRefusedLifeRecord(record, refusedLives, input.sessionId);
-  const sendable = spooled.filter((record) => !isWithheld(record));
-  const records = sendable.map((record) => withProducer(record, input.developerId, input.sessionId));
+  const sendable = lines.filter(
+    (line): line is SpooledLine => line.record !== null && !isWithheld(line.record),
+  );
+  const records = sendable.map((line) => withProducer(line.record, input.developerId, input.sessionId));
 
   const first = await deliver(ctx, records);
   if (first === null) {
     return null;
   }
   // WHAT THIS BATCH HAS LOST WHATEVER COMES NEXT — torn lines, withheld
-  // stragglers — written once: before a heal's walk when one runs, so the
-  // register it sends already reports them (review P3), else just below.
-  const writeSealed = once(async () => {
-    await recordDrop(ctx.home, ctx.repoKey, spool.slug, unparsable, "unparsable", ctx.now());
-    await recordWithheld(ctx, spool, spooled.filter(isWithheld));
-  });
+  // stragglers, refusals no heal can carry — written once: before a heal's
+  // walk when one runs, so the register it sends already reports them
+  // (review P3), else just below; and once per LINE across flushes, so a
+  // batch a walk leaves on disk is not counted again (spool/batch-losses.ts).
+  const earlier = await readCountedLines(spool.cursorPath, spool);
+  const losses = batchLosses(ctx, spool, lines, sendable, isWithheld, earlier);
   const healed = await healAndResend({
     ctx,
     developerId: input.developerId,
     flusherSessionId: input.sessionId,
-    spooled: sendable,
+    spooled: sendable.map((line) => line.record),
     first,
     healer: input.heal,
     deadlineMs,
-    spoolSlug: spool.slug,
-    beforeWalk: writeSealed,
+    beforeWalk: losses.write,
   });
   if (healed === null) {
+    await losses.keep();
     return null;
   }
   const summary = healed.summary;
-  await writeSealed();
-  // The refusals a heal's walk already wrote down are not counted twice.
-  const uncounted = (summary.results ?? []).filter((result) => !healed.counted.has(result.index));
+  await losses.write([]);
+  // The refusals a heal's walk already wrote down are not counted twice —
+  // this walk's, or an earlier one's that left the batch on disk.
+  const uncounted = (summary.results ?? []).filter(
+    (result) => !healed.counted.has(result.index) && !earlier.has(sendable[result.index]?.end ?? -1),
+  );
   // A 2xx is not a delivery. Ingest reports per-record outcomes, and a
   // record the hub REFUSED is discarded by the cursor write below exactly
   // like a torn line — so it is counted exactly like one. Nothing in the
@@ -256,7 +237,7 @@ const flushOneBatch = async (
       ? summary.rejected
       : uncounted.filter((result) => result.status === "rejected").length;
   const ignored = summary.ignored;
-  // Counted BEFORE the cursor moves past them (`writeSealed` above holds the
+  // Counted BEFORE the cursor moves past them (`losses` above holds the
   // torn lines), so a line that is not JSON — the only thing a torn write can
   // produce — becomes a visible drop instead of a silent hole. Counting first
   // can at worst double-count after a crash in the microseconds before the

@@ -39,7 +39,7 @@
  *      observations of the SAME path at two moments, so for `dev` to differ,
  *      the mount under one path would have to change between them.
  *      VERIFY: grep -rn "isSameFil[e](" packages/connector-core/src | grep -c .
- *      PRINTS: 4
+ *      PRINTS: 6
  *      (the bracket keeps this line from counting itself.)
  *
  * The first line also defeats the collision on its own: two files that merely
