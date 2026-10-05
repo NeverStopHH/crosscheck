@@ -37,6 +37,7 @@ const KEY = "0123456789abcdef";
 const OTHER_KEY = "fedcba9876543210";
 const SLUG = "session-1";
 const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
 const ABANDONED_MS = ABANDONED_TEMP_MAX_AGE_MS + MINUTE_MS;
 const IN_FLIGHT_MS = ABANDONED_TEMP_MAX_AGE_MS - MINUTE_MS;
 /** A caller with all the time in the world: only the cap can stop the sweep. */
@@ -154,6 +155,23 @@ describe("sweepAbandonedTemps covers every directory writePrivateFile litters", 
 });
 
 describe("sweepAbandonedTemps deletes only what is certainly abandoned", () => {
+  test("the bound is a day, in absolute hours: a temp 23 h old stays, one 25 h old goes", async () => {
+    // Arrange: ages written as hours, NOT derived from the constant — every
+    // other test here moves with ABANDONED_TEMP_MAX_AGE_MS, so only this one
+    // notices when it is set to a minute or to zero
+    const home = await tempHome("sweep-absolute-age");
+    const state = dirname(syncStatePath(home, KEY));
+    const young = await seed(join(state, `${KEY}.json.tmp-1-young`), 23 * HOUR_MS);
+    const old = await seed(join(state, `${KEY}.json.tmp-2-old`), 25 * HOUR_MS);
+
+    // Act
+    await sweepAbandonedTemps(home, NOW, ROOM);
+
+    // Assert
+    expect(await exists(young)).toBe(true);
+    expect(await exists(old)).toBe(false);
+  });
+
   test("a temp younger than ABANDONED_TEMP_MAX_AGE_MS stays: its writer may still rename it", async () => {
     // Arrange
     const home = await tempHome("sweep-young");

@@ -17573,6 +17573,24 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/capture-engine.test.ts`,
     because: "the proxy keeps the client waiting on its exit code past ACP_CAPTURE_EXIT_BUDGET_MS for a cleanup",
   },
+  {
+    // Review 2026-10-06 (M2): every other test derived its ages from the
+    // constant, so 0, a minute and 65 minutes all survived.
+    label: "the abandoned-temp bound shrinks to a minute",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const ABANDONED_TEMP_MAX_AGE_MS = MS_PER_DAY;",
+    to: "export const ABANDONED_TEMP_MAX_AGE_MS = 60_000;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a writer stopped for a minute between its write and its rename — a closed lid, a debugger — has its temp swept and loses that update",
+  },
+  {
+    label: "the abandoned-temp bound grows to a week",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const ABANDONED_TEMP_MAX_AGE_MS = MS_PER_DAY;",
+    to: "export const ABANDONED_TEMP_MAX_AGE_MS = 7 * MS_PER_DAY;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "temps nothing will ever read or rename stay on disk for a week instead of a day",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17747,7 +17765,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 14
+ * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 16
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
