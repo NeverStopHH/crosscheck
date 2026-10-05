@@ -313,6 +313,14 @@ export {
 } from "./harness-turn.ts";
 export type { HarnessShape } from "./harness-turn.ts";
 export { isSessionControlOnly } from "./session-control.ts";
+export { ENGLISH_STOP_WORDS, GERMAN_STOP_WORDS } from "./stop-words.ts";
+export {
+  PROMPT_MIN_TOKEN_CHARS,
+  isGermanPrompt,
+  promptTerms,
+  promptTokens,
+} from "./prompt-terms.ts";
+export type { PromptTerms } from "./prompt-terms.ts";
 export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,

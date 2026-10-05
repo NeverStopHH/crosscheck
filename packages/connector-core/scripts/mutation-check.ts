@@ -17545,9 +17545,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "German function words count as shared task words",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "          AND numnode(term.german) > 0\n",
-    to: "",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_STOP_WORDS.has(token));",
+    to: "ENGLISH_STOP_WORDS.has(token) || false;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"passt, das ist nicht so wichtig, mach weiter\" agrees with a German team's decision on das/ist/nicht and pushes it as substance",
   },
@@ -17970,18 +17970,42 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub scores a prompt of session commands as a task",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (await isSessionControlPrompt(deps.db, humanText)) {\n    return [];\n  }\n",
+    from: "  if (isSessionControlPrompt(content)) {\n    return [];\n  }\n",
     to: "",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"mache weiter, limit zuruckgesetzt, bitte\" points at a German tree on mach, limit and bitte — the live pilot",
   },
   {
     label: "the session-command rule judges stop words too",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "  isSessionControlOnly(await listContentWords(db, ftsTokens(text)));",
-    to: "  isSessionControlOnly(ftsTokens(text));",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const isFunctionWord = (token: string): boolean =>\n    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_STOP_WORDS.has(token));",
+    to: "  const isFunctionWord = (_token: string): boolean => false;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"weiter\" and \"alles\" are not session commands, so no real prompt of them is ever content-free",
+  },
+  {
+    label: "the hint pool is ranked on raw tokens",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      ftsTokens: query.terms,\n",
+    to: "",
+    test: `${SERVER}/test/hint-content-terms.test.ts`,
+    because: "a German prompt's das/ist/nicht/die fill the 10-row pool with noise trees and the one tree it is about never reaches the floor (M8)",
+  },
+  {
+    label: "the German stop list strips an English prompt",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_STOP_WORDS.has(token));",
+    to: "ENGLISH_STOP_WORDS.has(token) || GERMAN_STOP_WORDS.has(token);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"why does the worker die\" loses \"die\" and the worker tree it shares two words with (L1)",
+  },
+  {
+    label: "the language signal reads English as German",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  countWhere(tokens, (token) => GERMAN_STOP_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >\n",
+    to: "  countWhere(tokens, (token) => GERMAN_STOP_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >=\n",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a prompt with no stop word of either language is stripped of German function words it never had",
   },
 ];
 
@@ -18276,6 +18300,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 2
  * PRINTS: packages/schema/test/session-control.test.ts 5
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/substance-sentence.test.ts 3
@@ -18308,6 +18333,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 4
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
+ * PRINTS: packages/server/test/hint-content-terms.test.ts 1
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hints.test.ts 6

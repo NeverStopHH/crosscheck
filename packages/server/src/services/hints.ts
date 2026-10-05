@@ -45,9 +45,9 @@ import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
+  SEARCH_MAX_QUERY_TOKENS,
   exactTargetTokenConditions,
   exactTokens,
-  ftsTokens,
   searchWorkContexts,
 } from "./search.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
@@ -57,6 +57,7 @@ import {
   humanPromptText,
   isHarnessTurn,
   isSessionControlOnly,
+  promptTerms,
   substanceSentence,
 } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
@@ -135,67 +136,37 @@ export type HintMatchedOn = "prompt" | "intent";
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
 /**
- * How many distinct LEXEMES of `tokens` the document matches — the count
- * HINT_MIN_SHARED_TERMS is stated in. One subquery, bounded by
- * SEARCH_MAX_QUERY_TOKENS.
+ * How many distinct LEXEMES of `terms` the document matches — the count
+ * HINT_MIN_SHARED_TERMS is stated in. One subquery over at most
+ * SEARCH_MAX_QUERY_TOKENS terms.
  *
- * A FUNCTION WORD IS NEVER A TERM, IN EITHER LANGUAGE THIS TEAM WRITES. A word
- * counts only when NEITHER PostgreSQL's shipped english NOR its shipped german
- * snowball dictionary calls it a stop word: an empty tsquery under either
- * configuration drops it rather than letting it count as a free hit on every
- * row. The english configuration alone kept "das", "ist", "nicht", "und",
- * "die", "dem", "weiter" as terms, so a German team's own sentences agreed
- * with "passt, das ist nicht so wichtig, mach weiter" on three words (review
- * of batch 1006, finding 2). No word list is kept here: both stop lists are
- * the database's own. Covered: English and German — a prompt in any other
- * language keeps its function words as terms until its dictionary is added
- * to this condition.
- *
- * The lexeme that is MATCHED stays the english one, because that is the
- * configuration every tsv in this database is built with.
+ * A FUNCTION WORD IS NEVER A TERM: `terms` are the prompt's CONTENT terms
+ * (@crosscheck/schema prompt-terms.ts) — PostgreSQL's English stop list
+ * always out, its German one out of a German prompt (review 1006b, L1; the
+ * english configuration alone kept "das", "ist", "nicht" as terms, finding
+ * 2 of the review before). The lexeme that is MATCHED stays the english one,
+ * because that is the configuration every tsv in this database is built with.
  */
-const sharedTermsSql = (document: SQL, tokens: readonly string[]): SQL<number> =>
-  tokens.length === 0
+const sharedTermsSql = (document: SQL, terms: readonly string[]): SQL<number> =>
+  terms.length === 0
     ? sql<number>`0`
     : sql<number>`(SELECT count(DISTINCT term.lexeme::text)::int
-        FROM (SELECT plainto_tsquery('english', word) AS lexeme,
-                     plainto_tsquery('german', word) AS german
+        FROM (SELECT plainto_tsquery('english', word) AS lexeme
               FROM unnest(ARRAY[${sql.join(
-                tokens.map((token) => sql`${token}`),
+                terms.map((term) => sql`${term}`),
                 sql`, `,
               )}]::text[]) AS words(word)) AS term
         WHERE numnode(term.lexeme) > 0
-          AND numnode(term.german) > 0
           AND ${document} @@ term.lexeme)`;
-
-/**
- * The query's words that are TERMS — the ones neither stop list drops, the
- * same two `sharedTermsSql` applies — in one bounded query, so the
- * session-control rule below judges exactly the words the floor would count.
- */
-const listContentWords = async (db: Db, tokens: readonly string[]): Promise<readonly string[]> => {
-  if (tokens.length === 0) {
-    return [];
-  }
-  const result = await db.execute<{ word: string }>(sql`
-    SELECT word FROM unnest(ARRAY[${sql.join(
-      tokens.map((token) => sql`${token}`),
-      sql`, `,
-    )}]::text[]) AS words(word)
-    WHERE numnode(plainto_tsquery('english', word)) > 0
-      AND numnode(plainto_tsquery('german', word)) > 0`);
-  return result.rows.map((row) => row.word);
-};
 
 /**
  * A prompt made only of words that steer the session — continue, limit,
  * reset, bitte, typos or not (@crosscheck/schema session-control.ts) —
- * carries no task, so the intent stands in for it as for any content-free
- * prompt. Live on 0.10.0, "mache weiter, limit zuruckgesetzt. bitte alles
- * wiederuafnhemen" cleared the floor on a German claim sharing three words.
+ * carries no task. Live on 0.10.0, "mache weiter, limit zuruckgesetzt. bitte
+ * alles wiederuafnhemen" cleared the floor on a German claim sharing three
+ * words.
  */
-const isSessionControlPrompt = async (db: Db, text: string): Promise<boolean> =>
-  isSessionControlOnly(await listContentWords(db, ftsTokens(text)));
+const isSessionControlPrompt = (content: readonly string[]): boolean => isSessionControlOnly(content);
 
 /**
  * The context's own statement — what its owner said the work is — as one
@@ -647,11 +618,20 @@ const listClaimTermMaxima = async (
   return new Map(rows.map((row) => [row.id, Number(row.terms)]));
 };
 
+/** What one search is made of: the text, for its exact tier, and the content terms. */
+interface CandidateQuery {
+  readonly text: string;
+  /** The prompt's content terms, bounded — what the pool is ranked and counted on. */
+  readonly terms: readonly string[];
+  readonly repo: string;
+  readonly on: HintMatchedOn;
+}
+
 /** One query's candidates, each of which clears the floor on its own. */
 const matchCandidates = async (
   deps: Deps,
   callerDeveloperId: string,
-  query: { readonly text: string; readonly repo: string; readonly on: HintMatchedOn },
+  query: CandidateQuery,
 ): Promise<readonly HintContextCandidate[]> => {
   const searched = await searchWorkContexts(
     // Lexical by construction — see the header. The hub's real embedder must
@@ -659,6 +639,10 @@ const matchCandidates = async (
     { db: deps.db, now: deps.now, embedder: null },
     {
       query: query.text,
+      // RANKED ON CONTENT TERMS (review 1006b, M8): the raw tokens let a
+      // German prompt's "das ist nicht die" fill the pool with every tree
+      // that says them, before the floor below ever ran.
+      ftsTokens: query.terms,
       repo: query.repo,
       // In the search's own WHERE, before its bounds — a busy caller's own
       // contexts must not crowd teammates out of the pool (SEARCH_POOL_LIMIT).
@@ -674,7 +658,7 @@ const matchCandidates = async (
     .filter((row) => HINT_ELIGIBLE_TIERS.includes(row.tier))
     // Defense in depth only — exclusion already happened inside the search.
     .filter((row) => row.developerId !== callerDeveloperId);
-  const tokens = ftsTokens(query.text);
+  const tokens = query.terms;
   const poolIds = pool.map((row) => row.id);
   const [statementTerms, claimTerms] = await Promise.all([
     listStatementTerms(deps.db, poolIds, tokens),
@@ -744,11 +728,13 @@ export const listHintCandidates = async (
     return [];
   }
   const humanText = humanPromptText(input.query);
-  if (await isSessionControlPrompt(deps.db, humanText)) {
+  const { content } = promptTerms(humanText);
+  if (isSessionControlPrompt(content)) {
     return [];
   }
   return matchCandidates(deps, callerDeveloperId, {
     text: humanText,
+    terms: content.slice(0, SEARCH_MAX_QUERY_TOKENS),
     repo: input.repo,
     on: "prompt",
   });

@@ -232,6 +232,13 @@ export interface SearchDeps {
 
 export interface SearchQuery {
   readonly query: string;
+  /**
+   * The words the FTS tier ranks on, when the caller has already decided
+   * them — the hints endpoint passes a prompt's CONTENT terms, so function
+   * words never rank its pool (services/hints.ts). Absent: the query's own
+   * tokens. The exact tier always reads `query`, where a path is one word.
+   */
+  readonly ftsTokens?: readonly string[] | undefined;
   readonly repo?: string | undefined;
   /**
    * Excludes contexts owned by this developer INSIDE every tier query — see
@@ -746,7 +753,7 @@ export const searchWorkContexts = async (
   // Clamped even though the route already rejects: this service is the layer
   // whose queries can fault the embedded database, so the bound lives here too.
   const query = input.query.slice(0, SEARCH_MAX_QUERY_CHARS);
-  const wordTokens = ftsTokens(query);
+  const wordTokens = input.ftsTokens ?? ftsTokens(query);
   const pathTokens = exactTokens(query);
   const scope: SearchScope = {
     repo: input.repo,
