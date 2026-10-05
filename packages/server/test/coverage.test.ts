@@ -475,6 +475,43 @@ describe("git: stale evidence is not the same answer as no evidence", () => {
     expect(census.earliestSessionAt).toBeNull();
   });
 
+  test("a held link to Claude's commit identity credits no session: the census still counts the gap", async () => {
+    // Arrange: the viewer holds noreply@anthropic.com from before the
+    // refusal, and reported a session ten minutes after the Claude commit
+    const { harness, viewerId } = await seed();
+    await harness.db.insert(developerEmails).values({
+      email: "noreply@anthropic.com",
+      developerId: viewerId,
+      isPrimary: false,
+      createdAt: at(-4 * DAY_MS),
+    });
+    await insertSession(harness, viewerId, {
+      id: "ses_held_link",
+      lastHeartbeatAt: at(-3 * DAY_MS + 10 * MINUTE_MS),
+      endedAt: at(-3 * DAY_MS + 10 * MINUTE_MS),
+    });
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "noreply@anthropic.com",
+      authorName: "Claude",
+      latestCommitAt: at(-3 * DAY_MS),
+      collectedAt: at(-1 * 60 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+    const census = await readAbsenceCensus(
+      { db: harness.db, now: harness.clock.now },
+      viewerId,
+      REPO,
+    );
+
+    // Assert: the viewer's session is not the cloud session's report
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("commit_authors_unreported");
+    expect(census.unreportedAuthors).toBe(1);
+    expect(census.earliestSessionAt).toBeNull();
+  });
+
   test("fresh evidence whose authors all reported a session is complete", async () => {
     // Arrange: the viewer's own commits, an hour after their own session
     const { harness, viewerId } = await seed();

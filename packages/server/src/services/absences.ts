@@ -15,8 +15,9 @@ import {
   developerEmails,
   developers,
 } from "../db/schema.ts";
+import { isCloudAgentEmail, resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
-import { CLOUD_AGENT_IDENTITIES, cloudAgentForEmail } from "@crosscheck/schema";
+import { cloudAgentForEmail } from "@crosscheck/schema";
 import type { CloudAgentId } from "@crosscheck/schema";
 import type { SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -47,6 +48,17 @@ const absenceEvidenceWhere = (
     // mutes; unmatched rows (developers.id NULL) have no subject to check.
     sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,
   );
+
+/**
+ * Which developer an evidence row's author is — shared by the listing and the
+ * census for the reason above. A cloud agent's commit identity resolves to
+ * nobody, whatever `developer_emails` holds (services/cloud-agent-identity.ts):
+ * its commits stay an unconnected gap, and no member's session can close it.
+ */
+const authorMatch = and(
+  eq(developerEmails.email, commitEvidence.authorEmail),
+  resolvesToDeveloper(developerEmails.email),
+);
 
 /**
  * The two findings the design insists stay distinct (absence detection):
@@ -174,10 +186,7 @@ export const listAbsences = async (
     // stores its author_email lowercased, so the join is a plain equality.
     // developer_emails' PK on email guarantees at most one alias row — and
     // therefore at most one developer — per evidence row.
-    .leftJoin(
-      developerEmails,
-      eq(developerEmails.email, commitEvidence.authorEmail),
-    )
+    .leftJoin(developerEmails, authorMatch)
     .leftJoin(developers, eq(developers.id, developerEmails.developerId))
     .where(
       and(
@@ -233,15 +242,15 @@ export const listAbsences = async (
 /**
  * CLOUD AGENT IDENTITIES THIS HUB HAS LINKED TO A DEVELOPER anyway — rows
  * from before the developers routes refused them (services/developers.ts
- * CloudAgentRefused), or written straight into the table. Such a link makes
- * every commit under that identity, by anyone, one developer's: the listing
- * above names them instead of the identity, and a session of theirs near the
- * commit closes a gap the hub has no evidence about.
+ * CloudAgentRefused), or written straight into the table. Inert: no site
+ * resolves an address through them (services/cloud-agent-identity.ts), so the
+ * listing above still names the identity and no session closes its gap.
  *
- * NOT DELETED: the link is an admin's to undo, and dropping it here would
- * change whose commits are whose without a word to anyone. Reported instead,
- * ids only — never the developer, never the address — so doctor and status
- * can say it is there; `[]` is "none linked", and an older hub sends nothing.
+ * NOT DELETED: the row is an admin's to remove, and dropping it here would
+ * rewrite the developer's linked addresses without a word to anyone. Reported
+ * instead, ids only — never the developer, never the address — so doctor and
+ * status can say it is there and ignored; `[]` is "none linked", and an older
+ * hub sends nothing.
  */
 export const listLinkedCloudAgents = async (
   db: Db,
@@ -249,14 +258,9 @@ export const listLinkedCloudAgents = async (
   const rows = await db
     .select({ email: developerEmails.email })
     .from(developerEmails)
-    .where(
-      inArray(
-        developerEmails.email,
-        CLOUD_AGENT_IDENTITIES.map((identity) => identity.email),
-      ),
-    );
+    .where(isCloudAgentEmail(developerEmails.email));
   return rows.flatMap((row) => {
-    const cloudAgent = cloudAgentForEmail(row.email);
+    const cloudAgent = cloudAgentForEmail(row.email.toLowerCase());
     return cloudAgent === null ? [] : [cloudAgent];
   });
 };
@@ -326,10 +330,7 @@ export const readAbsenceCensus = async (
       earliestCommitAt: sql`min(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,
     })
     .from(commitEvidence)
-    .leftJoin(
-      developerEmails,
-      eq(developerEmails.email, commitEvidence.authorEmail),
-    )
+    .leftJoin(developerEmails, authorMatch)
     .leftJoin(developers, eq(developers.id, developerEmails.developerId))
     .where(
       and(

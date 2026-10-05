@@ -209,6 +209,43 @@ describe("GET /api/absences", () => {
     expect(kept.map((row) => row.email)).toContain("noreply@anthropic.com");
   });
 
+  test("a held link to Claude's commit identity is inert: the gap stays unconnected and names nobody", async () => {
+    // Arrange: Ken holds the address from before the refusal, and reported a
+    // session an hour after the Claude commit — exactly what the link would
+    // have counted as his
+    const setup = await createHarnessWithSession();
+    const ken = await createTestDeveloper(setup.harness, "Ken", "ken@example.com");
+    await setup.harness.db.insert(developerEmails).values({
+      email: "noreply@anthropic.com",
+      developerId: ken.developerId,
+      isPrimary: false,
+      createdAt: new Date(TEST_START_ISO),
+    });
+    await registerTestSession(setup.harness, ken.apiKey, { id: "ses_ken" });
+    await ingestEvidence(setup, [
+      {
+        name: "Claude",
+        email: "noreply@anthropic.com",
+        latestCommitAt: isoAt(-1 * MS_PER_HOUR),
+        commitCount: 2,
+      },
+    ]);
+
+    // Act
+    const { raw, absences } = await fetchAbsences(setup);
+
+    // Assert
+    expect(absences).toEqual([
+      expect.objectContaining({
+        kind: "unconnected",
+        name: "Claude",
+        lastSessionAt: null,
+        cloudAgent: "claude-code-web",
+      }),
+    ]);
+    expect(raw).not.toContain("Ken");
+  });
+
   test("a hub holding no such link says so with an empty list", async () => {
     // Arrange
     const setup = await createHarnessWithSession();
