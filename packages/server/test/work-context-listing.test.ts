@@ -18,6 +18,7 @@ import {
   jsonRequest,
   postRecords,
   recordEnvelope,
+  registerTestSession,
   validClaimBody,
   validWorkContextBody,
   WORK_CONTEXT_ID,
@@ -463,5 +464,50 @@ describe("GET /api/work-contexts names each context's branch", () => {
     expect(rows.map((row) => [row.title, row.branch])).toEqual([
       ["Fix the login 500s on staging", "feat/auth"],
     ]);
+  });
+
+  test("an opted-out teammate's LIVE branch is withheld; the context stays, by its title", async () => {
+    // The branch on the row is the session's CURRENT one — re-registering
+    // moves it — so it is presence-class: where the developer is right now.
+    // Presence hides an opted-out developer; this listing must not say the
+    // same thing by another door.
+    const robinSession = "cc_44444444-5555-4666-8777-888888888888";
+    const setup = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+      { id: robinSession, branch: "feat/old" },
+    );
+    await postRecords(
+      setup.harness,
+      robin,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ id: "wc_robin", sessionId: robinSession, title: "Login 500s" }),
+        { sessionId: robinSession },
+      ),
+    );
+    const optOut = await setup.harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+    expect(optOut.status).toBe(200);
+    await registerTestSession(setup.harness, robin.apiKey, {
+      id: robinSession,
+      branch: "feat/acquisition-talks",
+    });
+
+    // Act: Nick's listing, and Robin's own
+    const asNick = await list(setup, `${REPO_QUERY}&since=14d`);
+    const asRobin = await list({ harness: setup.harness, developer: robin }, `${REPO_QUERY}&since=14d`);
+
+    // Assert: the context is published knowledge and stays; the live branch
+    // does not reach anyone but Robin
+    const seenByNick = asNick.find((row) => row.id === "wc_robin");
+    expect(seenByNick?.title).toBe("Login 500s");
+    expect(seenByNick?.branch).toBeUndefined();
+    expect(JSON.stringify(asNick)).not.toContain("feat/acquisition-talks");
+    expect(asRobin.find((row) => row.id === "wc_robin")?.branch).toBe("feat/acquisition-talks");
   });
 });

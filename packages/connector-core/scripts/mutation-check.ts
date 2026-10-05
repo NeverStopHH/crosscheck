@@ -17606,7 +17606,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub drops the session's branch from the listing",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    branch: row.branch,\n",
+    from: "    ...(row.branch === null ? {} : { branch: row.branch }),\n",
     to: "",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
@@ -17644,6 +17644,18 @@ export const MUTATIONS: readonly Mutation[
     because:
       "three subagents with three different tasks on one branch are labelled " +
       "by whichever spoke first, as if the others were doing that too",
+  },
+  {
+    // Review finding 8: the row's branch is the session's CURRENT branch,
+    // presence-class data on a listing presence opt-out did not cover.
+    label: "an opted-out teammate's live branch reaches the work-context listing",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "      branch: sql<string | null>`case when ${visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)} then ${agentSessions.branch} else null end`,",
+    to: "      branch: agentSessions.branch,",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "a teammate who opted out of presence re-registers on feat/acquisition-talks " +
+      "and every colleague's briefing says so, while presence shows nothing",
   },
 ];
 
@@ -18020,7 +18032,7 @@ interface Outcome {
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
- * PRINTS: packages/server/test/work-context-listing.test.ts 6
+ * PRINTS: packages/server/test/work-context-listing.test.ts 7
  */
 const greenGuards = new Map<string, boolean>();
 

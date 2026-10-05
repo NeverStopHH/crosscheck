@@ -17,7 +17,7 @@ import {
 } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
-import { notMutedCondition } from "./visibility.ts";
+import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
@@ -108,8 +108,14 @@ export interface WorkContextListEntry extends WorkContextView {
    * the connector groups a teammate's work by. A host-supplied title ("Fix
    * the login 500s") does not carry it, so free-form titles on one branch
    * would otherwise read as separate pieces of work.
+   *
+   * ABSENT for a developer the viewer may not be told about. This is the
+   * session's CURRENT branch — re-registering moves it — so it says where
+   * that developer is right now, which is presence, and presence opt-out
+   * hides it (services/visibility.ts). The context itself is published
+   * knowledge and stays; the connector falls back to its title.
    */
-  readonly branch: string;
+  readonly branch?: string;
 }
 
 export interface WorkContextListWindow {
@@ -396,7 +402,9 @@ export const listWorkContextsByRepo = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
-      branch: agentSessions.branch,
+      // The presence predicate on this ONE field, not on the row: the row is
+      // published knowledge, the live branch is where its author is now.
+      branch: sql<string | null>`case when ${visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)} then ${agentSessions.branch} else null end`,
       // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
       // to carry: the join multiplied every context by its claims (100,000
       // rows aggregated to answer about 10,000) and could only ever count ONE
@@ -453,7 +461,7 @@ export const listWorkContextsByRepo = async (
     claimCount: row.claimCount,
     targetCount: row.targetCount,
     developerContextCount: row.developerContextCount,
-    branch: row.branch,
+    ...(row.branch === null ? {} : { branch: row.branch }),
   }));
 };
 
