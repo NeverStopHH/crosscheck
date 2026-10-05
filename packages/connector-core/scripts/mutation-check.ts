@@ -13556,8 +13556,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heartbeat flow reads the report and never sends it",
     file: `${CORE}/src/flows/heartbeat.ts`,
-    from: "  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);",
-    to: "  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status);",
+    from: "  const result = await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);",
+    to: "  const result = await heartbeatSession(input.hub, input.crosscheckSessionId, input.status);",
     test: `${CORE}/test/session-losses.test.ts`,
     because: "every host's beat (Claude, Cursor, ACP) goes through this one flow, so all three stop reporting at once",
   },
@@ -17359,6 +17359,118 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-losses.test.ts`,
     because: "status says '433 dropped' beside nothing that explains it, which is what the pilot read",
   },
+  {
+    label: "the flush never asks its healer when the hub refuses its own session",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    healer: input.heal,",
+    to: "    healer: undefined,",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a session the hub ended mid-life stays refused until the host's next SessionStart, every record in between lost",
+  },
+  {
+    label: "a refused session's heal re-sends the records its refused life produced",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '  !(bodyNamesItsSession(record["kind"]) && writtenBy(record) === heal.refusedSessionId);',
+    to: "  true;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "an edit made after the hub ended the life is filed into that ended session past its end, and its order is misstated",
+  },
+  {
+    label: "a session registered late re-sends only part of its own batch",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "  heal.sessionId === heal.refusedSessionId ||",
+    to: "  false ||",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a SessionStart whose register did not land loses its work context and every target, though the heal registered that very session",
+  },
+  {
+    label: "a never-registered session is not healed",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: 'const OWN_SESSION_CAUSES: ReadonlySet<RejectCause> = new Set(["session_ended", "session_unknown"]);',
+    to: 'const OWN_SESSION_CAUSES: ReadonlySet<RejectCause> = new Set(["session_ended"]);',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a session whose SessionStart register timed out is refused for the rest of its life",
+  },
+  {
+    label: "a refused life's straggler is delivered under the healed life",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    isRefusedLifeRecord(record, refusedLives, input.sessionId);",
+    to: "    false;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a parallel hook's edit of the refused life is filed into the ended session on the next flush",
+  },
+  {
+    label: "a heal that moves lives does not write the refused life down",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      await recordRefusedLife(input.home, input.repoKey, refusedSessionId, now);\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "the next hook's flush has no way to know the life was refused and delivers its stragglers into it",
+  },
+  {
+    label: "the heal ignores its cooldown",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "  if (!Number.isNaN(attemptedMs) && now.getTime() - attemptedMs < HEAL_COOLDOWN_MS) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a hub that refuses every register turns every tool call into a register round trip",
+  },
+  {
+    label: "the heal registers the next life and spools no work context for it",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "every target of the healed life names a work context the hub never heard of and is rejected",
+  },
+  {
+    label: "the healed life keeps the refused life's seen-set",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "          seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],",
+    to: "          seenTargets: fresh.seenTargets,",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "a file the ended life had captured is never captured into the next life's work context",
+  },
+  {
+    label: "the heal's walk ignores the flush's deadline",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  return roomMs <= 0 ? null : { ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) };",
+    to: "  return input.hub;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a slow hub's register runs past the hook's budget and takes its output and its state write with it",
+  },
+  {
+    label: "a heartbeat the hub refuses heals nothing",
+    file: `${CORE}/src/flows/heartbeat.ts`,
+    from: "    await input.onRefused?.();\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "the heartbeat's 409 is discarded again, and only a refused flush can heal",
+  },
+  {
+    label: "Claude's PostToolUse flushes without a healer",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "      heal: healerFor(ctx),\n",
+    to: "",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "a Claude Code conversation the hub ended mid-life stays deaf until its next SessionStart",
+  },
+  {
+    label: "Cursor's afterFileEdit flushes without a healer",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },",
+    to: "    { sessionId: state.crosscheckSessionId, developerId: state.developerId },",
+    test: `${CURSOR}/test/resumed-session.test.ts`,
+    because: "a Cursor chat the hub ended in another window stays deaf until it is reopened",
+  },
+  {
+    label: "the ACP engine's session does not follow its heal",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        session.workContextId = workContextIdFor(healed.sessionId);\n",
+    to: "",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "every capture after the heal still names the refused life's work context and is withheld",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17474,6 +17586,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
+ * PRINTS: packages/connector-acp/test/resumed-session.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -17518,7 +17631,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/resumed-session.test.ts 5
+ * PRINTS: packages/connector-claude/test/resumed-session.test.ts 7
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
@@ -17615,6 +17728,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 10
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
@@ -17638,6 +17752,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
+ * PRINTS: packages/connector-cursor/test/resumed-session.test.ts 1
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1

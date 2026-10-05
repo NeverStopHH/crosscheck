@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1533
+    # PRINTS: 1547
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -205,7 +205,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 1
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
-    # PRINTS: packages/connector-acp/src/capture/engine.ts 18
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 19
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 2
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
@@ -232,7 +232,7 @@ jobs:
     # PRINTS: doctor.ts 1
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
-    # PRINTS: hooks/post-tool-use.ts 9
+    # PRINTS: hooks/post-tool-use.ts 10
     # PRINTS: hooks/pre-tool-use.ts 18
     # PRINTS: hooks/runner.ts 7
     # PRINTS: hooks/session-start.ts 4
@@ -279,9 +279,10 @@ jobs:
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 4
-    # PRINTS: flows/heartbeat.ts 1
+    # PRINTS: flows/heal-session.ts 4
+    # PRINTS: flows/heartbeat.ts 2
     # PRINTS: flows/hint.ts 5
-    # PRINTS: flows/register-session.ts 7
+    # PRINTS: flows/register-session.ts 8
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
     # PRINTS: git/claim-drift.ts 5
@@ -331,7 +332,8 @@ jobs:
     # PRINTS: render-surfaces.ts 1
     # PRINTS: spool/counts.ts 1
     # PRINTS: spool/drops.ts 11
-    # PRINTS: spool/flush.ts 3
+    # PRINTS: spool/flush-heal.ts 3
+    # PRINTS: spool/flush.ts 5
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 15
@@ -355,7 +357,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
     # PRINTS: packages/connector-cursor/src/doctor.ts 10
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
-    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
+    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/stop.ts 1
@@ -525,7 +527,7 @@ jobs:
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 11
     # PRINTS: end-session.ts 4
-    # PRINTS: engine.ts 18
+    # PRINTS: engine.ts 19
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
     # PRINTS: envelope.ts 1
@@ -540,11 +542,12 @@ jobs:
     # PRINTS: fetch-switch.ts 4
     # PRINTS: fetch-trigger.ts 3
     # PRINTS: fetch-worker.ts 23
-    # PRINTS: file-edit.ts 3
+    # PRINTS: file-edit.ts 4
     # PRINTS: file-ref.ts 5
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
-    # PRINTS: flush.ts 3
+    # PRINTS: flush-heal.ts 3
+    # PRINTS: flush.ts 5
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
@@ -553,7 +556,8 @@ jobs:
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
-    # PRINTS: heartbeat.ts 1
+    # PRINTS: heal-session.ts 4
+    # PRINTS: heartbeat.ts 2
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 6
     # PRINTS: hints.ts 5
@@ -614,7 +618,7 @@ jobs:
     # PRINTS: pin.ts 11
     # PRINTS: pins.ts 12
     # PRINTS: post-tool-use-failure.ts 5
-    # PRINTS: post-tool-use.ts 9
+    # PRINTS: post-tool-use.ts 10
     # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 18
     # PRINTS: precision.ts 2
@@ -633,7 +637,7 @@ jobs:
     # PRINTS: records.ts 3
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
-    # PRINTS: register-session.ts 7
+    # PRINTS: register-session.ts 8
     # PRINTS: reject-cause.ts 1
     # PRINTS: release-preflight.ts 5
     # PRINTS: render-intent-chain.ts 1

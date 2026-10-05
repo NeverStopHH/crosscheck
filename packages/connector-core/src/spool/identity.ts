@@ -34,7 +34,7 @@
  *      symlinked CROSSCHECK_HOME relocates that directory whole, it does not
  *      split it.
  *      VERIFY: grep -c "join(spoolDir" packages/connector-core/src/config/paths.ts
- *      PRINTS: 8
+ *      PRINTS: 9
  *   2. `ino` is never compared ACROSS files. Every comparison is two
  *      observations of the SAME path at two moments, so for `dev` to differ,
  *      the mount under one path would have to change between them.
