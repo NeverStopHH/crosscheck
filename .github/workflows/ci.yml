@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1599
+    # PRINTS: 1601
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -428,7 +428,7 @@ jobs:
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
     # PRINTS: packages/server/src/services/hint-outcome-view.ts 4
-    # PRINTS: packages/server/src/services/hint-outcomes.ts 7
+    # PRINTS: packages/server/src/services/hint-outcomes.ts 9
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
@@ -568,7 +568,7 @@ jobs:
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint-outcome-view.ts 4
     # PRINTS: hint-outcome.ts 1
-    # PRINTS: hint-outcomes.ts 8
+    # PRINTS: hint-outcomes.ts 10
     # PRINTS: hint.ts 7
     # PRINTS: hints.ts 7
     # PRINTS: hook-budget.ts 2

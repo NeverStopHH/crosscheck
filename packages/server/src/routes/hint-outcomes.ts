@@ -47,6 +47,9 @@ export const HINT_OUTCOME_REFUSAL_SENTENCE: Record<HintOutcomeRefusal, string> =
     "that delivery belongs to another repo; outcomes are repo-scoped, so record it from that repo",
   not_unsolicited:
     "that was an answer somebody asked for; an outcome is recorded for what arrived unasked",
+  before_outcomes:
+    "that hint reached you before this repo began recording outcomes, so no outcome figure could ever count it — nothing was recorded",
+  past_window: `that hint reached you more than ${String(PILOT_RETENTION_DAYS)} days ago, older than any outcome figure reads — nothing was recorded`,
   reason_secret:
     "the reason looks like it holds a secret (a key, a token, a password), so nothing was recorded — say it again without it",
 };

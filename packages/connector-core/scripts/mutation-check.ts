@@ -17903,6 +17903,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "the agent reports an outcome to its person that no figure counts",
   },
+  // ── 07 §13.10, review #12: never "recorded" for a word no figure counts ─
+  {
+    label: "an outcome on a delivery from before outcomes were recordable is recorded",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (countable.outcomesSince === null || delivery.deliveredAt.getTime() < countable.outcomesSince.getTime()) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the answer says 'shows in your --mine' for a word every outcome figure starts after",
+  },
+  {
+    label: "an outcome on a delivery older than every window is recorded",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  return delivery.deliveredAt.getTime() < countable.windowStart.getTime() ? "past_window" : null;',
+    to: "  return null;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a word about a hint from four months ago is answered 'recorded' and never shown anywhere",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18226,7 +18243,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 7
- * PRINTS: packages/server/test/hint-outcomes.test.ts 7
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 9
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

@@ -171,6 +171,37 @@ describe("POST /api/hint-outcomes", () => {
     expect(rows.map((row) => row.outcome).sort()).toEqual(["followed", "overrode"]);
   });
 
+  test("review #12: a delivery from before the repo could record outcomes is refused, and says why", async () => {
+    // Arrange — a pointer delivered an hour before enrolment stamped the instant
+    const world = await createOutcomeWorld();
+    const earlier = new Date(world.harness.clock.now().getTime() - 3_600_000).toISOString();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", "wc_old_pointer", "prompt_hint", earlier)],
+    });
+
+    // Act — a 201 "shows in your --mine" here would be false: no figure ever counts it
+    const response = await recordOutcome(world, world.nick, { ref: "wc_old_pointer", outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(await errorOf(response)).toMatchObject({ code: "before_outcomes" });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(0);
+  });
+
+  test("review #12: a delivery older than every outcome figure's window is refused, and says why", async () => {
+    // Arrange — 91 days on, the widest window (90) no longer reaches the delivery
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(91 * 86_400);
+
+    // Act
+    const response = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(await errorOf(response)).toMatchObject({ code: "past_window" });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(0);
+  });
+
   test("a teammate's delivery answers exactly like an id that does not exist", async () => {
     // Arrange — Ken never received a pointer at Mike's context; Nick did. A
     // distinct refusal would tell Ken what Nick was shown (§8.4, §11.9).

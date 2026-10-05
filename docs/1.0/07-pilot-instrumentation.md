@@ -912,7 +912,7 @@ in `http/pilot.ts` still lists only the three human commands.
 
 Every refusal is a sentence: `not_enrolled`, `unknown_ref` (also for a delivery somebody else received —
 a distinct answer would tell the asker what a colleague was shown, §11.9), `wrong_repo`, `not_unsolicited`,
-`reason_secret` (the reason is secret-scanned by both clients before it leaves the machine and by the hub,
+`before_outcomes` and `past_window` (§13.10, #12), `reason_secret` (the reason is secret-scanned by both clients before it leaves the machine and by the hub,
 which drops the whole outcome rather than store a redacted derivative). Recording is **gated on
 enrolment** (D2's reasoning: outcomes are measurement).
 
@@ -1118,3 +1118,11 @@ written, and the answer names what it superseded (`replaced: "noise"` → `super
 label (kept in the history)`). The answer carries `stands` (additive; absent from an older hub, read as the
 word itself), so a word that ties with the label is answered `…, but your noise label from the same instant
 still stands (a label wins a tie)` rather than claiming the word took.
+
+*#12 — a delivery from before enrolment was answered "recorded … shows in your --mine" and never counted.*
+Every outcome figure starts at `pilot_outcomes_since` (the floor, §13.9), so a word about an earlier delivery
+was a 201 for nothing. Refused instead, consistent with the floor and saying why (`before_outcomes`: "that
+hint reached you before this repo began recording outcomes, so no outcome figure could ever count it —
+nothing was recorded"). The same lie had a second door — a delivery older than the widest window any figure
+reads (`PILOT_RETENTION_DAYS`, 90) — refused the same way (`past_window`). A delivery at the enrolment instant
+itself counts and is accepted.

@@ -22,6 +22,12 @@
  * The answer always carries what stands once it is said — the label on a tie
  * (D-O7) — so no reply claims a word stands that does not.
  *
+ * NEVER A WORD NO FIGURE COUNTS (review #12). A delivery from before outcomes
+ * became recordable on the repo is outside every outcome figure (the floor,
+ * §13.9), and one older than the widest window is outside all of them too;
+ * recording either would answer "recorded" for a word nothing will ever show.
+ * Both are refused, each with why.
+ *
  * NEVER `pilot_marks`. The agent writes these, through `mark_hint_outcome`,
  * and an agent writing a label would be the product grading itself (PIL-6).
  */
@@ -31,6 +37,7 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { PULLED_DELIVERY_CHANNEL, containsSecret } from "@crosscheck/schema";
 import type { HintOutcome } from "@crosscheck/schema";
 
+import { PILOT_RETENTION_DAYS } from "../constants.ts";
 import { agentSessions, hintDeliveries, hintOutcomes } from "../db/schema.ts";
 import { NOISE_WORDS } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
@@ -44,6 +51,7 @@ interface Deps {
 
 /** A delivery id as ingest derives it (`hintDeliveryId`). */
 const DELIVERY_ID_PREFIX = "hd_";
+const MS_PER_DAY = 86_400_000;
 
 /** Why an outcome was refused — an enum, so the route never invents prose. */
 export type HintOutcomeRefusal =
@@ -51,6 +59,8 @@ export type HintOutcomeRefusal =
   | "unknown_ref"
   | "wrong_repo"
   | "not_unsolicited"
+  | "before_outcomes"
+  | "past_window"
   | "reason_secret";
 
 export interface WriteHintOutcomeInput {
@@ -85,6 +95,7 @@ interface ResolvedDelivery {
   readonly repo: string;
   readonly recipient: string;
   readonly channel: string;
+  readonly deliveredAt: Date;
 }
 
 const deliveryColumns = {
@@ -92,7 +103,14 @@ const deliveryColumns = {
   repo: agentSessions.repo,
   recipient: agentSessions.developerId,
   channel: hintDeliveries.channel,
+  deliveredAt: hintDeliveries.deliveredAt,
 };
+
+/** What bounds a countable delivery: the repo's recordable instant, and the widest window's start. */
+interface CountableSince {
+  readonly outcomesSince: Date | null;
+  readonly windowStart: Date;
+}
 
 /** A delivery named by its own id, whoever it reached — the refusals decide. */
 const readDeliveryById = async (
@@ -143,6 +161,7 @@ const readDeliveryByRef = async (
 const refuse = (
   delivery: ResolvedDelivery | undefined,
   input: WriteHintOutcomeInput,
+  countable: CountableSince,
 ): HintOutcomeRefusal | null => {
   if (delivery === undefined || delivery.recipient !== input.recordedBy) {
     return "unknown_ref";
@@ -153,8 +172,16 @@ const refuse = (
   if (delivery.channel === PULLED_DELIVERY_CHANNEL) {
     return "not_unsolicited";
   }
-  return null;
+  if (countable.outcomesSince === null || delivery.deliveredAt.getTime() < countable.outcomesSince.getTime()) {
+    return "before_outcomes";
+  }
+  return delivery.deliveredAt.getTime() < countable.windowStart.getTime() ? "past_window" : null;
 };
+
+const countableSince = (outcomesSinceIso: string | null, now: Date): CountableSince => ({
+  outcomesSince: outcomesSinceIso === null ? null : new Date(outcomesSinceIso),
+  windowStart: new Date(now.getTime() - PILOT_RETENTION_DAYS * MS_PER_DAY),
+});
 
 interface Standing {
   readonly word: StandingWord;
@@ -239,7 +266,7 @@ export const writeHintOutcome = async (
   const delivery = input.ref.startsWith(DELIVERY_ID_PREFIX)
     ? await readDeliveryById(deps, input.ref)
     : await readDeliveryByRef(deps, input);
-  const refusal = refuse(delivery, input);
+  const refusal = refuse(delivery, input, countableSince(settings.pilotOutcomesSince, deps.now()));
   if (refusal !== null || delivery === undefined) {
     return { refusal: refusal ?? "unknown_ref" };
   }
