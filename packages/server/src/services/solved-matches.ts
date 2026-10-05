@@ -45,7 +45,7 @@ import {
   solvedCandidateCondition,
 } from "./solved.ts";
 import { loadClaimValidities } from "./claim-validity.ts";
-import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import { locationHiddenFrom, titleSeenBy, validitySeenBy } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { notMutedCondition } from "./visibility.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
@@ -556,7 +556,13 @@ const toMatchViews = async (
           // omission, which a reader would take for "no label reported".
           return axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES;
         })(),
-        rootCauseValidity: validityOf(rootCauses.get(winner.id), validities),
+        rootCauseValidity: (() => {
+          const cause = rootCauses.get(winner.id);
+          const validity = validityOf(cause, validities);
+          return cause === undefined || validity === null
+            ? validity
+            : validitySeenBy(hidden, cause.authorDeveloperId, validity);
+        })(),
       },
     ];
   });

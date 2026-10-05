@@ -17,7 +17,12 @@ import {
 } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
-import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import {
+  commitSeenBy,
+  locationHiddenFrom,
+  titleSeenBy,
+  validitySeenBy,
+} from "./live-location.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
@@ -65,10 +70,13 @@ export interface WorkContextView {
   readonly status: string;
   /**
    * The owning session's base commit — what the connector's drift label and
-   * landed ancestry check run against. "" only if the join ever misses
-   * (unreachable through ingest, same argument as the claim author join).
+   * landed ancestry check run against. OMITTED for a viewer the owner's live
+   * location is hidden from (services/live-location.ts): it is `rev-parse
+   * HEAD` of the live branch. Omitted rather than "", because every shipped
+   * connector reads it as `z.string().min(1).optional()` — absent is the
+   * shape an older hub already sends, and drift and landed simply skip.
    */
-  readonly baseCommit: string;
+  readonly baseCommit?: string;
   /** Merged-branch detection (DESIGN.md §5); null while unobserved. */
   readonly landedAt: string | null;
   readonly createdAt: string;
@@ -277,7 +285,7 @@ export interface Diagnosis {
 
 const toWorkContextView = (
   row: WorkContextRow,
-  baseCommit: string,
+  baseCommit: string | undefined,
 ): WorkContextView => ({
   id: row.id,
   sessionId: row.sessionId,
@@ -285,7 +293,7 @@ const toWorkContextView = (
   description: row.description,
   intent: row.intent ?? null,
   status: row.status,
-  baseCommit,
+  ...(baseCommit === undefined ? {} : { baseCommit }),
   landedAt: toIsoOrNull(row.landedAt),
   createdAt: row.createdAt.toISOString(),
   updatedAt: toIsoOrNull(row.updatedAt),
@@ -457,7 +465,10 @@ export const listWorkContextsByRepo = async (
     .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))
     .limit(limit);
   return rows.map((row) => ({
-    ...toWorkContextView(row.workContext, row.baseCommit),
+    ...toWorkContextView(
+      row.workContext,
+      commitSeenBy(hidden, row.developerId, row.baseCommit),
+    ),
     title: titleSeenBy(hidden, row.developerId, row.workContext.title, repo),
     developerId: row.developerId,
     developerName: row.developerName,
@@ -619,7 +630,10 @@ export const getDiagnosis = async (
   return {
     repo: contextRow.repo,
     workContext: {
-      ...toWorkContextView(contextRow.workContext, contextRow.baseCommit),
+      ...toWorkContextView(
+        contextRow.workContext,
+        commitSeenBy(hidden, contextRow.ownerDeveloperId, contextRow.baseCommit),
+      ),
       title: titleSeenBy(
         hidden,
         contextRow.ownerDeveloperId,
@@ -627,8 +641,8 @@ export const getDiagnosis = async (
         contextRow.repo,
       ),
     },
-    claims: claimRows.map((row) =>
-      toClaimView(
+    claims: claimRows.map((row) => {
+      const view = toClaimView(
         row,
         revalidations.get(row.claim.id),
         supersededBy.get(row.claim.id) ?? null,
@@ -637,8 +651,12 @@ export const getDiagnosis = async (
         // an answer: the weakest rung is the honest default, and inventing a
         // stronger one here would be the inversion the ladder exists to stop.
         axes.get(row.claim.id) ?? UNRESOLVED_AXES,
-      ),
-    ),
+      );
+      return {
+        ...view,
+        validity: validitySeenBy(hidden, row.authorDeveloperId, view.validity),
+      };
+    }),
     edges: edgeRows.map(toClaimEdgeView),
     externalClaims,
     targets,

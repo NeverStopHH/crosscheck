@@ -50,7 +50,7 @@ import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import type { ClaimValidityInput } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { ClaimAxesRow } from "./evidence-axes.ts";
-import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import { locationHiddenFrom, titleSeenBy, validitySeenBy } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
@@ -422,6 +422,7 @@ const buildPosition = async (
   side: CandidateSide,
   otherClaimId: string,
   workContextTitles: ReadonlyMap<string, string>,
+  hidden: HiddenLocations,
 ): Promise<RefereePositionView | undefined> => {
   const [loaded] = await loadClaims(db, [side.id]);
   if (loaded === undefined) {
@@ -442,10 +443,10 @@ const buildPosition = async (
     ruledOut: ruledOut.ruledOut,
     ruledOutTruncated: ruledOut.truncated,
     supersededByClaimId,
-    validity: claimValidity(
-      loaded.binding,
-      revalidations.get(side.id),
-      supersededByClaimId,
+    validity: validitySeenBy(
+      hidden,
+      loaded.view.authorDeveloperId,
+      claimValidity(loaded.binding, revalidations.get(side.id), supersededByClaimId),
     ),
   };
 };
@@ -500,8 +501,8 @@ export const getRefereeBrief = async (
     hidden,
   );
   const [positionA, positionB, shared] = await Promise.all([
-    buildPosition(db, now, pair.claimA, pair.claimB.id, titles),
-    buildPosition(db, now, pair.claimB, pair.claimA.id, titles),
+    buildPosition(db, now, pair.claimA, pair.claimB.id, titles, hidden),
+    buildPosition(db, now, pair.claimB, pair.claimA.id, titles, hidden),
     listSharedTargets(db, pair.claimA.workContextId, pair.claimB.workContextId),
   ]);
   if (positionA === undefined || positionB === undefined) {

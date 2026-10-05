@@ -173,6 +173,21 @@ describe("the validity clause on pulled surfaces", () => {
     expect(claimLineOf(rendered)).toContain("no commit");
   });
 
+  test("a bound claim whose commit the hub withheld says so, not that it had none", async () => {
+    // The hub withholds an opted-out author's HEAD from other readers
+    // (server services/live-location.ts): the claim WAS recorded against a
+    // commit, this reader just does not get it.
+    const rendered = renderDiagnosis(
+      diagnosisWith(validity({ commitBinding: "session_base", observedAtCommit: null })),
+      NOW,
+    );
+
+    expect(claimLineOf(rendered)).toContain(
+      "its commit is not shared with you, so it cannot be checked against the code",
+    );
+    expect(claimLineOf(rendered)).not.toContain("recorded against no commit");
+  });
+
   test("a hub that sends no validity gets no clause, not a guessed one", async () => {
     // Arrange: absence means "the hub did not answer", which is a different
     // statement from "unknown" — the targetsReported rule, one field over.

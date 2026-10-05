@@ -362,16 +362,19 @@ const validityDetail = (validity: ClaimValidity): string => {
   if (validity.state === "invalidated") {
     return "its author rejected it";
   }
-  if (validity.commitBinding === "none" || validity.observedAtCommit === null) {
+  if (validity.commitBinding === "none") {
     // The §8.5 refusal, said where the reader is rather than only in doctor:
     // a claim with no observation point can never be revalidated at all.
-    //
-    // The null test is not redundant with the binding test. The hub's CHECK
-    // makes the two agree in ITS database; this renderer reads a looseObject
-    // off the wire, and without the second half a hub sending
-    // `commitBinding: "reported"` beside a null commit produced a sentence
-    // beginning "; " — a rendering nobody wrote.
     return "recorded against no commit, so it cannot be checked against the code";
+  }
+  if (validity.observedAtCommit === null) {
+    // BOUND, BUT THE COMMIT DID NOT TRAVEL. The hub withholds an opted-out
+    // author's HEAD from every other reader (server services/live-
+    // location.ts) and keeps the binding, so "recorded against no commit"
+    // would be false. The same sentence covers a hub sending `reported`
+    // beside a null commit: without this branch that produced a sentence
+    // beginning "; " — a rendering nobody wrote.
+    return "its commit is not shared with you, so it cannot be checked against the code";
   }
   const observed = safeId(validity.observedAtCommit);
   if (observed.length === 0) {

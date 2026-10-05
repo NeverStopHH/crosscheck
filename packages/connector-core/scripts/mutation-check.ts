@@ -17734,6 +17734,37 @@ export const MUTATIONS: readonly Mutation[
       "Robin opts out and re-registers on feat/acquisition-talks; her context " +
       "titled `feat/acquisition-talks @ api` says so to every colleague",
   },
+  {
+    // Review M2: `baseCommit` is `rev-parse HEAD` of the live branch.
+    label: "an opted-out teammate's base commit reaches other viewers",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "): string | undefined => (hidden.has(ownerDeveloperId) ? undefined : commit);",
+    to: "): string | undefined => commit;",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "the listing and every diagnosis hand colleagues the HEAD of the branch " +
+      "an opted-out developer is on, which names it as surely as the branch",
+  },
+  {
+    label: "an opted-out author's claim commit reaches other viewers",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  hidden.has(authorDeveloperId) ? { ...validity, observedAtCommit: null } : validity;",
+    to: "  validity;",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "a claim filed without its own commit is bound to the session's base, so " +
+      "its validity record carries the author's HEAD to every reader",
+  },
+  {
+    label: "a withheld claim commit reads as a claim recorded against no commit",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "    return \"its commit is not shared with you, so it cannot be checked against the code\";",
+    to: "    return \"recorded against no commit, so it cannot be checked against the code\";",
+    test: `${CORE}/test/claim-validity-render.test.ts`,
+    because:
+      "get_diagnosis tells the reader a teammate's claim was never bound to the " +
+      "code when it was, and its commit was only withheld from them",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17925,7 +17956,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
- * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
@@ -18111,7 +18142,7 @@ interface Outcome {
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
- * PRINTS: packages/server/test/work-context-listing.test.ts 8
+ * PRINTS: packages/server/test/work-context-listing.test.ts 10
  */
 const greenGuards = new Map<string, boolean>();
 

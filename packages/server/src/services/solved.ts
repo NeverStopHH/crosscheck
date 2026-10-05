@@ -33,7 +33,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
 
-import { claimEdges, claims } from "../db/schema.ts";
+import { agentSessions, claimEdges, claims } from "../db/schema.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import type { Db } from "../db/client.ts";
 
@@ -205,6 +205,11 @@ export interface SolvedRootCause {
   readonly verificationRef: string | null;
   readonly commitBinding: string;
   readonly observedAtCommit: string | null;
+  /**
+   * Who wrote the cause: its commit is that author's HEAD, which a viewer
+   * their live location is hidden from does not get (services/live-location.ts).
+   */
+  readonly authorDeveloperId: string;
 }
 
 /**
@@ -235,8 +240,10 @@ export const listSolvedRootCauses = async (
       verificationRef: claims.verificationRef,
       commitBinding: claims.commitBinding,
       observedAtCommit: claims.observedAtCommit,
+      authorDeveloperId: agentSessions.developerId,
     })
     .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .where(solvedClaimCondition(contextIds))
     .orderBy(desc(claims.createdAt))
     .limit(SOLVED_ROOT_CAUSE_MAX_ROWS);
@@ -250,6 +257,7 @@ export const listSolvedRootCauses = async (
         verificationRef: row.verificationRef,
         commitBinding: row.commitBinding,
         observedAtCommit: row.observedAtCommit,
+        authorDeveloperId: row.authorDeveloperId,
       });
     }
   }

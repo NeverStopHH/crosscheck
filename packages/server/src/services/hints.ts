@@ -36,6 +36,7 @@ import {
 } from "../db/schema.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
+import { commitSeenBy, locationHiddenFrom, validitySeenBy } from "./live-location.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
   exactTargetTokenConditions,
@@ -408,10 +409,11 @@ export const listHintCandidates = async (
     .filter((row) => row.developerId !== callerDeveloperId)
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
-  const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
+  const [claimsByContext, baseCommits, matchedTargets, hidden] = await Promise.all([
     listContextClaims(deps.db, deps.now(), callerDeveloperId, ids, input.repo),
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(input.query)),
+    locationHiddenFrom(deps.db, callerDeveloperId),
   ]);
   return eligible.map((row) => ({
     workContext: {
@@ -422,13 +424,19 @@ export const listHintCandidates = async (
       tier: row.tier,
       developerId: row.developerId,
       developerName: row.developerName,
-      baseCommit: baseCommits.get(row.id) ?? "",
+      // "" is this field's own "unknown" on the wire (connector hub.ts: the
+      // drift label skips it), so a hidden owner's HEAD reads exactly as a
+      // context whose base commit the hub never knew.
+      baseCommit: commitSeenBy(hidden, row.developerId, baseCommits.get(row.id) ?? "") ?? "",
       resultKind: row.resultKind,
       solvedAt: row.solvedAt,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     },
-    claims: claimsByContext.get(row.id) ?? [],
+    claims: (claimsByContext.get(row.id) ?? []).map((claim) => ({
+      ...claim,
+      validity: validitySeenBy(hidden, claim.authorDeveloperId, claim.validity),
+    })),
     matchedTargets: matchedTargets.get(row.id) ?? [],
   }));
 };

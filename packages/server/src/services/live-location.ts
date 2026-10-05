@@ -55,3 +55,32 @@ export const titleSeenBy = (
   hidden.has(ownerDeveloperId) && isFallbackTitle(title, repo)
     ? WITHHELD_TITLE
     : title;
+
+/**
+ * A session's base commit — `rev-parse HEAD` of the live branch — as this
+ * viewer may read it: undefined for a hidden owner, so the wire OMITS the
+ * field. Omitted rather than "": the connector reads base commits through
+ * `z.string().min(1).optional()`, and an empty string would fail the whole
+ * row (or the whole diagnosis) on every connector already shipped.
+ */
+export const commitSeenBy = (
+  hidden: HiddenLocations,
+  ownerDeveloperId: string,
+  commit: string,
+): string | undefined => (hidden.has(ownerDeveloperId) ? undefined : commit);
+
+/**
+ * A claim's validity as this viewer may read it. A claim filed without its
+ * own commit is bound to the session's base commit (services/record-
+ * handlers.ts, `session_base`), and one the MCP tool publishes names the HEAD
+ * it was read at — either way, the author's HEAD. For a hidden author the
+ * commit goes, and nothing else: the state, the binding and the touching
+ * commits on the default branch stay, so the claim is still judged; this
+ * reader just cannot revalidate it against their own clone.
+ */
+export const validitySeenBy = <V extends { readonly observedAtCommit: string | null }>(
+  hidden: HiddenLocations,
+  authorDeveloperId: string,
+  validity: V,
+): V =>
+  hidden.has(authorDeveloperId) ? { ...validity, observedAtCommit: null } : validity;
