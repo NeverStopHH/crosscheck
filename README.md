@@ -64,11 +64,12 @@ curl -sX POST http://localhost:7100/api/developers/<developerId>/emails \
 # unlink with DELETE /api/developers/<developerId>/emails/alice@gmail.com
 ```
 
-`Claude <noreply@anthropic.com>` is not an alias to link: it is the identity
-Claude Code on the web commits under, from a cloud session crosscheck cannot
-capture and git does not say who started, so its absence line names that
-identity instead of asking for an account, and its commits still count as a
-coverage gap.
+`Claude <noreply@anthropic.com>` cannot be linked — the hub answers 400
+`cloud_agent_identity`, as an alias or as a new developer's email: it is the
+identity every Claude Code on the web session commits under, whoever started
+it, so its absence line names that identity instead of asking for an account,
+its commits still count as a coverage gap, and a link an older hub already
+holds is a `crosscheck doctor` WARN until an admin removes it.
 
 The id is shown exactly once, above, and every admin route after that takes it
 as a path parameter — so if it is lost, list the team back out. This is the
