@@ -1193,6 +1193,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
 CREATE INDEX IF NOT EXISTS pilot_marks_repo_created_idx
   ON pilot_marks (repo, created_at DESC);
 
+-- WHAT A DELIVERED HINT LED TO (07 13): followed, overrode, not_relevant_now,
+-- said by the recipient's agent or the recipient. APPEND-ONLY: the newest row
+-- per delivery is the current outcome and nothing is updated or deleted, so a
+-- changed mind keeps its history. Not pilot_marks: a label is a person's
+-- verdict counted into precision and no agent path may write one (PIL-6);
+-- noise stays that label and is never a value here.
+CREATE TABLE IF NOT EXISTS hint_outcomes (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  delivery_id text NOT NULL REFERENCES hint_deliveries(id),
+  outcome text NOT NULL,
+  -- keep in sync with MAX_HINT_OUTCOME_REASON_CHARS in @crosscheck/schema
+  reason text,
+  recorded_by text NOT NULL REFERENCES developers(id),
+  created_at timestamptz NOT NULL,
+  CONSTRAINT hint_outcomes_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200)
+);
+
+CREATE INDEX IF NOT EXISTS hint_outcomes_delivery_created_idx
+  ON hint_outcomes (delivery_id, created_at DESC);
+
 -- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
 -- nothing and its window ends NOW, so an answer cannot be reconstructed later
 -- and proof 3 would be unanswerable in principle. Append-only: rewriting an

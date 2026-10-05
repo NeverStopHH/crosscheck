@@ -186,6 +186,16 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
     reason: "records what was shown to a session and reads no position",
   },
   {
+    // 07 §13. Reaches a session through the delivery it answers — the way a
+    // pin reaches one through a file — so it is declared here although its
+    // column names a delivery, not a session.
+    table: "hint_outcomes",
+    column: "delivery_id",
+    semantics: "non_retaining_edge",
+    reason:
+      "a word about what a delivery led to (followed, overrode, not relevant now); reads no position in the receiving session's order",
+  },
+  {
     table: "questions",
     column: "author_session_id",
     semantics: "non_retaining_edge",

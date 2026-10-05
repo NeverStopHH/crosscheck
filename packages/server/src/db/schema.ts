@@ -43,6 +43,8 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  HINT_OUTCOMES,
+  MAX_HINT_OUTCOME_REASON_CHARS,
   MAX_PILOT_LABEL_REASON_CHARS,
   PILOT_LEGACY_COHORT,
   PILOT_SESSION_COHORTS,
@@ -1198,6 +1200,45 @@ export const pilotMarks = pgTable(
     ),
     // The report asks "this repo's marks in this window", newest first.
     index("pilot_marks_repo_created_idx").on(table.repo, table.createdAt.desc()),
+  ],
+);
+
+/**
+ * WHAT A DELIVERED HINT LED TO (07 §13) — followed, overrode, not relevant
+ * now — said by the recipient's agent or by the recipient.
+ *
+ * APPEND-ONLY. A later word supersedes an earlier one by being newer, and
+ * nothing is updated or deleted: the newest row per (delivery, recorder) is
+ * the current outcome, and the history of a changed mind stays readable.
+ *
+ * NOT `pilot_marks`, by construction. A label is a person's verdict counted
+ * into precision, and no agent path may write one (PIL-6); this is the record
+ * an agent may write, so it lives where the precision figures never read.
+ * Noise is not a value here — it is the label, read from `pilot_marks`.
+ */
+export const hintOutcomes = pgTable(
+  "hint_outcomes",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => hintDeliveries.id),
+    outcome: text("outcome", { enum: HINT_OUTCOMES }).notNull(),
+    /** Required on an override by the wire schema; otherwise null is the ordinary case. */
+    reason: text("reason"),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => developers.id),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "hint_outcomes_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_HINT_OUTCOME_REASON_CHARS))}`,
+    ),
+    // "The current outcome of this delivery" is the newest row for it.
+    index("hint_outcomes_delivery_created_idx").on(table.deliveryId, table.createdAt.desc()),
   ],
 );
 

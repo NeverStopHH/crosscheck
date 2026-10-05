@@ -116,6 +116,23 @@ describe("the retention registry against the DDL (CSK-12)", () => {
     expect(pilotReferences).toEqual(["pilot_attributions.top_session_id", "pilot_sessions.session_id"]);
   });
 
+  test("07 §13's outcomes say what they keep: a word about a delivery, never its session's order", async () => {
+    // Arrange — `hint_outcomes` reaches a session through the delivery it
+    // answers, exactly as a pin reaches one through a file. It reads no
+    // position in that session's order, so it may not keep the skeleton
+    // alive — and it must say so, or the sweep has no positive proof (01a).
+    const ddl = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const entry = RETENTION_REGISTRY.find((relation) => relation.table === "hint_outcomes");
+
+    // Assert
+    expect(ddl).toContain("delivery_id text NOT NULL REFERENCES hint_deliveries(id)");
+    expect(entry?.column).toBe("delivery_id");
+    expect(entry?.semantics).toBe("non_retaining_edge");
+    expect(entry?.semantics === "non_retaining_edge" ? entry.reason.length : 0).toBeGreaterThan(0);
+  });
+
   test("an entry that declines to retain says why", () => {
     // Act
     const unexplained = RETENTION_REGISTRY.filter(

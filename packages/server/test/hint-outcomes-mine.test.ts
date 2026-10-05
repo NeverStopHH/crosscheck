@@ -1,0 +1,193 @@
+/**
+ * GET /api/hint-outcomes/mine — one person's own hint outcomes (07 §13).
+ *
+ * "How often did crosscheck help me, from whom, and why — and how often did I
+ * get the hint and still do it my way?" Answered for the CALLER and nobody
+ * else: there is no parameter that names a person, so the view of someone
+ * else cannot be asked for (§8.4 still refuses a per-developer breakdown of
+ * the team). What a teammate learns is one count about their OWN work — how
+ * often others followed it — with no name, no reason and no override beside it.
+ *
+ * NOISE IS THE LABEL. The view reads it from `pilot_marks`, the one noise
+ * concept there is, and the later of an outcome and a noise label stands.
+ */
+import { describe, expect, test } from "bun:test";
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+
+import { pilotMarks } from "../src/db/schema.ts";
+import {
+  KEN_CLAIM,
+  KEN_CONTEXT,
+  MIKE_CONTEXT,
+  REPO,
+  createOutcomeWorld,
+  readMine,
+  recordOutcome,
+} from "./fixtures/hint-outcome-world.ts";
+import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
+import { jsonRequest } from "./helpers.ts";
+import type { TestDeveloper } from "./helpers.ts";
+
+const SECONDS_PER_DAY = 86_400;
+const OVERRIDE_REASON = "kept the developer key; the repo key mixes two people's caches";
+
+const viewOf = async (response: Response): Promise<Record<string, unknown>> =>
+  ((await response.json()) as { data: Record<string, unknown> }).data;
+
+const labelNoise = async (
+  world: OutcomeWorld,
+  developer: TestDeveloper,
+  deliveryId: string,
+): Promise<Response> =>
+  await world.harness.app.request(
+    "/api/pilot-marks",
+    jsonRequest("POST", developer.apiKey, {
+      repo: REPO,
+      refKind: "hint_delivery",
+      refId: deliveryId,
+      mark: "noise",
+      presence: PIN_PRESENCE_TERMINAL,
+    }),
+  );
+
+const tally = (counts: Partial<Record<string, number>>): Record<string, number> => ({
+  received: 0,
+  followed: 0,
+  overrode: 0,
+  notRelevantNow: 0,
+  noise: 0,
+  unmarked: 0,
+  ...counts,
+});
+
+describe("GET /api/hint-outcomes/mine", () => {
+  test("a person sees what reached them, what each led to, and from whom", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "overrode", reason: OVERRIDE_REASON });
+    await labelNoise(world, world.nick, world.delivered.mikeContext);
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick));
+
+    // Assert
+    expect(view).toMatchObject(tally({ received: 3, followed: 1, overrode: 1, noise: 1 }));
+    expect(view["bySource"]).toEqual([
+      { source: "Ken", ...tally({ received: 2, followed: 1, overrode: 1 }) },
+      { source: "Mike", ...tally({ received: 1, noise: 1 }) },
+    ]);
+    expect(view["reasons"]).toEqual([{ outcome: "overrode", reason: OVERRIDE_REASON, source: "Ken" }]);
+  });
+
+  test("what nobody said anything about is unmarked, never a verdict", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick));
+
+    // Assert
+    expect(view).toMatchObject(tally({ received: 3, unmarked: 3 }));
+  });
+
+  test("the later word stands, across an outcome and the noise label", async () => {
+    // Arrange — Ken's context: followed, then labelled noise by the person.
+    // Mike's context: labelled noise, then the agent said it was followed.
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", reason: "reused it" });
+    await labelNoise(world, world.nick, world.delivered.mikeContext);
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    await recordOutcome(world, world.nick, { ref: MIKE_CONTEXT, outcome: "followed" });
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick));
+
+    // Assert — and a superseded word's reason is not printed as current
+    expect(view).toMatchObject(tally({ received: 3, followed: 1, noise: 1, unmarked: 1 }));
+    expect(view["reasons"]).toEqual([]);
+  });
+
+  test("an older hub's off_target mark is read as the noise it meant", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await world.harness.db.insert(pilotMarks).values({
+      id: "pm_legacy",
+      repo: REPO,
+      refKind: "hint_delivery",
+      refId: world.delivered.kenClaim,
+      mark: "off_target",
+      markedBy: world.nick.developerId,
+      captureMode: "human",
+      createdAt: world.harness.clock.now(),
+      reason: null,
+    });
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick));
+
+    // Assert
+    expect(view).toMatchObject(tally({ received: 3, noise: 1, unmarked: 2 }));
+  });
+
+  test("nobody else's deliveries or outcomes reach my view", async () => {
+    // Arrange — Mike follows the pointer HE got; Ken got nothing
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.mike, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Act
+    const nick = await viewOf(await readMine(world, world.nick));
+    const ken = await viewOf(await readMine(world, world.ken));
+
+    // Assert
+    expect(nick).toMatchObject(tally({ received: 3, unmarked: 3 }));
+    expect(ken).toMatchObject(tally({}));
+    expect(ken["bySource"]).toEqual([]);
+  });
+
+  test("a teammate learns how often their own work was followed — and nothing about who or why", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "overrode", reason: OVERRIDE_REASON });
+    await recordOutcome(world, world.mike, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Act
+    const ken = await viewOf(await readMine(world, world.ken));
+
+    // Assert
+    expect(ken["yourWork"]).toEqual({ followed: 2 });
+    const said = JSON.stringify(ken);
+    expect(said).not.toContain("Nick");
+    expect(said).not.toContain("Mike");
+    expect(said).not.toContain(OVERRIDE_REASON);
+    expect(said).not.toContain("overrode\":1");
+  });
+
+  test("the window bounds what is counted", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(3 * SECONDS_PER_DAY);
+
+    // Act
+    const narrow = await viewOf(await readMine(world, world.nick, `repo=${encodeURIComponent(REPO)}&days=1`));
+    const wide = await viewOf(await readMine(world, world.nick, `repo=${encodeURIComponent(REPO)}&days=7`));
+
+    // Assert
+    expect(narrow).toMatchObject({ days: 1, received: 0 });
+    expect(wide).toMatchObject({ days: 7, received: 3 });
+  });
+
+  test("a repo nobody enrolled has no view, and says so", async () => {
+    // Arrange
+    const world = await createOutcomeWorld({ enrolled: false });
+
+    // Act
+    const response = await readMine(world, world.nick);
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe("not_enrolled");
+  });
+});

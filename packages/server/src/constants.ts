@@ -1043,3 +1043,17 @@ export const NOISE_MARK_MAX_CANDIDATES = 5;
  */
 export const NOISE_MARK_MAX_SESSIONS = 50;
 
+/**
+ * How many teammates one person's outcome view lists by name (07 §13). The
+ * view is the caller's own, so it is bounded by how many people's work can
+ * reach one reader, not by the team; past ten the count beside the list says
+ * how many were left out, and the totals above it still count them.
+ */
+export const HINT_OUTCOME_MAX_SOURCES = 10;
+
+/**
+ * How many outcome reasons the view prints — the label reasons' screenful,
+ * derived so the two lists of one person's sentences stop at the same place.
+ */
+export const HINT_OUTCOME_MAX_REASONS = PILOT_REPORT_MAX_LABEL_REASONS;
+

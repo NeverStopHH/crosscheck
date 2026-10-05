@@ -204,6 +204,26 @@ export const PILOT_MARKS_BY_REF_KIND = {
 >;
 
 /**
+ * WHAT A DELIVERED HINT LED TO (07 §13, 2026-10-05) — not a verdict on the
+ * intervention, which is the label above, but what the reader did next:
+ *
+ *   followed          acted on it — reused the teammate's decision, stopped
+ *                     duplicate work, coordinated;
+ *   overrode          saw it and deliberately went another way, with the reason
+ *                     the reader's way was better;
+ *   not_relevant_now  on the topic, not needed for the task at hand.
+ *
+ * FOLLOWING AND OVERRIDING ARE TWO PAIRS OF SHOES. A hint that was read and
+ * deliberately set aside did its job — the reader decided with the
+ * teammate's work in view — while a hint that was off-target did not. So
+ * `overrode` is never folded into noise, and noise is NOT IN THIS LIST: it
+ * already has one word, the person's `noise` label, and the per-person view
+ * reads it from there. A second spelling here, on a path an agent can reach,
+ * would be a second noise concept with the model's taste in it (07 D3, PIL-6).
+ */
+export const HINT_OUTCOMES = ["followed", "overrode", "not_relevant_now"] as const;
+
+/**
  * THE TWO COHORTS OF THE SESSION SET (07 §12). Sessions 1–50 are the
  * preregistered DISCOVERY cohort, frozen once full; 51–200 the REPLICATION
  * cohort, measured with the discovery cohort's figures already on the table.
@@ -459,6 +479,7 @@ export type PilotMark = (typeof PILOT_MARKS)[number];
 export type PilotInterventionLabel = (typeof PILOT_INTERVENTION_LABELS)[number];
 export type PilotCohort = (typeof PILOT_COHORTS)[number];
 export type PilotMarkRefKind = (typeof PILOT_MARK_REF_KINDS)[number];
+export type HintOutcome = (typeof HINT_OUTCOMES)[number];
 export type PilotEndReason = (typeof PILOT_END_REASONS)[number];
 export type PilotUnavailableReason =
   (typeof PILOT_UNAVAILABLE_REASONS)[number];

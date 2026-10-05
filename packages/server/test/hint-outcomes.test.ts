@@ -1,0 +1,263 @@
+/**
+ * POST /api/hint-outcomes — what a delivered hint led to (1.0 spec 07 §13).
+ *
+ * WHAT THESE PIN, in order of how easily each could be lost:
+ *
+ *   · an outcome names the delivery it answers, resolved from what the hint
+ *     PRINTED (a work-context or claim id) to the caller's OWN delivery — a
+ *     teammate's delivery answers exactly like an id that does not exist;
+ *   · it is append-only: a repeat is one row, a different word is a second
+ *     row that supersedes the first, and nothing is ever deleted;
+ *   · it never writes `pilot_marks`. An outcome is the one pilot record an
+ *     agent may write, and the label table is the one it may not (PIL-6);
+ *   · the reason is untrusted text: bounded, secret-scanned at the hub, and a
+ *     hit drops the whole outcome rather than a redacted derivative.
+ */
+import { describe, expect, test } from "bun:test";
+import { hintDeliveryId } from "@crosscheck/schema";
+
+import { hintOutcomes, pilotMarks } from "../src/db/schema.ts";
+import {
+  KEN_CLAIM,
+  KEN_CONTEXT,
+  MIKE_CONTEXT,
+  NICK_SECOND_SESSION,
+  NICK_SESSION,
+  OTHER_REPO,
+  REPO,
+  createOutcomeWorld,
+  deliveryRecord,
+  enrol,
+  recordOutcome,
+} from "./fixtures/hint-outcome-world.ts";
+import { postRecords, registerTestSession } from "./helpers.ts";
+
+/** A synthetic AWS example key, the fixture every secret-scan test uses. */
+const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
+
+const bodyOf = async (response: Response): Promise<Record<string, unknown>> =>
+  ((await response.json()) as { data: Record<string, unknown> }).data;
+
+const errorOf = async (response: Response): Promise<{ code: string; message: string }> =>
+  ((await response.json()) as { error: { code: string; message: string } }).error;
+
+describe("POST /api/hint-outcomes", () => {
+  test("the ref a hint printed records an outcome on the caller's own delivery", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+
+    // Act
+    const response = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect(await bodyOf(response)).toMatchObject({
+      deliveryId: world.delivered.kenContext,
+      outcome: "followed",
+      repeated: false,
+      replaced: null,
+    });
+    const rows = await world.harness.db.select().from(hintOutcomes);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      deliveryId: world.delivered.kenContext,
+      recordedBy: world.nick.developerId,
+      repo: REPO,
+      reason: null,
+    });
+  });
+
+  test("a delivery id names the delivery directly", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+
+    // Act
+    const response = await recordOutcome(world, world.nick, {
+      ref: world.delivered.kenClaim,
+      outcome: "overrode",
+      reason: "kept the developer key; the repo key mixes two people's caches",
+    });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect(await bodyOf(response)).toMatchObject({ deliveryId: world.delivered.kenClaim });
+  });
+
+  test("saying the same thing twice is one row, and SAYS so", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Act
+    const again = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(again.status).toBe(200);
+    expect(await bodyOf(again)).toMatchObject({ repeated: true });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
+  });
+
+  test("a different word supersedes the first and deletes nothing", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const changed = await recordOutcome(world, world.nick, {
+      ref: KEN_CONTEXT,
+      outcome: "overrode",
+      reason: "reverted it: the wider row broke the mobile layout",
+    });
+
+    // Assert — both rows stand; the answer names what was replaced
+    expect(changed.status).toBe(201);
+    expect(await bodyOf(changed)).toMatchObject({ repeated: false, replaced: "followed" });
+    const rows = await world.harness.db.select().from(hintOutcomes);
+    expect(rows.map((row) => row.outcome).sort()).toEqual(["followed", "overrode"]);
+  });
+
+  test("a teammate's delivery answers exactly like an id that does not exist", async () => {
+    // Arrange — Ken never received a pointer at Mike's context; Nick did. A
+    // distinct refusal would tell Ken what Nick was shown (§8.4, §11.9).
+    const world = await createOutcomeWorld();
+
+    // Act
+    const byRef = await recordOutcome(world, world.ken, { ref: MIKE_CONTEXT, outcome: "followed" });
+    const byDelivery = await recordOutcome(world, world.ken, {
+      ref: world.delivered.mikeContext,
+      outcome: "followed",
+    });
+    const missing = await recordOutcome(world, world.ken, { ref: "wc_nobody", outcome: "followed" });
+
+    // Assert
+    for (const response of [byRef, byDelivery, missing]) {
+      expect(response.status).toBe(422);
+      expect((await errorOf(response)).code).toBe("unknown_ref");
+    }
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(0);
+  });
+
+  test("the named session's delivery is the one answered", async () => {
+    // Arrange — Nick was pointed at Ken's claim in two sessions
+    const world = await createOutcomeWorld();
+    await registerTestSession(world.harness, world.nick.apiKey, { id: NICK_SECOND_SESSION, repo: REPO });
+    world.harness.clock.advanceSeconds(60);
+    await postRecords(world.harness, world.nick, {
+      records: [
+        deliveryRecord(
+          NICK_SECOND_SESSION,
+          "claim",
+          KEN_CLAIM,
+          "prompt_hint",
+          world.harness.clock.now().toISOString(),
+        ),
+      ],
+    });
+
+    // Act
+    const named = await recordOutcome(world, world.nick, {
+      ref: KEN_CLAIM,
+      outcome: "followed",
+      session: NICK_SESSION,
+    });
+    const newest = await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "not_relevant_now" });
+
+    // Assert
+    expect(await bodyOf(named)).toMatchObject({ deliveryId: hintDeliveryId(NICK_SESSION, KEN_CLAIM) });
+    expect(await bodyOf(newest)).toMatchObject({ deliveryId: hintDeliveryId(NICK_SECOND_SESSION, KEN_CLAIM) });
+  });
+
+  test("an outcome never writes a pilot label — the one table an agent may not reach", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+
+    // Act
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    await recordOutcome(world, world.nick, { ref: MIKE_CONTEXT, outcome: "not_relevant_now" });
+
+    // Assert
+    expect(await world.harness.db.select().from(pilotMarks)).toHaveLength(0);
+  });
+
+  test("a repo nobody enrolled records nothing, and says so", async () => {
+    // Arrange
+    const world = await createOutcomeWorld({ enrolled: false });
+
+    // Act
+    const response = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect((await errorOf(response)).code).toBe("not_enrolled");
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(0);
+  });
+
+  test("a delivery of another repo is refused as another repo's", async () => {
+    // Arrange — Nick's session on the other repo got Ken's context too
+    const world = await createOutcomeWorld();
+    const otherSession = "cc_aaaaaaaa-3333-4333-8333-333333333333";
+    await registerTestSession(world.harness, world.nick.apiKey, { id: otherSession, repo: OTHER_REPO });
+    await enrol(world.harness, OTHER_REPO);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(otherSession, "work_context", KEN_CONTEXT, "prompt_hint")],
+    });
+
+    // Act
+    const response = await recordOutcome(world, world.nick, {
+      ref: hintDeliveryId(otherSession, KEN_CONTEXT),
+      outcome: "followed",
+    });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect((await errorOf(response)).code).toBe("wrong_repo");
+  });
+
+  test("a reason that holds a secret drops the whole outcome", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+
+    // Act
+    const response = await recordOutcome(world, world.nick, {
+      ref: KEN_CONTEXT,
+      outcome: "overrode",
+      reason: `used my own key ${CREDENTIAL} instead`,
+    });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect((await errorOf(response)).code).toBe("reason_secret");
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(0);
+  });
+
+  test("an override with no reason, or a NUL in one, is refused before anything is stored", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+
+    // Act
+    const bare = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode" });
+    const nul = await recordOutcome(world, world.nick, {
+      ref: KEN_CONTEXT,
+      outcome: "overrode",
+      reason: "my way\u0000is better",
+    });
+
+    // Assert
+    expect(bare.status).toBe(400);
+    expect(nul.status).toBe(400);
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(0);
+  });
+
+  test("noise is not an outcome: the person's label is the one word for it", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+
+    // Act
+    const response = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "noise" });
+
+    // Assert
+    expect(response.status).toBe(400);
+    expect(await world.harness.db.select().from(pilotMarks)).toHaveLength(0);
+  });
+});
