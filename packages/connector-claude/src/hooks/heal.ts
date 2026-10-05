@@ -1,5 +1,5 @@
 import { sessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
-import type { SessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
+import type { RefusalCause, SessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -30,5 +30,5 @@ export const healerFor = (ctx: HookContext): SessionHealer =>
  */
 export const onRefusedHeartbeat =
   (ctx: HookContext, budget: HookBudget, crosscheckSessionId: string) =>
-  (): Promise<unknown> =>
-    healerFor(ctx)(crosscheckSessionId, Date.now() + budget.spareMs());
+  (cause: RefusalCause): Promise<unknown> =>
+    healerFor(ctx)({ sessionId: crosscheckSessionId, cause }, Date.now() + budget.spareMs());

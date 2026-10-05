@@ -439,7 +439,7 @@ describe("a heartbeat the hub refuses", () => {
       crosscheckSessionId: life.crosscheckSessionId,
       lastHeartbeatAt: null,
       now: new Date(),
-      onRefused: () => healer(life.crosscheckSessionId, Date.now() + GENEROUS_BUDGET_MS),
+      onRefused: (cause) => healer({ sessionId: life.crosscheckSessionId, cause }, Date.now() + GENEROUS_BUDGET_MS),
     });
 
     // Assert

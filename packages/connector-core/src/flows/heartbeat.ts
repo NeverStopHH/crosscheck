@@ -17,6 +17,7 @@ import { HEARTBEAT_MIN_INTERVAL_MS, HTTP_CONFLICT, HTTP_NOT_FOUND } from "../con
 import { heartbeatSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
+import type { RefusalCause } from "../spool/flush-heal.ts";
 
 export interface HeartbeatMaybeInput {
   readonly hub: HubContext;
@@ -30,12 +31,12 @@ export interface HeartbeatMaybeInput {
    * healer (flows/heal-session.ts), whose cooldown bounds how often this costs
    * a walk. Absent: the answer is discarded, as it always was.
    */
-  readonly onRefused?: () => Promise<unknown>;
+  readonly onRefused?: (cause: RefusalCause) => Promise<unknown>;
 }
 
 /** The two answers that mean the session is dead to the hub, not that the hub is down. */
-const isRefusedSession = (status: number): boolean =>
-  status === HTTP_CONFLICT || status === HTTP_NOT_FOUND;
+const refusalOf = (status: number): RefusalCause | null =>
+  status === HTTP_CONFLICT ? "session_ended" : status === HTTP_NOT_FOUND ? "session_unknown" : null;
 
 export const heartbeatMaybe = async (
   input: HeartbeatMaybeInput,
@@ -56,8 +57,9 @@ export const heartbeatMaybe = async (
   // beats nothing pays nothing; a local read of the ledgers, no round trip.
   const losses = await readTelemetryLossReport(input.hub.home, input.hub.repoKey);
   const result = await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);
-  if (!result.ok && isRefusedSession(result.status)) {
-    await input.onRefused?.();
+  const refused = result.ok ? null : refusalOf(result.status);
+  if (refused !== null) {
+    await input.onRefused?.(refused);
   }
   return true;
 };

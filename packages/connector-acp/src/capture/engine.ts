@@ -865,7 +865,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       session.repoKey === null
     ) {
       // A disabled session captures nothing, so nothing of it is ever refused.
-      return () => Promise.resolve(null);
+      return () => Promise.resolve({ outcome: "failed" });
     }
     const heal = sessionHealer({
       home: session.config.home,
@@ -879,9 +879,9 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
       now,
     });
-    return async (refusedSessionId, deadlineMs) => {
-      const healed = await heal(refusedSessionId, deadlineMs);
-      if (healed !== null && healed.sessionId !== session.crosscheckSessionId) {
+    return async (refusal, deadlineMs, beforeWalk) => {
+      const healed = await heal(refusal, deadlineMs, beforeWalk);
+      if (healed.outcome === "healed" && healed.sessionId !== session.crosscheckSessionId) {
         session.crosscheckSessionId = healed.sessionId;
         session.workContextId = workContextIdFor(healed.sessionId);
         session.seenTargets.clear();
@@ -904,8 +904,11 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       lastHeartbeatAt: session.lastHeartbeatAt,
       now: at,
       status,
-      onRefused: () =>
-        healerFor(session)(session.crosscheckSessionId, Date.now() + ACP_CAPTURE_FLUSH_BUDGET_MS),
+      onRefused: (cause) =>
+        healerFor(session)(
+          { sessionId: session.crosscheckSessionId, cause },
+          Date.now() + ACP_CAPTURE_FLUSH_BUDGET_MS,
+        ),
     });
     if (!attempted) {
       return;

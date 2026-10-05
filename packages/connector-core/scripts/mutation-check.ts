@@ -17402,7 +17402,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a heal that moves lives does not write the refused life down",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "      await recordRefusedLife(input.home, input.repoKey, refusedSessionId, now);\n",
+    from: "    await recordRefusedLife(input.home, input.repoKey, refusal.sessionId, now);\n",
     to: "",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "the next hook's flush has no way to know the life was refused and delivers its stragglers into it",
@@ -17410,7 +17410,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heal ignores its cooldown",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "  if (!Number.isNaN(attemptedMs) && now.getTime() - attemptedMs < HEAL_COOLDOWN_MS) {",
+    from: "  if (stamp !== null && now.getTime() - stamp.atMs < HEAL_COOLDOWN_MS) {",
     to: "  if (false) {",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "a hub that refuses every register turns every tool call into a register round trip",
@@ -17418,7 +17418,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heal registers the next life and spools no work context for it",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "      await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n",
+    from: "    await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);\n",
     to: "",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "every target of the healed life names a work context the hub never heard of and is rejected",
@@ -17442,7 +17442,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a heartbeat the hub refuses heals nothing",
     file: `${CORE}/src/flows/heartbeat.ts`,
-    from: "    await input.onRefused?.();\n",
+    from: "    await input.onRefused?.(refused);\n",
     to: "",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "the heartbeat's 409 is discarded again, and only a refused flush can heal",
@@ -17510,6 +17510,46 @@ export const MUTATIONS: readonly Mutation[
     to: "    return { summary: input.first, heal: null, asked: false };",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "SessionEnd's drain under a session the hub refuses drops whatever other conversations left on disk",
+  },
+  {
+    label: "a heal with no room still stamps its cooldown",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '  return deadlineMs - Date.now() < HEAL_MIN_ROOM_MS ? PENDING : "walk";',
+    to: '  return "walk";',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P6: a heartbeat refused at the end of a spent hook burns five minutes of cooldown and the next flush, with room, drops what it could have re-sent",
+  },
+  {
+    label: "a sibling's walk in flight reads as a failed heal",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    return stamp.walking && Date.now() < stamp.untilMs ? PENDING : FAILED;",
+    to: "    return FAILED;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P5: a parallel hook's flush drops the records the sibling's walk was about to give a life",
+  },
+  {
+    label: "a flush told to wait for a walk drops its batch anyway",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '  if (result.outcome === "pending") {\n    return null;',
+    to: '  if (result.outcome === "pending") {\n    return { summary: input.first, heal: null, asked: true };',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the pending answer is ignored and the records a landing walk would have carried are dropped",
+  },
+  {
+    label: "a heal of an ended life spends a register call on its sure 409",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '    ...(refusal.cause === "session_ended" ? { endedSessionId: refusal.sessionId } : {}),\n',
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "every heal walks the refused rung first and pays one more round trip on the hook's budget",
+  },
+  {
+    label: "the heal that loses the state race answers a dead end",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    const moved = await movedLife(input, refusal.sessionId);\n    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  if (ladder",
+    to: "    return FAILED;\n  }\n  if (ladder",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P4: the loser of two concurrent heals throws its batch away although the winner registered the very life it walked to",
   },
 ];
 
@@ -17770,7 +17810,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 10
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
- * PRINTS: packages/connector-core/test/session-lives.test.ts 5
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 10
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

@@ -1639,6 +1639,13 @@ export const REGISTER_LADDER_MAX_ATTEMPTS = 12;
  * counts it.
  */
 export const HEAL_COOLDOWN_MS = 5 * 60 * 1000;
+/**
+ * The least room a mid-life heal needs before it stamps an attempt: one
+ * register round trip against a reachable hub, which answers in tens of
+ * milliseconds. Below it the walk could not reach the hub, and stamping would
+ * cost the next caller — one with room — its turn for five minutes.
+ */
+export const HEAL_MIN_ROOM_MS = 100;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
 /** A session the hub holds as ended, or an id somebody else owns. */

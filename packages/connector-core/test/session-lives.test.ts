@@ -14,6 +14,7 @@ import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/serv
 import type { Db } from "@crosscheck/server";
 
 import { repoKey } from "../src/config/paths.ts";
+import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
 import { seqAt, withSeq } from "../src/capture/seq.ts";
@@ -38,6 +39,14 @@ const TIMEOUT_MS = 4000;
 const BUDGET_MS = 3000;
 /** How much older a backlog is made so the oldest-first drain takes it first. */
 const OLDER_MS = 60_000;
+/** A walk slow enough that a parallel flush lands while it is in flight. */
+const WALK_DELAY_MS = 300;
+/** How long the slow walk is given to stamp its attempt before the flush. */
+const WALK_HEAD_START_MS = 30;
+/** Enough delay that two concurrent healers overlap. */
+const RACE_DELAY_MS = 50;
+/** Any position: the point is that it is withheld when another life delivers it. */
+const COMMIT_POSITION = 7;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -349,5 +358,112 @@ describe("a register that does not land never leaves a life on an ended id (revi
     // Assert
     expect(spent).toBe(0);
     expect(await targetsOf(other.workContextId)).toEqual(["src/other.ts"]);
+  });
+});
+
+/**
+ * A producer-filed record of the refused life, positioned the way SessionStart
+ * positions it — re-sendable under the next life, with that position withheld.
+ */
+const commitEvidenceOf = (sessionId: string): Record<string, unknown> =>
+  withSeq(
+    commitEvidenceRecord(
+      REPO_ID,
+      [{ name: "Dev", email: "dev@example.com", latestCommitAt: new Date().toISOString(), commitCount: 1 }],
+      producerOf(sessionId),
+      new Date(),
+    ),
+    { epoch: crypto.randomUUID(), n: COMMIT_POSITION },
+  );
+
+const observedUnder = async (prefix: string): Promise<readonly { session_id: string; seq_reason: string }[]> =>
+  raw("select session_id, seq_reason from session_events where kind = 'commit.observed' and session_id like $1", [
+    `${prefix}%`,
+  ]);
+
+describe("the heal never throws away what it should re-send (review P4, P5, P6)", () => {
+  test("a heal handed no room spends no cooldown, and the next flush heals and re-sends", async () => {
+    // Arrange: an ended life, and a heartbeat refused at the end of a spent hook
+    const fx = await fixture("no-room");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    registerIds.length = 0;
+
+    // Act
+    const spent = await healerFor(fx, fx.proxied)(
+      { sessionId: life.crosscheckSessionId, cause: "session_ended" },
+      Date.now(),
+    );
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, [commitEvidenceOf(life.crosscheckSessionId)], new Date());
+    await flushAsHook(fx, fx.proxied);
+
+    // Assert: no walk without room, then one walk straight to the next rung
+    const next = `${life.crosscheckSessionId}~r1`;
+    expect(spent).toEqual({ outcome: "pending" });
+    expect(registerIds).toEqual([next]);
+    expect((await stateOf(fx))?.crosscheckSessionId).toBe(next);
+    expect(await observedUnder(life.crosscheckSessionId)).toEqual([
+      { session_id: next, seq_reason: "foreign_session_delivery" },
+    ]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason["rejected"] ?? 0).toBe(0);
+  });
+
+  test("a flush refused while a sibling's walk is in flight keeps its batch for the healed life", async () => {
+    // Arrange: an ended life with a producer-filed record waiting
+    const fx = await fixture("in-flight");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, [commitEvidenceOf(life.crosscheckSessionId)], new Date());
+
+    // Act: a heartbeat's walk is slow; a parallel hook's flush is refused meanwhile
+    registerDelayMs = WALK_DELAY_MS;
+    const walking = healerFor(fx, fx.proxied)(
+      { sessionId: life.crosscheckSessionId, cause: "session_ended" },
+      Date.now() + BUDGET_MS,
+    );
+    await Bun.sleep(WALK_HEAD_START_MS);
+    await flushAsHook(fx);
+    const walked = await walking;
+    registerDelayMs = 0;
+    await flushAsHook(fx);
+
+    // Assert: the record waited and went under the healed life
+    const next = `${life.crosscheckSessionId}~r1`;
+    expect(walked).toEqual({ outcome: "healed", refusedSessionId: life.crosscheckSessionId, sessionId: next });
+    expect(await observedUnder(life.crosscheckSessionId)).toEqual([
+      { session_id: next, seq_reason: "foreign_session_delivery" },
+    ]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason["rejected"] ?? 0).toBe(0);
+  });
+
+  test("two healers racing land on one life, and neither answers a dead end", async () => {
+    // Arrange
+    const fx = await fixture("race");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    registerDelayMs = RACE_DELAY_MS;
+
+    // Act
+    const refusal = { sessionId: life.crosscheckSessionId, cause: "session_ended" } as const;
+    const results = await Promise.all([
+      healerFor(fx, fx.proxied)(refusal, Date.now() + BUDGET_MS),
+      healerFor(fx, fx.proxied)(refusal, Date.now() + BUDGET_MS),
+    ]);
+    registerDelayMs = 0;
+
+    // Assert: one next life on the hub and in the state; every answer is it, or "wait"
+    const next = `${life.crosscheckSessionId}~r1`;
+    const lives = await raw<{ id: string }>("select id from agent_sessions where id like $1 order by id", [
+      `${life.crosscheckSessionId}%`,
+    ]);
+    expect(lives.map((row) => row.id)).toEqual([life.crosscheckSessionId, next]);
+    expect((await stateOf(fx))?.crosscheckSessionId).toBe(next);
+    expect(results.some((result) => result.outcome === "healed")).toBe(true);
+    for (const result of results) {
+      expect(result.outcome === "pending" || (result.outcome === "healed" && result.sessionId === next)).toBe(true);
+    }
   });
 });

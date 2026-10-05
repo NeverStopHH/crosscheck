@@ -41,14 +41,45 @@ export interface SessionHeal {
   readonly sessionId: string;
 }
 
-/** Registers the refused session's next life before `deadlineMs`, or answers null. */
+/** The two refusals a heal answers: the hub ended the session, or never registered it. */
+export type RefusalCause = "session_ended" | "session_unknown";
+
+export interface SessionRefusal {
+  readonly sessionId: string;
+  readonly cause: RefusalCause;
+}
+
+/**
+ * What a heal answers. `healed`: a life the refused session's records may go
+ * under — one the walk registered, or one a sibling already moved the state to.
+ * `pending`: no walk now, but one may still land — a sibling's is in flight,
+ * or there was no room for a round trip — so a caller keeps what it holds.
+ * `failed`: the walk ran and registered nothing, or one did within the
+ * cooldown; the refusal stands.
+ */
+export type HealResult =
+  | ({ readonly outcome: "healed" } & SessionHeal)
+  | { readonly outcome: "pending" }
+  | { readonly outcome: "failed" };
+
+/**
+ * Registers the refused session's next life before `deadlineMs`. `beforeWalk`
+ * runs once the walk is certain to start, before its first register — the
+ * moment a caller writes down what it has already lost, so the register
+ * carries it (flows/heal-session.ts).
+ */
 export type SessionHealer = (
-  refusedSessionId: string,
+  refusal: SessionRefusal,
   deadlineMs: number,
-) => Promise<SessionHeal | null>;
+  beforeWalk?: () => Promise<void>,
+) => Promise<HealResult>;
 
 /** The causes that say the PRODUCER is dead to the hub — the flusher, after the stamp. */
 const OWN_SESSION_CAUSES: ReadonlySet<RejectCause> = new Set(["session_ended", "session_unknown"]);
+
+/** The refusal behind a batch: every record shares the one producer it names. */
+const refusalCauseOf = (result: RecordResult): RefusalCause =>
+  rejectCauseOf(result.issues) === "session_unknown" ? "session_unknown" : "session_ended";
 
 export const isOwnSessionRefusal = (result: RecordResult): boolean =>
   result.status === "rejected" && OWN_SESSION_CAUSES.has(rejectCauseOf(result.issues));
@@ -163,10 +194,19 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   if (input.healer === undefined) {
     return othersAtStake ? null : { summary: input.first, heal: null, asked: false };
   }
-  const heal = await input.healer(input.flusherSessionId, input.deadlineMs);
-  if (heal === null) {
+  const result = await input.healer(
+    { sessionId: input.flusherSessionId, cause: refusalCauseOf(refusals[0] ?? { index: 0, status: "rejected" }) },
+    input.deadlineMs,
+  );
+  // A walk in flight, or no room for one: what this batch holds may still go
+  // under the life that walk lands, so nothing is spent now (review P5, P6).
+  if (result.outcome === "pending") {
+    return null;
+  }
+  if (result.outcome === "failed") {
     return othersAtStake ? null : { summary: input.first, heal: null, asked: true };
   }
+  const heal: SessionHeal = { refusedSessionId: result.refusedSessionId, sessionId: result.sessionId };
   const resent = refusals
     .map((result) => result.index)
     .filter((index) => {

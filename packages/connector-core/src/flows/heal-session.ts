@@ -17,18 +17,24 @@
  * is a new session with its own `session.started`, positioned under the state
  * file's epoch at 0 — the counter runs on, so nothing this session already
  * handed out is issued twice, and order is only ever compared inside one
- * session (spec 01 §3.4). A session the hub never registered is registered as
- * ITSELF: the walk starts at its own rung, which the hub then creates.
+ * session (spec 01 §3.4). An ENDED life's walk starts above it — its rung is a
+ * sure 409; a session the hub never registered is registered as ITSELF.
  *
  * BOUNDED TWICE. Once per flush, by the caller; and once per HEAL_COOLDOWN_MS
  * per session, here — the attempt is stamped beside the state file
  * (`sessions/<slug>.heal`) before the walk, so a hub that refuses every
  * register costs one walk per cooldown, not one per hook. The walk itself runs
- * to the caller's deadline.
+ * to the caller's deadline, and a heal with no room for one round trip stamps
+ * nothing at all.
+ *
+ * AND NEVER A DEAD END WHERE A LIFE EXISTS (review P4–P6). A heal whose sibling
+ * already moved the state answers that life; one that meets a sibling's walk
+ * in flight, or has no room, answers `pending`, so its caller keeps its records
+ * on disk for the life that walk lands rather than dropping them.
  */
 import type { CausalGuaranteeTriple } from "@crosscheck/schema";
 
-import { HEAL_COOLDOWN_MS } from "../constants.ts";
+import { HEAL_COOLDOWN_MS, HEAL_MIN_ROOM_MS } from "../constants.ts";
 import {
   readJsonOrNull,
   sessionHealPathForSlug,
@@ -39,7 +45,7 @@ import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import { ALLOCATION_FAILED } from "../capture/seq.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
-import type { SessionHealer } from "../spool/flush-heal.ts";
+import type { HealResult, SessionHealer, SessionRefusal } from "../spool/flush-heal.ts";
 import { recordRefusedLife } from "../spool/refused-lives.ts";
 import {
   readSessionState,
@@ -49,10 +55,19 @@ import {
 import type { SessionState } from "../state/session-state.ts";
 import { fallbackWorkContextTitle, registerSessionLadder } from "./register-session.ts";
 
-export type { SessionHeal, SessionHealer } from "../spool/flush-heal.ts";
+export type {
+  HealResult,
+  RefusalCause,
+  SessionHeal,
+  SessionHealer,
+  SessionRefusal,
+} from "../spool/flush-heal.ts";
 
 /** The status a healed life's work context is registered with when state has none. */
 const HEAL_STATUS = "implementing";
+
+const PENDING: HealResult = { outcome: "pending" };
+const FAILED: HealResult = { outcome: "failed" };
 
 export interface SessionHealerInput {
   readonly home: string;
@@ -69,33 +84,69 @@ export interface SessionHealerInput {
   readonly now: () => Date;
 }
 
+/**
+ * The last attempt, as stamped: when it started (the cooldown's clock, read on
+ * the caller's `now`), and — while it walks — the wall-clock deadline it walks
+ * to, past which a `walking` stamp is a walker that died mid-way.
+ */
+interface HealStamp {
+  readonly atMs: number;
+  readonly walking: boolean;
+  readonly untilMs: number;
+}
+
 const healPath = (input: SessionHealerInput): string =>
   sessionHealPathForSlug(input.home, sessionSlug(input.hostSessionKey));
 
-/** When the last walk started, or NaN when none is on record. */
-const lastAttemptMs = async (input: SessionHealerInput): Promise<number> => {
-  const stamp = (await readJsonOrNull(healPath(input))) as { at?: unknown } | null;
-  return typeof stamp?.at === "string" ? Date.parse(stamp.at) : Number.NaN;
+const readStamp = async (input: SessionHealerInput): Promise<HealStamp | null> => {
+  const stamp = (await readJsonOrNull(healPath(input))) as {
+    at?: unknown;
+    phase?: unknown;
+    until?: unknown;
+  } | null;
+  const atMs = typeof stamp?.at === "string" ? Date.parse(stamp.at) : Number.NaN;
+  return Number.isNaN(atMs)
+    ? null
+    : {
+        atMs,
+        walking: stamp?.phase === "walking",
+        untilMs: typeof stamp?.until === "number" ? stamp.until : 0,
+      };
 };
 
-/**
- * Stamps the attempt BEFORE the walk, so a hook killed mid-walk still counts
- * it; false while one is cooling down. Two hooks racing past the read both
- * walk, and the second one's walk lands on the first one's life and changes
- * nothing (`switchState` compares and swaps) — one extra register call, once.
- */
-const claimAttempt = async (input: SessionHealerInput, now: Date): Promise<boolean> => {
-  const attemptedMs = await lastAttemptMs(input);
-  if (!Number.isNaN(attemptedMs) && now.getTime() - attemptedMs < HEAL_COOLDOWN_MS) {
-    return false;
-  }
+const writeStamp = async (
+  input: SessionHealerInput,
+  now: Date,
+  phase: "walking" | "done",
+  untilMs: number,
+): Promise<boolean> => {
   try {
-    await writePrivateFile(healPath(input), `${JSON.stringify({ at: now.toISOString() })}\n`);
+    await writePrivateFile(healPath(input), `${JSON.stringify({ at: now.toISOString(), phase, until: untilMs })}\n`);
     return true;
   } catch {
     // A stamp that cannot be written is a cooldown that cannot be kept: no walk.
     return false;
   }
+};
+
+/**
+ * Whether this heal may walk now: `walk`, or the answer to give instead. A
+ * sibling's walk still inside its deadline is `pending` — it may land a life
+ * this caller's records can go under — and any other attempt inside the
+ * cooldown is `failed`. Too little room for one round trip is `pending` too,
+ * and stamps nothing: a heal that cannot reach the hub must not cost the next
+ * one its turn (review P6).
+ */
+const mayWalk = async (
+  input: SessionHealerInput,
+  now: Date,
+  deadlineMs: number,
+): Promise<"walk" | HealResult> => {
+  const stamp = await readStamp(input);
+  if (stamp !== null && now.getTime() - stamp.atMs < HEAL_COOLDOWN_MS) {
+    return stamp.walking && Date.now() < stamp.untilMs ? PENDING : FAILED;
+  }
+  return deadlineMs - Date.now() < HEAL_MIN_ROOM_MS ? PENDING : "walk";
 };
 
 /**
@@ -154,51 +205,91 @@ const spoolNextWorkContext = async (
   );
 };
 
+const healedTo = (refusedSessionId: string, sessionId: string): HealResult => ({
+  outcome: "healed",
+  refusedSessionId,
+  sessionId,
+});
+
+/**
+ * The life the state file moved to while this heal was not looking — a
+ * sibling's heal, a SessionStart — or null when it still names the refused one
+ * or is gone.
+ */
+const movedLife = async (input: SessionHealerInput, refusedSessionId: string): Promise<string | null> => {
+  const state = await readSessionState(input.home, input.hostSessionKey);
+  return state === null || state.crosscheckSessionId === refusedSessionId ? null : state.crosscheckSessionId;
+};
+
+/** The walk itself, once `mayWalk` allowed it and the attempt is stamped. */
+const walk = async (
+  input: SessionHealerInput,
+  state: SessionState,
+  refusal: SessionRefusal,
+  deadlineMs: number,
+  now: Date,
+): Promise<HealResult> => {
+  const ladder = await registerSessionLadder({
+    home: input.home,
+    repoKey: input.repoKey,
+    hub: input.hub,
+    agentKind: input.agentKind,
+    hostSessionKey: input.hostSessionKey,
+    repoId: input.repoId,
+    branch: input.branch,
+    baseCommit: input.baseCommit,
+    status: state.workContextStatus ?? HEAL_STATUS,
+    guarantees: input.guarantees,
+    seq: state.seqEpoch === null ? ALLOCATION_FAILED : { epoch: state.seqEpoch, n: 0 },
+    // First-wins: a live session with this id bound to ANOTHER repo stops
+    // the walk rather than spawning a sibling for the foreign repo.
+    recovery: true,
+    liveSessionId: refusal.sessionId,
+    ...(refusal.cause === "session_ended" ? { endedSessionId: refusal.sessionId } : {}),
+    deadlineMs,
+  });
+  if (ladder.outcome !== "registered") {
+    return FAILED;
+  }
+  if (!(await switchState(input, refusal.sessionId, ladder.sessionId, ladder.developerId))) {
+    // Lost the compare-and-swap: a sibling moved the state first. Its life is
+    // the answer — usually the very one this walk just registered (review P4).
+    const moved = await movedLife(input, refusal.sessionId);
+    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);
+  }
+  if (ladder.sessionId !== refusal.sessionId) {
+    // The refused life's stragglers are withheld from every later flush on
+    // this repo (spool/refused-lives.ts), then the next life's work context.
+    await recordRefusedLife(input.home, input.repoKey, refusal.sessionId, now);
+    await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
+  }
+  return healedTo(refusal.sessionId, ladder.sessionId);
+};
+
 export const sessionHealer =
   (input: SessionHealerInput): SessionHealer =>
-  async (refusedSessionId, deadlineMs) => {
+  async (refusal, deadlineMs, beforeWalk) => {
     const state = await readSessionState(input.home, input.hostSessionKey);
     if (state === null) {
-      return null;
+      return FAILED;
     }
     // Healed already — by a sibling hook, or a SessionStart that re-registered.
     // Its life is the answer, and costs no walk.
-    if (state.crosscheckSessionId !== refusedSessionId) {
-      return { refusedSessionId, sessionId: state.crosscheckSessionId };
+    if (state.crosscheckSessionId !== refusal.sessionId) {
+      return healedTo(refusal.sessionId, state.crosscheckSessionId);
     }
     const now = input.now();
-    if (!(await claimAttempt(input, now))) {
-      return null;
+    const allowed = await mayWalk(input, now, deadlineMs);
+    if (allowed !== "walk") {
+      // The cooldown's verdict, unless a sibling moved the state since the read above.
+      const moved = await movedLife(input, refusal.sessionId);
+      return moved === null ? allowed : healedTo(refusal.sessionId, moved);
     }
-    const ladder = await registerSessionLadder({
-      home: input.home,
-      repoKey: input.repoKey,
-      hub: input.hub,
-      agentKind: input.agentKind,
-      hostSessionKey: input.hostSessionKey,
-      repoId: input.repoId,
-      branch: input.branch,
-      baseCommit: input.baseCommit,
-      status: state.workContextStatus ?? HEAL_STATUS,
-      guarantees: input.guarantees,
-      seq: state.seqEpoch === null ? ALLOCATION_FAILED : { epoch: state.seqEpoch, n: 0 },
-      // First-wins: a live session with this id bound to ANOTHER repo stops
-      // the walk rather than spawning a sibling for the foreign repo.
-      recovery: true,
-      liveSessionId: refusedSessionId,
-      deadlineMs,
-    });
-    if (ladder.outcome !== "registered") {
-      return null;
+    if (!(await writeStamp(input, now, "walking", deadlineMs))) {
+      return FAILED;
     }
-    if (!(await switchState(input, refusedSessionId, ladder.sessionId, ladder.developerId))) {
-      return null;
-    }
-    if (ladder.sessionId !== refusedSessionId) {
-      // The refused life's stragglers are withheld from every later flush on
-      // this repo (spool/refused-lives.ts), then the next life's work context.
-      await recordRefusedLife(input.home, input.repoKey, refusedSessionId, now);
-      await spoolNextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
-    }
-    return { refusedSessionId, sessionId: ladder.sessionId };
+    await beforeWalk?.();
+    const result = await walk(input, state, refusal, deadlineMs, now);
+    await writeStamp(input, now, "done", deadlineMs);
+    return result;
   };

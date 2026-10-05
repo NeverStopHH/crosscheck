@@ -26,6 +26,7 @@ import {
 import {
   ladderRungs,
   ladderStart,
+  lifeRungOf,
   lifeSessionId,
   readEndedLifeRung,
 } from "../state/session-lineage.ts";
@@ -152,6 +153,12 @@ export interface RegisterLadderInput {
   /** The crosscheck session the state file is on, when there is one. */
   readonly liveSessionId: string | null;
   /**
+   * A life the caller KNOWS is ended — the hub just refused it as ended
+   * (flows/heal-session.ts). It counts like an end the lineage wrote down, so
+   * the walk starts above it instead of spending a round trip on a sure 409.
+   */
+  readonly endedSessionId?: string;
+  /**
    * Wall-clock end of the walk (`Date.now()` ms), for a walk that runs inside
    * a hook's flush (flows/heal-session.ts): no rung starts past it, and each
    * request is clamped to what is left. Absent: each rung gets the hub's own
@@ -159,6 +166,10 @@ export interface RegisterLadderInput {
    */
   readonly deadlineMs?: number;
 }
+
+/** The newer of two ended rungs, either of which may be unknown. */
+const newestRung = (left: number | null, right: number | null): number | null =>
+  left === null || right === null ? (left ?? right) : Math.max(left, right);
 
 /** The hub context for one rung: clamped to the walk's deadline, if it has one. */
 const rungContext = (input: RegisterLadderInput): HubContext | null => {
@@ -206,7 +217,10 @@ export const registerSessionLadder = async (
   const start = ladderStart(
     baseId,
     input.liveSessionId,
-    await readEndedLifeRung(input.home, input.hostSessionKey, baseId),
+    newestRung(
+      await readEndedLifeRung(input.home, input.hostSessionKey, baseId),
+      input.endedSessionId === undefined ? null : lifeRungOf(baseId, input.endedSessionId),
+    ),
   );
   const rungs = ladderRungs(start);
   for (const rung of rungs) {
