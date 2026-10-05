@@ -17747,6 +17747,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "every reaper pass reads every outcome on the hub to find the few past the window",
   },
+  {
+    label: "--mine says 'last 56 days' over a view that began this morning",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "  Date.parse(view.sinceIso) > Date.parse(view.untilIso) - view.days * MS_PER_DAY;",
+    to: "  false;",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a person reads eight weeks of silence where nothing could have been recorded",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17837,6 +17845,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 1
  * PRINTS: packages/cli/test/pilot-render.test.ts 21
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1

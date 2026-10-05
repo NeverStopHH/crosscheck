@@ -28,6 +28,7 @@ const INDENT = "  ";
 /** A source the hub could not name — work that is not this repo's, or is gone. */
 const UNNAMED_SOURCE = "work this repo cannot name";
 const ISO_DAY_CHARS = 10;
+const MS_PER_DAY = 86_400_000;
 
 type Tally = Pick<SourceTally, "followed" | "overrode" | "notRelevantNow" | "noise" | "unmarked">;
 
@@ -49,8 +50,22 @@ const day = (iso: string): string => bareUntrusted(iso.slice(0, ISO_DAY_CHARS));
 
 const plural = (count: number, word: string): string => `${String(count)} ${word}${count === 1 ? "" : "s"}`;
 
+/**
+ * WHERE COUNTING STARTS (07 §13.9): the hub clips the window to the instant
+ * outcomes became recordable here, and a header that still said "last 56
+ * days" over a view that began this morning would name a window nothing was
+ * counted in. A start the client cannot read is treated as unclipped.
+ */
+const isClipped = (view: MyHintOutcomes): boolean =>
+  Date.parse(view.sinceIso) > Date.parse(view.untilIso) - view.days * MS_PER_DAY;
+
+const windowWords = (view: MyHintOutcomes): string =>
+  isClipped(view)
+    ? `since ${day(view.sinceIso)}, when outcomes became recordable here (..${day(view.untilIso)})`
+    : `last ${plural(view.days, "day")} (${day(view.sinceIso)}..${day(view.untilIso)})`;
+
 const headerLines = (view: MyHintOutcomes): readonly string[] => [
-  `your hint outcomes on ${bareUntrusted(view.repo)} · last ${plural(view.days, "day")} (${day(view.sinceIso)}..${day(view.untilIso)})`,
+  `your hint outcomes on ${bareUntrusted(view.repo)} · ${windowWords(view)}`,
   QUOTED_DATA_NOTICE,
 ];
 
