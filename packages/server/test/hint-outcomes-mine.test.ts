@@ -91,22 +91,25 @@ describe("GET /api/hint-outcomes/mine", () => {
     expect(view).toMatchObject(tally({ received: 3, unmarked: 3 }));
   });
 
-  test("the later word stands, across an outcome and the noise label", async () => {
+  test("the later word stands, between two outcomes and across the noise label", async () => {
     // Arrange — Ken's context: followed, then labelled noise by the person.
     // Mike's context: labelled noise, then the agent said it was followed.
+    // Ken's claim: not relevant now, then overrode with a reason.
     const world = await createOutcomeWorld();
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", reason: "reused it" });
     await labelNoise(world, world.nick, world.delivered.mikeContext);
+    await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "not_relevant_now", reason: "later" });
     world.harness.clock.advanceSeconds(60);
     await labelNoise(world, world.nick, world.delivered.kenContext);
     await recordOutcome(world, world.nick, { ref: MIKE_CONTEXT, outcome: "followed" });
+    await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "overrode", reason: OVERRIDE_REASON });
 
     // Act
     const view = await viewOf(await readMine(world, world.nick));
 
     // Assert — and a superseded word's reason is not printed as current
-    expect(view).toMatchObject(tally({ received: 3, followed: 1, noise: 1, unmarked: 1 }));
-    expect(view["reasons"]).toEqual([]);
+    expect(view).toMatchObject(tally({ received: 3, followed: 1, overrode: 1, noise: 1 }));
+    expect(view["reasons"]).toEqual([{ outcome: "overrode", reason: OVERRIDE_REASON, source: "Ken" }]);
   });
 
   test("an older hub's off_target mark is read as the noise it meant", async () => {

@@ -1,0 +1,302 @@
+/**
+ * `mark_hint_outcome` end to end against a REAL hub (1.0 spec 07 §13).
+ *
+ * The agent is the one that knows what a hint led to: it read the pointer,
+ * and it either reused the teammate's decision or went its own way for a
+ * reason. These pin the tool's half of that bargain:
+ *
+ *   · the id the hint PRINTED is enough — the hub finds this session's
+ *     delivery of it, and the person's own view counts it;
+ *   · an override carries its reason, and a reason that looks like a secret
+ *     never leaves the machine;
+ *   · noise is refused BY NAME and pointed at the person's own command: the
+ *     agent may say what happened next, never whether the product was noisy
+ *     (07 D3, PIL-6);
+ *   · a hub that predates outcomes says so instead of failing vaguely.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { rm } from "node:fs/promises";
+
+import { createDb, createServer } from "@crosscheck/server";
+import { hintDeliveryId } from "@crosscheck/schema";
+
+import { getMyHintOutcomes } from "../src/http/hint-outcomes.ts";
+import { prepareMcp } from "../src/mcp/context.ts";
+import type { McpContext } from "../src/mcp/context.ts";
+import { findTool } from "../src/mcp/tools/index.ts";
+import {
+  NOISE_IS_THE_PERSONS_LABEL,
+  OUTCOMES_NOT_SERVED,
+  REASON_SECRET_REFUSAL,
+} from "../src/mcp/tools/mark-hint-outcome.ts";
+import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import { writeSessionState } from "../src/state/session-state.ts";
+import type { Env } from "../src/index.ts";
+import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
+import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
+import { makeHome, makeRepo } from "./helpers.ts";
+
+const ADMIN_TOKEN = "outcome-tool-admin";
+const REPO_ID = "github.com/acme/api";
+const NICK_SESSION = "cc_outcome-nick-uuid";
+const KEN_SESSION = "cc_outcome-ken-uuid";
+const KEN_CONTEXT = `wc_${KEN_SESSION}`;
+/** A synthetic AWS example key, the same fixture secret-scan.test.ts uses. */
+const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
+
+/** The full corpus twice over, under a loaded runner (mcp-hostile-hub.test.ts says why). */
+const CORPUS_TIMEOUT_MS = 20_000;
+
+let server: ReturnType<typeof Bun.serve>;
+let oldHub: ReturnType<typeof Bun.serve>;
+let hostileHub: ReturnType<typeof Bun.serve>;
+/** What the hostile hub answers next; rebound per payload. */
+let hostileAnswer: () => Response = () => Response.json({}, { status: 500 });
+let hubUrl: string;
+let nickEnv: Env;
+let nickRepo: string;
+const cleanups: string[] = [];
+
+const send = async (path: string, apiKey: string, body: unknown, method = "POST"): Promise<Response> =>
+  fetch(`${hubUrl}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+const developer = async (name: string, email: string): Promise<{ id: string; apiKey: string }> => {
+  const response = await send("/api/developers", ADMIN_TOKEN, { name, email });
+  const body = (await response.json()) as { data: { developer: { id: string }; apiKey: string } };
+  return { id: body.data.developer.id, apiKey: body.data.apiKey };
+};
+
+const envelope = (developerId: string, sessionId: string, kind: string, body: unknown): unknown => ({
+  cx: "0.1",
+  id: `env_${crypto.randomUUID()}`,
+  ts: new Date().toISOString(),
+  producer: { developerId, agentKind: "claude-code", sessionId },
+  kind,
+  body,
+});
+
+const seat = async (who: { id: string; apiKey: string }, sessionId: string, title: string): Promise<void> => {
+  await send("/api/sessions", who.apiKey, {
+    id: sessionId,
+    agentKind: "claude-code",
+    repo: REPO_ID,
+    branch: "main",
+    baseCommit: "a1b2c3d4",
+    status: "analyzing",
+  });
+  await send("/api/records", who.apiKey, {
+    records: [
+      envelope(who.id, sessionId, "work_context", {
+        id: `wc_${sessionId}`,
+        sessionId,
+        title,
+        status: "analyzing",
+        createdAt: new Date().toISOString(),
+      }),
+    ],
+  });
+};
+
+const contextFor = async (env: Env): Promise<McpContext> => {
+  const setup = await prepareMcp(env, nickRepo);
+  if (!setup.ok) {
+    throw new Error(`prepareMcp failed: ${setup.message}`);
+  }
+  return setup.ctx;
+};
+
+const call = async (args: unknown, env: Env = nickEnv): Promise<{ text: string; isError: boolean }> => {
+  const tool = findTool("mark_hint_outcome");
+  if (tool === undefined) {
+    throw new Error("no tool mark_hint_outcome");
+  }
+  const result = await tool.run(await contextFor(env), args);
+  return { text: result.content.map((part) => part.text).join("\n"), isError: result.isError === true };
+};
+
+const mine = async () => {
+  const ctx = await contextFor(nickEnv);
+  const view = await getMyHintOutcomes(ctx.hub, { repo: REPO_ID });
+  if (!view.ok) {
+    throw new Error(`view failed: ${view.message}`);
+  }
+  return view.data;
+};
+
+beforeAll(async () => {
+  const db = await createDb();
+  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  hubUrl = `http://127.0.0.1:${String(server.port)}`;
+  // A hub from before 07 §13: every route it lacks is its own `notFound`
+  // envelope (server/src/app.ts), exactly as a real older hub answers.
+  oldHub = Bun.serve({
+    port: 0,
+    fetch: () =>
+      Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
+  });
+  hostileHub = Bun.serve({ port: 0, fetch: () => hostileAnswer() });
+  const nick = await developer("Nick", "nick-outcome-tool@example.com");
+  const ken = await developer("Ken", "ken-outcome-tool@example.com");
+  await seat(ken, KEN_SESSION, "Widen the filter row");
+  await seat(nick, NICK_SESSION, "Rework the importer");
+  await send("/api/records", nick.apiKey, {
+    records: [
+      envelope(nick.id, NICK_SESSION, "hint_delivery", {
+        id: hintDeliveryId(NICK_SESSION, KEN_CONTEXT),
+        sessionId: NICK_SESSION,
+        refKind: "work_context",
+        refId: KEN_CONTEXT,
+        channel: "prompt_hint",
+        deliveredAt: new Date().toISOString(),
+      }),
+    ],
+  });
+  await send("/api/team-settings", ADMIN_TOKEN, { repo: REPO_ID, pilotEnrolled: true }, "PUT");
+  const home = await makeHome("outcome-tool");
+  nickRepo = await makeRepo("outcome-tool", { remote: "git@github.com:acme/api.git" });
+  cleanups.push(home, nickRepo);
+  const startedAt = new Date().toISOString();
+  await writeSessionState(home, {
+    hostSessionKey: "outcome-nick-uuid",
+    crosscheckSessionId: NICK_SESSION,
+    workContextId: `wc_${NICK_SESSION}`,
+    repoId: REPO_ID,
+    repoRoot: nickRepo,
+    hubUrl,
+    developerId: nick.id,
+    startedAt,
+    lastHeartbeatAt: startedAt,
+    seenTargets: [],
+    workContextTitle: "Rework the importer",
+    workContextStatus: "analyzing",
+  });
+  nickEnv = { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hubUrl, CROSSCHECK_API_KEY: nick.apiKey };
+});
+
+afterAll(async () => {
+  server.stop(true);
+  oldHub.stop(true);
+  hostileHub.stop(true);
+  await Promise.all(cleanups.map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("mark_hint_outcome", () => {
+  test("the id the hint printed records what it led to, and the person's own view counts it", async () => {
+    // Act
+    const result = await call({ ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("followed");
+    expect(result.text).toContain(KEN_CONTEXT);
+    expect(await mine()).toMatchObject({ received: 1, followed: 1 });
+  });
+
+  test("a different word later supersedes, and the answer says what it replaced", async () => {
+    // Act
+    const result = await call({
+      ref: KEN_CONTEXT,
+      outcome: "overrode",
+      reason: "kept the narrow row: the wide one breaks the mobile layout",
+    });
+
+    // Assert
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("followed");
+    expect(await mine()).toMatchObject({ received: 1, followed: 0, overrode: 1 });
+  });
+
+  test("an override without its reason is refused before any round trip", async () => {
+    // Act
+    const result = await call({ ref: KEN_CONTEXT, outcome: "overrode" });
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("reason");
+  });
+
+  test("noise is refused by name, and pointed at the person's own label", async () => {
+    // Act
+    const result = await call({ ref: KEN_CONTEXT, outcome: "noise" });
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(NOISE_IS_THE_PERSONS_LABEL);
+    expect(result.text).toContain("crosscheck noise");
+  });
+
+  test("a reason that looks like a secret never leaves the machine", async () => {
+    // Arrange
+    const before = await mine();
+
+    // Act
+    const result = await call({
+      ref: KEN_CONTEXT,
+      outcome: "not_relevant_now",
+      reason: `the deploy key ${CREDENTIAL} was already rotated`,
+    });
+
+    // Assert — refused HERE, in the tool's own words, not by the hub's scan
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(REASON_SECRET_REFUSAL);
+    expect(await mine()).toMatchObject({
+      notRelevantNow: before.notRelevantNow,
+      reasons: before.reasons,
+    });
+  });
+
+  test("a hub that predates outcomes says so, and nothing pretends to be recorded", async () => {
+    // Arrange
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(oldHub.port)}` };
+
+    // Act
+    const result = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(OUTCOMES_NOT_SERVED);
+  });
+});
+
+/** Every rule that holds for injected text, over a whole tool reply, line by line. */
+const assertSafeReply = (text: string, where: string): void => {
+  expect(text.includes("\r"), where).toBe(false);
+  text.split("\n").forEach((line, index) => {
+    assertUntrustedCharacters(line, `${where} line ${String(index + 1)}`);
+  });
+  if (text.includes("«")) {
+    expect(text.includes(QUOTED_DATA_NOTICE), `${where}: notice`).toBe(true);
+  }
+};
+
+describe("a hostile hub cannot speak through mark_hint_outcome's reply", () => {
+  test(
+    "every string the hub chooses — ids, outcome words, refusal code and message — holds the invariants",
+    async () => {
+      // Arrange
+      const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
+
+      for (const entry of INJECTION_CORPUS) {
+        // Act — a success that names everything with the payload, then a refusal
+        hostileAnswer = () =>
+          Response.json({
+            ok: true,
+            data: { id: entry.payload, deliveryId: entry.payload, outcome: entry.payload, repeated: false, replaced: entry.payload },
+          });
+        const recorded = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
+        hostileAnswer = () =>
+          Response.json({ ok: false, error: { code: entry.payload, message: entry.payload } }, { status: 422 });
+        const refused = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
+
+        // Assert
+        assertSafeReply(recorded.text, `recorded/${entry.id}`);
+        assertSafeReply(refused.text, `refused/${entry.id}`);
+      }
+    },
+    CORPUS_TIMEOUT_MS,
+  );
+});

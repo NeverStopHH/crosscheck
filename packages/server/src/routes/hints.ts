@@ -27,6 +27,7 @@ import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
 import { listLandedNotices } from "../services/landed-notices.ts";
 import { listUndeliveredAnswers } from "../services/questions.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
+import { readTeamSettings } from "../services/team-settings.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -78,7 +79,10 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // FOUR, with the author's notices (docs/1.0/landed-changes.md, step 4):
     // told on the author's next prompt, so they ride the one call the prompt
     // already makes — the same list the briefing reads, the same repo scope.
-    const [candidates, answers, coverage, notices] = await Promise.all([
+    // FIVE, with whether this repo records hint outcomes (07 §13): the
+    // connector appends its outcome clause only when it does, so a repo
+    // nobody enrolled is never invited into a call the hub would refuse.
+    const [candidates, answers, coverage, notices, settings] = await Promise.all([
       listHintCandidates(deps, c.get("developer").id, parsed.data),
       // `repo` on BOTH: the answers are scoped exactly like the candidates
       // beside them, so solicited substance from another codebase cannot land
@@ -86,6 +90,7 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       listUndeliveredAnswers(deps, c.get("developer").id, parsed.data.repo),
       readCoverage(deps, c.get("developer").id, parsed.data.repo),
       listLandedNotices(deps, c.get("developer").id, parsed.data.repo),
+      readTeamSettings(deps, parsed.data.repo),
     ]);
     // 07 §3.5, proof 5: this answer carried a coverage record, and
     // whether it did is what 03 made mandatory and nobody counted.
@@ -94,7 +99,7 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       surface: "api-hints-candidates",
       coverage,
     });
-    return ok(c, { candidates, answers, coverage, notices });
+    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: settings.pilotEnrolled });
   });
 
   router.get("/tripwire", async (c) => {

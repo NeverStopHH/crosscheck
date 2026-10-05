@@ -143,6 +143,9 @@ const deliveryStates = (repo: string, since: Date, who: SQL): SQL => sql`
     FROM stated
   )`;
 
+/** The caller's own deliveries — the one recipient this view is ever about. */
+const receivedBy = (developerId: string): SQL => sql`s.developer_id = ${developerId}`;
+
 type TallyRow = {
   readonly source_id: string | null;
   readonly source: string | null;
@@ -184,7 +187,7 @@ const readTallies = async (
   since: Date,
 ): Promise<readonly TallyRow[]> => {
   const rows = await deps.db.execute<TallyRow>(sql`
-    ${deliveryStates(input.repo, since, sql`s.developer_id = ${input.developerId}`)}
+    ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
     SELECT st.source_id, d.name AS source, st.state, count(*)::int AS n
     FROM states st LEFT JOIN developers d ON d.id = st.source_id
     GROUP BY st.source_id, d.name, st.state`);
@@ -198,7 +201,7 @@ const readReasons = async (
   since: Date,
 ): Promise<readonly ReasonRow[]> => {
   const rows = await deps.db.execute<ReasonRow>(sql`
-    ${deliveryStates(input.repo, since, sql`s.developer_id = ${input.developerId}`)}
+    ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
     SELECT st.state AS outcome, st.reason, d.name AS source, count(*) OVER ()::int AS total
     FROM states st LEFT JOIN developers d ON d.id = st.source_id
     WHERE st.reason IS NOT NULL

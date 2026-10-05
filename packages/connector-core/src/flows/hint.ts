@@ -42,6 +42,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
+import { withOutcomeClause } from "../hints/outcome-clause.ts";
 import {
   renderAnswerHint,
   renderClaimHint,
@@ -195,6 +196,15 @@ const selectNotice = (
 };
 
 /**
+ * 07 §13's one appended clause — after the coverage note, so it is the first
+ * thing the cap drops — and only where the hub said it records outcomes: an
+ * invitation to a call the hub would refuse is noise. It rides the EMITTED
+ * text, never the remembered one, for the coverage note's reason.
+ */
+const withOutcome = (text: string, refId: string, recordsOutcomes: boolean): string =>
+  recordsOutcomes ? withOutcomeClause(text, refId) : text;
+
+/**
  * The whole prompt-time pipeline; returns the rendered hint or "" (silence).
  * Every branch that cannot prove a hint is worth injecting returns "".
  */
@@ -261,7 +271,7 @@ export const selectAndRenderHint = async (
       // delivery record is what dedup and the echo-loop exclusion hash, and a
       // caveat that changed from day to day would defeat both.
       return (await rememberHintDelivery(input, state, delivery, true))
-        ? withCoverageNote(text, result.data.coverage, input.now)
+        ? withOutcome(withCoverageNote(text, result.data.coverage, input.now), delivery.refId, result.data.recordsOutcomes)
         : "";
     }
   }
@@ -308,5 +318,9 @@ export const selectAndRenderHint = async (
   if (!remembered) {
     return "";
   }
-  return withCoverageNote(delivery.text, result.data.coverage, input.now);
+  return withOutcome(
+    withCoverageNote(delivery.text, result.data.coverage, input.now),
+    delivery.refId,
+    result.data.recordsOutcomes,
+  );
 };

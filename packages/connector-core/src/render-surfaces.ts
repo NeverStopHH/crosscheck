@@ -34,6 +34,7 @@ import {
   renderTripwireReason,
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
+import { withOutcomeClause } from "./hints/outcome-clause.ts";
 import {
   quotingText,
   renderDiagnosis,
@@ -1179,7 +1180,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "hint-flow",
     delivery: "unsolicited",
     module: "src/flows/hint.ts",
-    note: "emits renderClaimHint/renderPointerHint output verbatim (registered above)",
+    note: "emits renderClaimHint/renderPointerHint output verbatim, plus withOutcomeClause (both registered above)",
     corpusCoveredBy: ["test/hint-flow.test.ts"],
   },
   {
@@ -1282,5 +1283,32 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     delivery: "pulled",
     module: "src/mcp/tools/search-related-work.ts",
     note: "renders through renderSearchResults/renderUnusableQuery/renderUnappliedFilters (registered above)",
+  },
+  {
+    // 07 §13. Echoes only the caller's own ref and the hub's outcome words,
+    // all through safeId; the reason is never echoed, and a hub refusal goes
+    // through hubFailure (mcp-tools-shared, registered above).
+    kind: "composite",
+    name: "mcp-tool-mark-hint-outcome",
+    delivery: "pulled",
+    module: "src/mcp/tools/mark-hint-outcome.ts",
+    note: "ids and outcome words through safeId; hub failures through hubFailure; the reason is never echoed",
+    corpusCoveredBy: ["test/mark-hint-outcome-tool.test.ts"],
+  },
+  {
+    // 07 §13. The clause a delivered hint ends with on a repo that records
+    // outcomes. UNSOLICITED, like the hint it rides; the ref it names is the
+    // delivery's own and goes through safeId, so the payload is planted in
+    // the ref as well as in every slot of the pointer it is appended to.
+    kind: "corpus",
+    name: "outcome-clause",
+    delivery: "unsolicited",
+    module: "src/hints/outcome-clause.ts",
+    framing: "framed",
+    render: (payload) =>
+      withOutcomeClause(
+        renderPointerHint({ context: hintContextWith(payload), claimCount: 2, drift: NO_DRIFT, now: NOW }),
+        payload,
+      ),
   },
 ];

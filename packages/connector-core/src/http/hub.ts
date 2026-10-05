@@ -1636,6 +1636,12 @@ export interface HintCandidatesResult {
    * too old to send the field.
    */
   readonly notices: readonly LandedNotice[];
+  /**
+   * Whether this repo records what a hint led to (07 §13) — the one fact the
+   * outcome clause needs. False from any hub too old to send it, so no hint
+   * invites a call that hub would answer 404.
+   */
+  readonly recordsOutcomes: boolean;
 }
 
 const HintCandidatesResponseSchema = z
@@ -1644,6 +1650,7 @@ const HintCandidatesResponseSchema = z
     answers: z.array(z.unknown()).default([]),
     coverage: z.unknown().optional(),
     notices: z.array(z.unknown()).default([]),
+    recordsOutcomes: z.boolean().default(false),
   })
   .transform(
     (value): HintCandidatesResult => ({
@@ -1652,6 +1659,7 @@ const HintCandidatesResponseSchema = z
       answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
       coverage: parseCoverage(value.coverage),
       notices: parseRows(value.notices, LandedNoticeSchema).rows,
+      recordsOutcomes: value.recordsOutcomes,
     }),
   );
 
