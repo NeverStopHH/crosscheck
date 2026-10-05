@@ -313,6 +313,13 @@ heal that lands spools the life's work context, a heal onto the same id too — 
 spent by another conversation's flush or an older connector; a second copy is a duplicate to the hub. ACP's
 registration flush now carries the healer, as SessionStart's does on the other hosts.
 
+**One deferred end per life** (review-2 finding 3). The `.pending-end` marker was one per HOST session, so a
+conversation resumed after a deferred end wrote the next life's marker over it: the earlier life was never ended
+from this machine (left to the hub's reaper), its `session.ended` position was lost, and it never reached doctor's
+`unclosed sessions` count, which counts markers as they age out. A later life's marker now carries its rung after
+`@` (`<slug>@r<n>.pending-end`; the base life keeps the old name), reap reads the slug back from the part before
+it, and each life's end waits for the conversation's backlog and lands — or ages out and is counted — on its own.
+
 ### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a

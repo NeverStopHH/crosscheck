@@ -71,7 +71,7 @@ import {
   spoolDataPath,
   spoolDir,
   spoolFlushLockPath,
-  spoolPendingEndPath,
+  PENDING_END_LIFE_SEPARATOR,
 } from "../config/paths.ts";
 import {
   DROPS_SUFFIX,
@@ -380,14 +380,31 @@ export type DeferredEnder = (
   seq?: SeqField,
 ) => Promise<DeferredEndOutcome>;
 
-const pendingEndSlugs = async (
+/** A `.pending-end` marker on disk: the host session whose life it ends, and its file. */
+interface PendingEndMarker {
+  readonly slug: string;
+  readonly path: string;
+}
+
+/**
+ * Every deferred end in the repo's spool, ONE PER LIFE (config/paths.ts
+ * spoolPendingEndPath, review-2 finding 3): the host session's slug is the
+ * name up to PENDING_END_LIFE_SEPARATOR, which no slug holds.
+ */
+const pendingEndMarkers = async (
   home: string,
   key: string,
-): Promise<readonly string[]> => {
+): Promise<readonly PendingEndMarker[]> => {
   try {
     return (await readdir(spoolDir(home, key)))
       .filter((name) => name.endsWith(PENDING_END_SUFFIX))
-      .map((name) => name.slice(0, -PENDING_END_SUFFIX.length));
+      .map((name) => {
+        const stem = name.slice(0, -PENDING_END_SUFFIX.length);
+        return {
+          slug: stem.split(PENDING_END_LIFE_SEPARATOR)[0] ?? stem,
+          path: join(spoolDir(home, key), name),
+        };
+      });
   } catch {
     return [];
   }
@@ -445,11 +462,10 @@ const isMarkerExpired = (deferredAt: Date, now: Date): boolean =>
 const endDeferredSession = async (
   home: string,
   key: string,
-  slug: string,
+  { slug, path }: PendingEndMarker,
   ender: DeferredEnder | undefined,
   now: Date,
 ): Promise<void> => {
-  const path = spoolPendingEndPath(home, key, slug);
   const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
   // A state file naming THIS life again means it came back: it will end
   // itself. A state file naming the NEXT life does not — this one is over.
@@ -530,8 +546,7 @@ export const hasSpendablePendingEnd = async (
   key: string,
   now: Date,
 ): Promise<boolean> => {
-  for (const slug of await pendingEndSlugs(home, key)) {
-    const path = spoolPendingEndPath(home, key, slug);
+  for (const { slug, path } of await pendingEndMarkers(home, key)) {
     const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
     if (await isLifeLive(home, slug, parsed.success ? parsed.data.crosscheckSessionId : null)) {
       continue;
@@ -610,8 +625,8 @@ export const reapSpool = async (
       // After the reaping, so a spool emptied in this very pass counts as
       // drained. Sequential rather than parallel: each one may cost a hub call
       // out of the hook's spare time.
-      for (const slug of await pendingEndSlugs(home, key)) {
-        await endDeferredSession(home, key, slug, endDeferred, now);
+      for (const marker of await pendingEndMarkers(home, key)) {
+        await endDeferredSession(home, key, marker, endDeferred, now);
       }
       for (const slug of await dropSlugs(home, key)) {
         await reapOrphanDrops(home, key, slug, now);

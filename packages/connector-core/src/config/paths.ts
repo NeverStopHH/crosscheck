@@ -152,12 +152,25 @@ export const spoolCursorPath = (
  * deferral was made, which is what MAX_SPOOL_AGE_DAYS is measured against.
  *
  * The suffix keeps it out of the `.jsonl` and `.drops` listings that reap walks.
+ *
+ * ONE PER LIFE, not per host session (review-2 finding 3): a conversation
+ * resumed after a deferred end ends again under the same slug, and a second
+ * marker written over the first lost that life's end for good. The base life
+ * keeps the name every earlier connector wrote; a later life's rung follows
+ * PENDING_END_LIFE_SEPARATOR, which no slug holds — `encodeURIComponent`
+ * escapes it — so reap reads the slug back unambiguously.
  */
+export const PENDING_END_LIFE_SEPARATOR = "@";
+
+const pendingEndStem = (slug: string, rung: number): string =>
+  rung === 0 ? slug : `${slug}${PENDING_END_LIFE_SEPARATOR}r${String(rung)}`;
+
 export const spoolPendingEndPath = (
   home: string,
   key: string,
   slug: string,
-): string => join(spoolDir(home, key), `${slug}.pending-end`);
+  rung = 0,
+): string => join(spoolDir(home, key), `${pendingEndStem(slug, rung)}.pending-end`);
 
 /** Append-only ledger of dropped batches: the source of truth for `spoolDropped`. */
 export const spoolDropsPath = (

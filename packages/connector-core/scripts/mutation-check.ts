@@ -17695,6 +17695,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/resumed-session.test.ts`,
     because: "review-2 finding 1: a register the hub refused at session/new stays unregistered until the first capture, its work context never reaching the hub before it",
   },
+  {
+    label: "a resumed life's deferred end overwrites the one before it",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    lifeRungOf(crosscheckSessionIdFor(input.hostSessionKey), lifeId) ?? 0,\n",
+    to: "    0,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 finding 3: the earlier life is never ended from this machine, its session.ended position is lost, and doctor's unclosed count never sees it",
+  },
+  {
+    label: "reap reads a later life's marker as a host session of its own",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "          slug: stem.split(PENDING_END_LIFE_SEPARATOR)[0] ?? stem,\n",
+    to: "          slug: stem,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a resumed life's deferred end is published while its records are still on disk, under a spool nobody writes",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17954,7 +17970,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 13
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 15
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 17
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

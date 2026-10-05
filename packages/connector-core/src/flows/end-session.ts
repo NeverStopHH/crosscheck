@@ -33,8 +33,8 @@ import { readSessionSpool } from "../spool/files.ts";
 import { flushSpool } from "../spool/flush.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { seqAt } from "../capture/seq.ts";
-import { recordEndedLife } from "../state/session-lineage.ts";
-import { allocateSeq, deleteSessionState } from "../state/session-state.ts";
+import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
+import { allocateSeq, crosscheckSessionIdFor, deleteSessionState } from "../state/session-state.ts";
 import type { SeqField } from "@crosscheck/schema";
 
 export interface EndSessionFlowInput {
@@ -58,10 +58,25 @@ export interface EndSessionFlowResult {
   readonly seq: SeqField;
 }
 
+/**
+ * The marker of ONE life's deferred end (config/paths.ts spoolPendingEndPath):
+ * a conversation resumed after a deferred end ends again under the same slug,
+ * and one marker per host session was overwritten by the next life's
+ * (review-2 finding 3).
+ */
+const pendingEndPathOf = (input: EndSessionFlowInput, lifeId: string): string =>
+  spoolPendingEndPath(
+    input.home,
+    input.repoKey,
+    sessionSlug(input.hostSessionKey),
+    lifeRungOf(crosscheckSessionIdFor(input.hostSessionKey), lifeId) ?? 0,
+  );
+
 export const endSessionFlow = async (
   input: EndSessionFlowInput,
 ): Promise<EndSessionFlowResult> => {
   const slug = sessionSlug(input.hostSessionKey);
+  const pendingEndPath = pendingEndPathOf(input, input.crosscheckSessionId);
 
   await flushSpool(
     input.hub,
@@ -88,7 +103,7 @@ export const endSessionFlow = async (
   // reason rather than a silence.
   const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0);
   await writePrivateFile(
-    spoolPendingEndPath(input.home, input.repoKey, slug),
+    pendingEndPath,
     `${JSON.stringify({
       crosscheckSessionId: input.crosscheckSessionId,
       at: input.now().toISOString(),
@@ -127,7 +142,7 @@ export const endSessionFlow = async (
   const losses = await readTelemetryLossReport(input.home, input.repoKey);
   const result = await endSession(input.hub, input.crosscheckSessionId, seq, losses);
   if (result.ok) {
-    await removeFile(spoolPendingEndPath(input.home, input.repoKey, slug));
+    await removeFile(pendingEndPath);
   }
   return { undelivered, ended: result.ok, seq };
 };

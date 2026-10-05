@@ -8,12 +8,13 @@
  * front of the hub turns those dials; everything else is the shipped flows.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 
 import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
-import { repoKey } from "../src/config/paths.ts";
+import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
+import { repoKey, spoolDir } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
@@ -28,6 +29,7 @@ import { appendRecords } from "../src/spool/append.ts";
 import { readDropDetail } from "../src/spool/drops.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { reapSpool } from "../src/spool/reap.ts";
+import { readUnclosedSummary } from "../src/spool/unclosed.ts";
 import { allocateSeq, readSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -57,6 +59,7 @@ let apiKey: string;
 let developerId: string;
 /** The proxy's dials. */
 let refuseRegisters = false;
+let refuseRecords = false;
 let refuseEnds = false;
 let registerDelayMs = 0;
 const registerIds: string[] = [];
@@ -203,6 +206,9 @@ beforeAll(async () => {
         if (registerDelayMs > 0) {
           await Bun.sleep(registerDelayMs);
         }
+      }
+      if (request.method === "POST" && pathname === "/api/records" && refuseRecords) {
+        return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
       }
       if (request.method === "POST" && pathname.endsWith("/end") && refuseEnds) {
         return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
@@ -555,5 +561,99 @@ describe("a heal asked from a hook in another repo (review finding 7)", () => {
     expect(rows).toEqual([{ repo: REPO_ID }]);
     const contexts = await raw<{ id: string }>("select id from work_contexts where session_id = $1", [next]);
     expect(contexts).toEqual([{ id: `wc_${next}` }]);
+  });
+});
+
+/**
+ * TWO DEFERRED ENDS OF ONE CONVERSATION (review-2 finding 3). The marker was
+ * one per HOST session, so the resumed life's SessionEnd wrote over the one
+ * its predecessor left: that life was never ended from this machine, its
+ * `session.ended` position was lost, and no count ever said so.
+ */
+const pendingEnds = async (fx: Fixture): Promise<readonly string[]> =>
+  (await readdir(spoolDir(fx.home, fx.key))).filter((name) => name.endsWith(".pending-end"));
+
+describe("a resumed life's end beside a deferred end before it", () => {
+  test("each life keeps its own marker, and the next reap ends the earlier one", async () => {
+    // Arrange: life K's end deferred — its last edit undelivered, the hub
+    // refusing records and ends — then the resumed life's edit
+    const fx = await fixture("two-ends");
+    const k = await register(fx);
+    await captureTarget(fx, "src/k.ts");
+    await flushAsHook(fx);
+    refuseRecords = true;
+    refuseEnds = true;
+    await captureTarget(fx, "src/k-late.ts");
+    await endViaFlow(fx, fx.proxied);
+    const r1 = await register(fx, fx.proxied);
+    await captureTarget(fx, "src/r1.ts");
+    refuseRecords = false;
+    refuseEnds = false;
+
+    // Act: the resumed life's own end, then the next SessionStart's reap
+    const endR1 = await endViaFlow(fx);
+    await reapAsSessionStart(fx);
+
+    // Assert: both lives ended, each at the position its own end took
+    expect(endR1.ended).toBe(true);
+    expect(await isEnded(k.crosscheckSessionId)).toBe(true);
+    const ends = await raw<{ session_id: string; seq_reason: string }>(
+      "select session_id, seq_reason from session_events where kind = 'session.ended' and session_id like $1 order by session_id",
+      [`${k.crosscheckSessionId}%`],
+    );
+    expect(ends).toEqual([
+      { session_id: k.crosscheckSessionId, seq_reason: "sequenced" },
+      { session_id: r1.crosscheckSessionId, seq_reason: "sequenced" },
+    ]);
+    expect(await targetsOf(k.workContextId)).toEqual(["src/k-late.ts", "src/k.ts"]);
+    expect(await pendingEnds(fx)).toEqual([]);
+  });
+
+  test("ends that never land age out into the unclosed count, one per life", async () => {
+    // Arrange: both lives' ends deferred while the hub refuses records and ends
+    const fx = await fixture("two-ends-aged");
+    await register(fx);
+    refuseRecords = true;
+    refuseEnds = true;
+    await captureTarget(fx, "src/k.ts");
+    await endViaFlow(fx, fx.proxied);
+    await register(fx, fx.proxied);
+    await captureTarget(fx, "src/r1.ts");
+    await endViaFlow(fx, fx.proxied);
+    refuseRecords = false;
+    refuseEnds = false;
+
+    // Act: a sweep past the age bound
+    await reapSpool(fx.home, fx.key, new Date(Date.now() + (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY));
+
+    // Assert: what doctor's `unclosed sessions` line reads
+    expect((await readUnclosedSummary(fx.home, fx.key)).sessions).toBe(2);
+    expect(await pendingEnds(fx)).toEqual([]);
+  });
+
+  test("a later life's deferred end waits for the conversation's backlog, then lands", async () => {
+    // Arrange: life 0 ended; the resumed life's end deferred with its edit on disk
+    const fx = await fixture("later-marker");
+    const k = await register(fx);
+    await endViaFlow(fx);
+    const r1 = await register(fx);
+    await captureTarget(fx, "src/r1.ts");
+    refuseRecords = true;
+    await endViaFlow(fx, fx.proxied);
+    refuseRecords = false;
+
+    // Act: a reap while the backlog is still on disk, then the next life's flush and reap
+    await reapAsSessionStart(fx);
+    const whileOnDisk = await isEnded(r1.crosscheckSessionId);
+    await register(fx);
+    await flushAsHook(fx);
+    await reapAsSessionStart(fx);
+
+    // Assert
+    expect(r1.crosscheckSessionId).toBe(`${k.crosscheckSessionId}~r1`);
+    expect(whileOnDisk).toBe(false);
+    expect(await isEnded(r1.crosscheckSessionId)).toBe(true);
+    expect(await targetsOf(r1.workContextId)).toEqual(["src/r1.ts"]);
+    expect(await pendingEnds(fx)).toEqual([]);
   });
 });
