@@ -88,6 +88,27 @@ describe("a teammate's live sessions, grouped by topic", () => {
     ]);
   });
 
+  test("a blocked branch surfaces even when it is not the freshest", () => {
+    // The line's status is the freshest branch's; a session stuck on another
+    // branch was invisible behind it.
+    const lines = presenceLines([
+      live(0, "feat/fresh"),
+      live(1, "fix/prod-outage", { status: "blocked" }),
+    ]);
+
+    expect(lines[0]).toContain("· status analyzing · blocked on fix/prod-outage · heartbeat");
+  });
+
+  test("a blocked freshest branch is said once, by its status", () => {
+    const lines = presenceLines([
+      live(0, "fix/prod-outage", { status: "blocked" }),
+      live(1, "feat/other"),
+    ]);
+
+    expect(lines[0]).toContain("· status blocked · heartbeat");
+    expect(lines[0]).not.toContain("blocked on");
+  });
+
   test("the status shown is the highest-ranked one on the freshest branch", () => {
     // The freshest session on feat/x is analyzing; an older one on the same
     // branch is implementing. A session on another branch says testing, and

@@ -35,7 +35,7 @@ import {
   axesLabel,
   cloudAgentById,
 } from "@crosscheck/schema";
-import type { ClaimValidity } from "@crosscheck/schema";
+import type { ClaimValidity, SessionStatus } from "@crosscheck/schema";
 import type {
   ContradictionEntry,
   ContradictionSide,
@@ -396,16 +396,34 @@ const renderGhostSection = (input: BriefingInput): Section => {
   };
 };
 
+const BLOCKED_STATUS: SessionStatus = "blocked";
+
+/**
+ * The live branches OTHER than the freshest whose sessions report blocked.
+ * The presence line's status is the freshest branch's, so a session stuck on
+ * another branch was invisible behind it — and a stuck session is the one
+ * fact about a teammate a reader most needs (TOPIC_STATUS_PRECEDENCE ranks
+ * it highest for the same reason). A blocked freshest branch already says
+ * so in its status and is not repeated.
+ */
+const blockedElsewhere = (group: TeammateGroup): readonly string[] =>
+  group.topics
+    .slice(1)
+    .filter((topic) => topic.status === BLOCKED_STATUS)
+    .map((topic) => topic.label);
+
 const renderPresenceSection = (input: BriefingInput): Section => {
   const teammates = groupTeammates(input.presence, input.now);
   const lines = teammates.slice(0, MAX_TEAMMATES).map((group) => {
     const label = group.branches.length === 1 ? "branch" : "branches";
     const drift =
       group.baseCommit === null ? undefined : input.drift?.[group.baseCommit];
+    const blocked = blockedElsewhere(group);
     const facts = [
       `- ${group.name}`,
       `${label} ${boundedTopicList(group.branches)}`,
       `status ${group.status}`,
+      ...(blocked.length === 0 ? [] : [`blocked on ${boundedTopicList(blocked)}`]),
       `heartbeat ${formatAge(group.ageMs)} ago`,
     ];
     // The intent LAST, after drift: the one framed value on a line that is

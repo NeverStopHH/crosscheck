@@ -17688,6 +17688,16 @@ export const MUTATIONS: readonly Mutation[
       "two sessions whose different titles both redact read as agreeing, and the " +
       "topic prints the redaction instead of the branch they share",
   },
+  {
+    label: "the presence line hides a blocked branch behind the freshest one's status",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    .filter((topic) => topic.status === BLOCKED_STATUS)",
+    to: "    .filter(() => false)",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "a teammate stuck on fix/prod-outage reads `status analyzing` because a " +
+      "fresher session on another branch is still analyzing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17867,7 +17877,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 20
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
- * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 3
+ * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 4
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
