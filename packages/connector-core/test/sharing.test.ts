@@ -231,6 +231,13 @@ describe("sharingFindings — the drafts nobody reviewed", () => {
     expect(detailFor(value, "drafts_unreviewed")).toContain("7 of your own drafts");
     expect(detailFor(value, "drafts_unreviewed")).toContain("the oldest captured 2 days ago");
     expect(detailFor(value, "drafts_unreviewed")).toContain("review_draft");
+    // True about visibility: never PUSHED, but readable by whoever pulls.
+    expect(detailFor(value, "drafts_unreviewed")).toContain(
+      "until one is confirmed it is never pushed to a teammate — it shows up, marked derived, only to a teammate who opens or searches your notes",
+    );
+    expect(detailFor(value, "drafts_unreviewed")).not.toContain("shown to nobody");
+    expect(detailFor(value, "drafts_unreviewed")).not.toContain("see none");
+    expect(sharingFindings(value)[0]?.short).toBe("7 own drafts await review — none is pushed to teammates until confirmed (review_draft)");
   });
 
   test("a backlog the hub counted past its listing is told exactly", () => {

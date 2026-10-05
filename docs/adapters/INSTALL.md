@@ -267,11 +267,16 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   model backend on the machine — `doctor` prints a `derive backend` line per
   connector saying whether one resolved — and `set_intent` works for any
   MCP-connected agent either way.
-- **Drafts are yours until you confirm them.** A summarizer draft is shown
-  to no teammate until `review_draft` confirms it. Once per session, on a
+- **Drafts are never pushed until you confirm them.** No summarizer draft is
+  injected into a teammate's session until `review_draft` confirms it; it
+  shows up, marked `provenance derived`, only to a teammate who opens your
+  notes (`get_diagnosis`) or whose search matches it. Once per session, on a
   prompt after the first finished turn, the agent is asked to go through the
   drafts that have waited a day and to ask YOU before it confirms, edits or
-  discards any of them; nothing is published or deleted without that answer.
+  discards any of them. Confirming or editing publishes the draft as your
+  claim; discarding marks it rejected — it stays in the history, labelled
+  rejected, and is never offered to anyone as a finding. Nothing is published
+  or marked without your answer.
 - **`sharing` — "why does my agent share nothing?"** `crosscheck doctor`
   prints one `sharing` line per cause it finds, each reading *your agent
   shares nothing because …; fix: …*: an off switch in the environment

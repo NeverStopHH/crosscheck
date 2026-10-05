@@ -313,10 +313,11 @@ const draftsUnreviewedRule: Rule = (input) => {
       : ` and ${amountOf(drafts.pastHorizon)} past ${String(DRAFT_RETENTION_HORIZON_DAYS)} days (kept: crosscheck never deletes a draft)`;
   return finding(
     "drafts_unreviewed",
-    `teammates see none of your agent's findings because ${amountOf(drafts.size)} of your own drafts on this repo await review${oldestClause(drafts.oldestAgeMs)}, ` +
-      `${amountOf(drafts.due)} of them for over ${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h${old} — a draft is shown to nobody until it is confirmed; ` +
+    `your agent's drafts reach no teammate unasked because ${amountOf(drafts.size)} of your own drafts on this repo await review${oldestClause(drafts.oldestAgeMs)}, ` +
+      `${amountOf(drafts.due)} of them for over ${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h${old} — until one is confirmed it is never pushed to a teammate — ` +
+      "it shows up, marked derived, only to a teammate who opens or searches your notes; " +
       "fix: ask your agent to settle them with review_draft (it is asked once per session, and must ask you before anything is published)",
-    `${amountOf(drafts.size)} own drafts await review — teammates see none of them (review_draft)`,
+    `${amountOf(drafts.size)} own drafts await review — none is pushed to teammates until confirmed (review_draft)`,
   );
 };
 

@@ -52,11 +52,24 @@ export interface DraftNudgeInput {
 
 const OTHER_KIND = "other";
 
+/**
+ * Every clause is a fact about the hub, and two of them were once false: a
+ * teammate CAN read an unreviewed draft (get_diagnosis returns its body,
+ * marked derived, and a word in it surfaces the tree in search), and a
+ * discard deletes nothing — it appends a rejected copy that stays in the
+ * history. What is true is narrower: no draft is ever PUSHED to anyone, and
+ * a rejected one is never offered as a finding (the declared-only hint gate,
+ * contradictions and solved pointers all skip it).
+ */
+const VISIBILITY =
+  " Drafts are never pushed to teammates; one shows up, marked derived, only to a teammate who opens or searches your notes.";
+
 const ASK =
   "When the current request is done, ask the person — do not decide yourself — " +
   "whether to confirm, edit or discard each one, and call review_draft only with " +
-  "their answer: confirm and edit publish the claim to the team, discard retires " +
-  "it for good. Nothing is published or deleted until then.";
+  "their answer: confirming or editing publishes it to the team as your claim; " +
+  "discarding marks it rejected — it stays in the history, labelled rejected, and is " +
+  "never offered to anyone as a finding. Nothing is published or marked until then.";
 
 const kindSummary = (due: readonly DraftEntry[]): string => {
   const known = CLAIM_KINDS.map((kind) => ({
@@ -83,7 +96,7 @@ const kindsClause = (dueListed: readonly DraftEntry[], due: DraftCount): string 
 const retentionSentence = (old: DraftCount): string =>
   old.count === 0
     ? ""
-    : ` ${old.floor ? "At least " : ""}${String(old.count)} of them ${old.count === 1 ? "is" : "are"} older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days; ` +
+    : ` ${old.floor ? "At least " : ""}${String(old.count)} of these drafts ${old.count === 1 ? "is" : "are"} older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days; ` +
       "crosscheck never deletes or auto-discards a draft, so they stay listed until settled.";
 
 /** The backlog in all, said only when the hub (or a short listing) makes it exact. */
@@ -102,7 +115,7 @@ const headerLine = (input: DraftNudgeInput, dueListed: readonly DraftEntry[]): s
     `crosscheck: ${amountOf(due)} of your own auto-captured draft claims ${verb} waited over ` +
     `${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h for review (${kindsClause(dueListed, due)}).` +
     backlogSentence(input.backlog, input.now) +
-    " No teammate is shown a draft until it is confirmed." +
+    VISIBILITY +
     retentionSentence(countAtLeastAged(input.backlog, DRAFT_HORIZON_AGE_MS, input.now))
   );
 };

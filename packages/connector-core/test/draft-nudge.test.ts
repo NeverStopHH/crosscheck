@@ -97,6 +97,23 @@ describe("renderDraftNudge", () => {
     expect(text).toContain("review_draft clm_a");
   });
 
+  test("says only what is true about who can see a draft and what discard does", () => {
+    // A teammate CAN read an unreviewed draft — get_diagnosis returns its body,
+    // marked derived, and a word in it makes the tree turn up in search — and a
+    // discard appends a rejected copy that stays in the history.
+    const text = nudgeOf([draft()]);
+
+    expect(text).toContain(
+      "Drafts are never pushed to teammates; one shows up, marked derived, only to a teammate who opens or searches your notes.",
+    );
+    expect(text).toContain(
+      "confirming or editing publishes it to the team as your claim; discarding marks it rejected — it stays in the history, labelled rejected, and is never offered to anyone as a finding. Nothing is published or marked until then.",
+    );
+    expect(text).not.toContain("No teammate is shown");
+    expect(text).not.toContain("for good");
+    expect(text).not.toContain("deleted until");
+  });
+
   test("no due draft renders nothing", () => {
     expect(nudgeOf([])).toBe("");
   });
@@ -109,7 +126,7 @@ describe("renderDraftNudge", () => {
     const text = nudgeOf(due);
 
     // Assert
-    expect(text).toContain(`1 of them is older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
+    expect(text).toContain(`1 of these drafts is older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
     expect(text).toContain("never deletes");
     expect(text).toContain("review_draft clm_old");
   });
@@ -143,7 +160,7 @@ describe("renderDraftNudge", () => {
     expect(text).toContain(`(of the newest ${String(DRAFT_LISTING_CAP)}: ${String(DRAFT_LISTING_CAP)} root_cause)`);
     expect(text).toContain(`${String(BACKLOG)} await review in all, the oldest captured 41d ago`);
     expect(text).not.toMatch(/at least \d+ of your own/);
-    expect(text).toContain(`confirmed. At least 1 of them is older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
+    expect(text).toContain(`your notes. At least 1 of these drafts is older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
     expect(text).toContain(`(+${String(BACKLOG - pointerLines(text).length)} more not shown)`);
   });
 
@@ -158,7 +175,7 @@ describe("renderDraftNudge", () => {
     const text = nudgeOf(listed, { total: BACKLOG, oldestCreatedAt: daysAgo(60) });
 
     // Assert
-    expect(text).toContain(`${String(listedPast + BACKLOG - DRAFT_LISTING_CAP)} of them are older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
+    expect(text).toContain(`${String(listedPast + BACKLOG - DRAFT_LISTING_CAP)} of these drafts are older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
   });
 
   test("names only drafts review_draft can reach: none due among the listed rows, no nudge", () => {

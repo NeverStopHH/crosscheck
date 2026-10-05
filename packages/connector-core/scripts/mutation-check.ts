@@ -17791,6 +17791,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/review-draft.test.ts`,
     because: "the agent is told the claim it just promoted from its own session is a teammate's words",
   },
+  {
+    label: "the nudge claims a teammate cannot see an unreviewed draft",
+    file: `${CORE}/src/briefing/draft-nudge.ts`,
+    from: "  \" Drafts are never pushed to teammates; one shows up, marked derived, only to a teammate who opens or searches your notes.\";",
+    to: "  \" No teammate is shown a draft until it is confirmed.\";",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "a teammate's get_diagnosis returns the draft's body, so the person is promised a privacy the hub does not keep",
+  },
+  {
+    label: "the nudge says a discarded draft is deleted",
+    file: `${CORE}/src/briefing/draft-nudge.ts`,
+    from: "  \"never offered to anyone as a finding. Nothing is published or marked until then.\";",
+    to: "  \"gone for good. Nothing is published or deleted until then.\";",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "discard appends a rejected copy that stays pullable, and the person is told the text is gone",
+  },
+  {
+    label: "doctor claims a teammate cannot see an unreviewed draft",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "      \"it shows up, marked derived, only to a teammate who opens or searches your notes; \" +",
+    to: "      \"a draft is shown to nobody until it is confirmed; \" +",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the remedy line promises a privacy get_diagnosis and search do not keep",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17995,7 +18019,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 2
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 22
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 24
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
@@ -18058,7 +18082,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 13
+ * PRINTS: packages/connector-core/test/sharing.test.ts 14
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
