@@ -76,6 +76,11 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
         "never fed from this host: with no pre-edit ask there is no ask to count, so the pilot report's tripwire figure counts only sessions on hosts that can ask — a low figure on a team working here means fewer sessions that could have asked, not fewer collisions",
     },
     {
+      name: "draft review nudge",
+      sentence:
+        "the once-per-session draft review nudge can ride only postToolUse's additional_context — beforeSubmitPrompt can only block and stop's followup_message would speak as the user — so a turn with no tool call carries none, and a background or cloud agent, where nobody reads and no injection is emitted, is never nudged",
+    },
+    {
       name: "prompt-time injection",
       sentence:
         "beforeSubmitPrompt is registered capture-only: its documented output is {continue, user_message}, which can block a prompt and cannot add context, so this connector answers it with no directives at all",

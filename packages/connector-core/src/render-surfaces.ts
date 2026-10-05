@@ -20,7 +20,8 @@
 import type { CommitDrift } from "./git/commit-drift.ts";
 import type { LandedChanges, LandedCommit } from "./landed-changes/probe.ts";
 import type { CoverageRecord } from "./http/coverage.ts";
-import { renderBriefing } from "./briefing/render.ts";
+import { OWN_DRAFTS_QUOTED_DATA_NOTICE, renderBriefing } from "./briefing/render.ts";
+import { renderDraftNudge } from "./briefing/draft-nudge.ts";
 import { renderConferenceReport } from "./conference/report.ts";
 import { formatSummarizerFailure } from "./model/runner.ts";
 import { ghostDraftBody } from "./briefing/ghost.ts";
@@ -34,6 +35,7 @@ import {
   renderTripwireReason,
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
+import { successText as reviewDraftSuccessText } from "./mcp/tools/review-draft.ts";
 import {
   quotingText,
   renderDiagnosis,
@@ -51,6 +53,7 @@ import type {
   ConferenceCorpus,
   ContradictionEntry,
   Diagnosis,
+  DraftEntry,
   GhostCheckEntry,
   HintClaimCandidate,
   InboxQuestion,
@@ -68,7 +71,8 @@ import { describeConnectionFailure } from "./http/connection-error.ts";
 
 /**
  * How a surface's output is classed, which decides its corpus assertions:
- *   framed    — a full document: carries QUOTED_DATA_NOTICE, every line under
+ *   framed    — a full document: carries its quoted-data notice
+ *               (QUOTED_DATA_NOTICE unless it declares `notice`), every line under
  *               the character invariants, at most one « » pair per line;
  *   sanitized — PROSE cleaned for a frame applied LATER (a title on its way
  *               to the hub): character invariants, and no « » at all;
@@ -111,6 +115,13 @@ export interface CorpusRenderSurface {
   /** Package-relative module the surface lives in, e.g. "src/mcp/render.ts". */
   readonly module: string;
   readonly framing: RenderSurfaceFraming;
+  /**
+   * The quoted-data notice a `framed` surface must carry — QUOTED_DATA_NOTICE
+   * when omitted. Only the blocks that quote the reader's OWN auto-captured
+   * drafts name OWN_DRAFTS_QUOTED_DATA_NOTICE: each notice has to be true of
+   * the text it heads, and the registry test holds every surface to its own.
+   */
+  readonly notice?: string;
   /** Renders with the payload planted in the surface's most exposed slot. */
   readonly render: (untrusted: string) => string;
 }
@@ -165,6 +176,8 @@ export const RENDER_BARREL_MODULES: readonly string[] = [
 
 const NOW = new Date("2026-08-18T12:00:00.000Z");
 const ISO = "2026-08-18T11:55:00.000Z";
+/** Three days before NOW: a draft old enough for the review nudge to name it. */
+const DRAFT_DUE_ISO = "2026-08-15T12:00:00.000Z";
 const NO_DRIFT: CommitDrift | null = null;
 
 /**
@@ -535,6 +548,35 @@ const landedNoticeWith = (payload: string): LandedNotice => ({
   ],
 });
 
+/**
+ * The reader's own drafts, as the hub lists them, with the payload in every
+ * hub-sent string the nudge prints: the kind, the body — and the id, on a
+ * second row, so the body slot is still attacked when the id sanitizes away.
+ */
+const draftsWith = (payload: string): readonly DraftEntry[] => [
+  {
+    id: "clm_11111111-2222-4333-8444-555555555555",
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    kind: payload,
+    body: payload,
+    status: "proposed",
+    confidence: 0.3,
+    createdAt: DRAFT_DUE_ISO,
+  },
+  {
+    id: payload,
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    kind: "root_cause",
+    body: "The reaper closes a session whose spool is still flushing",
+    status: "proposed",
+    confidence: 0.3,
+    createdAt: DRAFT_DUE_ISO,
+  },
+];
+
+/** A backlog bigger than its rows, so the corpus also reaches the exact-total clause. */
+const DRAFT_CORPUS_BACKLOG = 35;
+
 const diagnosisWith = (payload: string): Diagnosis => ({
   workContext: {
     id: "wc_cc_11111111-2222-4333-8444-555555555555",
@@ -759,6 +801,38 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ghostChecks: [ghostCheckWith(payload)],
         now: NOW,
       }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-drafts",
+    delivery: "unsolicited",
+    module: "src/briefing/render.ts",
+    framing: "framed",
+    notice: OWN_DRAFTS_QUOTED_DATA_NOTICE,
+    // The OWN-DRAFTS slot of the briefing, which no surface above reaches:
+    // the reader's own auto-captured drafts, alone, so the block's own notice
+    // is the only one the output may carry.
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        drafts: draftsWith(payload),
+        draftTotals: { total: DRAFT_CORPUS_BACKLOG, oldestCreatedAt: DRAFT_DUE_ISO },
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "review-draft-confirmation",
+    delivery: "pulled",
+    module: "src/mcp/tools/review-draft.ts",
+    framing: "framed",
+    notice: OWN_DRAFTS_QUOTED_DATA_NOTICE,
+    // review_draft's answer echoes the caller's OWN draft body (or their
+    // agent's edit of it) back as the claim just promoted.
+    render: (payload) => reviewDraftSuccessText("confirm", "clm_promoted", "clm_draft1", payload),
   },
   {
     kind: "corpus",
@@ -1057,6 +1131,23 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     render: (payload) => renderLandedNoticeHint(landedNoticeWith(payload), NOW)?.text ?? "",
   },
   {
+    // The once-per-session draft review nudge (flows/draft-nudge.ts), told on
+    // a prompt: the counts and the ask are renderer-owned, the kinds are
+    // counted against the claim-kind enum, the pointer lines are the
+    // briefing's own formatDraftLine.
+    kind: "corpus",
+    name: "draft-nudge",
+    delivery: "unsolicited",
+    module: "src/briefing/draft-nudge.ts",
+    framing: "framed",
+    notice: OWN_DRAFTS_QUOTED_DATA_NOTICE,
+    render: (payload) =>
+      renderDraftNudge({
+        backlog: { listed: draftsWith(payload), total: DRAFT_CORPUS_BACKLOG, oldestCreatedAt: DRAFT_DUE_ISO },
+        now: NOW,
+      }),
+  },
+  {
     kind: "corpus",
     name: "diagnosis",
     delivery: "pulled",
@@ -1351,7 +1442,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "mcp-tool-review-draft",
     delivery: "pulled",
     module: "src/mcp/tools/review-draft.ts",
-    note: "ids through safeId; promoted body through quoted under quotingText",
+    note: "ids through safeId; the caller's own promoted body through quotedBody under quotingOwnText, the own-drafts notice (the review-draft-confirmation corpus surface above)",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
   },
   {

@@ -54,6 +54,11 @@ export const CLAUDE_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     // cannot drift apart while it is true.
     UNPROJECTED_LEDGER_KINDS_REFUSAL,
     {
+      name: "draft review nudge in headless runs",
+      sentence:
+        "the once-per-session draft review nudge rides UserPromptSubmit's additionalContext and tells the agent to ask a PERSON before review_draft publishes anything, so a run marked headless with CROSSCHECK_TRIPWIRE=notice is never nudged — and Stop never carries it, because both of Stop's outputs keep the turn going instead of letting the person answer",
+    },
+    {
       name: "git lane blind spots",
       sentence:
         "the Stop-time lane reads UNCOMMITTED changes only, so work committed during the turn and untracked new files are invisible to it — and every position it does record is `observed` rather than `emitted`, an upper bound that refuses a happens-before question instead of answering one it cannot support",

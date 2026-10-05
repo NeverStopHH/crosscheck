@@ -131,6 +131,7 @@ const freshState = (
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,

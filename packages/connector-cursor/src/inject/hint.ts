@@ -26,6 +26,9 @@
  * budget race is the backstop for non-HTTP wedges, pinned deterministically
  * in connector-claude/test/hook-budget.test.ts.
  */
+import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
+import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
+import { deliverDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import { selectAndRenderSolvedHint } from "@crosscheck/connector-core/flows/solved-hint.ts";
 import { CURSOR_BACKGROUND_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
@@ -114,3 +117,23 @@ export const attemptSolvedHint = async (
   });
   return text;
 };
+
+/**
+ * The once-per-session draft review nudge (core flows/draft-nudge.ts) on a
+ * response nothing else spoke on. The one exception to the fast-path rule
+ * above: it buys a single hub call on a SUCCESSFUL tool result, at most once
+ * per session once the hub answers, because Cursor offers no other slot.
+ * Never in a background agent — the nudge asks a person, and nobody reads
+ * there. Not booked in the injection ledger, whose two kinds are briefing
+ * and hint; the session state's `draftNudge` is its record.
+ */
+export const attemptDraftNudge = (ctx: CursorHookContext, budget: HookBudget): Promise<string> =>
+  deliverDraftNudge({
+    home: ctx.config.home,
+    hub: ctx.hub,
+    hostSessionKey: ctx.hostSessionKey,
+    repoId: ctx.identity.repoId,
+    now: ctx.now(),
+    personReads: ctx.config.agentKind !== CURSOR_BACKGROUND_AGENT_KIND && aPersonReads(ctx.env),
+    spareMs: () => budget.spareMs(),
+  });

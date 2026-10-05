@@ -571,6 +571,14 @@ export const bareSummarizerLine = (
 const LABEL_SEPARATOR = ": ";
 
 /**
+ * The booked prefix of a run whose binary could not even be started. Exported
+ * because it is a FACT doctor reads back (derive/sharing.ts cannot_start): a
+ * hook that cannot start `claude` while doctor's own PATH can is the editor's
+ * environment, and only this prefix tells the two apart.
+ */
+export const SPAWN_FAILURE_LABEL = "could not start";
+
+/**
  * One line for a failure, fit to be BOOKED in session state and printed by
  * status/doctor: the reason first, then what the binary said (through
  * bareSummarizerLine), the binary's share of the line being whatever
@@ -600,7 +608,7 @@ export const formatSummarizerFailure = (failure: SummarizerFailure): string => {
   }
   const label =
     failure.reason === "spawn"
-      ? "could not start"
+      ? SPAWN_FAILURE_LABEL
       : `exit ${String(failure.exitCode)}`;
   const said = bareSummarizerLine(
     failure.detail,

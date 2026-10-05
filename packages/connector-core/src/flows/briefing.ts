@@ -46,7 +46,7 @@ import type { Producer } from "../capture/records.ts";
 import {
   getAbsences,
   getContradictions,
-  getDrafts,
+  getDraftListing,
   getGhostChecks,
   getLandedNotices,
   getPresence,
@@ -165,7 +165,7 @@ export const assembleBriefing = async (
     getAbsences(hub, repoId),
     getContradictions(hub, repoId),
     getSolvedMatches(hub, repoId),
-    getDrafts(hub, repoId),
+    getDraftListing(hub, repoId),
     // Roadmap R2. In the SAME parallel block, so the questions block costs no
     // extra wall clock: the whole fetch is still one per-request hub timeout,
     // and a hub too old to serve it simply renders no section (fail open).
@@ -194,7 +194,10 @@ export const assembleBriefing = async (
     ? contradictionsResult.data
     : [];
   const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
-  const drafts = draftsResult.ok ? draftsResult.data : [];
+  const drafts = draftsResult.ok ? draftsResult.data.drafts : [];
+  const draftTotals = draftsResult.ok
+    ? { total: draftsResult.data.total, oldestCreatedAt: draftsResult.data.oldestCreatedAt }
+    : undefined;
   const questions = questionsResult.ok ? questionsResult.data.inbox : [];
   const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
   const landedNotices = landedNoticesResult.ok ? landedNoticesResult.data : [];
@@ -221,6 +224,7 @@ export const assembleBriefing = async (
     contradictions,
     solvedMatches,
     drafts,
+    draftTotals,
     questions,
     ghostChecks,
     landedNotices,

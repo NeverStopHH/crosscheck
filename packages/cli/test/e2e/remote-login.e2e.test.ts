@@ -72,7 +72,16 @@ describe("first login from far away, zero configuration", () => {
     paths.push(home, repo);
     const server = farHub();
     const hubUrl = `http://127.0.0.1:${server.port}`;
-    const env = { CROSSCHECK_HOME: home, HOME: home };
+    // A teammate's machine has a model backend (claude on PATH); this env has
+    // no PATH at all, so the backend is named outright — without one, doctor
+    // rightly WARNs that this agent can derive nothing — and the runner probe
+    // is skipped rather than spawning it.
+    const env = {
+      CROSSCHECK_HOME: home,
+      HOME: home,
+      CROSSCHECK_SUMMARIZER_CMD: process.execPath,
+      CROSSCHECK_DOCTOR_NO_PROBE: "1",
+    };
 
     // Act 1: the front door, real probes against the real 600 ms hub
     const login = await runLogin([hubUrl], env, async () => "test-key");

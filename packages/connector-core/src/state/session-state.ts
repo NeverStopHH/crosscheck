@@ -576,6 +576,15 @@ const SessionStateObjectSchema = z.looseObject({
    * that a machine losing brackets stops reading exactly like one that is not.
    */
   toolWindowMisses: z.number().int().min(0).default(0),
+  /**
+   * The draft review nudge's ONE slot per session (flows/draft-nudge.ts):
+   * null until a prompt-time check got an answer from the hub, then
+   * `delivered` (the nudge went out) or `nothing_due` (no own draft had
+   * waited DRAFT_NUDGE_MIN_AGE_HOURS). Either spends it. Carried across a
+   * SessionStart re-fire (withCarriedCapture): compact and resume are the same
+   * session, and a second nudge inside it is the nag the slot exists to stop.
+   */
+  draftNudge: z.enum(["delivered", "nothing_due"]).nullable().default(null),
 });
 
 /**
@@ -802,6 +811,8 @@ export const withCarriedCapture = (
         // reason: a number that restarts on every compact cannot say whether
         // this machine is losing them.
         toolWindowMisses: previous.toolWindowMisses,
+        // The nudge is once per SESSION, and a re-fire is the same session.
+        draftNudge: previous.draftNudge,
       };
 
 /**
@@ -1502,5 +1513,6 @@ export const deriveSessionState = (
     toolWindows: [],
     toolWindowEvictions: 0,
     toolWindowMisses: 0,
+    draftNudge: null,
   };
 };

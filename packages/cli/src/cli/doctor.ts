@@ -169,6 +169,7 @@ import {
 } from "./pin-observability.ts";
 import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
+import { readSharingInput, sharingChecks } from "./doctor-sharing.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
 import {
@@ -3952,6 +3953,20 @@ export const runDoctor = async (
     await checkLandingFetch(identity.root, config.home, env, now),
     await checkLandedAuthors(identity.root, hubCtx),
     await checkCloudAgentMailmap(identity.root),
+    // "Why does my agent share nothing?" — every cause in one place, read off
+    // the live scan below plus the ended sessions' history and the hub's own
+    // drafts listing (doctor-sharing.ts), ABOVE the counters it summarizes.
+    ...sharingChecks(
+      await readSharingInput({
+        env,
+        hub: hubCtx,
+        repoId: identity.repoId,
+        home: config.home,
+        key,
+        liveStates: liveStates.states,
+        now,
+      }),
+    ),
     // ONE scan of the session-state directory for all three model-cost
     // checks (state/session-state.ts readLiveSessionStates says why).
     checkSummarizerCost(liveStates),
