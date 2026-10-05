@@ -13,25 +13,24 @@
  * override and no noise rides beside it — those are other people's words
  * about their own sessions.
  *
- * ONE NOISE CONCEPT. Noise is the person's label in `pilot_marks` (and the
- * 0.10 `off_target` spelling of it); an outcome is the agent's or the
- * person's word about what happened next. Per delivery the LATER of the two
- * stands, the label on a tie — it is the person's own verdict.
- *
  * NO RANKING. Teammates are listed in name order, never by count: a list of
  * people sorted by how often their work was taken is a score, and 00 §8.5
  * bans scoring people.
+ *
+ * What a delivery stands at is defined once, in `outcome-population.ts`.
  */
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import { PULLED_DELIVERY_CHANNEL } from "@crosscheck/schema";
 import type { HintOutcome } from "@crosscheck/schema";
 
 import { HINT_OUTCOME_MAX_REASONS, HINT_OUTCOME_MAX_SOURCES } from "../constants.ts";
-import { NOISE_WORDS } from "./pilot-label-figures.ts";
+import { EMPTY_TALLY, addToTally, deliveryStates, outcomePopulationStart } from "./outcome-population.ts";
+import type { DeliveryState, HintOutcomeTally } from "./outcome-population.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
+
+export type { HintOutcomeTally } from "./outcome-population.ts";
 
 interface Deps {
   readonly db: Db;
@@ -39,18 +38,6 @@ interface Deps {
 }
 
 const MS_PER_DAY = 86_400_000;
-
-/** What one delivery stands at: an outcome, the noise label, or nothing said. */
-type DeliveryState = HintOutcome | "noise" | "unmarked";
-
-export interface HintOutcomeTally {
-  readonly received: number;
-  readonly followed: number;
-  readonly overrode: number;
-  readonly notRelevantNow: number;
-  readonly noise: number;
-  readonly unmarked: number;
-}
 
 export interface SourceTally extends HintOutcomeTally {
   /** The teammate whose work the hints pointed at; null when it is not this repo's or not found. */
@@ -82,67 +69,6 @@ export interface ReadMyHintOutcomesInput {
   readonly days: number;
 }
 
-export const EMPTY_TALLY: HintOutcomeTally = {
-  received: 0,
-  followed: 0,
-  overrode: 0,
-  notRelevantNow: 0,
-  noise: 0,
-  unmarked: 0,
-};
-
-const TALLY_FIELD: Record<DeliveryState, keyof HintOutcomeTally> = {
-  followed: "followed",
-  overrode: "overrode",
-  not_relevant_now: "notRelevantNow",
-  noise: "noise",
-  unmarked: "unmarked",
-};
-
-/**
- * Every unasked delivery to the recipients `who` selects, on this repo, in
- * the window — with the developer whose work it pointed at and the word it
- * stands at. The source is THIS repo's: a delivery's ref is the client's own
- * word, so a pointer at another repo's work names nobody (07 §11.9).
- */
-export const deliveryStates = (repo: string, since: Date, who: SQL): SQL => sql`
-  WITH received AS (
-    SELECT hd.id, hd.ref_kind, hd.ref_id, s.developer_id AS recipient
-    FROM hint_deliveries hd
-    JOIN agent_sessions s ON s.id = hd.session_id
-    WHERE s.repo = ${repo}
-      AND ${who}
-      AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
-      AND hd.delivered_at >= ${since.toISOString()}::timestamptz
-  ), sourced AS (
-    SELECT r.*, (
-      SELECT src.developer_id FROM agent_sessions src
-      WHERE src.repo = ${repo} AND src.id = CASE WHEN r.ref_kind = 'work_context'
-        THEN (SELECT wc.session_id FROM work_contexts wc WHERE wc.id = r.ref_id)
-        ELSE (SELECT c.author_session_id FROM claims c WHERE c.id = r.ref_id) END
-    ) AS source_id
-    FROM received r
-  ), stated AS (
-    SELECT so.id, so.source_id, latest.outcome, latest.reason,
-           latest.created_at AS outcome_at, m.created_at AS noise_at
-    FROM sourced so
-    LEFT JOIN LATERAL (
-      SELECT o.outcome, o.reason, o.created_at FROM hint_outcomes o
-      WHERE o.delivery_id = so.id AND o.recorded_by = so.recipient
-      ORDER BY o.created_at DESC, o.id DESC LIMIT 1
-    ) latest ON true
-    LEFT JOIN pilot_marks m ON m.ref_kind = 'hint_delivery' AND m.ref_id = so.id
-      AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS}
-  ), states AS (
-    SELECT id, source_id, outcome_at,
-      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'
-           WHEN outcome IS NOT NULL THEN outcome
-           ELSE 'unmarked' END AS state,
-      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN NULL
-           ELSE reason END AS reason
-    FROM stated
-  )`;
-
 /** The caller's own deliveries — the one recipient this view is ever about. */
 const receivedBy = (developerId: string): SQL => sql`s.developer_id = ${developerId}`;
 
@@ -158,23 +84,6 @@ type ReasonRow = {
   readonly reason: string;
   readonly source: string | null;
   readonly total: number;
-};
-
-export const addToTally = (tally: HintOutcomeTally, state: DeliveryState, n: number): HintOutcomeTally => {
-  const field = TALLY_FIELD[state];
-  return { ...tally, received: tally.received + n, [field]: tally[field] + n };
-};
-
-/**
- * WHERE AN OUTCOME FIGURE STARTS (07 §13.9): the later of its window's start
- * and the instant outcomes became recordable on the repo. A delivery from
- * before that instant could not have had an outcome, so it is outside the
- * population — never "unmarked". No instant (never enrolled) starts at `now`:
- * nothing counts, the conservative of the two errors.
- */
-export const outcomePopulationStart = (windowStart: Date, outcomesSinceIso: string | null, now: Date): Date => {
-  const recordable = outcomesSinceIso === null ? now : new Date(outcomesSinceIso);
-  return recordable.getTime() > windowStart.getTime() ? recordable : windowStart;
 };
 
 const bySourceName = (left: SourceTally, right: SourceTally): number =>

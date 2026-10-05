@@ -93,7 +93,7 @@ import {
 } from "./pilot-label-figures.ts";
 import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
-import { NO_OUTCOME_FIGURES, readOutcomeFigures } from "./pilot-outcome-figures.ts";
+import { noOutcomeFigures, readOutcomeFigures } from "./pilot-outcome-figures.ts";
 import type { OutcomeFigures } from "./pilot-outcome-figures.ts";
 import type { PilotAnswerSurface } from "./pilot.ts";
 import type { Db } from "../db/client.ts";
@@ -758,7 +758,7 @@ const readIntegrity = async (
 /** What an un-enrolled repo reports: nothing measured, and saying so. */
 const notEnrolled = (): Omit<
   PilotReport,
-  "repo" | "enrolled" | "labelsSinceIso" | "sinceIso" | "untilIso" | "days"
+  "repo" | "enrolled" | "labelsSinceIso" | "sinceIso" | "untilIso" | "days" | "outcomes"
 > => ({
   sessionSet: {
     used: 0,
@@ -814,7 +814,6 @@ const notEnrolled = (): Omit<
     reasons: [],
     reasonsBeyondList: 0,
   },
-  outcomes: NO_OUTCOME_FIGURES,
   cohorts: PILOT_COHORTS.map((cohort) => ({
     cohort,
     cap: COHORT_CAP[cohort],
@@ -849,7 +848,7 @@ export const readPilotReport = async (
     days: input.days,
   };
   if (!settings.pilotEnrolled) {
-    return { ...base, ...notEnrolled() };
+    return { ...base, ...notEnrolled(), outcomes: noOutcomeFigures(until) };
   }
   // An enrolled repo always has the instant (enrolment and the bootstrap
   // backfill both write it); if one ever lacks it, NOTHING is labelled
@@ -863,9 +862,10 @@ export const readPilotReport = async (
       readCollisions(deps, input.repo, since, until),
       readAttribution(deps, input.repo, since, until),
       readPrecision(deps, input.repo, { since, until }, labelsSince),
+      // NOT the report's window (review #4): the outcome block covers its
+      // own fixed, closed month, so no `days` can be stepped to isolate a day.
       readOutcomeFigures(deps, {
         repo: input.repo,
-        windowStart: since,
         now: until,
         outcomesSinceIso: settings.pilotOutcomesSince,
       }),

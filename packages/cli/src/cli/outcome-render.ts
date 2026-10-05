@@ -34,8 +34,9 @@ export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): str
       ? ""
       : `, superseding the earlier ${outcomeWord(recorded.replaced)} (kept in the history)`;
   return (
-    `recorded: ${shown} — ${word}${replaced}. It shows in your own crosscheck pilot --mine; ` +
-    "the teammate whose work it was sees only how often their work was followed\n"
+    `recorded: ${shown} — ${word}${replaced}. It shows in full only in your own crosscheck pilot --mine; ` +
+    "others see it only inside the team's totals for a whole past month, once at least 3 people recorded outcomes; " +
+    "the teammate whose work it was sees how often their work was followed\n"
   );
 };
 

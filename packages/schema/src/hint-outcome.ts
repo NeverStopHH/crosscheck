@@ -58,3 +58,33 @@ export const HintOutcomeSchema = z
   });
 
 export type HintOutcomeInput = z.infer<typeof HintOutcomeSchema>;
+
+/**
+ * WHEN A SHARED OUTCOME FIGURE MAY PRINT AT ALL (07 §13.9, review #4/#10).
+ *
+ * A team total minus one's own `--mine` is everybody else's — with one other
+ * person, that person's exact outcomes; an author's credit falling 1 → 0 is a
+ * teammate switching to "overrode". So a figure anybody but the recorder sees
+ * rests on at least three people's words (no subtraction isolates one), about
+ * at least three people's work (no author reads the overrides of their own),
+ * ten words or more — and below any minimum it says which, and no number.
+ * Shared here because the hub decides and the CLI writes the sentence.
+ */
+export const HINT_OUTCOME_DISCLOSURE_MINIMUMS = {
+  recorders: 3,
+  sources: 3,
+  recorded: 10,
+} as const;
+
+/** Why a shared outcome figure printed no number — the hub picks one, the CLI says it. */
+export const HINT_OUTCOME_WITHHOLDINGS = [
+  /** No moment of the period could record an outcome on this repo. */
+  "not_recordable",
+  /** Nothing reached anyone in the counted part of the period. */
+  "no_interventions",
+  "too_few_recorders",
+  "too_few_sources",
+  "too_few_recorded",
+] as const;
+
+export type HintOutcomeWithholding = (typeof HINT_OUTCOME_WITHHOLDINGS)[number];

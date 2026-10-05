@@ -1,34 +1,36 @@
 /**
- * THE TEAM REPORT'S ONE OUTCOMES LINE (1.0 spec 07 §13.9, D-O5): what the
- * interventions that reached someone on this repo led to — followed, overrode,
- * not relevant now, noise (the person's label), unmarked — as counts the
- * client turns into "per 100".
+ * THE TEAM REPORT'S ONE OUTCOMES LINE (1.0 spec 07 §13.9, D-O5; review #4):
+ * what the interventions that reached someone on this repo led to — followed,
+ * overrode, not relevant now, noise (the person's label), unmarked — as counts
+ * the client turns into "per 100".
  *
- * DESCRIPTIVE, NOT A MEASUREMENT AGAINST A BAR. There is no target: an
- * outcome is recorded only when an agent or a person chose to say it, so
- * every figure is a FLOOR, like the noise marks, and "unmarked" is silence,
- * never a verdict.
+ * DESCRIPTIVE, NOT A MEASUREMENT AGAINST A BAR. There is no target, and only
+ * what an agent or a person chose to record is counted.
  *
- * PER REPO, NEVER PER PERSON (§8.4). The block is counts and one instant;
- * nothing in it names a recipient or a source. The per-person view is the
- * caller's own (`hint-outcome-view.ts`), and this reads the same states with
- * the same query so the two cannot disagree about what a delivery stands at.
+ * NO SUBTRACTION MAY SINGLE SOMEBODY OUT (review #4). The review subtracted
+ * one person's own `--mine` from a two-recipient team total and read the
+ * other's exact outcomes; the author read the overrides of their own work. So:
+ *
+ *   · ONE FIXED, CLOSED PERIOD — the last whole calendar month (UTC) — never
+ *     the report's `days`, which could be stepped to isolate a day; counted as
+ *     it stood at the month's end, so a word changed later never moves it;
+ *   · NUMBERS ONLY ABOVE THE DISCLOSURE MINIMUMS: at least three people's
+ *     words, about at least three people's work, ten words or more. Below any
+ *     of them the block says which, and carries no figure.
+ *
+ * Nothing in the block names a recipient or a source.
  */
 import { sql } from "drizzle-orm";
-import type { HintOutcome } from "@crosscheck/schema";
+import type { HintOutcomeWithholding } from "@crosscheck/schema";
 
-import { EMPTY_TALLY, addToTally, deliveryStates, outcomePopulationStart } from "./hint-outcome-view.ts";
+import { lastWholeMonth, outcomePopulationStart, readPeriodAggregate, withholdingOf } from "./outcome-population.ts";
 import type { Db } from "../db/client.ts";
 
 interface Deps {
   readonly db: Db;
 }
 
-export interface OutcomeFigures {
-  /** Where the figures start: the later of the window and when outcomes became recordable; null when never. */
-  readonly sinceIso: string | null;
-  /** Unasked deliveries that reached someone on this repo in the population. */
-  readonly interventions: number;
+export interface OutcomeCounts {
   readonly followed: number;
   readonly overrode: number;
   readonly notRelevantNow: number;
@@ -36,38 +38,70 @@ export interface OutcomeFigures {
   readonly unmarked: number;
 }
 
-/** What a repo that never enrolled reports: no instant, nothing counted. */
-export const NO_OUTCOME_FIGURES: OutcomeFigures = {
-  sinceIso: null,
-  interventions: 0,
-  followed: 0,
-  overrode: 0,
-  notRelevantNow: 0,
-  noise: 0,
-  unmarked: 0,
-};
+export interface OutcomeFigures {
+  /** The closed period the block covers: the last whole calendar month, UTC. */
+  readonly periodStartIso: string;
+  readonly periodEndIso: string;
+  /** When outcomes became recordable on this repo; null when never. */
+  readonly recordableSinceIso: string | null;
+  /** Where counting starts inside the period; null when no moment of it was recordable. */
+  readonly countedFromIso: string | null;
+  /** Unasked deliveries that reached someone in the counted part of the period. */
+  readonly interventions: number;
+  /** Why no figure is shown, or null when it is. */
+  readonly withheld: HintOutcomeWithholding | null;
+  readonly figures: OutcomeCounts | null;
+}
 
-type StateRow = { readonly state: HintOutcome | "noise" | "unmarked"; readonly n: number };
+const notRecordable = (
+  period: { readonly start: Date; readonly end: Date },
+  recordableSinceIso: string | null,
+): OutcomeFigures => ({
+  periodStartIso: period.start.toISOString(),
+  periodEndIso: period.end.toISOString(),
+  recordableSinceIso,
+  countedFromIso: null,
+  interventions: 0,
+  withheld: "not_recordable",
+  figures: null,
+});
+
+/** What a repo that never enrolled reports: no instant, nothing counted. */
+export const noOutcomeFigures = (now: Date): OutcomeFigures => notRecordable(lastWholeMonth(now), null);
 
 export const readOutcomeFigures = async (
   deps: Deps,
-  input: {
-    readonly repo: string;
-    readonly windowStart: Date;
-    readonly now: Date;
-    readonly outcomesSinceIso: string | null;
-  },
+  input: { readonly repo: string; readonly now: Date; readonly outcomesSinceIso: string | null },
 ): Promise<OutcomeFigures> => {
-  if (input.outcomesSinceIso === null) {
-    return NO_OUTCOME_FIGURES;
+  const period = lastWholeMonth(input.now);
+  if (input.outcomesSinceIso === null || new Date(input.outcomesSinceIso).getTime() >= period.end.getTime()) {
+    return notRecordable(period, input.outcomesSinceIso);
   }
-  const since = outcomePopulationStart(input.windowStart, input.outcomesSinceIso, input.now);
-  const rows = await deps.db.execute<StateRow>(sql`
-    ${deliveryStates(input.repo, since, sql`true`)}
-    SELECT st.state, count(*)::int AS n FROM states st GROUP BY st.state`);
-  const { received, ...tally } = rows.rows.reduce(
-    (sum, row) => addToTally(sum, row.state, Number(row.n)),
-    EMPTY_TALLY,
-  );
-  return { sinceIso: since.toISOString(), interventions: received, ...tally };
+  const from = outcomePopulationStart(period.start, input.outcomesSinceIso, input.now);
+  const aggregate = await readPeriodAggregate(deps.db, {
+    repo: input.repo,
+    from,
+    until: period.end,
+    who: sql`true`,
+    sourceIs: null,
+  });
+  const withheld = withholdingOf(aggregate, { sources: true, recorded: true });
+  return {
+    periodStartIso: period.start.toISOString(),
+    periodEndIso: period.end.toISOString(),
+    recordableSinceIso: input.outcomesSinceIso,
+    countedFromIso: from.toISOString(),
+    interventions: aggregate.interventions,
+    withheld,
+    figures:
+      withheld === null
+        ? {
+            followed: aggregate.followed,
+            overrode: aggregate.overrode,
+            notRelevantNow: aggregate.notRelevantNow,
+            noise: aggregate.noise,
+            unmarked: aggregate.unmarked,
+          }
+        : null,
+  };
 };

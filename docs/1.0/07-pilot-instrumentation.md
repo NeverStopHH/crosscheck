@@ -922,7 +922,7 @@ enrolment** (D2's reasoning: outcomes are measurement).
 |---|---|---|
 | the recipient | their own hints received, followed / overrode / not relevant now / noise / unmarked, by source teammate, with the reasons beside the current words | `crosscheck pilot --mine [--days N]` (`GET /api/hint-outcomes/mine`) |
 | the source teammate | ONE count: how often hints that pointed at their work were followed — no recipient, no reason, no override, no noise | the same command, run by them ("your own work, in teammates' hints: followed N times") |
-| the team | the per-repo report, unchanged and aggregated; outcomes do not enter it in this revision | `crosscheck pilot` |
+| the team | one per-repo line over the last whole calendar month, frozen at its end, and only once at least 3 people recorded outcomes about at least 3 people's work, 10 words or more (§13.9, §13.10) | `crosscheck pilot` |
 | anybody else | **nothing**: no route takes a person as a parameter, so somebody else's per-person view cannot be asked for | — |
 
 **This is consistent with §8.4, and why.** §8.4 refuses a per-developer breakdown of the TEAM's counters —
@@ -946,7 +946,7 @@ why, newest first — as you or your agent wrote it:
   followed, from Ken: «reused his decision to key the cache by repo»
 your own work, in teammates' hints: followed 0 times
 recorded with your key — by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode); noise is your own label (crosscheck noise)
-only you see this view; a teammate sees only how often their own work was followed, and the team report (crosscheck pilot) stays per repo
+only you see this view in full; others see your words only inside the team report's totals for a whole past month, shown once at least 3 people recorded outcomes about at least 3 people's work, and each teammate whose work it was sees how often it was followed
 ```
 
 and Ken's, on the same hub: `nothing reached you unasked on this repo in this window` · `your own work, in
@@ -1040,3 +1040,42 @@ rows may be deleted and the bound they are deleted at, side by side. **Deleted w
 the registry declares no root on it, so deleting an outcome strands nothing and releases nothing the skeleton
 sweep relies on; deliveries, which outcomes reference, are not pruned by this rule.
 
+**13.10 — Corrections from the adversarial review (2026-10-06).** A review of the merged batch read the
+figures the way a curious colleague would, and found that several printed promises were not true. Each
+fix below is pinned by a test and a mutation anchor.
+
+*#4 — the team line minus one's own `--mine` was a teammate's exact outcomes.* With two recipients, Nick
+subtracted his own view (`3: followed 1 · unmarked 2`) from the team line (`4: followed 1 · overrode 1 ·
+unmarked 2`) and read Mike's one override; Ken, whose work every hint pointed at, read "overrode 25.0" —
+the overrides of his own work, which D-O2 says an author never sees. Stepping `days` from 1 to 90 dated
+single deliveries on top of that. "Only you see this view" was false. So the team line is no longer a
+rolling window at all (`services/outcome-population.ts`, `pilot-outcome-figures.ts`):
+
+- **One fixed, closed period** — the last whole calendar month (UTC), never the report's `days`, which is
+  ignored for this block. It is counted **as it stood at the month's end**: deliveries, outcome rows and
+  noise labels created after it are not read, so a word changed in August never moves July.
+- **Disclosure minimums** (`HINT_OUTCOME_DISCLOSURE_MINIMUMS` in `@crosscheck/schema`): at least **3**
+  distinct people recorded something (an outcome or the noise label), about at least **3** distinct people's
+  work, and at least **10** recorded words in the month. Below any of them the block carries
+  `withheld: too_few_recorders | too_few_sources | too_few_recorded` and **no figure** (the client parse
+  refuses a block with both), and the line names the minimum:
+
+```
+   hint outcomes, September 2026: withheld — fewer than 3 people recorded an outcome, and a figure could single someone out
+```
+
+  Above them:
+
+```
+   hint outcomes per 100 interventions, July 2026 — the last whole month, fixed (11 reached someone): followed 54.5 · overrode 18.2 · not relevant now 9.1 · noise 9.1 · unmarked 9.1 — a FLOOR: only what agents and people chose to record; no target, nobody named
+```
+
+  The sources minimum is what keeps an author from reading the overrides of their own work out of the
+  team line; the recorders minimum is what defeats the subtraction; the words minimum keeps one person's
+  change of mind from being one visible step. A month counted from enrolment says so (`counted from
+  2026-07-24, when outcomes became recordable here`) only when that instant really falls inside it.
+
+Every printed promise was re-read against this and rewritten to be true: the `--mine` footer, the
+`mark_hint_outcome` description, `crosscheck followed / overrode`'s answer and usage all now say a word is
+shown in full only to its recorder, others see it only inside a whole past month's team totals once the
+minimums are met, and the source teammate sees how often their work was followed.

@@ -20,7 +20,7 @@ import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.t
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import type { MyHintOutcomes, SourceTally } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { quoted } from "@crosscheck/connector-core/mcp/render.ts";
-import { MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
+import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
 
 import { outcomeWord } from "./outcome-render.ts";
 
@@ -97,7 +97,7 @@ const reasonLines = (view: MyHintOutcomes): readonly string[] =>
 const footerLines = (view: MyHintOutcomes): readonly string[] => [
   `your own work, in teammates' hints: followed ${plural(view.yourWork.followed, "time")}`,
   "recorded with your key — by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode); noise is your own label (crosscheck noise)",
-  "only you see this view; a teammate sees only how often their own work was followed, and the team report (crosscheck pilot) stays per repo",
+  `only you see this view in full; others see your words only inside the team report's totals for a whole past month, shown once at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders)} people recorded outcomes about at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work, and each teammate whose work it was sees how often it was followed`,
 ];
 
 export const renderMyOutcomes = (view: MyHintOutcomes): string =>

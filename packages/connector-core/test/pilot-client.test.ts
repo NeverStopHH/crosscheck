@@ -276,15 +276,31 @@ describe("PilotReportSchema", () => {
     expect(parsed.data?.outcomes).toBeUndefined();
   });
 
-  test("D-O5: an outcomes block missing a count is a report this client cannot read", () => {
-    // Arrange — "followed 0" from a count that never arrived is AT-9's lie
-    const outcomes = { sinceIso: null, interventions: 4, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 3 };
+  test("D-O5: an outcomes figure missing a count, or contradicting its withholding, is unreadable", () => {
+    // Arrange — "followed 0" from a count that never arrived is AT-9's lie,
+    // and figures beside "withheld" would print what the hub withheld
+    const block = {
+      periodStartIso: "2026-07-01T00:00:00.000Z",
+      periodEndIso: "2026-08-01T00:00:00.000Z",
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: "2026-07-01T00:00:00.000Z",
+      interventions: 4,
+    };
+    const counts = { followed: 1, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 2 };
+    const { followed: _missing, ...short } = counts;
 
     // Act
-    const parsed = PilotReportSchema.safeParse({ ...wireReport(), outcomes });
+    const missing = PilotReportSchema.safeParse({ ...wireReport(), outcomes: { ...block, withheld: null, figures: short } });
+    const both = PilotReportSchema.safeParse({
+      ...wireReport(),
+      outcomes: { ...block, withheld: "too_few_recorders", figures: counts },
+    });
+    const shown = PilotReportSchema.safeParse({ ...wireReport(), outcomes: { ...block, withheld: null, figures: counts } });
 
     // Assert
-    expect(parsed.success).toBe(false);
+    expect(missing.success).toBe(false);
+    expect(both.success).toBe(false);
+    expect(shown.success).toBe(true);
   });
 
   test("an uninstrumented surface keeps its null — it never becomes an empty record", () => {

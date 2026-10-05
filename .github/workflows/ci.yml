@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1581
+    # PRINTS: 1587
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -305,7 +305,7 @@ jobs:
     # PRINTS: http/coverage.ts 3
     # PRINTS: http/hub.ts 15
     # PRINTS: http/latency.ts 1
-    # PRINTS: http/pilot.ts 6
+    # PRINTS: http/pilot.ts 7
     # PRINTS: http/verdict.ts 4
     # PRINTS: kit.ts 1
     # PRINTS: landed-changes/fetch-state.ts 10
@@ -425,18 +425,19 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
-    # PRINTS: packages/server/src/services/hint-outcome-view.ts 6
+    # PRINTS: packages/server/src/services/hint-outcome-view.ts 2
     # PRINTS: packages/server/src/services/hint-outcomes.ts 5
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
+    # PRINTS: packages/server/src/services/outcome-population.ts 8
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
     # PRINTS: packages/server/src/services/pilot-label-figures.ts 12
     # PRINTS: packages/server/src/services/pilot-outcome-figures.ts 1
-    # PRINTS: packages/server/src/services/pilot-report.ts 19
+    # PRINTS: packages/server/src/services/pilot-report.ts 20
     # PRINTS: packages/server/src/services/pilot-session-set.ts 9
     # PRINTS: packages/server/src/services/pilot.ts 28
     # PRINTS: packages/server/src/services/pins.ts 9
@@ -563,7 +564,7 @@ jobs:
     # PRINTS: git.ts 4
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
-    # PRINTS: hint-outcome-view.ts 6
+    # PRINTS: hint-outcome-view.ts 2
     # PRINTS: hint-outcome.ts 1
     # PRINTS: hint-outcomes.ts 5
     # PRINTS: hint.ts 7
@@ -603,6 +604,7 @@ jobs:
     # PRINTS: noise.ts 7
     # PRINTS: normalized-doc.ts 2
     # PRINTS: outcome-clause.ts 2
+    # PRINTS: outcome-population.ts 8
     # PRINTS: outcome.ts 3
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
@@ -621,9 +623,9 @@ jobs:
     # PRINTS: pilot-mine.ts 1
     # PRINTS: pilot-outcome-figures.ts 1
     # PRINTS: pilot-render.ts 24
-    # PRINTS: pilot-report.ts 19
+    # PRINTS: pilot-report.ts 20
     # PRINTS: pilot-session-set.ts 9
-    # PRINTS: pilot.ts 37
+    # PRINTS: pilot.ts 38
     # PRINTS: pin-observability.ts 14
     # PRINTS: pin-paths.ts 8
     # PRINTS: pin-render.ts 7

@@ -67,8 +67,10 @@ export const definition = {
     "give the reason, one sentence on why your way was better), or not_relevant_now. A later " +
     "call supersedes an earlier one; nothing is deleted. An off-target hint is not recorded " +
     "here: noise is the person's own label (crosscheck noise). The outcome is attributed to " +
-    "your developer's key and shown to them alone (crosscheck pilot --mine); the teammate " +
-    "whose work it pointed at learns only how often their work was followed.",
+    "your developer's key and shown in full only to them (crosscheck pilot --mine); others see " +
+    "it only inside the team report's totals for a whole past month, shown once at least three " +
+    "people recorded outcomes about at least three people's work; the teammate whose work it " +
+    "was sees how often their work was followed.",
   inputSchema: z.toJSONSchema(ArgsSchema) as Record<string, unknown>,
 };
 

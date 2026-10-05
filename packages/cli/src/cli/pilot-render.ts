@@ -38,7 +38,7 @@ import {
   COVERAGE_STATES,
 } from "@crosscheck/connector-core/http/coverage.ts";
 import { quoted, safeId } from "@crosscheck/connector-core/mcp/render.ts";
-import { DELIVERY_CHANNELS, MAX_PIN_PATH_CHARS } from "@crosscheck/schema";
+import { DELIVERY_CHANNELS, HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PIN_PATH_CHARS } from "@crosscheck/schema";
 import type { PilotUnavailableReason } from "@crosscheck/schema";
 import type { FixDiffOutcome } from "@crosscheck/connector-core/git/fix-diff.ts";
 import type {
@@ -346,27 +346,65 @@ const legacyNoiseLines = (proof: PilotReport["precision"]): readonly string[] =>
  */
 const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key`;
 
+type OutcomeBlock = NonNullable<PilotReport["outcomes"]>;
+
+/** The closed month by name — "July 2026" — or "an unknown month" for a start this client cannot read. */
+const monthOf = (iso: string): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms)
+    ? "an unknown month"
+    : new Date(ms).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+};
+
+/** Why a figure is withheld, for each minimum (review #4); a word this client lacks prints as itself. */
+const WITHHELD_SENTENCE: Readonly<Record<string, string>> = {
+  too_few_recorders: `fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders)} people recorded an outcome`,
+  too_few_sources: `the recorded outcomes are about fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work`,
+  too_few_recorded: `fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} outcomes were recorded`,
+};
+
+/** ", counted from <day>, when outcomes became recordable here" — only when that instant clips the month. */
+const clippedFrom = (block: OutcomeBlock): string =>
+  block.countedFromIso === null || block.countedFromIso === block.periodStartIso
+    ? ""
+    : `, counted from ${isoDay(block.countedFromIso)}, when outcomes became recordable here`;
+
+const withheldOutcomeLine = (block: OutcomeBlock, month: string, withheld: string): string => {
+  if (withheld === "not_recordable") {
+    const since = block.recordableSinceIso;
+    return since === null
+      ? `${INDENT}hint outcomes, ${month}: none could be recorded — this repo does not record them`
+      : `${INDENT}hint outcomes, ${month}: none could be recorded — outcomes became recordable here on ${isoDay(since)}`;
+  }
+  if (withheld === "no_interventions") {
+    return `${INDENT}hint outcomes, ${month}: no intervention reached anyone${clippedFrom(block)}`;
+  }
+  const why = WITHHELD_SENTENCE[withheld] ?? `withheld (${bareUntrusted(withheld)})`;
+  return `${INDENT}hint outcomes, ${month}: withheld — ${why}${clippedFrom(block)}, and a figure could single someone out`;
+};
+
 /**
- * 07 §13.9 (D-O5): WHAT THE INTERVENTIONS LED TO, one per-repo line —
- * descriptive, so no target; a floor, because only what an agent or a person
- * chose to record is in it; and counts over the repo, so nobody is named. An
- * older hub sends no block and the line says so; a population of zero says
- * so too, rather than printing "0.0" as if somebody had measured it.
+ * 07 §13.9 (D-O5, review #4): WHAT THE INTERVENTIONS LED TO, one per-repo
+ * line over ONE FIXED, CLOSED MONTH — descriptive, so no target; only what an
+ * agent or a person chose to record; and only above the disclosure minimums,
+ * so no subtraction of one's own `--mine` isolates a teammate. An older hub
+ * sends no block and the line says so; an empty month says so too, never "0.0".
  */
 const outcomeLine = (report: PilotReport): string => {
-  const outcomes = report.outcomes;
-  if (outcomes === undefined) {
+  const block = report.outcomes;
+  if (block === undefined) {
     return `${INDENT}hint outcomes: this hub does not record them`;
   }
-  const since = outcomes.sinceIso === null ? "unknown" : isoDay(outcomes.sinceIso);
-  if (outcomes.interventions === 0) {
-    return `${INDENT}hint outcomes: no intervention reached anyone since ${since}, when outcomes became recordable here`;
+  const month = monthOf(block.periodStartIso);
+  const figures = block.withheld === null && block.interventions > 0 ? block.figures : null;
+  if (figures === null) {
+    return withheldOutcomeLine(block, month, block.withheld ?? "no_interventions");
   }
-  const per100 = (value: number): string => ((value / outcomes.interventions) * 100).toFixed(RATE_DECIMALS);
+  const per100 = (value: number): string => ((value / block.interventions) * 100).toFixed(RATE_DECIMALS);
   return (
-    `${INDENT}hint outcomes per 100 interventions that reached someone (${count(outcomes.interventions)} since ${since}): ` +
-    `followed ${per100(outcomes.followed)} · overrode ${per100(outcomes.overrode)} · not relevant now ${per100(outcomes.notRelevantNow)} · ` +
-    `noise ${per100(outcomes.noise)} · unmarked ${per100(outcomes.unmarked)} — a FLOOR: only what agents and people chose to record; no target, nobody named`
+    `${INDENT}hint outcomes per 100 interventions, ${month} — the last whole month, fixed (${count(block.interventions)} reached someone${clippedFrom(block)}): ` +
+    `followed ${per100(figures.followed)} · overrode ${per100(figures.overrode)} · not relevant now ${per100(figures.notRelevantNow)} · ` +
+    `noise ${per100(figures.noise)} · unmarked ${per100(figures.unmarked)} — a FLOOR: only what agents and people chose to record; no target, nobody named`
   );
 };
 

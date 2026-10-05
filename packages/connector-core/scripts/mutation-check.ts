@@ -17426,7 +17426,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the oldest outcome of a delivery stands instead of the newest",
-    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    file: `${SERVER}/src/services/outcome-population.ts`,
     from: "      ORDER BY o.created_at DESC, o.id DESC LIMIT 1",
     to: "      ORDER BY o.created_at ASC, o.id ASC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
@@ -17434,7 +17434,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the person's noise label is not read as noise in their own view",
-    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    file: `${SERVER}/src/services/outcome-population.ts`,
     from: "      AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS}",
     to: "      AND m.marked_by = so.recipient AND m.mark IN ('helpful')",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
@@ -17442,7 +17442,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a later noise label does not supersede an earlier outcome",
-    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    file: `${SERVER}/src/services/outcome-population.ts`,
     from: "      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'",
     to: "      CASE WHEN noise_at IS NOT NULL AND outcome_at IS NULL THEN 'noise'",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
@@ -17660,7 +17660,7 @@ export const MUTATIONS: readonly Mutation[
   // ── 07 §13.9, D-O5: the team report's outcomes line ───────────────────────
   {
     label: "a delivery from before outcomes were recordable counts as unmarked",
-    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    file: `${SERVER}/src/services/outcome-population.ts`,
     from: "  return recordable.getTime() > windowStart.getTime() ? recordable : windowStart;",
     to: "  return windowStart;",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
@@ -17685,24 +17685,24 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the team report's outcome line counts nobody's interventions",
     file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
-    from: "    ${deliveryStates(input.repo, since, sql`true`)}",
-    to: "    ${deliveryStates(input.repo, since, sql`false`)}",
+    from: "    who: sql`true`,",
+    to: "    who: sql`false`,",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the per-repo line reads 'no intervention reached anyone' on a repo full of them",
   },
   {
     label: "an older hub's report reads as zero outcomes",
     file: `${CORE}/src/http/pilot.ts`,
-    from: "      unmarked: CountSchema,\n    })\n    .optional(),",
-    to: "      unmarked: CountSchema,\n    })\n    .default({ sinceIso: null, interventions: 0, followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 }),",
+    from: '      message: "an outcome figure is either withheld or shown",\n    })\n    .optional(),',
+    to: '      message: "an outcome figure is either withheld or shown",\n    })\n    .default({ periodStartIso: "", periodEndIso: "", recordableSinceIso: null, countedFromIso: null, interventions: 0, withheld: null, figures: { followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 } }),',
     test: `${CORE}/test/pilot-client.test.ts`,
     because: "a hub that records no outcomes looks like a team whose hints led to nothing",
   },
   {
     label: "the outcomes line prints per-100 figures over no intervention",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: "  if (outcomes.interventions === 0) {",
-    to: "  if (false) {",
+    from: "  const figures = block.withheld === null && block.interventions > 0 ? block.figures : null;",
+    to: "  const figures = block.withheld === null ? block.figures : null;",
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "an empty population prints NaN or 0.0 as if somebody had measured it",
   },
@@ -17754,6 +17754,55 @@ export const MUTATIONS: readonly Mutation[
     to: "  false;",
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "a person reads eight weeks of silence where nothing could have been recorded",
+  },
+  // ── 07 §13.10, review #4: no subtraction singles somebody out ────────────
+  {
+    label: "two people's outcomes print as a team figure",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "  if (aggregate.recorders < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the team total minus one's own --mine is the other person's exact outcomes",
+  },
+  {
+    label: "outcomes about one or two people's work print as a team figure",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "  if (checks.sources && aggregate.sources < HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the author whose work every hint pointed at reads the team line as the overrides of their own work",
+  },
+  {
+    label: "a handful of recorded outcomes prints as a team figure",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: '  return checks.recorded && recorded < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded ? "too_few_recorded" : null;',
+    to: "  return null;",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "with a few words in the month, one person's change of mind is one visible step in the figure",
+  },
+  {
+    label: "a word changed after the month moves the month's team figure",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      WHERE o.delivery_id = so.id AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}",
+    to: "      WHERE o.delivery_id = so.id AND o.recorded_by = so.recipient",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "reading the closed month before and after a teammate switches a word shows which word they switched",
+  },
+  {
+    label: "the report's days steps the team outcome line's window",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "        now: until,",
+    to: "        now: since,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "stepping --days a day at a time isolates one day's deliveries and so one person's words",
+  },
+  {
+    label: "the client prints figures the hub withheld",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "    .refine((block) => (block.withheld === null) === (block.figures !== null), {",
+    to: "    .refine(() => true, {",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because: "a hub that sends numbers beside 'withheld' has them printed as if the minimums were met",
   },
 ];
 
@@ -18000,7 +18049,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
- * PRINTS: packages/connector-core/test/pilot-client.test.ts 5
+ * PRINTS: packages/connector-core/test/pilot-client.test.ts 6
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
@@ -18097,7 +18146,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 3
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 8
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

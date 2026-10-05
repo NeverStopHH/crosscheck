@@ -178,15 +178,29 @@ export const PilotReportSchema = z.looseObject({
   // sends no block at all and the report says "this hub does not record
   // them"; a hub that sends one sends every count, none defaulted, because
   // "followed 0" read from a missing count is the AT-9 failure again.
+  // Review #4: ONE CLOSED MONTH, and figures only above the disclosure
+  // minimums — `withheld` names why not, as an open word, and a block whose
+  // figures and withholding disagree is a report this client cannot read.
   outcomes: z
     .looseObject({
-      sinceIso: z.string().nullable(),
+      periodStartIso: z.string().min(1),
+      periodEndIso: z.string().min(1),
+      recordableSinceIso: z.string().nullable(),
+      countedFromIso: z.string().nullable(),
       interventions: CountSchema,
-      followed: CountSchema,
-      overrode: CountSchema,
-      notRelevantNow: CountSchema,
-      noise: CountSchema,
-      unmarked: CountSchema,
+      withheld: z.string().min(1).nullable(),
+      figures: z
+        .looseObject({
+          followed: CountSchema,
+          overrode: CountSchema,
+          notRelevantNow: CountSchema,
+          noise: CountSchema,
+          unmarked: CountSchema,
+        })
+        .nullable(),
+    })
+    .refine((block) => (block.withheld === null) === (block.figures !== null), {
+      message: "an outcome figure is either withheld or shown",
     })
     .optional(),
   // THE LIST MUST ARRIVE: a list that did not is a report this client cannot

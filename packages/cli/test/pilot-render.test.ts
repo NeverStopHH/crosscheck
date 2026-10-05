@@ -60,6 +60,9 @@ const emptyLabels = (): PilotLabelFigures => ({
   labelCoverage: { kind: "unavailable", reason: "no_interventions" },
 });
 
+/** The closed month a hub reports outcomes for (07 §13.9, review #4). */
+const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z" };
+
 const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
   repo: "github.com/acme/api",
   enrolled: true,
@@ -536,46 +539,84 @@ describe("renderPilot", () => {
     expect(out).toContain("· 30 recorded before labels, in neither cohort");
   });
 
-  test("D-O5: one per-repo outcomes line, per 100 interventions, said to be a floor with no target", () => {
+  test("D-O5: one per-repo outcomes line for the last whole month, per 100 interventions, no target", () => {
     // Arrange
     const outcomes = {
-      sinceIso: "2026-07-20T12:00:00.000Z",
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
       interventions: 8,
-      followed: 4,
-      overrode: 1,
-      notRelevantNow: 1,
-      noise: 1,
-      unmarked: 1,
+      withheld: null,
+      figures: { followed: 4, overrode: 1, notRelevantNow: 1, noise: 1, unmarked: 1 },
     };
 
     // Act
     const out = renderPilot(view({ outcomes }));
 
-    // Assert — one line, descriptive, and nobody named in it
+    // Assert — one line, descriptive, the fixed month named, nobody named
     const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
     expect(lines).toEqual([
-      "   hint outcomes per 100 interventions that reached someone (8 since 2026-07-20): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 · unmarked 12.5 — a FLOOR: only what agents and people chose to record; no target, nobody named",
+      "   hint outcomes per 100 interventions, July 2026 — the last whole month, fixed (8 reached someone): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 · unmarked 12.5 — a FLOOR: only what agents and people chose to record; no target, nobody named",
     ]);
   });
 
-  test("D-O5: no intervention since outcomes became recordable says so, never 0.0", () => {
-    // Arrange
+  test("review #4: below the disclosure minimums the line names the minimum and prints no figure", () => {
+    // Arrange — two people recorded: the team minus one's own view would be the other's
     const outcomes = {
-      sinceIso: "2026-07-20T12:00:00.000Z",
-      interventions: 0,
-      followed: 0,
-      overrode: 0,
-      notRelevantNow: 0,
-      noise: 0,
-      unmarked: 0,
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      interventions: 4,
+      withheld: "too_few_recorders",
+      figures: null,
     };
 
     // Act
     const out = renderPilot(view({ outcomes }));
 
     // Assert
-    expect(out).toContain("   hint outcomes: no intervention reached anyone since 2026-07-20, when outcomes became recordable here");
-    expect(out).not.toContain("followed 0.0");
+    expect(out).toContain(
+      "   hint outcomes, July 2026: withheld — fewer than 3 people recorded an outcome, and a figure could single someone out",
+    );
+    expect(out).not.toContain("per 100 interventions, July");
+  });
+
+  test("D-O5: no intervention in the counted month says so, never 0.0", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      interventions: 0,
+      withheld: "no_interventions",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual(["   hint outcomes, July 2026: no intervention reached anyone"]);
+  });
+
+  test("review #4: figures sent over no intervention still print no per-100, never NaN", () => {
+    // Arrange — a hub that forgot to withhold an empty month
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      interventions: 0,
+      withheld: null,
+      figures: { followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 },
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual(["   hint outcomes, July 2026: no intervention reached anyone"]);
   });
 
   test("D-O5: a hub that predates outcomes says so instead of printing a figure", () => {

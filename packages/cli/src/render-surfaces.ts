@@ -359,7 +359,7 @@ const pilotWith = (payload: string): PilotView => {
         reasons: [{ label: payload, reason: payload }],
         reasonsBeyondList: 1,
       },
-      outcomes: { sinceIso: payload, interventions: 4, followed: 1, overrode: 1, notRelevantNow: 1, noise: 0, unmarked: 1 },
+      outcomes: { periodStartIso: payload, periodEndIso: payload, recordableSinceIso: ISO, countedFromIso: ISO, interventions: 4, withheld: payload, figures: null },
       cohorts: [
         { cohort: payload, cap: 50, ...labels },
         {
