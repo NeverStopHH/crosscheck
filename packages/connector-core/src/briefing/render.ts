@@ -908,6 +908,30 @@ export const absenceCloudAgent = (entry: AbsenceEntry): string | null =>
     ? (cloudAgentById(entry.cloudAgent)?.product ?? null)
     : null;
 
+const CLOUD_AGENT_LINK_EFFECT =
+  "is linked to a developer on this hub, so every commit under it, whoever " +
+  "started the session, is attributed to that one person and a session of " +
+  "theirs can close its gap";
+
+/**
+ * A cloud agent identity the hub reports linked to a developer (AbsencesOutcome
+ * linkedCloudAgents) — what the link does, and the admin's way out. Exported
+ * because doctor's WARN and status's line say it; two spellings would drift.
+ * An id this client's table does not hold is still warned about, its word
+ * printed bare: silence here would read as nothing linked.
+ */
+export const formatCloudAgentLink = (id: string): string => {
+  const identity = cloudAgentById(id);
+  if (identity === null) {
+    return `a cloud agent identity this client does not know (${bareUntrusted(id)}) ${CLOUD_AGENT_LINK_EFFECT}`;
+  }
+  return (
+    `${identity.product}'s commit identity ${identity.email} ${CLOUD_AGENT_LINK_EFFECT} — ` +
+    "an admin finds them in GET /api/developers and unlinks it with " +
+    `DELETE /api/developers/<developerId>/emails/${identity.email}`
+  );
+};
+
 /**
  * PHRASING CONTRACT (DESIGN.md §10 risk 3): each tail is a factual
  * observation about what was and was not REPORTED — never an inference about

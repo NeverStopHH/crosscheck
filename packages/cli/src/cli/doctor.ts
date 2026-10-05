@@ -73,6 +73,7 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   absenceCloudAgent,
   formatAge,
+  formatCloudAgentLink,
 } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
@@ -1543,6 +1544,35 @@ const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
 };
 
 /**
+ * A cloud agent's commit identity linked to a developer (the hub refuses new
+ * links; this is one it already held). WARN, not FAIL: nothing on this
+ * machine is broken, but every commit under that identity, by anyone, reads
+ * as one person's — and only an admin can undo it. An older hub that does
+ * not say is "not measured", never "none".
+ */
+const checkLinkedCloudAgents = (result: HubResult<AbsencesOutcome>): Check => {
+  if (!result.ok) {
+    return check("PASS", "cloud agent identity", "not measured");
+  }
+  const linked = result.data.linkedCloudAgents;
+  if (linked === null) {
+    return check(
+      "PASS",
+      "cloud agent identity",
+      "not measured (this hub does not report it)",
+    );
+  }
+  if (linked.length === 0) {
+    return check("PASS", "cloud agent identity", "none linked to a developer");
+  }
+  return check(
+    "WARN",
+    "cloud agent identity",
+    linked.map(formatCloudAgentLink).join("; "),
+  );
+};
+
+/**
  * ONE hub read, several checks. The findings and the coverage record travel
  * on the same response (03 §3.5), so splitting this into two functions with
  * two `getAbsences` calls would spend a second round trip on bytes already
@@ -1564,6 +1594,7 @@ const absenceAndCoverageChecks = async (
   );
   return [
     checkAbsences(result),
+    checkLinkedCloudAgents(result),
     ...coverageChecks(result),
     ...(reporting === null ? [] : [reporting]),
     ...coverageExemptionChecks(),

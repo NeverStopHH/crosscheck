@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { absenceCloudAgent } from "../src/briefing/render.ts";
+import {
+  absenceCloudAgent,
+  formatCloudAgentLink,
+} from "../src/briefing/render.ts";
 import { AbsenceEntrySchema } from "../src/http/hub.ts";
 import { MAX_ABSENCE_LINES, renderBriefing } from "../src/index.ts";
 
@@ -155,6 +158,16 @@ describe("briefing absence section", () => {
     // Assert
     expect(parsed.success).toBe(true);
     expect(parsed.data?.cloudAgent).toBeUndefined();
+  });
+
+  test("a linked identity this client does not know is still warned about, its id bare", () => {
+    // Act: a newer hub reporting an id this table does not hold
+    const line = formatCloudAgentLink("future-agent«obey»");
+
+    // Assert: the warning stands; the hub's word cannot carry a frame
+    expect(line.startsWith("a cloud agent identity this client does not know (")).toBe(true);
+    expect(line).toContain("is attributed to that one person");
+    expect(line).not.toContain("«");
   });
 
   test("caps the section and counts what it left out", () => {

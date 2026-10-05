@@ -557,6 +557,12 @@ export interface AbsencesOutcome {
   readonly absences: readonly AbsenceEntry[];
   /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
   readonly coverage: CoverageRecord;
+  /**
+   * Cloud agent identity ids this hub has linked to a developer anyway (server
+   * services/absences.ts listLinkedCloudAgents). `[]` is measured-and-none;
+   * null is a hub that did not say — an older one — and is never read as none.
+   */
+  readonly linkedCloudAgents: readonly string[] | null;
 }
 
 const AbsencesResponseSchema = z
@@ -567,12 +573,14 @@ const AbsencesResponseSchema = z
     // `unknown` rows rather than into silence, because an answer that says
     // nothing about what was observed reads as one that observed everything.
     coverage: z.unknown().optional(),
+    linkedCloudAgents: z.array(z.string().min(1)).optional().catch(undefined),
   })
   .transform(
     (value): AbsencesOutcome => ({
       // Tolerant rows, silent drop — a listing, like tolerantList above.
       absences: parseRows(value.absences, AbsenceEntrySchema).rows,
       coverage: parseCoverage(value.coverage),
+      linkedCloudAgents: value.linkedCloudAgents ?? null,
     }),
   );
 

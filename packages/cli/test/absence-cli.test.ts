@@ -67,6 +67,14 @@ const cloudAgentAbsence = (now: number): Record<string, unknown> => ({
   cloudAgent: "claude-code-web",
 });
 
+/** Doctor's WARN and status's line: one sentence, two surfaces. */
+const LINKED_SENTENCE =
+  "Claude Code on the web's commit identity noreply@anthropic.com is linked " +
+  "to a developer on this hub, so every commit under it, whoever started the " +
+  "session, is attributed to that one person and a session of theirs can close " +
+  "its gap — an admin finds them in GET /api/developers and unlinks it with " +
+  "DELETE /api/developers/<developerId>/emails/noreply@anthropic.com";
+
 const paths: string[] = [];
 const stops: (() => void)[] = [];
 
@@ -137,6 +145,35 @@ describe("crosscheck status absence lines", () => {
     expect(result.stdout).not.toContain("crosscheck account");
   });
 
+  test("says when the hub has Claude Code on the web's identity linked to a developer", async () => {
+    // Arrange: no absence line at all — a link can close the very gap that
+    // would have printed one, so the warning cannot ride on that section
+    const { repo, env } = await fixture("status-linked-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: ["claude-code-web"] },
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(`cloud agent identity: ${LINKED_SENTENCE}`);
+  });
+
+  test("prints no linked-identity line when nothing is linked", async () => {
+    // Arrange
+    const { repo, env } = await fixture("status-unlinked-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [] },
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).not.toContain("cloud agent identity:");
+  });
+
   test("prints no absence section when the hub has no endpoint for it", async () => {
     // Arrange
     const { repo, env } = await fixture("status-degrade", { unexpected: true });
@@ -198,6 +235,51 @@ describe("crosscheck doctor absence check", () => {
     expect(result.stdout).toContain(
       "3 recent commit authors with no matching reported session " +
         "(1 hub member, 1 without a crosscheck account, 1 cloud agent identity)",
+    );
+  });
+
+  test("warns when the hub has Claude Code on the web's identity linked to a developer", async () => {
+    // Arrange: a link from before the hub refused them
+    const { repo, env } = await fixture("doctor-linked-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: ["claude-code-web"] },
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      `WARN  cloud agent identity  ${LINKED_SENTENCE}`,
+    );
+  });
+
+  test("says no cloud agent identity is linked when the hub measured none", async () => {
+    // Arrange
+    const { repo, env } = await fixture("doctor-unlinked-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [] },
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "PASS  cloud agent identity  none linked to a developer",
+    );
+  });
+
+  test("an older hub's silence on linked identities is 'not measured', never 'none'", async () => {
+    // Arrange: the default fixture sends no linkedCloudAgents field
+    const { repo, env } = await fixture("doctor-older-hub-links");
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "PASS  cloud agent identity  not measured (this hub does not report it)",
     );
   });
 
