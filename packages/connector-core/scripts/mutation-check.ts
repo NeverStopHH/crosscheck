@@ -10773,8 +10773,8 @@ export const MUTATIONS: readonly Mutation[
     // Landed changes. A separator in a subject cannot hide its commit.
     label: "a subject carrying the separator hides its commit",
     file: `${CORE}/src/landed-changes/git-queries.ts`,
-    from: "const FIELD = \"\\x00\";\n/** full sha, short sha, author, email, committer time, subject */\nconst COMMIT_FORMAT = \"%H%x00%h%x00%aN%x00%aE%x00%ct%x00%s\";",
-    to: "const FIELD = \"\\x1f\";\n/** full sha, short sha, author, email, committer time, subject */\nconst COMMIT_FORMAT = \"%H%x1f%h%x1f%aN%x1f%aE%x1f%ct%x1f%s\";",
+    from: "const FIELD = \"\\x00\";\n/** full sha, short sha, author, email, committer time, subject, raw author, raw email */\nconst COMMIT_FORMAT = \"%H%x00%h%x00%aN%x00%aE%x00%ct%x00%s%x00%an%x00%ae\";",
+    to: "const FIELD = \"\\x1f\";\n/** full sha, short sha, author, email, committer time, subject, raw author, raw email */\nconst COMMIT_FORMAT = \"%H%x1f%h%x1f%aN%x1f%aE%x1f%ct%x1f%s%x1f%an%x1f%ae\";",
     test: `${CORE}/test/landed-changes-edges.test.ts`,
     because:
       "one control character in a commit subject makes that commit invisible to the stop",
@@ -16923,6 +16923,350 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/user-level-unreadable.test.ts`,
     because: "a locked user-level mcp.json is reported missing and the remedy is to install again",
   },
+  {
+    label: "the hub names no cloud agent for Claude Code on the web's commits",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      const cloudAgent = cloudAgentForEmail(row.authorEmail);",
+    to: "      const cloudAgent = null;",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "every briefing on the pilot repo goes back to telling the reader Claude needs a crosscheck account",
+  },
+  {
+    label: "the hub names every stranger a cloud agent",
+    file: `${SCHEMA}/src/commit-evidence.ts`,
+    from: "  CLOUD_AGENT_IDENTITIES.find((identity) => identity.email === email) ?? null;",
+    to: "  CLOUD_AGENT_IDENTITIES.find(() => true) ?? null;",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "a teammate who needs an invitation is told crosscheck cannot capture them, and nobody sends one",
+  },
+  {
+    label: "the briefing still asks for an account for Claude Code on the web",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    return product === null",
+    to: "    return true",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "the pilot's line again: a reader invited to create an account for something that is not a person",
+  },
+  {
+    label: "an unknown cloud agent id is rendered as a product name",
+    file: `${SCHEMA}/src/commit-evidence.ts`,
+    from: "  CLOUD_AGENT_IDENTITIES.find((identity) => identity.id === id) ?? null;",
+    to: "  CLOUD_AGENT_IDENTITIES[0] ?? null;",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "a newer hub's id is printed as Claude Code on the web's identity, a product the hub never named",
+  },
+  {
+    label: "a cloud agent id relabels a member's absence",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: '  entry.kind === "unconnected"\n    ? (cloudAgentById',
+    to: "  true\n    ? (cloudAgentById",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "doctor counts a named hub member as a cloud agent identity, and the member's own gap loses its name",
+  },
+  {
+    label: "a malformed cloud agent field drops the absence row",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  cloudAgent: z.string().min(1).optional().catch(undefined),",
+    to: "  cloudAgent: z.string().min(1).optional(),",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "a refinement this client cannot read hides a coverage gap from the briefing, status and doctor",
+  },
+  {
+    label: "skipping Claude Code on the web's commits as automation erases their gap",
+    file: `${CORE}/src/capture/commit-evidence.ts`,
+    from: "  entry.email.endsWith(GITHUB_NOREPLY_EMAIL_SUFFIX);",
+    to: '  entry.email.endsWith(GITHUB_NOREPLY_EMAIL_SUFFIX) ||\n  entry.email === "noreply@anthropic.com";',
+    test: `${CORE}/test/commit-evidence.test.ts`,
+    because: "the tempting fix for the pilot's line deletes the only trace of a session no connector ran in, and coverage reads complete",
+  },
+  {
+    label: "doctor still counts Claude Code on the web as an author without an account",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    (entry) => absenceCloudAgent(entry) !== null,",
+    to: "    () => false,",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "doctor repeats the pilot's wrong remedy one surface over from the briefing that stopped saying it",
+  },
+  {
+    label: "doctor counts Claude Code on the web's commits twice",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: 'findings.filter((entry) => entry.kind === "unconnected").length -',
+    to: 'findings.filter((entry) => entry.kind === "unconnected").length + 0 *',
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the parts sum past the total, and one cloud identity reads as a stranger needing an account as well",
+  },
+  {
+    label: "the alias API links Claude Code on the web's commit identity to one developer",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "  const email = normalizeEmail(rawEmail);\n  const refused = refuseCloudAgent(email);",
+    to: "  const email = normalizeEmail(rawEmail);\n  const refused = null;",
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because: "every cloud session's commits, by anyone, become one developer's, and a session of theirs nearby closes a gap the hub has no evidence about",
+  },
+  {
+    label: "a developer can be created under Claude Code on the web's commit identity",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "  const email = normalizeEmail(input.email);\n  const refused = refuseCloudAgent(email);",
+    to: "  const email = normalizeEmail(input.email);\n  const refused = null;",
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because: "the same misattribution through the primary email: an account called Claude owns every cloud session's commits",
+  },
+  {
+    label: "the hub hides a cloud agent identity it already linked to a developer",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "    return cloudAgent === null ? [] : [{ cloudAgent, primary: row.isPrimary }];",
+    to: "    return [];",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "a link from before the refusal keeps attributing everyone's cloud commits to one person, and nothing on any surface says so",
+  },
+  {
+    label: "an older hub's silence on linked identities reads as none linked",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "        value.linkedCloudAgents === undefined\n          ? null\n",
+    to: "        value.linkedCloudAgents === undefined\n          ? []\n",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "doctor reports a check the hub never ran as passed, the silence-that-looks-like-safety this project refuses",
+  },
+  {
+    label: "doctor passes a cloud agent identity linked to one developer",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '    "WARN",\n    "cloud agent identity",',
+    to: '    "PASS",\n    "cloud agent identity",',
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "a misattribution only an admin can undo sits among the green lines, where nobody looks",
+  },
+  {
+    label: "status drops the linked cloud agent identity line",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      ...cloudAgentLinkLines,\n",
+    to: "",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the link can close the very gap the absence heading would have shown, so status says nothing at all",
+  },
+  {
+    label: "a newer hub's unknown cloud agent id prints its own frame characters",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "does not know (${bareUntrusted(link.cloudAgent)})",
+    to: "does not know (${link.cloudAgent})",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "hub text in a bare slot can mint the renderer's own framing on doctor's and status's lines",
+  },
+  {
+    label: "a held cloud agent link names a developer in the absence listing",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  eq(developerEmails.email, commitEvidence.authorEmail),\n  resolvesToDeveloper(developerEmails.email),\n);",
+    to: "  eq(developerEmails.email, commitEvidence.authorEmail),\n);",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "the listing names whoever holds noreply@anthropic.com for every cloud session's commits, and a session of theirs hides the line",
+  },
+  {
+    label: "a held cloud agent link lets a developer's session close the census gap",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  eq(developerEmails.email, commitEvidence.authorEmail),\n  resolvesToDeveloper(developerEmails.email),\n);",
+    to: "  eq(developerEmails.email, commitEvidence.authorEmail),\n);",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because: "the git rung reads complete over commits nobody reported, on the strength of a session that was not theirs",
+  },
+  {
+    label: "a held cloud agent link names a teammate's work behind a Claude commit",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        eq(developerEmails.email, lowered(commit.authorEmail)),\n        resolvesToDeveloper(developerEmails.email),\n",
+    to: "        eq(developerEmails.email, lowered(commit.authorEmail)),\n",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "the landed-change stop tells the reader a teammate's work is the why of a commit a cloud session made",
+  },
+  {
+    label: "a held cloud agent link tells a teammate about a Claude commit's stop",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "      and(eq(developers.id, developerEmails.developerId), resolvesToDeveloper(developerEmails.email)),",
+    to: "      eq(developers.id, developerEmails.developerId),",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the stop prints that the link holder is told, naming a person git never named",
+  },
+  {
+    label: "a held cloud agent link makes Claude's commit address somebody's",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        inArray(developerEmails.email, [...firstSpelling.keys()]),\n        resolvesToDeveloper(developerEmails.email),\n",
+    to: "        inArray(developerEmails.email, [...firstSpelling.keys()]),\n",
+    test: `${SERVER}/test/landed-context.test.ts`,
+    because: "the hub answers that the address belongs to a developer, the one answer every other site now refuses to give",
+  },
+  {
+    label: "a held cloud agent link files a landed-change notice for a Claude commit",
+    file: `${SERVER}/src/services/landed-notices.ts`,
+    from: ".where(and(inArray(developerEmails.email, emails), resolvesToDeveloper(developerEmails.email)));",
+    to: ".where(inArray(developerEmails.email, emails));",
+    test: `${SERVER}/test/landed-notices.test.ts`,
+    because: "the link holder's briefing announces a stop at work that was never theirs",
+  },
+  {
+    label: "a held cloud agent link resolves a reference to the developer holding it",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "        // (services/cloud-agent-identity.ts).\n        resolvesToDeveloper(developerEmails.email),\n",
+    to: "        // (services/cloud-agent-identity.ts).\n",
+    test: `${SERVER}/test/developer-settings.test.ts`,
+    because: "muting or filtering by noreply@anthropic.com silently mutes or filters the link holder",
+  },
+  {
+    label: "doctor offers a .mailmap line mapping Claude's commit address to a person",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "    if (!isSkipped && !isCloudAgent) {",
+    to: "    if (!isSkipped) {",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the advice launders every cloud session's landed commits into one developer's through git itself, where the hub cannot see it",
+  },
+  {
+    label: "the cloud agent predicate matches no address",
+    file: `${SERVER}/src/services/cloud-agent-identity.ts`,
+    from: "  inArray(sql`lower(${email})`, CLOUD_AGENT_EMAILS);",
+    to: "  sql`false`;",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "every held link resolves again at once, and the link report says none is held",
+  },
+  {
+    label: "the held-link WARN claims the link still attributes commits",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: 'const IGNORED_GAP = "so its commits stay an unconnected gap attributed to nobody";',
+    to: 'const IGNORED_GAP = "so every commit under it is attributed to that one person";',
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "doctor and status state an attribution the hub refuses to make, and an admin chases a misattribution that is not there",
+  },
+  {
+    label: "the held-link WARN drops the admin's way to remove the row",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: '    : "an admin should still remove it: find the developer in GET /api/developers, then " +\n      `DELETE /api/developers/<developerId>/emails/${email}`;',
+    to: '    : "";',
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the stale row is ignored but never removed, and nobody is told how",
+  },
+  {
+    label: "status loses the space in spool: N pending",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      `spool: ${depth} pending",
+    to: "      `spool:${depth} pending",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the review's finding: a line every reader scans for, spelled unlike every other key on the surface",
+  },
+  {
+    label: "the hub reports a primary-held cloud agent identity as an alias",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "primary: row.isPrimary }",
+    to: "primary: false }",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "doctor offers DELETE …/emails for a row the hub answers with 400, the remedy the review could not carry out",
+  },
+  {
+    label: "the hub reports one cloud agent identity once per stored spelling",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  return [...byKey.values()];",
+    to: "  return links;",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "case-variant rows of one address print the same WARN twice",
+  },
+  {
+    label: "the alias DELETE misses a held row stored in another case",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "    eq(sql`lower(${developerEmails.email})`, email),",
+    to: "    eq(developerEmails.email, email),",
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because: "the remedy doctor prints answers 404 for the very row the link report found with lower()",
+  },
+  {
+    label: "doctor prints a held identity once per time the hub repeats it",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "          : distinctLinks(value.linkedCloudAgents),",
+    to: "          : value.linkedCloudAgents,",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the review's duplicate: one stale row reads as two",
+  },
+  {
+    label: "doctor offers the alias DELETE for a primary email the hub will not remove",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "${cloudAgentLinkRemedy(identity.email, link.primary)}",
+    to: "${cloudAgentLinkRemedy(identity.email, false)}",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "an admin runs the printed DELETE and gets 400 'the primary email … cannot be removed'",
+  },
+  {
+    label: "doctor calls a primary-held cloud agent identity a linked alias",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const effect = link.primary ? CLOUD_AGENT_PRIMARY_EFFECT : CLOUD_AGENT_LINK_EFFECT;",
+    to: "  const effect = CLOUD_AGENT_LINK_EFFECT;",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the account the old line invited is described as somebody's extra address, and the admin looks for the wrong row",
+  },
+  {
+    label: "a .mailmap line sends a teammate's address for a landed Claude commit",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "    authorEmail: isCloudAgent ? rawEmail : mappedEmail,",
+    to: "    authorEmail: mappedEmail,",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because: "the review's reproduction: every stop asks the hub about the mapped teammate, which names their work behind a cloud session's commit",
+  },
+  {
+    label: "a .mailmap line names a teammate as the author of a landed Claude commit",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "    authorName: isCloudAgent ? rawName : mappedName,",
+    to: "    authorName: mappedName,",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because: "the stop prints a person's name for a commit git never attributed to them",
+  },
+  {
+    label: "a .mailmap line mapping Claude to the reader silences a revert stop",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "          return isCloudAgentAuthor(raw) || mapped.toLowerCase() !== self;",
+    to: "          return mapped.toLowerCase() !== self;",
+    test: `${CORE}/test/landed-changes-edges.test.ts`,
+    because: "a cloud fix the reader picked reads as their own, so its revert looks like nothing to undo and the stop stays silent",
+  },
+  {
+    label: "doctor's author list reads Claude's commits through the .mailmap",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "    const isCloudAgent = cloudAgentForEmail(rawEmail.trim().toLowerCase()) !== null;",
+    to: "    const isCloudAgent = cloudAgentForEmail(key) !== null;",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the mapped address is listed as a teammate to map, so the laundering line advertises itself as a fix",
+  },
+  {
+    label: "doctor passes a .mailmap line that hands Claude's commits to a person",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "    (answer) => answer.email?.trim().toLowerCase() !== answer.identity.email,",
+    to: "    () => false,",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "git log, blame and shortlog credit one person with every cloud session's commits and nothing says so",
+  },
+  {
+    label: "doctor never asks git whether the .mailmap remaps a cloud agent identity",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    await checkCloudAgentMailmap(identity.root),\n",
+    to: "",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the check exists and no doctor run prints it",
+  },
+  {
+    label: "doctor says 'no commits by others' beside a cloud session's commits",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "      cloud.length === 0\n        ? `no commits by others ${WHERE(branches)}`",
+    to: "      true\n        ? `no commits by others ${WHERE(branches)}`",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the review's finding: a false sentence about the landing branches, and the cloud commits behind it unsaid",
+  },
+  {
+    label: "doctor calls every landed author known beside a cloud session's commits",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "    cloud.length === 0 ? detail : `${detail}${joiner}${cloud}`;",
+    to: "    detail;",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "'so a stop can name their work' overstates: the cloud commits name none",
+  },
+  {
+    label: "doctor stops counting a cloud session's landed commits",
+    file: `${CLI}/src/cli/doctor-landed-authors.ts`,
+    from: "      cloudCommits.set(rawKey, (cloudCommits.get(rawKey) ?? 0) + 1);",
+    to: "",
+    test: `${CLI}/test/landed-authors-doctor.test.ts`,
+    because: "the commits are dropped silently again, which is what the review found",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16967,6 +17311,7 @@ interface Outcome {
  * other.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
+ * PRINTS: packages/cli/test/absence-cli.test.ts 11
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
@@ -17002,7 +17347,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
- * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
+ * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
@@ -17093,7 +17438,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/absence-render.test.ts 1
+ * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
@@ -17107,6 +17452,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
+ * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
@@ -17138,7 +17484,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
- * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
+ * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
@@ -17206,6 +17552,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
+ * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -17221,12 +17568,13 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
- * PRINTS: packages/server/test/coverage.test.ts 12
+ * PRINTS: packages/server/test/coverage.test.ts 13
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
- * PRINTS: packages/server/test/developer-emails.test.ts 2
+ * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
+ * PRINTS: packages/server/test/developer-settings.test.ts 1
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
@@ -17237,8 +17585,8 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
- * PRINTS: packages/server/test/landed-context.test.ts 20
- * PRINTS: packages/server/test/landed-notices.test.ts 32
+ * PRINTS: packages/server/test/landed-context.test.ts 22
+ * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

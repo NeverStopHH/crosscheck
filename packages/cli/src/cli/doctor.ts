@@ -70,7 +70,11 @@ import {
   spoolFlushLockPath,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import {
+  absenceCloudAgent,
+  formatAge,
+  formatCloudAgentLink,
+} from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
@@ -167,7 +171,10 @@ import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
-import { checkLandedAuthors } from "./doctor-landed-authors.ts";
+import {
+  checkCloudAgentMailmap,
+  checkLandedAuthors,
+} from "./doctor-landed-authors.ts";
 import { announcementAnswerOf, passkeyDoctorCheck } from "./passkey-status.ts";
 import {
   readLocalLosses,
@@ -1549,9 +1556,15 @@ const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
     return check("PASS", "absence findings", "none");
   }
   const inactive = findings.filter((entry) => entry.kind === "inactive").length;
-  const unconnected = findings.filter(
-    (entry) => entry.kind === "unconnected",
+  // Still `unconnected` on the wire and still a gap; counted apart only
+  // because "without a crosscheck account" invites an account for something
+  // that is not a person — the same split the absence line makes.
+  const cloudAgents = findings.filter(
+    (entry) => absenceCloudAgent(entry) !== null,
   ).length;
+  const unconnected =
+    findings.filter((entry) => entry.kind === "unconnected").length -
+    cloudAgents;
   const parts = [
     ...(inactive > 0
       ? [`${inactive} hub member${inactive === 1 ? "" : "s"}`]
@@ -1559,12 +1572,44 @@ const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
     ...(unconnected > 0
       ? [`${unconnected} without a crosscheck account`]
       : []),
+    ...(cloudAgents > 0
+      ? [`${cloudAgents} cloud agent identit${cloudAgents === 1 ? "y" : "ies"}`]
+      : []),
   ];
   return check(
     "WARN",
     "absence findings",
     `${findings.length} recent commit author${findings.length === 1 ? "" : "s"} ` +
       `with no matching reported session (${parts.join(", ")}) — crosscheck status has the lines`,
+  );
+};
+
+/**
+ * A cloud agent's commit identity linked to a developer (the hub refuses new
+ * links; this is one it already held, and ignores for attribution). WARN, not
+ * FAIL: nothing on this machine is broken and no commit is misattributed, but
+ * the stale row says the address is someone's, and only an admin can remove
+ * it. An older hub that does not say is "not measured", never "none".
+ */
+const checkLinkedCloudAgents = (result: HubResult<AbsencesOutcome>): Check => {
+  if (!result.ok) {
+    return check("PASS", "cloud agent identity", "not measured");
+  }
+  const linked = result.data.linkedCloudAgents;
+  if (linked === null) {
+    return check(
+      "PASS",
+      "cloud agent identity",
+      "not measured (this hub does not report it)",
+    );
+  }
+  if (linked.length === 0) {
+    return check("PASS", "cloud agent identity", "none linked to a developer");
+  }
+  return check(
+    "WARN",
+    "cloud agent identity",
+    linked.map(formatCloudAgentLink).join("; "),
   );
 };
 
@@ -1590,6 +1635,7 @@ const absenceAndCoverageChecks = async (
   );
   return [
     checkAbsences(result),
+    checkLinkedCloudAgents(result),
     ...coverageChecks(result),
     ...(reporting === null ? [] : [reporting]),
     ...coverageExemptionChecks(),
@@ -3872,6 +3918,7 @@ export const runDoctor = async (
     await checkLandedChanges(identity.root),
     await checkLandingFetch(identity.root, config.home, env, now),
     await checkLandedAuthors(identity.root, hubCtx),
+    await checkCloudAgentMailmap(identity.root),
     // ONE scan of the session-state directory for all three model-cost
     // checks (state/session-state.ts readLiveSessionStates says why).
     checkSummarizerCost(liveStates),

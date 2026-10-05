@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import {
   TEST_ADMIN_TOKEN,
@@ -11,6 +12,7 @@ import {
   registerTestSession,
 } from "./helpers.ts";
 import type { HarnessWithSession } from "./helpers.ts";
+import { developerEmails } from "../src/db/schema.ts";
 
 const REPO = "github.com/acme/api";
 const MS_PER_HOUR = 3_600_000;
@@ -25,6 +27,7 @@ interface AbsenceView {
   readonly latestCommitAt: string;
   readonly lastSessionAt: string | null;
   readonly evidenceCollectedAt: string;
+  readonly cloudAgent?: string;
 }
 
 const ingestEvidence = async (
@@ -110,6 +113,43 @@ describe("GET /api/absences", () => {
     expect(absences[0]?.lastSessionAt).toBeNull();
   });
 
+  test("Claude Code on the web's commit identity stays 'unconnected', named as that identity", async () => {
+    // Arrange: commits authored AND committed as Claude <noreply@anthropic.com>
+    // — what a Claude Code on the web session pushes from a cloud sandbox no
+    // connector runs in — beside a plain stranger. Git names no developer
+    // for them, and nothing the hub holds does either.
+    const setup = await createHarnessWithSession();
+    await ingestEvidence(setup, [
+      {
+        name: "Claude",
+        email: "NoReply@Anthropic.com",
+        latestCommitAt: isoAt(-3 * MS_PER_DAY),
+        commitCount: 2,
+      },
+      {
+        name: "Sam Stranger",
+        email: "sam@external.example",
+        latestCommitAt: isoAt(-1 * MS_PER_DAY),
+        commitCount: 2,
+      },
+    ]);
+
+    // Act
+    const { raw, absences } = await fetchAbsences(setup);
+
+    // Assert: the kind a 0.10 client already renders, refined by an
+    // identifier — never the address, never a developer
+    const claude = absences.find((entry) => entry.name === "Claude");
+    const stranger = absences.find((entry) => entry.name === "Sam Stranger");
+    expect(absences.length).toBe(2);
+    expect(claude?.kind).toBe("unconnected");
+    expect(claude?.cloudAgent).toBe("claude-code-web");
+    expect(claude?.lastSessionAt).toBeNull();
+    expect(stranger?.kind).toBe("unconnected");
+    expect(stranger).not.toHaveProperty("cloudAgent");
+    expect(raw).not.toContain("@");
+  });
+
   test("a member matched via an ALIAS email is a member, never 'unconnected'", async () => {
     // Arrange: Robin's git commits carry a personal address the admin linked
     // as an alias (trial finding #7 — two of three trial members commit under
@@ -141,6 +181,147 @@ describe("GET /api/absences", () => {
     expect(absences.length).toBe(1);
     expect(absences[0]?.kind).toBe("inactive");
     expect(absences[0]?.name).toBe("Robin");
+  });
+
+  test("a cloud agent identity a hub already linked to a developer is reported, never deleted", async () => {
+    // Arrange: a link from before the developers routes refused it — the
+    // alias API accepted noreply@anthropic.com until then
+    const setup = await createHarnessWithSession();
+    const ken = await createTestDeveloper(setup.harness, "Ken", "ken@example.com");
+    await setup.harness.db.insert(developerEmails).values({
+      email: "noreply@anthropic.com",
+      developerId: ken.developerId,
+      isPrimary: false,
+      createdAt: new Date(TEST_START_ISO),
+    });
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+    const raw = await response.text();
+    const body = JSON.parse(raw) as { data: { linkedCloudAgents: unknown[] } };
+
+    // Assert: the identity's id and the row's kind — no developer, no
+    // address — and the row stays
+    expect(body.data.linkedCloudAgents).toEqual([
+      { cloudAgent: "claude-code-web", primary: false },
+    ]);
+    expect(raw).not.toContain("@");
+    const kept = await setup.harness.db.select().from(developerEmails);
+    expect(kept.map((row) => row.email)).toContain("noreply@anthropic.com");
+  });
+
+  test("a cloud agent identity held as a developer's PRIMARY is reported as primary", async () => {
+    // Arrange: what the old "no crosscheck account" line invited — an account
+    // created for Claude under the address, before the refusal
+    const setup = await createHarnessWithSession();
+    const claude = await createTestDeveloper(setup.harness, "Claude", "claude@placeholder.example");
+    await setup.harness.db
+      .update(developerEmails)
+      .set({ email: "noreply@anthropic.com" })
+      .where(eq(developerEmails.developerId, claude.developerId));
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+    const body = (await response.json()) as { data: { linkedCloudAgents: unknown[] } };
+
+    // Assert: primary, so no printed remedy may offer the alias DELETE
+    expect(body.data.linkedCloudAgents).toEqual([
+      { cloudAgent: "claude-code-web", primary: true },
+    ]);
+  });
+
+  test("two case-variant rows of one cloud agent identity are reported once", async () => {
+    // Arrange: a lowercase alias and a verbatim mixed-case alias — the PK is
+    // on the exact spelling, so a legacy hub can hold both
+    const setup = await createHarnessWithSession();
+    const ken = await createTestDeveloper(setup.harness, "Ken", "ken@example.com");
+    const mike = await createTestDeveloper(setup.harness, "Mike", "mike@example.com");
+    await setup.harness.db.insert(developerEmails).values([
+      {
+        email: "noreply@anthropic.com",
+        developerId: ken.developerId,
+        isPrimary: false,
+        createdAt: new Date(TEST_START_ISO),
+      },
+      {
+        email: "NoReply@Anthropic.com",
+        developerId: mike.developerId,
+        isPrimary: false,
+        createdAt: new Date(TEST_START_ISO),
+      },
+    ]);
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+    const body = (await response.json()) as { data: { linkedCloudAgents: unknown[] } };
+
+    // Assert
+    expect(body.data.linkedCloudAgents).toEqual([
+      { cloudAgent: "claude-code-web", primary: false },
+    ]);
+  });
+
+  test("a held link to Claude's commit identity is inert: the gap stays unconnected and names nobody", async () => {
+    // Arrange: Ken holds the address from before the refusal, and reported a
+    // session an hour after the Claude commit — exactly what the link would
+    // have counted as his
+    const setup = await createHarnessWithSession();
+    const ken = await createTestDeveloper(setup.harness, "Ken", "ken@example.com");
+    await setup.harness.db.insert(developerEmails).values({
+      email: "noreply@anthropic.com",
+      developerId: ken.developerId,
+      isPrimary: false,
+      createdAt: new Date(TEST_START_ISO),
+    });
+    await registerTestSession(setup.harness, ken.apiKey, { id: "ses_ken" });
+    await ingestEvidence(setup, [
+      {
+        name: "Claude",
+        email: "noreply@anthropic.com",
+        latestCommitAt: isoAt(-1 * MS_PER_HOUR),
+        commitCount: 2,
+      },
+    ]);
+
+    // Act
+    const { raw, absences } = await fetchAbsences(setup);
+
+    // Assert
+    expect(absences).toEqual([
+      expect.objectContaining({
+        kind: "unconnected",
+        name: "Claude",
+        lastSessionAt: null,
+        cloudAgent: "claude-code-web",
+      }),
+    ]);
+    expect(raw).not.toContain("Ken");
+  });
+
+  test("a hub holding no such link says so with an empty list", async () => {
+    // Arrange
+    const setup = await createHarnessWithSession();
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+    const body = (await response.json()) as {
+      data: { linkedCloudAgents?: string[] };
+    };
+
+    // Assert: [] is "measured, none" — an absent field is an older hub
+    expect(body.data.linkedCloudAgents).toEqual([]);
   });
 
   test("a member whose commit falls inside the grace window stays silent", async () => {

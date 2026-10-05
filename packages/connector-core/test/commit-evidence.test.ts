@@ -176,6 +176,22 @@ describe("collectCommitEvidence", () => {
     expect(authors?.[0]?.email).toBe("robin@example.com");
   });
 
+  test("keeps a commit by Claude <noreply@anthropic.com> — a cloud session is a gap, not automation", async () => {
+    // Arrange: what Claude Code on the web pushes, author and committer alike.
+    // Skipping it like a [bot] would erase the one trace a session no
+    // connector ran in leaves, and with it the coverage gap it is.
+    const root = await repo("cloud-agent");
+    await commitAs(root, "Claude", "noreply@anthropic.com", isoAt(3));
+
+    // Act
+    const authors = await collectCommitEvidence(root, NOW);
+
+    // Assert
+    expect(authors?.length).toBe(1);
+    expect(authors?.[0]?.name).toBe("Claude");
+    expect(authors?.[0]?.email).toBe("noreply@anthropic.com");
+  });
+
   test("returns null outside a git repository — fail open, never throw", async () => {
     // Arrange
     const plainDir = await mkdtemp(join(tmpdir(), "cx-no-repo-"));

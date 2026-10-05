@@ -6,8 +6,9 @@
  * no commit identity can carry the link. What survives every way of merging
  * is the person, the file and the time. For each commit, one question:
  * - a work context of the commit's author (the address mapped through
- *   `developer_emails`, aliases an admin linked included) that targeted this
- *   file (in its one canonical spelling, as ingest stores it) in this repo;
+ *   `developer_emails`, aliases an admin linked included — never a cloud
+ *   agent's commit identity, services/cloud-agent-identity.ts) that targeted
+ *   this file (in its one canonical spelling, as ingest stores it) in this repo;
  * - from a session still ACTIVE (a heartbeat) within LANDED_WHY_WINDOW_DAYS
  *   before the commit and STARTED no later than it (plus a clock slack: the
  *   start is the hub's clock, the commit time the author's laptop). The
@@ -54,6 +55,7 @@ import {
 } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
+import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { presenceCutoff } from "./presence.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 
@@ -122,6 +124,7 @@ const matchFor = async (
         eq(workContextTargets.value, storedSpelling(request.path)),
         eq(agentSessions.repo, request.repo),
         eq(developerEmails.email, lowered(commit.authorEmail)),
+        resolvesToDeveloper(developerEmails.email),
         ne(agentSessions.developerId, callerDeveloperId),
         lte(agentSessions.startedAt, startedBy),
         sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,
@@ -198,7 +201,10 @@ export const toldAuthors = async (
   const rows = await deps.db
     .select({ email: developerEmails.email, developerId: developers.id, name: developers.name })
     .from(developerEmails)
-    .innerJoin(developers, eq(developers.id, developerEmails.developerId))
+    .innerJoin(
+      developers,
+      and(eq(developers.id, developerEmails.developerId), resolvesToDeveloper(developerEmails.email)),
+    )
     .where(and(inArray(developerEmails.email, emails), ne(developers.id, callerDeveloperId)));
   const byEmail = new Map(rows.map((row) => [row.email, row]));
   return request.commits.flatMap((commit) => {
@@ -229,7 +235,12 @@ export const unknownAuthorEmails = async (
   const known = await deps.db
     .select({ email: developerEmails.email })
     .from(developerEmails)
-    .where(inArray(developerEmails.email, [...firstSpelling.keys()]));
+    .where(
+      and(
+        inArray(developerEmails.email, [...firstSpelling.keys()]),
+        resolvesToDeveloper(developerEmails.email),
+      ),
+    );
   const knownSet = new Set(known.map((row) => row.email));
   return [...firstSpelling].filter(([key]) => !knownSet.has(key)).map(([, spelling]) => spelling);
 };

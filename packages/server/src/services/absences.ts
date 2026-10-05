@@ -15,7 +15,10 @@ import {
   developerEmails,
   developers,
 } from "../db/schema.ts";
+import { isCloudAgentEmail, resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import { cloudAgentForEmail } from "@crosscheck/schema";
+import type { CloudAgentId } from "@crosscheck/schema";
 import type { SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -47,6 +50,17 @@ const absenceEvidenceWhere = (
   );
 
 /**
+ * Which developer an evidence row's author is — shared by the listing and the
+ * census for the reason above. A cloud agent's commit identity resolves to
+ * nobody, whatever `developer_emails` holds (services/cloud-agent-identity.ts):
+ * its commits stay an unconnected gap, and no member's session can close it.
+ */
+const authorMatch = and(
+  eq(developerEmails.email, commitEvidence.authorEmail),
+  resolvesToDeveloper(developerEmails.email),
+);
+
+/**
  * The two findings the design insists stay distinct (absence detection):
  * `inactive` — a hub member whose commits postdate their last reported agent
  * session on this repo; `unconnected` — a commit author no hub member's email
@@ -64,6 +78,19 @@ export interface AbsenceFinding {
   readonly lastSessionAt: string | null;
   /** When the evidence behind this line was read from git — staleness surface. */
   readonly evidenceCollectedAt: string;
+  /**
+   * `unconnected` only: the author's email is a known cloud agent's commit
+   * identity (schema CLOUD_AGENT_IDENTITIES) — an id, never the address.
+   *
+   * A REFINEMENT, NOT A THIRD KIND, on purpose. A 0.10 client skips a kind it
+   * does not know, so a `cloud_agent` kind would drop the line from its
+   * briefing and leave doctor's count with no word for it; an extra field is
+   * ignored and the line still renders as the unconnected one, which stays
+   * true. The finding is still `unconnected` because that is still the fact:
+   * no member's address matches, and git does not name who started the
+   * session — so the census below counts it as a gap exactly as before.
+   */
+  readonly cloudAgent?: CloudAgentId;
 }
 
 interface Deps {
@@ -146,6 +173,8 @@ export const listAbsences = async (
   const rows = await deps.db
     .select({
       authorName: commitEvidence.authorName,
+      // Read to classify, never returned: the response carries names only.
+      authorEmail: commitEvidence.authorEmail,
       latestCommitAt: commitEvidence.latestCommitAt,
       collectedAt: commitEvidence.collectedAt,
       developerId: developers.id,
@@ -157,10 +186,7 @@ export const listAbsences = async (
     // stores its author_email lowercased, so the join is a plain equality.
     // developer_emails' PK on email guarantees at most one alias row — and
     // therefore at most one developer — per evidence row.
-    .leftJoin(
-      developerEmails,
-      eq(developerEmails.email, commitEvidence.authorEmail),
-    )
+    .leftJoin(developerEmails, authorMatch)
     .leftJoin(developers, eq(developers.id, developerEmails.developerId))
     .where(
       and(
@@ -183,8 +209,15 @@ export const listAbsences = async (
       evidenceCollectedAt: row.collectedAt.toISOString(),
     };
     if (row.developerId === null || row.developerName === null) {
+      const cloudAgent = cloudAgentForEmail(row.authorEmail);
       return [
-        { kind: "unconnected", name: row.authorName, lastSessionAt: null, ...base },
+        {
+          kind: "unconnected",
+          name: row.authorName,
+          lastSessionAt: null,
+          ...base,
+          ...(cloudAgent === null ? {} : { cloudAgent }),
+        },
       ];
     }
     const lastSession = lastSessions.get(row.developerId) ?? null;
@@ -204,6 +237,44 @@ export const listAbsences = async (
     ];
   });
   return findings.slice(0, ABSENCE_MAX_FINDINGS);
+};
+
+/**
+ * CLOUD AGENT IDENTITIES THIS HUB HAS LINKED TO A DEVELOPER anyway — rows
+ * from before the developers routes refused them (services/developers.ts
+ * CloudAgentRefused), or written straight into the table. Inert: no site
+ * resolves an address through them (services/cloud-agent-identity.ts), so the
+ * listing above still names the identity and no session closes its gap.
+ *
+ * NOT DELETED: the row is an admin's to remove, and dropping it here would
+ * rewrite the developer's linked addresses without a word to anyone. Reported
+ * instead, ids only — never the developer, never the address — so doctor and
+ * status can say it is there and ignored; `[]` is "none linked", and an older
+ * hub sends nothing. `primary` because the remedy differs: an alias goes with
+ * DELETE …/emails/<address>, and no route removes a primary — a printed
+ * remedy the hub would refuse is worse than none. Once per (identity, kind):
+ * case-variant rows are one address.
+ */
+export interface LinkedCloudAgent {
+  readonly cloudAgent: CloudAgentId;
+  readonly primary: boolean;
+}
+
+export const listLinkedCloudAgents = async (
+  db: Db,
+): Promise<readonly LinkedCloudAgent[]> => {
+  const rows = await db
+    .select({ email: developerEmails.email, isPrimary: developerEmails.isPrimary })
+    .from(developerEmails)
+    .where(isCloudAgentEmail(developerEmails.email));
+  const links = rows.flatMap((row): readonly LinkedCloudAgent[] => {
+    const cloudAgent = cloudAgentForEmail(row.email.toLowerCase());
+    return cloudAgent === null ? [] : [{ cloudAgent, primary: row.isPrimary }];
+  });
+  const byKey = new Map(
+    links.map((link) => [`${link.cloudAgent}:${String(link.primary)}`, link]),
+  );
+  return [...byKey.values()];
 };
 
 /**
@@ -271,10 +342,7 @@ export const readAbsenceCensus = async (
       earliestCommitAt: sql`min(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,
     })
     .from(commitEvidence)
-    .leftJoin(
-      developerEmails,
-      eq(developerEmails.email, commitEvidence.authorEmail),
-    )
+    .leftJoin(developerEmails, authorMatch)
     .leftJoin(developers, eq(developers.id, developerEmails.developerId))
     .where(
       and(

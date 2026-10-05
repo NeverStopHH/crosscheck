@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1478
+    # PRINTS: 1521
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -172,12 +172,12 @@ jobs:
     # PRINTS: packages/cli/src/ci-report/run.ts 4
     # PRINTS: packages/cli/src/cli/conference.ts 15
     # PRINTS: packages/cli/src/cli/doctor-global.ts 3
-    # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 3
+    # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 9
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 48
+    # PRINTS: packages/cli/src/cli/doctor.ts 52
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-io.ts 5
@@ -197,7 +197,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pin.ts 9
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
-    # PRINTS: packages/cli/src/cli/status.ts 7
+    # PRINTS: packages/cli/src/cli/status.ts 9
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
@@ -246,8 +246,9 @@ jobs:
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 12
+    # PRINTS: briefing/render.ts 19
     # PRINTS: briefing/sanitize.ts 10
+    # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/records.ts 1
     # PRINTS: capture/target-paths.ts 1
     # PRINTS: capture/touched-root.ts 5
@@ -298,7 +299,7 @@ jobs:
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
-    # PRINTS: http/hub.ts 9
+    # PRINTS: http/hub.ts 12
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 5
     # PRINTS: http/verdict.ts 4
@@ -307,7 +308,7 @@ jobs:
     # PRINTS: landed-changes/fetch-switch.ts 4
     # PRINTS: landed-changes/fetch-trigger.ts 3
     # PRINTS: landed-changes/fetch-worker.ts 23
-    # PRINTS: landed-changes/git-queries.ts 12
+    # PRINTS: landed-changes/git-queries.ts 15
     # PRINTS: landed-changes/landing-branches.ts 7
     # PRINTS: landed-changes/probe.ts 38
     # PRINTS: landed-changes/working-days.ts 3
@@ -364,6 +365,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/runner.ts 5
     # PRINTS: packages/schema/src/causal-guarantees.ts 10
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
+    # PRINTS: packages/schema/src/commit-evidence.ts 2
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/enums.ts 2
     # PRINTS: packages/schema/src/envelope.ts 1
@@ -396,28 +398,30 @@ jobs:
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
     # PRINTS: packages/server/src/routes/work-contexts.ts 2
-    # PRINTS: packages/server/src/services/absences.ts 4
+    # PRINTS: packages/server/src/services/absences.ts 10
     # PRINTS: packages/server/src/services/calibration.ts 1
     # PRINTS: packages/server/src/services/causal-guarantees.ts 11
     # PRINTS: packages/server/src/services/ci-coverage.ts 3
     # PRINTS: packages/server/src/services/ci-delta.ts 4
     # PRINTS: packages/server/src/services/claim-revalidations.ts 7
     # PRINTS: packages/server/src/services/claim-validity.ts 6
+    # PRINTS: packages/server/src/services/cloud-agent-identity.ts 1
     # PRINTS: packages/server/src/services/commit-evidence.ts 2
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
     # PRINTS: packages/server/src/services/coverage.ts 32
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
-    # PRINTS: packages/server/src/services/developers.ts 10
+    # PRINTS: packages/server/src/services/developer-settings.ts 1
+    # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 6
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
-    # PRINTS: packages/server/src/services/landed-context.ts 17
-    # PRINTS: packages/server/src/services/landed-notices.ts 27
+    # PRINTS: packages/server/src/services/landed-context.ts 20
+    # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
@@ -458,7 +462,7 @@ jobs:
     # PRINTS: packages/server/test/verdict-latency.test.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
-    # PRINTS: absences.ts 6
+    # PRINTS: absences.ts 12
     # PRINTS: answer-question.ts 1
     # PRINTS: args.ts 2
     # PRINTS: ask-teammate.ts 1
@@ -486,7 +490,8 @@ jobs:
     # PRINTS: claim-surface.ts 1
     # PRINTS: claim-validity.ts 8
     # PRINTS: client.ts 12
-    # PRINTS: commit-evidence.ts 2
+    # PRINTS: cloud-agent-identity.ts 1
+    # PRINTS: commit-evidence.ts 5
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 17
     # PRINTS: config.ts 4
@@ -505,15 +510,16 @@ jobs:
     # PRINTS: derive.ts 2
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
-    # PRINTS: developers.ts 10
+    # PRINTS: developer-settings.ts 1
+    # PRINTS: developers.ts 13
     # PRINTS: diagnosis.ts 6
     # PRINTS: doctor-global.ts 3
-    # PRINTS: doctor-landed-authors.ts 3
+    # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
-    # PRINTS: doctor.ts 64
+    # PRINTS: doctor.ts 68
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
     # PRINTS: end-session.ts 3
@@ -543,14 +549,14 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-queries.ts 12
+    # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 6
     # PRINTS: hints.ts 5
     # PRINTS: hook-budget.ts 2
-    # PRINTS: hub.ts 9
+    # PRINTS: hub.ts 12
     # PRINTS: index.ts 4
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 5
@@ -567,9 +573,9 @@ jobs:
     # PRINTS: junit.ts 2
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
-    # PRINTS: landed-context.ts 20
+    # PRINTS: landed-context.ts 23
     # PRINTS: landed-notice.ts 5
-    # PRINTS: landed-notices.ts 32
+    # PRINTS: landed-notices.ts 33
     # PRINTS: landed-why.ts 2
     # PRINTS: landed.ts 3
     # PRINTS: landing-branches.ts 7
@@ -631,7 +637,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 76
+    # PRINTS: render.ts 83
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9
@@ -668,7 +674,7 @@ jobs:
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stats.ts 1
-    # PRINTS: status.ts 7
+    # PRINTS: status.ts 9
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
     # PRINTS: suspect-render.ts 3

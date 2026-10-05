@@ -13,7 +13,11 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
 import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
-import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import {
+  formatAbsenceLine,
+  formatAge,
+  formatCloudAgentLink,
+} from "@crosscheck/connector-core/briefing/render.ts";
 import {
   HUB_UNREACHABLE_CLAUSE,
   coverageClause,
@@ -434,6 +438,11 @@ export const runStatus = async (
       const line = formatAbsenceLine(entry, now);
       return line === null ? [] : [`  ${line}`];
     });
+  // Its own line, not one under the absence heading: it is about a stale
+  // link the hub ignores, not about an author. Doctor's WARN, verbatim.
+  const cloudAgentLinkLines = (
+    absences.ok ? (absences.data.linkedCloudAgents ?? []) : []
+  ).map((link) => `cloud agent identity: ${formatCloudAgentLink(link)}`);
 
   // Teammate lines through the render layer: name, branch and status are
   // hub-served, teammate-written short fields printed BARE on a ·-separated
@@ -491,6 +500,7 @@ export const runStatus = async (
       ...(absenceLines.length === 0
         ? []
         : ["commit authors without a recent session:", ...absenceLines]),
+      ...cloudAgentLinkLines,
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...lossLines,
       ...foreignDropLines,

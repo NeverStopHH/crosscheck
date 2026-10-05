@@ -4,7 +4,10 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { listAbsences } from "../services/absences.ts";
+import {
+  listAbsences,
+  listLinkedCloudAgents,
+} from "../services/absences.ts";
 import { readCoverage } from "../services/coverage.ts";
 import { countCoverageAnswer } from "../services/pilot.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -48,7 +51,10 @@ export const absencesRoutes = (deps: AppDeps): Hono<AppEnv> => {
       surface: "api-absences",
       coverage,
     });
-    return ok(c, { absences, coverage });
+    // Hub-wide, not repo-scoped: a linked cloud agent identity changes whose
+    // commits are whose on every repo this hub matches (services/absences.ts).
+    const linkedCloudAgents = await listLinkedCloudAgents(deps.db);
+    return ok(c, { absences, coverage, linkedCloudAgents });
   });
 
   return router;

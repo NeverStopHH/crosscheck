@@ -57,6 +57,36 @@ const startHub = (absencesBody?: unknown): {
   };
 };
 
+/** What the pilot's hub held: commits authored as Claude <noreply@anthropic.com>. */
+const cloudAgentAbsence = (now: number): Record<string, unknown> => ({
+  kind: "unconnected",
+  name: "Claude",
+  latestCommitAt: new Date(now - 3 * MS_PER_DAY).toISOString(),
+  lastSessionAt: null,
+  evidenceCollectedAt: new Date(now).toISOString(),
+  cloudAgent: "claude-code-web",
+});
+
+/** Doctor's WARN and status's line: one sentence, two surfaces. */
+const LINKED_SENTENCE =
+  "Claude Code on the web's commit identity noreply@anthropic.com is linked " +
+  "to a developer on this hub; crosscheck ignores that link, so its commits " +
+  "stay an unconnected gap attributed to nobody — an admin should still remove " +
+  "it: find the developer in GET /api/developers, then " +
+  "DELETE /api/developers/<developerId>/emails/noreply@anthropic.com";
+
+/** How the hub reports a held link: the identity and the row's kind. */
+const ALIAS_LINK = { cloudAgent: "claude-code-web", primary: false };
+const PRIMARY_LINK = { cloudAgent: "claude-code-web", primary: true };
+
+/** For a PRIMARY row: no route removes one, so no DELETE is offered. */
+const PRIMARY_SENTENCE =
+  "Claude Code on the web's commit identity noreply@anthropic.com is a " +
+  "developer's primary email on this hub; crosscheck ignores it for " +
+  "attribution, so its commits stay an unconnected gap attributed to nobody " +
+  "— no admin route removes a primary email, so this stays; " +
+  "GET /api/developers shows which account holds it";
+
 const paths: string[] = [];
 const stops: (() => void)[] = [];
 
@@ -110,6 +140,69 @@ describe("crosscheck status absence lines", () => {
     );
   });
 
+  test("names Claude Code on the web's commit identity the way the briefing does", async () => {
+    // Arrange
+    const { repo, env } = await fixture("status-cloud-agent", {
+      ok: true,
+      data: { absences: [cloudAgentAbsence(Date.now())] },
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "- Claude · last commit 3d ago · the identity Claude Code on the web commits under — crosscheck cannot capture those sessions, and git does not name who started them",
+    );
+    expect(result.stdout).not.toContain("crosscheck account");
+  });
+
+  test("says when the hub has Claude Code on the web's identity linked to a developer", async () => {
+    // Arrange: no absence line at all — a link can close the very gap that
+    // would have printed one, so the warning cannot ride on that section
+    const { repo, env } = await fixture("status-linked-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [ALIAS_LINK] },
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(`cloud agent identity: ${LINKED_SENTENCE}`);
+  });
+
+  test("the line after the absence section keeps its spelling: `spool: N pending`", async () => {
+    // Arrange: an absence line and a linked identity, both printed above it
+    const { repo, env } = await fixture("status-spool-spelling", {
+      ok: true,
+      data: {
+        absences: [cloudAgentAbsence(Date.now())],
+        linkedCloudAgents: [ALIAS_LINK],
+      },
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toMatch(/^spool: 0 pending, 0 dropped$/m);
+  });
+
+  test("prints no linked-identity line when nothing is linked", async () => {
+    // Arrange
+    const { repo, env } = await fixture("status-unlinked-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [] },
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).not.toContain("cloud agent identity:");
+  });
+
   test("prints no absence section when the hub has no endpoint for it", async () => {
     // Arrange
     const { repo, env } = await fixture("status-degrade", { unexpected: true });
@@ -136,6 +229,124 @@ describe("crosscheck doctor absence check", () => {
     expect(result.stdout).toContain("1 without a crosscheck account");
     expect(result.stdout).toContain("crosscheck status");
     expect(result.stdout).not.toContain("Robin");
+  });
+
+  test("counts a cloud agent's commit identity apart from authors without an account", async () => {
+    // Arrange: a member, a stranger, and Claude Code on the web's identity
+    const now = Date.now();
+    const { repo, env } = await fixture("doctor-cloud-agent", {
+      ok: true,
+      data: {
+        absences: [
+          {
+            kind: "inactive",
+            name: "Robin",
+            latestCommitAt: new Date(now - 2 * MS_PER_DAY).toISOString(),
+            lastSessionAt: new Date(now - 9 * MS_PER_DAY).toISOString(),
+            evidenceCollectedAt: new Date(now).toISOString(),
+          },
+          {
+            kind: "unconnected",
+            name: "Sam Stranger",
+            latestCommitAt: new Date(now - MS_PER_DAY).toISOString(),
+            lastSessionAt: null,
+            evidenceCollectedAt: new Date(now).toISOString(),
+          },
+          cloudAgentAbsence(now),
+        ],
+      },
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert: all three still counted as no matching reported session
+    expect(result.stdout).toContain(
+      "3 recent commit authors with no matching reported session " +
+        "(1 hub member, 1 without a crosscheck account, 1 cloud agent identity)",
+    );
+  });
+
+  test("warns when the hub has Claude Code on the web's identity linked to a developer", async () => {
+    // Arrange: a link from before the hub refused them
+    const { repo, env } = await fixture("doctor-linked-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [ALIAS_LINK] },
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      `WARN  cloud agent identity  ${LINKED_SENTENCE}`,
+    );
+  });
+
+  test("for an identity held as a PRIMARY email, offers no remedy the hub would refuse", async () => {
+    // Arrange: the account the old "no crosscheck account" line invited
+    const { repo, env } = await fixture("doctor-primary-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [PRIMARY_LINK] },
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert: DELETE …/emails answers 400 for a primary, so it is not offered
+    expect(result.stdout).toContain(
+      `WARN  cloud agent identity  ${PRIMARY_SENTENCE}`,
+    );
+    expect(result.stdout).not.toContain("DELETE /api/developers");
+  });
+
+  test("says a held identity once, however many times the hub lists it", async () => {
+    // Arrange
+    const { repo, env } = await fixture("doctor-duplicate-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [ALIAS_LINK, ALIAS_LINK] },
+    });
+
+    // Act
+    const doctor = await runCli(["doctor"], env, repo);
+    const status = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(doctor.stdout.split(LINKED_SENTENCE).length - 1).toBe(1);
+    expect(status.stdout.split(LINKED_SENTENCE).length - 1).toBe(1);
+  });
+
+  test("says no cloud agent identity is linked when the hub measured none", async () => {
+    // Arrange
+    const { repo, env } = await fixture("doctor-unlinked-cloud-agent", {
+      ok: true,
+      data: { absences: [], linkedCloudAgents: [] },
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert: and the repo's .mailmap, the other way to hand Claude's
+    // commits to a person, is checked beside it
+    expect(result.stdout).toContain(
+      "PASS  cloud agent identity  none linked to a developer",
+    );
+    expect(result.stdout).toContain(
+      "PASS  cloud agent mailmap  no .mailmap line maps a cloud agent's commit identity to another address",
+    );
+  });
+
+  test("an older hub's silence on linked identities is 'not measured', never 'none'", async () => {
+    // Arrange: the default fixture sends no linkedCloudAgents field
+    const { repo, env } = await fixture("doctor-older-hub-links");
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "PASS  cloud agent identity  not measured (this hub does not report it)",
+    );
   });
 
   test("passes with 'none' when the hub reports no findings", async () => {

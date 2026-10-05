@@ -537,9 +537,34 @@ export const AbsenceEntrySchema = z.looseObject({
   latestCommitAt: z.string().min(1),
   lastSessionAt: z.string().nullable().optional(),
   evidenceCollectedAt: z.string().min(1),
+  // A refinement of `unconnected`, so tolerant like the hint counts above: a
+  // value this client cannot read costs the refinement, never the row — the
+  // row is a coverage gap, and dropping it would hide one.
+  cloudAgent: z.string().min(1).optional().catch(undefined),
 });
 
 export type AbsenceEntry = z.infer<typeof AbsenceEntrySchema>;
+
+/**
+ * A cloud agent identity this hub holds on a developer row anyway (server
+ * services/absences.ts listLinkedCloudAgents): the identity's id and whether
+ * the row is that developer's primary — the remedy differs. Ids only.
+ */
+const CloudAgentLinkSchema = z.looseObject({
+  cloudAgent: z.string().min(1),
+  primary: z.boolean(),
+});
+
+export type CloudAgentLink = z.infer<typeof CloudAgentLinkSchema>;
+
+/** One line per (identity, kind), whatever a hub repeats. */
+const distinctLinks = (
+  links: readonly CloudAgentLink[],
+): readonly CloudAgentLink[] => [
+  ...new Map(
+    links.map((link) => [`${link.cloudAgent}:${String(link.primary)}`, link]),
+  ).values(),
+];
 
 /**
  * The endpoint named "absences" answers findings AND how far they can be
@@ -553,6 +578,12 @@ export interface AbsencesOutcome {
   readonly absences: readonly AbsenceEntry[];
   /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
   readonly coverage: CoverageRecord;
+  /**
+   * Cloud agent identities this hub holds on a developer row anyway, once
+   * each. `[]` is measured-and-none; null is a hub that did not say — an
+   * older one, or a shape this client cannot read — and is never read as none.
+   */
+  readonly linkedCloudAgents: readonly CloudAgentLink[] | null;
 }
 
 const AbsencesResponseSchema = z
@@ -563,12 +594,17 @@ const AbsencesResponseSchema = z
     // `unknown` rows rather than into silence, because an answer that says
     // nothing about what was observed reads as one that observed everything.
     coverage: z.unknown().optional(),
+    linkedCloudAgents: z.array(CloudAgentLinkSchema).optional().catch(undefined),
   })
   .transform(
     (value): AbsencesOutcome => ({
       // Tolerant rows, silent drop — a listing, like tolerantList above.
       absences: parseRows(value.absences, AbsenceEntrySchema).rows,
       coverage: parseCoverage(value.coverage),
+      linkedCloudAgents:
+        value.linkedCloudAgents === undefined
+          ? null
+          : distinctLinks(value.linkedCloudAgents),
     }),
   );
 

@@ -17,7 +17,7 @@
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
-import { agentSessions } from "../src/db/schema.ts";
+import { agentSessions, developerEmails } from "../src/db/schema.ts";
 
 import {
   TEST_ADMIN_TOKEN,
@@ -116,6 +116,19 @@ const askContext = async (
   const matches =
     response.status === 200 ? (JSON.parse(raw) as { data: { matches: Match[] } }).data.matches : [];
   return { status: response.status, matches, raw };
+};
+
+/**
+ * A link the developers routes now refuse (services/developers.ts), as a hub
+ * from before the refusal holds it: straight in the table.
+ */
+const holdCloudAgentLink = async (t: Team, developer: TestDeveloper): Promise<void> => {
+  await t.harness.db.insert(developerEmails).values({
+    email: "noreply@anthropic.com",
+    developerId: developer.developerId,
+    isPrimary: false,
+    createdAt: new Date(TEST_START_ISO),
+  });
 };
 
 const commitBy = (authorEmail: string, committedAt: string, sha: string = SHA) => ({
@@ -460,6 +473,21 @@ describe("POST /api/landed/context", () => {
     expect(shouting.matches.map((match) => match.workContextId)).toEqual(["wc_mike"]);
   });
 
+  test("a held link to Claude's commit identity names none of Mike's work", async () => {
+    // Arrange: Mike holds noreply@anthropic.com from before the refusal, and
+    // worked on the file before the Claude commit landed
+    const t = await team();
+    await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });
+    await holdCloudAgentLink(t, t.mike);
+
+    // Act
+    const answer = await askContext(t, t.nick, [commitBy("NoReply@Anthropic.com", at(HOUR_S))]);
+
+    // Assert: no work behind it, and nobody told
+    expect(answer.matches).toEqual([]);
+    expect(answer.raw).not.toContain("Mike");
+  });
+
   test("the answer never carries an address", async () => {
     const t = await team();
     await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });
@@ -523,6 +551,18 @@ describe("POST /api/landed/authors", () => {
     );
 
     expect((await askAuthors(t, [alias])).unknown).toEqual([]);
+  });
+
+  test("Claude's commit identity belongs to nobody, even under a held link", async () => {
+    // Arrange
+    const t = await team();
+    await holdCloudAgentLink(t, t.mike);
+
+    // Act
+    const answer = await askAuthors(t, ["noreply@anthropic.com", MIKE_EMAIL]);
+
+    // Assert
+    expect(answer.unknown).toEqual(["noreply@anthropic.com"]);
   });
 
   test("a list too long to be one clone's authors is refused", async () => {

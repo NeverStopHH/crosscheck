@@ -14,7 +14,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { landedNotices } from "../src/db/schema.ts";
+import { developerEmails, landedNotices } from "../src/db/schema.ts";
 import { reapStaleSessions } from "../src/services/sessions.ts";
 
 import {
@@ -144,6 +144,19 @@ const delivered = async (
   return posted.data?.accepted ?? 0;
 };
 
+/**
+ * A link the developers routes now refuse (services/developers.ts), as a hub
+ * from before the refusal holds it: straight in the table.
+ */
+const holdCloudAgentLink = async (t: Team, developer: TestDeveloper): Promise<void> => {
+  await t.harness.db.insert(developerEmails).values({
+    email: "noreply@anthropic.com",
+    developerId: developer.developerId,
+    isPrimary: false,
+    createdAt: new Date(TEST_START_ISO),
+  });
+};
+
 const commitIds = (notices: readonly NoticeView[]): readonly string[] =>
   notices.flatMap((notice) => notice.commits.map((commit) => commit.id));
 
@@ -169,6 +182,26 @@ describe("POST /api/landed/context: who the stop tells", () => {
     const told = (JSON.parse(raw) as { data: { told: unknown[] } }).data.told;
     expect(told).toEqual([{ sha: SHA, developerId: t.mike.developerId, name: "Mike" }]);
     expect(raw).not.toContain("@example.com");
+  });
+
+  test("a held link to Claude's commit identity tells nobody", async () => {
+    // Arrange: Mike holds noreply@anthropic.com from before the refusal
+    const t = await team();
+    await holdCloudAgentLink(t, t.mike);
+
+    // Act
+    const response = await t.harness.app.request(
+      "/api/landed/context",
+      jsonRequest("POST", t.nick.apiKey, {
+        repo: REPO,
+        path: FILE,
+        commits: [{ sha: SHA, authorEmail: "noreply@anthropic.com", committedAt: TEST_START_ISO }],
+      }),
+    );
+
+    // Assert: git does not name who started the cloud session
+    const told = ((await response.json()) as { data: { told: unknown[] } }).data.told;
+    expect(told).toEqual([]);
   });
 
   test("a teammate who muted the reader is still named: a mute is never disclosed", async () => {
@@ -258,6 +291,19 @@ describe("the author's notice", () => {
 
     expect(await noticesFor(t, t.mike)).toEqual([]);
     expect(await noticesFor(t, t.ken)).toEqual([]);
+  });
+
+  test("a stop naming Mike for a Claude commit is not told, even under his held link", async () => {
+    // Arrange: a connector from before the refusal named Mike, because the
+    // hub it asked held his link
+    const t = await team();
+    await holdCloudAgentLink(t, t.mike);
+
+    // Act
+    await nickStops(t, [{ author: t.mike, authorEmail: "noreply@anthropic.com" }]);
+
+    // Assert
+    expect(await noticesFor(t, t.mike)).toEqual([]);
   });
 
   test("a reader is never told about their own commit", async () => {

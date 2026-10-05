@@ -30,6 +30,7 @@ import {
   NO_AXES_FROM_HUB,
   NO_AXES_READABLE,
   axesLabel,
+  cloudAgentById,
 } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type {
@@ -96,6 +97,8 @@ export interface AbsenceEntry {
   readonly latestCommitAt: string;
   readonly lastSessionAt?: string | null | undefined;
   readonly evidenceCollectedAt: string;
+  /** A cloud agent's commit identity the hub recognised (`unconnected` only). */
+  readonly cloudAgent?: string | undefined;
 }
 
 export interface BriefingInput {
@@ -893,13 +896,73 @@ const ABSENCE_HEADER_BASE =
   "Commit authors on this repo without a recent agent session";
 
 /**
+ * The product an `unconnected` finding's author identity belongs to, or null
+ * — named by the schema's CLOUD_AGENT_IDENTITIES row, the one spelling the
+ * hub's refusals use too. A refinement of that one kind and nothing else: an
+ * id this client's table does not hold keeps the plain unconnected sentence,
+ * which is still true, rather than costing the line. Exported because doctor
+ * counts the same split.
+ */
+export const absenceCloudAgent = (entry: AbsenceEntry): string | null =>
+  entry.kind === "unconnected"
+    ? (cloudAgentById(entry.cloudAgent)?.product ?? null)
+    : null;
+
+const IGNORED_GAP = "so its commits stay an unconnected gap attributed to nobody";
+
+const CLOUD_AGENT_LINK_EFFECT = `is linked to a developer on this hub; crosscheck ignores that link, ${IGNORED_GAP}`;
+
+const CLOUD_AGENT_PRIMARY_EFFECT =
+  "is a developer's primary email on this hub; crosscheck ignores it for " +
+  `attribution, ${IGNORED_GAP}`;
+
+/**
+ * Only a remedy the hub will perform. An alias goes with DELETE …/emails/
+ * <address> (case-insensitive); a primary is the account's identity and no
+ * route removes one, so saying so is the whole of the truthful next step.
+ */
+const cloudAgentLinkRemedy = (email: string, isPrimary: boolean): string =>
+  isPrimary
+    ? "no admin route removes a primary email, so this stays; GET /api/developers shows which account holds it"
+    : "an admin should still remove it: find the developer in GET /api/developers, then " +
+      `DELETE /api/developers/<developerId>/emails/${email}`;
+
+/**
+ * A cloud agent identity the hub reports held on a developer row
+ * (AbsencesOutcome linkedCloudAgents). The hub that reports it resolves no
+ * address through it (server services/cloud-agent-identity.ts), so the
+ * sentence says it is ignored — never that it attributes anything — and
+ * offers the remedy for that kind of row. Exported because doctor's WARN and
+ * status's line say it; two spellings would drift. An id this client's table
+ * does not hold is still warned about, its word printed bare: silence would
+ * read as none.
+ */
+export const formatCloudAgentLink = (link: {
+  readonly cloudAgent: string;
+  readonly primary: boolean;
+}): string => {
+  const effect = link.primary ? CLOUD_AGENT_PRIMARY_EFFECT : CLOUD_AGENT_LINK_EFFECT;
+  const identity = cloudAgentById(link.cloudAgent);
+  if (identity === null) {
+    return `a cloud agent identity this client does not know (${bareUntrusted(link.cloudAgent)}) ${effect}`;
+  }
+  return `${identity.product}'s commit identity ${identity.email} ${effect} — ${cloudAgentLinkRemedy(identity.email, link.primary)}`;
+};
+
+/**
  * PHRASING CONTRACT (DESIGN.md §10 risk 3): each tail is a factual
  * observation about what was and was not REPORTED — never an inference about
  * what somebody did. We see agent sessions, not keystrokes.
  */
 const absenceTail = (entry: AbsenceEntry, now: Date): string | null => {
   if (entry.kind === "unconnected") {
-    return "no crosscheck account for this author";
+    // The cloud agent sentence names an IDENTITY, not an actor: the address
+    // is git free text, and the hub holds no evidence of who started the
+    // session — so it says what crosscheck cannot see and offers no remedy.
+    const product = absenceCloudAgent(entry);
+    return product === null
+      ? "no crosscheck account for this author"
+      : `the identity ${product} commits under — crosscheck cannot capture those sessions, and git does not name who started them`;
   }
   if (entry.kind !== "inactive") {
     // A kind this renderer does not know (newer hub): skipping is honest,
