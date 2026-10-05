@@ -7,8 +7,9 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { rm, utimes, writeFile } from "node:fs/promises";
 
-import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, REGISTER_LADDER_MAX_ATTEMPTS } from "../src/constants.ts";
-import { sessionLineagePathForSlug, sessionSlug } from "../src/config/paths.ts";
+import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, REFUSED_LIVES_MAX, REGISTER_LADDER_MAX_ATTEMPTS } from "../src/constants.ts";
+import { readTextOrNull, sessionLineagePathForSlug, sessionSlug, spoolRefusedLivesPath } from "../src/config/paths.ts";
+import { readRefusedLives, recordRefusedLife } from "../src/spool/refused-lives.ts";
 import {
   ladderRungs,
   ladderStart,
@@ -107,5 +108,51 @@ describe("the ended-life note", () => {
     expect(reaped).toBe(1);
     expect(await readEndedLifeRung(dir, "old-uuid", "cc_old-uuid")).toBeNull();
     expect(await readEndedLifeRung(dir, "fresh-uuid", "cc_fresh-uuid")).toBe(1);
+  });
+});
+
+/**
+ * THE REFUSED-LIVES NOTE STAYS BOUNDED (review finding 8). It was append-only
+ * and read on every drain: lines older than MAX_SPOOL_AGE_DAYS were ignored
+ * on read and never removed, so it only grew.
+ */
+describe("the refused-lives note", () => {
+  const KEY = "repo-key";
+  const linesOf = async (dir: string): Promise<readonly string[]> =>
+    ((await readTextOrNull(spoolRefusedLivesPath(dir, KEY))) ?? "").split("\n").filter((line) => line.length > 0);
+
+  test("a write drops the lines past their age", async () => {
+    // Arrange: two stale lives and one young one already on file
+    const dir = await home("refused-prune");
+    const now = new Date();
+    const stale = new Date(now.getTime() - (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    await recordRefusedLife(dir, KEY, "cc_old-1", stale);
+    await recordRefusedLife(dir, KEY, "cc_old-2", stale);
+    await recordRefusedLife(dir, KEY, "cc_young", now);
+
+    // Act
+    await recordRefusedLife(dir, KEY, "cc_new", now);
+
+    // Assert
+    expect(await linesOf(dir)).toHaveLength(2);
+    expect([...(await readRefusedLives(dir, KEY, now))].sort()).toEqual(["cc_new", "cc_young"]);
+  });
+
+  test(`a write keeps at most the newest ${String(REFUSED_LIVES_MAX)} lives`, async () => {
+    // Arrange
+    const dir = await home("refused-cap");
+    const now = new Date();
+    for (let index = 0; index < REFUSED_LIVES_MAX; index += 1) {
+      await recordRefusedLife(dir, KEY, `cc_life-${String(index)}`, now);
+    }
+
+    // Act
+    await recordRefusedLife(dir, KEY, "cc_newest", now);
+
+    // Assert: the oldest went, the newest stayed
+    const lives = await readRefusedLives(dir, KEY, now);
+    expect(await linesOf(dir)).toHaveLength(REFUSED_LIVES_MAX);
+    expect(lives.has("cc_newest")).toBe(true);
+    expect(lives.has("cc_life-0")).toBe(false);
   });
 });

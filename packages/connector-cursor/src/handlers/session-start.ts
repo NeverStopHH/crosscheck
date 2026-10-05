@@ -54,6 +54,7 @@ import type { CursorHookContext } from "../runner.ts";
 import { recordInjectionOutcome } from "../inject/ledger.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { healerFor } from "./heal.ts";
+import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
 
 const INITIAL_STATUS = "analyzing";
 
@@ -169,6 +170,10 @@ export const handleCursorSessionStart = async (
     budget.spareMs() - endHoldbackMs,
   );
   await reapSpool(ctx.config.home, ctx.repoKey, now, deferredEnder(ctx, budget));
+  // The lineage notes and heal stamps of lives that never came back
+  // (state/session-lineage.ts) — Claude's SessionStart sweeps them too, but a
+  // Cursor-only machine has no other path that does.
+  await reapStaleLineages(ctx.config.home, now);
 
   return briefing.length === 0 ? "" : cursorInjectionOutput(briefing);
 };

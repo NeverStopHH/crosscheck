@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1568
+    # PRINTS: 1571
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -205,7 +205,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 1
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
-    # PRINTS: packages/connector-acp/src/capture/engine.ts 19
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 20
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 2
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
@@ -338,6 +338,7 @@ jobs:
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 16
     # PRINTS: spool/reap.ts 2
+    # PRINTS: spool/refused-lives.ts 1
     # PRINTS: spool/reject-cause.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
@@ -359,7 +360,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
-    # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
+    # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 3
     # PRINTS: packages/connector-cursor/src/handlers/stop.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 3
     # PRINTS: packages/connector-cursor/src/init/init.ts 1
@@ -527,7 +528,7 @@ jobs:
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 11
     # PRINTS: end-session.ts 4
-    # PRINTS: engine.ts 19
+    # PRINTS: engine.ts 20
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
     # PRINTS: envelope.ts 1
@@ -637,6 +638,7 @@ jobs:
     # PRINTS: records.ts 3
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
+    # PRINTS: refused-lives.ts 1
     # PRINTS: register-session.ts 9
     # PRINTS: reject-cause.ts 1
     # PRINTS: release-preflight.ts 5
@@ -666,7 +668,7 @@ jobs:
     # PRINTS: session-lineage.ts 2
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
-    # PRINTS: session-start.ts 6
+    # PRINTS: session-start.ts 7
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 15

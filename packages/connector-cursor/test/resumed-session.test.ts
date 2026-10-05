@@ -7,9 +7,15 @@
  * ladder's last rung — was refused by the hub as a late write.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, utimes } from "node:fs/promises";
 
-import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "@crosscheck/connector-core/constants.ts";
+import {
+  repoKey,
+  sessionHealPathForSlug,
+  sessionLineagePathForSlug,
+  sessionSlug,
+} from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { getDiagnosis } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
@@ -145,5 +151,37 @@ describe("a Cursor conversation the hub ends while it keeps going", () => {
     if (!diagnosis.ok) throw new Error("diagnosis unavailable");
     expect(diagnosis.data.targets.map((target) => target.value)).toEqual(["src/after.ts"]);
     expect((await readDropDetail(home, key)).rejectedCauses).toEqual({ session_ended: 1 });
+  });
+});
+
+describe("a Cursor-only machine sweeps the side files of lives that never came back (review finding 8)", () => {
+  test("sessionStart removes lineage notes and heal stamps past their age", async () => {
+    // Arrange: a week-old note and stamp of a conversation that never resumed
+    const repo = await makeRepo("cursor-sweep", { remote: "git@github.com:acme/api.git" });
+    const home = await makeHome("cursor-sweep");
+    cleanups.push(repo, home);
+    const env: Env = {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.hubUrl,
+      CROSSCHECK_API_KEY: hub.apiKey,
+      CROSSCHECK_TIMEOUT_MS: "4000",
+    };
+    const old = new Date(Date.now() - (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    const sideFiles = [
+      sessionLineagePathForSlug(home, sessionSlug("cur-gone")),
+      sessionHealPathForSlug(home, sessionSlug("cur-gone")),
+    ];
+    for (const path of sideFiles) {
+      await writeRepoFile(home, path.slice(home.length + 1), "{}\n");
+      await utimes(path, old, old);
+    }
+
+    // Act
+    await run("sessionStart", inRepo(SESSION_START_INPUT, repo, "conv-sweep"), env);
+
+    // Assert
+    for (const path of sideFiles) {
+      expect(await Bun.file(path).exists()).toBe(false);
+    }
   });
 });

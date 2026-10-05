@@ -17639,6 +17639,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review finding 7: a Stop in another repo of a multi-repo workspace re-homes the session to that repo on the hub",
   },
+  {
+    label: "the refused-lives note only ever grows",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "  if (kept.length === lines.length && kept.length < REFUSED_LIVES_MAX) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/session-lineage.test.ts`,
+    because: "review finding 8: lines past their age stay on file for good, read on every drain",
+  },
+  {
+    label: "a Cursor-only machine never sweeps lineage notes and heal stamps",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "  await reapStaleLineages(ctx.config.home, now);\n",
+    to: "",
+    test: `${CURSOR}/test/resumed-session.test.ts`,
+    because: "review finding 8: the side files of every conversation that never came back pile up in the sessions directory",
+  },
+  {
+    label: "an ACP-only machine never sweeps lineage notes and heal stamps",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          await reapStaleLineages(session.config.home, now());\n",
+    to: "",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review finding 8: the proxy's machines keep every side file of every session it ever loaded",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17754,7 +17778,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
- * PRINTS: packages/connector-acp/test/resumed-session.test.ts 1
+ * PRINTS: packages/connector-acp/test/resumed-session.test.ts 2
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -17897,7 +17921,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 11
- * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
+ * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 15
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
@@ -17921,7 +17945,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
- * PRINTS: packages/connector-cursor/test/resumed-session.test.ts 1
+ * PRINTS: packages/connector-cursor/test/resumed-session.test.ts 2
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1

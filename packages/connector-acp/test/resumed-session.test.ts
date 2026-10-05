@@ -7,9 +7,15 @@
  * last rung — was refused by the hub as a late write.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
+import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "@crosscheck/connector-core/constants.ts";
+import {
+  sessionHealPathForSlug,
+  sessionLineagePathForSlug,
+  sessionSlug,
+} from "@crosscheck/connector-core/config/paths.ts";
 import { readDropDetail } from "@crosscheck/connector-core/spool/drops.ts";
 // By path, the wire-loss suite's arrangement: this package has no drizzle edge.
 import { workContextTargets } from "../../server/src/db/schema.ts";
@@ -157,5 +163,32 @@ describe("an ACP session the hub ends while its proxy keeps capturing", () => {
       { workContextId: `wc_cc_${hostKey}~r1`, value: "src/mid/after.ts" },
     ]);
     expect((await readDropDetail(h.home, h.hub.repoKey)).rejectedCauses).toEqual({ session_ended: 1 });
+  });
+});
+
+describe("an ACP-only machine sweeps the side files of lives that never came back (review finding 8)", () => {
+  test("the proxy's shutdown reap removes lineage notes and heal stamps past their age", async () => {
+    // Arrange: a live session gives the shutdown its home; a week-old note and stamp beside it
+    const h = await createHarness(hub, cleanups, "acp-sweep");
+    handshake(h, "sess_sweep", h.repo);
+    await h.capture.settle();
+    // Aged against the engine's own clock, which the harness freezes.
+    const old = new Date(h.clock.value.getTime() - (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    const sideFiles = [
+      sessionLineagePathForSlug(h.home, sessionSlug("acp-gone")),
+      sessionHealPathForSlug(h.home, sessionSlug("acp-gone")),
+    ];
+    for (const path of sideFiles) {
+      await writeRepoFile(h.home, path.slice(h.home.length + 1), "{}\n");
+      await utimes(path, old, old);
+    }
+
+    // Act
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert
+    for (const path of sideFiles) {
+      expect(await Bun.file(path).exists()).toBe(false);
+    }
   });
 });

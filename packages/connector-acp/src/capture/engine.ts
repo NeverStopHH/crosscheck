@@ -93,6 +93,7 @@ import {
 import type { AssembledBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
 import { endSessionFlow } from "@crosscheck/connector-core/flows/end-session.ts";
 import { sessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
+import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
 import type { SessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
@@ -1408,6 +1409,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
               return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
             },
           );
+          // ...and the lineage notes and heal stamps of lives that never came
+          // back (state/session-lineage.ts): a machine that only ever runs this
+          // proxy has no other path that sweeps them.
+          await reapStaleLineages(session.config.home, now());
         }
       } catch (error) {
         counters.errors += 1;

@@ -1646,6 +1646,13 @@ export const HEAL_COOLDOWN_MS = 5 * 60 * 1000;
  * cost the next caller — one with room — its turn for five minutes.
  */
 export const HEAL_MIN_ROOM_MS = 100;
+/**
+ * Most refused lives one repo's note keeps (spool/refused-lives.ts): the newest
+ * ones, each younger than MAX_SPOOL_AGE_DAYS. A machine heals a handful of
+ * times a week; the bound keeps the note a few kilobytes on the drain path
+ * that reads it, whatever a pathological hub does.
+ */
+export const REFUSED_LIVES_MAX = 64;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
 /** A session the hub holds as ended, or an id somebody else owns. */
