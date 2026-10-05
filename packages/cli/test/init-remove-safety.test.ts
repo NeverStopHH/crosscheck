@@ -4,7 +4,7 @@
  * tree, and never claim a change it did not make (review 2026-10-05).
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { lstat, mkdir, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
@@ -136,6 +136,34 @@ describe("the backup of a rewritten file", () => {
     expect(await read(saved)).toBe(mcpBefore);
     expect((await stat(saved)).mode & 0o777).toBe(0o600);
     expect(result.stdout).toContain(`${mcpPath}: removed the crosscheck mcp server; everything else in it is kept (original saved to ${saved})`);
+  });
+});
+
+describe("a write that fails mid-run", () => {
+  // Root ignores permission bits, so the failure cannot be staged there.
+  const isRoot = process.getuid?.() === 0;
+
+  test.skipIf(isRoot)("names the file it stopped at and every file already changed before it", async () => {
+    // Arrange: .claude/ stays writable, the repo root does not — so the
+    // settings rewrite lands and the .mcp.json rewrite after it cannot
+    const { repo, env, settingsPath, mcpPath } = await fixture("partial");
+    await writeJson(settingsPath, { hooks: OWNED_HOOKS, model: "opus" });
+    const mcpBefore = await writeJson(mcpPath, {
+      mcpServers: { crosscheck: OWNED_MCP_SERVER, docs: { command: "docs-mcp", args: [] } },
+    });
+    await chmod(repo, 0o555);
+
+    // Act
+    const result = await runCli(["init", "--remove"], env, repo).finally(() => chmod(repo, 0o755));
+
+    // Assert
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toContain(`stopped at ${mcpPath}`);
+    expect(result.stdout).toContain("already changed before that:");
+    expect(result.stdout).toContain(`${settingsPath}: removed 2 hook entries`);
+    expect(result.stdout).toContain(`not changed: ${mcpPath}`);
+    expect(await read(mcpPath)).toBe(mcpBefore);
+    expect(await read(settingsPath)).not.toContain("crosscheck hook");
   });
 });
 

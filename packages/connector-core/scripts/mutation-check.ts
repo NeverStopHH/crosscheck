@@ -16457,6 +16457,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "the backup of a .mcp.json with an API key in a server's env is world-readable on a shared machine",
   },
+  {
+    label: "init --remove reports a half-removed repo as done",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (!applied.ok) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "a write that failed on the second file reads as a clean removal while that file keeps crosscheck's entries",
+  },
+  {
+    label: "init --remove hides the files it already changed before a failed write",
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
+    from: "        applied: changes.slice(0, index),",
+    to: "        applied: [],",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "the developer is told the repo is as it was while one file has already lost its hooks",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16531,7 +16547,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 2
- * PRINTS: packages/cli/test/init-remove-safety.test.ts 7
+ * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3

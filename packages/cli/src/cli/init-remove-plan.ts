@@ -125,13 +125,51 @@ export const saveOriginals = async (
     }),
   );
 
-export const applyPlan = async (plan: FilePlan): Promise<void> => {
+const applyPlan = async (plan: FilePlan): Promise<void> => {
   if (plan.kind === "strip") {
     await writeConfigAtomically(plan.path, renderJsonFile(plan.stripped.value));
   }
   if (plan.kind === "delete") {
     await rm(plan.path);
   }
+};
+
+export type ApplyOutcome =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      /** Changed before the failure — the repo is half-removed by exactly these. */
+      readonly applied: readonly FilePlan[];
+      readonly failed: FilePlan;
+      /** Planned changes never attempted. */
+      readonly pending: readonly FilePlan[];
+      readonly error: string;
+    };
+
+const isChange = (plan: FilePlan): boolean => plan.kind === "strip" || plan.kind === "delete";
+
+/**
+ * Applies the plans in order and, when a write fails part-way (EACCES on the
+ * second file, review 2026-10-05), says exactly which files were already
+ * changed rather than letting the error escape as one bare line: the repo IS
+ * half-removed at that point, and only this knows by which files.
+ */
+export const applyAll = async (plans: readonly FilePlan[]): Promise<ApplyOutcome> => {
+  const changes = plans.filter(isChange);
+  for (const [index, plan] of changes.entries()) {
+    try {
+      await applyPlan(plan);
+    } catch (error) {
+      return {
+        ok: false,
+        applied: changes.slice(0, index),
+        failed: plan,
+        pending: changes.slice(index + 1),
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  return { ok: true };
 };
 
 export const planLine = (plan: FilePlan): string => {

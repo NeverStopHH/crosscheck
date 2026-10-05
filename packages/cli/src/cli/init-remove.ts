@@ -35,13 +35,13 @@ import { isPathTracked } from "@crosscheck/connector-core/git/check-ignore.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { readGlobalWiring } from "./doctor-global.ts";
 import {
-  applyPlan,
+  applyAll,
   planAll,
   planLine,
   removalBackupDir,
   saveOriginals,
 } from "./init-remove-plan.ts";
-import type { FilePlan } from "./init-remove-plan.ts";
+import type { ApplyOutcome, FilePlan } from "./init-remove-plan.ts";
 import { REMOVE_RESTART_LINE, removalTargets } from "./wiring-removal.ts";
 import {
   collisionSentence,
@@ -119,6 +119,18 @@ const leftInPlaceLines = async (
   ];
 };
 
+/** A run that stopped part-way: what changed, where it stopped, what did not. */
+const failureReport = (outcome: ApplyOutcome & { readonly ok: false }): string =>
+  [
+    `stopped at ${outcome.failed.path}: ${outcome.error}`,
+    ...(outcome.applied.length === 0
+      ? ["nothing had been changed before that — the repo is as it was"]
+      : ["already changed before that:", ...outcome.applied.map((plan) => `  ${planLine(plan)}`)]),
+    `not changed: ${[outcome.failed, ...outcome.pending].map((plan) => plan.path).join(", ")}`,
+    "rerun crosscheck init --remove once that is fixed — the files already changed have nothing left to remove",
+    "",
+  ].join("\n");
+
 export const runProjectRemove = async (
   options: ProjectRemoveOptions,
   env: Env,
@@ -148,8 +160,9 @@ export const runProjectRemove = async (
     return { stdout: `${planned.refusal}\n`, exitCode: EXIT_ABORTED };
   }
   const plans = await saveOriginals(planned.plans, root, removalBackupDir(env, root));
-  for (const plan of plans) {
-    await applyPlan(plan);
+  const applied = await applyAll(plans);
+  if (!applied.ok) {
+    return { stdout: failureReport(applied), exitCode: EXIT_FAIL };
   }
   const notes = await Promise.all(plans.map((plan) => teamChangeNote(root, plan)));
   return {
