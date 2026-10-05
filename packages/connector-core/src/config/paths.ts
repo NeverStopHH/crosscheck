@@ -300,7 +300,10 @@ export const tempSibling = (path: string): string =>
  * base36 characters (`slice(2, 10)` of a base36 `Math.random()`), then the
  * end of the name. The sweep (state/temp-sweep.ts) deletes on this test plus
  * an age, so every character it accepts beyond that shape is a file nobody
- * abandoned put up for deletion. It changes with `tempSibling` or not at all.
+ * abandoned put up for deletion. `tempSibling` is the only thing that names a
+ * temp — writePrivateFile and the CLI's writeConfigAtomically (cli/init-io.ts)
+ * both call it rather than spell the shape out — so this pattern changes when
+ * `tempSibling` does, and at no other time.
  */
 const TEMP_SIBLING_NAME = /^.+\.tmp-[0-9]+-[0-9a-z]{1,8}$/;
 

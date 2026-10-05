@@ -17645,6 +17645,24 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/abandoned-temps.test.ts`,
     because: "`notes-tmp-123-abcdefgh` is not a temp of anything and is deleted once a day old",
   },
+  {
+    // Review 2026-10-06 (L4): the inits' atomic write was writePrivateFile's
+    // defect in a second copy.
+    label: "init's atomic write leaves its temp behind when it fails",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  } catch (error) {\n    await removeFile(temp);\n    throw error;\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${CLI}/test/init-io-atomic.test.ts`,
+    because: "a failed `crosscheck init` leaves `settings.json.tmp-…` in the repo's .claude/ for git status to offer",
+  },
+  {
+    label: "init names its temp by hand again",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  const temp = tempSibling(path);\n",
+    to: "  const temp = `${path}.tmp`;\n",
+    test: `${CLI}/test/init-io-atomic.test.ts`,
+    because: "the shape drifts from tempSibling's the way it did before, with nothing to notice",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17723,6 +17741,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
  * PRINTS: packages/cli/test/init-backups.test.ts 7
  * PRINTS: packages/cli/test/init-global.test.ts 3
+ * PRINTS: packages/cli/test/init-io-atomic.test.ts 2
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 14
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
