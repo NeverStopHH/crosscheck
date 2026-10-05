@@ -117,6 +117,7 @@ const sessionState = (
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
   draftNudge: null,
+  lastDeriveFireAt: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,

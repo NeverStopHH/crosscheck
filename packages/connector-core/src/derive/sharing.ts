@@ -41,11 +41,13 @@ import {
   DOCTOR_SHARING_QUIET_INTENT_SESSIONS_WARN,
   DOCTOR_SHARING_QUIET_TURNS_WARN,
   DOCTOR_SHARING_SILENT_FIRES_WARN,
+  DERIVE_RUN_GRACE_MS,
   DOCTOR_SUMMARIZER_REJECTED_WARN,
   DRAFT_NUDGE_MIN_AGE_HOURS,
   DRAFT_RETENTION_HORIZON_DAYS,
   INTENT_MIN_PROMPT_CHARS,
   MS_PER_DAY,
+  MS_PER_SECOND,
   SUMMARIZER_CHILD_ENV,
 } from "../constants.ts";
 import type { SessionState } from "../state/session-state.ts";
@@ -68,9 +70,13 @@ export type DeriveDigest = Pick<
   | "intentSetCount"
   | "intentFailCount"
   | "intentLastFailure"
->;
+  | "lastDeriveFireAt"
+> & {
+  /** When the session ended; null while it is live. */
+  readonly endedAt: string | null;
+};
 
-export const digestOf = (state: SessionState): DeriveDigest => ({
+export const digestOf = (state: SessionState, endedAt: Date | null = null): DeriveDigest => ({
   stopTurnCount: state.stopTurnCount,
   summarizerFireCount: state.summarizerFireCount,
   summarizerNoneCount: state.summarizerNoneCount,
@@ -86,6 +92,8 @@ export const digestOf = (state: SessionState): DeriveDigest => ({
   intentSetCount: state.intentSetCount,
   intentFailCount: state.intentFailCount,
   intentLastFailure: state.intentLastFailure,
+  lastDeriveFireAt: state.lastDeriveFireAt,
+  endedAt: endedAt === null ? null : endedAt.toISOString(),
 });
 
 /**
@@ -106,6 +114,8 @@ export interface OwnDraftsFact {
 export interface SharingInput {
   /** The environment doctor runs with — its off switches and its PATH. */
   readonly env: Env;
+  /** Doctor's clock: what decides whether an unanswered run is still in flight. */
+  readonly now: Date;
   /** Digests of the live sessions of this repo + hub, newest first. */
   readonly live: readonly DeriveDigest[];
   /** Digests of ended sessions the history kept, newest first. */
@@ -139,7 +149,6 @@ interface Totals {
   readonly sessions: number;
   readonly turns: number;
   readonly fires: number;
-  readonly outcomes: number;
   readonly answered: number;
   readonly drafts: number;
   readonly fails: number;
@@ -149,6 +158,11 @@ interface Totals {
   readonly lastNoSlice: string | null;
   readonly intentFires: number;
   readonly intentsSet: number;
+  /** Fires and outcomes of sessions whose newest run is past DERIVE_RUN_GRACE_MS. */
+  readonly settledFires: number;
+  readonly settledOutcomes: number;
+  /** Unanswered runs of LIVE sessions still inside the grace window. */
+  readonly inFlight: number;
 }
 
 const sumOf = (digests: readonly DeriveDigest[], pick: (digest: DeriveDigest) => number): number =>
@@ -157,7 +171,44 @@ const sumOf = (digests: readonly DeriveDigest[], pick: (digest: DeriveDigest) =>
 const firstOf = (values: readonly (string | null)[]): string | null =>
   values.find((value): value is string => value !== null) ?? null;
 
-const totalsOf = (digests: readonly DeriveDigest[]): Totals => {
+const outcomesOf = (d: DeriveDigest): number =>
+  d.summarizerNoneCount +
+  d.intentNoneCount +
+  d.summarizerDraftCount +
+  d.intentSetCount +
+  d.summarizerFailCount +
+  d.intentFailCount +
+  d.summarizerRejectCount +
+  d.summarizerUnreadableCount;
+
+const firesOf = (d: DeriveDigest): number => d.summarizerFireCount + d.intentFireCount;
+
+/**
+ * Whether a session's runs have had their time. Measured from its NEWEST
+ * fire — its earlier runs are older still — to now, or to SessionEnd for an
+ * ended session, whose late answer had no state file to land in. No recorded
+ * fire time is never settled: missing evidence does not get to blame the host.
+ */
+const isSettled = (d: DeriveDigest, now: Date): boolean => {
+  const fired = d.lastDeriveFireAt === null ? Number.NaN : Date.parse(d.lastDeriveFireAt);
+  const until = d.endedAt === null ? now.getTime() : Date.parse(d.endedAt);
+  return !Number.isNaN(fired) && !Number.isNaN(until) && until - fired >= DERIVE_RUN_GRACE_MS;
+};
+
+const settlementOf = (
+  digests: readonly DeriveDigest[],
+  now: Date,
+): Pick<Totals, "settledFires" | "settledOutcomes" | "inFlight"> => {
+  const settled = digests.filter((d) => isSettled(d, now));
+  const liveInFlight = digests.filter((d) => d.endedAt === null && d.lastDeriveFireAt !== null && !isSettled(d, now));
+  return {
+    settledFires: sumOf(settled, firesOf),
+    settledOutcomes: sumOf(settled, outcomesOf),
+    inFlight: sumOf(liveInFlight, (d) => Math.max(0, firesOf(d) - outcomesOf(d))),
+  };
+};
+
+const totalsOf = (digests: readonly DeriveDigest[], now: Date): Totals => {
   const nones = sumOf(digests, (d) => d.summarizerNoneCount + d.intentNoneCount);
   const drafts = sumOf(digests, (d) => d.summarizerDraftCount);
   const intentsSet = sumOf(digests, (d) => d.intentSetCount);
@@ -167,7 +218,6 @@ const totalsOf = (digests: readonly DeriveDigest[]): Totals => {
     sessions: digests.length,
     turns: sumOf(digests, (d) => d.stopTurnCount),
     fires: sumOf(digests, (d) => d.summarizerFireCount + d.intentFireCount),
-    outcomes: nones + drafts + intentsSet + fails + refused,
     answered: nones + drafts + intentsSet,
     drafts,
     fails,
@@ -177,6 +227,7 @@ const totalsOf = (digests: readonly DeriveDigest[]): Totals => {
     lastNoSlice: firstOf(digests.map((d) => d.summarizerLastNoSlice)),
     intentFires: sumOf(digests, (d) => d.intentFireCount),
     intentsSet,
+    ...settlementOf(digests, now),
   };
 };
 
@@ -250,12 +301,13 @@ const runnerFailingRule: Rule = (_input, totals) =>
     : null;
 
 const workersSilentRule: Rule = (_input, totals) =>
-  totals.fires >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.outcomes === 0
+  totals.settledFires >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.settledOutcomes === 0
     ? finding(
         "workers_silent",
-        `your agent shares nothing because ${String(totals.fires)} model runs were started and not one reported back: the detached worker did not start, or died with the hook that spawned it; ` +
+        `your agent shares nothing because ${String(totals.settledFires)} model runs started more than ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s ago (or that long before their session ended) never reported back: ` +
+          "the detached worker did not start, or died with the hook that spawned it; " +
           "fix: run the summarizer runner check below — if it passes, the host is killing the hook's children, so send this doctor output to whoever runs your crosscheck",
-        `no drafts or intents — ${String(totals.fires)} model runs never reported back`,
+        `no drafts or intents — ${String(totals.settledFires)} model runs never reported back`,
       )
     : null;
 
@@ -337,7 +389,7 @@ const RULES: readonly Rule[] = [
 ];
 
 export const sharingFindings = (input: SharingInput): readonly SharingFinding[] => {
-  const totals = totalsOf([...input.live, ...input.ended]);
+  const totals = totalsOf([...input.live, ...input.ended], input.now);
   return RULES.flatMap((rule) => {
     const found = rule(input, totals);
     return found === null ? [] : [found];
@@ -346,14 +398,18 @@ export const sharingFindings = (input: SharingInput): readonly SharingFinding[] 
 
 /** The PASS line: what was read, so "nothing found" is a measurement. */
 export const sharingSummary = (input: SharingInput): string => {
-  const totals = totalsOf([...input.live, ...input.ended]);
+  const totals = totalsOf([...input.live, ...input.ended], input.now);
   if (totals.sessions === 0) {
     return "no session on this repo has been recorded on this machine yet — open one, then run doctor again";
   }
   const unreviewed =
     input.drafts === null ? "" : `, ${amountOf(input.drafts.size)} own drafts unreviewed`;
+  const inFlight =
+    totals.inFlight === 0
+      ? ""
+      : `, ${String(totals.inFlight)} model runs still in flight (started under ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s ago)`;
   return (
     `${String(input.live.length)} live and ${String(input.ended.length)} recently ended session${totals.sessions === 1 ? "" : "s"}: ` +
-    `${String(totals.drafts)} drafts and ${String(totals.intentsSet)} intents derived${unreviewed} — nothing found that keeps this agent from sharing`
+    `${String(totals.drafts)} drafts and ${String(totals.intentsSet)} intents derived${unreviewed}${inFlight} — nothing found that keeps this agent from sharing`
   );
 };

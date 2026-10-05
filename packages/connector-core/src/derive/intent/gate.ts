@@ -45,8 +45,9 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
 };
 
 /** One fire, booked BEFORE the spawn (the Stop hook's ordering contract). */
-export const withIntentFire = (state: SessionState): SessionState => ({
+export const withIntentFire = (state: SessionState, firedAt: Date): SessionState => ({
   ...state,
+  lastDeriveFireAt: firedAt.toISOString(),
   intentFireCount: state.intentFireCount + 1,
 });
 

@@ -130,7 +130,7 @@ export const maybeSpawnCursorIntentWorker = async (
         return null;
       }
       fired = true;
-      return withIntentFire(fresh);
+      return withIntentFire(fresh, ctx.now());
     });
     if (!fired) {
       return;
@@ -321,7 +321,7 @@ export const runCursorSummarizerGate = async (
       return decoded;
     }
     fired = true;
-    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText));
+    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText), ctx.now());
   });
 
   if (fired && look.slice !== null && look.transcriptPath !== null) {

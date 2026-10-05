@@ -147,7 +147,7 @@ export const maybeSpawnAcpIntentWorker = async (
         return null;
       }
       fired = true;
-      return withIntentFire(fresh);
+      return withIntentFire(fresh, new Date());
     });
     if (!fired) {
       return false;
@@ -267,7 +267,7 @@ export const runAcpSummarizerGate = async (
         return counted;
       }
       fired = true;
-      return withSummarizerFire(counted, estimateFireTokens(sliceText));
+      return withSummarizerFire(counted, estimateFireTokens(sliceText), new Date());
     });
     if (!fired) {
       return false;

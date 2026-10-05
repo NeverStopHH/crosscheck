@@ -235,8 +235,10 @@ export const withStopTurn = (state: SessionState): SessionState => ({
 export const withSummarizerFire = (
   state: SessionState,
   estimatedTokens: number,
+  firedAt: Date,
 ): SessionState => ({
   ...state,
+  lastDeriveFireAt: firedAt.toISOString(),
   summarizerFireCount: state.summarizerFireCount + 1,
   summarizerLastFireTurn: state.stopTurnCount,
   summarizerEstimatedTokens:

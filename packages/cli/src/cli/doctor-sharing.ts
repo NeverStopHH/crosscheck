@@ -71,7 +71,8 @@ export const readSharingInput = async (sources: SharingSources): Promise<Sharing
   ]);
   return {
     env: sources.env,
-    live: sources.liveStates.map(digestOf),
+    now: sources.now,
+    live: sources.liveStates.map((state) => digestOf(state)),
     ended: history.sessions,
     drafts,
   };

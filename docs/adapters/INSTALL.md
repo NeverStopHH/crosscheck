@@ -284,7 +284,8 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   backend on this PATH, hooks that could not START the model although this
   shell can (the editor's own environment — set `CROSSCHECK_SUMMARIZER_CMD`
   to the absolute path), a runner whose every run failed, runs that never
-  reported back, turns with no transcript, answers that were all refused,
+  reported back (only runs over two minutes old, or that old when their
+  session ended — younger ones are reported as in flight, never blamed), turns with no transcript, answers that were all refused,
   twenty finished turns none of which read as a conclusion, sessions that
   never opened with a substantive prompt, and drafts that wait for your
   review. It reads the live sessions AND the last 20 ended ones: SessionEnd

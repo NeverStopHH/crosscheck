@@ -50,6 +50,8 @@ const DigestSchema = z.object({
   intentSetCount: count,
   intentFailCount: count,
   intentLastFailure: said,
+  lastDeriveFireAt: said,
+  endedAt: said,
 });
 
 const HistorySchema = z.object({
@@ -81,6 +83,7 @@ export const foldDeriveHistory = async (
   home: string,
   key: string,
   hostSessionKey: string,
+  endedAt: Date,
 ): Promise<void> => {
   try {
     const state = await readSessionState(home, hostSessionKey);
@@ -88,7 +91,7 @@ export const foldDeriveHistory = async (
       return;
     }
     await withLock(deriveHistoryLockPath(home, key), undefined, async () => {
-      const next = withSession(await readDeriveHistory(home, key), digestOf(state));
+      const next = withSession(await readDeriveHistory(home, key), digestOf(state, endedAt));
       await writePrivateFile(deriveHistoryPath(home, key), JSON.stringify(next));
     });
   } catch {

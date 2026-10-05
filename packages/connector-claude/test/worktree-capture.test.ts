@@ -124,6 +124,7 @@ const sessionState = (repoRoot: string): SessionState => ({
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
   draftNudge: null,
+  lastDeriveFireAt: null,
   probedFingerprints: [],
 });
 

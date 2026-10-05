@@ -97,6 +97,7 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
   draftNudge: null,
+  lastDeriveFireAt: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -208,8 +209,11 @@ describe("debounce and hard cap (DESIGN.md §3: >=2 turns apart, 6/session)", ()
 
   test("withSummarizerFire records fire turn, count and token estimate", () => {
     const before = baseState({ stopTurnCount: 7, summarizerEstimatedTokens: 100 });
-    const after = withSummarizerFire(before, 250);
+    const firedAt = new Date("2026-10-05T12:00:00.000Z");
+    const after = withSummarizerFire(before, 250, firedAt);
     expect(after.summarizerFireCount).toBe(1);
+    // When it fired: what tells doctor a run in flight from a silent worker.
+    expect(after.lastDeriveFireAt).toBe(firedAt.toISOString());
     expect(after.summarizerLastFireTurn).toBe(7);
     expect(after.summarizerEstimatedTokens).toBe(350);
     expect(before.summarizerFireCount).toBe(0);

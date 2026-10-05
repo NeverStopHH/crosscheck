@@ -150,7 +150,7 @@ export const handleStop = async (
       return counted;
     }
     fired = true;
-    return withSummarizerFire(counted, estimateFireTokens(sliceText));
+    return withSummarizerFire(counted, estimateFireTokens(sliceText), ctx.now());
   });
 
   if (fired && slice !== null && transcriptPath !== undefined) {

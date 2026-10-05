@@ -22,18 +22,26 @@ const HEALTHY_ENV = { PATH: "/usr/bin" };
 /** A PATH with no `claude` on it, so the backend rule has nothing to say only where an override is set. */
 const WITH_OVERRIDE = { PATH: "/nonexistent", CROSSCHECK_SUMMARIZER_CMD: "/opt/model/wrapper.sh" };
 
-const session = (overrides: Partial<SessionState> = {}): DeriveDigest =>
-  digestOf({
-    ...deriveSessionState({
-      hostSessionKey: "sharing-uuid",
-      repoId: "github.com/acme/api",
-      repoRoot: "/tmp/api",
-      hubUrl: "http://hub.test",
-      developerId: "dev_self",
-      startedAt: "2026-10-05T08:00:00.000Z",
-    }),
-    ...overrides,
-  });
+/** The doctor run's clock; every digest below is placed relative to it. */
+const NOW = new Date("2026-10-05T12:00:00.000Z");
+const ago = (ms: number): string => new Date(NOW.getTime() - ms).toISOString();
+const MINUTE_MS = 60_000;
+
+const session = (overrides: Partial<SessionState> = {}, endedAt: Date | null = null): DeriveDigest =>
+  digestOf(
+    {
+      ...deriveSessionState({
+        hostSessionKey: "sharing-uuid",
+        repoId: "github.com/acme/api",
+        repoRoot: "/tmp/api",
+        hubUrl: "http://hub.test",
+        developerId: "dev_self",
+        startedAt: "2026-10-05T08:00:00.000Z",
+      }),
+      ...overrides,
+    },
+    endedAt,
+  );
 
 const DAY_MS = 86_400_000;
 
@@ -54,6 +62,7 @@ const ownDrafts = (
 
 const input = (overrides: Partial<SharingInput> = {}): SharingInput => ({
   env: WITH_OVERRIDE,
+  now: NOW,
   live: [],
   ended: [],
   drafts: ownDrafts(0, 0, { floor: false, pastHorizon: 0 }),
@@ -165,10 +174,46 @@ describe("sharingFindings — what the workers booked", () => {
     expect(causes(value)).not.toContain("runner_failing");
   });
 
-  test("runs that never reported back are a silent worker", () => {
-    const value = input({ ended: [session({ summarizerFireCount: 1, intentFireCount: 1 })] });
+  test("runs that never reported back, long before their session ended, are a silent worker", () => {
+    const value = input({
+      ended: [session({ summarizerFireCount: 1, intentFireCount: 1, lastDeriveFireAt: ago(60 * MINUTE_MS) }, new Date(NOW.getTime() - 30 * MINUTE_MS))],
+    });
 
     expect(causes(value)).toContain("workers_silent");
+    expect(detailFor(value, "workers_silent")).toContain("2 model runs started more than");
+  });
+
+  test("runs started moments ago are in flight, not silent — and the summary says so", () => {
+    const value = input({
+      live: [session({ summarizerFireCount: 1, intentFireCount: 1, lastDeriveFireAt: ago(10_000) })],
+    });
+
+    expect(causes(value)).not.toContain("workers_silent");
+    expect(sharingSummary(value)).toContain("2 model runs still in flight");
+  });
+
+  test("runs whose session ended moments after they started may have finished after it", () => {
+    // SessionEnd deletes the state file a late answer would be booked in.
+    const ended = new Date(NOW.getTime() - 5 * MINUTE_MS);
+    const value = input({
+      ended: [session({ summarizerFireCount: 1, intentFireCount: 1, lastDeriveFireAt: new Date(ended.getTime() - 20_000).toISOString() }, ended)],
+    });
+
+    expect(causes(value)).not.toContain("workers_silent");
+  });
+
+  test("a live session's runs long past the grace window are silent", () => {
+    const value = input({
+      live: [session({ summarizerFireCount: 1, intentFireCount: 1, lastDeriveFireAt: ago(20 * MINUTE_MS) })],
+    });
+
+    expect(causes(value)).toContain("workers_silent");
+  });
+
+  test("runs with no recorded start time are never blamed on the host", () => {
+    const value = input({ ended: [session({ summarizerFireCount: 2, intentFireCount: 1 }, new Date(NOW.getTime() - MINUTE_MS))] });
+
+    expect(causes(value)).not.toContain("workers_silent");
   });
 
   test("one unanswered run is not yet a silent worker", () => {

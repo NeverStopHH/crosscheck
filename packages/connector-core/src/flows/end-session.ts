@@ -100,7 +100,7 @@ export const endSessionFlow = async (
   // The derive counters outlive the file they were booked in: `doctor` asks
   // "why does my agent share nothing?" after the session that could answer is
   // gone (state/derive-history.ts). Fail-open, and read before the delete.
-  await foldDeriveHistory(input.home, input.repoKey, input.hostSessionKey);
+  await foldDeriveHistory(input.home, input.repoKey, input.hostSessionKey, input.now());
   await deleteSessionState(input.home, input.hostSessionKey);
   // A first prompt parked for the derived-intent worker that never ran (a
   // spawn that failed, a session ending inside the worker's deadline) must

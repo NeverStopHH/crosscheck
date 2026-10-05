@@ -17562,7 +17562,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "model runs that never reported back read as healthy",
     file: `${CORE}/src/derive/sharing.ts`,
-    from: "  totals.fires >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.outcomes === 0\n",
+    from: "  totals.settledFires >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.settledOutcomes === 0\n",
     to: "  false\n",
     test: `${CORE}/test/sharing.test.ts`,
     because: "a worker that dies with its hook is the finding-#14 silence again, now on the line built to end it",
@@ -17618,7 +17618,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SessionEnd forgets why nothing was drafted",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  await foldDeriveHistory(input.home, input.repoKey, input.hostSessionKey);\n",
+    from: "  await foldDeriveHistory(input.home, input.repoKey, input.hostSessionKey, input.now());\n",
     to: "",
     test: `${CORE}/test/derive-history.test.ts`,
     because: "a doctor run after the editor closed reads no live session and explains nothing",
@@ -17871,6 +17871,46 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/review-draft.test.ts`,
     because: "the nudge names the oldest drafts and review_draft refuses every one of them as not a draft",
   },
+  {
+    label: "doctor blames the host for a model run still in flight",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  return !Number.isNaN(fired) && !Number.isNaN(until) && until - fired >= DERIVE_RUN_GRACE_MS;",
+    to: "  return true;",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a run ten seconds old is reported as a worker that never reported back",
+  },
+  {
+    label: "doctor blames the host for a run that answered after SessionEnd",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  const until = d.endedAt === null ? now.getTime() : Date.parse(d.endedAt);",
+    to: "  const until = now.getTime();",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the last turn's run, whose answer had no state file left to land in, reads as a dead worker",
+  },
+  {
+    label: "a summarizer fire books no start time",
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
+    from: "  lastDeriveFireAt: firedAt.toISOString(),\n  summarizerFireCount: state.summarizerFireCount + 1,",
+    to: "  summarizerFireCount: state.summarizerFireCount + 1,",
+    test: `${CONNECTOR}/test/stop-gate.test.ts`,
+    because: "doctor can never tell a run in flight from a silent worker, so it never blames either",
+  },
+  {
+    label: "an intent fire books no start time",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  lastDeriveFireAt: firedAt.toISOString(),\n  intentFireCount: state.intentFireCount + 1,",
+    to: "  intentFireCount: state.intentFireCount + 1,",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "a session whose only run was the intent is never judged at all",
+  },
+  {
+    label: "SessionEnd forgets when the session ended",
+    file: `${CORE}/src/state/derive-history.ts`,
+    from: "digestOf(state, endedAt)",
+    to: "digestOf(state)",
+    test: `${CORE}/test/derive-history.test.ts`,
+    because: "an ended session's late runs are measured against doctor's clock and blamed on the host",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18027,6 +18067,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
@@ -18037,7 +18078,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
- * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
+ * PRINTS: packages/connector-claude/test/stop-gate.test.ts 5
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
@@ -18074,7 +18115,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
- * PRINTS: packages/connector-core/test/derive-history.test.ts 2
+ * PRINTS: packages/connector-core/test/derive-history.test.ts 3
  * PRINTS: packages/connector-core/test/draft-nudge.test.ts 29
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
@@ -18138,7 +18179,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 14
+ * PRINTS: packages/connector-core/test/sharing.test.ts 16
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2

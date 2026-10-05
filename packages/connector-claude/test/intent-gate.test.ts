@@ -63,8 +63,10 @@ describe("isSubstantivePrompt", () => {
 
 describe("intent transforms", () => {
   test("a fire, a NONE, a set and a failure each book their own counter", () => {
-    const fired = withIntentFire(baseState());
+    const firedAt = new Date("2026-10-05T12:00:00.000Z");
+    const fired = withIntentFire(baseState(), firedAt);
     expect(fired.intentFireCount).toBe(1);
+    expect(fired.lastDeriveFireAt).toBe(firedAt.toISOString());
     expect(withIntentNone(fired).intentNoneCount).toBe(1);
     expect(withIntentSet(fired).intentSetCount).toBe(1);
     const failed = withIntentFailure(fired, "exit 1: Not logged in");

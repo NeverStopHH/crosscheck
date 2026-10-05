@@ -1452,6 +1452,16 @@ export const DOCTOR_SHARING_QUIET_TURNS_WARN = 20;
  */
 export const DOCTOR_SHARING_SILENT_FIRES_WARN = 2;
 /**
+ * How long a model run may go unanswered and still be IN FLIGHT rather than
+ * silent: twice the runner's own deadline. A run younger than this — counted
+ * to now for a live session, to SessionEnd for an ended one, whose late answer
+ * had no state file left to land in — is never blamed on the host.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DERIVE_RUN_GRACE_MS / 1000, c.DERIVE_RUN_GRACE_MS > c.SUMMARIZER_TIMEOUT_MS)'
+ * PRINTS: 120 true
+ */
+export const DERIVE_RUN_GRACE_MS = 2 * SUMMARIZER_TIMEOUT_MS;
+/**
  * Sessions with not one derived-intent fire before doctor says no session
  * opened with a substantive prompt. Two, because one session is one prompt.
  */

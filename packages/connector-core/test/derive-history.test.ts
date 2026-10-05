@@ -59,8 +59,8 @@ describe("foldDeriveHistory", () => {
     });
 
     // Act
-    await foldDeriveHistory(at, KEY, "first-uuid");
-    await foldDeriveHistory(at, KEY, "second-uuid");
+    await foldDeriveHistory(at, KEY, "first-uuid", new Date());
+    await foldDeriveHistory(at, KEY, "second-uuid", new Date());
     const history = await readDeriveHistory(at, KEY);
 
     // Assert
@@ -76,7 +76,7 @@ describe("foldDeriveHistory", () => {
     const total = DERIVE_HISTORY_MAX_SESSIONS + 3;
     for (let i = 0; i < total; i += 1) {
       await seed(at, `ring-${String(i)}-uuid`, { stopTurnCount: i });
-      await foldDeriveHistory(at, KEY, `ring-${String(i)}-uuid`);
+      await foldDeriveHistory(at, KEY, `ring-${String(i)}-uuid`, new Date());
     }
 
     const history = await readDeriveHistory(at, KEY);
@@ -89,7 +89,7 @@ describe("foldDeriveHistory", () => {
   test("a session with no state file folds nothing", async () => {
     const at = await home("history-none");
 
-    await foldDeriveHistory(at, KEY, "ghost-uuid");
+    await foldDeriveHistory(at, KEY, "ghost-uuid", new Date());
 
     expect((await readDeriveHistory(at, KEY)).folded).toBe(0);
   });
@@ -101,7 +101,7 @@ describe("foldDeriveHistory", () => {
     await seed(at, "after-uuid", { stopTurnCount: 2 });
 
     expect((await readDeriveHistory(at, KEY)).sessions).toEqual([]);
-    await foldDeriveHistory(at, KEY, "after-uuid");
+    await foldDeriveHistory(at, KEY, "after-uuid", new Date());
     expect((await readDeriveHistory(at, KEY)).sessions).toHaveLength(1);
   });
 });
@@ -129,5 +129,8 @@ describe("the end flow folds before it deletes", () => {
     const history = await readDeriveHistory(at, KEY);
     expect(history.sessions[0]?.stopTurnCount).toBe(7);
     expect(history.sessions[0]?.summarizerNoneCount).toBe(2);
+    // ...with WHEN it ended, which is what tells a run that finished after
+    // SessionEnd from a worker that never reported back.
+    expect(typeof history.sessions[0]?.endedAt).toBe("string");
   });
 });

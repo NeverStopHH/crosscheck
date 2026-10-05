@@ -150,7 +150,7 @@ const maybeSpawnIntentWorker = async (ctx: HookContext): Promise<void> => {
         return null;
       }
       fired = true;
-      return withIntentFire(fresh);
+      return withIntentFire(fresh, ctx.now());
     });
     if (!fired) {
       return;

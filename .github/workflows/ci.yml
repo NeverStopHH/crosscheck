@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1596
+    # PRINTS: 1601
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -269,13 +269,14 @@ jobs:
     # PRINTS: derive/conference/prompt.ts 1
     # PRINTS: derive/ghost/cost.ts 1
     # PRINTS: derive/ghost/worker.ts 5
+    # PRINTS: derive/intent/gate.ts 1
     # PRINTS: derive/intent/prompt.ts 1
     # PRINTS: derive/intent/worker.ts 2
-    # PRINTS: derive/sharing.ts 14
+    # PRINTS: derive/sharing.ts 16
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 2
-    # PRINTS: derive/summarizer/gate.ts 7
+    # PRINTS: derive/summarizer/gate.ts 8
     # PRINTS: evidence/render.ts 1
     # PRINTS: flows/briefing.ts 6
     # PRINTS: flows/capture-git-touches.ts 1
@@ -345,7 +346,7 @@ jobs:
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
-    # PRINTS: state/derive-history.ts 1
+    # PRINTS: state/derive-history.ts 2
     # PRINTS: state/git-lane-cost.ts 2
     # PRINTS: state/loss-ledger.ts 10
     # PRINTS: state/loss-refusals.ts 1
@@ -517,7 +518,7 @@ jobs:
     # PRINTS: declarations.ts 5
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
-    # PRINTS: derive-history.ts 1
+    # PRINTS: derive-history.ts 2
     # PRINTS: derive.ts 2
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
@@ -558,7 +559,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
     # PRINTS: flush.ts 2
-    # PRINTS: gate.ts 7
+    # PRINTS: gate.ts 9
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
     # PRINTS: ghost-overlap.ts 4
@@ -680,7 +681,7 @@ jobs:
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
-    # PRINTS: sharing.ts 14
+    # PRINTS: sharing.ts 16
     # PRINTS: skeleton-identity.ts 8
     # PRINTS: slice.ts 2
     # PRINTS: solved-counts.ts 1

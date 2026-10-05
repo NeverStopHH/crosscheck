@@ -585,6 +585,14 @@ const SessionStateObjectSchema = z.looseObject({
    * session, and a second nudge inside it is the nag the slot exists to stop.
    */
   draftNudge: z.enum(["delivered", "nothing_due"]).nullable().default(null),
+  /**
+   * When the newest summarizer or derived-intent fire was booked — what lets
+   * doctor tell a model run still in flight (or one that finished after
+   * SessionEnd, with nowhere left to book its answer) from a worker that
+   * never reported back (derive/sharing.ts DERIVE_RUN_GRACE_MS). Null on a
+   * state written before it existed, which doctor then never blames.
+   */
+  lastDeriveFireAt: z.string().min(1).nullable().default(null),
 });
 
 /**
@@ -1514,5 +1522,6 @@ export const deriveSessionState = (
     toolWindowEvictions: 0,
     toolWindowMisses: 0,
     draftNudge: null,
+    lastDeriveFireAt: null,
   };
 };
