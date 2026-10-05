@@ -108,6 +108,84 @@ const setup = async (): Promise<{ harness: TestHarness; robin: TestDeveloper }> 
   return { harness, robin };
 };
 
+/** One teammate tree with the given statements, and a reader to ask about it. */
+const seedTree = async (
+  workContext: Record<string, unknown>,
+  claimBodies: readonly Record<string, unknown>[],
+): Promise<{ harness: TestHarness; robin: TestDeveloper }> => {
+  const { harness, developer: nick } = await createHarnessWithSession();
+  const seeded = await postRecords(harness, nick, {
+    records: [
+      recordEnvelope("work_context", validWorkContextBody(workContext)),
+      ...claimBodies.map((claim) => recordEnvelope("claim", validClaimBody(claim))),
+    ],
+  });
+  expect(seeded.data?.accepted).toBe(1 + claimBodies.length);
+  const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", {
+    id: "ses_02",
+  });
+  return { harness, robin };
+};
+
+/** Probe A2 of the review: a German-written decision tree. */
+const germanUploadTree = () =>
+  seedTree({ title: "Upload der Trainingsvideos", description: "Chunked Upload statt PUT" }, [
+    { id: "clm_obs", body: "Der PUT bricht ab 2 GB ab." },
+    {
+      id: "clm_dec",
+      kind: "decision",
+      evidenceRefs: ["clm_obs"],
+      body: "Wir bleiben beim Chunked Upload, das ist stabiler und die Gateway-Grenze ist nicht verhandelbar.",
+    },
+  ]);
+
+describe("German and English function words are never task words (finding 2)", () => {
+  test.each([
+    ["passt, das ist nicht so wichtig, mach weiter"],
+    ["ok, mach jetzt weiter und dann die nächsten Schritte"],
+    ["ja, und dann?"],
+  ])("German filler %p matches no German-written tree", async (prompt) => {
+    // Arrange — "das", "ist", "nicht", "und", "die" sit in the decision; the
+    // english configuration alone kept every one of them as a term
+    const { harness, robin } = await germanUploadTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: prompt });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test("the control: a German prompt with two task words still matches the tree", async () => {
+    // Arrange
+    const { harness, robin } = await germanUploadTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, {
+      query: "warum bricht der chunked upload ab",
+    });
+
+    // Assert
+    expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+  });
+
+  test("English filler matches no English-written tree", async () => {
+    // Arrange — every word of the prompt is an English function word
+    const { harness, robin } = await seedTree(
+      { title: "Then the cache was fine", description: "And with that it was done" },
+      [{ id: "clm_en", body: "It was then and there that the cache was rebuilt" }],
+    );
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, {
+      query: "and then what was that with the",
+    });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+});
+
 describe("a tree that shares one stray word is never a candidate", () => {
   test("matched on the intent: the upload tree, never the rate-limit tree beside it", async () => {
     // Arrange

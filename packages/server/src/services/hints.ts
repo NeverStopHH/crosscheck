@@ -114,8 +114,10 @@ const SEARCH_POOL_LIMIT = 10;
  * pr_limits_oneword_debatable found a header bug; two agreeing on the same
  * statement is a topic.
  *
- * COUNTED IN LEXEMES, after the english configuration's own stemming and stop
- * words, so "limit limits limiting" is one word and "the" is none.
+ * COUNTED IN LEXEMES, after the english configuration's own stemming, and
+ * without the stop words of English AND German (the database's own lists —
+ * sharedTermsSql below), so "limit limits limiting" is one word and "the",
+ * "das" and "nicht" are none.
  */
 export const HINT_MIN_SHARED_TERMS = 2;
 
@@ -128,19 +130,36 @@ const SUPERSEDES_EDGE_KIND = "supersedes";
 /**
  * How many distinct LEXEMES of `tokens` the document matches — the count
  * HINT_MIN_SHARED_TERMS is stated in. One subquery, bounded by
- * SEARCH_MAX_QUERY_TOKENS; a stop word becomes an empty tsquery and is dropped
- * by `numnode` rather than counted as a free hit on every row.
+ * SEARCH_MAX_QUERY_TOKENS.
+ *
+ * A FUNCTION WORD IS NEVER A TERM, IN EITHER LANGUAGE THIS TEAM WRITES. A word
+ * counts only when NEITHER PostgreSQL's shipped english NOR its shipped german
+ * snowball dictionary calls it a stop word: an empty tsquery under either
+ * configuration drops it rather than letting it count as a free hit on every
+ * row. The english configuration alone kept "das", "ist", "nicht", "und",
+ * "die", "dem", "weiter" as terms, so a German team's own sentences agreed
+ * with "passt, das ist nicht so wichtig, mach weiter" on three words (review
+ * of batch 1006, finding 2). No word list is kept here: both stop lists are
+ * the database's own. Covered: English and German — a prompt in any other
+ * language keeps its function words as terms until its dictionary is added
+ * to this condition.
+ *
+ * The lexeme that is MATCHED stays the english one, because that is the
+ * configuration every tsv in this database is built with.
  */
 const sharedTermsSql = (document: SQL, tokens: readonly string[]): SQL<number> =>
   tokens.length === 0
     ? sql<number>`0`
     : sql<number>`(SELECT count(DISTINCT term.lexeme::text)::int
-        FROM (SELECT plainto_tsquery('english', word) AS lexeme
+        FROM (SELECT plainto_tsquery('english', word) AS lexeme,
+                     plainto_tsquery('german', word) AS german
               FROM unnest(ARRAY[${sql.join(
                 tokens.map((token) => sql`${token}`),
                 sql`, `,
               )}]::text[]) AS words(word)) AS term
-        WHERE numnode(term.lexeme) > 0 AND ${document} @@ term.lexeme)`;
+        WHERE numnode(term.lexeme) > 0
+          AND numnode(term.german) > 0
+          AND ${document} @@ term.lexeme)`;
 
 /**
  * The context's own statement — what its owner said the work is — as one

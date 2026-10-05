@@ -17559,6 +17559,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a hub that forgets the per-candidate floor gets its stray-word tree pointed at, with nothing on this side to stop it",
   },
+  {
+    label: "German function words count as shared task words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "          AND numnode(term.german) > 0\n",
+    to: "",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"passt, das ist nicht so wichtig, mach weiter\" agrees with a German team's decision on das/ist/nicht and pushes it as substance",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17877,7 +17885,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-candidate-floor.test.ts 1
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 5
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
