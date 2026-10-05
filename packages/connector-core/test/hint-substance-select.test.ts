@@ -76,9 +76,22 @@ describe("a strong, evidence-backed match is substance", () => {
     expect(selectedClaimId([context([decision()])])).toBe("clm_decision");
   });
 
-  test("an evidence-backed root cause, still only proposed", () => {
-    const cause = decision({ id: "clm_cause", kind: "root_cause", status: "proposed" });
+  test("a root cause whose status is confirmed, on a strong match", () => {
+    const cause = decision({ id: "clm_cause", kind: "root_cause", status: "likely_root_cause" });
     expect(selectedClaimId([context([cause])])).toBe("clm_cause");
+  });
+
+  test("a rejected approach with evidence, as it always was — whatever words it shares", () => {
+    // Negative knowledge cannot anchor a wrong theory, only save a dead end
+    // (§4 (a)); its rule is the one it had before the relevance half existed.
+    const negative = decision({ id: "clm_neg", kind: "rejected_approach", status: "rejected", matchedTerms: 0 });
+    expect(selectedClaimId([context([negative])])).toBe("clm_neg");
+  });
+
+  test("a rejected approach still goes first, ahead of a more relevant decision", () => {
+    const closer = decision({ id: "clm_closer", matchedTerms: 4 });
+    const negative = decision({ id: "clm_neg", kind: "rejected_approach", status: "rejected", matchedTerms: 0 });
+    expect(selectedClaimId([context([closer, negative])])).toBe("clm_neg");
   });
 
   test("a tree clearly about the prompt lends its strength to a claim that shares one word", () => {
@@ -104,12 +117,24 @@ describe("a weak or unbacked match keeps today's pointer", () => {
     expect(selection.kind === "pointer" ? selection.claimCount : 0).toBe(1);
   });
 
-  test("a hub that sends no count buys no substance, even for a settled negative", () => {
-    // An older hub: the field is absent. The trust half alone used to be
-    // enough; the relevance half is unknown, and unknown fails closed.
-    const negative = decision({ kind: "rejected_approach", status: "rejected" });
-    const { matchedTerms: _omitted, ...withoutCount } = negative;
+  test("a hub that sends no count buys no substance for a decision", () => {
+    // An older hub: the field is absent. The relevance half is unknown, and
+    // unknown fails closed.
+    const { matchedTerms: _omitted, ...withoutCount } = decision();
     expect(select([context([withoutCount])]).kind).toBe("pointer");
+  });
+
+  test("a PROPOSED root cause stays a pointer however strongly it matched", () => {
+    // Principle 5 (Nick, via the batch-1006 review, finding 3): an
+    // unverified cause pushed unasked as "a teammate's recorded finding"
+    // anchors exactly the wrong theory §4 exists to keep out.
+    const cause = decision({ kind: "root_cause", status: "proposed", matchedTerms: 6 });
+    expect(select([context([cause])]).kind).toBe("pointer");
+  });
+
+  test("a confirmed root cause on a weak match is a pointer", () => {
+    const cause = decision({ kind: "root_cause", status: "likely_root_cause", matchedTerms: 1 });
+    expect(select([context([cause])]).kind).toBe("pointer");
   });
 
   test("a tree clearly about the prompt lends nothing to a claim that shares no word", () => {

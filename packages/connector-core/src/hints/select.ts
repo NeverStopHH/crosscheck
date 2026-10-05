@@ -6,15 +6,17 @@
  *   (a) a rejected_approach claim WITH evidence — negative knowledge cannot
  *       anchor a wrong theory, only save a dead end;
  *   (b) a likely_root_cause / partially_confirmed claim WITH evidence; and
- *   (c) a stated DECISION or ROOT CAUSE, still proposed, WITH evidence (the
- *       2026-10 pilot: 95 hints, 0 opened — a decision can never reach a
- *       settled status, so it was pointer-only forever, behind a
- *       get_diagnosis no agent made) —
- * and all three ONLY ON A STRONG MATCH: the claim itself shares
+ *   (c) a stated DECISION, still proposed, WITH evidence (the 2026-10 pilot:
+ *       95 hints, 0 opened — a decision can never reach a settled status, so
+ *       it was pointer-only forever, behind a get_diagnosis no agent made) —
+ * (b) and (c) ONLY ON A STRONG MATCH: the claim itself shares
  * HINT_MIN_SHARED_TERMS words with what was matched, or the match is an error
  * fingerprint. Trust and relevance are both required to assert something
  * unasked (§4 "Solved before" states the same narrowing for the briefing).
- * Everything else — bare proposed hypotheses above all, and any claim on a
+ * (a) keeps the rule it always had, and is still scanned first.
+ * Everything else — bare proposed hypotheses and PROPOSED ROOT CAUSES above
+ * all (principle 5: an unverified cause pushed unasked as "a teammate's
+ * recorded finding" anchors the wrong theory), and any (b)/(c) claim on a
  * weak match — reaches the reader only as a POINTER: context id + title, no
  * body. The pointer variant of the return type carries no claim at all, so a
  * body cannot leak through it by construction; test/hint-select.test.ts and
@@ -107,18 +109,20 @@ const isNegativeKnowledge = (claim: HintClaimCandidate): boolean =>
 const isSettled = (claim: HintClaimCandidate): boolean =>
   INJECTABLE_STATUSES.has(claim.status);
 
-/** Kinds that STATE something — what was decided, what caused it — rather than guess. */
-const STATED_KINDS: ReadonlySet<string> = new Set(["decision", "root_cause"]);
-
 /**
- * (c) of the header: a decision or root cause its author stated and nobody
- * has taken back. Positive equality on `proposed`, the status such a claim is
- * born with, so `rejected` — the claim itself turned down — and any status
- * this build does not know stay out (fail closed); the settled statuses are
- * (b)'s already.
+ * (c) of the header: a DECISION its author stated and nobody has taken back.
+ * Positive equality on `proposed`, the status a decision is born with and
+ * keeps, so `rejected` — the decision itself turned down — and any status
+ * this build does not know stay out (fail closed).
+ *
+ * A ROOT CAUSE IS NOT HERE, and that is principle 5, decided by Nick on the
+ * batch-1006 review (finding 3): a cause still `proposed` is a theory nobody
+ * confirmed, and pushing it unasked under "a teammate's recorded finding" is
+ * the anchoring §4 exists to prevent. A root cause is substance only once its
+ * status is settled — (b) — and stays a pointer before that.
  */
-const isStatedFinding = (claim: HintClaimCandidate): boolean =>
-  STATED_KINDS.has(claim.kind) && claim.status === "proposed";
+const isStatedDecision = (claim: HintClaimCandidate): boolean =>
+  claim.kind === "decision" && claim.status === "proposed";
 
 /**
  * THE RELEVANCE HALF OF THE GATE, counted by the hub against the query that
@@ -152,18 +156,26 @@ const isStrongMatch = (
 };
 
 /**
- * The ONE most relevant claim first: more shared words, then negatives
- * (privileged, §4), then the hub's own claim order — a stable sort over a
- * copy, so the hub's order survives every tie.
+ * The order a tree's claims are offered in: rejected approaches FIRST, in the
+ * hub's order — their rule is the one they always had (§4: negatives are
+ * privileged) — then everything else most relevant first, more shared words
+ * before fewer, the hub's order on a tie (a stable sort over a copy).
  */
-const mostRelevantFirst = (
+const offeringOrder = (
   claims: readonly HintClaimCandidate[],
-): readonly HintClaimCandidate[] =>
-  [...claims].sort(
-    (left, right) =>
-      (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0) ||
-      Number(isNegativeKnowledge(right)) - Number(isNegativeKnowledge(left)),
-  );
+): readonly HintClaimCandidate[] => [
+  ...claims.filter(isNegativeKnowledge),
+  ...[...claims.filter((claim) => !isNegativeKnowledge(claim))].sort(
+    (left, right) => (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0),
+  ),
+];
+
+/**
+ * Whether this claim may be pushed as substance from this tree: trust, and —
+ * for everything but a rejected approach, whose rule predates it — relevance.
+ */
+const isDeliverable = (claim: HintClaimCandidate, context: HintContextCandidate): boolean =>
+  isInjectable(claim) && (isNegativeKnowledge(claim) || isStrongMatch(claim, context));
 
 /**
  * Machine-derived claims are never substance (DESIGN.md §3: Tier-1 drafts
@@ -226,7 +238,7 @@ const isInjectable = (claim: HintClaimCandidate): boolean =>
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
   isCodeCurrent(claim) &&
-  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedFinding(claim));
+  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedDecision(claim));
 
 /**
  * THE CONTENT FLOOR, LOOKED AT AGAIN. The hub keeps only candidates that
@@ -297,13 +309,12 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
   // Substance pass over ALL eligible contexts first: an evidence-backed claim
   // in the second-ranked context beats a pointer at the first-ranked one.
   for (const context of eligible) {
-    // The most relevant claim first; negatives are privileged (§4) on a tie.
+    // Negatives first (§4), then the most relevant of the rest.
     const foreign = context.claims.filter((claim) =>
       isForeignClaim(claim, selfDeveloperId),
     );
-    const injectable = mostRelevantFirst(foreign).find(
-      (claim) =>
-        isInjectable(claim) && isStrongMatch(claim, context) && !seen.has(claim.id),
+    const injectable = offeringOrder(foreign).find(
+      (claim) => isDeliverable(claim, context) && !seen.has(claim.id),
     );
     if (injectable !== undefined) {
       // The rest are the OTHER teammate claims of the tree — what the hint's

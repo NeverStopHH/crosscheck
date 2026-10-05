@@ -594,9 +594,9 @@ shape, used a tool or added a plan item that no control run did.
 After the 2026-10 pilot (95 prompt hints, 0 opened) a prompt hint on a strong,
 evidence-backed match carries one teammate claim's kind and **first sentence**
 (at most `HINT_SUBSTANCE_MAX_CHARS` = 200 characters) instead of only a
-pointer, for a class wider than before: a stated `decision` or `root_cause`
-still `proposed`, beside the rejected approaches and settled causes that could
-already arrive (DESIGN.md §4). That **adds to the injection surface**: more
+pointer, for a class wider than before: a stated `decision` still `proposed`,
+beside the rejected approaches and settled causes that could already arrive
+(DESIGN.md §4; a root cause still `proposed` stays a pointer, principle 5). That **adds to the injection surface**: more
 teammate-written body text now reaches an agent's context unasked, and it
 arrives mid-task, at UserPromptSubmit, rather than at SessionStart. It is the
 class §9 measured — a teammate's body field, unasked, in the agent's context —

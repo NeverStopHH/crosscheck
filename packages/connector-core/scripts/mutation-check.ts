@@ -17458,15 +17458,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a weak match delivers a teammate's finding as substance",
     file: `${CORE}/src/hints/select.ts`,
-    from: "        isInjectable(claim) && isStrongMatch(claim, context) && !seen.has(claim.id),",
-    to: "        isInjectable(claim) && !seen.has(claim.id),",
+    from: "  isInjectable(claim) && (isNegativeKnowledge(claim) || isStrongMatch(claim, context));",
+    to: "  isInjectable(claim);",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "one shared word puts a teammate's sentence in the agent's context unasked — the single-token path the pilot condemned",
   },
   {
     label: "an evidence-backed decision on a strong match stays a pointer",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedFinding(claim));",
+    from: "  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedDecision(claim));",
     to: "  (isNegativeKnowledge(claim) || isSettled(claim));",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a decision can never reach a settled status, so it stays behind a get_diagnosis no agent makes",
@@ -17474,8 +17474,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a rejected decision is injected as substance",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  STATED_KINDS.has(claim.kind) && claim.status === \"proposed\";",
-    to: "  STATED_KINDS.has(claim.kind);",
+    from: "  claim.kind === \"decision\" && claim.status === \"proposed\";",
+    to: "  claim.kind === \"decision\";",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a decision its own tree turned down reaches the reader as a recorded finding",
   },
@@ -17490,8 +17490,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the least relevant claim of a tree is delivered first",
     file: `${CORE}/src/hints/select.ts`,
-    from: "      (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0) ||\n",
-    to: "",
+    from: "    (left, right) => (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0),",
+    to: "    () => 0,",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the hint carries the newest backed claim rather than the one the prompt is about",
   },
@@ -17566,6 +17566,30 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"passt, das ist nicht so wichtig, mach weiter\" agrees with a German team's decision on das/ist/nicht and pushes it as substance",
+  },
+  {
+    label: "a proposed root cause is pushed unasked as a recorded finding",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  claim.kind === \"decision\" && claim.status === \"proposed\";",
+    to: "  (claim.kind === \"decision\" || claim.kind === \"root_cause\") && claim.status === \"proposed\";",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "an unverified cause lands in a healthy agent's context as a teammate's finding — the anchoring principle 5 forbids",
+  },
+  {
+    label: "a rejected approach needs a strong match it never needed",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "(isNegativeKnowledge(claim) || isStrongMatch(claim, context))",
+    to: "isStrongMatch(claim, context)",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "the dead end a teammate already ruled out stops reaching the reader unless its sentence repeats the prompt's words",
+  },
+  {
+    label: "rejected approaches lose their place at the front of a tree",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  ...claims.filter(isNegativeKnowledge),\n  ...[...claims.filter((claim) => !isNegativeKnowledge(claim))].sort(",
+    to: "  ...[...claims].sort(",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a more word-rich decision is pushed over the dead end §4 privileges",
   },
 ];
 
@@ -17783,7 +17807,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 1
- * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 7
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 10
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
