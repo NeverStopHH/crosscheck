@@ -16258,7 +16258,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove strips the other files when one is not valid json",
-    file: `${CLI}/src/cli/init-remove.ts`,
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
     from: "  if (refused !== undefined && !refused.read.ok) {",
     to: "  if (false) {",
     test: `${CLI}/test/init-remove.test.ts`,
@@ -16266,7 +16266,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove rewrites or deletes a file that held no crosscheck entries",
-    file: `${CLI}/src/cli/init-remove.ts`,
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
     from: "  if (!stripped.changed) {\n    return { kind: \"untouched\"",
     to: "  if (false) {\n    return { kind: \"untouched\"",
     test: `${CLI}/test/init-remove.test.ts`,
@@ -16274,7 +16274,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove leaves an emptied file behind",
-    file: `${CLI}/src/cli/init-remove.ts`,
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
     from: "kind: stripped.leftover ? \"delete\" : \"strip\"",
     to: "kind: \"strip\"",
     test: `${CLI}/test/init-remove.test.ts`,
@@ -16427,7 +16427,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --remove edits a symlinked project file through its link",
-    file: `${CLI}/src/cli/init-remove.ts`,
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
     from: "    if ((await lstat(plan.path)).isSymbolicLink()) {",
     to: "    if (false) {",
     test: `${CLI}/test/init-remove-safety.test.ts`,
