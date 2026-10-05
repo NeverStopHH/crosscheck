@@ -150,11 +150,6 @@ interface Section {
   readonly total: number;
   /** The section's own "+N more" line, where the generic one would mislead. */
   readonly more?: (count: number) => string;
-  /**
-   * True for a section whose text the READER wrote (their own drafts), which
-   * QUOTED_DATA_NOTICE — "written by other developers" — must not cover.
-   */
-  readonly readersOwn?: boolean;
 }
 
 /**
@@ -1164,7 +1159,6 @@ const renderDraftSection = (input: BriefingInput): Section => {
       "(review_draft confirms, edits or discards):",
     lines: rendered.slice(0, MAX_DRAFT_POINTERS),
     total: rendered.length,
-    readersOwn: true,
   };
 };
 
@@ -1360,22 +1354,6 @@ const appendSection = (
 };
 
 /**
- * Whether any section OTHER developers wrote made it into the briefing.
- * QUOTED_DATA_NOTICE says "Text in « » was written by other developers":
- * said over nothing but the reader's own drafts and a renderer-owned coverage
- * line, it called the reader's words somebody else's. A section is in when
- * its header is — appendSection adds a header only with at least one of its
- * lines. (The reader's own drafts get no notice of their own on this branch.)
- */
-const quotesTeammates = (
-  sections: readonly Section[],
-  lines: readonly string[],
-): boolean =>
-  sections.some(
-    (section) => section.readersOwn !== true && lines.includes(section.header),
-  );
-
-/**
  * Factual statements only, teammate text inside a quote frame — imperatives in
  * injected context trip Claude Code's prompt-injection defences (DESIGN.md §4).
  */
@@ -1408,15 +1386,10 @@ export const renderBriefing = (input: BriefingInput): string => {
     return "";
   }
   const repoLabel = sanitizeUntrusted(input.repoId);
-  const subject = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}.`;
-  // Fitted WITH the notice, so no budget decision depends on dropping it.
-  const header = `${subject} ${QUOTED_DATA_NOTICE}`;
+  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}. ${QUOTED_DATA_NOTICE}`;
   const lines = sections.reduce<readonly string[]>(appendSection, [
     header,
     ...coverageLines,
   ]);
-  if (lines.length <= 1) {
-    return "";
-  }
-  return (quotesTeammates(sections, lines) ? lines : [subject, ...lines.slice(1)]).join("\n");
+  return lines.length <= 1 ? "" : lines.join("\n");
 };

@@ -17711,25 +17711,16 @@ export const MUTATIONS: readonly Mutation[
       "mints a frame, a line or a field of its own",
   },
   {
-    // Review LOW: the teammate notice rode every briefing unconditionally.
-    label: "the reader's own drafts count as teammate text for the notice",
+    // Review H1: "own" drafts quote teammates (a ghost draft is a teammate's
+    // plan), so the notice is on every briefing, never conditional.
+    label: "the briefing header drops the quoted-data notice",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "    readersOwn: true,\n",
-    to: "",
+    from: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}. ${QUOTED_DATA_NOTICE}`;",
+    to: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}.`;",
     test: `${CORE}/test/briefing-notice.test.ts`,
     because:
-      "a briefing of nothing but the reader's own drafts tells the agent they " +
-      "were written by other developers",
-  },
-  {
-    label: "the teammate notice is said on every briefing again",
-    file: `${CORE}/src/briefing/render.ts`,
-    from: "    (section) => section.readersOwn !== true && lines.includes(section.header),",
-    to: "    () => true,",
-    test: `${CORE}/test/briefing-notice.test.ts`,
-    because:
-      "a coverage line alone, or the reader's own drafts, are introduced as " +
-      "quoted text other developers wrote",
+      "a drafts-only briefing frames a teammate's live plan in « » with nothing " +
+      "telling the agent the quoted text is data and not instruction",
   },
 ];
 
@@ -17911,7 +17902,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 20
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
- * PRINTS: packages/connector-core/test/briefing-notice.test.ts 2
+ * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 4
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
