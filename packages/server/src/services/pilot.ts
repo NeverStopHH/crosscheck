@@ -28,6 +28,7 @@ import { and, asc, eq, lt, notInArray, sql } from "drizzle-orm";
 import {
   agentSessions,
   hintDeliveries,
+  hintOutcomes,
   pilotAttributions,
   pilotCounters,
   pilotMarks,
@@ -711,4 +712,10 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
   await deps.db
     .delete(pilotAttributions)
     .where(lt(pilotAttributions.answeredAt, cutoff));
+  // 07 §13.9 (D-O6): outcomes are pilot measurement too, under the same rule.
+  // DELETED WITH PROOF (01a, principle 6): nothing references an outcome and
+  // the registry declares it non-retaining, so this strands nothing; and an
+  // outcome is never older than its delivery, so no figure — whose widest
+  // window is this same number — loses a row it could read.
+  await deps.db.delete(hintOutcomes).where(lt(hintOutcomes.createdAt, cutoff));
 };

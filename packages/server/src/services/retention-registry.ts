@@ -33,6 +33,8 @@ import type { SQL } from "drizzle-orm";
 
 import type { RetentionRootName } from "@crosscheck/schema";
 
+import { PILOT_RETENTION_DAYS } from "../constants.ts";
+
 /**
  * `while_exists`: live for as long as the row exists — the owning feature has
  * no retirement in 1.0. `undefined_pending_spec`: the owning spec has not
@@ -70,6 +72,14 @@ export interface NonRetainingRelation extends RelationBase {
   readonly semantics: "non_retaining_edge";
   /** Why this reference depends on nothing in the session's order. */
   readonly reason: string;
+  /**
+   * How long this relation's OWN rows live, when they age out at all (07
+   * §13.9, D-O6) — declared here, beside why they keep nothing alive, so the
+   * statement that they may be deleted and the bound they are deleted at sit
+   * in one place and are checked together (test/hint-outcome-retention.test.ts).
+   * Absent: the rows have no age limit of their own.
+   */
+  readonly ownRetentionDays?: number;
 }
 
 export interface SkeletonRelation extends RelationBase {
@@ -194,6 +204,9 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
     semantics: "non_retaining_edge",
     reason:
       "a word about what a delivery led to (followed, overrode, not relevant now); reads no position in the receiving session's order",
+    // D-O6: pilot measurement, so the pilot's rule — and nothing references
+    // an outcome, so deleting one at this bound strands nothing (01a, principle 6).
+    ownRetentionDays: PILOT_RETENTION_DAYS,
   },
   {
     table: "questions",

@@ -1226,6 +1226,10 @@ CREATE TABLE IF NOT EXISTS hint_outcomes (
 
 CREATE INDEX IF NOT EXISTS hint_outcomes_delivery_created_idx
   ON hint_outcomes (delivery_id, created_at DESC);
+-- 07 13.9 (D-O6): outcomes age out with the pilot, past PILOT_RETENTION_DAYS,
+-- from the reaper's pass across every repo — an index range, never a scan.
+CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx
+  ON hint_outcomes (created_at);
 
 -- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
 -- nothing and its window ends NOW, so an answer cannot be reconstructed later

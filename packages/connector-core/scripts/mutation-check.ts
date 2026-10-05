@@ -17714,6 +17714,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "an unmarked share reads as hints nobody followed, when it is only hints nobody recorded",
   },
+  // ── 07 §13.9, D-O6: outcomes under the pilot's retention ──────────────────
+  {
+    label: "outcomes outlive the pilot's retention",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  await deps.db.delete(hintOutcomes).where(lt(hintOutcomes.createdAt, cutoff));",
+    to: "  await Promise.resolve(cutoff);",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "a person's reasons stay on the hub for ever while every other pilot row ages out at 90 days",
+  },
+  {
+    label: "the outcome prune takes the boundary day a report still reads",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: ".where(lt(hintOutcomes.createdAt, cutoff))",
+    to: ".where(lt(hintOutcomes.createdAt, new Date(cutoff.getTime() + 1)))",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "the widest window's first day loses its outcomes while the window still counts its deliveries",
+  },
+  {
+    label: "the registry's declared outcome lifetime drifts from the prune's",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "    ownRetentionDays: PILOT_RETENTION_DAYS,",
+    to: "    ownRetentionDays: PILOT_RETENTION_DAYS * 2,",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "the registry says one bound and the reaper deletes at another — no positive proof either way",
+  },
+  {
+    label: "the outcome prune scans the whole table",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx\n  ON hint_outcomes (created_at);",
+    to: "CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx\n  ON hint_outcomes (delivery_id);",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "every reaper pass reads every outcome on the hub to find the few past the window",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18023,7 +18056,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 2
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 3
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -18034,6 +18067,7 @@ interface Outcome {
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
+ * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 5
  * PRINTS: packages/server/test/hint-outcomes.test.ts 5
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3

@@ -96,6 +96,20 @@ describe("hint_outcomes DDL sync", () => {
     ]);
   });
 
+  test("the 90-day prune is an index range across every repo, not a scan (D-O6)", async () => {
+    // Arrange — the reaper deletes by age on every pass; without this index
+    // the prune reads the whole table each time, as 07 §11.6 says of its siblings
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexdef AS d FROM pg_indexes WHERE indexname = 'hint_outcomes_created_idx'`,
+    );
+
+    // Assert
+    expect(String(rows.rows[0]?.["d"] ?? "")).toContain("(created_at)");
+  });
+
   test("'the current outcome of a delivery' is an index range, not a scan", async () => {
     // Arrange
     const harness = await createTestHarness();

@@ -986,7 +986,8 @@ clause and a tally line.
   off-target hints, it would be a separate, agent-attributed figure, never the label.
 - **D-O5 — outcomes in the team report.** *Decided by the owner, built — §13.9: one descriptive line, no
   target.*
-- **D-O6 — enrolment gate and retention.** Outcomes need `pilot_enrolled`; they have no age limit.
+- **D-O6 — enrolment gate and retention.** *Decided by the owner, built — §13.9: enrolment stays required;
+  outcomes age out with the pilot.*
 - **D-O7 — ties.** When an outcome and the noise label carry the same instant, the label stands.
 
 **13.9 — The owner's decisions (2026-10-05).** D-O1, D-O2 (with the team-of-two elimination stated, above),
@@ -1024,4 +1025,16 @@ is stamped exactly as `pilot_labels_since` is (when enrolment turns on; for a re
 first start of a hub that records outcomes), and every outcome figure — this line, `--mine`, the source
 credit — starts at the later of it and the window. A delivery from before that instant is outside the
 population rather than "unmarked". `--json` carries the block, cleaned like the rest.
+
+*D-O6 — outcomes live under the pilot's retention; enrolment stays required to record.* §13.7's "no age
+limit of their own" is superseded: `hint_outcomes` rows prune past `PILOT_RETENTION_DAYS` (90) from the
+reaper's pass, beside `pilot_counters` and `pilot_attributions`, the boundary day kept — every outcome
+figure's widest window is that same number, and an outcome is never older than the delivery it answers, so
+nothing a figure can read is removed. A `hint_outcomes_created_idx` keeps the delete an index range across
+every repo. The bound is **declared in the retention registry** (01a): the `hint_outcomes.delivery_id` entry
+stays `non_retaining_edge` and now carries `ownRetentionDays: PILOT_RETENTION_DAYS`, the statement that the
+rows may be deleted and the bound they are deleted at, side by side. **Deleted with proof, not by default
+(01a, the sixth principle):** a test checks that no relation in the DDL references `hint_outcomes` and that
+the registry declares no root on it, so deleting an outcome strands nothing and releases nothing the skeleton
+sweep relies on; deliveries, which outcomes reference, are not pruned by this rule.
 

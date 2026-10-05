@@ -1247,6 +1247,8 @@ export const hintOutcomes = pgTable(
     ),
     // "The current outcome of this delivery" is the newest row for it.
     index("hint_outcomes_delivery_created_idx").on(table.deliveryId, table.createdAt.desc()),
+    // 07 §13.9 (D-O6): the reaper's age prune, across every repo.
+    index("hint_outcomes_created_idx").on(table.createdAt),
   ],
 );
 
