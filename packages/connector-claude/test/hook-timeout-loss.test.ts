@@ -173,8 +173,9 @@ describe("LOSS-12: a hook that runs out of budget is a counted loss, keyed when 
     const outside = await makeHome("timeout-outside");
     paths.push(outside);
 
-    // Act
-    await runHookWith("post-tool-use", neverSettles, editPayload(outside), env);
+    // Act: git cannot answer inside the budget, so the hook is really CUT —
+    // on a fast machine a plain directory resolved in time and nothing was cut
+    await withSlowGit(() => runHookWith("post-tool-use", neverSettles, editPayload(outside), env));
 
     // Assert: no connected repo could have lost this hook's capture
     expect(await Bun.file(lossLedgerPath(home)).exists()).toBe(false);
@@ -195,8 +196,8 @@ describe("LOSS-12: a hook that runs out of budget is a counted loss, keyed when 
       }),
     );
 
-    // Act
-    await runHookWith("post-tool-use", neverSettles, editPayload(repo), env);
+    // Act: cut before identity on any machine, so the state file is what keys it
+    await withSlowGit(() => runHookWith("post-tool-use", neverSettles, editPayload(repo), env));
 
     // Assert: keyed — no other repo on the machine is charged
     const [line] = await ledgerLines(home);
