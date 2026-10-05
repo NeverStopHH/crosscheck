@@ -1293,9 +1293,9 @@ The evidence for each row:
 **13.5 — The `order` block (§3.7).**
 
 - **The fold** is `server/src/services/coverage-order.ts:71`. It runs over the agent_event rung's own
-  scope, restated in `coverage.ts` (`orderScope`) so the loss-reading code stays untouched; a test holds
-  the two to one scope. Since the review (§13.9, H3) it also includes the sessions the answer itself
-  names, passed as `orderSessionIds`.
+  scope, `sessionScope` in `coverage.ts`, the one definition the rung reads too. Since the review
+  (§13.9, H3) it also includes the sessions the answer itself names, passed as `answerSessionIds`
+  (`orderSessionIds` until the rung joined the same fold, §13.10.4).
 - **Which kinds a question needs**, decided for the reads that exist (`coverage.ts:685` and the two
   routes):
   - `GET /api/suspect` computes 04's verdict, whose timing answer is `explanationTimingFor`, so it reads
@@ -1397,6 +1397,7 @@ The evidence for each row:
   - The failure falls toward the weaker minimum: a fold over more sessions can only be lower.
   - Left as found: the agent_event rung itself still reads `complete / sessions_reported` for the same
     scope. That is 03's predicate, and the order block no longer inherits it (§13.10).
+    **Closed 2026-10-05** (§13.10.4): the rung folds over the same sessions.
 - **H4 — ACP's deferred end sent no position.** `reapSpool` hands the ender the marker's seq. Claude
   and Cursor forwarded it, but ACP's shutdown ender (`connector-acp/src/capture/engine.ts`) called
   `endSession(hub, id)`.
@@ -1475,6 +1476,9 @@ The evidence for each row:
 4. **The agent_event rung's scope (H3).** The order block now folds over suspect's candidates. The
    agent_event rung beside it still reads `complete / sessions_reported` over the heartbeat window,
    which is 03's predicate.
+   **Closed 2026-10-05, on Nick's go-ahead:** the rung folds over the same scope (`sessionScope` in
+   `coverage.ts`), with the named sessions passed by trace, `get_diagnosis` and the tripwire as
+   `answerSessionIds`. A named session can only weaken the rung (03 §3.2a).
 5. **03 §5.3 still says "one line"** (§13.11.2). The renderer and its tests now allow two. A longer
    note also makes it more likely that a hint near `MAX_HINT_TEXT_LENGTH` drops the note. That
    behaviour predates this round.
