@@ -28,7 +28,7 @@ import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { getUnknownAuthors } from "@crosscheck/connector-core/http/hub.ts";
 import { quietGitRunner, readOwnEmail } from "@crosscheck/connector-core/landed-changes/git-queries.ts";
 import { readLandingBranches, resolveLandingRefs } from "@crosscheck/connector-core/landed-changes/landing-branches.ts";
-import { LANDED_AUTHORS_MAX_EMAILS } from "@crosscheck/schema";
+import { LANDED_AUTHORS_MAX_EMAILS, cloudAgentForEmail } from "@crosscheck/schema";
 
 import type { Check } from "./doctor.ts";
 
@@ -50,8 +50,16 @@ const authorsOf = (log: string, own: string | null): readonly Author[] => {
   for (const line of log.split("\n")) {
     const [email = "", name = ""] = line.split(FIELD);
     const key = email.trim().toLowerCase();
+    // A cloud agent's commit identity is left out like a bot: it is nobody's
+    // on the hub by design, and a .mailmap line for it would hand every cloud
+    // session's commits to one person (schema CLOUD_AGENT_IDENTITIES).
     const isSkipped =
-      !key.includes("@") || key === own || BOT.test(email) || BOT.test(name) || seen.has(key);
+      !key.includes("@") ||
+      key === own ||
+      BOT.test(email) ||
+      BOT.test(name) ||
+      cloudAgentForEmail(key) !== null ||
+      seen.has(key);
     if (!isSkipped) {
       seen.set(key, { email: email.trim(), name: name.trim() });
     }

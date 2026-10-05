@@ -160,6 +160,26 @@ describe("doctor's landed-change reasons line", () => {
   );
 
   test(
+    "never offers a .mailmap line that would hand Claude's commits to a person",
+    async () => {
+      // Arrange: a squash landed as Claude Code on the web commits. The hub
+      // says the address is nobody's — true — but mapping it to a teammate
+      // would make every cloud session's commits theirs.
+      const s = await setup("lad-cloud-agent");
+      await lands(s, { name: "Claude", email: "noreply@anthropic.com" }, "export const offset = 6;\n");
+
+      // Act
+      const line = await checkLandedAuthors(s.repos.reader, hubFor(s));
+
+      // Assert
+      expect(line.level).toBe("PASS");
+      expect(line.detail).not.toContain("noreply@anthropic.com");
+      expect(line.detail).not.toContain("Claude <");
+    },
+    HEAVY_SETUP_MS,
+  );
+
+  test(
     "an older hub without the question is said, not warned about",
     async () => {
       const fake = Bun.serve({
