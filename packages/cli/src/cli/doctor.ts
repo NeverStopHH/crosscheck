@@ -70,7 +70,10 @@ import {
   spoolFlushLockPath,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import {
+  absenceCloudAgent,
+  formatAge,
+} from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
@@ -1511,15 +1514,24 @@ const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
     return check("PASS", "absence findings", "none");
   }
   const inactive = findings.filter((entry) => entry.kind === "inactive").length;
-  const unconnected = findings.filter(
-    (entry) => entry.kind === "unconnected",
+  // Still `unconnected` on the wire and still a gap; counted apart only
+  // because "without a crosscheck account" invites an account for something
+  // that is not a person — the same split the absence line makes.
+  const cloudAgents = findings.filter(
+    (entry) => absenceCloudAgent(entry) !== null,
   ).length;
+  const unconnected =
+    findings.filter((entry) => entry.kind === "unconnected").length -
+    cloudAgents;
   const parts = [
     ...(inactive > 0
       ? [`${inactive} hub member${inactive === 1 ? "" : "s"}`]
       : []),
     ...(unconnected > 0
       ? [`${unconnected} without a crosscheck account`]
+      : []),
+    ...(cloudAgents > 0
+      ? [`${cloudAgents} cloud agent identit${cloudAgents === 1 ? "y" : "ies"}`]
       : []),
   ];
   return check(

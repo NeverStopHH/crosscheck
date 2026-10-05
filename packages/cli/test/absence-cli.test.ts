@@ -57,6 +57,16 @@ const startHub = (absencesBody?: unknown): {
   };
 };
 
+/** What the pilot's hub held: commits authored as Claude <noreply@anthropic.com>. */
+const cloudAgentAbsence = (now: number): Record<string, unknown> => ({
+  kind: "unconnected",
+  name: "Claude",
+  latestCommitAt: new Date(now - 3 * MS_PER_DAY).toISOString(),
+  lastSessionAt: null,
+  evidenceCollectedAt: new Date(now).toISOString(),
+  cloudAgent: "claude-code-web",
+});
+
 const paths: string[] = [];
 const stops: (() => void)[] = [];
 
@@ -110,6 +120,23 @@ describe("crosscheck status absence lines", () => {
     );
   });
 
+  test("names Claude Code on the web's commit identity the way the briefing does", async () => {
+    // Arrange
+    const { repo, env } = await fixture("status-cloud-agent", {
+      ok: true,
+      data: { absences: [cloudAgentAbsence(Date.now())] },
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "- Claude · last commit 3d ago · the identity Claude Code on the web commits under — crosscheck cannot capture those sessions, and git does not name who started them",
+    );
+    expect(result.stdout).not.toContain("crosscheck account");
+  });
+
   test("prints no absence section when the hub has no endpoint for it", async () => {
     // Arrange
     const { repo, env } = await fixture("status-degrade", { unexpected: true });
@@ -136,6 +163,42 @@ describe("crosscheck doctor absence check", () => {
     expect(result.stdout).toContain("1 without a crosscheck account");
     expect(result.stdout).toContain("crosscheck status");
     expect(result.stdout).not.toContain("Robin");
+  });
+
+  test("counts a cloud agent's commit identity apart from authors without an account", async () => {
+    // Arrange: a member, a stranger, and Claude Code on the web's identity
+    const now = Date.now();
+    const { repo, env } = await fixture("doctor-cloud-agent", {
+      ok: true,
+      data: {
+        absences: [
+          {
+            kind: "inactive",
+            name: "Robin",
+            latestCommitAt: new Date(now - 2 * MS_PER_DAY).toISOString(),
+            lastSessionAt: new Date(now - 9 * MS_PER_DAY).toISOString(),
+            evidenceCollectedAt: new Date(now).toISOString(),
+          },
+          {
+            kind: "unconnected",
+            name: "Sam Stranger",
+            latestCommitAt: new Date(now - MS_PER_DAY).toISOString(),
+            lastSessionAt: null,
+            evidenceCollectedAt: new Date(now).toISOString(),
+          },
+          cloudAgentAbsence(now),
+        ],
+      },
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert: all three still counted as no matching reported session
+    expect(result.stdout).toContain(
+      "3 recent commit authors with no matching reported session " +
+        "(1 hub member, 1 without a crosscheck account, 1 cloud agent identity)",
+    );
   });
 
   test("passes with 'none' when the hub reports no findings", async () => {
