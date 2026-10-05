@@ -600,13 +600,6 @@ const listMatchedTargets = async (
 export interface HintCandidatesQuery {
   readonly query: string;
   readonly repo: string;
-  /**
-   * The session's stated intent (`set_intent`, or the intent worker's
-   * sentence), matched IN PLACE OF a prompt that carries nothing
-   * task-bearing — never beside one that does. Already the session's own
-   * published sentence, so it costs the prompt nothing to send.
-   */
-  readonly intent?: string;
 }
 
 /**
@@ -733,9 +726,10 @@ const matchCandidates = async (
 };
 
 /**
- * The prompt first; the session's intent in its place only when the prompt
- * carried nothing task-bearing, held to the same floor — and silence when
- * neither does. At most two lexical searches, both inside the one call.
+ * The prompt's candidates, or silence. NOTHING STANDS IN for a prompt that
+ * carried no task — not the session's intent either (owner decision, review
+ * 1006b M6): a hint on "mache weiter" is noise whatever it is matched on. An
+ * `intent` a connector built before that decision still sends is ignored.
  */
 export const listHintCandidates = async (
   deps: Deps,
@@ -745,30 +739,18 @@ export const listHintCandidates = async (
   // A TURN THE HARNESS WROTE is nobody's prompt: a background task's
   // notification or another agent's message, which an installed connector
   // still sends as the query. Only the human text outside the wrappers is
-  // scored, and a turn that is all harness gets nothing — not the intent
-  // either, since nobody typed anything for it to stand in for.
+  // scored, and a turn that is all harness gets nothing.
   if (isHarnessTurn(input.query)) {
     return [];
   }
   const humanText = humanPromptText(input.query);
-  const fromPrompt = (await isSessionControlPrompt(deps.db, humanText))
-    ? []
-    : await matchCandidates(deps, callerDeveloperId, {
-        text: humanText,
-        repo: input.repo,
-        on: "prompt",
-      });
-  if (fromPrompt.length > 0) {
-    return fromPrompt;
-  }
-  const intent = input.intent?.trim() ?? "";
-  if (intent.length === 0) {
+  if (await isSessionControlPrompt(deps.db, humanText)) {
     return [];
   }
   return matchCandidates(deps, callerDeveloperId, {
-    text: intent,
+    text: humanText,
     repo: input.repo,
-    on: "intent",
+    on: "prompt",
   });
 };
 

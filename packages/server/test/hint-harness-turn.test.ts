@@ -107,7 +107,7 @@ describe("a turn that is all harness is no query", () => {
     expect(candidates).toEqual([]);
   });
 
-  test("the control: the same intent beside a content-free HUMAN prompt still matches", async () => {
+  test("nor beside a content-free HUMAN prompt — no intent stands in anywhere (M6)", async () => {
     // Arrange
     const { harness, robin } = await setup();
 
@@ -115,7 +115,7 @@ describe("a turn that is all harness is no query", () => {
     const candidates = await fetchCandidates(harness, robin, { query: "ok", intent: SESSION_INTENT });
 
     // Assert
-    expect(candidates.map((candidate) => candidate.workContext.id)).toEqual([WORK_CONTEXT_ID]);
+    expect(candidates).toEqual([]);
   });
 });
 

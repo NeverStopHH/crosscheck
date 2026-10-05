@@ -1582,11 +1582,6 @@ export interface HintCandidatesRequest {
   readonly query: string;
   /** Relevance filter, never a boundary (DESIGN.md §2.1). */
   readonly repo: string;
-  /**
-   * The session's own stated intent, for the hub to match IN PLACE OF a
-   * prompt that carries nothing task-bearing — inside this one call.
-   */
-  readonly intent?: string;
 }
 
 /** The UserPromptSubmit fast path's ONE bounded hub call (DESIGN.md §4). */
@@ -1720,7 +1715,6 @@ export const getHintCandidates = (
   const params = new URLSearchParams({
     ...(request.query.length === 0 ? {} : { query: request.query }),
     repo: request.repo,
-    ...(request.intent === undefined ? {} : { intent: request.intent }),
   });
   return hubRequest(ctx, {
     method: "GET",

@@ -1,13 +1,10 @@
 /**
- * The session's intent in place of a content-free prompt (DESIGN.md §4),
- * connector half: what goes on the wire, what the hint then says, and what
- * never leaves the machine.
- *
- * The hub decides whether a prompt carried anything task-bearing — only it
- * holds the team's words to count against (server/test/hint-content-floor
- * pins that half) — so the connector's job is to put the session's intent on
- * the SAME call, keep a prompt with no searchable word off the wire
- * entirely, and say honestly what a delivered hint was matched on.
+ * No intent in place of a content-free prompt (DESIGN.md §4, owner decision
+ * in review 1006b, M6), connector half: the session's intent never travels in
+ * a prompt's place or beside it, a prompt with no searchable word costs no
+ * call, and a hub that still reports an intent match is labelled honestly.
+ * server/test/hint-content-floor pins the hub half: an intent sent by an
+ * older connector is not matched either.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
@@ -32,6 +29,8 @@ const NOW = new Date("2026-08-19T12:00:00.000Z");
 const SESSION_INTENT = "Stop the refresh 500s by refetching the JWKS on an unknown kid";
 /** Two words, neither of HINT_MIN_TOKEN_CHARS: no searchable word at all. */
 const NO_WORD_PROMPT = "ok ja";
+/** A prompt that carries a task, so a call is made at all. */
+const TASK_PROMPT = "why does the refresh call 500 after the key rotation";
 
 const paths: string[] = [];
 const hubs: HintHub[] = [];
@@ -110,70 +109,47 @@ const intentMatchedCandidate = (): Record<string, unknown> => ({
   matchedOn: "intent",
 });
 
-describe("what goes on the wire", () => {
-  test("a prompt with no searchable word stays home; the session's intent travels in its place", async () => {
+describe("what goes on the wire: never the intent in a prompt's place (owner decision, review 1006b M6)", () => {
+  test("a prompt with no searchable word stays home, and so does the session's intent", async () => {
     // Arrange
     const f = await fixture("if-noword", SESSION_INTENT);
 
     // Act
-    await selectAndRenderHint(flowInput(f, NO_WORD_PROMPT));
+    const text = await selectAndRenderHint(flowInput(f, NO_WORD_PROMPT));
 
-    // Assert — ONE call, carrying the intent and no prompt text at all
-    expect(f.hub.calls.candidates).toBe(1);
-    const sent = f.hub.lastCandidatesQuery();
-    expect(sent?.get("intent")).toBe(SESSION_INTENT);
-    expect(sent?.get("query") ?? "").toBe("");
-    expect(sent?.toString()).not.toContain("ja");
+    // Assert — no hint and no call: nothing stands in for a prompt that said nothing
+    expect(text).toBe("");
+    expect(f.hub.calls.candidates).toBe(0);
   });
 
-  test("a prompt with words is sent as before, with the intent beside it for the hub to fall back on", async () => {
+  test("a prompt with words is sent alone — the intent never rides beside it", async () => {
     // Arrange
     const f = await fixture("if-words", SESSION_INTENT);
+    const prompt = "why does src/auth/refresh.ts still 500 after the key rotation";
 
     // Act
-    await selectAndRenderHint(flowInput(f, "mache weiter"));
+    await selectAndRenderHint(flowInput(f, prompt));
 
-    // Assert — the hub, not the connector, decides "mache weiter" carries
-    // nothing; both ride the one call so the fallback costs no round trip
+    // Assert
     expect(f.hub.calls.candidates).toBe(1);
-    expect(f.hub.lastCandidatesQuery()?.get("query")).toBe("mache weiter");
-    expect(f.hub.lastCandidatesQuery()?.get("intent")).toBe(SESSION_INTENT);
-  });
-
-  test("without an intent, a prompt with no searchable word still costs zero HTTP", async () => {
-    // Arrange
-    const f = await fixture("if-nointent", null);
-
-    // Act
-    const text = await selectAndRenderHint(flowInput(f, NO_WORD_PROMPT));
-
-    // Assert
-    expect(text).toBe("");
-    expect(f.hub.calls.candidates).toBe(0);
-  });
-
-  test("an intent that looks like a credential is never sent", async () => {
-    // Arrange — the writers screen it already (set_intent, the intent
-    // worker); this is the query's own gate, the prompt's sibling
-    const f = await fixture("if-secret", "rotate AKIAIOSFODNN7EXAMPLE before the deploy");
-
-    // Act
-    const text = await selectAndRenderHint(flowInput(f, NO_WORD_PROMPT));
-
-    // Assert
-    expect(text).toBe("");
-    expect(f.hub.calls.candidates).toBe(0);
+    expect(f.hub.lastCandidatesQuery()?.get("query")).toBe(prompt);
+    expect(f.hub.lastCandidatesQuery()?.has("intent")).toBe(false);
   });
 });
 
-describe("what the hint then says", () => {
+/**
+ * A hub that reports a candidate as matched on an intent — one built before
+ * the stand-in was removed — is still labelled honestly: the header says
+ * which intent, by who wrote it.
+ */
+describe("what the hint then says when a hub reports an intent match", () => {
   test("a candidate matched on a DERIVED intent says so, as every intent surface does", async () => {
     // Arrange — the intent worker's sentence: a model wrote it
     const f = await fixture("if-header", SESSION_INTENT, "derived");
     f.hub.setCandidates([intentMatchedCandidate()]);
 
     // Act
-    const text = await selectAndRenderHint(flowInput(f, "mache weiter"));
+    const text = await selectAndRenderHint(flowInput(f, TASK_PROMPT));
 
     // Assert
     expect(text).toContain("may relate to this session's derived intent.");
@@ -187,7 +163,7 @@ describe("what the hint then says", () => {
     f.hub.setCandidates([intentMatchedCandidate()]);
 
     // Act
-    const text = await selectAndRenderHint(flowInput(f, "mache weiter"));
+    const text = await selectAndRenderHint(flowInput(f, TASK_PROMPT));
 
     // Assert
     expect(text).toContain("may relate to this session's intent.");
@@ -200,7 +176,7 @@ describe("what the hint then says", () => {
     f.hub.setCandidates([intentMatchedCandidate()]);
 
     // Act
-    const text = await selectAndRenderHint(flowInput(f, "mache weiter"));
+    const text = await selectAndRenderHint(flowInput(f, TASK_PROMPT));
 
     // Assert
     expect(text).toContain("this session's derived intent");
@@ -229,7 +205,7 @@ describe("PRIVACY: the prompt text never leaves the machine on this path either"
     const marker = "SECRETPROMPTMARKER";
 
     // Act
-    const text = await selectAndRenderHint(flowInput(f, `${marker} weiter`));
+    const text = await selectAndRenderHint(flowInput(f, `${marker} ${TASK_PROMPT}`));
 
     // Assert — delivered (so the files were written), and the prompt is in none
     expect(text).toContain("this session's derived intent");

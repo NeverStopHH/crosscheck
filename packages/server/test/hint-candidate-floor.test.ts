@@ -225,7 +225,7 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
     expect(candidates).toEqual([]);
   });
 
-  test("the session's intent still stands in for such a prompt", async () => {
+  test("and the session's intent does not stand in for such a prompt (M6)", async () => {
     // Arrange
     const { harness, robin } = await germanLimitTree();
 
@@ -236,8 +236,7 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
     });
 
     // Assert
-    expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
-    expect(candidates[0]?.matchedOn).toBe("intent");
+    expect(candidates).toEqual([]);
   });
 
   test("the control: one task word beside them makes it a prompt that matches", async () => {
@@ -256,15 +255,15 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
 });
 
 describe("a tree that shares one stray word is never a candidate", () => {
-  test("matched on the intent: the upload tree, never the rate-limit tree beside it", async () => {
+  test("probe F: \"ok\" beside the session's intent points at neither tree (M6)", async () => {
     // Arrange
     const { harness, robin } = await setup();
 
-    // Act — "ok": nothing task-bearing, so the session's intent stands in
+    // Act — "ok" carries nothing, and nothing stands in for it
     const candidates = await fetchCandidates(harness, robin, { query: "ok", intent: SESSION_INTENT });
 
     // Assert
-    expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+    expect(candidates).toEqual([]);
   });
 
   test("matched on the prompt: the same, one stray word earns nothing", async () => {
@@ -285,7 +284,9 @@ describe("a tree that shares one stray word is never a candidate", () => {
     const { harness, robin } = await setup();
 
     // Act
-    const [candidate] = await fetchCandidates(harness, robin, { query: "ok", intent: SESSION_INTENT });
+    const [candidate] = await fetchCandidates(harness, robin, {
+      query: "why does the practice upload hit the body limit",
+    });
 
     // Assert — the number the floor was decided on, for the connector's own
     // second look (hints/select.ts)

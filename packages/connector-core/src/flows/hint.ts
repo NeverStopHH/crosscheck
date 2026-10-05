@@ -70,18 +70,6 @@ const hasSearchableWord = (prompt: string): boolean =>
     .split(/[^\p{L}\p{N}]+/u)
     .some((token) => token.length >= HINT_MIN_TOKEN_CHARS);
 
-/**
- * The session's intent as the hub may match it IN PLACE OF a prompt that
- * carries nothing task-bearing (DESIGN.md §4) — the session's own published
- * sentence (`set_intent`, or the intent worker's), never the prompt. Held to
- * the prompt's own two gates: a sentence with no searchable word is not a
- * query, and one that looks like a credential never goes on the wire.
- */
-const intentQuery = (intent: string | null): string | undefined =>
-  intent === null || !hasSearchableWord(intent) || containsSecret(intent)
-    ? undefined
-    : intent.slice(0, MAX_SEARCH_QUERY_CHARS);
-
 export interface SelectAndRenderHintInput {
   readonly home: string;
   readonly repoKey: string;
@@ -289,10 +277,9 @@ export const selectAndRenderHint = async (
   }
   const humanText = humanPromptText(input.prompt);
   // A prompt with no searchable word is not a query, and it is not SENT: it
-  // stays on this machine, and only the session's intent can travel in its
-  // place (below). Whether a prompt WITH words carries anything task-bearing
-  // is the hub's call — only the hub holds the team's words to count against
-  // (server services/hints.ts, the content floor).
+  // stays on this machine. Whether a prompt WITH words carries anything
+  // task-bearing is the hub's call — only the hub holds the team's words to
+  // count against (server services/hints.ts, the content floor).
   const promptQuery = hasSearchableWord(humanText)
     ? humanText.slice(0, MAX_SEARCH_QUERY_CHARS)
     : "";
@@ -316,16 +303,14 @@ export const selectAndRenderHint = async (
   if (state.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION) {
     return "";
   }
-  // ON THE SAME CALL, never a second one: the 800 ms budget has room for one
-  // bounded round trip, so the hub falls back to the intent itself.
-  const intent = intentQuery(state.workContextIntent);
-  if (promptQuery.length === 0 && intent === undefined) {
+  // NOTHING STANDS IN for a prompt that said nothing — not the session's
+  // intent either (owner decision, review 1006b M6): no call at all.
+  if (promptQuery.length === 0) {
     return "";
   }
   const result = await getHintCandidates(input.hub, {
     query: promptQuery,
     repo: input.repoId,
-    ...(intent === undefined ? {} : { intent }),
   });
   if (!result.ok) {
     return "";

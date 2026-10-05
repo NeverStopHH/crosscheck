@@ -17391,14 +17391,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"mache weiter\" and \"limit ist zurückgesetzt\" point the agent at a teammate's tree again, the pilot's 5 of 5",
   },
-  {
-    label: "a content-free prompt ignores the session's intent",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "  const intent = input.intent?.trim() ?? \"\";",
-    to: "  const intent = \"\";",
-    test: `${SERVER}/test/hint-content-floor.test.ts`,
-    because: "a session that stated what it is doing hears nothing about the teammate work on the same thing whenever it types \"weiter\"",
-  },
+  // SUPERSEDED AND REMOVED, 2026-10-06 — "a content-free prompt ignores the
+  // session's intent", "the session's intent never reaches the hub" and "a
+  // credential-shaped intent is sent to the hub". All three guarded the
+  // intent stand-in, which the owner removed (review 1006b, M6: no hint on a
+  // content-free prompt, the stand-in included). The code they mutated is
+  // gone; what replaces them is the opposite guarantee, pinned by
+  // hint-content-floor.test.ts (an intent an older connector still sends is
+  // not matched) and hint-intent-fallback.test.ts (no intent on the wire).
   {
     label: "two spellings of one word count as two agreeing words",
     file: `${SERVER}/src/services/hints.ts`,
@@ -17424,28 +17424,12 @@ export const MUTATIONS: readonly Mutation[
     because: "a finding in a tree clearly about the prompt, sharing one word itself, falls back to a pointer nobody opens",
   },
   {
-    label: "the session's intent never reaches the hub",
-    file: `${CORE}/src/flows/hint.ts`,
-    from: "    ...(intent === undefined ? {} : { intent }),",
-    to: "",
-    test: `${CORE}/test/hint-intent-fallback.test.ts`,
-    because: "the hub cannot match the session's work in place of \"ja\", so the fallback is dead code",
-  },
-  {
     label: "a prompt with no searchable word goes on the wire",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = hasSearchableWord(humanText)\n    ? humanText.slice(0, MAX_SEARCH_QUERY_CHARS)\n    : \"\";",
     to: "  const promptQuery = humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
-  },
-  {
-    label: "a credential-shaped intent is sent to the hub",
-    file: `${CORE}/src/flows/hint.ts`,
-    from: "intent === null || !hasSearchableWord(intent) || containsSecret(intent)",
-    to: "intent === null || !hasSearchableWord(intent)",
-    test: `${CORE}/test/hint-intent-fallback.test.ts`,
-    because: "an intent carrying an AKIA key lands in the hub's request path and access logs as a GET string",
   },
   {
     label: "an intent-matched hint claims to relate to the prompt",
@@ -17720,6 +17704,14 @@ export const MUTATIONS: readonly Mutation[
     because: "the renderer budgets for trailers nobody tells it about, and the note is dropped again",
   },
   {
+    label: "a prompt that said nothing still costs a hub call",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  if (promptQuery.length === 0) {\n    return \"\";\n  }\n",
+    to: "",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "\"ja ok\" spends a round trip of the 800 ms budget on a call nothing can answer (M6)",
+  },
+  {
     label: "a finding too long for its trailers goes silent instead of pointing",
     file: `${CORE}/src/flows/hint.ts`,
     from: "      return deliveryOf(scope, selection.ifUnfit, drift);",
@@ -17978,8 +17970,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub scores a prompt of session commands as a task",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  const fromPrompt = (await isSessionControlPrompt(deps.db, humanText))\n",
-    to: "  const fromPrompt = false\n",
+    from: "  if (await isSessionControlPrompt(deps.db, humanText)) {\n    return [];\n  }\n",
+    to: "",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"mache weiter, limit zuruckgesetzt, bitte\" points at a German tree on mach, limit and bitte — the live pilot",
   },
@@ -18203,7 +18195,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 2
- * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
+ * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 8
@@ -18315,7 +18307,7 @@ interface Outcome {
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 4
- * PRINTS: packages/server/test/hint-content-floor.test.ts 7
+ * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hints.test.ts 6

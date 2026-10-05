@@ -1,8 +1,8 @@
 /**
  * The content floor of GET /api/hints/candidates (DESIGN.md §4): a prompt
- * that carries nothing task-bearing matches no teammate work, and when the
- * session has stated what it is doing, the session's intent is matched in
- * its place — in the SAME call, never a second round trip.
+ * that carries nothing task-bearing matches no teammate work — and nothing
+ * stands in for it, the session's intent included (owner decision, review
+ * 1006b M6).
  *
  * "Task-bearing" is derived from the team's own work, not from a word list:
  * a prompt word counts when it names a target that work touched (the exact
@@ -136,9 +136,10 @@ describe("a prompt that carries nothing task-bearing matches no teammate work", 
   });
 });
 
-describe("the session's intent stands in for a content-free prompt, in the same call", () => {
-  test("a content-free prompt with an intent matches on the intent", async () => {
-    // Arrange
+describe("a content-free prompt gets nothing, the session's intent included (owner decision, review 1006b M6)", () => {
+  test("an intent sent beside a content-free prompt is not matched in its place", async () => {
+    // Arrange — an intent that WOULD match the tree on its own; a connector
+    // built before this decision still sends it
     const { harness, robin } = await setup();
 
     // Act
@@ -147,13 +148,11 @@ describe("the session's intent stands in for a content-free prompt, in the same 
       intent: SESSION_INTENT,
     });
 
-    // Assert — matched, and labelled as matched on the intent, so the hint
-    // can say what it relates to.
-    expect(candidates.map((candidate) => candidate.workContext.id)).toEqual([WORK_CONTEXT_ID]);
-    expect(candidates[0]?.matchedOn).toBe("intent");
+    // Assert
+    expect(candidates).toEqual([]);
   });
 
-  test("an absent prompt with an intent matches on the intent — the prompt need not travel", async () => {
+  test("an intent with no prompt at all matches nothing", async () => {
     // Arrange
     const { harness, robin } = await setup();
 
@@ -161,10 +160,10 @@ describe("the session's intent stands in for a content-free prompt, in the same 
     const candidates = await fetchCandidates(harness, robin, { intent: SESSION_INTENT });
 
     // Assert
-    expect(candidates[0]?.matchedOn).toBe("intent");
+    expect(candidates).toEqual([]);
   });
 
-  test("a prompt that carries content is matched on itself, whatever the intent says", async () => {
+  test("the control: a prompt that carries content is matched on itself", async () => {
     // Arrange
     const { harness, robin } = await setup();
 
@@ -175,21 +174,8 @@ describe("the session's intent stands in for a content-free prompt, in the same 
     });
 
     // Assert
+    expect(candidates.map((candidate) => candidate.workContext.id)).toEqual([WORK_CONTEXT_ID]);
     expect(candidates[0]?.matchedOn).toBe("prompt");
-  });
-
-  test("an intent that itself carries nothing task-bearing matches nothing either", async () => {
-    // Arrange
-    const { harness, robin } = await setup();
-
-    // Act
-    const candidates = await fetchCandidates(harness, robin, {
-      query: "weiter",
-      intent: "Rename the billing tables before the limit freeze",
-    });
-
-    // Assert — one rule for every query: "limit" alone is still a coincidence
-    expect(candidates).toEqual([]);
   });
 });
 
@@ -287,18 +273,4 @@ describe("each claim carries how many distinct words of the matched query it sha
     expect(candidate?.claims.find((claim) => claim.id === "clm_long")?.matchedTerms).toBe(0);
   });
 
-  test("a claim matched through the intent is counted against the intent", async () => {
-    // Arrange
-    const { harness, robin } = await setup();
-
-    // Act
-    const [candidate] = await fetchCandidates(harness, robin, {
-      query: "ok",
-      intent: SESSION_INTENT,
-    });
-
-    // Assert
-    const decision = candidate?.claims.find((claim) => claim.id === DECISION_ID);
-    expect(decision?.matchedTerms).toBeGreaterThanOrEqual(HINT_MIN_SHARED_TERMS);
-  });
 });

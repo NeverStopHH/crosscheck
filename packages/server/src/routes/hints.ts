@@ -41,10 +41,6 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CandidatesQuerySchema = z.object({
   query: z.string().max(SEARCH_MAX_QUERY_CHARS).default(""),
   repo: z.string().min(1),
-  // The session's intent, searched only in place of a prompt that carried
-  // nothing task-bearing (services/hints.ts, the content floor). Capped like
-  // the query, for the same embedded-database reason.
-  intent: z.string().max(SEARCH_MAX_QUERY_CHARS).default(""),
 });
 
 const TripwireQuerySchema = z.object({
@@ -66,7 +62,6 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const parsed = CandidatesQuerySchema.safeParse({
       query: c.req.query("query"),
       repo: c.req.query("repo"),
-      intent: c.req.query("intent"),
     });
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));

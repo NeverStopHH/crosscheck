@@ -212,19 +212,16 @@ describe("capture after a content-free prompt is capture as usual", () => {
   );
 });
 
-describe("the prompt stays on this machine; the session's intent is what travels", () => {
-  test("a prompt with no searchable word reaches the hub as the intent alone", async () => {
-    // Arrange
+describe("the prompt stays on this machine, and nothing travels in its place", () => {
+  test("a prompt with no searchable word makes no call — the session's intent does not stand in (M6)", async () => {
+    // Arrange — the session HAS an intent
     const f = await fixture("cf-wire");
 
     // Act
     await runHook("user-prompt-submit", promptPayload(f, "ja ok"), f.env);
 
-    // Assert — one call, the session's own published sentence, no prompt
-    expect(f.hub.calls.candidates).toBe(1);
-    const sent = f.hub.lastCandidatesQuery();
-    expect(sent?.get("intent")).toBe(SESSION_INTENT);
-    expect(sent?.has("query")).toBe(false);
+    // Assert
+    expect(f.hub.calls.candidates).toBe(0);
   });
 
   test("the prompt lands in no file the hooks write", async () => {
