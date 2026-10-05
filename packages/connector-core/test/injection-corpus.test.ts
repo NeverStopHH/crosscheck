@@ -75,7 +75,7 @@
  *
  *    THE CAP IS THE ONE INVARIANT THE CORPUS CANNOT EXERCISE, and saying so is
  *    the point. One payload in one slot is three lines of briefing: the longest
- *    all 57 payloads across all 10 slots can produce is 684 characters against
+ *    all 61 payloads across all 11 slots can produce is 684 characters against
  *    the 2200 cap, 1516 short of ever reaching the assertion. So until the
  *    `saturating briefings` block below existed, the per-line budget in
  *    render.ts's appendSection could be deleted with the whole suite green —
@@ -99,7 +99,7 @@
  * PRINTS: 61
  *
  * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
- * PRINTS: 10
+ * PRINTS: 11
  *
  * VERIFY: grep -c '^const LONGEST_CORPUS_BRIEFING = 684;$' packages/connector-core/test/injection-corpus.test.ts
  * PRINTS: 1
@@ -173,6 +173,17 @@ const CONTEXT_LINE = /^- .*, \d+[smhd] ago, status .*: «[^«»]*»$/;
  * inside « ». The one OTHER framed line the contexts section may emit.
  */
 const CONTEXT_INTENT_LINE = /^  intent(?: \(derived\))?: «[^«»]*»$/;
+/**
+ * A teammate with several topics (briefing/topic-group.ts): a head line with
+ * the totals and no frame at all, one line per topic — the label, and only
+ * the label, inside « » — the lead topic's intent indented under it, and a
+ * renderer-owned tail counting the topics left out. Every count may read
+ * "at least" when the hub's row bound cut the teammate short.
+ */
+const TOPIC_HEAD_LINE = /^- [^«»]+, (?:at least )?\d+ topics?, (?:at least )?\d+ sessions?:$/;
+const TOPIC_LINE = /^  - (?:at least )?\d+ sessions?, \d+[smhd] ago, status [^«»]*: «[^«»]*»$/;
+const TOPIC_INTENT_LINE = /^    intent(?: \(derived\))?: «[^«»]*»$/;
+const TOPIC_MORE_LINE = /^  … and (?:at least )?\d+ more topics?$/;
 
 /**
  * THE CHARACTER CLASSES MOVED, and what they assert is unchanged.
@@ -281,6 +292,7 @@ const SPACED_SEPARATORS: readonly (readonly [string, number])[] = [
  */
 type Slot =
   | "workContextTitle"
+  | "workContextBranch"
   | "workContextIntent"
   | "presenceName"
   | "presenceIntent"
@@ -293,6 +305,7 @@ type Slot =
 
 const SLOTS: readonly Slot[] = [
   "workContextTitle",
+  "workContextBranch",
   "workContextIntent",
   "presenceName",
   "presenceIntent",
@@ -319,9 +332,10 @@ const intentWith = (slot: Slot, wanted: Slot, payload: string) => ({
 });
 
 /**
- * The slots the renderer prints WITHOUT the « » frame. `workContextTitle` and
- * the two intent slots are the framed ones, and `repoId` goes in the header
- * rather than a bullet.
+ * The slots the renderer prints WITHOUT the « » frame. `workContextTitle`,
+ * `workContextBranch` (the session branch a topic is keyed by) and the two
+ * intent slots are the framed ones, and `repoId` goes in the header rather
+ * than a bullet.
  * A semantic forgery needs no special character, so it is reachable from every
  * slot in this list — which is why the known-not-caught tests loop over it
  * rather than naming a single field.
@@ -373,8 +387,14 @@ const contextAuthorFor = (slot: Slot, payload: string): string | undefined => {
   return slot === "contextAuthorFallback" ? undefined : "Robin";
 };
 
+/**
+ * Only the `workContextBranch` slot sends the session's branch: every other
+ * slot attacks the row an older hub sends, whose topic falls back to the
+ * TITLE — so the title slot stays the one the topic label prints.
+ */
 const attackerContext = (slot: Slot, payload: string): WorkContextEntry => ({
   id: "wc_attacker",
+  ...(slot === "workContextBranch" ? { branch: payload } : {}),
   developerId: "dev_attacker",
   developerName: contextAuthorFor(slot, payload),
   title: slot === "workContextTitle" ? payload : "Rate limiter drops burst traffic",
@@ -392,6 +412,48 @@ const renderWith = (slot: Slot, payload: string): string =>
     workContexts: [attackerContext(slot, payload)],
     now: NOW,
   });
+
+/**
+ * The TOPIC shapes (briefing/topic-group.ts) under the same attack. The
+ * attacker's planted context is open in two sessions, four clean topics sit
+ * beside it — more than an entry names even when a payload sanitizes to
+ * nothing and the planted rows drop out — and the hub reports more contexts
+ * than arrived, so the section renders the head line, the topic lines, the
+ * lead intent, the "… and N more topics" tail and every count as "at least",
+ * each carrying the payload in whatever slot it prints.
+ */
+const renderTopicsWith = (slot: Slot, payload: string): string => {
+  const planted = attackerContext(slot, payload);
+  const clean = [1, 2, 3, 4].map((index) => ({
+    ...planted,
+    id: `wc_clean_${String(index)}`,
+    sessionId: `cc_clean_${String(index)}`,
+    title: `Importer retries forever ${String(index)}`,
+    // Their own branches, so a payload planted in the branch slot stays on
+    // the planted rows and these remain topics of their own.
+    branch: `feat/importer-${String(index)}`,
+  }));
+  return renderBriefing({
+    repoId: slot === "repoId" ? payload : REPO_ID,
+    selfDeveloperId: SELF_DEVELOPER_ID,
+    presence: [CLEAN_TEAMMATE, attackerPresence(slot, payload)],
+    workContexts: [
+      { ...planted, sessionId: "cc_attacker_1" },
+      {
+        ...planted,
+        id: "wc_attacker_2",
+        sessionId: "cc_attacker_2",
+        // Under the branch slot the two sessions disagree on their title, so
+        // the topic is CALLED by its branch and the payload is what prints.
+        ...(slot === "workContextBranch"
+          ? { title: "A second session on the same branch" }
+          : {}),
+      },
+      ...clean,
+    ].map((row) => ({ ...row, developerContextCount: 9 })),
+    now: NOW,
+  });
+};
 
 /** Characters no line may carry, whichever section it belongs to. */
 const assertCharacters = assertUntrustedCharacters;
@@ -427,14 +489,20 @@ const assertInvariants = (output: string, label: string): void => {
     }
     // Anything else is a bullet, and a bullet outside a section is already a
     // broken frame: no untrusted value may produce a line of its own. The
-    // contexts section may emit exactly two shapes — the context line and the
-    // indented intent line under it.
+    // contexts section may emit exactly these shapes — the one-topic line and
+    // the indented intent under it, or a topic list: its head line, its topic
+    // lines, the lead topic's intent and the tail.
     expect(section, where).not.toBeNull();
     if (section === "presence") {
       expect(line, where).toMatch(PRESENCE_LINE);
     } else {
       expect(
-        CONTEXT_LINE.test(line) || CONTEXT_INTENT_LINE.test(line),
+        CONTEXT_LINE.test(line) ||
+          CONTEXT_INTENT_LINE.test(line) ||
+          TOPIC_HEAD_LINE.test(line) ||
+          TOPIC_LINE.test(line) ||
+          TOPIC_INTENT_LINE.test(line) ||
+          TOPIC_MORE_LINE.test(line),
         where,
       ).toBe(true);
     }
@@ -500,6 +568,23 @@ describe("briefing invariants over the injection corpus", () => {
 
         // Assert
         assertInvariants(output, `${entry.id}/${slot}`);
+      }
+    }
+  });
+
+  test("holds for the topic shapes too, every payload in every slot", () => {
+    for (const entry of INJECTION_CORPUS) {
+      for (const slot of SLOTS) {
+        // Act
+        const output = renderTopicsWith(slot, entry.payload);
+
+        // Assert: the shapes under attack really rendered — a walker that
+        // never met them would pass vacuously — and every line holds
+        const lines = output.split("\n");
+        expect(lines.some((line) => TOPIC_HEAD_LINE.test(line)), entry.id).toBe(true);
+        expect(lines.some((line) => TOPIC_LINE.test(line)), entry.id).toBe(true);
+        expect(lines.some((line) => TOPIC_MORE_LINE.test(line)), entry.id).toBe(true);
+        assertInvariants(output, `${entry.id}/${slot}/topics`);
       }
     }
   });

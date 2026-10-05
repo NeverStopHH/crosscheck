@@ -1,6 +1,7 @@
 import {
   EXIT_OK,
   EXIT_UNREACHABLE,
+  MAX_TOPICS_PER_TEAMMATE,
   STATUS_MAX_ABSENCE_LINES,
   STATUS_SESSION_IDLE_HOURS,
   TRIPWIRE_MODE_ENV,
@@ -14,10 +15,18 @@ import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
 import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
 import {
+  countOf,
   formatAbsenceLine,
   formatAge,
   formatCloudAgentLink,
+  groupTeammates,
+  moreTopicsTail,
 } from "@crosscheck/connector-core/briefing/render.ts";
+import type {
+  PresenceTopicRow,
+  TeammateGroup,
+} from "@crosscheck/connector-core/briefing/render.ts";
+import type { Topic } from "@crosscheck/connector-core/briefing/topic-group.ts";
 import {
   HUB_UNREACHABLE_CLAUSE,
   coverageClause,
@@ -91,6 +100,39 @@ const ageOrNever = (iso: string | null, now: Date): string => {
 
 const plural = (count: number, noun: string): string =>
   `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/** `feat/x · implementing · 3 sessions · intent: «…»` — one topic's fields. */
+const topicFields = (topic: Topic<PresenceTopicRow>): readonly string[] => {
+  const intent = renderIntent(topic.rows[0]?.entry.intent);
+  return [
+    topic.label,
+    topic.status,
+    ...(topic.sessions === 1 ? [] : [countOf(topic.sessions, "session", false)]),
+    ...(intent === null ? [] : [intent]),
+  ];
+};
+
+/**
+ * One teammate's entry, grouped by topic exactly as the briefing groups it
+ * (connector-core briefing/topic-group.ts, through `groupTeammates` with the
+ * BARE sanitizer). One topic is the line it always was; several are a head
+ * line with the totals, the most active topics one per line, and the rest
+ * counted — never one line per session, which put a teammate live in six
+ * worktrees of one branch on six lines.
+ */
+const teammateStatusLines = (group: TeammateGroup): readonly string[] => {
+  const [only] = group.topics;
+  if (group.topics.length === 1 && only !== undefined) {
+    return [[`  - ${group.name}`, ...topicFields(only)].join(" · ")];
+  }
+  const shown = group.topics.slice(0, MAX_TOPICS_PER_TEAMMATE);
+  const hidden = group.topics.length - shown.length;
+  return [
+    `  - ${group.name} · ${countOf(group.topics.length, "topic", false)}, ${countOf(group.sessions, "session", false)}`,
+    ...shown.map((topic) => `    ${topicFields(topic).join(" · ")}`),
+    ...(hidden > 0 ? [`    ${moreTopicsTail(hidden, false)}`] : []),
+  ];
+};
 
 /**
  * ONE `losses:` LINE, ABOVE ZERO ONLY (docs/1.0/loss-accounting.md §5.1),
@@ -449,19 +491,10 @@ export const runStatus = async (
   // line, so they take the BARE class (bareUntrusted — no minting a second
   // field; the MCP claim lines' rule), and the session's intent — WHAT they
   // are doing, trial finding #16 — is the one framed fragment every surface
-  // spells (briefing/intent.ts).
+  // spells (briefing/intent.ts). Grouped per teammate by topic, the
+  // briefing's own grouping (`groupTeammates`, which also drops isSelf).
   const teammates = presence.ok
-    ? presence.data
-        .filter((entry) => entry.isSelf !== true)
-        .map((entry) => {
-          const facts = [
-            `  - ${bareUntrusted(entry.developerName)}`,
-            bareUntrusted(entry.branch),
-            bareUntrusted(entry.status),
-          ];
-          const intent = renderIntent(entry.intent);
-          return [...facts, ...(intent === null ? [] : [intent])].join(" · ");
-        })
+    ? groupTeammates(presence.data, now, bareUntrusted).flatMap(teammateStatusLines)
     : ["  (hub unreachable)"];
 
   return {

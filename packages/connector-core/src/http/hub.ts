@@ -130,6 +130,28 @@ export const WorkContextEntrySchema = z.looseObject({
    */
   claimCount: z.number().int().min(0).optional().catch(undefined),
   targetCount: z.number().int().min(0).optional().catch(undefined),
+  /**
+   * The session that opened this context — what the briefing's "N sessions"
+   * counts, since a recovered session can own a second context. Tolerant: a
+   * row without it counts as its own session (briefing/render.ts).
+   */
+  sessionId: z.string().min(1).optional().catch(undefined),
+  /**
+   * How many contexts this row's developer has inside the window the hub
+   * answered, counted BEFORE its row bound (server services/diagnosis.ts). The
+   * briefing compares it with the rows that arrived, and a teammate the bound
+   * cut short has every count said as "at least". Tolerant like the two
+   * above: an older hub sends none, and its rows read as complete — the
+   * undercount that hub always had, never a fabricated one.
+   */
+  developerContextCount: z.number().int().min(0).optional().catch(undefined),
+  /**
+   * The owning session's own branch (server services/diagnosis.ts) — the key
+   * the briefing groups a teammate's work by, because a host-supplied title
+   * does not carry it. Tolerant: an older hub sends none, and the briefing
+   * falls back to the title (briefing/render.ts contextTopic).
+   */
+  branch: z.string().min(1).optional().catch(undefined),
 });
 
 export type WorkContextEntry = z.infer<typeof WorkContextEntrySchema>;

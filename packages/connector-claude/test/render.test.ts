@@ -107,9 +107,11 @@ describe("renderBriefing", () => {
     // Act
     const briefing = render([older, newer], []);
 
-    // Assert
+    // Assert: one line, the branches most active first — the topic order
+    // every teammate listing shares (core briefing/topic-group.ts), not the
+    // order the hub's rows happened to arrive in
     expect(briefing).toContain(
-      "- Alice · branches fix/a, feat/b · status implementing · heartbeat 12s ago",
+      "- Alice · branches feat/b, fix/a · status implementing · heartbeat 12s ago",
     );
     expect(
       briefing.split("\n").filter((line) => line.startsWith("- Alice")),

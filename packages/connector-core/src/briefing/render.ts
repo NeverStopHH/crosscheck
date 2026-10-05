@@ -13,6 +13,7 @@ import {
   MAX_QUESTION_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
+  MAX_TOPICS_PER_TEAMMATE,
   MAX_CLAIM_VALIDITY_WORD_CHARS,
   MAX_TITLE_CHARS,
   MINUTES_PER_HOUR,
@@ -26,6 +27,8 @@ import {
 } from "../constants.ts";
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
+import { isDetachedBranch } from "../git/detached-branch.ts";
+import { repoLabel } from "../git/repo-label.ts";
 import {
   NO_AXES_FROM_HUB,
   NO_AXES_READABLE,
@@ -44,7 +47,8 @@ import type {
   SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
-import { groupContextsByDeveloper } from "./context-group.ts";
+import { groupTopicsByDeveloper } from "./topic-group.ts";
+import type { TeammateTopics, Topic, TopicRow } from "./topic-group.ts";
 import { formatAge } from "./age.ts";
 import { fitEntries } from "./fit.ts";
 import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
@@ -148,11 +152,27 @@ interface Section {
   readonly more?: (count: number) => string;
 }
 
+/**
+ * The ONE topic every detached-HEAD session of this repo shares, on every
+ * teammate listing. Keyed by its sha, each worktree session would be a topic
+ * of its own — exactly the shape the topic grouping exists to fold.
+ */
+export const DETACHED_TOPIC = "detached";
+
+/** A live session as the topic grouping reads it (briefing/topic-group.ts). */
+export interface PresenceTopicRow extends TopicRow {
+  readonly entry: PresenceEntry;
+  /** The display name, already through the caller's sanitizer. */
+  readonly name: string;
+}
+
 /** One teammate as the briefing and the statusline show them: not one session. */
 export interface TeammateGroup {
   readonly developerId: string;
   readonly name: string;
+  /** Every live branch, most active first — a surface bounds what it prints. */
   readonly branches: readonly string[];
+  /** The highest-ranked status on the freshest branch (topic-group.ts). */
   readonly status: string;
   readonly ageMs: number;
   readonly baseCommit: string | null;
@@ -161,42 +181,66 @@ export interface TeammateGroup {
    * labelled by briefing/intent.ts; null when that session carries none.
    */
   readonly intent: IntentLabel | null;
+  /** The live sessions grouped by branch, for a surface that prints each. */
+  readonly topics: readonly Topic<PresenceTopicRow>[];
+  readonly sessions: number;
 }
 
-const toGroup = (entry: PresenceEntry, now: Date): TeammateGroup | null => {
+const toPresenceRow = (
+  entry: PresenceEntry,
+  now: Date,
+  clean: (raw: string) => string,
+): PresenceTopicRow | null => {
   const ageMs = ageMsFrom(entry.lastHeartbeatAt, now);
-  const name = sanitizeUntrusted(entry.developerName);
-  const branch = sanitizeUntrusted(entry.branch);
+  const name = clean(entry.developerName);
+  const branch = isDetachedBranch(entry.branch) ? DETACHED_TOPIC : clean(entry.branch);
   if (ageMs === null || name.length === 0 || branch.length === 0) {
     return null;
   }
   return {
     developerId: entry.developerId,
-    name,
-    branches: [branch],
-    status: sanitizeUntrusted(entry.status),
+    topic: branch,
+    sessionKey: entry.sessionId,
+    status: clean(entry.status),
     ageMs,
-    baseCommit: entry.baseCommit ?? null,
-    intent: formatIntentLabel(entry.intent),
+    // Presence carries no claim or target counts; the freshest speaks.
+    hasRecordedWork: false,
+    entry,
+    name,
   };
 };
 
-/** The freshest session speaks for the developer's status, base commit and intent. */
-const mergeGroup = (
-  existing: TeammateGroup,
-  candidate: TeammateGroup,
-): TeammateGroup => {
-  const branch = candidate.branches[0] ?? "";
-  const branches = existing.branches.includes(branch)
-    ? existing.branches
-    : [...existing.branches, branch];
-  const freshest = candidate.ageMs < existing.ageMs ? candidate : existing;
-  return { ...freshest, branches };
+/** The freshest session speaks for the name, base commit and intent. */
+const toTeammateGroup = (
+  teammate: TeammateTopics<PresenceTopicRow>,
+): TeammateGroup | null => {
+  const lead = teammate.topics[0];
+  const speaker = lead?.rows[0];
+  if (lead === undefined || speaker === undefined) {
+    return null;
+  }
+  return {
+    developerId: teammate.developerId,
+    name: speaker.name,
+    branches: teammate.topics.map((topic) => topic.label),
+    status: lead.status,
+    ageMs: teammate.ageMs,
+    baseCommit: speaker.entry.baseCommit ?? null,
+    intent: formatIntentLabel(speaker.entry.intent),
+    topics: teammate.topics,
+    sessions: teammate.sessions,
+  };
 };
 
 /**
- * One line per developer, newest heartbeat first. Grouping is what keeps a
- * teammate with four open windows from filling the briefing on their own.
+ * One group per developer, newest heartbeat first, the live sessions inside
+ * it grouped by branch — the topic grouping every teammate listing runs
+ * (briefing/topic-group.ts). Grouping is what keeps a teammate with four open
+ * windows from filling the briefing on their own.
+ *
+ * `clean` is the sanitizer CLASS of the surface that prints the result: the
+ * briefing's PROSE sanitizer by default, `bareUntrusted` for `crosscheck
+ * status`, whose fields sit bare on a ·-separated line.
  *
  * isSelf is server-computed and developer-scoped, so the reader's own parallel
  * worktrees never appear here (DESIGN.md §4).
@@ -204,20 +248,28 @@ const mergeGroup = (
 export const groupTeammates = (
   presence: readonly PresenceEntry[],
   now: Date,
-): readonly TeammateGroup[] => {
-  const groups = new Map<string, TeammateGroup>();
-  for (const entry of presence) {
-    const candidate = entry.isSelf === true ? null : toGroup(entry, now);
-    if (candidate === null) {
-      continue;
-    }
-    const existing = groups.get(entry.developerId);
-    groups.set(
-      entry.developerId,
-      existing === undefined ? candidate : mergeGroup(existing, candidate),
-    );
-  }
-  return [...groups.values()].sort((left, right) => left.ageMs - right.ageMs);
+  clean: (raw: string) => string = sanitizeUntrusted,
+): readonly TeammateGroup[] =>
+  groupTopicsByDeveloper(
+    presence.flatMap((entry) => {
+      const row = entry.isSelf === true ? null : toPresenceRow(entry, now, clean);
+      return row === null ? [] : [row];
+    }),
+  ).flatMap((teammate) => {
+    const group = toTeammateGroup(teammate);
+    return group === null ? [] : [group];
+  });
+
+/**
+ * At most MAX_TOPICS_PER_TEAMMATE labels, and the rest counted — never cut
+ * without saying so.
+ */
+const boundedTopicList = (labels: readonly string[]): string => {
+  const shown = labels.slice(0, MAX_TOPICS_PER_TEAMMATE);
+  const hidden = labels.length - shown.length;
+  return hidden > 0
+    ? `${shown.join(", ")} and ${String(hidden)} more`
+    : shown.join(", ");
 };
 
 const driftLabel = (drift: CommitDrift | undefined): string => {
@@ -334,7 +386,7 @@ const renderPresenceSection = (input: BriefingInput): Section => {
       group.baseCommit === null ? undefined : input.drift?.[group.baseCommit];
     const facts = [
       `- ${group.name}`,
-      `${label} ${group.branches.join(", ")}`,
+      `${label} ${boundedTopicList(group.branches)}`,
       `status ${group.status}`,
       `heartbeat ${formatAge(group.ageMs)} ago`,
     ];
@@ -385,66 +437,237 @@ const contextTimestamp = (context: WorkContextEntry): string =>
 const hasRecordedWork = (context: WorkContextEntry): boolean =>
   (context.claimCount ?? 0) > 0 || (context.targetCount ?? 0) > 0;
 
+/** A work context as the topic grouping reads it (briefing/topic-group.ts). */
+interface ContextTopicRow extends TopicRow {
+  readonly context: WorkContextEntry;
+  /** The topic its TITLE names (titleTopic) — the label when a topic agrees. */
+  readonly titleLabel: string;
+}
+
 /**
- * ONE LINE PER TEAMMATE, not per context (audit row M15-rest). The grouping
- * rules and why they are in their own module: briefing/context-group.ts.
+ * The topic a title names. The honest fallback title is `<branch> @ <repo>`
+ * (flows/register-session.ts), and every row of this per-repo listing repeats
+ * the same repo label, so it comes off — BEFORE sanitizing, so the title cap
+ * is spent on the branch. Any other title (a host's own session title, a
+ * detached `detached@<sha> · <subject>`) is its own topic, whole.
+ */
+const titleTopic = (title: string, repoId: string): string => {
+  const label = repoLabel(repoId);
+  const suffix = label === null ? null : ` @ ${label}`;
+  const head =
+    suffix !== null && title.endsWith(suffix)
+      ? title.slice(0, title.length - suffix.length)
+      : title;
+  return sanitizeUntrusted(head);
+};
+
+/**
+ * The topic a work context belongs to: its session's OWN branch, which the
+ * hub sends with the row (server services/diagnosis.ts) — a host-supplied
+ * title ("Fix the login 500s") does not carry it, so free-form titles on one
+ * branch would otherwise be separate topics. The title is the fallback only
+ * where that branch says nothing: an older hub that sends none, or a detached
+ * HEAD, whose session-start title may still have resolved the branch it sits
+ * on (flows/work-context-title.ts). Whatever is still detached after that is
+ * the one DETACHED_TOPIC, never keyed by sha.
+ */
+const contextTopic = (context: WorkContextEntry, repoId: string): string => {
+  if (context.branch !== undefined && !isDetachedBranch(context.branch)) {
+    return sanitizeUntrusted(context.branch);
+  }
+  const fromTitle = titleTopic(context.title, repoId);
+  return isDetachedBranch(fromTitle) ? DETACHED_TOPIC : fromTitle;
+};
+
+const toContextRow = (
+  context: WorkContextEntry,
+  input: BriefingInput,
+): ContextTopicRow | null => {
+  const ageMs = ageMsFrom(contextTimestamp(context), input.now);
+  const topic = contextTopic(context, input.repoId);
+  if (
+    ageMs === null ||
+    ageMs > CONTEXT_MAX_AGE_DAYS * MS_PER_DAY ||
+    topic.length === 0
+  ) {
+    return null;
+  }
+  return {
+    developerId: context.developerId,
+    topic,
+    // A row without its session id is its own session: never two rows
+    // merged on a guess.
+    sessionKey: context.sessionId ?? `wc:${context.id}`,
+    status: sanitizeUntrusted(context.status),
+    ageMs,
+    hasRecordedWork: hasRecordedWork(context),
+    titleLabel: titleTopic(context.title, input.repoId),
+    context,
+  };
+};
+
+/**
+ * What a topic is CALLED on its line, which is not always what it is KEYED
+ * by. When every session in it says the same title, that title — a host's
+ * own session title ("Login 500s on staging") tells a reader more than the
+ * branch it runs on, and a fallback title IS the branch. When they disagree,
+ * the branch they were grouped by: never one session's title speaking for
+ * sessions that said something else.
+ */
+const topicLabel = (topic: Topic<ContextTopicRow>): string => {
+  const titles = new Set(topic.rows.map((row) => row.titleLabel));
+  const [shared] = titles;
+  return titles.size === 1 && shared !== undefined && shared.length > 0
+    ? shared
+    : topic.label;
+};
+
+/**
+ * Teammates the hub's row bound cut short: fewer of their rows ARRIVED than
+ * the hub counted inside its window (`developerContextCount`, server
+ * services/diagnosis.ts). Counted over every row that arrived, before this
+ * renderer's own filters — a row dropped here for an empty title was still
+ * sent. A hub too old to count sends nothing, and its rows read as complete.
+ */
+const cutShortDevelopers = (
+  contexts: readonly WorkContextEntry[],
+): ReadonlySet<string> => {
+  const arrived = new Map<string, number>();
+  const counted = new Map<string, number>();
+  for (const context of contexts) {
+    arrived.set(context.developerId, (arrived.get(context.developerId) ?? 0) + 1);
+    if (context.developerContextCount !== undefined) {
+      counted.set(
+        context.developerId,
+        Math.max(counted.get(context.developerId) ?? 0, context.developerContextCount),
+      );
+    }
+  }
+  return new Set(
+    [...counted]
+      .filter(([developerId, total]) => (arrived.get(developerId) ?? 0) < total)
+      .map(([developerId]) => developerId),
+  );
+};
+
+/**
+ * `3 sessions`, `1 topic`, `at least 12 sessions` — a count says if it is a
+ * floor. Exported with the tail below: `crosscheck status` prints the same
+ * topic list, and one spelling of it is what keeps the two from drifting.
+ */
+export const countOf = (count: number, noun: string, atLeast: boolean): string =>
+  `${atLeast ? "at least " : ""}${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/** `… and 46 more topics` — how every topic list says what its cap left out. */
+export const moreTopicsTail = (hidden: number, atLeast: boolean): string =>
+  `… and ${countOf(hidden, "more topic", atLeast)}`;
+
+/**
+ * Every framed line of this section: facts first, then the topic, and the
+ * topic closes the line. Exactly one « » pair per line — a count or a status
+ * appended after the quotes would be a second untrusted-looking thing on the
+ * line and break the shape the injection corpus pins.
+ */
+const framedTopicLine = (facts: string, label: string): string =>
+  `${facts}: «${label}»`;
+
+const topicFacts = (topic: Topic<ContextTopicRow>): string =>
+  `${formatAge(topic.ageMs)} ago, status ${topic.status}`;
+
+/**
+ * One topic, complete: the line it always was, with the session count in
+ * the facts once there is more than one.
+ */
+const singleTopicEntry = (
+  author: string,
+  topic: Topic<ContextTopicRow>,
+): string => {
+  const sessions =
+    topic.sessions === 1 ? "" : `${countOf(topic.sessions, "session", false)}, `;
+  return framedTopicLine(`- ${author}, ${sessions}${topicFacts(topic)}`, topicLabel(topic));
+};
+
+/**
+ * Several topics, or a teammate the hub could not list completely: a head
+ * line with the totals, the most active topics one per line, and the rest
+ * counted. A cut-short teammate takes this shape even with one topic arrived,
+ * because the head line is where "there may be more" is said.
+ */
+const topicListEntry = (
+  author: string,
+  teammate: TeammateTopics<ContextTopicRow>,
+  atLeast: boolean,
+  leadIntent: string | null,
+): readonly string[] => {
+  const shown = teammate.topics.slice(0, MAX_TOPICS_PER_TEAMMATE);
+  const hidden = teammate.topics.length - shown.length;
+  const topicLines = shown.flatMap((topic, index) => {
+    const line = framedTopicLine(
+      `  - ${countOf(topic.sessions, "session", atLeast)}, ${topicFacts(topic)}`,
+      topicLabel(topic),
+    );
+    return index === 0 && leadIntent !== null ? [line, `    ${leadIntent}`] : [line];
+  });
+  return [
+    `- ${author}, ${countOf(teammate.topics.length, "topic", atLeast)}, ${countOf(teammate.sessions, "session", atLeast)}:`,
+    ...topicLines,
+    ...(hidden > 0 ? [`  ${moreTopicsTail(hidden, atLeast)}`] : []),
+  ];
+};
+
+/**
+ * One entry per teammate. The intent is the LEAD topic's only, on its own
+ * line (one « » pair per line) — one intent per teammate is what this section
+ * always spent, and an intent per topic would cost the pilot's busiest
+ * developer three more 140-character lines. Lines are joined into ONE entry
+ * string, so appendSection keeps or drops a teammate whole and its "+N more"
+ * arithmetic still counts people.
+ */
+const contextEntry = (
+  teammate: TeammateTopics<ContextTopicRow>,
+  input: BriefingInput,
+  atLeast: boolean,
+): string | null => {
+  const lead = teammate.topics[0];
+  const speaker = lead?.rows[0];
+  if (lead === undefined || speaker === undefined) {
+    return null;
+  }
+  const author = authorNameFor(speaker.context, input.presence);
+  const intent = renderIntent(speaker.context.intent);
+  if (teammate.topics.length === 1 && !atLeast) {
+    const entry = singleTopicEntry(author, lead);
+    return intent === null ? entry : `${entry}\n  ${intent}`;
+  }
+  return topicListEntry(author, teammate, atLeast, intent).join("\n");
+};
+
+/**
+ * ONE ENTRY PER TEAMMATE, the teammate's work grouped by TOPIC — the rules
+ * and why they are in their own module: briefing/topic-group.ts.
  *
  * `total` counts TEAMMATES, so appendSection's "(+N more not shown)" says how
  * many people did not fit rather than how many rows were folded — the folded
- * ones are stated on the line that folded them, and counting them twice would
- * be the same context reported as missing in two different places.
+ * ones are stated inside the entry that folded them, and counting them twice
+ * would be the same work reported as missing in two different places.
  */
 const renderContextSection = (input: BriefingInput): Section => {
-  const maxAgeMs = CONTEXT_MAX_AGE_DAYS * MS_PER_DAY;
-  const eligible = input.workContexts
+  const rows = input.workContexts
     .filter((context) => context.developerId !== input.selfDeveloperId)
     .flatMap((context) => {
-      const ageMs = ageMsFrom(contextTimestamp(context), input.now);
-      const title = sanitizeUntrusted(context.title);
-      if (ageMs === null || ageMs > maxAgeMs || title.length === 0) {
-        return [];
-      }
-      return [
-        {
-          context,
-          developerId: context.developerId,
-          title,
-          ageMs,
-          hasRecordedWork: hasRecordedWork(context),
-        },
-      ];
+      const row = toContextRow(context, input);
+      return row === null ? [] : [row];
     });
-  const groups = groupContextsByDeveloper(eligible);
-
-  const lines = groups.slice(0, MAX_CONTEXTS).map(({ shown, otherTitles }) => {
-    const author = authorNameFor(shown.context, input.presence);
-    const status = sanitizeUntrusted(shown.context.status);
-    // The fold count sits with the facts, BEFORE the frame: every line in this
-    // section carries exactly one « » pair and the title closes it, so a count
-    // appended after the quotes would be the second untrusted-looking thing on
-    // the line and would break the shape the injection corpus pins.
-    // The noun names what the number counts: DISTINCT other titles, not rows.
-    // It read ", N more contexts" while counting titles, so a teammate with
-    // the same branch open in three worktrees and one other investigation was
-    // announced as having two sessions running when he had four — and this
-    // number is the only quantitative fact on the line a reader uses to decide
-    // whether to interrupt him.
-    const more =
-      otherTitles === 0
-        ? ""
-        : `, ${String(otherTitles)} other piece${otherTitles === 1 ? "" : "s"} of work`;
-    // The intent on ITS OWN line (one « » pair per line, the framed-surface
-    // invariant), indented under the context it belongs to — but inside the
-    // SAME entry string, so appendSection's "+N more" arithmetic still counts
-    // one teammate per entry and the two lines are kept or dropped together.
-    const intent = renderIntent(shown.context.intent);
-    const entry = `- ${author}, ${formatAge(shown.ageMs)} ago, status ${status}${more}: «${shown.title}»`;
-    return intent === null ? entry : `${entry}\n  ${intent}`;
+  const teammates = groupTopicsByDeveloper(rows);
+  const cutShort = cutShortDevelopers(input.workContexts);
+  const lines = teammates.slice(0, MAX_CONTEXTS).flatMap((teammate) => {
+    const entry = contextEntry(teammate, input, cutShort.has(teammate.developerId));
+    return entry === null ? [] : [entry];
   });
   return {
     header: "Teammate work contexts on this repo:",
     lines,
-    total: groups.length,
+    total: teammates.length,
   };
 };
 

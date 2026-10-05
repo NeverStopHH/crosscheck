@@ -14,6 +14,7 @@
  */
 import type { CausalGuaranteeTriple } from "@crosscheck/schema";
 
+import { repoLabel } from "../git/repo-label.ts";
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -47,21 +48,6 @@ const REPO_MISMATCH_CODE = "repo_mismatch";
 
 /** Sentinel: registration refused because a live sibling owns another repo. */
 const REPO_MISMATCH = Symbol("crosscheck.register.repo-mismatch");
-
-const LOCAL_REPO_PREFIX = "local:";
-
-/**
- * Last segment of the shared repo id (`github.com/acme/api` → `api`), never a
- * local directory name: this title is uploaded and read by teammates. A
- * `local:` id has no shareable segment, so the branch alone has to carry it.
- */
-const repoLabel = (repoId: string): string | null => {
-  if (repoId.startsWith(LOCAL_REPO_PREFIX)) {
-    return null;
-  }
-  const last = repoId.split("/").at(-1)?.trim();
-  return last === undefined || last.length === 0 ? null : last;
-};
 
 /**
  * The honest work-context title when the host supplied none: branch @ repo,

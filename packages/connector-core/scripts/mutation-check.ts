@@ -397,10 +397,11 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the briefing stops framing quoted teammate text",
     file: `${CORE}/src/briefing/render.ts`,
-    // Re-anchored when the section became one line per TEAMMATE (audit row
-    // M15-rest): the fold count now sits between the status and the frame.
-    from: "status ${status}${more}: «${shown.title}»",
-    to: "status ${status}${more}: ${shown.title}",
+    // Re-anchored when the section grouped a teammate's work by TOPIC
+    // (briefing/topic-group.ts): every framed line of it — the one-topic line
+    // and each line of a topic list — is composed by this one helper.
+    from: "  `${facts}: «${label}»`;",
+    to: "  `${facts}: ${label}`;",
     test: `${CORE}/test/injection-corpus.test.ts`,
     because:
       "teammate-authored text arrives unquoted and unlabelled, which is the " +
@@ -3651,10 +3652,12 @@ export const MUTATIONS: readonly Mutation[
   {
     // Audit row M15-rest. A work context is created per SESSION, so one
     // teammate's three worktrees filled a five-line section on their own.
+    // Re-anchored when the grouping moved to briefing/topic-group.ts: bucketed
+    // by session instead of developer, every session is a teammate again.
     label: "the briefing lists one line per context again",
-    file: `${CORE}/src/briefing/render.ts`,
-    from: "  const groups = groupContextsByDeveloper(eligible);",
-    to: "  const groups = eligible.map((entry) => ({ shown: entry, otherTitles: 0 }));",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  [...bucket(rows, (row) => row.developerId)]",
+    to: "  [...bucket(rows, (row) => row.sessionKey)]",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "one busy teammate takes the whole section and the teammate working " +
@@ -3665,7 +3668,7 @@ export const MUTATIONS: readonly Mutation[
     // starting a session is what creates one, so the freshest is often the
     // one that has done nothing.
     label: "an empty session speaks for the teammate again",
-    file: `${CORE}/src/briefing/context-group.ts`,
+    file: `${CORE}/src/briefing/topic-group.ts`,
     from: "  if (candidate.hasRecordedWork !== current.hasRecordedWork) {",
     to: "  if (false) {",
     test: `${CORE}/test/briefing-contexts.test.ts`,
@@ -17407,6 +17410,265 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "every checkout sharing the linked directory is wired by one repo's install",
   },
+  {
+    // The pilot: one developer's 471 subagent and worktree sessions, many on
+    // one branch minutes apart. A topic is the branch, not the session.
+    label: "every session on one branch is its own topic again",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  topics: [...bucket(rows, (row) => row.topic)]",
+    to: "  topics: [...bucket(rows, (row) => row.sessionKey)]",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "twelve sessions on the branch a teammate is implementing read as twelve " +
+      "pieces of work, and the line is the useless 469-other-pieces count again",
+  },
+  {
+    label: "a topic shows its freshest session's status, not its most advanced",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "    status: displayedStatus(ordered),",
+    to: "    status: ordered[0]?.status ?? \"\",",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "the topic a teammate is implementing reads `analyzing` because the " +
+      "session that opened a minute ago has not got there yet",
+  },
+  {
+    label: "a status this client does not know outranks every known one",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "const statusRank = (status: string): number => RANKED_STATUSES.indexOf(status);",
+    to: "const statusRank = (status: string): number => RANKED_STATUSES.indexOf(status) === -1 ? RANKED_STATUSES.length : RANKED_STATUSES.indexOf(status);",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "a hostile or newer hub's made-up status word displaces the real one the " +
+      "topic's other sessions report",
+  },
+  {
+    label: "two contexts of one session are counted as two sessions",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  new Set(rows.map((row) => row.sessionKey)).size;",
+    to: "  rows.length;",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "a recovered session's second context reads as a session that never " +
+      "ran, and every session count on the line is inflated",
+  },
+  {
+    label: "a teammate's topics past the cap are cut without saying so",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    ...(hidden > 0 ? [`  ${moreTopicsTail(hidden, atLeast)}`] : []),",
+    to: "    ...[],",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "Nick's entry names three topics and the 46 others vanish from a list " +
+      "that looks complete",
+  },
+  {
+    label: "a teammate's entry names every topic, unbounded",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const shown = teammate.topics.slice(0, MAX_TOPICS_PER_TEAMMATE);",
+    to: "  const shown = teammate.topics;",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "the pilot's 49-topic entry outgrows MAX_BRIEFING_CHARS on its own and " +
+      "the busiest teammate drops out of the briefing whole",
+  },
+  {
+    label: "a teammate the hub's row bound cut short reads as complete",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "      .filter(([developerId, total]) => (arrived.get(developerId) ?? 0) < total)",
+    to: "      .filter(() => false)",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "counts of the freshest 600 rows are printed as the whole of a teammate's " +
+      "work, a count the hub never completed stated as exact",
+  },
+  {
+    label: "every topic keeps the repo label the whole listing repeats",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    suffix !== null && title.endsWith(suffix)",
+    to: "    false",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "each topic line spends the title cap on ` @ monorepo`, the one word the " +
+      "briefing's header already said",
+  },
+  {
+    label: "presence prints every live branch, unbounded",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const shown = labels.slice(0, MAX_TOPICS_PER_TEAMMATE);",
+    to: "  const shown = labels;",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "a teammate live in twenty worktrees prints twenty branches on one " +
+      "presence line, ahead of every section below it",
+  },
+  {
+    label: "presence shows the freshest session's status, not the topic's",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    status: lead.status,",
+    to: "    status: speaker.status,",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "the presence line and the work contexts below it disagree about what " +
+      "the same branch's status is",
+  },
+  {
+    // The hub is the only party that knows how many rows its bound cut; the
+    // connector says "at least" from this count and from nothing else.
+    label: "the hub counts the whole answer instead of each developer's share",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "const contextCountPerDeveloper = sql<number>`(count(*) over (partition by ${agentSessions.developerId}))::int`;",
+    to: "const contextCountPerDeveloper = sql<number>`(count(*) over ())::int`;",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "every teammate reads as cut short by the busiest one's rows, and a " +
+      "colleague whose two contexts all arrived is announced as `at least`",
+  },
+  {
+    label: "the hub drops the per-developer count from the listing",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    developerContextCount: row.developerContextCount,\n",
+    to: "",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "the connector cannot tell a teammate the row bound cut short from one " +
+      "it listed whole, and prints the floor as the exact count",
+  },
+  {
+    label: "status cuts a teammate's topics past the cap without saying so",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    ...(hidden > 0 ? [`    ${moreTopicsTail(hidden, false)}`] : []),",
+    to: "    ...[],",
+    test: `${CLI}/test/status-topics.test.ts`,
+    because:
+      "a teammate live on four branches reads as live on three, in the one " +
+      "command a person runs to see who is doing what",
+  },
+  {
+    label: "status stops saying how many sessions a topic holds",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    ...(topic.sessions === 1 ? [] : [countOf(topic.sessions, \"session\", false)]),",
+    to: "    ...[],",
+    test: `${CLI}/test/status-topics.test.ts`,
+    because:
+      "three sessions on one branch print as one, and the reader cannot see " +
+      "that a teammate's subagents are all on the same piece of work",
+  },
+  {
+    label: "status groups teammates through the prose sanitizer instead of the bare one",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "groupTeammates(presence.data, now, bareUntrusted)",
+    to: "groupTeammates(presence.data, now)",
+    test: `${CLI}/test/status-intent.test.ts`,
+    because:
+      "a display name carrying ` · ` mints a field on a line whose fields are " +
+      "separated by exactly that",
+  },
+  {
+    // The display order is NOT the enum's lifecycle order, on purpose: a
+    // reader of a teammate listing asks what is live.
+    label: "a topic's status ranks in lifecycle order again, so done outranks live work",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "const RANKED_STATUSES: readonly string[] = TOPIC_STATUS_PRECEDENCE;",
+    to: "const RANKED_STATUSES: readonly string[] = [\"analyzing\", \"planning\", \"implementing\", \"testing\", \"blocked\", \"done\"];",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "one finished subagent on a branch three others are still implementing " +
+      "makes the whole topic read done",
+  },
+  {
+    label: "a testing session outranks a blocked one",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  \"testing\",\n  \"blocked\",\n];",
+    to: "  \"blocked\",\n  \"testing\",\n];",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "a stuck session disappears behind a sibling that is testing, and the " +
+      "one fact a teammate most needs about the topic is not on the line",
+  },
+  {
+    // Host-supplied session titles do not carry the branch; the session row does.
+    label: "the briefing groups by title even when the hub sent the session's branch",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  if (context.branch !== undefined && !isDetachedBranch(context.branch)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "three sessions on one branch with three free-form titles read as three " +
+      "pieces of work, the unreadable count this grouping exists to fold",
+  },
+  {
+    label: "detached sessions are one topic per sha again",
+    file: `${CORE}/src/git/detached-branch.ts`,
+    from: "  branch === UNNAMED_HEAD_BRANCH || branch.startsWith(DETACHED_BRANCH_PREFIX);",
+    to: "  false;",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "every worktree session on a detached HEAD is a topic of its own, and a " +
+      "teammate's line lists shas nobody can recognise",
+  },
+  {
+    label: "a detached title is keyed by its sha",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  return isDetachedBranch(fromTitle) ? DETACHED_TOPIC : fromTitle;",
+    to: "  return fromTitle;",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "an older hub's detached rows, and detached sessions whose title could " +
+      "not name a branch, split into one `detached@<sha> · subject` topic each",
+  },
+  {
+    label: "presence keys a detached session by its sha",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const branch = isDetachedBranch(entry.branch) ? DETACHED_TOPIC : clean(entry.branch);",
+    to: "  const branch = clean(entry.branch);",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "a teammate live in three detached worktrees prints three shas as three " +
+      "branches on the presence line",
+  },
+  {
+    label: "the hub drops the session's branch from the listing",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    branch: row.branch,\n",
+    to: "",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "the connector has only the titles to group by, and free-form titles on " +
+      "one branch read as separate pieces of work",
+  },
+  {
+    // The session branch is a new untrusted slot on the briefing: whatever a
+    // teammate's connector registered, a hostile hub can rewrite.
+    label: "the session's branch reaches the briefing unsanitized",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    return sanitizeUntrusted(context.branch);",
+    to: "    return context.branch;",
+    test: `${CORE}/test/injection-corpus.test.ts`,
+    because:
+      "a branch carrying « » or a newline closes the topic frame early and " +
+      "mints a line of its own in the reader's context",
+  },
+  {
+    label: "a topic is called by its branch even when every session shares one title",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  return titles.size === 1 && shared !== undefined && shared.length > 0",
+    to: "  return false",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "Alice's one session titled «Login 500s on staging» reads as «main», and " +
+      "the briefing drops the one fact that says what she is doing",
+  },
+  {
+    label: "one session's title speaks for a topic whose sessions disagree",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const titles = new Set(topic.rows.map((row) => row.titleLabel));",
+    to: "  const titles = new Set(topic.rows.slice(0, 1).map((row) => row.titleLabel));",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "three subagents with three different tasks on one branch are labelled " +
+      "by whichever spoke first, as if the others were doing that too",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17507,6 +17769,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 15
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
+ * PRINTS: packages/cli/test/status-intent.test.ts 1
+ * PRINTS: packages/cli/test/status-topics.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/terminal.test.ts 3
  * PRINTS: packages/cli/test/trace-command.test.ts 2
@@ -17582,8 +17846,9 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
- * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 17
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
@@ -17621,7 +17886,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
- * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
+ * PRINTS: packages/connector-core/test/injection-corpus.test.ts 7
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
@@ -17779,7 +18044,7 @@ interface Outcome {
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
- * PRINTS: packages/server/test/work-context-listing.test.ts 3
+ * PRINTS: packages/server/test/work-context-listing.test.ts 6
  */
 const greenGuards = new Map<string, boolean>();
 

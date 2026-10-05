@@ -95,6 +95,21 @@ export interface WorkContextListEntry extends WorkContextView {
    * claims would cross-multiply claimCount.
    */
   readonly targetCount: number;
+  /**
+   * How many contexts this row's developer has inside the WHERE — the repo,
+   * the viewer's mutes and the caller's window — counted BEFORE the row bound.
+   * The connector groups a teammate's work by topic from the rows that
+   * arrive; when fewer arrive than this, every count it prints for that
+   * teammate is a floor and it says "at least" (briefing/render.ts).
+   */
+  readonly developerContextCount: number;
+  /**
+   * The owning session's branch, as its connector registered it — the key
+   * the connector groups a teammate's work by. A host-supplied title ("Fix
+   * the login 500s") does not carry it, so free-form titles on one branch
+   * would otherwise read as separate pieces of work.
+   */
+  readonly branch: string;
 }
 
 export interface WorkContextListWindow {
@@ -354,6 +369,15 @@ const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts
  */
 const contextRankPerDeveloper = sql`row_number() over (partition by ${agentSessions.developerId} order by ${contextActivityAt} desc)`;
 
+/**
+ * How many contexts this row's developer has in the answer BEFORE the bound.
+ * A window aggregate over the same partition as the rank above, so Postgres
+ * evaluates it after the WHERE and before the LIMIT — the count of what the
+ * bound may have cut, not of what it kept — in the same pass, with no second
+ * query. ::int because count() is bigint, which arrives as a string.
+ */
+const contextCountPerDeveloper = sql<number>`(count(*) over (partition by ${agentSessions.developerId}))::int`;
+
 export const listWorkContextsByRepo = async (
   db: Db,
   viewerDeveloperId: string,
@@ -372,6 +396,7 @@ export const listWorkContextsByRepo = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
+      branch: agentSessions.branch,
       // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
       // to carry: the join multiplied every context by its claims (100,000
       // rows aggregated to answer about 10,000) and could only ever count ONE
@@ -384,6 +409,7 @@ export const listWorkContextsByRepo = async (
       // claim yet is real work, and the briefing prefers it over an empty
       // shell when it picks which context speaks for a teammate.
       targetCount: sql<number>`(select count(*)::int from ${workContextTargets} where ${workContextTargets.workContextId} = ${workContexts.id})`,
+      developerContextCount: contextCountPerDeveloper,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -426,6 +452,8 @@ export const listWorkContextsByRepo = async (
     developerName: row.developerName,
     claimCount: row.claimCount,
     targetCount: row.targetCount,
+    developerContextCount: row.developerContextCount,
+    branch: row.branch,
   }));
 };
 

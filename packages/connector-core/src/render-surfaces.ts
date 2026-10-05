@@ -660,6 +660,47 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       }),
   },
   {
+    // The TOPIC shapes (briefing/topic-group.ts): one teammate with the
+    // payload's topic open in two sessions beside four clean ones, cut short
+    // by the hub's row bound — so the head line, the topic lines, the lead
+    // intent, the "… and N more topics" tail and the "at least" counts all
+    // render — and live on five branches, so presence prints its bounded
+    // branch list with the payload in it.
+    kind: "corpus",
+    name: "briefing-topics",
+    delivery: "unsolicited",
+    module: "src/briefing/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [payload, "feat/a", "feat/b", "feat/c", "feat/d"].map(
+          (branch, index) => ({
+            ...presenceWith(payload),
+            sessionId: `cc_topics_${String(index)}`,
+            branch,
+          }),
+        ),
+        // The first two rows carry the payload as their SESSION branch — the
+        // key a topic is grouped by when the hub sends one — under two
+        // different titles, so the topic is CALLED by that branch; the rest
+        // take the older hub's title fallback.
+        workContexts: [payload, "A second session", "feat/a", "feat/b", "feat/c", "feat/d"].map(
+          (title, index) => ({
+            ...workContextWith(payload),
+            id: `wc_topics_${String(index)}`,
+            sessionId: `cc_topics_${String(index)}`,
+            title: `${title} @ api`,
+            status: payload,
+            developerContextCount: 9,
+            ...(index < 2 ? { branch: payload } : {}),
+          }),
+        ),
+        now: NOW,
+      }),
+  },
+  {
     kind: "corpus",
     name: "briefing-questions",
     delivery: "unsolicited",

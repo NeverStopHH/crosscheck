@@ -474,6 +474,14 @@ export const SESSION_STATE_LOCK_RETRIES = 20;
 export const MAX_BRIEFING_CHARS = 2200;
 export const MAX_TEAMMATES = 5;
 export const MAX_CONTEXTS = 5;
+/**
+ * Topics one teammate's entry names before "… and N more topics" (the
+ * briefing's work contexts and presence, `crosscheck status`). Three, because
+ * the pilot's busiest developer — 471 contexts over 49 branches — then costs
+ * the briefing about 300 characters, and his two colleagues still fit beside
+ * him under MAX_BRIEFING_CHARS (test/briefing-contexts.test.ts pins both).
+ */
+export const MAX_TOPICS_PER_TEAMMATE = 3;
 export const MAX_TITLE_CHARS = 80;
 /** One git process per distinct teammate base commit, never more. */
 export const MAX_DRIFT_LOOKUPS = 5;

@@ -33,6 +33,10 @@ interface ListEntry {
   readonly updatedAt: string | null;
   readonly claimCount: number;
   readonly targetCount: number;
+  readonly sessionId: string;
+  readonly developerContextCount: number;
+  readonly title: string;
+  readonly branch: string;
 }
 
 const list = async (
@@ -353,5 +357,111 @@ describe("GET /api/work-contexts is bounded", () => {
     expect(
       WORK_CONTEXT_LIST_MAX - inWindow(unwindowed),
     ).toBeGreaterThanOrEqual(WORK_CONTEXT_LIST_MAX / 4);
+  });
+});
+
+describe("GET /api/work-contexts says when its bound cut a teammate short", () => {
+  test("each row carries its developer's count in the window, counted before the bound", async () => {
+    // The connector groups a teammate's work by topic from the rows that
+    // arrive. When the bound let only some of them through, every count it
+    // prints is a floor — and only the hub knows there were more.
+    const setup = await createHarnessWithSession();
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    const quiet = await addTestDeveloperWithSession(
+      setup.harness,
+      "Mike",
+      "mike@example.com",
+      { id: "cc_22222222-3333-4444-8555-666666666666" },
+    );
+    await postRecords(
+      setup.harness,
+      quiet,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: "wc_mike_only",
+          sessionId: "cc_22222222-3333-4444-8555-666666666666",
+          title: "Mike is halfway through the importer retry",
+        }),
+        { sessionId: "cc_22222222-3333-4444-8555-666666666666" },
+      ),
+    );
+    const extra = WORK_CONTEXT_LIST_MAX + 5;
+    await setup.harness.db.execute(sql`
+      INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
+      SELECT 'wc_busy_' || lpad(g::text, 4, '0'),
+             (SELECT session_id FROM work_contexts WHERE id = ${WORK_CONTEXT_ID}),
+             'Worktree ' || g,
+             'analyzing',
+             now() - make_interval(mins => g::int),
+             now() - make_interval(mins => g::int)
+      FROM generate_series(1, ${extra}) g
+    `);
+
+    // Act: exactly what the connector sends.
+    const rows = await list(setup, `${REPO_QUERY}&since=14d`);
+
+    // Assert: still bounded, and each person's TRUE count rides on their rows
+    expect(rows).toHaveLength(WORK_CONTEXT_LIST_MAX);
+    const nick = rows.filter((row) => row.developerId === setup.developer.developerId);
+    const mike = rows.filter((row) => row.developerId === quiet.developerId);
+    expect(nick.length).toBeLessThan(extra + 1);
+    expect(new Set(nick.map((row) => row.developerContextCount))).toEqual(
+      new Set([extra + 1]),
+    );
+    expect(mike.map((row) => row.developerContextCount)).toEqual([1]);
+    // …and the session each context belongs to, which is what "N sessions" counts
+    expect(mike.map((row) => row.sessionId)).toEqual([
+      "cc_22222222-3333-4444-8555-666666666666",
+    ]);
+  });
+
+  test("the count is of the window the reader asked for, not of all time", async () => {
+    const setup = await createHarnessWithSession();
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    await setup.harness.db.execute(sql`
+      INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
+      SELECT 'wc_ancient', session_id, 'Ancient investigation', 'analyzing',
+             created_at - interval '90 days', NULL
+      FROM work_contexts WHERE id = ${WORK_CONTEXT_ID}
+    `);
+
+    const windowed = await list(setup, `${REPO_QUERY}&since=14d`);
+    const everything = await list(setup);
+
+    // The reader drops the ancient row too, so counting it would announce a
+    // context the reader was never going to see as missing.
+    expect(windowed.map((row) => row.developerContextCount)).toEqual([1]);
+    expect(everything.map((row) => row.developerContextCount)).toEqual([2, 2]);
+  });
+});
+
+describe("GET /api/work-contexts names each context's branch", () => {
+  test("every row carries its session's own branch, whatever its title says", async () => {
+    // The connector groups a teammate's work by branch. A host-supplied title
+    // ("Fix the login 500s") does not carry it, so the session row has to.
+    const setup = await createHarnessWithSession({ branch: "feat/auth" });
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ title: "Fix the login 500s on staging" }),
+      ),
+    );
+
+    const rows = await list(setup, `${REPO_QUERY}&since=14d`);
+
+    expect(rows.map((row) => [row.title, row.branch])).toEqual([
+      ["Fix the login 500s on staging", "feat/auth"],
+    ]);
   });
 });

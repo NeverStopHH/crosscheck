@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 
 import { LOCAL_REPO_HASH_CHARS } from "../constants.ts";
+import { DETACHED_BRANCH_PREFIX, UNNAMED_HEAD_BRANCH } from "./detached-branch.ts";
 import { runGit } from "./git.ts";
 import { resolveSshHostname } from "./ssh-hostname.ts";
 import type { SshHostnameResolver } from "./ssh-hostname.ts";
@@ -243,20 +244,21 @@ export { NO_COMMIT_SHA };
  * small one). ONE spelling, exported, so the session-start title builder
  * (flows/work-context-title.ts) can recognize a detached session from the
  * identity alone and never re-runs git in the per-hook path that computes
- * this.
+ * this. Declared in git/detached-branch.ts, which has no imports, so the
+ * render layer can recognize a detached session without importing git.
  */
-export const DETACHED_BRANCH_PREFIX = "detached@";
+export { DETACHED_BRANCH_PREFIX };
 
 const resolveBranch = async (cwd: string): Promise<string> => {
   const branch = await runGit(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
   if (branch === null) {
-    return "HEAD";
+    return UNNAMED_HEAD_BRANCH;
   }
   if (branch !== "HEAD") {
     return branch;
   }
   const shortSha = await runGit(["rev-parse", "--short", "HEAD"], cwd);
-  return shortSha === null ? "HEAD" : `${DETACHED_BRANCH_PREFIX}${shortSha}`;
+  return shortSha === null ? UNNAMED_HEAD_BRANCH : `${DETACHED_BRANCH_PREFIX}${shortSha}`;
 };
 
 /**
