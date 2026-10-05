@@ -51,9 +51,10 @@ import {
   getLandedNotices,
   getPresence,
   getQuestions,
-  getSolvedMatches,
+  getSolvedPointers,
   getWorkContexts,
 } from "../http/hub.ts";
+import { withBriefingOutcomeClause } from "../hints/outcome-clause.ts";
 import type { HubResult } from "../http/client.ts";
 import type {
   GhostCheckEntry,
@@ -164,7 +165,7 @@ export const assembleBriefing = async (
     }),
     getAbsences(hub, repoId),
     getContradictions(hub, repoId),
-    getSolvedMatches(hub, repoId),
+    getSolvedPointers(hub, repoId),
     getDraftListing(hub, repoId),
     // Roadmap R2. In the SAME parallel block, so the questions block costs no
     // extra wall clock: the whole fetch is still one per-request hub timeout,
@@ -193,7 +194,8 @@ export const assembleBriefing = async (
   const contradictions = contradictionsResult.ok
     ? contradictionsResult.data
     : [];
-  const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
+  const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data.matches : [];
+  const recordsOutcomes = solvedMatchesResult.ok && solvedMatchesResult.data.recordsOutcomes;
   const drafts = draftsResult.ok ? draftsResult.data.drafts : [];
   const draftTotals = draftsResult.ok
     ? { total: draftsResult.data.total, oldestCreatedAt: draftsResult.data.oldestCreatedAt }
@@ -262,7 +264,12 @@ export const assembleBriefing = async (
     });
 
   return {
-    briefing,
+    // 07 §13 (D-O3): the solved pointers are briefing-channel deliveries, so
+    // where the repo records outcomes the briefing ends with the one clause
+    // that says how to record one — after the rendered text, never in it, and
+    // only while the whole still fits the briefing's cap.
+    briefing:
+      recordsOutcomes && shownSolvedIds.length > 0 ? withBriefingOutcomeClause(briefing) : briefing,
     shownSolvedIds,
     shownGhostCount,
     shownLandedNoticeIds,

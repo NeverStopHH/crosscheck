@@ -12085,8 +12085,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the prompt's call carries no notices",
     file: `${SERVER}/src/routes/hints.ts`,
-    from: "    return ok(c, { candidates, answers, coverage, notices });",
-    to: "    return ok(c, { candidates, answers, coverage });",
+    from: "    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { candidates, answers, coverage, recordsOutcomes: settings.pilotEnrolled });",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "an author in a live session hears nothing until their next session",
   },
@@ -18237,6 +18237,378 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/review-draft.test.ts`,
     because: "the agent is told the claim it just promoted from its own session is a teammate's words",
   },
+  // ── 07 §13: per-person hint outcomes ──────────────────────────────────────
+  {
+    label: "a teammate's delivery takes an outcome",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (delivery === undefined || delivery.recipient !== input.recordedBy) {",
+    to: "  if (delivery === undefined) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "Ken could say what Nick's hint led to, and the distinct answer would tell him what Nick was shown",
+  },
+  {
+    label: "saying the same outcome twice writes a second row",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (current !== undefined && current.outcome === input.outcome && current.reason === input.reason) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an agent retrying its call doubles the history and the answer never says it was already recorded",
+  },
+  {
+    label: "an outcome on a repo nobody enrolled is stored",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (!settings.pilotEnrolled) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a team that never opted into the pilot is measured per person anyway (D2)",
+  },
+  {
+    label: "the hub stores a secret-shaped outcome reason",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (input.reason !== null && containsSecret(input.reason)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a body posted straight at the route stores the credential the clients would have dropped",
+  },
+  {
+    label: "a delivery of another repo takes an outcome from this one",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (delivery.repo !== input.repo) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "one repo's outcomes are filed under another's, and its per-person view counts them",
+  },
+  {
+    label: "the oldest outcome of a delivery stands instead of the newest",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      ORDER BY o.created_at DESC, o.id DESC LIMIT 1",
+    to: "      ORDER BY o.created_at ASC, o.id ASC LIMIT 1",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "a changed mind is never shown: the view keeps the first word, append-only reads as frozen",
+  },
+  {
+    label: "the person's noise label is not read as noise in their own view",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS}",
+    to: "      AND m.marked_by = so.recipient AND m.mark IN ('helpful')",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "noise vanishes from the per-person view, or a second noise concept is needed to bring it back",
+  },
+  {
+    label: "a later noise label does not supersede an earlier outcome",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'",
+    to: "      CASE WHEN noise_at IS NOT NULL AND outcome_at IS NULL THEN 'noise'",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the person's own verdict is overruled by whatever their agent said first",
+  },
+  {
+    label: "another person's deliveries reach my outcome view",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "const receivedBy = (developerId: string): SQL => sql`s.developer_id = ${developerId}`;",
+    to: "const receivedBy = (developerId: string): SQL => sql`${developerId} IS NOT NULL`;",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the per-person view becomes a view of the team, with every colleague's reasons in it",
+  },
+  {
+    label: "a source's credit counts an override as a follow",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    WHERE st.source_id = ${input.developerId} AND st.state = 'followed'`);",
+    to: "    WHERE st.source_id = ${input.developerId}`);",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "Ken is told his work was followed when a teammate deliberately went another way",
+  },
+  {
+    label: "the hub says it records outcomes on a repo nobody enrolled",
+    file: `${SERVER}/src/routes/hints.ts`,
+    from: "    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: true });",
+    test: `${SERVER}/test/hints-records-outcomes.test.ts`,
+    because: "every hint on an unenrolled repo invites a call the hub then refuses",
+  },
+  {
+    label: "the outcome reason's bound drifts between bootstrap.sql and the schema",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  CONSTRAINT hint_outcomes_reason_length_check\n    CHECK (reason IS NULL OR char_length(reason) <= 200)",
+    to: "  CONSTRAINT hint_outcomes_reason_length_check\n    CHECK (reason IS NULL OR char_length(reason) <= 201)",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a fresh hub accepts a reason the route refuses, and the two authorities answer differently",
+  },
+  {
+    label: "hint_outcomes is silent about retention",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "    table: \"hint_outcomes\",",
+    to: "    table: \"hint_outcomes_undeclared\",",
+    test: `${SERVER}/test/retention-registry.test.ts`,
+    because: "a relation that reaches a session has no positive statement about what it keeps (01a)",
+  },
+  {
+    label: "noise becomes an outcome an agent can record",
+    file: `${SCHEMA}/src/enums.ts`,
+    from: "export const HINT_OUTCOMES = [\"followed\", \"overrode\", \"not_relevant_now\"] as const;",
+    to: "export const HINT_OUTCOMES = [\"followed\", \"overrode\", \"not_relevant_now\", \"noise\"] as const;",
+    test: `${SCHEMA}/test/hint-outcome.test.ts`,
+    because: "a second noise concept with the model's taste in it, on the path the agent reaches (D3, PIL-6)",
+  },
+  {
+    label: "an override is stored without its reason",
+    file: `${SCHEMA}/src/hint-outcome.ts`,
+    from: "  .refine((body) => body.outcome !== \"overrode\" || body.reason !== undefined, {",
+    to: "  .refine(() => true, {",
+    test: `${SCHEMA}/test/hint-outcome.test.ts`,
+    because: "an override with no reason cannot be told from noise, which is exactly what it is not",
+  },
+  {
+    label: "the outcome clause rides a hint on a repo that records none",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  recordsOutcomes ? withOutcomeClause(text, refId) : text;",
+    to: "  withOutcomeClause(text, refId);",
+    test: `${CORE}/test/hint-flow.test.ts`,
+    because: "every hint on an older or unenrolled hub ends with an invitation to a call that fails",
+  },
+  {
+    label: "the outcome clause costs the hint",
+    file: `${CORE}/src/hints/outcome-clause.ts`,
+    from: "  appendWithin(hint, outcomeClause(refId), MAX_HINT_TEXT_LENGTH);",
+    to: "  appendWithin(hint, outcomeClause(refId), Number.POSITIVE_INFINITY);",
+    test: `${CORE}/test/outcome-clause.test.ts`,
+    because: "a full hint is pushed past the wire cap by a request to talk about the hint",
+  },
+  {
+    label: "an older hub's candidates answer reads as recording outcomes",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    notices: z.array(z.unknown()).default([]),\n    recordsOutcomes: z.boolean().default(false),",
+    to: "    notices: z.array(z.unknown()).default([]),\n    recordsOutcomes: z.boolean().default(true),",
+    test: `${CORE}/test/hint-flow.test.ts`,
+    because: "a connector ahead of its hub invites a call the hub answers 404, on every hint",
+  },
+  {
+    label: "mark_hint_outcome lets noise fall through to a generic refusal",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  if (isNoise(args)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent is told 'must be one of …' and never that noise is the person's label",
+  },
+  {
+    label: "mark_hint_outcome sends a secret-shaped reason to the hub",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  if (reason !== undefined && containsSecret(reason)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the credential leaves the machine and only the hub's scan stands between it and the table",
+  },
+  {
+    label: "mark_hint_outcome sends an override without its reason",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  if (outcome === \"overrode\" && reason === undefined) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent spends a round trip to learn what the tool already knew",
+  },
+  {
+    label: "mark_hint_outcome reads an older hub's 404 as a refusal",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  if (isOutcomesNotServed(posted)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent is told the hub refused the request instead of that the hub predates outcomes",
+  },
+  {
+    label: "crosscheck overrode records without its reason",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  if (command === \"overrode\" && args.reason === undefined) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person's override arrives as a bare hub error instead of the line that says what to add",
+  },
+  {
+    label: "crosscheck followed sends a secret-shaped reason",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  return containsSecret(reason) ? REASON_SECRET_LINE : null;",
+    to: "  return null;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the credential leaves the machine before anything says it should not",
+  },
+  {
+    label: "crosscheck followed reads an older hub's 404 as a refusal",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  isOutcomesNotServed(result)\n    ? { stdout: OUTCOMES_NOT_SERVED_LINE, exitCode: EXIT_FAIL }",
+    to: "  false\n    ? { stdout: OUTCOMES_NOT_SERVED_LINE, exitCode: EXIT_FAIL }",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person reads 'route not found' and never that the hub predates outcomes",
+  },
+  {
+    label: "crosscheck pilot --mine breaks a person down by developer",
+    file: `${CLI}/src/cli/pilot-mine.ts`,
+    from: "  if (argv.includes(PILOT_FLAG_BY_DEVELOPER)) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "--by-developer stops being refused by name on the one command that is about a person (§8.4)",
+  },
+  {
+    label: "an outcome reason prints outside its frame in --mine",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "${quoted(said.reason, MAX_PILOT_LABEL_REASON_UTF16_UNITS)}",
+    to: "${said.reason}",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because: "an agent-written sentence reaches the reader as crosscheck's own text, unframed and uncleaned",
+  },
+  // ── 07 §13.9, D-O3: the tripwire and the briefing ─────────────────────────
+  {
+    label: "the tripwire answer says it records outcomes on a repo nobody enrolled",
+    file: `${SERVER}/src/routes/hints.ts`,
+    from: "    return ok(c, { sessions, coverage, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { sessions, coverage, recordsOutcomes: true });",
+    test: `${SERVER}/test/hints-records-outcomes.test.ts`,
+    because: "every stop on an unenrolled repo invites a call the hub then refuses",
+  },
+  {
+    label: "the solved-match listing says it records outcomes on a repo nobody enrolled",
+    file: `${SERVER}/src/routes/solved-matches.ts`,
+    from: "    return ok(c, { matches, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { matches, recordsOutcomes: true });",
+    test: `${SERVER}/test/hints-records-outcomes.test.ts`,
+    because: "every briefing with a solved pointer on an unenrolled repo ends with an invitation the hub refuses",
+  },
+  {
+    label: "an older hub's tripwire answer reads as recording outcomes",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    coverage: z.unknown().optional(),\n    recordsOutcomes: z.boolean().default(false),",
+    to: "    coverage: z.unknown().optional(),\n    recordsOutcomes: z.boolean().default(true),",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because: "a connector ahead of its hub ends every stop with a call the hub answers 404",
+  },
+  {
+    label: "an older hub's solved-match listing reads as recording outcomes",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    matches: z.array(z.unknown()),\n    recordsOutcomes: z.boolean().default(false),",
+    to: "    matches: z.array(z.unknown()),\n    recordsOutcomes: z.boolean().default(true),",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "a connector ahead of its hub ends the briefing with a call the hub answers 404",
+  },
+  {
+    label: "the tripwire ask ends with the outcome clause on a repo that records none",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    won.teammate !== null && found.recordsOutcomes",
+    to: "    won.teammate !== null",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because: "the stop invites a call the hub refuses, on exactly the moment a person is reading it",
+  },
+  {
+    label: "the briefing's outcome clause rides with no solved pointer shown",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "      recordsOutcomes && shownSolvedIds.length > 0 ? withBriefingOutcomeClause(briefing) : briefing,",
+    to: "      recordsOutcomes ? withBriefingOutcomeClause(briefing) : briefing,",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "every briefing ends with a sentence about solved lines it does not contain",
+  },
+  {
+    label: "the briefing's outcome clause pushes it past its cap",
+    file: `${CORE}/src/hints/outcome-clause.ts`,
+    from: "  appendWithin(briefing, BRIEFING_OUTCOME_CLAUSE, MAX_BRIEFING_CHARS);",
+    to: "  appendWithin(briefing, BRIEFING_OUTCOME_CLAUSE, Number.POSITIVE_INFINITY);",
+    test: `${CORE}/test/outcome-clause.test.ts`,
+    because: "a full briefing grows past the bound every teammate's lines are budgeted against",
+  },
+  // ── 07 §13.9, D-O5: the team report's outcomes line ───────────────────────
+  {
+    label: "a delivery from before outcomes were recordable counts as unmarked",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  return recordable.getTime() > windowStart.getTime() ? recordable : windowStart;",
+    to: "  return windowStart;",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "every upgraded hub reports weeks of history as unmarked — the H1 error, measured as silence",
+  },
+  {
+    label: "enrolment does not stamp when outcomes became recordable",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    pilotOutcomesSince: sinceAfter(current.pilotOutcomesSince, current, pilotEnrolled, now),",
+    to: "    pilotOutcomesSince: current.pilotOutcomesSince === null ? null : new Date(current.pilotOutcomesSince),",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a newly enrolled repo has no instant, so its outcome figures count nothing for ever",
+  },
+  {
+    label: "an upgraded hub never stamps outcomes-since for a repo already enrolled",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "UPDATE team_settings SET pilot_outcomes_since = now()\n  WHERE pilot_enrolled AND pilot_outcomes_since IS NULL;",
+    to: "UPDATE team_settings SET pilot_outcomes_since = now()\n  WHERE false;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the monorepo, enrolled before outcomes existed, would never show an outcome figure",
+  },
+  {
+    label: "the team report's outcome line counts nobody's interventions",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    ${deliveryStates(input.repo, since, sql`true`)}",
+    to: "    ${deliveryStates(input.repo, since, sql`false`)}",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the per-repo line reads 'no intervention reached anyone' on a repo full of them",
+  },
+  {
+    label: "an older hub's report reads as zero outcomes",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "      unmarked: CountSchema,\n    })\n    .optional(),",
+    to: "      unmarked: CountSchema,\n    })\n    .default({ sinceIso: null, interventions: 0, followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 }),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because: "a hub that records no outcomes looks like a team whose hints led to nothing",
+  },
+  {
+    label: "the outcomes line prints per-100 figures over no intervention",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (outcomes.interventions === 0) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "an empty population prints NaN or 0.0 as if somebody had measured it",
+  },
+  {
+    label: "the outcomes line stops saying it is a floor",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: " — a FLOOR: only what agents and people chose to record; no target, nobody named`",
+    to: "`",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "an unmarked share reads as hints nobody followed, when it is only hints nobody recorded",
+  },
+  // ── 07 §13.9, D-O6: outcomes under the pilot's retention ──────────────────
+  {
+    label: "outcomes outlive the pilot's retention",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  await deps.db.delete(hintOutcomes).where(lt(hintOutcomes.createdAt, cutoff));",
+    to: "  await Promise.resolve(cutoff);",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "a person's reasons stay on the hub for ever while every other pilot row ages out at 90 days",
+  },
+  {
+    label: "the outcome prune takes the boundary day a report still reads",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: ".where(lt(hintOutcomes.createdAt, cutoff))",
+    to: ".where(lt(hintOutcomes.createdAt, new Date(cutoff.getTime() + 1)))",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "the widest window's first day loses its outcomes while the window still counts its deliveries",
+  },
+  {
+    label: "the registry's declared outcome lifetime drifts from the prune's",
+    file: `${SERVER}/src/services/retention-registry.ts`,
+    from: "    ownRetentionDays: PILOT_RETENTION_DAYS,",
+    to: "    ownRetentionDays: PILOT_RETENTION_DAYS * 2,",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "the registry says one bound and the reaper deletes at another — no positive proof either way",
+  },
+  {
+    label: "the outcome prune scans the whole table",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx\n  ON hint_outcomes (created_at);",
+    to: "CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx\n  ON hint_outcomes (delivery_id);",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "every reaper pass reads every outcome on the hub to find the few past the window",
+  },
+  {
+    label: "--mine says 'last 56 days' over a view that began this morning",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "  Date.parse(view.sinceIso) > Date.parse(view.untilIso) - view.days * MS_PER_DAY;",
+    to: "  false;",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a person reads eight weeks of silence where nothing could have been recorded",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18323,11 +18695,13 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 4
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
- * PRINTS: packages/cli/test/pilot-render.test.ts 19
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 1
+ * PRINTS: packages/cli/test/pilot-render.test.ts 21
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -18413,12 +18787,12 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
- * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
+ * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 17
- * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-flow.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
@@ -18455,7 +18829,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
- * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
@@ -18481,6 +18855,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -18490,7 +18865,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
+ * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
+ * PRINTS: packages/connector-core/test/pilot-client.test.ts 5
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
@@ -18501,7 +18877,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
- * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 6
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/review-draft.test.ts 1
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
@@ -18535,6 +18911,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
+ * PRINTS: packages/schema/test/hint-outcome.test.ts 2
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
@@ -18557,6 +18934,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 3
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -18569,6 +18947,10 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-content-floor.test.ts 5
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
+ * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 5
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 5
+ * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
@@ -18586,6 +18968,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 3
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
@@ -18595,7 +18978,7 @@ interface Outcome {
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2
- * PRINTS: packages/server/test/retention-registry.test.ts 2
+ * PRINTS: packages/server/test/retention-registry.test.ts 3
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3

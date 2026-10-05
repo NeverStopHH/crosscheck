@@ -543,6 +543,56 @@ describe("renderPilot", () => {
     expect(out).toContain("· 30 recorded before labels, in neither cohort");
   });
 
+  test("D-O5: one per-repo outcomes line, per 100 interventions, said to be a floor with no target", () => {
+    // Arrange
+    const outcomes = {
+      sinceIso: "2026-07-20T12:00:00.000Z",
+      interventions: 8,
+      followed: 4,
+      overrode: 1,
+      notRelevantNow: 1,
+      noise: 1,
+      unmarked: 1,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert — one line, descriptive, and nobody named in it
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes per 100 interventions that reached someone (8 since 2026-07-20): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 · unmarked 12.5 — a FLOOR: only what agents and people chose to record; no target, nobody named",
+    ]);
+  });
+
+  test("D-O5: no intervention since outcomes became recordable says so, never 0.0", () => {
+    // Arrange
+    const outcomes = {
+      sinceIso: "2026-07-20T12:00:00.000Z",
+      interventions: 0,
+      followed: 0,
+      overrode: 0,
+      notRelevantNow: 0,
+      noise: 0,
+      unmarked: 0,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain("   hint outcomes: no intervention reached anyone since 2026-07-20, when outcomes became recordable here");
+    expect(out).not.toContain("followed 0.0");
+  });
+
+  test("D-O5: a hub that predates outcomes says so instead of printing a figure", () => {
+    // Arrange & Act — the builder carries no outcomes block, as an older hub's report does
+    const out = renderPilot(view());
+
+    // Assert
+    expect(out).toContain("   hint outcomes: this hub does not record them");
+  });
+
   test("the header says 0.10's refusals and the pre-labels sessions apart from the set's own (M2, M4)", () => {
     // Arrange
     const base = report();

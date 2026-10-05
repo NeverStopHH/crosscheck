@@ -70,6 +70,7 @@ import {
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { renderEditWarning } from "@crosscheck/connector-core/hints/render.ts";
+import { appendOutcomeClause } from "@crosscheck/connector-core/hints/outcome-clause.ts";
 import {
   openToolWindow,
   readSessionState,
@@ -233,7 +234,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
     won.landed === null || !mayTellAuthors(ctx, state)
       ? []
       : await recordLandedStop(ctx, state, file, won.landed, answer.told);
-  const reason = renderEditWarning({
+  const warning = renderEditWarning({
     live: won.teammate,
     landed: won.landed,
     file,
@@ -242,6 +243,14 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
     why: answer.matches,
     told,
   });
+  // 07 §13 (D-O3): the live half is a tripwire-channel delivery of the
+  // teammate's context, so where the repo records outcomes the ask ends with
+  // the clause naming that context. Only the LIVE half — the landed half is
+  // no delivery (recordLandedStop) and has nothing to name.
+  const reason =
+    won.teammate !== null && found.recordsOutcomes
+      ? appendOutcomeClause(warning, won.teammate.workContextId)
+      : warning;
   if (won.teammate !== null) {
     await recordTripwireAsk(ctx, state, won.teammate);
   }
@@ -267,6 +276,8 @@ interface Reasons {
 
 interface FoundReasons extends Reasons {
   readonly coverage?: CoverageRecord;
+  /** The tripwire answer said this repo records hint outcomes (07 §13); false when it did not answer. */
+  readonly recordsOutcomes: boolean;
   /** The probe answered "nothing" under this key (landed-changes/probe.ts). */
   readonly cleanKey: string | null;
   /**
@@ -320,6 +331,7 @@ const findReasons = async (
     landed: worthStopping(probed),
     cleanKey: probed?.cleanKey ?? null,
     ...(hub === null ? {} : { coverage: hub.coverage }),
+    recordsOutcomes: hub?.recordsOutcomes ?? false,
     why,
   };
 };

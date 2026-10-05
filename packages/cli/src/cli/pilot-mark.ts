@@ -27,8 +27,12 @@ import type { PilotMarkRefKind } from "@crosscheck/schema";
 
 const INDENT = "  ";
 
-/** The two one-word label shortcuts (07 §12, second review M6), each printed as itself. */
-export type ShortcutCommand = "noise" | "helpful";
+/**
+ * The two one-word label shortcuts (07 §12, second review M6) and the two
+ * outcome commands that resolve a delivery the same way (07 §13), each
+ * printed as itself.
+ */
+export type ShortcutCommand = "noise" | "helpful" | "followed" | "overrode";
 
 /** What to type when this command cannot tell which delivery was meant. */
 const nameItInstead = (command: ShortcutCommand): string =>

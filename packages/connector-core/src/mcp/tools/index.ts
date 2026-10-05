@@ -15,6 +15,7 @@ import * as extendDiagnosis from "./extend-diagnosis.ts";
 import * as getDiagnosis from "./get-diagnosis.ts";
 import * as getRefereeBrief from "./get-referee-brief.ts";
 import * as listOpenQuestions from "./list-open-questions.ts";
+import * as markHintOutcome from "./mark-hint-outcome.ts";
 import * as publishClaim from "./publish-claim.ts";
 import * as reviewDraft from "./review-draft.ts";
 import * as searchRelatedWork from "./search-related-work.ts";
@@ -33,7 +34,7 @@ export interface McpTool {
 
 /**
  * VERIFY: bun -e 'const {TOOLS}=await import("./packages/connector-core/src/mcp/tools/index.ts");console.log(TOOLS.length, TOOLS.map((t)=>t.definition.name).join(" "))'
- * PRINTS: 10 publish_claim set_intent review_draft extend_diagnosis get_diagnosis get_referee_brief search_related_work ask_teammate answer_question list_open_questions
+ * PRINTS: 11 publish_claim set_intent review_draft extend_diagnosis get_diagnosis get_referee_brief search_related_work ask_teammate answer_question list_open_questions mark_hint_outcome
  */
 export const TOOLS: readonly McpTool[] = [
   publishClaim,
@@ -49,6 +50,9 @@ export const TOOLS: readonly McpTool[] = [
   askTeammate,
   answerQuestion,
   listOpenQuestions,
+  // 07 §13, last because it is the last thing an agent does with a hint:
+  // after reading, acting or deliberately not, it says which.
+  markHintOutcome,
 ];
 
 export const findTool = (name: string): McpTool | undefined =>

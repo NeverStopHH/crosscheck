@@ -5,6 +5,7 @@ export {
   CLAIM_CAPTURE_MODES,
   DELIVERY_CHANNELS,
   DeliveryChannelSchema,
+  HINT_OUTCOMES,
   PILOT_COHORTS,
   PILOT_LEGACY_COHORT,
   PILOT_SESSION_COHORTS,
@@ -51,6 +52,7 @@ export type {
   ArtifactSensitivity,
   CaptureMode,
   DeliveryChannel,
+  HintOutcome,
   PilotCohort,
   PilotEndReason,
   PilotInterventionLabel,
@@ -169,6 +171,11 @@ export {
   reasonLength,
 } from "./pilot-mark.ts";
 export type { PilotMarkInput } from "./pilot-mark.ts";
+export {
+  HintOutcomeSchema,
+  MAX_HINT_OUTCOME_REASON_CHARS,
+} from "./hint-outcome.ts";
+export type { HintOutcomeInput } from "./hint-outcome.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,

@@ -277,6 +277,7 @@ describe("two developers, one diagnosis", () => {
       "ask_teammate",
       "answer_question",
       "list_open_questions",
+      "mark_hint_outcome",
     ]);
   });
 

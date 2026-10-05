@@ -20,6 +20,7 @@ import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
 import { recordsRoutes } from "./routes/records.ts";
+import { hintOutcomeRoutes } from "./routes/hint-outcomes.ts";
 import { pilotMarkRoutes } from "./routes/pilot-marks.ts";
 import { pilotRoutes } from "./routes/pilot.ts";
 import { searchRoutes } from "./routes/search.ts";
@@ -49,6 +50,9 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/contradictions", contradictionsRoutes(deps));
   app.route("/api/absences", absencesRoutes(deps));
   app.route("/api/pilot-marks", pilotMarkRoutes(deps));
+  // 07 §13. Beside the marks and never inside them: the one pilot record an
+  // agent may write, so it has a route the label path does not share.
+  app.route("/api/hint-outcomes", hintOutcomeRoutes(deps));
   app.route("/api/pilot", pilotRoutes(deps));
   app.route("/api/solved-matches", solvedMatchesRoutes(deps));
   app.route("/api/ghost-checks", ghostChecksRoutes(deps));

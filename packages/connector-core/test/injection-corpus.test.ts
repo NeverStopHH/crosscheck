@@ -96,7 +96,7 @@
  *    1516, is 2200 - 684 and follows from the two below it.
  *
  * VERIFY: bun -e 'const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(INJECTION_CORPUS.length)'
- * PRINTS: 65
+ * PRINTS: 67
  *
  * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
  * PRINTS: 11
@@ -544,7 +544,8 @@ const CORPUS_SHAPE: Readonly<Record<InjectionCategory, number>> = {
   // entered is room nothing defends.
   oversize: 6,
   structure: 4,
-  "self-mimicry": 7,
+  // 7 → 9 with 07 §13: the outcome clause and the `--mine` tally line, forged.
+  "self-mimicry": 9,
 };
 const CORPUS_SIZE = Object.values(CORPUS_SHAPE).reduce(
   (total, count) => total + count,

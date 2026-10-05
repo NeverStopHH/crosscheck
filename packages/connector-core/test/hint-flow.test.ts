@@ -19,6 +19,7 @@ import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { repoKey, sessionSlug } from "../src/config/paths.ts";
 import type { HubContext } from "../src/http/client.ts";
 import { readDeliveredHintHashes } from "../src/hints/delivered-store.ts";
+import { outcomeClause } from "../src/hints/outcome-clause.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import {
   readSessionState,
@@ -350,8 +351,43 @@ describe("selectAndRenderHint (the extracted UserPromptSubmit recipe)", () => {
     expect(JSON.stringify(state)).not.toContain("SECRET-PROMPT-MARKER");
   });
 
+  test("on a repo that records outcomes, the hint ends with ONE clause naming its own ref (07 §13)", async () => {
+    // Arrange
+    const f = await fixture("hf-outcome-clause");
+    f.hub.setRecordsOutcomes(true);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert — the agent is told how to say what the hint led to, with the
+    // argument the call needs, once, as the last line
+    const lines = text.split("\n");
+    expect(lines.at(-1)).toBe(outcomeClause(CANDIDATE_CLAIM_ID));
+    expect(text.split("mark_hint_outcome").length).toBe(2);
+    expect(text).toContain(CANDIDATE_BODY);
+  });
+
+  test("an older hub, or a repo that records no outcomes, gets the hint without the clause", async () => {
+    // Arrange — an older hub sends no field; a hub that knows says false
+    const older = await fixture("hf-outcome-older");
+    const unenrolled = await fixture("hf-outcome-unenrolled");
+    unenrolled.hub.setRecordsOutcomes(false);
+
+    // Act
+    const fromOlder = await selectAndRenderHint(flowInput(older));
+    const fromUnenrolled = await selectAndRenderHint(flowInput(unenrolled));
+
+    // Assert — an invitation to a call the hub would refuse is noise
+    expect(fromOlder).toContain(CANDIDATE_BODY);
+    expect(fromOlder).not.toContain("mark_hint_outcome");
+    expect(fromUnenrolled).toContain(CANDIDATE_BODY);
+    expect(fromUnenrolled).not.toContain("mark_hint_outcome");
+  });
+
   test("flow output holds the hint invariants against every corpus payload", async () => {
     const f = await fixture("hf-corpus");
+    // The clause rides every payload's hint, so it is attacked with them.
+    f.hub.setRecordsOutcomes(true);
 
     for (const { id, payload } of INJECTION_CORPUS) {
       // Fresh state per payload: the cap and seen-set must not mute later

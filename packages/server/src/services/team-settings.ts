@@ -59,6 +59,11 @@ export interface TeamSettingsView {
    * only sessions that started at or after it. Null until first enrolled.
    */
   readonly pilotLabelsSince: string | null;
+  /**
+   * WHEN OUTCOMES BECAME RECORDABLE (07 §13.9), stamped exactly as
+   * `pilotLabelsSince` is. Every outcome figure starts at it. Null until first enrolled.
+   */
+  readonly pilotOutcomesSince: string | null;
   /** Null while the repo has never been configured — the defaults are in use. */
   readonly updatedAt: string | null;
 }
@@ -93,6 +98,7 @@ export const readTeamSettings = async (
       suspectAttribution: teamSettings.suspectAttribution,
       pilotEnrolled: teamSettings.pilotEnrolled,
       pilotLabelsSince: teamSettings.pilotLabelsSince,
+      pilotOutcomesSince: teamSettings.pilotOutcomesSince,
       updatedAt: teamSettings.updatedAt,
     })
     .from(teamSettings)
@@ -106,6 +112,7 @@ export const readTeamSettings = async (
       suspectAttribution: DEFAULT_TEAM_SETTINGS.suspectAttribution,
       pilotEnrolled: DEFAULT_TEAM_SETTINGS.pilotEnrolled,
       pilotLabelsSince: null,
+      pilotOutcomesSince: null,
       updatedAt: null,
     };
   }
@@ -115,17 +122,20 @@ export const readTeamSettings = async (
     suspectAttribution: row.suspectAttribution,
     pilotEnrolled: row.pilotEnrolled,
     pilotLabelsSince: row.pilotLabelsSince?.toISOString() ?? null,
+    pilotOutcomesSince: row.pilotOutcomesSince?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
   };
 };
 
 /**
- * THE INSTANT LABELS BECAME AVAILABLE, after this write. Stamped NOW when
+ * THE INSTANT LABELS (AND, 07 §13.9, OUTCOMES) BECAME AVAILABLE, after this
+ * write — `stored` is the one being carried. Stamped NOW when
  * enrolment turns on — a re-enrolment is a new consent, and the sessions of
  * the gap between were never measured — and otherwise kept as it was,
  * leaving included: a team that leaves keeps the record of when it joined.
  */
-const labelsSinceAfter = (
+const sinceAfter = (
+  stored: string | null,
   current: TeamSettingsView,
   nextEnrolled: boolean,
   now: Date,
@@ -133,7 +143,7 @@ const labelsSinceAfter = (
   if (nextEnrolled && !current.pilotEnrolled) {
     return now;
   }
-  return current.pilotLabelsSince === null ? null : new Date(current.pilotLabelsSince);
+  return stored === null ? null : new Date(stored);
 };
 
 export interface WriteTeamSettingsInput {
@@ -160,7 +170,9 @@ export const writeTeamSettings = async (
     pinPolicy: input.pinPolicy ?? current.pinPolicy,
     suspectAttribution: input.suspectAttribution ?? current.suspectAttribution,
     pilotEnrolled,
-    pilotLabelsSince: labelsSinceAfter(current, pilotEnrolled, now),
+    pilotLabelsSince: sinceAfter(current.pilotLabelsSince, current, pilotEnrolled, now),
+    // 07 §13.9: the same consent, the same instant — outcomes are measurement too.
+    pilotOutcomesSince: sinceAfter(current.pilotOutcomesSince, current, pilotEnrolled, now),
     updatedAt: now,
   };
   await deps.db
@@ -173,12 +185,14 @@ export const writeTeamSettings = async (
         suspectAttribution: next.suspectAttribution,
         pilotEnrolled: next.pilotEnrolled,
         pilotLabelsSince: next.pilotLabelsSince,
+        pilotOutcomesSince: next.pilotOutcomesSince,
         updatedAt: next.updatedAt,
       },
     });
   return {
     ...next,
     pilotLabelsSince: next.pilotLabelsSince?.toISOString() ?? null,
+    pilotOutcomesSince: next.pilotOutcomesSince?.toISOString() ?? null,
     updatedAt: next.updatedAt.toISOString(),
   };
 };

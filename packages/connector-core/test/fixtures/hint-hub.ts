@@ -30,6 +30,8 @@ export interface HintHub {
   readonly calls: HintHubCalls;
   readonly latency: HintHubLatency;
   readonly setCandidates: (candidates: readonly unknown[]) => void;
+  /** Whether the candidates, tripwire and solved-match answers say this repo records hint outcomes (07 §13); undefined omits it. */
+  readonly setRecordsOutcomes: (recordsOutcomes: boolean | undefined) => void;
   /** Answers to the CALLER's own questions, on the same bounded response. */
   readonly setAnswers: (answers: readonly unknown[]) => void;
   /** The author's notices (landed changes, step 4), on the same response. */
@@ -233,6 +235,8 @@ export const startHintHub = (
     other: 0,
   };
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
+  /** Absent unless a test sets it — what every hub before 07 §13 sends. */
+  let recordsOutcomes: boolean | undefined;
   let answers: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
   let tripwireSessions: readonly unknown[] = [];
@@ -248,7 +252,10 @@ export const startHintHub = (
         calls.candidates += 1;
         lastCandidatesQuery = searchParams;
         await sleep(latency.candidates);
-        return Response.json({ ok: true, data: { candidates, answers, notices } });
+        return Response.json({
+          ok: true,
+          data: { candidates, answers, notices, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+        });
       }
       if (pathname === "/api/solved-matches") {
         calls.solvedMatches += 1;
@@ -256,12 +263,18 @@ export const startHintHub = (
         lastSolvedFingerprint = new URL(request.url).searchParams.get(
           "fingerprint",
         );
-        return Response.json({ ok: true, data: { matches: solvedMatches } });
+        return Response.json({
+          ok: true,
+          data: { matches: solvedMatches, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+        });
       }
       if (pathname === "/api/hints/tripwire") {
         calls.tripwire += 1;
         await sleep(latency.tripwire);
-        return Response.json({ ok: true, data: { sessions: tripwireSessions } });
+        return Response.json({
+          ok: true,
+          data: { sessions: tripwireSessions, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+        });
       }
       if (pathname === "/api/records") {
         const body = (await request.json()) as { records: readonly unknown[] };
@@ -292,6 +305,9 @@ export const startHintHub = (
     postedRecords,
     setCandidates: (next) => {
       candidates = next;
+    },
+    setRecordsOutcomes: (next) => {
+      recordsOutcomes = next;
     },
     setAnswers: (next) => {
       answers = next;

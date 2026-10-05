@@ -264,6 +264,29 @@ describe("PilotReportSchema", () => {
     expect(parsed.success).toBe(false);
   });
 
+  test("D-O5: an older hub's report has no outcomes block — never one read as zeros", () => {
+    // Arrange — the wire fixture is an older hub's: no `outcomes` at all
+    const { outcomes: _none, ...older } = wireReport() as Record<string, unknown>;
+
+    // Act
+    const parsed = PilotReportSchema.safeParse(older);
+
+    // Assert
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.outcomes).toBeUndefined();
+  });
+
+  test("D-O5: an outcomes block missing a count is a report this client cannot read", () => {
+    // Arrange — "followed 0" from a count that never arrived is AT-9's lie
+    const outcomes = { sinceIso: null, interventions: 4, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 3 };
+
+    // Act
+    const parsed = PilotReportSchema.safeParse({ ...wireReport(), outcomes });
+
+    // Assert
+    expect(parsed.success).toBe(false);
+  });
+
   test("an uninstrumented surface keeps its null — it never becomes an empty record", () => {
     // Arrange & Act — PIL-4 at the client: `{}` would print as a surface that
     // answered nothing, `null` prints as one nobody counted.

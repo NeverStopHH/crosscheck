@@ -682,6 +682,10 @@ CREATE TABLE IF NOT EXISTS team_settings (
   -- 07 12 (second review): when enrolment last turned on, so when a person
   -- could first label this repo's interventions. NULL until it is enrolled.
   pilot_labels_since timestamptz,
+  -- 07 13.9: when outcomes became recordable here — stamped like
+  -- pilot_labels_since, so a delivery from before it is outside every outcome
+  -- figure instead of reading "unmarked". NULL until it is enrolled.
+  pilot_outcomes_since timestamptz,
   updated_at timestamptz NOT NULL,
   updated_by text REFERENCES developers(id)
 );
@@ -1131,6 +1135,14 @@ ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_labels_since timestampt
 UPDATE team_settings SET pilot_labels_since = now()
   WHERE pilot_enrolled AND pilot_labels_since IS NULL;
 
+-- 07 13.9 (the H1 lesson again): WHEN OUTCOMES BECAME RECORDABLE on a repo.
+-- A repo enrolled before this column existed could record no outcome until
+-- this hub started, so it is stamped NOW, once — only rows still NULL match,
+-- so every later start writes nothing.
+ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_outcomes_since timestamptz;
+UPDATE team_settings SET pilot_outcomes_since = now()
+  WHERE pilot_enrolled AND pilot_outcomes_since IS NULL;
+
 -- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
 
 -- WHICH BROKEN PIN THIS ONE REPAIRS (07 3.4), and at which version of that
@@ -1192,6 +1204,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
   ON pilot_marks (ref_kind, ref_id, marked_by);
 CREATE INDEX IF NOT EXISTS pilot_marks_repo_created_idx
   ON pilot_marks (repo, created_at DESC);
+
+-- WHAT A DELIVERED HINT LED TO (07 13): followed, overrode, not_relevant_now,
+-- said by the recipient's agent or the recipient. APPEND-ONLY: the newest row
+-- per delivery is the current outcome and nothing is updated or deleted, so a
+-- changed mind keeps its history. Not pilot_marks: a label is a person's
+-- verdict counted into precision and no agent path may write one (PIL-6);
+-- noise stays that label and is never a value here.
+CREATE TABLE IF NOT EXISTS hint_outcomes (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  delivery_id text NOT NULL REFERENCES hint_deliveries(id),
+  outcome text NOT NULL,
+  -- keep in sync with MAX_HINT_OUTCOME_REASON_CHARS in @crosscheck/schema
+  reason text,
+  recorded_by text NOT NULL REFERENCES developers(id),
+  created_at timestamptz NOT NULL,
+  CONSTRAINT hint_outcomes_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200)
+);
+
+CREATE INDEX IF NOT EXISTS hint_outcomes_delivery_created_idx
+  ON hint_outcomes (delivery_id, created_at DESC);
+-- 07 13.9 (D-O6): outcomes age out with the pilot, past PILOT_RETENTION_DAYS,
+-- from the reaper's pass across every repo — an index range, never a scan.
+CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx
+  ON hint_outcomes (created_at);
 
 -- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
 -- nothing and its window ends NOW, so an answer cannot be reconstructed later

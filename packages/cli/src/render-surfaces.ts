@@ -55,6 +55,7 @@ import {
   reasonPromptLine,
 } from "./cli/pilot-label-render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
+import { HINT_OUTCOME_SURFACES } from "./render-surfaces-outcomes.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
@@ -358,6 +359,7 @@ const pilotWith = (payload: string): PilotView => {
         reasons: [{ label: payload, reason: payload }],
         reasonsBeyondList: 1,
       },
+      outcomes: { sinceIso: payload, interventions: 4, followed: 1, overrode: 1, notRelevantNow: 1, noise: 0, unmarked: 1 },
       cohorts: [
         { cohort: payload, cap: 50, ...labels },
         {
@@ -777,6 +779,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ]),
       ].join("\n"),
   },
+  ...HINT_OUTCOME_SURFACES, // 07 §13, THE ARRAY TAIL: `followed` / `overrode` and `pilot --mine`
 ];
 
 /**

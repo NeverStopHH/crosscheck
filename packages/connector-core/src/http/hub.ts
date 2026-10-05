@@ -720,6 +720,41 @@ export const getSolvedMatches = (
     schema: tolerantList("matches", SolvedMatchEntrySchema),
   });
 
+/** The briefing's read of the same listing: its rows, and whether the repo records outcomes. */
+export interface SolvedPointers {
+  readonly matches: readonly SolvedMatchEntry[];
+  /** 07 §13 (D-O3): false from a hub too old to say. */
+  readonly recordsOutcomes: boolean;
+}
+
+const SolvedPointersSchema = z
+  .looseObject({
+    matches: z.array(z.unknown()),
+    recordsOutcomes: z.boolean().default(false),
+  })
+  .transform(
+    (value): SolvedPointers => ({
+      matches: parseRows(value.matches, SolvedMatchEntrySchema).rows,
+      recordsOutcomes: value.recordsOutcomes,
+    }),
+  );
+
+/**
+ * THE SAME CALL `getSolvedMatches` MAKES, read for the briefing (07 §13): the
+ * flag rides the listing SessionStart already fetches, so the outcome clause
+ * costs no round trip. A separate reader rather than a changed return type,
+ * so every other caller of the listing keeps the shape it has.
+ */
+export const getSolvedPointers = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<SolvedPointers>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/solved-matches${encodeRepo(repo)}`,
+    schema: SolvedPointersSchema,
+  });
+
 /**
  * The precision counters for solved pointers (VISION.md §1): how many this
  * reader was shown on this repo inside the hub's window, and how many they
@@ -1733,6 +1768,12 @@ export interface HintCandidatesResult {
    * too old to send the field.
    */
   readonly notices: readonly LandedNotice[];
+  /**
+   * Whether this repo records what a hint led to (07 §13) — the one fact the
+   * outcome clause needs. False from any hub too old to send it, so no hint
+   * invites a call that hub would answer 404.
+   */
+  readonly recordsOutcomes: boolean;
 }
 
 const HintCandidatesResponseSchema = z
@@ -1741,6 +1782,7 @@ const HintCandidatesResponseSchema = z
     answers: z.array(z.unknown()).default([]),
     coverage: z.unknown().optional(),
     notices: z.array(z.unknown()).default([]),
+    recordsOutcomes: z.boolean().default(false),
   })
   .transform(
     (value): HintCandidatesResult => ({
@@ -1749,6 +1791,7 @@ const HintCandidatesResponseSchema = z
       answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
       coverage: parseCoverage(value.coverage),
       notices: parseRows(value.notices, LandedNoticeSchema).rows,
+      recordsOutcomes: value.recordsOutcomes,
     }),
   );
 
@@ -2288,17 +2331,21 @@ export interface TripwireOutcome {
   readonly sessions: readonly TripwireSession[];
   /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
   readonly coverage: CoverageRecord;
+  /** 07 §13 (D-O3): whether the ask may end with the outcome clause; false from an older hub. */
+  readonly recordsOutcomes: boolean;
 }
 
 const TripwireResponseSchema = z
   .looseObject({
     sessions: z.array(z.unknown()).default([]),
     coverage: z.unknown().optional(),
+    recordsOutcomes: z.boolean().default(false),
   })
   .transform(
     (value): TripwireOutcome => ({
       sessions: parseRows(value.sessions, TripwireSessionSchema).rows,
       coverage: parseCoverage(value.coverage),
+      recordsOutcomes: value.recordsOutcomes,
     }),
   );
 
