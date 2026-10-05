@@ -68,8 +68,10 @@ export type HintSelection =
       readonly kind: "claim";
       readonly context: HintContextCandidate;
       readonly claim: HintClaimCandidate;
-      /** The teammate claims the substance leaves behind — the pointer to the rest. */
+      /** The tree's other claims the substance leaves behind — the pointer to the rest. */
       readonly restCount: number;
+      /** The hub's claim window left rows out, so restCount is a lower bound. */
+      readonly isRestLowerBound: boolean;
       /**
        * What goes out instead when the finding cannot be shown whole beside
        * the lines appended after it (flows/hint.ts): the pointer at the same
@@ -349,13 +351,15 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
       (claim) => isDeliverable(claim, context) && !seen.has(claim.id),
     );
     if (injectable !== undefined) {
-      // The rest are the OTHER teammate claims of the tree — what the hint's
-      // pointer line says is one get_diagnosis away.
+      // The rest are the tree's OTHER claims — the reader's own among them,
+      // since get_diagnosis reads those too — what the hint's pointer line
+      // says is one call away.
       return {
         kind: "claim",
         context,
         claim: injectable,
-        restCount: foreign.length - 1,
+        restCount: context.claims.length - 1,
+        isRestLowerBound: context.claimsTruncated === true,
         ifUnfit: isUnpointed(context, seen)
           ? { kind: "pointer", context, claimCount: foreign.length }
           : SILENCE,

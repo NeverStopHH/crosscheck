@@ -17498,7 +17498,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a substance hint hides how many claims stay behind",
     file: `${CORE}/src/hints/select.ts`,
-    from: "        restCount: foreign.length - 1,\n",
+    from: "        restCount: context.claims.length - 1,\n",
     to: "        restCount: 0,\n",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the pointer to the rest says nothing remains, so nobody reads the tree",
@@ -17674,8 +17674,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a substance hint leaves no room for its trailers",
     file: `${CORE}/src/hints/render.ts`,
-    from: "  const cap = reservedCap(input.reserveChars);\n  const restCount",
-    to: "  const cap = MAX_HINT_TEXT_LENGTH;\n  const restCount",
+    from: "  const cap = reservedCap(input.reserveChars);\n  const rest = restFragment(",
+    to: "  const cap = MAX_HINT_TEXT_LENGTH;\n  const rest = restFragment(",
     test: `${CORE}/test/hint-trailer-budget.test.ts`,
     because: "long labels fill the hint to the wire cap and the coverage note and the outcome clause are dropped without a word",
   },
@@ -17698,8 +17698,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the pointer line keeps its title over the finding",
     file: `${CORE}/src/hints/render.ts`,
-    from: "  const rest = [true, false]\n",
-    to: "  const rest = [true]\n",
+    from: "  const pointerLine = [true, false]\n",
+    to: "  const pointerLine = [true]\n",
     test: `${CORE}/test/hint-trailer-budget.test.ts`,
     because: "a long title costs the reader the teammate's finding when dropping the title would have made room",
   },
@@ -17734,6 +17734,54 @@ export const MUTATIONS: readonly Mutation[
     to: "        ifUnfit: true\n",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "a tree the briefing already named is pointed at a second time — the noise the seen-set exists to stop",
+  },
+  {
+    label: "the hub's claim window hides that it left rows out",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return { claims: windowed, truncated: fetched.length > rows.length };",
+    to: "  return { claims: windowed, truncated: false };",
+    test: `${SERVER}/test/hints.test.ts`,
+    because: "a 50-claim tree is announced as \"beside 29 more claims\", and nobody can tell the count stopped at the window",
+  },
+  {
+    label: "the hub's claim window grows by the row it reads to detect a cut",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const rows = fetched.slice(0, HINT_MAX_CLAIMS_PER_CONTEXT);",
+    to: "  const rows = fetched;",
+    test: `${SERVER}/test/hints.test.ts`,
+    because: "every outgrown tree ships one claim past the bound the selector and the wire budget were sized for",
+  },
+  {
+    label: "the rest count leaves out the reader's own claims in the tree",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "        restCount: context.claims.length - 1,\n",
+    to: "        restCount: foreign.length - 1,\n",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "the pointer to the rest undercounts the tree get_diagnosis actually reads",
+  },
+  {
+    label: "a lower-bound rest count is printed as exact",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "` beside ${isLowerBound ? \"at least \" : \"\"}${String(count)}",
+    to: "` beside ${String(count)}",
+    test: `${CORE}/test/hint-substance-render.test.ts`,
+    because: "\"beside 29 more claims\" on a tree whose window was cut reads as its whole size",
+  },
+  {
+    label: "the selector drops the hub's window-cut signal",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "        isRestLowerBound: context.claimsTruncated === true,",
+    to: "        isRestLowerBound: false,",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "the hub says the count is a lower bound and the hint states it as exact",
+  },
+  {
+    label: "the prompt flow drops the window-cut signal before rendering",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "      isRestLowerBound: selection.isRestLowerBound,\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "every layer knows the count is a lower bound except the sentence the reader sees",
   },
 ];
 
@@ -17949,9 +17997,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
- * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 5
- * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 2
- * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 11
+ * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 6
+ * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 13
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 5
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
@@ -18058,7 +18106,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
- * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/hints.test.ts 5
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2

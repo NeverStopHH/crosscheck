@@ -278,11 +278,23 @@ export interface ClaimHintInput {
   readonly matchedOn?: HintMatchedOn;
   /** Who wrote the session intent it was matched on (declared / derived). */
   readonly intentProvenance?: string | null;
-  /** The teammate claims the substance leaves behind; absent counts none. */
+  /** The tree's other claims the substance leaves behind; absent counts none. */
   readonly restCount?: number;
+  /** The hub's window left claims out, so the count is "at least". */
+  readonly isRestLowerBound?: boolean;
   /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
   readonly reserveChars?: number;
 }
+
+/**
+ * " beside N more claims", or nothing — "at least N" when the count was read
+ * off a hub window that left claims out (review 1006b): a 50-claim tree must
+ * not read as a 30-claim one.
+ */
+const restFragment = (count: number, isLowerBound: boolean): string =>
+  count > 0
+    ? ` beside ${isLowerBound ? "at least " : ""}${String(count)} more claim${count === 1 ? "" : "s"}`
+    : "";
 
 /**
  * The pointer to the rest (§4): how many claims stay behind, and the id the
@@ -290,9 +302,7 @@ export interface ClaimHintInput {
  * invent one (the answer hint learned that first). The title is the one part
  * that can go when room is short; the id and the call never do.
  */
-const restLine = (context: HintContext, restCount: number, withTitle: boolean): string => {
-  const rest =
-    restCount > 0 ? ` beside ${String(restCount)} more claim${restCount === 1 ? "" : "s"}` : "";
+const restLine = (context: HintContext, rest: string, withTitle: boolean): string => {
   const title = withTitle ? ` ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}` : "";
   return (
     `Recorded on work context ${safeId(context.id)}${title}${rest} — ` +
@@ -370,13 +380,13 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
   // The intent line goes first (fitHint drops from the end), then the title
   // on the pointer line; when even that cannot fit, "" — the flow points.
   const cap = reservedCap(input.reserveChars);
-  const restCount = input.restCount ?? 0;
-  const rest = [true, false]
-    .map((withTitle) => restLine(context, restCount, withTitle))
+  const rest = restFragment(input.restCount ?? 0, input.isRestLowerBound === true);
+  const pointerLine = [true, false]
+    .map((withTitle) => restLine(context, rest, withTitle))
     .find((line) => [header, factsLine, line].join("\n").length <= cap);
-  return rest === undefined
+  return pointerLine === undefined
     ? ""
-    : fitHint([header, factsLine, rest, ...intentLines(context.intent)], cap);
+    : fitHint([header, factsLine, pointerLine, ...intentLines(context.intent)], cap);
 };
 
 export interface PointerHintInput {

@@ -249,6 +249,12 @@ export interface HintContextCandidate {
   };
   readonly claims: readonly HintClaimCandidate[];
   /**
+   * True when the context holds more visible claims than the window of
+   * HINT_MAX_CLAIMS_PER_CONTEXT carries, so "N more claims" read off
+   * `claims` is a lower bound and the hint says "at least".
+   */
+  readonly claimsTruncated: boolean;
+  /**
    * The targets this context carries that the PROMPT lexically named (trial
    * finding #19): the exact-tier predicate's own matches, so a targets-only
    * pointer says "touched <path> <age> ago" for a file the reader's prompt
@@ -305,12 +311,20 @@ interface ClaimWindowScope {
   readonly tokens: readonly string[];
 }
 
+/** One context's claim window, and whether visible rows stayed outside it. */
+interface ClaimWindow {
+  readonly claims: readonly HintClaimCandidate[];
+  readonly truncated: boolean;
+}
+
+const EMPTY_WINDOW: ClaimWindow = { claims: [], truncated: false };
+
 const listClaimsForContext = async (
   scope: ClaimWindowScope,
   workContextId: string,
-): Promise<readonly HintClaimCandidate[]> => {
+): Promise<ClaimWindow> => {
   const { db, now, readerDeveloperId, repo } = scope;
-  const rows = await db
+  const fetched = await db
     .select({
       claim: claims,
       authorDeveloperId: agentSessions.developerId,
@@ -341,7 +355,9 @@ const listClaimsForContext = async (
       sql`(${claims.provenance} = ${DECLARED_PROVENANCE}) desc`,
       desc(claims.createdAt),
     )
-    .limit(HINT_MAX_CLAIMS_PER_CONTEXT);
+    // One row past the window, read only to learn that rows stayed behind.
+    .limit(HINT_MAX_CLAIMS_PER_CONTEXT + 1);
+  const rows = fetched.slice(0, HINT_MAX_CLAIMS_PER_CONTEXT);
   // ONE batched read for the whole page, not one per row. `notSuperseded`
   // above has already filtered retracted claims out of this list, so no edge
   // lookup is needed here — the selector's own superseded guard stays as
@@ -377,7 +393,7 @@ const listClaimsForContext = async (
     })),
     scope.tokens,
   );
-  return [...rows]
+  const windowed = [...rows]
     .sort(
       (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),
     )
@@ -418,6 +434,7 @@ const listClaimsForContext = async (
     matchedTerms: shownTerms.get(row.claim.id) ?? 0,
     createdAt: row.claim.createdAt.toISOString(),
   }));
+  return { claims: windowed, truncated: fetched.length > rows.length };
 };
 
 /**
@@ -454,11 +471,11 @@ const listShownSentenceTerms = async (
 const listContextClaims = async (
   scope: ClaimWindowScope,
   workContextIds: readonly string[],
-): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
+): Promise<ReadonlyMap<string, ClaimWindow>> => {
   const lists = await Promise.all(
     workContextIds.map((id) => listClaimsForContext(scope, id)),
   );
-  return new Map(workContextIds.map((id, index) => [id, lists[index] ?? []]));
+  return new Map(workContextIds.map((id, index) => [id, lists[index] ?? EMPTY_WINDOW]));
 };
 
 /**
@@ -672,7 +689,8 @@ const matchCandidates = async (
       updatedAt: row.updatedAt,
       matchedTerms: ownTerms,
     },
-    claims: claimsByContext.get(row.id) ?? [],
+    claims: (claimsByContext.get(row.id) ?? EMPTY_WINDOW).claims,
+    claimsTruncated: (claimsByContext.get(row.id) ?? EMPTY_WINDOW).truncated,
     matchedTargets: matchedTargets.get(row.id) ?? [],
     matchedOn: query.on,
     sharedTerms,

@@ -251,7 +251,7 @@ describe("the ONE most relevant claim, plus the pointer to the rest", () => {
     expect(selectedClaimId([context([positive, negative])])).toBe("clm_negative");
   });
 
-  test("the selection counts the teammate claims it leaves behind", () => {
+  test("the selection counts every claim of the tree it leaves behind", () => {
     const selection = select([
       context([
         decision(),
@@ -261,8 +261,17 @@ describe("the ONE most relevant claim, plus the pointer to the rest", () => {
       ]),
     ]);
     expect(selection.kind).toBe("claim");
-    // Three foreign claims, one delivered: two left behind. The reader's own
-    // claim is knowledge, not a teammate's rest.
-    expect(selection.kind === "claim" ? selection.restCount : -1).toBe(2);
+    // Four claims, one delivered: three left behind. The reader's own claim
+    // in the teammate's tree is part of what get_diagnosis reads, so the
+    // pointer to "the rest" counts it (batch-1006 review, LOW-c).
+    expect(selection.kind === "claim" ? selection.restCount : -1).toBe(3);
+    expect(selection.kind === "claim" ? selection.isRestLowerBound : null).toBe(false);
+  });
+
+  test("a tree whose claims outgrew the hub's window makes the count a lower bound", () => {
+    const selection = select([
+      { ...context([decision(), decision({ id: "clm_obs", kind: "observation", matchedTerms: 0 })]), claimsTruncated: true },
+    ]);
+    expect(selection.kind === "claim" ? selection.isRestLowerBound : null).toBe(true);
   });
 });

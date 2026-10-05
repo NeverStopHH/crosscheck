@@ -96,6 +96,22 @@ describe("plus the pointer to the rest", () => {
     expect(text).not.toContain("more claim");
     expect(text).toContain("get_diagnosis wc_1");
   });
+
+  test("a count read off a capped window says it is a lower bound", () => {
+    const text = renderClaimHint({
+      claim: claim(),
+      context: workContext(),
+      drift: null,
+      now: NOW,
+      restCount: 29,
+      isRestLowerBound: true,
+    });
+    expect(text).toContain("beside at least 29 more claims");
+  });
+
+  test("an exact count stays plain", () => {
+    expect(render({}, 29)).toContain("beside 29 more claims");
+  });
 });
 
 describe("the sentence cut opens no new injection path", () => {

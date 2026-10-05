@@ -174,6 +174,7 @@ const deliveryOf = (
       matchedOn,
       intentProvenance,
       restCount: selection.restCount,
+      isRestLowerBound: selection.isRestLowerBound,
       reserveChars,
     });
     // TOO LONG TO SHOW WHOLE beside the lines appended after it: the

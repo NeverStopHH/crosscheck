@@ -48,6 +48,7 @@ interface ContextCandidateView {
   };
   readonly claims: readonly ClaimCandidateView[];
   readonly matchedTargets: readonly MatchedTargetView[];
+  readonly claimsTruncated?: boolean;
 }
 
 const fetchCandidates = async (
@@ -525,6 +526,35 @@ describe("candidate pool integrity", () => {
     expect(candidate?.claims.map((claim) => claim.id)).toContain(
       "clm_settled_late",
     );
+  });
+
+  test.each([
+    // Nick's context already holds two claims
+    ["exactly fills", HINT_MAX_CLAIMS_PER_CONTEXT - 2, false],
+    ["outgrows", HINT_MAX_CLAIMS_PER_CONTEXT - 1, true],
+  ])("a context that %s its claim window says whether rows stayed behind", async (_, fillerCount, truncated) => {
+    // Arrange — a hint counts "N more claims" off this window, so a window
+    // that cut rows must say so, or a 50-claim tree reads as 30
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    const fillers = Array.from({ length: fillerCount }, (_unused, index) =>
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: `clm_window_${String(index).padStart(2, "0")}`,
+          body: `Window observation number ${String(index)}`,
+        }),
+      ),
+    );
+    const seeded = await postRecords(harness, nick, { records: fillers });
+    expect(seeded.data?.accepted).toBe(fillerCount);
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "why does refresh.ts 500");
+
+    // Assert — the window itself never grows past its bound
+    const candidate = result.candidates.find((row) => row.workContext.id === WORK_CONTEXT_ID);
+    expect(candidate?.claims).toHaveLength(HINT_MAX_CLAIMS_PER_CONTEXT);
+    expect(candidate?.claimsTruncated).toBe(truncated);
   });
 
   test("a flood of newer derived drafts cannot evict declared substance from the window", async () => {

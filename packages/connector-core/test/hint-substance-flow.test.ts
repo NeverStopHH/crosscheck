@@ -134,6 +134,18 @@ describe("a strong, evidence-backed match carries its substance", () => {
     expect(f.hub.calls.candidates).toBe(1);
   });
 
+  test("a tree past the hub's claim window is counted as a lower bound", async () => {
+    // Arrange — the hub says the window cut rows
+    const f = await fixture("sf-truncated");
+    f.hub.setCandidates([{ ...decisionTree(4), claimsTruncated: true }]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toContain("beside at least 2 more claims");
+  });
+
   test("the echo mark covers the sentence that was shown", async () => {
     // Arrange
     const f = await fixture("sf-echo");

@@ -1558,6 +1558,9 @@ export const HintContextCandidateSchema = z
     // most query words ONE statement of the tree shares. Optional — an older
     // hub has no floor to report, and then the selector cannot look again.
     sharedTerms: z.number().int().min(0).optional(),
+    // True when the hub's claim window left visible rows behind, so a count
+    // read off `claims` is a lower bound. Absent from an older hub: no claim.
+    claimsTruncated: z.boolean().optional(),
   })
   .transform((value) => ({
     workContext: value.workContext,
@@ -1566,6 +1569,7 @@ export const HintContextCandidateSchema = z
     matchedTargets: parseRows(value.matchedTargets, MatchedTargetSchema).rows,
     matchedOn: value.matchedOn,
     ...(value.sharedTerms === undefined ? {} : { sharedTerms: value.sharedTerms }),
+    ...(value.claimsTruncated === undefined ? {} : { claimsTruncated: value.claimsTruncated }),
   }));
 
 export type HintContextCandidate = z.infer<typeof HintContextCandidateSchema>;
