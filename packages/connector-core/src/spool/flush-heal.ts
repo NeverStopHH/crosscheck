@@ -31,6 +31,7 @@ import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
+import { recordDrop } from "./drops.ts";
 import { conversationOf } from "../state/session-lineage.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
@@ -151,7 +152,11 @@ export interface HealedDelivery {
   readonly heal: SessionHeal | null;
   /** True once the healer was asked, whatever it answered: once per flush. */
   readonly asked: boolean;
+  /** Indices of refusals already written to the drop ledger before the walk. */
+  readonly counted: ReadonlySet<number>;
 }
+
+const NONE_COUNTED: ReadonlySet<number> = new Set();
 
 export interface HealInput {
   readonly ctx: HubContext;
@@ -162,7 +167,40 @@ export interface HealInput {
   readonly first: IngestSummary;
   readonly healer: SessionHealer | undefined;
   readonly deadlineMs: number;
+  /** The spool the batch came from — the ledger its drops go to. */
+  readonly spoolSlug: string;
+  /** The caller's own certain losses, written before a walk's register. */
+  readonly beforeWalk?: () => Promise<void>;
 }
+
+/**
+ * The refusals no heal can carry: records the refused life produced whose body
+ * names it, when the hub said that life ENDED. Never re-sent (`mayResend`), so
+ * their loss is certain before the walk starts.
+ */
+const sealedRefusals = (input: HealInput, refusals: readonly RecordResult[], cause: RefusalCause): readonly number[] =>
+  cause !== "session_ended"
+    ? []
+    : refusals
+        .map((result) => result.index)
+        .filter((index) => {
+          const record = input.spooled[index];
+          return (
+            record !== undefined &&
+            bodyNamesItsSession(record["kind"]) &&
+            writtenBy(record) === input.flusherSessionId
+          );
+        });
+
+const recordSealed = async (input: HealInput, sealed: readonly number[]): Promise<void> => {
+  if (sealed.length === 0) {
+    return;
+  }
+  const records = sealed.map((index) => input.spooled[index] ?? {});
+  await recordDrop(input.ctx.home, input.ctx.repoKey, input.spoolSlug, sealed.length, "rejected", input.ctx.now(), kindsOf(records), {
+    session_ended: sealed.length,
+  });
+};
 
 /**
  * Whether the refusal fell on ANOTHER conversation's records: a batch the
@@ -188,23 +226,31 @@ const spendsAnotherConversation = (input: HealInput, refusals: readonly RecordRe
 export const healAndResend = async (input: HealInput): Promise<HealedDelivery | null> => {
   const refusals = (input.first.results ?? []).filter(isOwnSessionRefusal);
   if (refusals.length === 0) {
-    return { summary: input.first, heal: null, asked: false };
+    return { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };
   }
   const othersAtStake = spendsAnotherConversation(input, refusals);
   if (input.healer === undefined) {
-    return othersAtStake ? null : { summary: input.first, heal: null, asked: false };
+    return othersAtStake ? null : { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };
   }
-  const result = await input.healer(
-    { sessionId: input.flusherSessionId, cause: refusalCauseOf(refusals[0] ?? { index: 0, status: "rejected" }) },
-    input.deadlineMs,
-  );
+  const cause = refusalCauseOf(refusals[0] ?? { index: 0, status: "rejected" });
+  const sealed = sealedRefusals(input, refusals, cause);
+  // BEFORE THE WALK'S REGISTER, so the next life reports what this refusal
+  // cost from its first word and coverage never reads the window complete in
+  // between (review P3). Only a walk that starts runs this.
+  let walked = false;
+  const result = await input.healer({ sessionId: input.flusherSessionId, cause }, input.deadlineMs, async () => {
+    await input.beforeWalk?.();
+    await recordSealed(input, sealed);
+    walked = true;
+  });
+  const counted: ReadonlySet<number> = walked ? new Set(sealed) : NONE_COUNTED;
   // A walk in flight, or no room for one: what this batch holds may still go
   // under the life that walk lands, so nothing is spent now (review P5, P6).
   if (result.outcome === "pending") {
     return null;
   }
   if (result.outcome === "failed") {
-    return othersAtStake ? null : { summary: input.first, heal: null, asked: true };
+    return othersAtStake ? null : { summary: input.first, heal: null, asked: true, counted };
   }
   const heal: SessionHeal = { refusedSessionId: result.refusedSessionId, sessionId: result.sessionId };
   const resent = refusals
@@ -214,8 +260,12 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
       return record !== undefined && mayResend(record, heal);
     });
   if (resent.length === 0) {
-    return { summary: input.first, heal, asked: true };
+    return { summary: input.first, heal, asked: true, counted };
   }
+  // No room left to re-send after a walk: the batch waits for the next flush,
+  // which sends it under the healed life. What the walk already wrote down is
+  // met again there and counted a second time — the one direction a drop
+  // count may err in, on a path that needs a walk to finish at the deadline.
   const roomMs = input.deadlineMs - Date.now();
   if (roomMs <= 0) {
     return null;
@@ -227,6 +277,6 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
     ),
   );
   return again.ok
-    ? { summary: merged(input.first, resent, again.data), heal, asked: true }
+    ? { summary: merged(input.first, resent, again.data), heal, asked: true, counted }
     : null;
 };

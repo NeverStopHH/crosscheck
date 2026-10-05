@@ -28,7 +28,7 @@ import { reapStaleSessions } from "../../server/src/services/sessions.ts";
 import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
 import { sessionLineagePathForSlug, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
 import { readDropDetail, recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
@@ -65,6 +65,8 @@ let registerCalls = 0;
 /** The proxy's dials: hold every register this long; refuse every end. */
 let registerDelayMs = 0;
 let refuseEnds = false;
+/** The session every heartbeat through the proxy named, in order. */
+const heartbeatIds: string[] = [];
 const cleanups: string[] = [];
 
 interface Fixture {
@@ -197,6 +199,10 @@ beforeAll(async () => {
         if (registerDelayMs > 0) {
           await Bun.sleep(registerDelayMs);
         }
+      }
+      const beat = /^\/api\/sessions\/([^/]+)\/heartbeat$/.exec(pathname);
+      if (request.method === "POST" && beat !== null) {
+        heartbeatIds.push(decodeURIComponent(beat[1] ?? ""));
       }
       if (request.method === "POST" && pathname.endsWith("/end") && refuseEnds) {
         return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
@@ -529,6 +535,39 @@ describe("a session the hub ends while the conversation keeps going", () => {
     // Assert
     expect(registerCalls - before).toBe(1);
     expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(`cc_${sessionId}~r1`);
+  });
+
+  test("the heartbeat after a heal beats the healed life, not the refused one", async () => {
+    // Arrange: a live life whose next beat is due, then ended by another process
+    const fx = await fixture("mid-life-beat", { url: proxyUrl });
+    const sessionId = "mid-life-beat-uuid";
+    await sessionStart(fx, sessionId, "startup");
+    await updateSessionState(fx.home, sessionId, (fresh) => ({ ...fresh, lastHeartbeatAt: null }));
+    await endOnHub(`cc_${sessionId}`);
+    heartbeatIds.length = 0;
+
+    // Act: the edit whose flush heals, and whose heartbeat follows it
+    await edit(fx, sessionId, "src/mid-beat/refused.ts");
+
+    // Assert
+    expect(heartbeatIds).toEqual([`cc_${sessionId}~r1`]);
+  });
+
+  test("a file edited in the refused hook is captured into the next life when edited again", async () => {
+    // Arrange
+    const fx = await fixture("mid-life-same-file");
+    const sessionId = "mid-life-same-file-uuid";
+    await sessionStart(fx, sessionId, "startup");
+    await endOnHub(`cc_${sessionId}`);
+
+    // Act: the same file, in the hook the hub refuses and once more after
+    await edit(fx, sessionId, "src/same/file.ts");
+    await edit(fx, sessionId, "src/same/file.ts");
+
+    // Assert
+    const byContext = await db.execute(sql`
+      select work_context_id from work_context_targets where value = 'src/same/file.ts'`);
+    expect(byContext.rows).toEqual([{ work_context_id: `wc_cc_${sessionId}~r1` }]);
   });
 
   test("a heal against a hub too slow to register keeps PostToolUse inside its budget", async () => {

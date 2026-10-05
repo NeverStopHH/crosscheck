@@ -197,14 +197,18 @@ const maybeHeartbeat = async (
   if (!isEditTool(toolName) && !isBashTool(toolName)) {
     return false;
   }
+  // THE LIFE THE STATE NAMES NOW, not the one this hook started on: the flush
+  // before this may have healed the session, and a beat at the refused id is a
+  // 409 that tells the new life nothing — its loss report included (review P3).
+  const current = (await readSessionState(ctx.config.home, ctx.payload.session_id)) ?? state;
   return heartbeatMaybe({
     hub: ctx.hub,
-    crosscheckSessionId: state.crosscheckSessionId,
-    lastHeartbeatAt: state.lastHeartbeatAt,
+    crosscheckSessionId: current.crosscheckSessionId,
+    lastHeartbeatAt: current.lastHeartbeatAt,
     now,
     status: heartbeatStatusFor(toolName),
     // A beat the hub refuses as ended or unknown walks the ladder (hooks/heal.ts).
-    onRefused: onRefusedHeartbeat(ctx, budget, state.crosscheckSessionId),
+    onRefused: onRefusedHeartbeat(ctx, budget, current.crosscheckSessionId),
   });
 };
 
@@ -385,7 +389,9 @@ export const handlePostToolUse = async (
   // `allocation_failed` for itself.
   const lostBracket = editFired && seq !== null && seq.after === undefined;
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
-    ...withCaptureBookkeeping(withSeenTargets(fresh, files), {
+    // Files this call captured into a life the flush then healed away from
+    // were withheld with it: they stay unseen, so the next life captures them.
+    ...withCaptureBookkeeping(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), {
       resolution,
       capturedCount: files.length,
       editFired,

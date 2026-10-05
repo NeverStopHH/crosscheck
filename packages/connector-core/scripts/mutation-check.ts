@@ -1444,7 +1444,7 @@ export const MUTATIONS: readonly Mutation[
     // Re-pointed when the #17 port folded the capture counters into the same
     // write: the seen-set merge is now the inner call of that fold, so the
     // anchor moved while the defect it re-creates did not.
-    from: "withSeenTargets(fresh, files)",
+    from: "withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : [])",
     to: "fresh",
     test: `${CURSOR}/test/handlers.test.ts`,
     because:
@@ -17314,7 +17314,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a rejected ledger line forgets why the hub refused it",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "      rejectCauses(summary.results),\n",
+    from: "      rejectCauses(uncounted),\n",
     to: "",
     test: `${CORE}/test/reject-cause.test.ts`,
     because: "the pilot's state: 433 records dropped and nothing on the machine that says why",
@@ -17498,16 +17498,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a refused flusher spends another conversation's records when it cannot heal",
     file: `${CORE}/src/spool/flush-heal.ts`,
-    from: "    return othersAtStake ? null : { summary: input.first, heal: null, asked: true };",
-    to: "    return { summary: input.first, heal: null, asked: true };",
+    from: "    return othersAtStake ? null : { summary: input.first, heal: null, asked: true, counted };",
+    to: "    return { summary: input.first, heal: null, asked: true, counted };",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review P7: one conversation's dead session drops another conversation's edits, cursor and all",
   },
   {
     label: "a refused drain with no healer spends another conversation's records",
     file: `${CORE}/src/spool/flush-heal.ts`,
-    from: "    return othersAtStake ? null : { summary: input.first, heal: null, asked: false };",
-    to: "    return { summary: input.first, heal: null, asked: false };",
+    from: "    return othersAtStake ? null : { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };",
+    to: "    return { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "SessionEnd's drain under a session the hub refuses drops whatever other conversations left on disk",
   },
@@ -17550,6 +17550,38 @@ export const MUTATIONS: readonly Mutation[
     to: "    return FAILED;\n  }\n  if (ladder",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review P4: the loser of two concurrent heals throws its batch away although the winner registered the very life it walked to",
+  },
+  {
+    label: "the heal's register is sent before the refusal's loss is written",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    await recordSealed(input, sealed);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P3: the next life reports no loss from its first word, and coverage reads complete over the records the refusal just cost",
+  },
+  {
+    label: "a refusal the walk already wrote down is counted again",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const uncounted = (summary.results ?? []).filter((result) => !healed.counted.has(result.index));",
+    to: "  const uncounted = summary.results ?? [];",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "every record a heal's refusal cost is booked twice in the drop ledger",
+  },
+  {
+    label: "Claude's heartbeat after a heal beats the refused life",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const current = (await readSessionState(ctx.config.home, ctx.payload.session_id)) ?? state;",
+    to: "  const current = state;",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "review P3b: the beat right after a heal is a 409 at the dead id, and the new life's loss report waits a whole throttle interval",
+  },
+  {
+    label: "a file captured into the refused life stays seen in the next one",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : [])",
+    to: "withSeenTargets(fresh, files)",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "an edit made in the hook the hub refused is never captured into the healed life, however often the file is edited again",
   },
 ];
 
@@ -17711,7 +17743,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/resumed-session.test.ts 7
+ * PRINTS: packages/connector-claude/test/resumed-session.test.ts 9
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
@@ -17810,7 +17842,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 10
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
- * PRINTS: packages/connector-core/test/session-lives.test.ts 10
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 12
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

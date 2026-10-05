@@ -142,6 +142,15 @@ const rejectCauses = (results: readonly RecordResult[] | undefined): Counts =>
     .filter((result) => result.status === "rejected")
     .reduce<Counts>((causes, result) => addCount(causes, rejectCauseOf(result.issues), 1), {});
 
+/** A write that runs at most once, however many paths ask for it. */
+const once = (run: () => Promise<void>): (() => Promise<void>) => {
+  let started: Promise<void> | null = null;
+  return () => {
+    started ??= run();
+    return started;
+  };
+};
+
 /** What one batch did: how many records went, and whether it healed the producer. */
 interface BatchOutcome {
   readonly sent: number;
@@ -203,6 +212,13 @@ const flushOneBatch = async (
   if (first === null) {
     return null;
   }
+  // WHAT THIS BATCH HAS LOST WHATEVER COMES NEXT — torn lines, withheld
+  // stragglers — written once: before a heal's walk when one runs, so the
+  // register it sends already reports them (review P3), else just below.
+  const writeSealed = once(async () => {
+    await recordDrop(ctx.home, ctx.repoKey, spool.slug, unparsable, "unparsable", ctx.now());
+    await recordWithheld(ctx, spool, spooled.filter(isWithheld));
+  });
   const healed = await healAndResend({
     ctx,
     developerId: input.developerId,
@@ -211,12 +227,16 @@ const flushOneBatch = async (
     first,
     healer: input.heal,
     deadlineMs,
+    spoolSlug: spool.slug,
+    beforeWalk: writeSealed,
   });
   if (healed === null) {
     return null;
   }
   const summary = healed.summary;
-  await recordWithheld(ctx, spool, spooled.filter(isWithheld));
+  await writeSealed();
+  // The refusals a heal's walk already wrote down are not counted twice.
+  const uncounted = (summary.results ?? []).filter((result) => !healed.counted.has(result.index));
   // A 2xx is not a delivery. Ingest reports per-record outcomes, and a
   // record the hub REFUSED is discarded by the cursor write below exactly
   // like a torn line — so it is counted exactly like one. Nothing in the
@@ -230,21 +250,16 @@ const flushOneBatch = async (
   // against an older hub lost whole record kinds while `spool drops` printed
   // "none" (docs/1.0/loss-accounting.md §1). Counted with the kinds the hub
   // ignored, so doctor can say what an upgrade would recover.
-  const refused = summary.rejected;
+  const refused =
+    summary.results === undefined
+      ? summary.rejected
+      : uncounted.filter((result) => result.status === "rejected").length;
   const ignored = summary.ignored;
-  // Counted BEFORE the cursor moves past them, so a line that is not JSON —
-  // the only thing a torn write can produce — becomes a visible drop instead
-  // of a silent hole. Counting first can at worst double-count after a crash
-  // in the microseconds before the cursor write, and over-counting a drop is
-  // the honest direction to fail in.
-  await recordDrop(
-    ctx.home,
-    ctx.repoKey,
-    spool.slug,
-    unparsable,
-    "unparsable",
-    ctx.now(),
-  );
+  // Counted BEFORE the cursor moves past them (`writeSealed` above holds the
+  // torn lines), so a line that is not JSON — the only thing a torn write can
+  // produce — becomes a visible drop instead of a silent hole. Counting first
+  // can at worst double-count after a crash in the microseconds before the
+  // cursor write, and over-counting a drop is the honest direction to fail in.
   if (refused > 0) {
     await recordDrop(
       ctx.home,
@@ -253,8 +268,8 @@ const flushOneBatch = async (
       refused,
       "rejected",
       ctx.now(),
-      kindsWithStatus(records, summary.results, "rejected"),
-      rejectCauses(summary.results),
+      kindsWithStatus(records, uncounted, "rejected"),
+      rejectCauses(uncounted),
     );
   }
   if (ignored > 0) {

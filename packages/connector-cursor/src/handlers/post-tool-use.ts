@@ -41,7 +41,7 @@ import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
-import { updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 import type { CursorHookContext } from "../runner.ts";
@@ -159,15 +159,18 @@ export const handleCursorPostToolUse = async (
   // race then discards the delivered text it exists to carry out
   // (budget.test.ts pins both halves: skip at zero, clamp when hung).
   const roomMs = budget.spareMs();
+  // The life the state names NOW: the flush above may have healed it, and a
+  // beat at the refused id tells the new life nothing (review P3).
+  const current = (await readSessionState(ctx.config.home, ctx.hostSessionKey)) ?? state;
   const didHeartbeat =
     roomMs <= 0
       ? false
       : await heartbeatMaybe({
           hub: { ...ctx.hub, timeoutMs: Math.min(ctx.hub.timeoutMs, roomMs) },
-          crosscheckSessionId: state.crosscheckSessionId,
-          lastHeartbeatAt: state.lastHeartbeatAt,
+          crosscheckSessionId: current.crosscheckSessionId,
+          lastHeartbeatAt: current.lastHeartbeatAt,
           now,
-          onRefused: onRefusedHeartbeat(ctx, budget, state.crosscheckSessionId),
+          onRefused: onRefusedHeartbeat(ctx, budget, current.crosscheckSessionId),
         });
   if (didHeartbeat) {
     await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({

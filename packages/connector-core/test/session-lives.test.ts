@@ -467,3 +467,23 @@ describe("the heal never throws away what it should re-send (review P4, P5, P6)"
     }
   });
 });
+
+describe("coverage right after a heal never reads a loss as observed (review P3)", () => {
+  test("the heal's register carries the records the refusal just cost", async () => {
+    // Arrange: a live life ended by the hub, and an edit captured after the end
+    const fx = await fixture("loss-carried");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    await captureTarget(fx, "src/lost.ts");
+
+    // Act: the flush refused for its own session heals it
+    await flushAsHook(fx);
+
+    // Assert: the next life's row reports the loss from its very first word
+    const next = `${life.crosscheckSessionId}~r1`;
+    const rows = await raw<{ loss_total: number }>("select loss_total from agent_sessions where id = $1", [next]);
+    expect(rows[0]?.loss_total).toBe(1);
+    expect((await readDropDetail(fx.home, fx.key)).byReason["rejected"]).toBe(1);
+  });
+});
