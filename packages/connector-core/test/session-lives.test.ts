@@ -24,6 +24,7 @@ import { sessionHealer } from "../src/flows/heal-session.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/register-session.ts";
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declarations.ts";
 import { appendRecords } from "../src/spool/append.ts";
+import { readDropDetail } from "../src/spool/drops.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { reapSpool } from "../src/spool/reap.ts";
 import { allocateSeq, readSessionState } from "../src/state/session-state.ts";
@@ -35,6 +36,8 @@ const BRANCH = "main";
 const BASE_COMMIT = "0000000000000000000000000000000000000000";
 const TIMEOUT_MS = 4000;
 const BUDGET_MS = 3000;
+/** How much older a backlog is made so the oldest-first drain takes it first. */
+const OLDER_MS = 60_000;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -244,5 +247,107 @@ describe("a resume after a SessionEnd whose end never reached the hub (review P2
     });
     expect(await targetsOf(first.workContextId)).toEqual(["src/life0.ts"]);
     expect(await targetsOf(resumed.workContextId)).toEqual(["src/life1.ts"]);
+  });
+});
+
+const flushAs = async (fx: Fixture, hostSessionKey: string, hub: HubContext = fx.hub): Promise<void> => {
+  const state = await readSessionState(fx.home, hostSessionKey);
+  if (state === null) throw new Error("no session state");
+  await flushSpool(hub, { sessionId: state.crosscheckSessionId, developerId, heal: healerFor({ ...fx, hostSessionKey }, hub) }, BUDGET_MS);
+};
+
+describe("a register that does not land never leaves a life on an ended id (review P1, P7)", () => {
+  test("a re-fire whose register fails keeps the live life", async () => {
+    // Arrange: life 0 ended by SessionEnd, the conversation resumed on ~r1
+    const fx = await fixture("refire-down");
+    await register(fx);
+    await endViaFlow(fx);
+    const resumed = await register(fx);
+    await captureTarget(fx, "src/before-refire.ts");
+    await flushAsHook(fx);
+
+    // Act: /compact re-fires SessionStart while the hub refuses registers
+    refuseRegisters = true;
+    const refire = await register(fx, fx.proxied);
+    refuseRegisters = false;
+    await captureTarget(fx, "src/after-refire.ts");
+    await flushAsHook(fx);
+
+    // Assert: still ~r1, and both edits are in it
+    expect(refire.crosscheckSessionId).toBe(resumed.crosscheckSessionId);
+    expect((await stateOf(fx))?.crosscheckSessionId).toBe(resumed.crosscheckSessionId);
+    expect(await targetsOf(resumed.workContextId)).toEqual(["src/after-refire.ts", "src/before-refire.ts"]);
+  });
+
+  test("a resume whose register fails takes the next life's id, and the heal registers it as itself", async () => {
+    // Arrange
+    const fx = await fixture("resume-down");
+    const first = await register(fx);
+    await endViaFlow(fx);
+
+    // Act: the resume's register does not land; the next flush reaches the hub
+    refuseRegisters = true;
+    const resumed = await register(fx, fx.proxied);
+    refuseRegisters = false;
+    await captureTarget(fx, "src/resumed.ts");
+    await flushAsHook(fx);
+
+    // Assert
+    const next = `${first.crosscheckSessionId}~r1`;
+    expect(resumed.crosscheckSessionId).toBe(next);
+    expect(await isEnded(next)).toBe(false);
+    expect(await targetsOf(`wc_${next}`)).toEqual(["src/resumed.ts"]);
+  });
+
+  /** Another conversation's pending edit, OLDER than anything of this one, so it drains first. */
+  const otherBacklog = async (fx: Fixture): Promise<{ readonly host: string; readonly workContextId: string }> => {
+    const host = `${fx.hostSessionKey}-other`;
+    const other = await register(fx, fx.hub, host);
+    await flushAs(fx, host);
+    await appendRecords(
+      fx.home,
+      fx.key,
+      host,
+      [targetRecord(other.workContextId, "file", "src/other.ts", producerOf(other.crosscheckSessionId), new Date(Date.now() - OLDER_MS))],
+      new Date(),
+    );
+    return { host, workContextId: other.workContextId };
+  };
+
+  test("a refused flusher that cannot heal leaves another conversation's records on disk", async () => {
+    // Arrange: this conversation ended by the hub, a hub that refuses every
+    // register so no heal can land, and the other conversation's older edit
+    const fx = await fixture("other-at-stake");
+    const other = await otherBacklog(fx);
+    const life = await register(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+
+    // Act: this conversation's flush, refused and unhealable; then the other's own flush
+    refuseRegisters = true;
+    await flushAs(fx, fx.hostSessionKey, fx.proxied);
+    refuseRegisters = false;
+    const spent = (await readDropDetail(fx.home, fx.key)).byReason["rejected"] ?? 0;
+    await flushAs(fx, other.host);
+
+    // Assert: nothing was spent under the refused producer, and the edit landed
+    expect(spent).toBe(0);
+    expect(await targetsOf(other.workContextId)).toEqual(["src/other.ts"]);
+  });
+
+  test("a refused drain with no healer leaves another conversation's records on disk too", async () => {
+    // Arrange
+    const fx = await fixture("other-no-healer");
+    const other = await otherBacklog(fx);
+    const life = await register(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+
+    // Act: a drain under the refused session with no healer — SessionEnd's
+    await flushSpool(fx.hub, { sessionId: life.crosscheckSessionId, developerId }, BUDGET_MS);
+    const spent = (await readDropDetail(fx.home, fx.key)).byReason["rejected"] ?? 0;
+    await flushAs(fx, other.host);
+
+    // Assert
+    expect(spent).toBe(0);
+    expect(await targetsOf(other.workContextId)).toEqual(["src/other.ts"]);
   });
 });

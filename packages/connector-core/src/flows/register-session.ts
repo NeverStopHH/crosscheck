@@ -177,8 +177,15 @@ export type RegisterLadderOutcome =
     }
   /** Recovery only: a LIVE session with this id is bound to another repo. */
   | { readonly outcome: "repo_mismatch" }
-  /** The hub did not answer, answered something else, or refused every rung. */
-  | { readonly outcome: "unregistered" };
+  /**
+   * The hub did not answer, answered something else, or refused every rung.
+   * `sessionId` is the life this host session is on meanwhile: the rung the
+   * walk could not settle — never one the hub answered 409, which is ended or
+   * somebody else's. Records spooled under it are refused `session_unknown`
+   * until a heal registers it as itself (flows/heal-session.ts); under a
+   * refused id they were refused for good.
+   */
+  | { readonly outcome: "unregistered"; readonly sessionId: string };
 
 /**
  * ONE WALK OF THE LIFE LADDER, shared by every register that can meet an
@@ -201,12 +208,13 @@ export const registerSessionLadder = async (
     input.liveSessionId,
     await readEndedLifeRung(input.home, input.hostSessionKey, baseId),
   );
-  for (const rung of ladderRungs(start)) {
+  const rungs = ladderRungs(start);
+  for (const rung of rungs) {
+    const sessionId = lifeSessionId(baseId, rung);
     const hub = rungContext(input);
     if (hub === null) {
-      return { outcome: "unregistered" };
+      return { outcome: "unregistered", sessionId };
     }
-    const sessionId = lifeSessionId(baseId, rung);
     const result = await registerSession(hub, {
       id: sessionId,
       agentKind: input.agentKind,
@@ -226,13 +234,13 @@ export const registerSessionLadder = async (
       };
     }
     if (result.status !== HTTP_CONFLICT) {
-      return { outcome: "unregistered" };
+      return { outcome: "unregistered", sessionId };
     }
     if (input.recovery === true && result.code === REPO_MISMATCH_CODE) {
       return { outcome: "repo_mismatch" };
     }
   }
-  return { outcome: "unregistered" };
+  return { outcome: "unregistered", sessionId: lifeSessionId(baseId, (rungs.at(-1) ?? start) + 1) };
 };
 
 /** The session-start recipe: register → state BEFORE append → work context. */
@@ -284,7 +292,12 @@ export const registerSessionFlow = async (
       registered: false,
     };
   }
-  const crosscheckSessionId = registration?.sessionId ?? baseSessionId;
+  // THE LIFE THE WALK SETTLED ON, registered or not — never the base id as a
+  // default. A re-fire whose register did not land keeps the life it is on; a
+  // resume takes the rung above the life its last end closed. Falling back to
+  // the base id put a resumed conversation back on a life the hub had ENDED,
+  // and the very next flush spent the whole repo spool under it (review E2E-2).
+  const crosscheckSessionId = ladder.sessionId;
   const developerId = registration?.developerId ?? input.fallbackDeveloperId;
   const workContextId = workContextIdFor(crosscheckSessionId);
 

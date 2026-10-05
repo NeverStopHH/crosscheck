@@ -17306,8 +17306,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "Claude's recovery captures under the base id the hub ended",
     file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: '    ladder.outcome === "registered" ? ladder.sessionId : derived.crosscheckSessionId;',
-    to: "    derived.crosscheckSessionId;",
+    from: "  const crosscheckSessionId = ladder.sessionId;\n  const workContextId = workContextIdFor(crosscheckSessionId);\n  const developerId =\n    ladder.outcome",
+    to: "  const crosscheckSessionId = derived.crosscheckSessionId;\n  const workContextId = workContextIdFor(crosscheckSessionId);\n  const developerId =\n    ladder.outcome",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "a conversation that SessionEnd closed and that continues without a SessionStart has every record rejected",
   },
@@ -17486,6 +17486,30 @@ export const MUTATIONS: readonly Mutation[
     to: "  return true;",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "the life the host ended stays open on the hub for good once the conversation resumes, because the next life's state file hides its marker",
+  },
+  {
+    label: "a register that does not land falls back to the base id",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const crosscheckSessionId = ladder.sessionId;\n  const developerId = registration?.developerId",
+    to: "  const crosscheckSessionId = registration?.sessionId ?? baseSessionId;\n  const developerId = registration?.developerId",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review E2E-2: a re-fire whose register is slow puts the live conversation back on the life the hub ended, and the next flush spends the repo spool under it",
+  },
+  {
+    label: "a refused flusher spends another conversation's records when it cannot heal",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    return othersAtStake ? null : { summary: input.first, heal: null, asked: true };",
+    to: "    return { summary: input.first, heal: null, asked: true };",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P7: one conversation's dead session drops another conversation's edits, cursor and all",
+  },
+  {
+    label: "a refused drain with no healer spends another conversation's records",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    return othersAtStake ? null : { summary: input.first, heal: null, asked: false };",
+    to: "    return { summary: input.first, heal: null, asked: false };",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "SessionEnd's drain under a session the hub refuses drops whatever other conversations left on disk",
   },
 ];
 
@@ -17746,7 +17770,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 10
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 1
- * PRINTS: packages/connector-core/test/session-lives.test.ts 2
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 5
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

@@ -53,6 +53,7 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 import type { CursorHookContext } from "../runner.ts";
 import { recordInjectionOutcome } from "../inject/ledger.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
+import { healerFor } from "./heal.ts";
 
 const INITIAL_STATUS = "analyzing";
 
@@ -160,9 +161,11 @@ export const handleCursorSessionStart = async (
   ))
     ? ctx.hub.timeoutMs
     : 0;
+  // WITH the healer, like Claude's SessionStart: an unregistered life is
+  // registered, never used to spend the repo's spool under a refused id.
   await flushSpool(
     ctx.hub,
-    { sessionId: crosscheckSessionId, developerId },
+    { sessionId: crosscheckSessionId, developerId, heal: healerFor(ctx) },
     budget.spareMs() - endHoldbackMs,
   );
   await reapSpool(ctx.config.home, ctx.repoKey, now, deferredEnder(ctx, budget));

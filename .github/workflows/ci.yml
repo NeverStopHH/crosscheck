@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1549
+    # PRINTS: 1552
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -282,7 +282,7 @@ jobs:
     # PRINTS: flows/heal-session.ts 4
     # PRINTS: flows/heartbeat.ts 2
     # PRINTS: flows/hint.ts 5
-    # PRINTS: flows/register-session.ts 8
+    # PRINTS: flows/register-session.ts 9
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
     # PRINTS: git/claim-drift.ts 5
@@ -332,7 +332,7 @@ jobs:
     # PRINTS: render-surfaces.ts 1
     # PRINTS: spool/counts.ts 1
     # PRINTS: spool/drops.ts 11
-    # PRINTS: spool/flush-heal.ts 3
+    # PRINTS: spool/flush-heal.ts 5
     # PRINTS: spool/flush.ts 5
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
@@ -546,7 +546,7 @@ jobs:
     # PRINTS: file-ref.ts 5
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
-    # PRINTS: flush-heal.ts 3
+    # PRINTS: flush-heal.ts 5
     # PRINTS: flush.ts 5
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
@@ -637,7 +637,7 @@ jobs:
     # PRINTS: records.ts 3
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
-    # PRINTS: register-session.ts 8
+    # PRINTS: register-session.ts 9
     # PRINTS: reject-cause.ts 1
     # PRINTS: release-preflight.ts 5
     # PRINTS: render-intent-chain.ts 1

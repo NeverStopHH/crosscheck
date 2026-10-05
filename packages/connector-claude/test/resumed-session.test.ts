@@ -513,6 +513,24 @@ describe("a session the hub ends while the conversation keeps going", () => {
     });
   });
 
+  test("a re-fire after a mid-life heal stays on the healed life, for one register call", async () => {
+    // Arrange: a heal moved the conversation to ~r1 with no SessionEnd, so no
+    // lineage note says where it is — only the state file does
+    const fx = await fixture("mid-life-refire", { url: proxyUrl });
+    const sessionId = "mid-life-refire-uuid";
+    await sessionStart(fx, sessionId, "startup");
+    await endOnHub(`cc_${sessionId}`);
+    await edit(fx, sessionId, "src/mid-refire/refused.ts");
+
+    // Act
+    const before = registerCalls;
+    await sessionStart(fx, sessionId, "compact");
+
+    // Assert
+    expect(registerCalls - before).toBe(1);
+    expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(`cc_${sessionId}~r1`);
+  });
+
   test("a heal against a hub too slow to register keeps PostToolUse inside its budget", async () => {
     // Arrange: an ended life behind a register slower than the whole hook
     const fx = await fixture("mid-life-budget", { url: proxyUrl });
@@ -584,5 +602,42 @@ describe("a conversation resumed after a SessionEnd the hub never heard", () => 
       { work_context_id: `wc_${base}`, value: "src/end-lost/a.ts" },
       { work_context_id: `wc_${base}~r1`, value: "src/end-lost/b.ts" },
     ]);
+  });
+});
+
+/**
+ * A `/compact` RE-FIRE WHOSE REGISTER IS SLOWER THAN THE REQUEST TIMEOUT
+ * (review E2E-2). The register did not answer in time, the flow fell back to
+ * the ended base id, and SessionStart's own flush then spent the spool under
+ * it: every record refused, the cursor past them.
+ */
+describe("a re-fire whose register outlives its timeout", () => {
+  test("keeps the live life, and the next edits land in it", async () => {
+    // Arrange: life 0 ended, the conversation resumed on ~r1
+    const fx = await fixture("slow-refire", { url: proxyUrl });
+    const sessionId = "slow-refire-uuid";
+    await sessionStart(fx, sessionId, "startup");
+    await sessionEnd(fx, sessionId);
+    await sessionStart(fx, sessionId, "resume");
+    await edit(fx, sessionId, "src/slow-refire/before.ts");
+    const tight = { ...fx, env: { ...fx.env, CROSSCHECK_TIMEOUT_MS: String(TIGHT_TIMEOUT_MS) } };
+
+    // Act: the compact's register answers after the request timeout
+    registerDelayMs = TIGHT_TIMEOUT_MS + 300;
+    await sessionStart(tight, sessionId, "compact");
+    registerDelayMs = 0;
+    await edit(fx, sessionId, "src/slow-refire/after-compact.ts");
+
+    // Assert
+    const next = `cc_${sessionId}~r1`;
+    expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(next);
+    const byContext = await db.execute(sql`
+      select work_context_id, value from work_context_targets
+       where value like 'src/slow-refire/%' order by value`);
+    expect(byContext.rows).toEqual([
+      { work_context_id: `wc_${next}`, value: "src/slow-refire/after-compact.ts" },
+      { work_context_id: `wc_${next}`, value: "src/slow-refire/before.ts" },
+    ]);
+    expect((await readDropDetail(fx.home, repoKey(fx.url, REPO_ID))).byReason["rejected"] ?? 0).toBe(0);
   });
 });

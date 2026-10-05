@@ -59,6 +59,18 @@ const LineageSchema = z.looseObject({
 export const lifeSessionId = (baseId: string, rung: number): string =>
   rung === 0 ? baseId : `${baseId}${LIFE_SUFFIX}${String(rung)}`;
 
+/**
+ * The conversation a crosscheck session id belongs to: its base id, every
+ * life of one host session sharing it. Two ids of one conversation are lives
+ * of the same work; two different bases are two conversations.
+ */
+export const conversationOf = (sessionId: string): string => {
+  const at = sessionId.lastIndexOf(LIFE_SUFFIX);
+  return at > 0 && RUNG_PATTERN.test(sessionId.slice(at + LIFE_SUFFIX.length))
+    ? sessionId.slice(0, at)
+    : sessionId;
+};
+
 /** Which life an id names, or null when it is not one of `baseId`'s. */
 export const lifeRungOf = (
   baseId: string,

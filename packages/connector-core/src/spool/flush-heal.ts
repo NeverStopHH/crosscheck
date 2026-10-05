@@ -31,6 +31,7 @@ import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
+import { conversationOf } from "../state/session-lineage.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
 
@@ -133,19 +134,38 @@ export interface HealInput {
 }
 
 /**
- * Null when a re-send was owed and could not be made — no room left, or the
- * hub did not take the request: the batch then stays on disk, and the next
- * flush sends it under the healed life (stragglers withheld, the rest
- * deduplicated by the hub).
+ * Whether the refusal fell on ANOTHER conversation's records: a batch the
+ * flusher drained for a successor's sake, refused only because the flusher
+ * itself is dead to the hub. A record whose writer cannot be read is counted
+ * as the flusher's own — it names no other conversation to protect.
+ */
+const spendsAnotherConversation = (input: HealInput, refusals: readonly RecordResult[]): boolean =>
+  refusals.some((result) => {
+    const record = input.spooled[result.index];
+    const author = record === undefined ? undefined : writtenBy(record);
+    return typeof author === "string" && conversationOf(author) !== conversationOf(input.flusherSessionId);
+  });
+
+/**
+ * Null when the batch must stay on disk: a re-send was owed and could not be
+ * made — no room left, or the hub did not take the request — or the refusal
+ * fell on ANOTHER conversation's records and no life was healed to carry them.
+ * One conversation's dead session never spends another conversation's records
+ * (review P7): they wait for a live flusher — that conversation's own, or this
+ * one once it heals — and the hub deduplicates whatever was already accepted.
  */
 export const healAndResend = async (input: HealInput): Promise<HealedDelivery | null> => {
   const refusals = (input.first.results ?? []).filter(isOwnSessionRefusal);
-  if (input.healer === undefined || refusals.length === 0) {
+  if (refusals.length === 0) {
     return { summary: input.first, heal: null, asked: false };
+  }
+  const othersAtStake = spendsAnotherConversation(input, refusals);
+  if (input.healer === undefined) {
+    return othersAtStake ? null : { summary: input.first, heal: null, asked: false };
   }
   const heal = await input.healer(input.flusherSessionId, input.deadlineMs);
   if (heal === null) {
-    return { summary: input.first, heal: null, asked: true };
+    return othersAtStake ? null : { summary: input.first, heal: null, asked: true };
   }
   const resent = refusals
     .map((result) => result.index)

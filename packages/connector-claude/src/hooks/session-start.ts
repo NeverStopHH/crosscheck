@@ -49,6 +49,7 @@ import {
 } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
+import { healerFor } from "./heal.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -429,9 +430,12 @@ export const handleSessionStart = async (
   ))
     ? ctx.hub.timeoutMs
     : 0;
+  // WITH the healer: a register that did not land leaves this life unknown to
+  // the hub, and a drain under it must register it rather than spend the
+  // repo's spool — other conversations' records too — under a refused id.
   await flushSpool(
     ctx.hub,
-    { sessionId: crosscheckSessionId, developerId },
+    { sessionId: crosscheckSessionId, developerId, heal: healerFor(ctx) },
     budget.spareMs() - endHoldbackMs,
   );
   // After the flush, so a session whose records just reached the hub is reaped

@@ -115,8 +115,9 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
   if (ladder.outcome === "repo_mismatch") {
     return null;
   }
-  const crosscheckSessionId =
-    ladder.outcome === "registered" ? ladder.sessionId : derived.crosscheckSessionId;
+  // The life the walk settled on, registered or not — never the base id the
+  // hub may have ended (flows/register-session.ts RegisterLadderOutcome).
+  const crosscheckSessionId = ladder.sessionId;
   const workContextId = workContextIdFor(crosscheckSessionId);
   const developerId =
     ladder.outcome === "registered" ? ladder.developerId : ctx.config.developerId;
