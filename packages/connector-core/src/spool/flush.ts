@@ -45,6 +45,7 @@ import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
 import { lineTimestampMs } from "./lines.ts";
 import { withLock } from "./lock.ts";
+import { rejectCauseOf } from "./reject-cause.ts";
 
 export interface FlushInput {
   readonly sessionId: string;
@@ -120,6 +121,16 @@ const kindsWithStatus = (
     }, {});
 
 /**
+ * WHY each refused record was refused, as a word (spool/reject-cause.ts) —
+ * never the hub's sentence, which is another process's prose. A hub from
+ * before per-record results sends none, and the count then carries no cause.
+ */
+const rejectCauses = (results: readonly RecordResult[] | undefined): Counts =>
+  (results ?? [])
+    .filter((result) => result.status === "rejected")
+    .reduce<Counts>((causes, result) => addCount(causes, rejectCauseOf(result.issues), 1), {});
+
+/**
  * Sends one batch and moves that spool's cursor past it. Returns how many
  * records went, or null when the hub refused them and nothing was consumed.
  *
@@ -185,6 +196,7 @@ const flushOneBatch = async (
       "rejected",
       ctx.now(),
       kindsWithStatus(records, summary.results, "rejected"),
+      rejectCauses(summary.results),
     );
   }
   if (ignored > 0) {

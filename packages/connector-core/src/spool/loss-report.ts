@@ -34,6 +34,11 @@ import {
   readUnrecordedDrop,
 } from "./drops.ts";
 import type { DropDetail, UnrecordedDrop } from "./drops.ts";
+import {
+  REJECT_CAUSES,
+  REJECT_CAUSE_SENTENCES,
+  UNRECORDED_CAUSE_SENTENCE,
+} from "./reject-cause.ts";
 
 /**
  * The ledger's reason words → the wire's kinds. Three append refusals share
@@ -290,6 +295,8 @@ const detailsOf = (capture: CaptureLossSummary, kind: LossKind): string =>
 export interface LossLines {
   /** The spool-drops sentence: records discarded, in batches, by reason. */
   readonly dropped: string | null;
+  /** Records the hub rejected, and WHY, cause by cause (loss-accounting §4.3). */
+  readonly rejected: string | null;
   /** Records a hub older than this connector threw away INSIDE the hub's window, with their kinds and the remedy. */
   readonly ignored: string | null;
   /** Ignored records whose newest predates the window: said, without telling anyone to upgrade (review M3). */
@@ -341,6 +348,28 @@ const droppedLine = (local: LocalLosses): string | null => {
     `${plural(summary.records, "record")} discarded in ${plural(summary.entries, "batch", "batches")}` +
     `${parenthetical(breakdown(screenReasons(local.drops.byReason)))}${malformed}${unreadable}${markerClause(local.unrecorded)}`
   );
+};
+
+/**
+ * WHY THE HUB REJECTED RECORDS (pilot, 2026-10-05): `433 dropped` was all the
+ * pilot's machine could say, and only the hub's source told 225 of them
+ * apart as a conversation the hub held as ended. Each cause a ledger line
+ * names gets its count and its sentence; the rejected records no line names a
+ * cause for — ledgers from before the field — are counted as such, never
+ * guessed into one.
+ */
+const rejectedLine = (local: LocalLosses): string | null => {
+  const records = local.drops.byReason["rejected"] ?? 0;
+  if (records === 0) {
+    return null;
+  }
+  const causes = local.drops.rejectedCauses;
+  const named = REJECT_CAUSES.filter((cause) => (causes[cause] ?? 0) > 0).map(
+    (cause) => `${String(causes[cause] ?? 0)} ${REJECT_CAUSE_SENTENCES[cause]}`,
+  );
+  const unnamed = records - Object.values(causes).reduce((sum, count) => sum + count, 0);
+  const parts = unnamed > 0 ? [...named, `${String(unnamed)} ${UNRECORDED_CAUSE_SENTENCE}`] : named;
+  return `${plural(records, "record")} rejected by the hub: ${parts.join(" · ")}`;
 };
 
 /**
@@ -439,6 +468,7 @@ const captureLine = (local: LocalLosses): string | null => {
 /** One spelling for both commands (the spool-drops discipline). */
 export const formatLossLines = (local: LocalLosses, now: Date): LossLines => ({
   dropped: droppedLine(local),
+  rejected: rejectedLine(local),
   ...ignoredLines(local, now),
   capture: captureLine(local),
 });

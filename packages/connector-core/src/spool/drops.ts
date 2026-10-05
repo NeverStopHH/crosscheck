@@ -55,6 +55,7 @@ import {
 } from "./ledger-read.ts";
 import type { UndatedContent } from "./ledger-read.ts";
 import { toLines } from "./lines.ts";
+import { screenCauses } from "./reject-cause.ts";
 import { appendOnce } from "./write.ts";
 
 export type DropReason =
@@ -116,6 +117,12 @@ const DropSchema = z.looseObject({
   reason: z.string().min(1),
   /** Record kinds behind the count, on `ignored` and `rejected` lines. */
   kinds: KindsSchema.optional(),
+  /**
+   * Why the hub refused them, on `rejected` lines: a word from
+   * spool/reject-cause.ts per record, never the hub's sentence. A line from
+   * before the field has none, and its count is "no cause recorded".
+   */
+  causes: KindsSchema.optional(),
 });
 
 export const DROPS_SUFFIX = ".drops";
@@ -257,17 +264,20 @@ export const recordDrop = async (
   reason: DropReason,
   now: Date,
   kinds: Readonly<Record<string, number>> = {},
+  causes: Readonly<Record<string, number>> = {},
 ): Promise<void> => {
   if (count <= 0) {
     return;
   }
   const path = spoolDropsPath(home, key, slug);
   const screened = screenKinds(kinds);
+  const screenedCauses = screenCauses(causes);
   const line = {
     at: now.toISOString(),
     count,
     reason,
     ...(Object.keys(screened).length === 0 ? {} : { kinds: screened }),
+    ...(Object.keys(screenedCauses).length === 0 ? {} : { causes: screenedCauses }),
   };
   const outcome = await appendOnce(path, `${JSON.stringify(line)}\n`);
   if (outcome === "written") {
@@ -375,6 +385,8 @@ export interface DropDetail {
   readonly entriesByReason: Counts;
   /** Record kinds the hub ignored, summed over the `ignored` lines. */
   readonly ignoredRecordKinds: Counts;
+  /** Why the hub rejected records, summed over the `rejected` lines that say. */
+  readonly rejectedCauses: Counts;
   readonly oldestAt: string | null;
   readonly newestAt: string | null;
   /**
@@ -403,6 +415,7 @@ const EMPTY_DETAIL: DropDetail = {
   byReason: {},
   entriesByReason: {},
   ignoredRecordKinds: {},
+  rejectedCauses: {},
   oldestAt: null,
   newestAt: null,
   undated: NO_UNDATED,
@@ -441,7 +454,7 @@ const detailOf = (lines: readonly string[], writtenBy: string | null): DropDetai
       if (!parsed.success) {
         return detail;
       }
-      const { at, reason, count, kinds } = parsed.data;
+      const { at, reason, count, kinds, causes } = parsed.data;
       return {
         ...detail,
         undated: isUndated(at) ? mergeUndated(detail.undated, undatedOf(1, writtenBy)) : detail.undated,
@@ -451,6 +464,10 @@ const detailOf = (lines: readonly string[], writtenBy: string | null): DropDetai
           reason === "ignored" && kinds !== undefined
             ? addCounts(detail.ignoredRecordKinds, screenKinds(kinds))
             : detail.ignoredRecordKinds,
+        rejectedCauses:
+          reason === "rejected" && causes !== undefined
+            ? addCounts(detail.rejectedCauses, screenCauses(causes))
+            : detail.rejectedCauses,
         ignoredNewestAt:
           reason === "ignored"
             ? laterIsoOf(detail.ignoredNewestAt, ledgerInstant(at) ?? writtenBy)
@@ -481,6 +498,7 @@ const addDetail = (left: DropDetail, right: DropDetail): DropDetail => ({
   byReason: addCounts(left.byReason, right.byReason),
   entriesByReason: addCounts(left.entriesByReason, right.entriesByReason),
   ignoredRecordKinds: addCounts(left.ignoredRecordKinds, right.ignoredRecordKinds),
+  rejectedCauses: addCounts(left.rejectedCauses, right.rejectedCauses),
   oldestAt: isoOrNull(earliest(msOrNull(left.oldestAt), msOrNull(right.oldestAt))),
   newestAt: isoOrNull(latest(msOrNull(left.newestAt), msOrNull(right.newestAt))),
   undated: mergeUndated(left.undated, right.undated),
@@ -508,6 +526,8 @@ const ArchiveSchema = z.looseObject({
   byReason: KindsSchema.optional(),
   entriesByReason: KindsSchema.optional(),
   ignoredKinds: KindsSchema.optional(),
+  /** The rejection causes folded in; absent in an archive from before them. */
+  rejectedCauses: KindsSchema.optional(),
   /** Undatable entries folded in, and their bound (review H2). */
   undatable: z.number().int().min(0).optional(),
   undatableBy: z.string().nullable().optional(),
@@ -554,6 +574,7 @@ const readArchiveDetail = async (path: string): Promise<DropDetail> => {
         : byReason,
     entriesByReason: parsed.data.entriesByReason ?? {},
     ignoredRecordKinds: screenKinds(parsed.data.ignoredKinds ?? {}),
+    rejectedCauses: screenCauses(parsed.data.rejectedCauses ?? {}),
     oldestAt,
     newestAt,
     // The bound the fold kept, else the archive's own mtime: it is rewritten
@@ -616,6 +637,7 @@ export const archiveLedger = async (
       byReason,
       entriesByReason: total.entriesByReason,
       ignoredKinds: total.ignoredRecordKinds,
+      rejectedCauses: total.rejectedCauses,
       // Carried, because `stamp` above writes a real instant even when every
       // folded line was undatable, and the archive must not launder that —
       // with the bound those lines had, so they still age out (review H2).

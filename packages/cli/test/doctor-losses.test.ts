@@ -200,3 +200,57 @@ describe("§5.1: doctor and status print every loss, in one spelling", () => {
     expect(without.stdout).not.toContain("\nlosses:");
   });
 });
+
+/**
+ * WHY THE HUB REJECTED RECORDS (pilot, 2026-10-05; loss-accounting §4.3). The
+ * pilot's `status` said `433 dropped` and nothing on the machine could say
+ * why; the ledger now keeps the hub's refusal as a word, and both commands
+ * spell it out — lines from before the field counted as "no cause recorded",
+ * never guessed.
+ */
+describe("doctor and status say why the hub rejected records", () => {
+  const seedRejections = async (home: string, key: string): Promise<void> => {
+    const now = new Date();
+    await recordDrop(home, key, sessionSlug("rejected-cli"), 2, "rejected", now, { target: 2 }, { session_ended: 2 });
+    // A 0.10 line: the count, and nothing about why.
+    await recordDrop(home, key, sessionSlug("rejected-cli-old"), 3, "rejected", now);
+  };
+
+  test("doctor names each cause with its count, and the uncaused ones as such", async () => {
+    // Arrange
+    const { repo, home, env, key } = await fixture("doctor-rejected");
+    await seedRejections(home, key);
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "WARN  hub rejected records  5 records rejected by the hub: 2 because the hub held their session as ended",
+    );
+    expect(result.stdout).toContain(" · 3 with no cause recorded — written by a connector before 1.0");
+  });
+
+  test("a clean machine passes the line", async () => {
+    // Arrange
+    const { repo, env } = await fixture("doctor-not-rejected");
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  hub rejected records  none");
+  });
+
+  test("status carries the same sentence on its losses line", async () => {
+    // Arrange
+    const { repo, home, env, key } = await fixture("status-rejected");
+    await seedRejections(home, key);
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("\nlosses: 5 records rejected by the hub: 2 because the hub held their session as ended");
+  });
+});

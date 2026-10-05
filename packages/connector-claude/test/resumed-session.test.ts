@@ -27,7 +27,7 @@ import type { Db } from "@crosscheck/server";
 import { reapStaleSessions } from "../../server/src/services/sessions.ts";
 import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
 import { sessionLineagePathForSlug, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
-import { readDropDetail } from "@crosscheck/connector-core/spool/drops.ts";
+import { readDropDetail, recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { repoKey, runHook } from "../src/index.ts";
@@ -362,11 +362,12 @@ describe("a PostToolUse after SessionEnd with no SessionStart in between", () =>
  * on their own repo and developer, whose email is the fixture repo's author.
  */
 describe("coverage once a conversation is captured again", () => {
-  const COVERAGE_REMOTE = "git@github.com:acme/coverage.git";
-  const COVERAGE_REPO_ID = "github.com/acme/coverage";
+  // One repo per test: a coverage rung folds every session on its repo.
+  const remoteOf = (name: string): string => `git@github.com:acme/${name}.git`;
+  const repoIdOf = (name: string): string => `github.com/acme/${name}`;
 
-  const rung = async (viewerId: string, source: "agent_event" | "git") =>
-    (await readCoverage({ db, now: () => new Date() }, viewerId, COVERAGE_REPO_ID)).sources.find(
+  const rung = async (viewerId: string, repo: string, source: "agent_event" | "git") =>
+    (await readCoverage({ db, now: () => new Date() }, viewerId, repoIdOf(repo))).sources.find(
       (row) => row.source === source,
     );
 
@@ -374,32 +375,61 @@ describe("coverage once a conversation is captured again", () => {
     // Arrange: the repo's commit author, three ended lives, and their last
     // live session two days behind the commits it is meant to cover
     const author = await createDeveloper("Committer", "dev@example.com");
-    const fx = await fixture("coverage-git", { key: author.key, remote: COVERAGE_REMOTE });
+    const fx = await fixture("coverage-git", { key: author.key, remote: remoteOf("coverage-git") });
     const sessionId = "coverage-git-uuid";
     await liveAndEnd(fx, sessionId, OLD_LADDER_RUNGS);
     await db.execute(sql`
       update agent_sessions set last_heartbeat_at = now() - interval '2 days'
-       where repo = ${COVERAGE_REPO_ID}`);
-    expect((await rung(author.id, "git"))?.reason).toBe("commit_authors_unreported");
+       where repo = ${repoIdOf("coverage-git")}`);
+    expect((await rung(author.id, "coverage-git", "git"))?.reason).toBe("commit_authors_unreported");
 
     // Act: the conversation comes back
     await sessionStart(fx, sessionId, "resume");
     await edit(fx, sessionId, "src/coverage/after.ts");
 
     // Assert
-    expect(await rung(author.id, "git")).toMatchObject({ state: "complete" });
-    expect(await rung(author.id, "agent_event")).toMatchObject({ state: "complete" });
+    expect(await rung(author.id, "coverage-git", "git")).toMatchObject({ state: "complete" });
+    expect(await rung(author.id, "coverage-git", "agent_event")).toMatchObject({ state: "complete" });
+  });
+
+  test("records rejected while the conversation was deaf keep the agent rung open after it returns", async () => {
+    // Arrange: the machine's ledger holds the records the deaf lives lost —
+    // the pilot's state at upgrade time
+    const author = await createDeveloper("Deaf", "deaf@example.com");
+    const fx = await fixture("coverage-deaf", { key: author.key, remote: remoteOf("coverage-deaf") });
+    const sessionId = "coverage-deaf-uuid";
+    await liveAndEnd(fx, sessionId, OLD_LADDER_RUNGS);
+    await recordDrop(
+      fx.home,
+      repoKey(fx.url, repoIdOf("coverage-deaf")),
+      sessionSlug(sessionId),
+      2,
+      "rejected",
+      new Date(),
+      { target: 2 },
+      { session_ended: 2 },
+    );
+
+    // Act: the conversation comes back
+    await sessionStart(fx, sessionId, "resume");
+
+    // Assert: observation resumed, but what was lost is not called observed —
+    // the register carried the loss, and it is the rung's reason
+    expect(await rung(author.id, "coverage-deaf", "agent_event")).toMatchObject({
+      state: "incomplete",
+      reason: "telemetry_lost",
+    });
   });
 
   test("a reaped life that comes back is revived, and the reaped caveat goes with it", async () => {
     // Arrange: a live life killed without SessionEnd and reaped by the hub
     const viewer = await createDeveloper("Reaped", "reaped@example.com");
-    const fx = await fixture("coverage-reaped", { key: viewer.key, remote: COVERAGE_REMOTE });
+    const fx = await fixture("coverage-reaped", { key: viewer.key, remote: remoteOf("coverage-reaped") });
     const sessionId = "coverage-reaped-uuid";
     await liveAndEnd(fx, sessionId, OLD_LADDER_RUNGS);
     await sessionStart(fx, sessionId, "resume");
     await reapStaleSessions({ db, now: () => new Date() }, { staleHours: 0, developerId: viewer.id });
-    expect(await rung(viewer.id, "agent_event")).toMatchObject({
+    expect(await rung(viewer.id, "coverage-reaped", "agent_event")).toMatchObject({
       state: "incomplete",
       reason: "session_reaped",
     });
@@ -411,6 +441,6 @@ describe("coverage once a conversation is captured again", () => {
     expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(
       `cc_${sessionId}~r${String(OLD_LADDER_RUNGS)}`,
     );
-    expect((await rung(viewer.id, "agent_event"))?.state).not.toBe("incomplete");
+    expect((await rung(viewer.id, "coverage-reaped", "agent_event"))?.state).not.toBe("incomplete");
   });
 });

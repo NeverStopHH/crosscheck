@@ -615,7 +615,7 @@ describe("one spelling for doctor and status", () => {
     const lines = formatLossLines(await readLocalLosses(await home(), KEY), T4);
 
     // Assert
-    expect(lines).toEqual({ dropped: null, ignored: null, ignoredEarlier: null, capture: null });
+    expect(lines).toEqual({ dropped: null, rejected: null, ignored: null, ignoredEarlier: null, capture: null });
   });
 });
 
