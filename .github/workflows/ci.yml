@@ -240,7 +240,7 @@ jobs:
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 15
+    # PRINTS: briefing/render.ts 14
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/records.ts 1
@@ -357,7 +357,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/runner.ts 5
     # PRINTS: packages/schema/src/causal-guarantees.ts 10
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
-    # PRINTS: packages/schema/src/commit-evidence.ts 1
+    # PRINTS: packages/schema/src/commit-evidence.ts 2
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/enums.ts 2
     # PRINTS: packages/schema/src/envelope.ts 1
@@ -480,7 +480,7 @@ jobs:
     # PRINTS: claim-surface.ts 1
     # PRINTS: claim-validity.ts 8
     # PRINTS: client.ts 12
-    # PRINTS: commit-evidence.ts 4
+    # PRINTS: commit-evidence.ts 5
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 17
     # PRINTS: config.ts 4
@@ -620,7 +620,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 79
+    # PRINTS: render.ts 78
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9

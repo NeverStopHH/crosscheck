@@ -89,15 +89,26 @@ export type CommitEvidence = z.infer<typeof CommitEvidenceSchema>;
  * Matched on the lowercased author email the hub already stores. That is a
  * free-text git field like the name, which is why renderers name the
  * IDENTITY and never assert who or what made the commit. A row is added with
- * evidence of the address a product commits under, never by guess.
+ * evidence of the address a product commits under, never by guess. The
+ * product name rides on the row so the hub's refusals and every renderer
+ * spell one identity one way.
  */
 export const CLOUD_AGENT_IDENTITIES = [
-  { id: "claude-code-web", email: "noreply@anthropic.com" },
+  {
+    id: "claude-code-web",
+    email: "noreply@anthropic.com",
+    product: "Claude Code on the web",
+  },
 ] as const;
 
-export type CloudAgentId = (typeof CLOUD_AGENT_IDENTITIES)[number]["id"];
+export type CloudAgentIdentity = (typeof CLOUD_AGENT_IDENTITIES)[number];
+export type CloudAgentId = CloudAgentIdentity["id"];
 
 /** The cloud agent a lowercased commit author email belongs to, or null. */
 export const cloudAgentForEmail = (email: string): CloudAgentId | null =>
   CLOUD_AGENT_IDENTITIES.find((identity) => identity.email === email)?.id ??
   null;
+
+/** The row behind a cloud agent id, or null for an id this table does not hold. */
+export const cloudAgentById = (id: unknown): CloudAgentIdentity | null =>
+  CLOUD_AGENT_IDENTITIES.find((identity) => identity.id === id) ?? null;
