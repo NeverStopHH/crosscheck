@@ -67,6 +67,13 @@ export interface CaptureGitTouchesInput {
    * `withGitTouches` write happens after them.
    */
   readonly seq?: SeqRange | null;
+  /**
+   * How long `git diff` may take. Absent = GIT_TOUCHES_TIMEOUT_MS, the bound
+   * the Stop hook's budget needs. Only a test that builds thousands of dirty
+   * files passes more, so a loaded machine cannot turn its bound check into
+   * "git did not answer".
+   */
+  readonly gitTimeoutMs?: number;
 }
 
 /** True when the file changed after the session began. Unreadable = no. */
@@ -113,7 +120,7 @@ export const captureGitTouches = async (
     // `git add` mid-turn has not made its work invisible.
     ["diff", "--name-only", "HEAD"],
     input.repoRoot,
-    GIT_TOUCHES_TIMEOUT_MS,
+    input.gitTimeoutMs ?? GIT_TOUCHES_TIMEOUT_MS,
   );
   if (!outcome.ok) {
     return UNAVAILABLE;
