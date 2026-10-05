@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1581
+    # PRINTS: 1585
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -245,12 +245,12 @@ jobs:
     # PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
     # PRINTS: briefing/context-group.ts 1
     # PRINTS: briefing/draft-backlog.ts 5
-    # PRINTS: briefing/draft-nudge.ts 4
+    # PRINTS: briefing/draft-nudge.ts 5
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 21
+    # PRINTS: briefing/render.ts 24
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/records.ts 1
@@ -533,7 +533,7 @@ jobs:
     # PRINTS: doctor-sharing.ts 3
     # PRINTS: doctor.ts 70
     # PRINTS: draft-backlog.ts 5
-    # PRINTS: draft-nudge.ts 8
+    # PRINTS: draft-nudge.ts 9
     # PRINTS: drafts.ts 2
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
@@ -652,7 +652,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 85
+    # PRINTS: render.ts 88
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9

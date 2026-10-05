@@ -13,7 +13,7 @@ import { MAX_HINT_TEXT_LENGTH } from "@crosscheck/schema";
 import { backlogOf } from "../src/briefing/draft-backlog.ts";
 import type { DraftBacklog } from "../src/briefing/draft-backlog.ts";
 import { renderDraftNudge } from "../src/briefing/draft-nudge.ts";
-import { QUOTED_DATA_NOTICE, renderBriefing } from "../src/briefing/render.ts";
+import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE, renderBriefing } from "../src/briefing/render.ts";
 import { repoKey } from "../src/config/paths.ts";
 import {
   DRAFT_LISTING_CAP,
@@ -91,7 +91,8 @@ describe("renderDraftNudge", () => {
     expect(text).toContain("review_draft");
     expect(text).toContain("ask the person");
     expect(text).toContain("do not decide yourself");
-    expect(text).toContain(QUOTED_DATA_NOTICE);
+    expect(text).toContain(OWN_DRAFTS_QUOTED_DATA_NOTICE);
+    expect(text).not.toContain(QUOTED_DATA_NOTICE);
     expect(pointerLines(text)).toHaveLength(3);
     expect(text).toContain("review_draft clm_a");
   });
@@ -475,5 +476,49 @@ describe("the SessionStart briefing carries the hub's backlog totals", () => {
       expect(assembled.briefing).toContain(`${String(BACKLOG)} in all, the oldest`);
       expect(assembled.briefing).toContain(`(+${String(BACKLOG - MAX_DRAFT_POINTERS)} more not shown)`);
     });
+  });
+});
+
+describe("the « » notice is true for the block it heads", () => {
+  const draftHeaderOf = (text: string): string =>
+    text.split("\n").find((line) => line.startsWith("Your own unreviewed draft claims")) ?? "";
+
+  test("a briefing of own drafts only never says its text was written by teammates", () => {
+    const text = renderBriefing({
+      repoId: REPO_ID,
+      selfDeveloperId: "dev_self",
+      presence: [],
+      workContexts: [],
+      now: NOW,
+      drafts: [draft()],
+    });
+
+    expect(text).not.toContain(QUOTED_DATA_NOTICE);
+    expect(draftHeaderOf(text)).toEndWith(OWN_DRAFTS_QUOTED_DATA_NOTICE);
+  });
+
+  test("beside teammates' blocks, each block keeps its own notice", () => {
+    const text = renderBriefing({
+      repoId: REPO_ID,
+      selfDeveloperId: "dev_self",
+      presence: [
+        {
+          sessionId: "cc_mara",
+          developerId: "dev_mara",
+          developerName: "Mara",
+          branch: "fix/reap",
+          status: "investigating",
+          lastHeartbeatAt: new Date(NOW.getTime() - 60_000).toISOString(),
+          isSelf: false,
+          intent: null,
+        },
+      ],
+      workContexts: [],
+      now: NOW,
+      drafts: [draft()],
+    });
+
+    expect(text.split("\n")[0]).toEndWith(QUOTED_DATA_NOTICE);
+    expect(draftHeaderOf(text)).toEndWith(OWN_DRAFTS_QUOTED_DATA_NOTICE);
   });
 });

@@ -42,7 +42,7 @@ import {
   oldestAgeMs,
 } from "./draft-backlog.ts";
 import type { DraftBacklog, DraftCount } from "./draft-backlog.ts";
-import { formatDraftLine, QUOTED_DATA_NOTICE } from "./render.ts";
+import { formatDraftLine, OWN_DRAFTS_QUOTED_DATA_NOTICE } from "./render.ts";
 
 export interface DraftNudgeInput {
   /** The hub's listing, already counted (briefing/draft-backlog.ts). */
@@ -132,7 +132,7 @@ export const renderDraftNudge = (input: DraftNudgeInput): string => {
     return "";
   }
   const due = countAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
-  const fixed = [headerLine(input, dueListed), ASK, QUOTED_DATA_NOTICE];
+  const fixed = [headerLine(input, dueListed), ASK, OWN_DRAFTS_QUOTED_DATA_NOTICE];
   const pointers = dueListed.flatMap((entry) => {
     const line = formatDraftLine(entry, input.now);
     return line === null ? [] : [line];

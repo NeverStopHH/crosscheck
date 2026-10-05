@@ -3,8 +3,10 @@
  *
  * 1. THE CORPUS ON EVERY REGISTERED SURFACE. Each `corpus` registration
  *    renders every injection payload and is held to its framing class:
- *    framed output carries QUOTED_DATA_NOTICE, every line passes the
- *    character invariants (fixtures/untrusted-invariants.ts — the SAME
+ *    framed output carries ITS quoted-data notice (QUOTED_DATA_NOTICE, or
+ *    the own-drafts notice a surface declares) and never the other one,
+ *    every line passes the character invariants
+ *    (fixtures/untrusted-invariants.ts — the SAME
  *    assertions the briefing and MCP corpora use), and at most one « » pair
  *    per line; `sanitized` output additionally carries no frame characters
  *    at all.
@@ -39,7 +41,7 @@ import { describe, expect, test } from "bun:test";
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 
-import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import {
   RENDER_BARREL_MODULES,
   RENDER_LAYER_MODULES,
@@ -54,6 +56,12 @@ import {
   REGISTERED_PACKAGES,
 } from "./fixtures/registry-packages.ts";
 import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
+
+/** Every quoted-data notice the render layer owns — one constant per notice. */
+const QUOTED_DATA_NOTICES: readonly string[] = [QUOTED_DATA_NOTICE, OWN_DRAFTS_QUOTED_DATA_NOTICE];
+
+/** The notice a framed surface must carry: its declared one, else the teammate notice. */
+const noticeOf = (surface: CorpusRenderSurface): string => surface.notice ?? QUOTED_DATA_NOTICE;
 
 const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
 
@@ -300,7 +308,7 @@ describe("§4.4: the corpus runs on every registered surface", () => {
       // Assert
       expect(output.length, surface.name).toBeGreaterThan(0);
       if (surface.framing === "framed") {
-        expect(output, surface.name).toContain(QUOTED_DATA_NOTICE);
+        expect(output, surface.name).toContain(noticeOf(surface));
       }
     },
   );
@@ -324,7 +332,13 @@ describe("§4.4: the corpus runs on every registered surface", () => {
           // correct render). Non-emptiness is pinned on a benign payload in
           // the test below, where it cannot be excused.
           if (output.length > 0) {
-            expect(output, where).toContain(QUOTED_DATA_NOTICE);
+            expect(output, where).toContain(noticeOf(surface));
+            // ...and never the OTHER notice: each one must be true of the
+            // text it heads, so a block of the reader's own drafts may not
+            // say it was written by teammates, nor the reverse.
+            for (const other of QUOTED_DATA_NOTICES.filter((notice) => notice !== noticeOf(surface))) {
+              expect(output.includes(other), `${where}: wrong notice`).toBe(false);
+            }
           }
         } else {
           // sanitized / bare / id: no frame characters at all — the frame
