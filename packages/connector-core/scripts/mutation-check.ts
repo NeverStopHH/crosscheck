@@ -16472,6 +16472,62 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/absence-cli.test.ts`,
     because: "the parts sum past the total, and one cloud identity reads as a stranger needing an account as well",
   },
+  {
+    label: "the alias API links Claude Code on the web's commit identity to one developer",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "  const email = normalizeEmail(rawEmail);\n  const refused = refuseCloudAgent(email);",
+    to: "  const email = normalizeEmail(rawEmail);\n  const refused = null;",
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because: "every cloud session's commits, by anyone, become one developer's, and a session of theirs nearby closes a gap the hub has no evidence about",
+  },
+  {
+    label: "a developer can be created under Claude Code on the web's commit identity",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "  const email = normalizeEmail(input.email);\n  const refused = refuseCloudAgent(email);",
+    to: "  const email = normalizeEmail(input.email);\n  const refused = null;",
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because: "the same misattribution through the primary email: an account called Claude owns every cloud session's commits",
+  },
+  {
+    label: "the hub hides a cloud agent identity it already linked to a developer",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "    return cloudAgent === null ? [] : [cloudAgent];",
+    to: "    return [];",
+    test: `${SERVER}/test/absences.test.ts`,
+    because: "a link from before the refusal keeps attributing everyone's cloud commits to one person, and nothing on any surface says so",
+  },
+  {
+    label: "an older hub's silence on linked identities reads as none linked",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      linkedCloudAgents: value.linkedCloudAgents ?? null,",
+    to: "      linkedCloudAgents: value.linkedCloudAgents ?? [],",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "doctor reports a check the hub never ran as passed, the silence-that-looks-like-safety this project refuses",
+  },
+  {
+    label: "doctor passes a cloud agent identity linked to one developer",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '    "WARN",\n    "cloud agent identity",',
+    to: '    "PASS",\n    "cloud agent identity",',
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "a misattribution only an admin can undo sits among the green lines, where nobody looks",
+  },
+  {
+    label: "status drops the linked cloud agent identity line",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      ...cloudAgentLinkLines,\n",
+    to: "",
+    test: `${CLI}/test/absence-cli.test.ts`,
+    because: "the link can close the very gap the absence heading would have shown, so status says nothing at all",
+  },
+  {
+    label: "a newer hub's unknown cloud agent id prints its own frame characters",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "does not know (${bareUntrusted(id)})",
+    to: "does not know (${id})",
+    test: `${CORE}/test/absence-render.test.ts`,
+    because: "hub text in a bare slot can mint the renderer's own framing on doctor's and status's lines",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16516,7 +16572,7 @@ interface Outcome {
  * other.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: packages/cli/test/absence-cli.test.ts 2
+ * PRINTS: packages/cli/test/absence-cli.test.ts 5
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
@@ -16639,7 +16695,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/absence-render.test.ts 5
+ * PRINTS: packages/connector-core/test/absence-render.test.ts 6
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
@@ -16753,7 +16809,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
- * PRINTS: packages/server/test/absences.test.ts 2
+ * PRINTS: packages/server/test/absences.test.ts 3
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -16769,7 +16825,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
- * PRINTS: packages/server/test/developer-emails.test.ts 2
+ * PRINTS: packages/server/test/developer-emails.test.ts 4
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
