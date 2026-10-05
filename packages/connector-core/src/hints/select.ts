@@ -228,9 +228,24 @@ const isInjectable = (claim: HintClaimCandidate): boolean =>
   isCodeCurrent(claim) &&
   (isNegativeKnowledge(claim) || isSettled(claim) || isStatedFinding(claim));
 
+/**
+ * THE CONTENT FLOOR, LOOKED AT AGAIN. The hub keeps only candidates that
+ * share HINT_MIN_SHARED_TERMS words on one of their statements, or hold a
+ * target the query named (server/src/services/hints.ts); this is the second
+ * lock, the shape every rule in this file has. A tree that shares one stray
+ * word is never pointed at — not even after the strong tree beside it was
+ * delivered (the batch-1006 review's probe F). A hub too old to report the
+ * number has no floor to check, and keeps its old behaviour.
+ */
+const clearsContentFloor = (context: HintContextCandidate): boolean =>
+  context.sharedTerms === undefined ||
+  context.workContext.tier === "exact" ||
+  context.sharedTerms >= HINT_MIN_SHARED_TERMS;
+
 const isEligibleContext = (context: HintContextCandidate): boolean =>
   context.workContext.tier !== undefined &&
-  HINT_ELIGIBLE_TIERS.has(context.workContext.tier);
+  HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&
+  clearsContentFloor(context);
 
 /** Not the reader's own words, however the context they sit in matched. */
 const isForeignClaim = (

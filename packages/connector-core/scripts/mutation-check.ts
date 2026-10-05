@@ -17386,8 +17386,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a content-free prompt matches teammate work on one stray word",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      candidate.workContext.tier === \"exact\" || sharedTerms >= HINT_MIN_SHARED_TERMS,",
-    to: "      true,",
+    from: "  tier === \"exact\" || sharedTerms >= HINT_MIN_SHARED_TERMS;",
+    to: "  true;",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"mache weiter\" and \"limit ist zurückgesetzt\" point the agent at a teammate's tree again, the pilot's 5 of 5",
   },
@@ -17410,16 +17410,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "words from two different claims count as agreeing on one statement",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "sharedTerms: Math.max(ownTerms, ...contextClaims.map((claim) => claim.matchedTerms)),",
-    to: "sharedTerms: ownTerms + contextClaims.reduce((total, claim) => total + claim.matchedTerms, 0),",
+    from: "terms: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, tokens)})`,",
+    to: "terms: sql<number>`sum(${sharedTermsSql(sql`${claims.tsv}`, tokens)})`,",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"weiter\" in a German claim plus \"limit\" in another make a limit note look like a task",
   },
   {
     label: "the tree's own shared words never reach the selector",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "          matchedTerms: ownTerms,",
-    to: "          matchedTerms: 0,",
+    from: "      matchedTerms: ownTerms,",
+    to: "      matchedTerms: 0,",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "a finding in a tree clearly about the prompt, sharing one word itself, falls back to a pointer nobody opens",
   },
@@ -17542,6 +17542,22 @@ export const MUTATIONS: readonly Mutation[
     to: "      WHERE ${windowed}",
     test: `${SERVER}/test/pilot-substance-channel.test.ts`,
     because: "work done after a finding was handed over is credited to a pointer nobody needed to open",
+  },
+  {
+    label: "a tree sharing one stray word rides along with one that qualifies",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))",
+    to: "    .filter(() => true)",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "once the upload tree is delivered, the next \"ok\" points at the rate-limit tree for the word \"limit\" — the pilot's failure, one step later",
+  },
+  {
+    label: "the selector points at a candidate below the content floor",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&\n  clearsContentFloor(context);",
+    to: "  HINT_ELIGIBLE_TIERS.has(context.workContext.tier);",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a hub that forgets the per-candidate floor gets its stray-word tree pointed at, with nothing on this side to stop it",
   },
 ];
 
@@ -17759,7 +17775,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 1
- * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 6
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 7
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -17861,6 +17877,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 1
  * PRINTS: packages/server/test/hint-content-floor.test.ts 5
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3

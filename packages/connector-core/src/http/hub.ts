@@ -1552,6 +1552,10 @@ export const HintContextCandidateSchema = z
     // absent IS "prompt", the one honest reading. An unknown word from a
     // newer hub drops the candidate rather than mislabelling it.
     matchedOn: z.enum(HINT_MATCHED_ON).default("prompt"),
+    // The number the hub's per-candidate content floor was decided on: the
+    // most query words ONE statement of the tree shares. Optional — an older
+    // hub has no floor to report, and then the selector cannot look again.
+    sharedTerms: z.number().int().min(0).optional(),
   })
   .transform((value) => ({
     workContext: value.workContext,
@@ -1559,6 +1563,7 @@ export const HintContextCandidateSchema = z
     claims: parseRows(value.claims, HintClaimCandidateSchema).rows,
     matchedTargets: parseRows(value.matchedTargets, MatchedTargetSchema).rows,
     matchedOn: value.matchedOn,
+    ...(value.sharedTerms === undefined ? {} : { sharedTerms: value.sharedTerms }),
   }));
 
 export type HintContextCandidate = z.infer<typeof HintContextCandidateSchema>;

@@ -240,6 +240,12 @@ export interface HintContextCandidate {
    * says which of the two it relates to.
    */
   readonly matchedOn: HintMatchedOn;
+  /**
+   * The most distinct query words ONE of its statements shares — its own, or
+   * one visible claim: the number this candidate cleared the content floor
+   * on, shipped so the connector can look again (hints/select.ts).
+   */
+  readonly sharedTerms: number;
 }
 
 /**
@@ -491,29 +497,57 @@ export interface HintCandidatesQuery {
   readonly intent?: string;
 }
 
-interface MatchedCandidate {
-  readonly candidate: HintContextCandidate;
-  /** Most distinct query words one statement of it shares — the content floor's input. */
-  readonly sharedTerms: number;
-}
+/**
+ * A candidate is backed by a fact or by agreement: an exact target, or
+ * HINT_MIN_SHARED_TERMS words on one of its statements. Anything less is a
+ * stray word, however high the search ranked it.
+ */
+const clearsFloor = (tier: SearchTier, sharedTerms: number): boolean =>
+  tier === "exact" || sharedTerms >= HINT_MIN_SHARED_TERMS;
 
 /**
- * A query carries a task when something it would surface is backed by a fact
- * or by agreement: an exact target, or HINT_MIN_SHARED_TERMS words on one
- * statement. Anything less is filler, however many single words it matched.
+ * The best shared-word count of any one VISIBLE claim per context — under the
+ * claim window's own two conditions, retraction and the reader's mutes, so a
+ * hidden author's words can never qualify a tree. One bounded aggregate, the
+ * GIN prefilter first, over the whole pool: the floor is decided BEFORE the
+ * pool is cut to HINT_MAX_CONTEXTS, so three weak trees cannot crowd out a
+ * fourth that qualifies.
  */
-const carriesContent = (matched: readonly MatchedCandidate[]): boolean =>
-  matched.some(
-    ({ candidate, sharedTerms }) =>
-      candidate.workContext.tier === "exact" || sharedTerms >= HINT_MIN_SHARED_TERMS,
-  );
+const listClaimTermMaxima = async (
+  db: Db,
+  readerDeveloperId: string,
+  workContextIds: readonly string[],
+  tokens: readonly string[],
+): Promise<ReadonlyMap<string, number>> => {
+  if (workContextIds.length === 0 || tokens.length === 0) {
+    return new Map();
+  }
+  const anyToken = sql`websearch_to_tsquery('english', ${tokens.join(" or ")})`;
+  const rows = await db
+    .select({
+      id: claims.workContextId,
+      terms: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, tokens)})`,
+    })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(
+      and(
+        inArray(claims.workContextId, workContextIds),
+        sql`${claims.tsv} @@ ${anyToken}`,
+        notSuperseded(db),
+        notMutedCondition(readerDeveloperId, agentSessions.developerId),
+      ),
+    )
+    .groupBy(claims.workContextId);
+  return new Map(rows.map((row) => [row.id, Number(row.terms)]));
+};
 
-/** One query's candidates, as the prompt path has always built them, plus their counts. */
+/** One query's candidates, each of which clears the floor on its own. */
 const matchCandidates = async (
   deps: Deps,
   callerDeveloperId: string,
   query: { readonly text: string; readonly repo: string; readonly on: HintMatchedOn },
-): Promise<readonly MatchedCandidate[]> => {
+): Promise<readonly HintContextCandidate[]> => {
   const searched = await searchWorkContexts(
     // Lexical by construction — see the header. The hub's real embedder must
     // not be reachable from this path.
@@ -531,52 +565,58 @@ const matchCandidates = async (
       limit: SEARCH_POOL_LIMIT,
     },
   );
-  const eligible = searched.results
+  const pool = searched.results
     .filter((row) => HINT_ELIGIBLE_TIERS.includes(row.tier))
     // Defense in depth only — exclusion already happened inside the search.
-    .filter((row) => row.developerId !== callerDeveloperId)
-    .slice(0, HINT_MAX_CONTEXTS);
-  const ids = eligible.map((row) => row.id);
+    .filter((row) => row.developerId !== callerDeveloperId);
   const tokens = ftsTokens(query.text);
-  const [claimsByContext, baseCommits, matchedTargets, statementTerms] = await Promise.all([
+  const poolIds = pool.map((row) => row.id);
+  const [statementTerms, claimTerms] = await Promise.all([
+    listStatementTerms(deps.db, poolIds, tokens),
+    listClaimTermMaxima(deps.db, callerDeveloperId, poolIds, tokens),
+  ]);
+  // THE FLOOR, PER CANDIDATE: every tree a hint may name must itself share
+  // HINT_MIN_SHARED_TERMS words on ONE of its statements — its own, or one
+  // visible claim — or hold a target the query named. Decided over the whole
+  // pool, then cut to the bound.
+  const qualified = pool
+    .map((row) => ({
+      row,
+      ownTerms: statementTerms.get(row.id) ?? 0,
+      sharedTerms: Math.max(statementTerms.get(row.id) ?? 0, claimTerms.get(row.id) ?? 0),
+    }))
+    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))
+    .slice(0, HINT_MAX_CONTEXTS);
+  const ids = qualified.map(({ row }) => row.id);
+  const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
     listContextClaims(
       { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens },
       ids,
     ),
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(query.text)),
-    listStatementTerms(deps.db, ids, tokens),
   ]);
-  return eligible.map((row) => {
-    const contextClaims = claimsByContext.get(row.id) ?? [];
-    const ownTerms = statementTerms.get(row.id) ?? 0;
-    return {
-      candidate: {
-        workContext: {
-          id: row.id,
-          title: row.title,
-          status: row.status,
-          intent: row.intent,
-          tier: row.tier,
-          developerId: row.developerId,
-          developerName: row.developerName,
-          baseCommit: baseCommits.get(row.id) ?? "",
-          resultKind: row.resultKind,
-          solvedAt: row.solvedAt,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          matchedTerms: ownTerms,
-        },
-        claims: contextClaims,
-        matchedTargets: matchedTargets.get(row.id) ?? [],
-        matchedOn: query.on,
-      },
-      // The claims counted are the ones the window returned — mutes and
-      // retractions already applied in its WHERE — so a hidden author's words
-      // can never decide that a prompt carried a task.
-      sharedTerms: Math.max(ownTerms, ...contextClaims.map((claim) => claim.matchedTerms)),
-    };
-  });
+  return qualified.map(({ row, ownTerms, sharedTerms }) => ({
+    workContext: {
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      intent: row.intent,
+      tier: row.tier,
+      developerId: row.developerId,
+      developerName: row.developerName,
+      baseCommit: baseCommits.get(row.id) ?? "",
+      resultKind: row.resultKind,
+      solvedAt: row.solvedAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      matchedTerms: ownTerms,
+    },
+    claims: claimsByContext.get(row.id) ?? [],
+    matchedTargets: matchedTargets.get(row.id) ?? [],
+    matchedOn: query.on,
+    sharedTerms,
+  }));
 };
 
 /**
@@ -594,19 +634,18 @@ export const listHintCandidates = async (
     repo: input.repo,
     on: "prompt",
   });
-  if (carriesContent(fromPrompt)) {
-    return fromPrompt.map((matched) => matched.candidate);
+  if (fromPrompt.length > 0) {
+    return fromPrompt;
   }
   const intent = input.intent?.trim() ?? "";
   if (intent.length === 0) {
     return [];
   }
-  const fromIntent = await matchCandidates(deps, callerDeveloperId, {
+  return matchCandidates(deps, callerDeveloperId, {
     text: intent,
     repo: input.repo,
     on: "intent",
   });
-  return carriesContent(fromIntent) ? fromIntent.map((matched) => matched.candidate) : [];
 };
 
 export interface TargetSessionView {

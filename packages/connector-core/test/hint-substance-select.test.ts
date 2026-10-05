@@ -170,6 +170,42 @@ describe("a weak or unbacked match keeps today's pointer", () => {
   });
 });
 
+describe("the floor is per candidate, looked at again on this side", () => {
+  /** A tree as a current hub sends it: tier, own count, the floor's number. */
+  const tree = (
+    id: string,
+    sharedTerms: number | undefined,
+    tier = "fts",
+  ): HintContextCandidate => {
+    const base = context([decision({ id: `clm_${id}`, workContextId: id, kind: "observation", evidenceRefCount: 0 })]);
+    return {
+      ...base,
+      workContext: { ...base.workContext, id, tier },
+      ...(sharedTerms === undefined ? {} : { sharedTerms }),
+    };
+  };
+
+  test("once the strong tree is seen, the stray-word tree beside it is silence, not a pointer", () => {
+    // Probe F of the batch-1006 review, as a hub that forgot the floor sends it
+    const selection = selectHint({
+      candidates: [tree("wc_upload", 4), tree("wc_rate_limit", 1)],
+      seenRefIds: ["wc_upload"],
+      deliveredCount: 1,
+      selfDeveloperId: SELF,
+    });
+    expect(selection.kind).toBe("silence");
+  });
+
+  test("an exact target clears the floor without a shared word", () => {
+    const selection = select([tree("wc_named", 0, "exact")]);
+    expect(selection.kind).toBe("pointer");
+  });
+
+  test("a hub too old to send the number keeps today's behaviour", () => {
+    expect(select([tree("wc_old", undefined)]).kind).toBe("pointer");
+  });
+});
+
 describe("the ONE most relevant claim, plus the pointer to the rest", () => {
   test("more shared words wins over the hub's order", () => {
     const first = decision({ id: "clm_first", matchedTerms: 2 });
