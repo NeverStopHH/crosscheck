@@ -1474,7 +1474,9 @@ export const HintClaimCandidateSchema = z.looseObject({
    */
   axes: EvidenceAxesSchema.optional(),
   /**
-   * How many distinct words of the matched query THIS claim shares — the
+   * How many distinct words of the matched query THIS claim's SHOWN SENTENCE
+   * shares (the hub counts on the sentence a hint would show, never on the
+   * rest of the body, so a keyword-stuffed tail buys nothing) — the
    * relevance half of the substance gate (hints/select.ts isStrongMatch).
    * OPTIONAL, and absent fails closed: an older hub never measured it, and a
    * claim whose relevance nobody measured is a pointer, not substance.

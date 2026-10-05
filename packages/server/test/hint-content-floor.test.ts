@@ -203,12 +203,13 @@ describe("each claim carries how many distinct words of the matched query it sha
       query: "why does the practice upload hit the body limit limits",
     });
 
-    // Assert — practice, upload, hit, body, limit: five distinct lexemes of
-    // the decision; "limits" is "limit" again, and why/does/the are stop
-    // words the english configuration drops.
+    // Assert — counted on the sentence a hint would SHOW ("Keep the chunked
+    // upload for practice videos."): practice and upload. "hit", "body" and
+    // "limit" sit in the second sentence, which no hint shows, so they do not
+    // count; "limits" is "limit" again; why/does/the are stop words.
     const decision = candidate?.claims.find((claim) => claim.id === DECISION_ID);
     const observation = candidate?.claims.find((claim) => claim.id === "clm_obs");
-    expect(decision?.matchedTerms).toBe(5);
+    expect(decision?.matchedTerms).toBe(2);
     expect(observation?.matchedTerms).toBe(1);
   });
 
@@ -224,6 +225,66 @@ describe("each claim carries how many distinct words of the matched query it sha
     // Assert — "Practice video upload stalls" / "Uploads continue only after
     // a manual retry": practice and upload, counted once each
     expect(candidate?.workContext.matchedTerms).toBe(2);
+  });
+
+  test("a claim's count is taken on the sentence a hint SHOWS, not on a stuffed tail", async () => {
+    // Arrange — probe C of the batch-1006 review: an unrelated first
+    // sentence, then a tail of every keyword a prompt could carry
+    const { harness, developer: nick } = await createHarnessWithSession();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Dependency pinning", description: "Vendored fork" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_ev", body: "Observed the fork builds." })),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_stuffed",
+            kind: "decision",
+            evidenceRefs: ["clm_ev"],
+            // Probe C2's shape: the stuffing is a SECOND sentence. (A
+            // lower-case run-on is one sentence to UAX #29 and is shown — its
+            // words then count, because the reader sees them.)
+            body: "Pin every dependency to the vendored fork at libs/fork and never call upstream. Login session token refresh build test deploy cache error fix bug api upload limit migration database.",
+          }),
+        ),
+      ],
+    });
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+
+    // Act
+    const [candidate] = await fetchCandidates(harness, robin, { query: "fix the login bug" });
+
+    // Assert — the tree may still be pointed at (its claim shares three
+    // words), but the sentence that would be shown shares none of them
+    const stuffed = candidate?.claims.find((claim) => claim.id === "clm_stuffed");
+    expect(stuffed?.matchedTerms).toBe(0);
+  });
+
+  test("words past the length a hint can show do not count either", async () => {
+    // Arrange — ONE sentence, its matching words beyond SUBSTANCE_MAX_CHARS
+    const { harness, developer: nick } = await createHarnessWithSession();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Login fix bug", description: "x" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_ev", body: "Observed it twice." })),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_long",
+            kind: "decision",
+            evidenceRefs: ["clm_ev"],
+            body: `Keep ${"really ".repeat(40)}careful about the login fix bug.`,
+          }),
+        ),
+      ],
+    });
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+
+    // Act
+    const [candidate] = await fetchCandidates(harness, robin, { query: "fix the login bug" });
+
+    // Assert — the reader would see "Keep really really …" and an ellipsis
+    expect(candidate?.claims.find((claim) => claim.id === "clm_long")?.matchedTerms).toBe(0);
   });
 
   test("a claim matched through the intent is counted against the intent", async () => {

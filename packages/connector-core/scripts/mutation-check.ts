@@ -17631,6 +17631,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${SCHEMA}/test/substance-sentence.test.ts`,
     because: "\"Yes.\" or a full stop behind zero-width spaces is pushed as a teammate's finding",
   },
+  {
+    label: "a claim's relevance is scored on its whole body again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "          ? substanceSentence(row.claim.body).slice(0, SUBSTANCE_MAX_CHARS)",
+    to: "          ? row.claim.body",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "a keyword-stuffed second sentence makes one claim strong substance for every prompt it never speaks to",
+  },
+  {
+    label: "words past the shown length count toward a claim's relevance",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "substanceSentence(row.claim.body).slice(0, SUBSTANCE_MAX_CHARS)",
+    to: "substanceSentence(row.claim.body)",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "the words that made a claim relevant sit behind the ellipsis the reader is shown",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17951,7 +17967,7 @@ interface Outcome {
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 2
- * PRINTS: packages/server/test/hint-content-floor.test.ts 5
+ * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

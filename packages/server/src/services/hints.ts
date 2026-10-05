@@ -52,6 +52,7 @@ import {
 } from "./search.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import { SUBSTANCE_MAX_CHARS, substanceSentence } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
@@ -193,12 +194,14 @@ export interface HintClaimCandidate {
    */
   readonly validity: ClaimValidity;
   /**
-   * How many distinct words of the matched query THIS claim shares (in
-   * lexemes, HINT_MIN_SHARED_TERMS's unit) — what lets the connector tell a
-   * finding the prompt is about from one that merely sits in a tree the
-   * prompt brushed (DESIGN.md §4: substance needs a strong match). Counted
-   * against the query the candidate was matched on — the session's intent
-   * when that stood in for the prompt.
+   * How many distinct words of the matched query THIS claim's SHOWN SENTENCE
+   * shares (in lexemes, HINT_MIN_SHARED_TERMS's unit) — what lets the
+   * connector tell a finding the prompt is about from one that merely sits in
+   * a tree the prompt brushed (DESIGN.md §4: substance needs a strong match).
+   * Counted on the sentence a hint would show (@crosscheck/schema
+   * substanceSentence, at most SUBSTANCE_MAX_CHARS of it), never on the rest
+   * of the body, and against the query the candidate was matched on — the
+   * session's intent when that stood in for the prompt.
    */
   readonly matchedTerms: number;
   readonly createdAt: string;
@@ -312,9 +315,6 @@ const listClaimsForContext = async (
       claim: claims,
       authorDeveloperId: agentSessions.developerId,
       authorDeveloperName: developers.name,
-      // In the same row read, never a second query: the count rides the
-      // window this one bounded query already selects.
-      matchedTerms: sharedTermsSql(sql`${claims.tsv}`, scope.tokens),
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
@@ -361,6 +361,22 @@ const listClaimsForContext = async (
     repo,
     claims: rows.map((row) => row.claim),
   });
+  // THE SENTENCE A HINT WOULD SHOW is what relevance is scored on — the
+  // shared cut, the very one the connector frames — so a keyword-stuffed
+  // tail can never make a claim a strong match for prompts its shown
+  // sentence says nothing about (review of batch 1006, finding 6). A body
+  // that never crosses the wire scores nothing.
+  const shownTerms = await listShownSentenceTerms(
+    db,
+    rows.map((row) => ({
+      id: row.claim.id,
+      sentence:
+        row.claim.provenance === DECLARED_PROVENANCE
+          ? substanceSentence(row.claim.body).slice(0, SUBSTANCE_MAX_CHARS)
+          : "",
+    })),
+    scope.tokens,
+  );
   return [...rows]
     .sort(
       (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),
@@ -399,9 +415,34 @@ const listClaimsForContext = async (
     // rung, never omitted: an absent field reads as "this hub does not report
     // one", which would send the reader to the wrong remedy.
     axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
-    matchedTerms: Number(row.matchedTerms),
+    matchedTerms: shownTerms.get(row.claim.id) ?? 0,
     createdAt: row.claim.createdAt.toISOString(),
   }));
+};
+
+/**
+ * How many distinct query words each SHOWN sentence shares, in one bounded
+ * query for the whole claim window: the sentences travel as a parameter
+ * array and are tokenized with the same english configuration every tsv on
+ * this hub uses.
+ */
+const listShownSentenceTerms = async (
+  db: Db,
+  shown: readonly { readonly id: string; readonly sentence: string }[],
+  tokens: readonly string[],
+): Promise<ReadonlyMap<string, number>> => {
+  const counted = shown.filter((entry) => entry.sentence.length > 0);
+  if (counted.length === 0 || tokens.length === 0) {
+    return new Map();
+  }
+  const result = await db.execute<{ id: string; terms: number }>(sql`
+    SELECT shown.id AS id,
+           ${sharedTermsSql(sql`to_tsvector('english', shown.sentence)`, tokens)} AS terms
+    FROM unnest(
+      ARRAY[${sql.join(counted.map((entry) => sql`${entry.id}`), sql`, `)}]::text[],
+      ARRAY[${sql.join(counted.map((entry) => sql`${entry.sentence}`), sql`, `)}]::text[]
+    ) AS shown(id, sentence)`);
+  return new Map(result.rows.map((row) => [row.id, Number(row.terms)]));
 };
 
 /**

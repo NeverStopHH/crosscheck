@@ -1836,10 +1836,13 @@ export const UNSOLICITED_CLAIM_BODY_MAX_CHARS = 400;
  * unsolicited body cap, the width the briefing gives a recorded root cause
  * (SOLVED_ROOT_CAUSE_MAX_CHARS) — enough for one sentence that says what the
  * finding IS, with the rest one get_diagnosis away. A longer first sentence
- * is cut with the sanitizer's visible ellipsis, never silently.
+ * is cut with the sanitizer's visible ellipsis, never silently. The hub
+ * scores a claim's relevance on no more than this many characters of the same
+ * sentence (@crosscheck/schema SUBSTANCE_MAX_CHARS), so words past the
+ * ellipsis never make a claim relevant — the two numbers are one:
  *
- * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.HINT_SUBSTANCE_MAX_CHARS === c.SOLVED_ROOT_CAUSE_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS < c.UNSOLICITED_CLAIM_BODY_MAX_CHARS)'
- * PRINTS: true true
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.HINT_SUBSTANCE_MAX_CHARS === c.SOLVED_ROOT_CAUSE_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS < c.UNSOLICITED_CLAIM_BODY_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS === s.SUBSTANCE_MAX_CHARS)'
+ * PRINTS: true true true
  */
 export const HINT_SUBSTANCE_MAX_CHARS = 200;
 

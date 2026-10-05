@@ -299,7 +299,11 @@ export {
 } from "./storable-text.ts";
 
 export { containsSecret } from "./secret-scan.ts";
-export { SUBSTANCE_MIN_WORDS, substanceSentence } from "./substance-sentence.ts";
+export {
+  SUBSTANCE_MAX_CHARS,
+  SUBSTANCE_MIN_WORDS,
+  substanceSentence,
+} from "./substance-sentence.ts";
 export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,

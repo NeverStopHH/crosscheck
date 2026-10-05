@@ -36,6 +36,14 @@ const SENTENCES = new Intl.Segmenter("und", { granularity: "sentence" });
 /** Words a shown sentence needs, each of at least two letters. */
 export const SUBSTANCE_MIN_WORDS = 3;
 
+/**
+ * The most of that sentence a hint shows — the connector frames it at this
+ * width (HINT_SUBSTANCE_MAX_CHARS is this number), and the hub scores
+ * relevance on no more than it, so words a reader would never see past the
+ * ellipsis never make a claim relevant.
+ */
+export const SUBSTANCE_MAX_CHARS = 200;
+
 /** Common German and English abbreviations whose dot does not end a sentence. */
 const ABBREVIATIONS: ReadonlySet<string> = new Set([
   "approx",
