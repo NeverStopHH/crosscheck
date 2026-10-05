@@ -186,7 +186,7 @@ export const unrecognisedLine = (path: string, commands: readonly string[]): rea
     : [
         `${path}: left ${commands.length === 1 ? "1 entry that looks" : `${String(commands.length)} entries that look`} like crosscheck's but ${commands.length === 1 ? "runs" : "run"} through a launcher it does not recognise as its own — NOT removed: ${commands
           .map((command) => `\`${command}\``)
-          .join(", ")}; if an \`init --command-prefix\` install wrote them, delete them by hand`,
+          .join(", ")}; if an \`init --command-prefix\` install wrote them, delete them by hand, with any hooks that run through the same launcher`,
       ];
 
 /** The leftovers a plan's file still holds, as lines (none for absent or deleted files). */

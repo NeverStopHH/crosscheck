@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1457
+    # PRINTS: 1458
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -201,7 +201,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
-    # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 1
+    # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 2
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 2
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
@@ -697,7 +697,7 @@ jobs:
     # PRINTS: waivers.ts 5
     # PRINTS: waivers.tsx 2
     # PRINTS: webauthn.ts 11
-    # PRINTS: wiring-lookalikes.ts 1
+    # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 2
     # PRINTS: work-contexts.ts 1

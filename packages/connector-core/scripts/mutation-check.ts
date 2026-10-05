@@ -16506,7 +16506,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "init --remove never names entries it did not recognise as its own",
     file: `${CLI}/src/cli/wiring-lookalikes.ts`,
-    from: "  typeof command === \"string\" && subcommands.some((suffix) => command.trimEnd().endsWith(suffix));",
+    from: "  subcommands.some((suffix) => command.trimEnd().endsWith(suffix));",
     to: "  false;",
     test: `${CLI}/test/init-remove-verdict.test.ts`,
     because: "'no crosscheck entries' is printed for a file still running every crosscheck hook through a wrapper",
@@ -16737,6 +16737,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-global.test.ts`,
     because: "the 0600 ~/.claude.json's OAuth account and mcp tokens sit in a 0644 copy beside it",
   },
+  {
+    label: "another tool's statusline is called crosscheck's for sharing the subcommand word",
+    file: `${CLI}/src/cli/wiring-lookalikes.ts`,
+    from: "  NAMES_CROSSCHECK.test(command) &&\n",
+    to: "",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "`npx -y ccusage statusline` is flagged as crosscheck's and the verified closing line never prints",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16814,7 +16822,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-backups.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 3
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
- * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6
+ * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3
