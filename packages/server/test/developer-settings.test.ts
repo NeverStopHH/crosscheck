@@ -7,6 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { developerEmails } from "../src/db/schema.ts";
 import { addMute } from "../src/services/developer-settings.ts";
 import {
   createTestHarness,
@@ -221,6 +222,27 @@ describe("POST /api/settings/mutes", () => {
 
     // Assert
     expect(ambiguous).toEqual({ outcome: "ambiguous" });
+  });
+
+  test("Claude's commit identity resolves to nobody, even under a held link", async () => {
+    // Arrange: Ken holds noreply@anthropic.com from before the refusal
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await harness.db.insert(developerEmails).values({
+      email: "noreply@anthropic.com",
+      developerId: ken.developerId,
+      isPrimary: false,
+      createdAt: new Date(),
+    });
+
+    // Act: a reference by that address is not a reference to Ken
+    const muted = await postMute(harness, nick, "NoReply@Anthropic.com");
+
+    // Assert
+    expect(muted.status).toBe(404);
+    const { settings } = await fetchSettings(harness, nick);
+    expect(settings?.mutes).toEqual([]);
   });
 
   test("unknown developer is 404, ambiguous name is 409, self-mute is 400", async () => {
