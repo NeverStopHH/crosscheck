@@ -16537,6 +16537,32 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ddl-sync-work-context-updater.test.ts`,
     because: "drizzle selects a column the database does not have, and every work-context read on an upgraded hub fails",
   },
+  // The review of H3, finding 4: an instant is presence, so only a session the
+  // viewer may be told about lends the rung one.
+  {
+    label: "an opted-out session's heartbeat dates the agent rung's gap",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap} and ${isTold})`,",
+    to: "      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "get_diagnosis prints when an opted-out claim author last ran an agent",
+  },
+  {
+    label: "an opted-out session's loss dates the agent rung's gap",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost} and ${isTold})`,",
+    to: "      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "an opted-out teammate's machine ledger dates the gap every teammate reads",
+  },
+  {
+    label: "an opted-out teammate's heartbeat is the agent rung's observedAt",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      observedAt: sql`max(${agentSessions.lastHeartbeatAt}) filter (where ${isTold})`,",
+    to: "      observedAt: sql`max(${agentSessions.lastHeartbeatAt})`,",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "/api/absences tells every teammate when the opted-out developer last ran an agent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16825,6 +16851,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
+ * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2

@@ -48,6 +48,7 @@ import {
 import { readAbsenceCensus } from "./absences.ts";
 import { ALL_ORDER_KINDS, readCoverageOrder } from "./coverage-order.ts";
 import { presenceCutoff } from "./presence.ts";
+import { visiblePresenceCondition } from "./visibility.ts";
 import { CAUSAL_GUARANTEES, ORDER_REASONS } from "@crosscheck/schema";
 import type { CoverageOrder, GuaranteeKind } from "@crosscheck/schema";
 import type { AbsenceCensus } from "./absences.ts";
@@ -537,26 +538,35 @@ const inScope = (scope: SessionScope): SQL =>
  * a 300-day-old loss on the machine gap every answer naming any session that
  * re-stated it (review of H3). A named session adds its reap, its silence and
  * its in-window losses, exactly what a session in the window adds.
+ *
+ * AN INSTANT IS PRESENCE (review of H3, finding 4). `gapSince`, the loss
+ * instant and `observedAt` say when somebody last ran an agent, which
+ * presence opt-out hides from everyone but its subject (services/visibility.ts).
+ * A session of a developer this viewer may not be told about still counts
+ * towards the state — the gap is real whoever had it — and lends the record
+ * no instant, whether the window or the answer brought it in.
  */
 const readAgentEventCoverage = async (
   deps: Deps,
   now: Date,
+  viewerDeveloperId: string,
   since: Date,
   scope: SessionScope,
 ): Promise<CoverageSourceRecord> => {
   const isGap = gapCondition(agentSessions, presenceCutoff(now));
   const isLost = lossCondition(agentSessions, since);
+  const isTold = visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId);
   const rows = await deps.db
     .select({
       // The window alone can say somebody was reporting (sessionScope).
       reporting: sql`count(*) filter (where ${scope.window})`,
       reaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,
       gaps: sql`count(*) filter (where ${isGap})`,
-      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
+      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap} and ${isTold})`,
       lost: sql`count(*) filter (where ${isLost})`,
       ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,
-      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
-      observedAt: sql`max(${agentSessions.lastHeartbeatAt})`,
+      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost} and ${isTold})`,
+      observedAt: sql`max(${agentSessions.lastHeartbeatAt}) filter (where ${isTold})`,
     })
     .from(agentSessions)
     .where(inScope(scope));
@@ -733,7 +743,7 @@ export const readCoverage = async (
   const paths = scopePaths(options.scope);
   const scope = sessionScope(deps, now, repo, since, paths, options.answerSessionIds ?? []);
   const [agentEvent, git, order] = await Promise.all([
-    readAgentEventCoverage(deps, now, since, scope),
+    readAgentEventCoverage(deps, now, viewerDeveloperId, since, scope),
     readGitCoverage(deps, now, viewerDeveloperId, repo),
     readCoverageOrder(
       deps.db,
