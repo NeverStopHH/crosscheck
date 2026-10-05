@@ -651,17 +651,23 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
    machine's capture applies", "the pin door names only the first file the denylist excludes", "the pin door
    refuses without saying why an excluded file can never be guarded", "a sweep moves a pin onto a path no capture
    observes", "a sweep records an excluded rename as missing without saying why".
-   **Extended 2026-10-05 (Nick: as recommended): the door also refuses on the shipped defaults.** The door, the
-   sweep, `status` and `doctor` judge against `pinDenylistPatterns` — this machine's effective list plus
-   `DEFAULT_DENYLIST` — because the list is per machine: a developer whose config replaces the defaults still has
+   **Extended 2026-10-05 (Nick: as recommended): the door also refuses on the shipped defaults.** `deniedPinPaths`
+   — the one question the door, the sweep, `status` and `doctor` ask — checks this machine's effective list AND
+   `DEFAULT_DENYLIST`, because the list is per machine: a developer whose config replaces the defaults still has
    teammates who kept them, and on each of those machines a pin over `yarn.lock` is blind while it reads as a
-   guard. A refusal by a shipped rule says so and offers no config remedy, since no config on this machine can
-   lift it. *The cost, stated:* a team whose every machine replaced the defaults can no longer pin a
-   shipped-excluded file through the CLI — the conservative side, and the refusal points at the files those are
-   made from. Anchors "the pin door judges a pin by this machine's denylist alone", "the pin denylist drops the
-   shipped defaults", "status shadows pins by this machine's denylist alone", "doctor shadows pins by this
-   machine's denylist alone", "a pin refused by shipped rules is told to change the config", "a pin refused by
-   shipped rules does not say they bind teammates".
+   guard. Every match carries whether it binds this machine too (`here`) and which shipped rule matches it
+   (`shippedPattern`, decided by a match, never by comparing rule text). That keeps each sentence true where it
+   is read: a file this machine records is named as *never captured on machines that keep the shipped denylist*,
+   never as unrecorded "no matter who did"; and the config remedy is offered only when some file is excluded by
+   this machine's list alone, since no config here can lift a shipped rule. *The cost, stated:* a team whose every
+   machine replaced the defaults can no longer pin a shipped-excluded file through the CLI — the conservative
+   side, and the refusal points at the files those are made from. The first build of this extension judged
+   "shipped" by the first matching rule's text and called every such file unrecorded everywhere; the adversarial
+   review of 2026-10-05 found both, and both are fixed. Anchors "the pin door judges a pin by this machine's
+   denylist alone", "a shipped rule is recognised by its text instead of by a match", "a file only the shipped
+   list excludes is called excluded on this machine", "the shadow line calls every shadowed file never captured
+   by anyone", "a pin refused by shipped rules is told to change the config", "a sweep says no session records a
+   file this machine records", "a pin refused by shipped rules does not say they bind teammates".
 5. **Loss outranks reap in the reason word** (§4.5). *Default: yes.* The alternative keeps 03's word on repos
    that have both, and hides the one with the different remedy.
 6. **ACP wire lines are charged to every repo** (§4.3, the three writers). *Default taken: yes* — decision 2's
