@@ -16425,6 +16425,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "$HOME is connected as a repo and every session under it reports to the hub",
   },
+  {
+    label: "init --remove edits a symlinked project file through its link",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "    if ((await lstat(plan.path)).isSymbolicLink()) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "the link becomes a stripped copy while its target stays wired, or only the link is deleted, and the output claims the file is gone",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -16499,7 +16507,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 5
  * PRINTS: packages/cli/test/init-global.test.ts 2
- * PRINTS: packages/cli/test/init-remove-safety.test.ts 3
+ * PRINTS: packages/cli/test/init-remove-safety.test.ts 4
  * PRINTS: packages/cli/test/init-remove.test.ts 16
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 3

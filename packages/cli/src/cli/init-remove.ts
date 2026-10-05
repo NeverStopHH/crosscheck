@@ -22,7 +22,7 @@
  * structure is deleted; any other changed file is rewritten through the
  * same backup + atomic write the installs use.
  */
-import { rm } from "node:fs/promises";
+import { lstat, realpath, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import {
@@ -92,12 +92,32 @@ const planAll = async (targets: readonly RemovalTarget[]): Promise<PlanResult> =
   if (refused !== undefined && !refused.read.ok) {
     return { ok: false, refusal: refusalMessage(refused.target.path, refused.read.reason) };
   }
-  return {
-    ok: true,
-    plans: reads.flatMap(({ target, read }) =>
-      read.ok ? [planFile(target, read.value, read.raw)] : [],
-    ),
-  };
+  const plans = reads.flatMap(({ target, read }) =>
+    read.ok ? [planFile(target, read.value, read.raw)] : [],
+  );
+  const linked = await linkRefusal(plans);
+  return linked === null ? { ok: true, plans } : { ok: false, refusal: linked };
+};
+
+/**
+ * A file this run would CHANGE must not be a symlink (review 2026-10-05): the
+ * rewrite is temp + rename, which turns the link into a regular file and
+ * leaves the file it pointed at wired, and a delete removes only the link —
+ * either way the output would claim a change to a file it never made. The
+ * target is named, and nothing is changed; a link to a file without
+ * crosscheck entries is never touched, so it is no reason to refuse.
+ */
+const linkRefusal = async (plans: readonly FilePlan[]): Promise<string | null> => {
+  for (const plan of plans) {
+    if (plan.kind !== "strip" && plan.kind !== "delete") {
+      continue;
+    }
+    if ((await lstat(plan.path)).isSymbolicLink()) {
+      const target = await realpath(plan.path);
+      return `${plan.path} is a symlink to ${target} — init --remove does not edit a file through a link (everything else that links to it would change too), so nothing was changed; remove crosscheck's entries from ${target} itself`;
+    }
+  }
+  return null;
 };
 
 const applyPlan = async (plan: FilePlan): Promise<void> => {
