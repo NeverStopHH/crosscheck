@@ -81,7 +81,7 @@ describe("the 'sessions here load no crosscheck hooks' sentence", () => {
 
   test("is withheld, and the leftovers named, when hooks run through a launcher crosscheck does not recognise", async () => {
     // Arrange: an install made with an operator's own --command-prefix
-    const { repo, env, settingsPath } = await fixture("verdict-prefix");
+    const { repo, env, settingsPath, mcpPath } = await fixture("verdict-prefix");
     expect(
       (await runCli(["init", "--command-prefix", "/opt/tools/cx-wrap"], env, repo)).exitCode,
     ).toBe(0);
@@ -94,6 +94,9 @@ describe("the 'sessions here load no crosscheck hooks' sentence", () => {
     expect(result.stdout).toContain(`${settingsPath}: left`);
     expect(result.stdout).toContain("/opt/tools/cx-wrap hook session-start");
     expect(result.stdout).toContain("NOT removed");
+    expect(result.stdout).toContain(
+      `${mcpPath}: left 1 entry that looks like crosscheck's but runs through a launcher`,
+    );
   });
 
   test.skipIf(process.getuid?.() === 0)(

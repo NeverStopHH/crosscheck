@@ -183,7 +183,7 @@ export const unrecognisedLine = (path: string, commands: readonly string[]): rea
   commands.length === 0
     ? []
     : [
-        `${path}: left ${String(commands.length)} ${commands.length === 1 ? "entry" : "entries"} that look like crosscheck's but run through a launcher it does not recognise as its own — NOT removed: ${commands
+        `${path}: left ${commands.length === 1 ? "1 entry that looks" : `${String(commands.length)} entries that look`} like crosscheck's but ${commands.length === 1 ? "runs" : "run"} through a launcher it does not recognise as its own — NOT removed: ${commands
           .map((command) => `\`${command}\``)
           .join(", ")}; if an \`init --command-prefix\` install wrote them, delete them by hand`,
       ];
