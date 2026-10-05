@@ -43,13 +43,25 @@ import type { Counts } from "./counts.ts";
 import { recordDrop } from "./drops.ts";
 import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
+import { healAndResend, isRefusedLifeRecord, kindsOf } from "./flush-heal.ts";
+import type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 import { lineTimestampMs } from "./lines.ts";
 import { withLock } from "./lock.ts";
+import { readRefusedLives } from "./refused-lives.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
+
+export type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 
 export interface FlushInput {
   readonly sessionId: string;
   readonly developerId: string | null;
+  /**
+   * Re-registers the flushing session when the hub refuses its OWN id
+   * (flows/heal-session.ts) — asked at most once per flush. The hooks of a
+   * live host session pass one; the SessionEnd drain does not, because a life
+   * about to end has nothing to heal for.
+   */
+  readonly heal?: SessionHealer;
 }
 
 export type FlushOutcome =
@@ -130,6 +142,32 @@ const rejectCauses = (results: readonly RecordResult[] | undefined): Counts =>
     .filter((result) => result.status === "rejected")
     .reduce<Counts>((causes, result) => addCount(causes, rejectCauseOf(result.issues), 1), {});
 
+/** What one batch did: how many records went, and whether it healed the producer. */
+interface BatchOutcome {
+  readonly sent: number;
+  readonly heal: SessionHeal | null;
+  /** The healer was asked — the flush's one walk is spent, whatever it answered. */
+  readonly healAsked: boolean;
+}
+
+/**
+ * WITHHELD, NOT SENT: records a refused life produced whose body names that
+ * life (spool/flush-heal.ts). Counted as the hub's own `rejected` with the
+ * cause it gave for their life — the hub already ended it, and any live
+ * session's delivery would file them into it past its end.
+ */
+const recordWithheld = async (
+  ctx: HubContext,
+  spool: SessionSpool,
+  withheld: readonly Record<string, unknown>[],
+): Promise<void> => {
+  if (withheld.length > 0) {
+    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "rejected", ctx.now(), kindsOf(withheld), {
+      session_ended: withheld.length,
+    });
+  }
+};
+
 /**
  * Sends one batch and moves that spool's cursor past it. Returns how many
  * records went, or null when the hub refused them and nothing was consumed.
@@ -140,25 +178,45 @@ const rejectCauses = (results: readonly RecordResult[] | undefined): Counts =>
  *
  * Records are stamped with the FLUSHING session, not the one that wrote them:
  * ingest rejects records whose producer session has ended, so a dead session's
- * spool is only deliverable in a live session's name.
+ * spool is only deliverable in a live session's name. When the hub refuses the
+ * flushing session ITSELF, `healAndResend` asks the healer once and re-sends
+ * what the batch may carry under the life it registers (spool/flush-heal.ts).
  */
 const flushOneBatch = async (
   ctx: HubContext,
   input: FlushInput,
   spool: SessionSpool,
-): Promise<number | null> => {
+  deadlineMs: number,
+  refusedLives: ReadonlySet<string>,
+): Promise<BatchOutcome | null> => {
   const batch = spool.lines.slice(0, MAX_INGEST_BATCH);
   const consumed = spool.offset + bytesOfLines(spool.pending, batch.length);
   const parsed = batch.map(parseLine);
   const unparsable = parsed.filter((record) => record === null).length;
-  const records = parsed
-    .filter((record): record is Record<string, unknown> => record !== null)
-    .map((record) => withProducer(record, input.developerId, input.sessionId));
+  const spooled = parsed.filter((record): record is Record<string, unknown> => record !== null);
+  const isWithheld = (record: Record<string, unknown>): boolean =>
+    isRefusedLifeRecord(record, refusedLives, input.sessionId);
+  const sendable = spooled.filter((record) => !isWithheld(record));
+  const records = sendable.map((record) => withProducer(record, input.developerId, input.sessionId));
 
-  const summary = await deliver(ctx, records);
-  if (summary === null) {
+  const first = await deliver(ctx, records);
+  if (first === null) {
     return null;
   }
+  const healed = await healAndResend({
+    ctx,
+    developerId: input.developerId,
+    flusherSessionId: input.sessionId,
+    spooled: sendable,
+    first,
+    healer: input.heal,
+    deadlineMs,
+  });
+  if (healed === null) {
+    return null;
+  }
+  const summary = healed.summary;
+  await recordWithheld(ctx, spool, spooled.filter(isWithheld));
   // A 2xx is not a delivery. Ingest reports per-record outcomes, and a
   // record the hub REFUSED is discarded by the cursor write below exactly
   // like a torn line — so it is counted exactly like one. Nothing in the
@@ -215,8 +273,26 @@ const flushOneBatch = async (
   // file — same name, and on ext4 the same inode number too — and its records
   // start at offset 0.
   await writeCursorOffset(spool.dataPath, spool.cursorPath, consumed, spool);
-  return records.length;
+  return { sent: records.length, heal: healed.heal, healAsked: healed.asked };
 };
+
+/**
+ * The producer the drain's later batches carry: the healed life once a batch
+ * registered one, and no healer once one was asked — one walk per flush.
+ */
+const afterBatch = (producer: FlushInput, outcome: BatchOutcome): FlushInput =>
+  outcome.healAsked
+    ? {
+        sessionId: outcome.heal?.sessionId ?? producer.sessionId,
+        developerId: producer.developerId,
+      }
+    : producer;
+
+/** A heal that moved lives adds the refused one to what the drain withholds. */
+const withRefused = (refused: ReadonlySet<string>, heal: SessionHeal | null): ReadonlySet<string> =>
+  heal === null || heal.sessionId === heal.refusedSessionId
+    ? refused
+    : new Set([...refused, heal.refusedSessionId]);
 
 /**
  * How old a spool's backlog is, taken from the first record still waiting.
@@ -269,6 +345,8 @@ const drain = async (
   deadlineMs: number,
 ): Promise<FlushOutcome> => {
   let sent = 0;
+  let producer = input;
+  let refusedLives = await readRefusedLives(ctx.home, ctx.repoKey, ctx.now());
   for (let batch = 0; batch < MAX_FLUSH_BATCHES_PER_HOOK; batch += 1) {
     // Checked BEFORE every batch, the first included: the budget belongs to the
     // hosting hook, and a round trip started without room left is exactly what
@@ -286,11 +364,19 @@ const drain = async (
         ? { outcome: "empty" }
         : { outcome: "flushed", sent, remaining: 0 };
     }
-    const delivered = await flushOneBatch(withinRoom(ctx, roomMs), input, target);
+    const delivered = await flushOneBatch(
+      withinRoom(ctx, roomMs),
+      producer,
+      target,
+      deadlineMs,
+      refusedLives,
+    );
     if (delivered === null) {
       return { outcome: "failed", remaining: pendingTotal(spools) };
     }
-    sent += delivered;
+    sent += delivered.sent;
+    producer = afterBatch(producer, delivered);
+    refusedLives = withRefused(refusedLives, delivered.heal);
   }
   return {
     outcome: "flushed",

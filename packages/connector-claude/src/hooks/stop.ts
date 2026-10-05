@@ -42,6 +42,7 @@ import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
 import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
+import { healerFor } from "./heal.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /**
@@ -246,6 +247,7 @@ export const handleStop = async (
     {
       sessionId: state.crosscheckSessionId,
       developerId: state.developerId,
+      heal: healerFor(ctx),
     },
     budget.spareMs(),
   );

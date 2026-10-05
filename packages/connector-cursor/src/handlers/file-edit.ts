@@ -56,6 +56,7 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 
 import type { CursorHookContext } from "../runner.ts";
 import { IMPLEMENTING_STATUS, requireSessionState } from "./recover.ts";
+import { healerFor, onRefusedHeartbeat } from "./heal.ts";
 
 /**
  * What `lastPostToolUseTool` holds for this host. The field name is
@@ -134,7 +135,7 @@ export const handleAfterFileEdit = async (
   // write after it is what keeps this session's spool safe.
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
   const didHeartbeat = await heartbeatMaybe({
@@ -143,6 +144,7 @@ export const handleAfterFileEdit = async (
     lastHeartbeatAt: state.lastHeartbeatAt,
     now,
     status: IMPLEMENTING_STATUS,
+    onRefused: onRefusedHeartbeat(ctx, budget, state.crosscheckSessionId),
   });
   // Freshest state under the lock — never the snapshot read above (the
   // Claude state-race lesson: sibling hooks overlap). The #17 root cache and

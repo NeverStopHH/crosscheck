@@ -175,6 +175,9 @@ export const MCP_SERVER_MODULE = `${CORE}/mcp/server.ts`;
 export const ALLOCATOR_WRAPPERS: readonly string[] = [`${CORE}/mcp/tools/shared.ts`];
 
 const REGISTER_FLOW = `${CORE}/flows/register-session.ts`;
+// The mid-life heal registers the next life with `{ epoch: state.seqEpoch, n: 0 }`
+// — the same origin, from the hook whose flush or heartbeat the hub refused.
+const HEAL_FLOW = `${CORE}/flows/heal-session.ts`;
 const END_FLOW = `${CORE}/flows/end-session.ts`;
 const MCP_CLAIMS = [
   `${CORE}/mcp/tools/publish-claim.ts`,
@@ -200,7 +203,7 @@ const lane = (name: GuaranteeLane, modules: readonly string[]): LaneProducers =>
 /** The kinds every host shares through connector-core's flows, MCP tools and workers. */
 const sharedKinds = {
   // register-session.ts:170 sends `seq: { epoch, n: 0 }` — the origin, allocated by nobody.
-  "session.started": row([lane("lifecycle", [REGISTER_FLOW])]),
+  "session.started": row([lane("lifecycle", [REGISTER_FLOW, HEAL_FLOW])]),
   // end-session.ts allocates the end, writes the marker, then deletes the state:
   // a detached worker can still allocate past the end in that gap. The hub caps
   // this kind when such a row lands (services/causal-guarantees.ts, review M1).
@@ -222,7 +225,9 @@ const claudeTable: ConnectorTable = {
   // A hook installed mid-session re-registers from PostToolUse
   // (post-tool-use.ts:78) with `{ epoch: derived.seqEpoch, n: 0 }` — a second
   // origin, still n = 0 by construction.
-  "session.started": row([lane("lifecycle", [REGISTER_FLOW, `${CLAUDE}/hooks/post-tool-use.ts`])]),
+  "session.started": row([
+    lane("lifecycle", [REGISTER_FLOW, HEAL_FLOW, `${CLAUDE}/hooks/post-tool-use.ts`]),
+  ]),
   // Edit-family calls are bracketed (pre-tool-use.ts:188 opens, post-tool-use.ts:284
   // closes); Bash is in POST_TOOL_USE_MATCHER and not PRE_TOOL_USE_MATCHER
   // (constants.ts:1630-1632), and the Stop git lane (stop.ts:186) observes.

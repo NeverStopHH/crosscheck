@@ -22,6 +22,7 @@
 import {
   intentPromptPathForSlug,
   removeFile,
+  sessionHealPathForSlug,
   sessionSlug,
   spoolPendingEndPath,
   writePrivateFile,
@@ -108,6 +109,9 @@ export const endSessionFlow = async (
   // spawn that failed, a session ending inside the worker's deadline) must
   // not outlive the session: best-effort, like the state delete above.
   await removeFile(intentPromptPathForSlug(input.home, slug));
+  // ...and so must the mid-life heal's cooldown stamp: a resumed life heals
+  // on its own clock, not on the one this life left running.
+  await removeFile(sessionHealPathForSlug(input.home, slug));
 
   if (undelivered > 0) {
     // Telling the hub "done" now would publish a finished session while

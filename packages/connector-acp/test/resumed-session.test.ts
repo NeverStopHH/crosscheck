@@ -116,3 +116,46 @@ describe("an ACP session loaded again after its proxy ended it", () => {
     expect((await readDropDetail(first.home, first.hub.repoKey)).byReason["rejected"] ?? 0).toBe(0);
   });
 });
+
+describe("an ACP session the hub ends while its proxy keeps capturing", () => {
+  test("the next capture heals into the next life, and the edits after it land there", async () => {
+    // Arrange: a live session, then ended by another proxy on the same machine
+    const h = await createHarness(hub, cleanups, "acp-mid-life");
+    const sessionId = "sess_mid_life";
+    const hostKey = `acp-fake-agent--${sessionId}`;
+    handshake(h, sessionId, h.repo);
+    await h.capture.settle();
+    await fetch(`${hub.hubUrl}/api/sessions/${encodeURIComponent(`cc_${hostKey}`)}/end`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${hub.apiKey}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const editAs = async (file: string): Promise<void> => {
+      await writeRepoFile(h.repo, file, "export const a = 1;\n");
+      h.capture.offer(
+        "a2c",
+        toolCallUpdate(sessionId, {
+          sessionUpdate: "tool_call",
+          toolCallId: `call_${file}`,
+          kind: "edit",
+          status: "completed",
+          locations: [{ path: join(h.repo, file) }],
+        }),
+      );
+      await h.capture.settle();
+    };
+
+    // Act: the edit the hub refuses, then the next one
+    await editAs("src/mid/refused.ts");
+    await editAs("src/mid/after.ts");
+
+    // Assert: the later edit is in the next life's work context
+    const rows = await hub.db
+      .select({ workContextId: workContextTargets.workContextId, value: workContextTargets.value })
+      .from(workContextTargets);
+    expect(rows.filter((row) => row.value.startsWith("src/mid/"))).toEqual([
+      { workContextId: `wc_cc_${hostKey}~r1`, value: "src/mid/after.ts" },
+    ]);
+    expect((await readDropDetail(h.home, h.hub.repoKey)).rejectedCauses).toEqual({ session_ended: 1 });
+  });
+});

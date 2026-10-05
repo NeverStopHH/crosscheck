@@ -35,6 +35,7 @@ import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.
 import { ALLOCATION_FAILED, seqAt } from "@crosscheck/connector-core/capture/seq.ts";
 import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { healerFor, onRefusedHeartbeat } from "./heal.ts";
 import { resolveSessionWorkContextTitle } from "./session-start.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -187,6 +188,7 @@ const heartbeatStatusFor = (toolName: string | undefined): string | undefined =>
 /** Claude's heartbeat POLICY (which tools may beat); the throttle is core's. */
 const maybeHeartbeat = async (
   ctx: HookContext,
+  budget: HookBudget,
   state: SessionState,
   now: Date,
 ): Promise<boolean> => {
@@ -200,6 +202,8 @@ const maybeHeartbeat = async (
     lastHeartbeatAt: state.lastHeartbeatAt,
     now,
     status: heartbeatStatusFor(toolName),
+    // A beat the hub refuses as ended or unknown walks the ladder (hooks/heal.ts).
+    onRefused: onRefusedHeartbeat(ctx, budget, state.crosscheckSessionId),
   });
 };
 
@@ -346,11 +350,12 @@ export const handlePostToolUse = async (
     {
       sessionId: state.crosscheckSessionId,
       developerId: state.developerId,
+      heal: healerFor(ctx),
     },
     budget.spareMs(),
   );
 
-  const didHeartbeat = await maybeHeartbeat(ctx, state, now);
+  const didHeartbeat = await maybeHeartbeat(ctx, budget, state, now);
   // Transform the FRESHEST state under the lock, never write back the whole
   // snapshot read before the flush: a sibling PreToolUse recorded its
   // tripwire marker inside this hook's window, and a stale whole-file write

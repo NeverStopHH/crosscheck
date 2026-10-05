@@ -100,6 +100,15 @@ export const intentPromptPathForSlug = (home: string, slug: string): string =>
 export const sessionLineagePathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.lineage`);
 
+/**
+ * When a host session last walked the ladder MID-LIFE (flows/heal-session.ts):
+ * the cooldown's clock. Beside the state file rather than in it, so the state
+ * schema every hook parses does not grow for one timestamp; swept with the
+ * lineage notes (state/session-lineage.ts).
+ */
+export const sessionHealPathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.heal`);
+
 export const sessionStatePath = (
   home: string,
   hostSessionKey: string,
@@ -197,6 +206,15 @@ export const spoolUnrecordedDropsPath = (home: string, key: string): string =>
  */
 export const spoolUnclosedPath = (home: string, key: string): string =>
   join(spoolDir(home, key), "unclosed.endsummary");
+
+/**
+ * The crosscheck sessions a mid-life heal left behind on this repo
+ * (spool/refused-lives.ts): append-only, one line per healed life. The
+ * `.lives` suffix keeps it out of every listing the sweep walks, and no
+ * slug-derived name can produce it.
+ */
+export const spoolRefusedLivesPath = (home: string, key: string): string =>
+  join(spoolDir(home, key), "refused.lives");
 
 /**
  * Guards flush and reap only. Appends never take it, so a lock that is busy or

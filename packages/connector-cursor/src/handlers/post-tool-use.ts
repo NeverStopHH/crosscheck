@@ -53,6 +53,7 @@ import { attemptFailureHint } from "../inject/hint.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { maybeSpawnCursorGhostWorker } from "../derive/triggers.ts";
 import { requireSessionState } from "./recover.ts";
+import { healerFor, onRefusedHeartbeat } from "./heal.ts";
 
 /**
  * The documented tool_output string, parsed tolerantly: not a string, not
@@ -149,7 +150,7 @@ export const handleCursorPostToolUse = async (
   // call and the state write is what keeps this session's spool safe.
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
   // The heartbeat runs AFTER the hint is in hand, so it may spend the spare
@@ -166,6 +167,7 @@ export const handleCursorPostToolUse = async (
           crosscheckSessionId: state.crosscheckSessionId,
           lastHeartbeatAt: state.lastHeartbeatAt,
           now,
+          onRefused: onRefusedHeartbeat(ctx, budget, state.crosscheckSessionId),
         });
   if (didHeartbeat) {
     await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({

@@ -45,6 +45,9 @@ import { sessionStateDir } from "./session-scan.ts";
 
 const LIFE_SUFFIX = "~r";
 const LINEAGE_SUFFIX = ".lineage";
+/** The mid-life heal's cooldown stamp (flows/heal-session.ts), swept the same way. */
+const HEAL_SUFFIX = ".heal";
+const SIDE_FILE_SUFFIXES = [LINEAGE_SUFFIX, HEAL_SUFFIX] as const;
 /** A rung as the ladder spells it: no sign, no leading zero, nine digits at most. */
 const RUNG_PATTERN = /^[1-9][0-9]{0,8}$/;
 
@@ -139,16 +142,19 @@ const isLineageStale = async (path: string, nowMs: number): Promise<boolean> => 
 };
 
 /**
- * Lineage files of host sessions that never came back, removed after the
- * same MAX_SPOOL_AGE_DAYS every other spool artifact obeys and bounded per
- * run like the state reap that calls it. A conversation resumed later than
- * that walks from the base id instead, which the gallop keeps short.
+ * Lineage notes and heal stamps of host sessions that never came back,
+ * removed after the same MAX_SPOOL_AGE_DAYS every other spool artifact obeys
+ * and bounded per run like the state reap that calls it. A conversation
+ * resumed later than that walks from the base id instead, which the gallop
+ * keeps short.
  */
 export const reapStaleLineages = async (home: string, now: Date): Promise<number> => {
   const dir = sessionStateDir(home);
   let names: readonly string[];
   try {
-    names = (await readdir(dir)).filter((name) => name.endsWith(LINEAGE_SUFFIX));
+    names = (await readdir(dir)).filter((name) =>
+      SIDE_FILE_SUFFIXES.some((suffix) => name.endsWith(suffix)),
+    );
   } catch {
     return 0;
   }

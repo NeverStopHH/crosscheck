@@ -151,7 +151,23 @@ export interface RegisterLadderInput {
   readonly recovery?: boolean;
   /** The crosscheck session the state file is on, when there is one. */
   readonly liveSessionId: string | null;
+  /**
+   * Wall-clock end of the walk (`Date.now()` ms), for a walk that runs inside
+   * a hook's flush (flows/heal-session.ts): no rung starts past it, and each
+   * request is clamped to what is left. Absent: each rung gets the hub's own
+   * timeout, as SessionStart's register always has.
+   */
+  readonly deadlineMs?: number;
 }
+
+/** The hub context for one rung: clamped to the walk's deadline, if it has one. */
+const rungContext = (input: RegisterLadderInput): HubContext | null => {
+  if (input.deadlineMs === undefined) {
+    return input.hub;
+  }
+  const roomMs = input.deadlineMs - Date.now();
+  return roomMs <= 0 ? null : { ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) };
+};
 
 export type RegisterLadderOutcome =
   | {
@@ -186,8 +202,12 @@ export const registerSessionLadder = async (
     await readEndedLifeRung(input.home, input.hostSessionKey, baseId),
   );
   for (const rung of ladderRungs(start)) {
+    const hub = rungContext(input);
+    if (hub === null) {
+      return { outcome: "unregistered" };
+    }
     const sessionId = lifeSessionId(baseId, rung);
-    const result = await registerSession(input.hub, {
+    const result = await registerSession(hub, {
       id: sessionId,
       agentKind: input.agentKind,
       repo: input.repoId,

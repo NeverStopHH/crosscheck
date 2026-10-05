@@ -42,6 +42,14 @@ const TEST_TIMEOUT_MS = "4000";
 const RESUME_CYCLES = 5;
 /** Lives the old ladder could give one conversation: `cc_<id>`, `~r1`, `~r2`. */
 const OLD_LADDER_RUNGS = 3;
+/** A hook timeout small enough that a slow register cannot fit in the hook. */
+const TIGHT_TIMEOUT_MS = 400;
+/** PostToolUse's budget at that timeout (core constants POST_TOOL_USE_BUDGET_RATIO). */
+const TIGHT_POST_TOOL_USE_BUDGET_MS = TIGHT_TIMEOUT_MS * 4;
+/** A register slower than that whole budget. */
+const SLOW_REGISTER_MS = 2000;
+/** What a busy runner may add to a hook that kept its budget. */
+const BUDGET_SLACK_MS = 300;
 /** Every `source` Claude Code documents for SessionStart. */
 const SESSION_START_SOURCES = ["startup", "resume", "clear", "compact", "fork"] as const;
 /** The sources that re-fire INSIDE a live conversation, with no SessionEnd before. */
@@ -54,6 +62,8 @@ let hubUrl: string;
 let proxyUrl: string;
 let apiKey: string;
 let registerCalls = 0;
+/** The proxy's dial: hold every register this long. */
+let registerDelayMs = 0;
 const cleanups: string[] = [];
 
 interface Fixture {
@@ -183,6 +193,9 @@ beforeAll(async () => {
       const { pathname, search } = new URL(request.url);
       if (request.method === "POST" && pathname === "/api/sessions") {
         registerCalls += 1;
+        if (registerDelayMs > 0) {
+          await Bun.sleep(registerDelayMs);
+        }
       }
       return fetch(`${hubUrl}${pathname}${search}`, {
         method: request.method,
@@ -442,5 +455,89 @@ describe("coverage once a conversation is captured again", () => {
       `cc_${sessionId}~r${String(OLD_LADDER_RUNGS)}`,
     );
     expect((await rung(viewer.id, "coverage-reaped", "agent_event"))?.state).not.toBe("incomplete");
+  });
+});
+
+/**
+ * THE HUB ENDS A LIVE SESSION MID-LIFE — a sibling process's SessionEnd after a
+ * VS Code reload, or a 0.10 conversation already deaf when the connector was
+ * upgraded. No SessionStart comes; the next hook's flush is refused for its own
+ * session and heals it (core flows/heal-session.ts).
+ */
+describe("a session the hub ends while the conversation keeps going", () => {
+  const endOnHub = async (sessionId: string): Promise<void> => {
+    await fetch(`${hubUrl}/api/sessions/${encodeURIComponent(sessionId)}/end`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+  };
+
+  test("the next hook heals into the next life, and the edits after it land there", async () => {
+    // Arrange: a live life with one edit delivered, then ended elsewhere
+    const fx = await fixture("mid-life");
+    const sessionId = "mid-life-uuid";
+    await sessionStart(fx, sessionId, "startup");
+    await edit(fx, sessionId, "src/mid/before.ts");
+    await endOnHub(`cc_${sessionId}`);
+
+    // Act: the edit the hub refuses, then a new file and one the ended life
+    // had already captured — the next life has its own work context, so its
+    // seen-set starts empty
+    await edit(fx, sessionId, "src/mid/refused.ts");
+    await edit(fx, sessionId, "src/mid/after.ts");
+    await edit(fx, sessionId, "src/mid/before.ts");
+
+    // Assert: the next life holds the later edit, the ended one keeps its own
+    const next = `cc_${sessionId}~r1`;
+    expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(next);
+    expect(await sessionRows(sessionId)).toEqual([
+      { id: `cc_${sessionId}`, ended: true, reaped: false },
+      { id: next, ended: false, reaped: false },
+    ]);
+    const byContext = await db.execute(sql`
+      select work_context_id, value from work_context_targets
+       where value like 'src/mid/%' order by value, work_context_id desc`);
+    expect(byContext.rows).toEqual([
+      { work_context_id: `wc_${next}`, value: "src/mid/after.ts" },
+      { work_context_id: `wc_${next}`, value: "src/mid/before.ts" },
+      { work_context_id: `wc_cc_${sessionId}`, value: "src/mid/before.ts" },
+    ]);
+    // ...and the one edit between the end and the heal is counted, with its cause
+    expect((await readDropDetail(fx.home, repoKey(fx.url, REPO_ID))).rejectedCauses).toEqual({
+      session_ended: 1,
+    });
+  });
+
+  test("a heal against a hub too slow to register keeps PostToolUse inside its budget", async () => {
+    // Arrange: an ended life behind a register slower than the whole hook
+    const fx = await fixture("mid-life-budget", { url: proxyUrl });
+    const sessionId = "mid-life-budget-uuid";
+    await sessionStart(fx, sessionId, "startup");
+    await endOnHub(`cc_${sessionId}`);
+    const firesBefore = (await readSessionState(fx.home, sessionId))?.editToolFires ?? 0;
+    registerDelayMs = SLOW_REGISTER_MS;
+
+    // Act
+    const started = Date.now();
+    await writeRepoFile(fx.repo, "src/slow/edit.ts", "export const a = 1;\n");
+    await runHook(
+      "post-tool-use",
+      JSON.stringify({
+        session_id: sessionId,
+        cwd: fx.repo,
+        hook_event_name: "PostToolUse",
+        tool_name: "Edit",
+        tool_input: { file_path: join(fx.repo, "src/slow/edit.ts") },
+        tool_response: {},
+      }),
+      { ...fx.env, CROSSCHECK_TIMEOUT_MS: String(TIGHT_TIMEOUT_MS) },
+    );
+    const elapsed = Date.now() - started;
+    registerDelayMs = 0;
+
+    // Assert: inside the budget, and the hook's own last state write landed
+    expect(elapsed).toBeLessThan(TIGHT_POST_TOOL_USE_BUDGET_MS + BUDGET_SLACK_MS);
+    expect((await readSessionState(fx.home, sessionId))?.editToolFires).toBe(firesBefore + 1);
   });
 });

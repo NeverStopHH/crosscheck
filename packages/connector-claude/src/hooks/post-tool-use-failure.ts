@@ -54,6 +54,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { healerFor } from "./heal.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 export const handlePostToolUseFailure = async (
@@ -156,7 +157,7 @@ export const handlePostToolUseFailure = async (
   // back so the drain can never eat the injection.
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
   if (hint.length === 0) {

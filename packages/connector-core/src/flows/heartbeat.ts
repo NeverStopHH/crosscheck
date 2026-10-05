@@ -13,7 +13,7 @@
  * `now` as its new `lastHeartbeatAt`, whatever the hub answered (fail-open:
  * a dead hub must not turn the throttle into a hammer).
  */
-import { HEARTBEAT_MIN_INTERVAL_MS } from "../constants.ts";
+import { HEARTBEAT_MIN_INTERVAL_MS, HTTP_CONFLICT, HTTP_NOT_FOUND } from "../constants.ts";
 import { heartbeatSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
@@ -24,7 +24,18 @@ export interface HeartbeatMaybeInput {
   readonly lastHeartbeatAt: string | null;
   readonly now: Date;
   readonly status?: string | undefined;
+  /**
+   * Called when the hub refuses the session itself — 409, already ended, or
+   * 404, never registered (server routes/sessions.ts). The caller binds its
+   * healer (flows/heal-session.ts), whose cooldown bounds how often this costs
+   * a walk. Absent: the answer is discarded, as it always was.
+   */
+  readonly onRefused?: () => Promise<unknown>;
 }
+
+/** The two answers that mean the session is dead to the hub, not that the hub is down. */
+const isRefusedSession = (status: number): boolean =>
+  status === HTTP_CONFLICT || status === HTTP_NOT_FOUND;
 
 export const heartbeatMaybe = async (
   input: HeartbeatMaybeInput,
@@ -44,6 +55,9 @@ export const heartbeatMaybe = async (
   // at the end. Read AFTER the throttle decided a beat is due, so a hook that
   // beats nothing pays nothing; a local read of the ledgers, no round trip.
   const losses = await readTelemetryLossReport(input.hub.home, input.hub.repoKey);
-  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);
+  const result = await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);
+  if (!result.ok && isRefusedSession(result.status)) {
+    await input.onRefused?.();
+  }
   return true;
 };

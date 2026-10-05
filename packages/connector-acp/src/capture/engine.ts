@@ -81,7 +81,10 @@ import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
-import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  allocateSeq,
+  workContextIdFor,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import type { KnownWorktreeRoot } from "@crosscheck/connector-core/capture/touched-root.ts";
 import {
   assembleBriefing,
@@ -89,6 +92,8 @@ import {
 } from "@crosscheck/connector-core/flows/briefing.ts";
 import type { AssembledBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
 import { endSessionFlow } from "@crosscheck/connector-core/flows/end-session.ts";
+import { sessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
+import type { SessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
 import {
@@ -271,8 +276,12 @@ interface CaptureSession {
   readonly identity: RepoIdentity | null;
   readonly hub: HubContext | null;
   readonly repoKey: string | null;
-  readonly crosscheckSessionId: string;
-  readonly workContextId: string;
+  /**
+   * Moved by a mid-life heal (`healerFor` below): the engine never reads its
+   * state file back, so the twin follows the session to its next life.
+   */
+  crosscheckSessionId: string;
+  workContextId: string;
   developerId: string | null;
   lastHeartbeatAt: string | null;
   readonly seenTargets: Set<string>;
@@ -798,7 +807,11 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     }
     await flushSpool(
       session.hub,
-      { sessionId: session.crosscheckSessionId, developerId: session.developerId },
+      {
+        sessionId: session.crosscheckSessionId,
+        developerId: session.developerId,
+        heal: healerFor(session),
+      },
       ACP_CAPTURE_FLUSH_BUDGET_MS,
     );
   };
@@ -828,9 +841,53 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     counters.fingerprints += 1;
     await flushSpool(
       session.hub,
-      { sessionId: session.crosscheckSessionId, developerId: session.developerId },
+      {
+        sessionId: session.crosscheckSessionId,
+        developerId: session.developerId,
+        heal: healerFor(session),
+      },
       ACP_CAPTURE_FLUSH_BUDGET_MS,
     );
+  };
+
+  /**
+   * The mid-life heal (core flows/heal-session.ts) for one live session: the
+   * hub refused its own id — a second proxy ended it, or its register never
+   * landed. A heal that moves the session to its next life moves this
+   * in-memory twin with it, or every later capture would still name the
+   * refused life and be withheld (core spool/flush-heal.ts).
+   */
+  const healerFor = (session: CaptureSession): SessionHealer => {
+    if (
+      session.config === null ||
+      session.hub === null ||
+      session.identity === null ||
+      session.repoKey === null
+    ) {
+      // A disabled session captures nothing, so nothing of it is ever refused.
+      return () => Promise.resolve(null);
+    }
+    const heal = sessionHealer({
+      home: session.config.home,
+      repoKey: session.repoKey,
+      hub: session.hub,
+      agentKind: session.config.agentKind,
+      hostSessionKey: session.hostSessionKey,
+      repoId: session.identity.repoId,
+      branch: session.identity.branch,
+      baseCommit: session.identity.baseCommit,
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+      now,
+    });
+    return async (refusedSessionId, deadlineMs) => {
+      const healed = await heal(refusedSessionId, deadlineMs);
+      if (healed !== null && healed.sessionId !== session.crosscheckSessionId) {
+        session.crosscheckSessionId = healed.sessionId;
+        session.workContextId = workContextIdFor(healed.sessionId);
+        session.seenTargets.clear();
+      }
+      return healed;
+    };
   };
 
   const heartbeat = async (
@@ -847,6 +904,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       lastHeartbeatAt: session.lastHeartbeatAt,
       now: at,
       status,
+      onRefused: () =>
+        healerFor(session)(session.crosscheckSessionId, Date.now() + ACP_CAPTURE_FLUSH_BUDGET_MS),
     });
     if (!attempted) {
       return;

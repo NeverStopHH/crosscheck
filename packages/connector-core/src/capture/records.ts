@@ -167,6 +167,10 @@ const BODY_NAMES_ITS_SESSION: ReadonlySet<string> = new Set([
   "target",
 ]);
 
+/** Whether the hub files this kind's position in the session its BODY names. */
+export const bodyNamesItsSession = (kind: unknown): boolean =>
+  typeof kind === "string" && BODY_NAMES_ITS_SESSION.has(kind);
+
 /**
  * Flush-time rewrite: ingest rejects records from an ended producer session,
  * so a dead session's spool is only deliverable in a live session's name.

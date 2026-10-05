@@ -106,3 +106,44 @@ describe("a Cursor conversation reopened after sessionEnd", () => {
     expect((await readDropDetail(home, key)).byReason["rejected"] ?? 0).toBe(0);
   });
 });
+
+describe("a Cursor conversation the hub ends while it keeps going", () => {
+  test("the next afterFileEdit heals into the next life, and later edits land there", async () => {
+    // Arrange: a live life, then a sessionEnd that ran in another window
+    const repo = await makeRepo("cursor-mid-life", { remote: "git@github.com:acme/api.git" });
+    const home = await makeHome("cursor-mid-life");
+    cleanups.push(repo, home);
+    const env: Env = {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.hubUrl,
+      CROSSCHECK_API_KEY: hub.apiKey,
+      CROSSCHECK_TIMEOUT_MS: "4000",
+    };
+    const key = repoKey(hub.hubUrl, REPO_ID);
+    const hubCtx: HubContext = { hubUrl: hub.hubUrl, apiKey: hub.apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
+    const conv = "conv-mid-life";
+    const editOf = async (file: string): Promise<void> => {
+      await writeRepoFile(repo, file, "export const a = 1;\n");
+      await run("afterFileEdit", { ...inRepo(AFTER_FILE_EDIT_INPUT, repo, conv), file_path: `${repo}/${file}` }, env);
+    };
+    await run("sessionStart", inRepo(SESSION_START_INPUT, repo, conv), env);
+    const first = await readSessionState(home, `cur-${conv}`);
+    await fetch(`${hub.hubUrl}/api/sessions/${encodeURIComponent(first?.crosscheckSessionId ?? "")}/end`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${hub.apiKey}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    // Act: the edit the hub refuses, then the next one
+    await editOf("src/refused.ts");
+    await editOf("src/after.ts");
+
+    // Assert
+    const healed = await readSessionState(home, `cur-${conv}`);
+    expect(healed?.crosscheckSessionId).toBe(`${first?.crosscheckSessionId ?? ""}~r1`);
+    const diagnosis = await getDiagnosis(hubCtx, healed?.workContextId ?? "");
+    if (!diagnosis.ok) throw new Error("diagnosis unavailable");
+    expect(diagnosis.data.targets.map((target) => target.value)).toEqual(["src/after.ts"]);
+    expect((await readDropDetail(home, key)).rejectedCauses).toEqual({ session_ended: 1 });
+  });
+});

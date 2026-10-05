@@ -1626,8 +1626,22 @@ export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
  * rungs are taken costs a skipped rung name, never a refused record.
  */
 export const REGISTER_LADDER_MAX_ATTEMPTS = 12;
+/**
+ * How long a session waits between two mid-life heals (flows/heal-session.ts).
+ *
+ * A flush or a heartbeat the hub refuses for the session's OWN id walks the
+ * ladder above once and registers the next life. A hub that refuses every
+ * register — down, misconfigured, a key it no longer takes — would otherwise
+ * turn every tool call into a register round trip on the hook the developer is
+ * waiting for. Five minutes is one walk per a few dozen tool calls at most;
+ * the attempt is stamped before the walk, so a hook killed mid-walk still
+ * counts it.
+ */
+export const HEAL_COOLDOWN_MS = 5 * 60 * 1000;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
+/** A session the hub holds as ended, or an id somebody else owns. */
+export const HTTP_CONFLICT = 409;
 
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;
