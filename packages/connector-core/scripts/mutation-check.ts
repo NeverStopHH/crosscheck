@@ -17492,7 +17492,7 @@ export const MUTATIONS: readonly Mutation[
     because: "cursor, drop-aggregate and `.pending-end` temps under spool/<key>/ are never removed",
   },
   {
-    label: "a missing home directory makes the temp sweep throw",
+    label: "a missing home subdirectory makes the temp sweep throw",
     file: `${CORE}/src/state/temp-sweep.ts`,
     from: "  } catch {\n    return false;\n  }",
     to: "  } catch (error) {\n    throw error;\n  }",
