@@ -17533,8 +17533,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "status groups teammates through the prose sanitizer instead of the bare one",
     file: `${CLI}/src/cli/status.ts`,
-    from: "groupTeammates(presence.data, now, bareUntrusted)",
-    to: "groupTeammates(presence.data, now)",
+    from: "groupTeammates(presence, now, bareUntrusted)",
+    to: "groupTeammates(presence, now)",
     test: `${CLI}/test/status-intent.test.ts`,
     because:
       "a display name carrying ` · ` mints a field on a line whose fields are " +
@@ -17698,6 +17698,18 @@ export const MUTATIONS: readonly Mutation[
       "a teammate stuck on fix/prod-outage reads `status analyzing` because a " +
       "fresher session on another branch is still analyzing",
   },
+  {
+    // The status block's corpus walk (review LOW): its topic lines print the
+    // grouped label, never the raw branch the hub sent.
+    label: "status prints a teammate's raw branch on a topic line",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    topic.label,\n    topic.status,",
+    to: "    topic.rows[0]?.entry.branch ?? \"\",\n    topic.status,",
+    test: `${CLI}/test/status-teammates-corpus.test.ts`,
+    because:
+      "a branch carrying « », a newline or ` · ` reaches the terminal raw and " +
+      "mints a frame, a line or a field of its own",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17799,6 +17811,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/status-intent.test.ts 1
+ * PRINTS: packages/cli/test/status-teammates-corpus.test.ts 1
  * PRINTS: packages/cli/test/status-topics.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/terminal.test.ts 3
