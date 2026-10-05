@@ -170,8 +170,9 @@ export const handleCursorSessionStart = async (
   // Abandoned writePrivateFile temps, home-wide — the Claude SessionStart's
   // sweep at the same point, because a Cursor-only machine has no Claude
   // SessionStart to run it (state/temp-sweep.ts carries the finding and
-  // the cost). Local readdirs only, no hub call, never throws.
-  await sweepAbandonedTemps(ctx.config.home, now);
+  // the cost). Held to the spare budget and a per-run cap, never the
+  // reserve; local readdirs only, no hub call, never throws.
+  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);
 
   return briefing.length === 0 ? "" : cursorInjectionOutput(briefing);
 };

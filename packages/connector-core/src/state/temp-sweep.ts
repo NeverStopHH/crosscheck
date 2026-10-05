@@ -33,7 +33,10 @@ import type { Dirent } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ABANDONED_TEMP_MAX_AGE_MS } from "../constants.ts";
+import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
+} from "../constants.ts";
 import { isTempSiblingName } from "../config/paths.ts";
 
 /** Absent or unlistable reads as empty: nothing this run can sweep there. */
@@ -74,15 +77,19 @@ const sweptDirectories = async (home: string): Promise<readonly string[]> => [
   ...(await spoolDirectories(home)),
 ];
 
-const removeIfAbandoned = async (path: string, now: Date): Promise<void> => {
+/** True when this call removed the file (or found it already gone). */
+const removeIfAbandoned = async (path: string, now: Date): Promise<boolean> => {
   try {
     const { mtimeMs } = await lstat(path);
     if (now.getTime() - mtimeMs > ABANDONED_TEMP_MAX_AGE_MS) {
       await rm(path, { force: true });
+      return true;
     }
+    return false;
   } catch {
     // Refused (EACCES), or gone under a concurrent sweep: this one file
     // stays, and the next SessionStart looks again.
+    return false;
   }
 };
 
@@ -96,24 +103,40 @@ const removeIfAbandoned = async (path: string, now: Date): Promise<void> => {
  * handlers/session-start.ts), and the ACP proxy's child-exit drain, off the
  * wire, which is where that connector reaps (connector-acp capture/engine.ts).
  *
- * NOT BOUNDED PER RUN, unlike the session-state reap, because the work per
- * orphan is one lstat and one unlink rather than a read and a parse.
- * MEASURED 2026-10-06 (bun 1.3.13, M4 Max, temp home with 200 ordinary files
- * across five directories): nothing to sweep 0.25 ms; the pilot machine's
- * whole backlog of 44 orphans 1.9 ms, once; 1000 orphans 55 ms, once, against
- * SessionStart's 1000 ms budget. A backlog only builds while no SessionStart
- * runs, and every run leaves at most one day's worth behind it.
+ * BOUNDED TWICE, because two of those three callers run inside a budget race
+ * whose loser is the briefing. ABANDONED_TEMP_SWEEP_MAX_PER_RUN bounds the
+ * work; `spareMs` — the caller's HookBudget.spareMs, or ACP's exit budget —
+ * bounds the time, and the sweep stops before the next syscall once it reads
+ * zero. What a hook still holds when that happens is its reserve, one request
+ * timeout (400 ms by default), and the reserve is what carries the briefing
+ * out; the sweep never spends it. MEASURED 2026-10-06 (bun 1.3.13, M4 Max,
+ * temp home with 200 ordinary files across five directories): nothing to
+ * sweep 0.25 ms; the pilot machine's whole backlog of 44 orphans 1.9 ms; a
+ * full run of 100 removals about 5.5 ms — none of it taken from the reserve.
  */
 export const sweepAbandonedTemps = async (
   home: string,
   now: Date,
+  spareMs: () => number,
 ): Promise<void> => {
+  let removed = 0;
+  const hasRoom = (): boolean =>
+    removed < ABANDONED_TEMP_SWEEP_MAX_PER_RUN && spareMs() > 0;
   for (const dir of await sweptDirectories(home)) {
+    if (!hasRoom()) {
+      return;
+    }
     for (const entry of await listEntries(dir)) {
       // Regular files only: writePrivateFile makes nothing else, and a
       // temp-shaped directory or symlink is somebody else's to keep.
-      if (entry.isFile() && isTempSiblingName(entry.name)) {
-        await removeIfAbandoned(join(dir, entry.name), now);
+      if (!entry.isFile() || !isTempSiblingName(entry.name)) {
+        continue;
+      }
+      if (!hasRoom()) {
+        return;
+      }
+      if (await removeIfAbandoned(join(dir, entry.name), now)) {
+        removed += 1;
       }
     }
   }

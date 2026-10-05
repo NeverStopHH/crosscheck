@@ -1636,6 +1636,23 @@ export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
  * be DELIVERED. A temp carries nothing anybody will ever read.
  */
 export const ABANDONED_TEMP_MAX_AGE_MS = MS_PER_DAY;
+/**
+ * Most abandoned temps ONE sweep removes — the SESSION_STATE_REAP_MAX_PER_RUN
+ * argument, because the sweep runs inside SessionStart's budget race too. A
+ * review measured the uncapped sweep through the real hook against a fast
+ * hub at the default 400 ms request timeout: 20 000 orphans took the hook to
+ * 1006 ms, it answered "" instead of its briefing and booked a false
+ * `hook_timed_out`.
+ *
+ * WHY 100. Twice the pilot machine's whole backlog (44), so a machine like it
+ * drains in one session. One removal measured 55 µs (1000 in 55 ms, bun
+ * 1.3.13, M4 Max), so a full run is about 5.5 ms — under 2% of the 400 ms
+ * reserve, with room for a disk ten times slower. At the pilot's rate of
+ * about one orphan a day the cap only ever binds on a backlog, and a backlog
+ * drains by a hundred per session. The cap bounds the WORK; the caller's
+ * spare budget bounds the TIME, and the sweep stops at whichever comes first.
+ */
+export const ABANDONED_TEMP_SWEEP_MAX_PER_RUN = 100;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
 

@@ -17510,7 +17510,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SessionStart never sweeps abandoned temps",
     file: `${CONNECTOR}/src/hooks/session-start.ts`,
-    from: "  await sweepAbandonedTemps(ctx.config.home, now);\n",
+    from: "  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);\n",
     to: "",
     test: `${CONNECTOR}/test/state-reap.test.ts`,
     because: "the sweep exists and nothing on the hook path calls it, so the orphans grow exactly as the pilot machine's did",
@@ -17518,7 +17518,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "Cursor SessionStart never sweeps abandoned temps",
     file: `${CURSOR}/src/handlers/session-start.ts`,
-    from: "  await sweepAbandonedTemps(ctx.config.home, now);\n",
+    from: "  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);\n",
     to: "",
     test: `${CURSOR}/test/handlers.test.ts`,
     because: "a Cursor-only machine has no Claude SessionStart, so its abandoned temps grow without bound exactly as the pilot machine's did",
@@ -17526,10 +17526,52 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "ACP shutdown never sweeps abandoned temps",
     file: `${ACP}/src/capture/engine.ts`,
-    from: "          await sweepAbandonedTemps(home, now());\n",
+    from: "          await sweepAbandonedTemps(home, now(), remaining);\n",
     to: "",
     test: `${ACP}/test/capture-engine.test.ts`,
     because: "an ACP-only machine has no SessionStart hook at all, and the child-exit drain is its only maintenance point — its abandoned temps grow without bound",
+  },
+  {
+    // Review 2026-10-06 (M1): uncapped, 20 000 orphans took a real
+    // SessionStart to 1006 ms, cost its briefing and booked a false timeout.
+    label: "the temp sweep ignores its per-run cap",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "    removed < ABANDONED_TEMP_SWEEP_MAX_PER_RUN && spareMs() > 0;",
+    to: "    spareMs() > 0;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a large backlog is removed in one run for as long as the spare lasts, and one SessionStart pays for a year of orphans",
+  },
+  {
+    label: "the temp sweep spends past its caller's spare budget",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "    removed < ABANDONED_TEMP_SWEEP_MAX_PER_RUN && spareMs() > 0;",
+    to: "    removed < ABANDONED_TEMP_SWEEP_MAX_PER_RUN;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a sweep that started with the spare already spent eats the reserve that carries the briefing out",
+  },
+  {
+    label: "SessionStart's temp sweep is handed more than the spare",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);\n",
+    to: "  await sweepAbandonedTemps(ctx.config.home, now, () => Number.POSITIVE_INFINITY);\n",
+    test: `${CONNECTOR}/test/hook-budget.test.ts`,
+    because: "after a drain ran to its deadline the sweep still runs, on the reserve the briefing needs",
+  },
+  {
+    label: "Cursor SessionStart's temp sweep is handed more than the spare",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);\n",
+    to: "  await sweepAbandonedTemps(ctx.config.home, now, () => Number.POSITIVE_INFINITY);\n",
+    test: `${CURSOR}/test/budget.test.ts`,
+    because: "after a drain ran to its deadline the Cursor sweep still runs, on the reserve its briefing needs",
+  },
+  {
+    label: "ACP shutdown's temp sweep outlives its exit budget",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          await sweepAbandonedTemps(home, now(), remaining);\n",
+    to: "          await sweepAbandonedTemps(home, now(), () => Number.POSITIVE_INFINITY);\n",
+    test: `${ACP}/test/capture-engine.test.ts`,
+    because: "the proxy keeps the client waiting on its exit code past ACP_CAPTURE_EXIT_BUDGET_MS for a cleanup",
   },
 ];
 
@@ -17639,7 +17681,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/waiver-render.test.ts 12
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
- * PRINTS: packages/connector-acp/test/capture-engine.test.ts 2
+ * PRINTS: packages/connector-acp/test/capture-engine.test.ts 3
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
@@ -17676,7 +17718,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
- * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
+ * PRINTS: packages/connector-claude/test/hook-budget.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
@@ -17705,7 +17747,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
- * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 12
+ * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 14
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
@@ -17805,7 +17847,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
- * PRINTS: packages/connector-cursor/test/budget.test.ts 1
+ * PRINTS: packages/connector-cursor/test/budget.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3

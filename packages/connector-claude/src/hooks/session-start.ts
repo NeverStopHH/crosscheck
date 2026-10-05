@@ -456,9 +456,11 @@ export const handleSessionStart = async (
   // like the state reap above and for its reason: the writers that abandon
   // them are every hook of every repo, and this once-a-session region is the
   // one that already pays for a directory walk. No other hook sweeps — a
-  // readdir per PostToolUse would buy nothing a day-old bound needs. A few
-  // readdirs and a stat per temp-shaped name; it never throws.
-  await sweepAbandonedTemps(ctx.config.home, now);
+  // readdir per PostToolUse would buy nothing a day-old bound needs. Held to
+  // the SPARE budget and a per-run cap, never the reserve: uncapped, a
+  // 20 000-orphan backlog took this hook past its budget and cost the
+  // briefing (state/temp-sweep.ts). It never throws.
+  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);
   await landingFetch;
 
   if (briefing.length === 0) {

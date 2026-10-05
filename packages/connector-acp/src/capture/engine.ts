@@ -1359,7 +1359,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           ),
         );
         for (const home of homes) {
-          await sweepAbandonedTemps(home, now());
+          await sweepAbandonedTemps(home, now(), remaining);
         }
       } catch (error) {
         counters.errors += 1;

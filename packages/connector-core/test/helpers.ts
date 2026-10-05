@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -55,6 +55,36 @@ export const writeRepoFile = async (
 
 export const makeHome = async (label: string): Promise<string> =>
   mkdtemp(join(tmpdir(), `cx-home-${label}-`));
+
+/** Files created at once while seeding: enough to be quick, few enough fds. */
+const SEED_CHUNK = 500;
+
+/**
+ * `count` empty files in `dir`, each named exactly like a writePrivateFile
+ * temp sibling and each `ageMs` older than `now` — the abandoned-temp
+ * backlog the sweep tests need (state/temp-sweep.ts). Returns their paths.
+ */
+export const seedAbandonedTemps = async (
+  dir: string,
+  count: number,
+  ageMs: number,
+  now: Date = new Date(),
+): Promise<readonly string[]> => {
+  await mkdir(dir, { recursive: true });
+  const when = new Date(now.getTime() - ageMs);
+  const paths = Array.from({ length: count }, (_, index) =>
+    join(dir, `seeded-${String(index)}.json.tmp-${String(index)}-abcdefgh`),
+  );
+  for (let start = 0; start < paths.length; start += SEED_CHUNK) {
+    await Promise.all(
+      paths.slice(start, start + SEED_CHUNK).map(async (path) => {
+        await writeFile(path, "", "utf8");
+        await utimes(path, when, when);
+      }),
+    );
+  }
+  return paths;
+};
 
 /** What the kernel is given to move an exited child into the zombie state. */
 const ZOMBIE_SETTLE_MS = 300;

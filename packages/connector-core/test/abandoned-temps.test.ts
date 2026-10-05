@@ -16,7 +16,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { ABANDONED_TEMP_MAX_AGE_MS } from "../src/constants.ts";
+import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
+} from "../src/constants.ts";
 import {
   presenceCachePath,
   sessionStatePathForSlug,
@@ -27,7 +30,7 @@ import {
   writePrivateFile,
 } from "../src/config/paths.ts";
 import { sweepAbandonedTemps } from "../src/state/temp-sweep.ts";
-import { makeHome } from "./helpers.ts";
+import { makeHome, seedAbandonedTemps } from "./helpers.ts";
 
 const NOW = new Date("2026-10-06T12:00:00.000Z");
 const KEY = "0123456789abcdef";
@@ -36,6 +39,8 @@ const SLUG = "session-1";
 const MINUTE_MS = 60_000;
 const ABANDONED_MS = ABANDONED_TEMP_MAX_AGE_MS + MINUTE_MS;
 const IN_FLIGHT_MS = ABANDONED_TEMP_MAX_AGE_MS - MINUTE_MS;
+/** A caller with all the time in the world: only the cap can stop the sweep. */
+const ROOM = (): number => Number.POSITIVE_INFINITY;
 
 const isRoot = process.getuid?.() === 0;
 
@@ -92,7 +97,7 @@ describe("sweepAbandonedTemps covers every directory writePrivateFile litters", 
     const temp = await seed(tempSibling(real), ABANDONED_MS);
 
     // Act
-    await sweepAbandonedTemps(home, NOW);
+    await sweepAbandonedTemps(home, NOW, ROOM);
 
     // Assert
     expect(await exists(temp)).toBe(false);
@@ -106,7 +111,7 @@ describe("sweepAbandonedTemps covers every directory writePrivateFile litters", 
     const temp = await seed(tempSibling(real), ABANDONED_MS);
 
     // Act
-    await sweepAbandonedTemps(home, NOW);
+    await sweepAbandonedTemps(home, NOW, ROOM);
 
     // Assert
     expect(await exists(temp)).toBe(false);
@@ -120,7 +125,7 @@ describe("sweepAbandonedTemps covers every directory writePrivateFile litters", 
     const temp = await seed(tempSibling(real), ABANDONED_MS);
 
     // Act
-    await sweepAbandonedTemps(home, NOW);
+    await sweepAbandonedTemps(home, NOW, ROOM);
 
     // Assert
     expect(await exists(temp)).toBe(false);
@@ -138,7 +143,7 @@ describe("sweepAbandonedTemps covers every directory writePrivateFile litters", 
     const cursorTemp = await seed(tempSibling(cursor), ABANDONED_MS);
 
     // Act
-    await sweepAbandonedTemps(home, NOW);
+    await sweepAbandonedTemps(home, NOW, ROOM);
 
     // Assert
     expect(await exists(markerTemp)).toBe(false);
@@ -155,7 +160,7 @@ describe("sweepAbandonedTemps deletes only what is certainly abandoned", () => {
     const temp = await seed(tempSibling(syncStatePath(home, KEY)), IN_FLIGHT_MS);
 
     // Act
-    await sweepAbandonedTemps(home, NOW);
+    await sweepAbandonedTemps(home, NOW, ROOM);
 
     // Assert
     expect(await exists(temp)).toBe(true);
@@ -191,12 +196,41 @@ describe("sweepAbandonedTemps deletes only what is certainly abandoned", () => {
     await utimes(shapedDirectory, when, when);
 
     // Act
-    await sweepAbandonedTemps(home, NOW);
+    await sweepAbandonedTemps(home, NOW, ROOM);
 
     // Assert
     expect((await readdir(state)).sort()).toEqual(
       [...names, basename(shapedDirectory)].sort(),
     );
+  });
+});
+
+describe("sweepAbandonedTemps stays inside its caller's budget", () => {
+  test("removes at most ABANDONED_TEMP_SWEEP_MAX_PER_RUN per run, so a backlog drains over successive runs", async () => {
+    // Arrange: fifty more orphans than one run may remove
+    const home = await tempHome("sweep-cap");
+    const state = dirname(syncStatePath(home, KEY));
+    await seedAbandonedTemps(state, ABANDONED_TEMP_SWEEP_MAX_PER_RUN + 50, ABANDONED_MS, NOW);
+
+    // Act + Assert: the first run stops at the cap, the second takes the rest
+    await sweepAbandonedTemps(home, NOW, ROOM);
+    expect(await readdir(state)).toHaveLength(50);
+    await sweepAbandonedTemps(home, NOW, ROOM);
+    expect(await readdir(state)).toHaveLength(0);
+  });
+
+  test("removes nothing once the caller's spare budget is spent", async () => {
+    // Arrange: the flush ran to its deadline and left no spare
+    const home = await tempHome("sweep-spent");
+    const temps = await seedAbandonedTemps(dirname(syncStatePath(home, KEY)), 3, ABANDONED_MS, NOW);
+
+    // Act
+    await sweepAbandonedTemps(home, NOW, () => 0);
+
+    // Assert: next session's sweep, not this one's reserve
+    for (const temp of temps) {
+      expect(await exists(temp)).toBe(true);
+    }
   });
 });
 
@@ -206,7 +240,7 @@ describe("sweepAbandonedTemps never fails its caller", () => {
     const home = await tempHome("sweep-empty");
 
     // Act + Assert
-    expect(await sweepAbandonedTemps(home, NOW)).toBeUndefined();
+    expect(await sweepAbandonedTemps(home, NOW, ROOM)).toBeUndefined();
   });
 
   test.skipIf(isRoot)("a temp it may not remove is skipped and every other directory is still swept", async () => {
@@ -218,7 +252,7 @@ describe("sweepAbandonedTemps never fails its caller", () => {
 
     try {
       // Act
-      const outcome = await sweepAbandonedTemps(home, NOW).then(
+      const outcome = await sweepAbandonedTemps(home, NOW, ROOM).then(
         () => "resolved",
         () => "rejected",
       );
@@ -243,8 +277,8 @@ describe("sweepAbandonedTemps never fails its caller", () => {
 
     // Act
     const outcomes = await Promise.allSettled([
-      sweepAbandonedTemps(home, NOW),
-      sweepAbandonedTemps(home, NOW),
+      sweepAbandonedTemps(home, NOW, ROOM),
+      sweepAbandonedTemps(home, NOW, ROOM),
     ]);
 
     // Assert

@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1553
+    # PRINTS: 1558
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -211,7 +211,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 3
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
-    # PRINTS: packages/connector-acp/src/capture/engine.ts 19
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 20
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 2
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
@@ -241,7 +241,7 @@ jobs:
     # PRINTS: hooks/post-tool-use.ts 9
     # PRINTS: hooks/pre-tool-use.ts 18
     # PRINTS: hooks/runner.ts 7
-    # PRINTS: hooks/session-start.ts 5
+    # PRINTS: hooks/session-start.ts 6
     # PRINTS: hooks/stop.ts 2
     # PRINTS: hooks/user-prompt-submit.ts 4
     # PRINTS: summarizer/probe.ts 1
@@ -351,7 +351,7 @@ jobs:
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 20
-    # PRINTS: state/temp-sweep.ts 8
+    # PRINTS: state/temp-sweep.ts 10
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
@@ -362,7 +362,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
-    # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 3
+    # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/stop.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 3
     # PRINTS: packages/connector-cursor/src/init/init.ts 1
@@ -530,7 +530,7 @@ jobs:
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
     # PRINTS: end-session.ts 3
-    # PRINTS: engine.ts 19
+    # PRINTS: engine.ts 20
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
     # PRINTS: envelope.ts 1
@@ -665,7 +665,7 @@ jobs:
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
-    # PRINTS: session-start.ts 8
+    # PRINTS: session-start.ts 10
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 15
@@ -690,7 +690,7 @@ jobs:
     # PRINTS: target-paths.ts 1
     # PRINTS: team-settings.ts 2
     # PRINTS: telemetry-loss.ts 6
-    # PRINTS: temp-sweep.ts 8
+    # PRINTS: temp-sweep.ts 10
     # PRINTS: terminal.ts 3
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 2

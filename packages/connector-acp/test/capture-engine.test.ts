@@ -40,6 +40,7 @@ import type { CaptureHub, Harness, HarnessOptions } from "./fixtures/capture-har
 import {
   makeHome,
   makeRepo,
+  seedAbandonedTemps,
   writeRepoFile,
 } from "../../connector-core/test/helpers.ts";
 
@@ -436,6 +437,27 @@ describe("the §2.4 mapping against a live hub", () => {
     const names = await readdir(state);
     expect(names).not.toContain(abandoned);
     expect(names).toContain(inFlight);
+  });
+
+  test("a shutdown with no exit budget left sweeps nothing: the temps wait for a later drain", async () => {
+    // Arrange: a live session gives the shutdown its home
+    const h = await harness("temp-sweep-spent");
+    handshake(h, "sess_temp_spent", h.repo);
+    await h.capture.settle();
+    const temps = await seedAbandonedTemps(
+      join(h.home, "state"),
+      3,
+      ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+      h.clock.value,
+    );
+
+    // Act: a drain whose ACP_CAPTURE_EXIT_BUDGET_MS is already spent
+    await h.capture.shutdown(0);
+
+    // Assert
+    for (const temp of temps) {
+      expect(await Bun.file(temp).exists()).toBe(true);
+    }
   });
 
   test("a deferred end the shutdown reap spends carries the position its marker holds", async () => {
