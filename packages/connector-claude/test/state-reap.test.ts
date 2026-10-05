@@ -8,16 +8,23 @@
  * file exists, so each corpse pinned a delivered `.jsonl` that could never be
  * reaped.
  *
+ * The same maintenance region sweeps abandoned `writePrivateFile` temp
+ * siblings (pilot finding, 2026-10-06: 40 in one machine's `state/`, aged up
+ * to 925 h, and still being produced). The pure sweep is pinned in
+ * connector-core/test/abandoned-temps.test.ts; this file pins that the hook
+ * runs it.
+ *
  * This runs the REAL `crosscheck hook session-start` against a throwaway hub,
  * because the interesting part is that the reap happens on the hook path at
  * all — not that the pure function works.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdir, rm, utimes } from "node:fs/promises";
+import { mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runHook } from "../src/index.ts";
 import {
+  ABANDONED_TEMP_MAX_AGE_MS,
   MAX_SPOOL_AGE_DAYS,
   MS_PER_DAY,
 } from "@crosscheck/connector-core/constants.ts";
@@ -165,5 +172,46 @@ describe("SessionStart reaps zombie state files", () => {
     const names = await stateNames(home);
     expect(names).toContain("recent-a.json");
     expect(names).toContain("recent-b.json");
+  });
+});
+
+/** A temp sibling in `<home>/state`, its mtime `ageMs` in the past. */
+const seedStateTemp = async (
+  home: string,
+  name: string,
+  ageMs: number,
+): Promise<void> => {
+  await mkdir(join(home, "state"), { recursive: true });
+  const path = join(home, "state", name);
+  await writeFile(path, "", "utf8");
+  const when = new Date(Date.now() - ageMs);
+  await utimes(path, when, when);
+};
+
+describe("SessionStart sweeps abandoned temp siblings", () => {
+  test("a temp past ABANDONED_TEMP_MAX_AGE_MS goes; a fresh one stays", async () => {
+    // Arrange: the two shapes the pilot machine had — an hour old and weeks old
+    const repo = await makeRepo("temp-sweep", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("temp-sweep");
+    paths.push(repo, home);
+    const hubUrl = acceptingHub();
+    const abandoned = "0123456789abcdef-hooks.json.tmp-4242-k3j9x0qa";
+    const inFlight = "0123456789abcdef.json.tmp-4243-p0w8rt2z";
+    await seedStateTemp(home, abandoned, ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY);
+    await seedStateTemp(home, inFlight, 60 * 60 * 1000);
+
+    // Act: the real hook
+    await runHook(
+      "session-start",
+      JSON.stringify({ session_id: LIVE_SESSION_ID, cwd: repo }),
+      hookEnv(home, hubUrl),
+    );
+
+    // Assert
+    const names = await readdir(join(home, "state"));
+    expect(names).not.toContain(abandoned);
+    expect(names).toContain(inFlight);
   });
 });

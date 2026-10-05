@@ -48,6 +48,7 @@ import {
   writePresenceCache,
 } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
+import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -451,6 +452,13 @@ export const handleSessionStart = async (
   await reapStaleSessionStates(ctx.config.home, now, {
     keepHostSessionKey: ctx.payload.session_id,
   });
+  // Abandoned writePrivateFile temps (pilot finding, 2026-10-06), home-wide
+  // like the state reap above and for its reason: the writers that abandon
+  // them are every hook of every repo, and this once-a-session region is the
+  // one that already pays for a directory walk. No other hook sweeps — a
+  // readdir per PostToolUse would buy nothing a day-old bound needs. A few
+  // readdirs and a stat per temp-shaped name; it never throws.
+  await sweepAbandonedTemps(ctx.config.home, now);
   await landingFetch;
 
   if (briefing.length === 0) {

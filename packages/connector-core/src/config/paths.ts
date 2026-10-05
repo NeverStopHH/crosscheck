@@ -287,12 +287,38 @@ export const ensureDir = async (path: string): Promise<void> => {
   await mkdir(path, { recursive: true, mode: HOME_DIR_MODE });
 };
 
-const tempSibling = (path: string): string =>
+/**
+ * Exported so the sweep's tests name the files THIS produces, not a copy of
+ * the idea typed out by hand.
+ */
+export const tempSibling = (path: string): string =>
   `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+
+/**
+ * Exactly the names `tempSibling` produces and nothing looser: a target name,
+ * `.tmp-`, the writer's pid in decimal, `-`, and one to eight lower-case
+ * base36 characters (`slice(2, 10)` of a base36 `Math.random()`), then the
+ * end of the name. The sweep (state/temp-sweep.ts) deletes on this test plus
+ * an age, so every character it accepts beyond that shape is a file nobody
+ * abandoned put up for deletion. It changes with `tempSibling` or not at all.
+ */
+const TEMP_SIBLING_NAME = /^.+\.tmp-[0-9]+-[0-9a-z]{1,8}$/;
+
+export const isTempSiblingName = (name: string): boolean =>
+  TEMP_SIBLING_NAME.test(name);
 
 /**
  * Atomic write: a crashed hook must never leave a half-written state file that
  * the next hook parses as truth.
+ *
+ * A FAILED write removes its own temp (pilot finding, 2026-10-06). A
+ * `writeFile` that died part-way, a refused chmod or a rename that threw used
+ * to leave `<path>.tmp-<pid>-<rand>` beside the target for good: nothing
+ * reads those names, and nothing removed them. The removal is best-effort —
+ * `removeFile` swallows its own failure — so what the caller catches is
+ * always the write's own error. A writer that DIES between the two steps
+ * runs no catch at all; that half is SessionStart's age sweep
+ * (state/temp-sweep.ts).
  */
 export const writePrivateFile = async (
   path: string,
@@ -300,9 +326,14 @@ export const writePrivateFile = async (
 ): Promise<void> => {
   await ensureDir(dirname(path));
   const temp = tempSibling(path);
-  await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });
-  await chmod(temp, PRIVATE_FILE_MODE);
-  await rename(temp, path);
+  try {
+    await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });
+    await chmod(temp, PRIVATE_FILE_MODE);
+    await rename(temp, path);
+  } catch (error) {
+    await removeFile(temp);
+    throw error;
+  }
 };
 
 export type TextRead =
