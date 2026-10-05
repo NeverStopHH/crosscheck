@@ -5,6 +5,8 @@
  * incidents that never involved these endpoints).
  */
 
+import { DELIVERY_CHANNELS } from "@crosscheck/schema";
+
 export interface HintHubCalls {
   candidates: number;
   tripwire: number;
@@ -36,6 +38,11 @@ export interface HintHub {
   readonly setNotices: (notices: readonly unknown[]) => void;
   /** The coverage record on the same response; unset, the field is absent. */
   readonly setCoverage: (coverage: unknown) => void;
+  /**
+   * The delivery channels the hub advertises — every channel a current hub
+   * records by default; undefined answers like a hub too old to send it.
+   */
+  readonly setDeliveryChannels: (channels: readonly string[] | undefined) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
   /** Rows GET /api/solved-matches answers with. */
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
@@ -238,6 +245,7 @@ export const startHintHub = (
   let answers: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
   let coverage: unknown = undefined;
+  let deliveryChannels: readonly string[] | undefined = [...DELIVERY_CHANNELS];
   let tripwireSessions: readonly unknown[] = [];
   let solvedMatches: readonly unknown[] = [];
   let lastSolvedFingerprint: string | null = null;
@@ -251,7 +259,7 @@ export const startHintHub = (
         calls.candidates += 1;
         lastCandidatesQuery = searchParams;
         await sleep(latency.candidates);
-        return Response.json({ ok: true, data: { candidates, answers, notices, coverage } });
+        return Response.json({ ok: true, data: { candidates, answers, notices, coverage, deliveryChannels } });
       }
       if (pathname === "/api/solved-matches") {
         calls.solvedMatches += 1;
@@ -304,6 +312,9 @@ export const startHintHub = (
     },
     setCoverage: (next) => {
       coverage = next;
+    },
+    setDeliveryChannels: (next) => {
+      deliveryChannels = next;
     },
     setTripwireSessions: (next) => {
       tripwireSessions = next;

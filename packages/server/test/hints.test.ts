@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { DELIVERY_CHANNELS, SUBSTANCE_DELIVERY_CHANNEL } from "@crosscheck/schema";
+
 import { createRecordingEmbedder } from "./fixtures/fake-embedder.ts";
 import { HINT_MAX_CLAIMS_PER_CONTEXT } from "../src/services/hints.ts";
 import {
@@ -146,6 +148,24 @@ const setupTwoDevelopers = async (): Promise<{
 };
 
 describe("GET /api/hints/candidates", () => {
+  test("the answer advertises every delivery channel this hub records, prompt_substance among them", async () => {
+    // Arrange — a connector books a shown finding on prompt_substance only
+    // where the hub says it records that channel; an older hub rejects it
+    const { harness, robin } = await setupTwoDevelopers();
+    const params = new URLSearchParams({ query: "why does refresh.ts 500", repo: REPO });
+
+    // Act
+    const response = await harness.app.request(
+      `/api/hints/candidates?${params.toString()}`,
+      jsonRequest("GET", robin.apiKey),
+    );
+
+    // Assert — the very list the hint_delivery record validator accepts
+    const body = (await response.json()) as { data: { deliveryChannels?: readonly string[] } };
+    expect(body.data.deliveryChannels).toEqual([...DELIVERY_CHANNELS]);
+    expect(body.data.deliveryChannels).toContain(SUBSTANCE_DELIVERY_CHANNEL);
+  });
+
   test("returns a matching teammate context with claims and trust fields", async () => {
     // Arrange
     const { harness, robin } = await setupTwoDevelopers();

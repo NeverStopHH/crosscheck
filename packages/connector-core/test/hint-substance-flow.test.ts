@@ -185,6 +185,21 @@ describe("an inline finding is still counted, on a channel of its own", () => {
     expect(await spooledChannel(f)).toBe(SUBSTANCE_DELIVERY_CHANNEL);
   });
 
+  test("a hub that does not advertise the channel gets the finding booked as prompt_hint", async () => {
+    // Arrange — a hub older than the channel rejects a record carrying it,
+    // and a rejected delivery is no count at all
+    const f = await fixture("sf-channel-older-hub");
+    f.hub.setCandidates([decisionTree(4)]);
+    f.hub.setDeliveryChannels(undefined);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert — the reader still gets the finding; only the booking changes
+    expect(text).toContain(`«${FIRST}»`);
+    expect(await spooledChannel(f)).toBe("prompt_hint");
+  });
+
   test("a decision with no sentence worth showing is a pointer, booked as one", async () => {
     // Arrange — the trust and the match are there; the substance is not
     const f = await fixture("sf-channel-empty");

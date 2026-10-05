@@ -1684,6 +1684,12 @@ export interface HintCandidatesResult {
    * too old to send the field.
    */
   readonly notices: readonly LandedNotice[];
+  /**
+   * The delivery channels this hub records. Empty from a hub too old to send
+   * the field — and such a hub rejects any channel it does not know, so the
+   * hint flow books a newer channel only when it is listed here.
+   */
+  readonly deliveryChannels: readonly string[];
 }
 
 const HintCandidatesResponseSchema = z
@@ -1692,6 +1698,7 @@ const HintCandidatesResponseSchema = z
     answers: z.array(z.unknown()).default([]),
     coverage: z.unknown().optional(),
     notices: z.array(z.unknown()).default([]),
+    deliveryChannels: z.array(z.string()).catch([]),
   })
   .transform(
     (value): HintCandidatesResult => ({
@@ -1700,6 +1707,7 @@ const HintCandidatesResponseSchema = z
       answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
       coverage: parseCoverage(value.coverage),
       notices: parseRows(value.notices, LandedNoticeSchema).rows,
+      deliveryChannels: value.deliveryChannels,
     }),
   );
 

@@ -133,7 +133,18 @@ interface RenderScope {
   readonly intentProvenance: string | null;
   /** What the lines appended after the hint need (`hintTrailerReserve`). */
   readonly reserveChars: number;
+  /** The channel a shown finding is booked on (`substanceChannelOf`). */
+  readonly substanceChannel: DeliveryChannel;
 }
+
+/**
+ * A shown finding's own channel where the hub says it records it, else
+ * prompt_hint (review 1006b): a hub older than `prompt_substance` rejects a
+ * record carrying it, and a rejected delivery is no count at all. The older
+ * hub then counts the finding as a pointer — the smaller loss of the two.
+ */
+const substanceChannelOf = (advertised: readonly string[]): DeliveryChannel =>
+  advertised.includes(SUBSTANCE_DELIVERY_CHANNEL) ? SUBSTANCE_DELIVERY_CHANNEL : "prompt_hint";
 
 const renderSelection = async (
   scope: RenderScope,
@@ -188,7 +199,7 @@ const deliveryOf = (
       refId: selection.claim.id,
       // The finding rides INSIDE this hint, so a later read of its tree is
       // the agent pulling more, never "the pointer was opened" (07 §3.1).
-      channel: SUBSTANCE_DELIVERY_CHANNEL,
+      channel: scope.substanceChannel,
       // The echo mark covers what was SHOWN — the first sentence — so that
       // sentence coming back as the reader's own observation is caught.
       bodyHash: hintBodyHash(substanceSentence(selection.claim.body)),
@@ -384,6 +395,7 @@ export const selectAndRenderHint = async (
       now: input.now,
       intentProvenance: state.workContextIntentProvenance ?? null,
       reserveChars: hintTrailerReserve(result.data.coverage, input.now),
+      substanceChannel: substanceChannelOf(result.data.deliveryChannels),
     },
     selection,
   );

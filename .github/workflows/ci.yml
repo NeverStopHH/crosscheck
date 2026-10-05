@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1585
+    # PRINTS: 1588
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -280,7 +280,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
-    # PRINTS: flows/hint.ts 13
+    # PRINTS: flows/hint.ts 14
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
@@ -299,7 +299,7 @@ jobs:
     # PRINTS: hints/select.ts 24
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
-    # PRINTS: http/hub.ts 12
+    # PRINTS: http/hub.ts 13
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 5
     # PRINTS: http/verdict.ts 4
@@ -388,7 +388,7 @@ jobs:
     # PRINTS: packages/server/src/routes/absences.ts 2
     # PRINTS: packages/server/src/routes/events.ts 1
     # PRINTS: packages/server/src/routes/fence-waivers.ts 1
-    # PRINTS: packages/server/src/routes/hints.ts 2
+    # PRINTS: packages/server/src/routes/hints.ts 3
     # PRINTS: packages/server/src/routes/landed.ts 3
     # PRINTS: packages/server/src/routes/passkeys.ts 1
     # PRINTS: packages/server/src/routes/pilot-marks.ts 2
@@ -554,10 +554,10 @@ jobs:
     # PRINTS: git.ts 4
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
-    # PRINTS: hint.ts 14
-    # PRINTS: hints.ts 16
+    # PRINTS: hint.ts 15
+    # PRINTS: hints.ts 17
     # PRINTS: hook-budget.ts 2
-    # PRINTS: hub.ts 12
+    # PRINTS: hub.ts 13
     # PRINTS: index.ts 4
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 8

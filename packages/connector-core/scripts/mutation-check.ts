@@ -12082,8 +12082,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the prompt's call carries no notices",
     file: `${SERVER}/src/routes/hints.ts`,
-    from: "    return ok(c, { candidates, answers, coverage, notices });",
-    to: "    return ok(c, { candidates, answers, coverage });",
+    from: "    return ok(c, { candidates, answers, coverage, notices, deliveryChannels: DELIVERY_CHANNELS });",
+    to: "    return ok(c, { candidates, answers, coverage, deliveryChannels: DELIVERY_CHANNELS });",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "an author in a live session hears nothing until their next session",
   },
@@ -17522,7 +17522,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a substance hint is booked as a pointer",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "      channel: SUBSTANCE_DELIVERY_CHANNEL,",
+    from: "      channel: scope.substanceChannel,",
     to: "      channel: \"prompt_hint\",",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "every later read of an inlined finding's tree counts as an opened pointer and inflates the pilot's precision",
@@ -17783,6 +17783,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "every layer knows the count is a lower bound except the sentence the reader sees",
   },
+  {
+    label: "the hub stops advertising the delivery channels it records",
+    file: `${SERVER}/src/routes/hints.ts`,
+    from: ", notices, deliveryChannels: DELIVERY_CHANNELS });",
+    to: ", notices });",
+    test: `${SERVER}/test/hints.test.ts`,
+    because: "every current connector books a shown finding as a pointer, and the pilot's prompt_substance bucket stays empty",
+  },
+  {
+    label: "an older hub is sent a delivery channel it rejects",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  advertised.includes(SUBSTANCE_DELIVERY_CHANNEL) ? SUBSTANCE_DELIVERY_CHANNEL : \"prompt_hint\";",
+    to: "  SUBSTANCE_DELIVERY_CHANNEL;",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the hub refuses the hint_delivery record, and the finding the reader was shown is counted nowhere",
+  },
+  {
+    label: "the connector drops the channels the hub advertises",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      deliveryChannels: value.deliveryChannels,\n",
+    to: "      deliveryChannels: [],\n",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a current hub is treated as an old one, and every shown finding is booked as an opened-able pointer",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17997,7 +18021,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
- * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 6
+ * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 8
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
  * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 13
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 5
@@ -18106,7 +18130,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
- * PRINTS: packages/server/test/hints.test.ts 5
+ * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2

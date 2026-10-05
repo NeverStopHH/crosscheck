@@ -11,6 +11,7 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
+import { DELIVERY_CHANNELS } from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
@@ -99,7 +100,10 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       surface: "api-hints-candidates",
       coverage,
     });
-    return ok(c, { candidates, answers, coverage, notices });
+    // The delivery channels this hub records — the hint_delivery validator's
+    // own list — so a connector newer than the hub books a shown finding on
+    // a channel it can store (review 1006b): additive, one constant.
+    return ok(c, { candidates, answers, coverage, notices, deliveryChannels: DELIVERY_CHANNELS });
   });
 
   router.get("/tripwire", async (c) => {

@@ -86,7 +86,10 @@ opened, prior work, converged, opened anyway, opened per 100 sessions (`OPENED_A
 `services/pilot-report.ts`) — because the finding arrived with the hint, so a later read of its tree is
 the agent pulling more, not a pointer being followed. Pointers keep `prompt_hint`. The delivery id is
 unchanged (`hintDeliveryId(session, ref)`); a hub older than the value refuses the record (the channel is
-a closed enum), so upgrade the hub before the connectors.*
+a closed enum), so the hub now lists the channels it records in the candidates answer
+(`deliveryChannels`, additive) and a connector books `prompt_substance` only where it is listed — on an
+older hub the shown finding is booked `prompt_hint`, counted as a pointer rather than not at all
+(batch-1006 review). Upgrading the hub first still keeps the figures clean.*
 
 ### 3.2 `pilot_marks` — the only human input, and it is never a question
 
