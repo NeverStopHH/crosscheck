@@ -13,17 +13,32 @@
  * that goes idle for an hour or dies silently for good, an older connector's
  * flush, hub faults, a work context the hub refuses for good, and a crash at
  * any hooked write.
+ *
+ * ROUND 8, from the round-7 review's copy: two connector processes at once
+ * (`par` — parallel tool calls, a reload's SessionEnd beside its SessionStart),
+ * a slow hub that commits and answers late, and a host that dies while a week
+ * passes for every file on disk (`age`). The timing is production's: the real
+ * request timeout and each hook's real budget, of which a drain gets what is
+ * spare (config/hook-budget.ts) — so a record taken unheard is as common here
+ * as on a laptop.
  */
-import { readdir, utimes } from "node:fs/promises";
+import { readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
+  HTTP_TIMEOUT_MS,
   MAX_INGEST_BATCH,
   MAX_SPOOL_AGE_DAYS,
   MINUTES_PER_HOUR,
   MS_PER_DAY,
   MS_PER_SECOND,
+  POST_TOOL_USE_BUDGET_RATIO,
   SECONDS_PER_MINUTE,
+  SESSION_END_BUDGET_RATIO,
+  SESSION_START_BUDGET_RATIO,
+  STOP_BUDGET_RATIO,
 } from "../../src/constants.ts";
+import { hookBudget } from "../../src/config/hook-budget.ts";
 import { repoKey, sessionSlug, sessionStatePath, spoolDir } from "../../src/config/paths.ts";
 import { targetRecord, withProducer, workContextRecord } from "../../src/capture/records.ts";
 import type { Producer } from "../../src/capture/records.ts";
@@ -55,22 +70,17 @@ export const REPO_ID = "github.com/acme/simulation";
 const BRANCH = "main";
 const BASE_COMMIT = "0000000000000000000000000000000000000000";
 const AGENT_KIND = "acp:simulation";
-const REQUEST_TIMEOUT_MS = 1500;
-/** What a hook spares a drain. */
-const FLUSH_BUDGET_MS = 2000;
+/** Production's request timeout (constants.ts), against an in-memory hub: some batches time out after it committed. */
+const REQUEST_TIMEOUT_MS = HTTP_TIMEOUT_MS;
 /** What the deadline check and one clamped request may add on a busy runner. */
 const DRAIN_SLACK_MS = 600;
-/** I5: a hook's drain returns inside its budget… */
-const HOOK_LIMIT_MS = FLUSH_BUDGET_MS + DRAIN_SLACK_MS;
-/** …and SessionEnd inside its drain's budget plus the one `end` call. */
-const END_LIMIT_MS = FLUSH_BUDGET_MS + REQUEST_TIMEOUT_MS + DRAIN_SLACK_MS;
 const MINUTE_MS = SECONDS_PER_MINUTE * MS_PER_SECOND;
 /** The hour round 6's hold released an idle life after (review M2, P3). */
 const IDLE_MS = 61 * MINUTE_MS;
 /** Past the bound session-reap deletes a state on: the host died long ago. */
 const ABANDONED_MS = MAX_SPOOL_AGE_DAYS * MS_PER_DAY + MINUTES_PER_HOUR * MINUTE_MS;
-/** How many rounds the final drain may take before the scenario has failed to settle. */
-const DRAIN_ROUNDS = 12;
+/** How many rounds the final drain may take before the scenario has failed to settle — at a Stop hook's budget each. */
+const DRAIN_ROUNDS = 30;
 const STATUSES = ["implementing", "blocked", "reviewing", "done"] as const;
 const DEBT_SUFFIX = ".owed-wc";
 
@@ -87,12 +97,20 @@ export type SimEvent =
   | { readonly kind: "refuseWc"; readonly c: number }
   | {
       readonly kind: "fault";
-      readonly fault: "records503" | "recordsLate" | "registersDown";
+      readonly fault: "records503" | "recordsLate" | "registersDown" | "slow";
       readonly count: number;
       /** Calls of that kind that go through before the first one fails. */
       readonly after: number;
+      /** `slow` only: how long the committed answer is held back. */
+      readonly ms?: number;
     }
-  | ({ readonly kind: "crash" } & Crash);
+  | ({ readonly kind: "crash" } & Crash)
+  /** Two connector processes at once: parallel tool calls, a reload's SessionEnd beside its SessionStart. */
+  | { readonly kind: "par"; readonly a: SimEvent; readonly b: SimEvent }
+  /** A host dies silently for good, and a week passes for EVERYTHING on disk, not only its state. */
+  | { readonly kind: "age"; readonly c: number }
+  /** Fixed scenarios only: a parallel hook that read the state before a heal appends one target of the BASE life. */
+  | { readonly kind: "straggle"; readonly c: number };
 
 /** mulberry32: a 32-bit seed, a stream of [0, 1). Small, fast and the same everywhere. */
 export const prng = (seed: number): (() => number) => {
@@ -119,7 +137,13 @@ const WEIGHTS: readonly (readonly [SimEvent["kind"], number])[] = [
   ["refuseWc", 2],
   ["fault", 12],
   ["crash", 15],
+  ["par", 10],
+  ["age", 3],
 ];
+
+/** The actor kinds a `par` pairs up, weighted: parallel tool calls are the common case. */
+const PAR_KINDS: readonly SimEvent["kind"][] = ["edit", "edit", "edit", "flush", "intent", "end", "start"];
+const SLOW_MS: readonly number[] = [600, 1400, 1700];
 
 const pick = (random: () => number): SimEvent["kind"] => {
   const total = WEIGHTS.reduce((sum, [, weight]) => sum + weight, 0);
@@ -133,17 +157,24 @@ const pick = (random: () => number): SimEvent["kind"] => {
   return "edit";
 };
 
-const FAULTS = ["records503", "recordsLate", "registersDown"] as const;
+const FAULTS = ["records503", "recordsLate", "registersDown", "slow"] as const;
 
 /** The events a connector process plays: the only ones an armed crash can kill. */
 const ACTOR_EVENTS: ReadonlySet<SimEvent["kind"]> = new Set(["start", "edit", "flush", "intent", "end", "oldFlush"]);
 
-/** The scenario a seed stands for: 1–3 conversations, 6–21 events. */
+/**
+ * The scenario a seed stands for: 1–3 conversations, 6–21 events. The
+ * round-7 review's generator, draw for draw, so its seeds replay here.
+ */
 export const scenarioOf = (seed: number): readonly SimEvent[] => {
   const random = prng(seed);
   const conversations = 1 + Math.floor(random() * 3);
   const length = 6 + Math.floor(random() * 16);
   const started = new Set<number>();
+  const actorOf = (kind: SimEvent["kind"], c: number): SimEvent =>
+    kind === "intent"
+      ? { kind, c, status: STATUSES[Math.floor(random() * STATUSES.length)] ?? "implementing" }
+      : ({ kind, c } as SimEvent);
   return Array.from({ length }, (): SimEvent => {
     const c = Math.floor(random() * conversations);
     const kind = started.has(c) ? pick(random) : "start";
@@ -151,17 +182,26 @@ export const scenarioOf = (seed: number): readonly SimEvent[] => {
     switch (kind) {
       case "intent":
         return { kind, c, status: STATUSES[Math.floor(random() * STATUSES.length)] ?? "implementing" };
-      case "fault":
+      case "fault": {
+        const fault = FAULTS[Math.floor(random() * FAULTS.length)] ?? "records503";
         return {
           kind,
-          fault: FAULTS[Math.floor(random() * FAULTS.length)] ?? "records503",
+          fault,
           count: 1 + Math.floor(random() * 2),
           after: Math.floor(random() * 3),
+          ...(fault === "slow" ? { ms: SLOW_MS[Math.floor(random() * SLOW_MS.length)] ?? 1400 } : {}),
         };
+      }
       case "crash":
         return { kind, at: 1 + Math.floor(random() * 8), when: random() < 0.5 ? "before" : "after" };
+      case "par": {
+        const other = Math.floor(random() * conversations);
+        const first = PAR_KINDS[Math.floor(random() * PAR_KINDS.length)] ?? "edit";
+        const second = PAR_KINDS[Math.floor(random() * PAR_KINDS.length)] ?? "edit";
+        return { kind, a: actorOf(first, c), b: actorOf(started.has(other) ? second : "start", other) };
+      }
       default:
-        return { kind, c };
+        return { kind, c } as SimEvent;
     }
   });
 };
@@ -175,8 +215,14 @@ export interface Run {
   readonly drops: readonly DropCall[];
   readonly debts: readonly DebtWrite[];
   readonly deliveries: readonly Delivery[];
-  /** Each conversation's phase BEFORE each step: `phaseAt(c, step)`. */
-  readonly phaseAt: (conversation: number, step: number) => Phase;
+  /**
+   * Each conversation's phase before and after each step. A step two
+   * processes share can end a conversation while the other sends its spool,
+   * or start one after the other found it ended: only a conversation live on
+   * BOTH sides of the step was live for every send in it.
+   */
+  readonly phaseBefore: (conversation: number, step: number) => Phase;
+  readonly phaseAfter: (conversation: number, step: number) => Phase;
   /** The conversation a life belongs to, by its host session key. */
   readonly conversationOf: (sessionId: string) => number | null;
   /** Steps whose flusher was an older connector: the one exception I6 grants (documented residual). */
@@ -254,14 +300,21 @@ const timed = async (world: World, limitMs: number, run: () => Promise<unknown>)
   }
 };
 
-/** A hook's drain, under the life the state names, with its healer. */
-const hookFlush = async (world: World, hostSessionKey: string): Promise<void> => {
+/** A hook's deadline: its real budget ratio of the real request timeout (constants.ts), from now. */
+const hookDeadline = (ratio: number): number => Date.now() + ratio * REQUEST_TIMEOUT_MS;
+
+/** What a hook with that deadline spares a drain now: one request timeout held back (config/hook-budget.ts). */
+const spareBy = (deadlineMs: number): number => hookBudget(deadlineMs, REQUEST_TIMEOUT_MS).spareMs();
+
+/** A hook's drain, under the life the state names, with its healer, on what the hook spares it (I5: inside that). */
+const hookFlush = async (world: World, hostSessionKey: string, deadlineMs: number): Promise<void> => {
   const state = await readSessionState(world.home, hostSessionKey);
   if (state === null) {
     return;
   }
   const input = { sessionId: state.crosscheckSessionId, developerId: world.hub.developerId, heal: healerFor(world, hostSessionKey) };
-  await timed(world, HOOK_LIMIT_MS, () => flushSpool(world.ctx, input, FLUSH_BUDGET_MS));
+  const budgetMs = spareBy(deadlineMs);
+  await timed(world, budgetMs + DRAIN_SLACK_MS, () => flushSpool(world.ctx, input, budgetMs));
 };
 
 const register = (world: World, hostSessionKey: string) =>
@@ -286,8 +339,9 @@ const register = (world: World, hostSessionKey: string) =>
 /** SessionStart: register (a resume walks the ladder), the drain with the healer, the maintenance reaps. */
 const start = async (world: World, c: number): Promise<void> => {
   const hostSessionKey = world.keys[c] ?? "";
+  const deadlineMs = hookDeadline(SESSION_START_BUDGET_RATIO);
   await register(world, hostSessionKey);
-  await hookFlush(world, hostSessionKey);
+  await hookFlush(world, hostSessionKey, deadlineMs);
   await reapSpool(world.home, world.key, new Date(), async (crosscheckSessionId, seq) =>
     (await endSession(world.ctx, crosscheckSessionId, seq)).ok ? "ended" : "retry",
   );
@@ -297,6 +351,7 @@ const start = async (world: World, c: number): Promise<void> => {
 /** One captured edit, positioned from the state's counter, then the hook's drain. */
 const edit = async (world: World, c: number): Promise<void> => {
   const hostSessionKey = world.keys[c] ?? "";
+  const deadlineMs = hookDeadline(POST_TOOL_USE_BUDGET_RATIO);
   const state = await readSessionState(world.home, hostSessionKey);
   if (state === null) {
     return;
@@ -311,7 +366,7 @@ const edit = async (world: World, c: number): Promise<void> => {
     new Date(),
   );
   await appendRecords(world.home, world.key, hostSessionKey, [withSeq(record, seq)], new Date());
-  await hookFlush(world, hostSessionKey);
+  await hookFlush(world, hostSessionKey, deadlineMs);
 };
 
 /** The status written to the state — read back after, so a write that landed before a crash still counts. */
@@ -375,6 +430,7 @@ const end = async (world: World, c: number): Promise<void> => {
   if (state === null) {
     return;
   }
+  const flushBudgetMs = spareBy(hookDeadline(SESSION_END_BUDGET_RATIO));
   const input = {
     home: world.home,
     repoKey: world.key,
@@ -382,10 +438,11 @@ const end = async (world: World, c: number): Promise<void> => {
     hostSessionKey,
     crosscheckSessionId: state.crosscheckSessionId,
     developerId: world.hub.developerId,
-    flushBudgetMs: FLUSH_BUDGET_MS,
+    flushBudgetMs,
     now: () => new Date(),
   };
-  await timed(world, END_LIMIT_MS, () => endSessionFlow(input));
+  // I5: SessionEnd returns inside its drain's budget plus the one `end` call.
+  await timed(world, flushBudgetMs + REQUEST_TIMEOUT_MS + DRAIN_SLACK_MS, () => endSessionFlow(input));
 };
 
 /** The conversation's state has said nothing for `silentMs`. */
@@ -444,14 +501,91 @@ const hubEnd = async (world: World, c: number): Promise<void> => {
   }
 };
 
-const act = async (world: World, event: SimEvent, step: number): Promise<void> => {
+/** Files whose bytes are their identity (a cursor proves its data file by the first line): only their mtime ages. */
+const isIdentityBytes = (name: string): boolean =>
+  name.endsWith(".jsonl") || name.endsWith(".cursor") || name.endsWith(".lock") || name.includes(".tmp-");
+const ISO_INSTANT = /"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)"/gu;
+
+const filesUnder = async (dir: string): Promise<readonly string[]> => {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  const nested = await Promise.all(
+    entries.map((entry) => (entry.isDirectory() ? filesUnder(join(dir, entry.name)) : Promise.resolve([join(dir, entry.name)]))),
+  );
+  return nested.flat();
+};
+
+/** Every instant a file holds, and its mtime, moved back by `byMs`. */
+const ageFile = async (path: string, byMs: number): Promise<void> => {
+  const facts = await stat(path).catch(() => null);
+  if (facts === null) {
+    return;
+  }
+  if (!isIdentityBytes(path)) {
+    const text = await readFile(path, "utf8").catch(() => null);
+    const aged = text?.replace(ISO_INSTANT, (_, iso: string) => `"${new Date(Date.parse(iso) - byMs).toISOString()}"`);
+    if (text !== null && text !== undefined && aged !== text) {
+      await writeFile(path, aged ?? text);
+    }
+  }
+  await utimes(path, new Date(facts.atimeMs - byMs), new Date(facts.mtimeMs - byMs)).catch(() => undefined);
+};
+
+/**
+ * A WEEK PASSES FOR EVERYTHING (the round-7 review's `age`): every instant on
+ * disk and every mtime moves back by `byMs` — the refused-lives note, the
+ * debts' first refusals, the lineage, the stamps and markers, the drop ledger
+ * — and every OTHER live conversation is then seen to have been active since,
+ * as one that kept working through the week would be.
+ */
+const ageHome = async (world: World, byMs: number, abandoned: number): Promise<void> => {
+  for (const path of await filesUnder(world.home)) {
+    await ageFile(path, byMs);
+  }
+  for (const [c, phase] of world.phase.entries()) {
+    if (c === abandoned || phase !== "live") {
+      continue;
+    }
+    const now = new Date();
+    await updateSessionState(world.home, world.keys[c] ?? "", (fresh) => ({ ...fresh, lastHeartbeatAt: now.toISOString() }));
+    await utimes(sessionStatePath(world.home, world.keys[c] ?? ""), now, now).catch(() => undefined);
+  }
+};
+
+/** A parallel hook that read the state before a heal moved it: one more target of the BASE life. */
+const straggle = async (world: World, c: number): Promise<void> => {
+  const hostSessionKey = world.keys[c] ?? "";
+  const base = `cc_${hostSessionKey}`;
+  world.edits += 1;
+  const seq = seqAt(await allocateSeq(world.home, hostSessionKey, 1), 0);
+  const record = targetRecord(
+    `wc_${base}`,
+    "file",
+    `src/sim/${hostSessionKey}-straggler-${String(world.edits)}.ts`,
+    producerOf(world, base),
+    new Date(),
+  );
+  await appendRecords(world.home, world.key, hostSessionKey, [withSeq(record, seq)], new Date());
+};
+
+/** Two connector processes at once, each judged against the phases BEFORE either runs, as two processes find them. */
+const both = async (world: World, sides: readonly SimEvent[], step: number): Promise<void> => {
+  const running = sides.filter((side) => applies(world, side));
+  const settled = await Promise.allSettled(running.map((side) => act(world, side, step)));
+  for (const outcome of settled) {
+    if (outcome.status === "rejected" && !(outcome.reason instanceof SimulatedCrash)) {
+      throw outcome.reason;
+    }
+  }
+};
+
+async function act(world: World, event: SimEvent, step: number): Promise<void> {
   switch (event.kind) {
     case "start":
       return start(world, event.c);
     case "edit":
       return edit(world, event.c);
     case "flush":
-      return hookFlush(world, world.keys[event.c] ?? "");
+      return hookFlush(world, world.keys[event.c] ?? "", hookDeadline(STOP_BUDGET_RATIO));
     case "intent":
       return intent(world, event.c, event.status);
     case "end":
@@ -470,15 +604,27 @@ const act = async (world: World, event: SimEvent, step: number): Promise<void> =
       world.hub.dials.wcRefusedFor.add(`cc_${world.keys[event.c] ?? ""}`);
       return;
     case "fault":
+      if (event.fault === "slow") {
+        world.hub.dials.slow = { skip: event.after, count: event.count, ms: event.ms ?? 0 };
+        return;
+      }
       world.hub.dials[event.fault] = { skip: event.after, count: event.count };
       return;
+    case "par":
+      return both(world, [event.a, event.b], step);
+    case "age":
+      world.phase[event.c] = "abandoned";
+      await silence(world, event.c, ABANDONED_MS);
+      return ageHome(world, ABANDONED_MS, event.c);
+    case "straggle":
+      return straggle(world, event.c);
     case "crash":
       return;
   }
-};
+}
 
 /** Whether the event can act on its conversation's phase; otherwise it is skipped. */
-const applies = (world: World, event: SimEvent): boolean => {
+function applies(world: World, event: SimEvent): boolean {
   if (!("c" in event)) {
     return true;
   }
@@ -487,7 +633,7 @@ const applies = (world: World, event: SimEvent): boolean => {
     return false;
   }
   return event.kind === "start" || event.kind === "refuseWc" || phase === "live";
-};
+}
 
 /** The phases as the disk has them: a state file is a live conversation, its absence one that ended. */
 const syncPhases = async (world: World): Promise<void> => {
@@ -505,11 +651,11 @@ interface CursorMark {
   readonly drops: number;
 }
 
-/** I6's snapshot: every OTHER live conversation's cursor and drop count. */
-const marksOfOthers = async (world: World, actor: number | null): Promise<ReadonlyMap<number, CursorMark>> => {
+/** I6's snapshot: every live conversation's cursor and drop count, but the step's actors'. */
+const marksOfOthers = async (world: World, actors: ReadonlySet<number>): Promise<ReadonlyMap<number, CursorMark>> => {
   const marks = new Map<number, CursorMark>();
   for (const [c, phase] of world.phase.entries()) {
-    if (phase !== "live" || c === actor) {
+    if (phase !== "live" || actors.has(c)) {
       continue;
     }
     const slug = sessionSlug(world.keys[c] ?? "");
@@ -523,7 +669,7 @@ const marksOfOthers = async (world: World, actor: number | null): Promise<Readon
 };
 
 const checkSix = async (world: World, before: ReadonlyMap<number, CursorMark>, step: number, label: string) => {
-  const after = await marksOfOthers(world, null);
+  const after = await marksOfOthers(world, new Set());
   for (const [c, mark] of before.entries()) {
     const now = after.get(c);
     if (now !== undefined && (now.offset !== mark.offset || now.drops !== mark.drops)) {
@@ -539,9 +685,11 @@ export const describeEvent = (event: SimEvent): string => {
     case "intent":
       return `intent c${String(event.c)} ${event.status}`;
     case "fault":
-      return `fault ${event.fault}×${String(event.count)} after ${String(event.after)}`;
+      return `fault ${event.fault}${event.ms === undefined ? "" : `(${String(event.ms)}ms)`}×${String(event.count)} after ${String(event.after)}`;
     case "crash":
       return `crash at write ${String(event.at)} ${event.when}`;
+    case "par":
+      return `par[${describeEvent(event.a)} ‖ ${describeEvent(event.b)}]`;
     default:
       return `${event.kind} c${String(event.c)}`;
   }
@@ -550,8 +698,9 @@ export const describeEvent = (event: SimEvent): string => {
 /** One step, with the crash armed before it; its outcome goes on the trace. */
 const runStep = async (world: World, event: SimEvent, step: number, crash: Crash | null, trace: string[]) => {
   world.hub.clock.step = step;
-  const actor = "c" in event ? event.c : null;
-  const before = event.kind === "oldFlush" ? new Map<number, CursorMark>() : await marksOfOthers(world, actor);
+  const sides = event.kind === "par" ? [event.a, event.b] : [event];
+  const actors = new Set(sides.flatMap((side) => ("c" in side ? [side.c] : [])));
+  const before = event.kind === "oldFlush" ? new Map<number, CursorMark>() : await marksOfOthers(world, actors);
   beginStep(step, crash);
   let outcome = "ok";
   try {
@@ -642,6 +791,9 @@ const newWorld = async (hub: SimHub, events: readonly SimEvent[], repoRoot: stri
   };
 };
 
+const phaseIn = (history: readonly Phase[], index: number): Phase =>
+  history[Math.min(Math.max(index, 0), history.length - 1)] ?? "new";
+
 const runOf = async (world: World, trace: readonly string[], quiescent: boolean): Promise<Run> => {
   const log = scenarioLog();
   const ledger = await readDropDetail(world.home, world.key);
@@ -652,10 +804,9 @@ const runOf = async (world: World, trace: readonly string[], quiescent: boolean)
     drops: log.drops,
     debts: log.debts,
     deliveries: [...world.hub.deliveries],
-    phaseAt: (c, step) => {
-      const history = world.history[c] ?? [];
-      return history[Math.min(Math.max(step - 1, 0), history.length - 1)] ?? "new";
-    },
+    // history[i] is the phase before step i + 1: after step i.
+    phaseBefore: (c, step) => phaseIn(world.history[c] ?? [], step - 1),
+    phaseAfter: (c, step) => phaseIn(world.history[c] ?? [], step),
     conversationOf: (sessionId) => {
       const tilde = sessionId.indexOf("~");
       return lifeOwners.get(tilde === -1 ? sessionId : sessionId.slice(0, tilde)) ?? null;

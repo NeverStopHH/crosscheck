@@ -59,6 +59,20 @@ const takenUnheard = (run: Run): number => {
   ).size;
 };
 
+/** The I1 balance as numbers: what the sweep prints, to measure the over-count (the round-7 review's Q3). */
+export const accountingStats = (run: Run) => {
+  const taken = new Set(run.deliveries.filter((delivery) => TAKEN.has(delivery.status)).map((delivery) => delivery.id));
+  const lost = run.captured.filter((captured) => !taken.has(captured.id)).length;
+  const releases = run.drops.filter(isDebtRelease).length;
+  return {
+    captured: run.captured.length,
+    lost,
+    ledger: run.ledgerTotal,
+    /** Counted beyond what was lost: records the hub HOLDS that the ledger calls lost. */
+    overCounted: Math.max(0, run.ledgerTotal - (lost + releases)),
+  };
+};
+
 /** I1: what was captured and never taken is exactly what the ledger counts. */
 const accounting = (run: Run): readonly Verdict[] => {
   const taken = new Set(run.deliveries.filter((delivery) => TAKEN.has(delivery.status)).map((delivery) => delivery.id));
@@ -125,14 +139,17 @@ const placement = (run: Run): readonly Verdict[] => {
       }
       const own = run.conversationOf(captured.writer);
       const flusher = run.conversationOf(delivery.producer);
-      const phase = own === null ? "ended" : run.phaseAt(own, delivery.step);
-      const isForeignWhileLive = own !== flusher && phase !== "ended" && phase !== "abandoned";
-      return isForeignWhileLive
+      // Live on both sides of the step: one a parallel process ended or
+      // started within it may have been ended when the send was decided.
+      const isLive = (phase: string): boolean => phase === "live";
+      const wasLiveThroughout =
+        own !== null && isLive(run.phaseBefore(own, delivery.step)) && isLive(run.phaseAfter(own, delivery.step));
+      return own !== flusher && wasLiveThroughout
         ? [
             ...late,
             {
               invariant: "I2",
-              detail: `${delivery.kind} written by ${captured.writer} delivered under ${delivery.producer} while its conversation was ${phase} (step ${String(delivery.step)})`,
+              detail: `${delivery.kind} written by ${captured.writer} delivered under ${delivery.producer} while its conversation was live (step ${String(delivery.step)})`,
             },
           ]
         : late;

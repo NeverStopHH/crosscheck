@@ -497,6 +497,24 @@ Residuals the invariants allow for, each counted, never silent:
   hub (k of 3 refusals before they are released); P debt files that will not parse`. A corrupt debt file is counted
   as the problem it is, never read as "nothing owed" (L4).
 
+**The simulation, extended** (review-2 round 8). The round-7 review extended the simulation with three things it did
+not model, and they are part of it now:
+
+- two connector processes at once (`par`), interleaving at every file and network await: parallel tool calls, and a
+  reload's SessionEnd beside its SessionStart;
+- a slow hub that commits a record or register POST and holds its answer for 600, 1400 or 1700 ms;
+- a host that dies while a week passes for every file on disk (`age`), not only its state.
+
+The timing is production's: the request timeout is `HTTP_TIMEOUT_MS` (400 ms), and each hook's drain gets what its real
+budget spares it (`config/hook-budget.ts`). A batch the hub committed after the connector stopped waiting is logged as
+taken unheard, which at 400 ms against the in-memory hub is common, as on a laptop. CI runs 300 seeds in about 50 s and
+prints the over-count with every run: records the ledger counts lost that the hub holds. Each seed the review's sweep
+failed is a fixed scenario named by its seed and finding. Two of them, 1018 and 1034, were the checker's: it read a
+conversation's phase before a step in which a parallel SessionEnd ended it, so a successor sending its spool looked
+like a send while it was live. At production timing the sweep found the mirror image (seed 10009: a conversation a
+parallel SessionStart restarted after the other process found it ended). A send counts as into a live conversation
+now only when that conversation was live on both sides of the step.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

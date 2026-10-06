@@ -5,9 +5,14 @@
  *
  * Faults: a record POST answered 503 and never forwarded; one forwarded and
  * committed whose answer is lost (504 — a timeout the hub outlived); a
- * register answered 503; and a life whose work_context records the hub is made
- * to refuse for good (a blank title fails its schema). A process the hooks
- * killed reaches nothing.
+ * register answered 503; a slow hub that commits a record or register POST and
+ * holds its answer back (review-2 round 8, from the round-7 review's copy);
+ * and a life whose work_context records the hub is made to refuse for good (a
+ * blank title fails its schema). A process the hooks killed reaches nothing.
+ *
+ * An answer the connector stopped waiting for — its request timed out after
+ * the hub committed — is logged as lost, whatever made it slow: at the
+ * production timeout that is the common way a record is taken unheard.
  */
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
@@ -26,7 +31,13 @@ export interface Dial {
   count: number;
 }
 
+/** A slow hub: the next `count` record or register POSTs are committed, and answered `ms` later. */
+export interface SlowDial extends Dial {
+  ms: number;
+}
+
 export interface Dials {
+  slow: SlowDial;
   /** Record POSTs answered 503, never forwarded. */
   records503: Dial;
   /** Record POSTs forwarded and committed, their answer lost. */
@@ -38,6 +49,8 @@ export interface Dials {
 }
 
 const idle = (): Dial => ({ skip: 0, count: 0 });
+const quick = (): SlowDial => ({ skip: 0, count: 0, ms: 0 });
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Whether this call is one the dial fails. */
 const trips = (dial: Dial): boolean => {
@@ -76,7 +89,7 @@ export interface Delivery {
    * a sibling saw is one no flusher can know of (a documented residual).
    */
   readonly endKnown: boolean;
-  /** The hub's answer never reached the connector (a 504 after the hub committed). */
+  /** The hub's answer never reached the connector: a 504 after the hub committed, or a request that timed out. */
   readonly answerLost: boolean;
   readonly step: number;
 }
@@ -138,7 +151,13 @@ export const startSimHub = async (): Promise<SimHub> => {
     (await client.query(sql, params)).rows as T[];
   const server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   const hubUrl = `http://127.0.0.1:${server.port}`;
-  const dials: Dials = { records503: idle(), recordsLate: idle(), registersDown: idle(), wcRefusedFor: new Set() };
+  const dials: Dials = {
+    slow: quick(),
+    records503: idle(),
+    recordsLate: idle(),
+    registersDown: idle(),
+    wcRefusedFor: new Set(),
+  };
   const deliveries: Delivery[] = [];
   const clock = { step: 0 };
   /** Sessions the connector has been told are ended (Delivery.endKnown). */
@@ -157,31 +176,47 @@ export const startSimHub = async (): Promise<SimHub> => {
     return new Set(rows.map((row) => row.id));
   };
 
+  type Results = readonly { index: number; status: string; issues?: readonly string[] }[];
+
+  /** What the hub answered, logged the step the request arrived in: it has committed, whatever the connector hears. */
   const logAnswers = (
     wire: readonly WireRecord[],
     ended: ReadonlySet<string>,
-    results: readonly { index: number; status: string; issues?: readonly string[] }[],
+    results: Results,
     answerLost: boolean,
-  ) => {
+    step: number,
+  ): readonly Delivery[] => {
     const known = new Set(toldEnded);
-    for (const result of results) {
+    return results.map((result) => {
       const record = wire[result.index] ?? {};
       const bodySession = bodySessionOf(record);
-      const producer = text(record.producer?.sessionId) ?? "";
-      deliveries.push({
+      const delivery: Delivery = {
         id: text(record.id) ?? "",
         kind: text(record.kind) ?? "",
-        producer,
+        producer: text(record.producer?.sessionId) ?? "",
         bodySession,
         workContextId: workContextOf(record),
         status: result.status,
         intoEndedSession: bodySession !== null && ended.has(bodySession),
         endKnown: bodySession !== null && known.has(bodySession),
         answerLost,
-        step: clock.step,
-      });
-      if (!answerLost && result.status === "rejected" && /session has already ended/.test(result.issues?.[0] ?? "")) {
-        toldEnded.add(producer);
+        step,
+      };
+      deliveries.push(delivery);
+      return delivery;
+    });
+  };
+
+  /** The connector heard these answers after all: what they said is known, a refusal as ended among them. */
+  const markHeard = (logged: readonly Delivery[], results: Results): void => {
+    for (const [position, delivery] of logged.entries()) {
+      const index = deliveries.indexOf(delivery);
+      if (index !== -1) {
+        deliveries[index] = { ...delivery, answerLost: false };
+      }
+      const said = results[position];
+      if (said?.status === "rejected" && /session has already ended/.test(said.issues?.[0] ?? "")) {
+        toldEnded.add(delivery.producer);
       }
     }
   };
@@ -214,12 +249,19 @@ export const startSimHub = async (): Promise<SimHub> => {
         : record,
     );
     const ended = await endedOf(wire.map(bodySessionOf).filter((id): id is string => id !== null));
+    const arrivedAt = clock.step;
     const answer = await forward(request, pathname, search, JSON.stringify({ ...sent, records: wire }));
-    const parsed = (await answer.clone().json()) as {
-      data?: { results?: { index: number; status: string; issues?: string[] }[] };
-    };
+    const parsed = (await answer.clone().json()) as { data?: { results?: Results } };
+    const results = parsed.data?.results ?? [];
     const isLate = trips(dials.recordsLate);
-    logAnswers(wire, ended, parsed.data?.results ?? [], isLate);
+    const isSlow = !isLate && trips(dials.slow);
+    const logged = logAnswers(wire, ended, results, true, arrivedAt);
+    if (isSlow) {
+      await sleep(dials.slow.ms);
+    }
+    if (!isLate && !request.signal.aborted) {
+      markHeard(logged, results);
+    }
     return isLate ? unavailable("sim late", HTTP_GATEWAY_TIMEOUT) : answer;
   };
 
@@ -238,7 +280,13 @@ export const startSimHub = async (): Promise<SimHub> => {
       }
       const body = request.method === "GET" ? undefined : await request.arrayBuffer();
       const answer = await forward(request, pathname, search, body);
-      noteEnds(request.method, pathname, body, answer.status);
+      if (request.method === "POST" && pathname === "/api/sessions" && trips(dials.slow)) {
+        await sleep(dials.slow.ms);
+      }
+      // An answer the connector stopped waiting for tells it nothing.
+      if (!request.signal.aborted) {
+        noteEnds(request.method, pathname, body, answer.status);
+      }
       return answer;
     },
   });
@@ -270,6 +318,7 @@ export const startSimHub = async (): Promise<SimHub> => {
 
 /** The transient faults off; a work context the hub refuses for good stays refused. */
 export const calmDials = (hub: SimHub): void => {
+  hub.dials.slow = quick();
   hub.dials.records503 = idle();
   hub.dials.recordsLate = idle();
   hub.dials.registersDown = idle();
