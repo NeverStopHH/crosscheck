@@ -19422,6 +19422,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/team-settings.test.ts`,
     because: "the CHECK refuses an interval that ends before it starts, and leaving the pilot is a 500",
   },
+  // ── 07 §13.14, round-6 LOW-3: the review-5 survivors T1, T2, T4, B1 ──
+  {
+    label: "the terminal probe reads stdout, not stdin (T1)",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  process.stdin.isTTY === true;",
+    to: "  process.stdout.isTTY === true;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "`crosscheck followed | tee log` typed by the person is the agent's, and an agent's tool with a pty stdout is the person",
+  },
+  {
+    label: "crosscheck overrode always posts as the person (T2)",
+    file: `${CLI}/src/cli/index.ts`,
+    from: "      return options.isInteractive === undefined\n        ? runOverrode(rest, env, cwd)\n        : runOverrode(rest, env, cwd, options.isInteractive);",
+    to: "      return runOverrode(rest, env, cwd, () => true);",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "an agent overturns its own person's word by running crosscheck overrode",
+  },
+  {
+    label: "the agent's-word line only for followed (T4)",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "${outcomeRecordedLine(ref, answer.result.data)}${target.agentLine}`",
+    to: '${outcomeRecordedLine(ref, answer.result.data)}${outcome === "followed" ? target.agentLine : ""}`',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "an override filed as the agent's reads as the person's",
+  },
+  {
+    label: "a backdated upgrade start on an enrolled repo is not called reconstructed (B1)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "         (b.started_at < b.recordable OR NOT b.enrolled)",
+    to: "         (NOT b.enrolled)",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "an interval the upgrade backdated from recorded outcomes is printed as the toggle's instant",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19508,7 +19541,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 31
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 34
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
@@ -19734,7 +19767,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 21
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 22
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11

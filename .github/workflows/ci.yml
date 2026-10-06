@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1782
+    # PRINTS: 1786
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -179,7 +179,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor.ts 54
-    # PRINTS: packages/cli/src/cli/index.ts 5
+    # PRINTS: packages/cli/src/cli/index.ts 6
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-io.ts 8
     # PRINTS: packages/cli/src/cli/init-remove-plan.ts 5
@@ -189,7 +189,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 11
     # PRINTS: packages/cli/src/cli/outcome-render.ts 6
-    # PRINTS: packages/cli/src/cli/outcome.ts 16
+    # PRINTS: packages/cli/src/cli/outcome.ts 17
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
@@ -200,7 +200,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pilot.ts 3
     # PRINTS: packages/cli/src/cli/pin-observability.ts 14
     # PRINTS: packages/cli/src/cli/pin-render.ts 7
-    # PRINTS: packages/cli/src/cli/pin.ts 9
+    # PRINTS: packages/cli/src/cli/pin.ts 10
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 9
@@ -391,7 +391,7 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/src/constants.ts 1
-    # PRINTS: packages/server/src/db/bootstrap.sql 38
+    # PRINTS: packages/server/src/db/bootstrap.sql 39
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
     # PRINTS: packages/server/src/http/schemas.ts 1
@@ -489,7 +489,7 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 38
+    # PRINTS: bootstrap.sql 39
     # PRINTS: briefing.ts 6
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
@@ -582,7 +582,7 @@ jobs:
     # PRINTS: hints.ts 7
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 15
-    # PRINTS: index.ts 5
+    # PRINTS: index.ts 6
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 8
     # PRINTS: init-remove-plan.ts 5
@@ -618,7 +618,7 @@ jobs:
     # PRINTS: outcome-clause.ts 2
     # PRINTS: outcome-population.ts 40
     # PRINTS: outcome-render.ts 6
-    # PRINTS: outcome.ts 16
+    # PRINTS: outcome.ts 17
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
@@ -643,7 +643,7 @@ jobs:
     # PRINTS: pin-paths.ts 8
     # PRINTS: pin-render.ts 7
     # PRINTS: pin-sweep.ts 2
-    # PRINTS: pin.ts 11
+    # PRINTS: pin.ts 12
     # PRINTS: pins.ts 12
     # PRINTS: pointer-standing.ts 14
     # PRINTS: post-tool-use-failure.ts 5

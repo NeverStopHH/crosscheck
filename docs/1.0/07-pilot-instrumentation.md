@@ -1586,3 +1586,8 @@ commands run by an agent's tool, a pipe or Claude Code's `!`)".
 before it starts is a database fact since round 5, and the toggle closed the open interval at the hub's wall
 clock: one that stepped back past the interval's start (an NTP correction) had its close refused. The close
 is now `GREATEST(now, started_at)` — a zero-length interval at worst, never a backwards one.
+
+*LOW-3 — four survivors of the review's own mutants.* Each is now a regression test: the TTY probe reads
+stdin, never stdout (T1 — `crosscheck followed | tee log` typed by the person stays theirs); `crosscheck
+overrode` with no terminal takes the agent's route (T2) and says so (T4), like `followed`; and an enrolled
+repo whose interval the upgrade backdated before its stamp is marked reconstructed (B1).

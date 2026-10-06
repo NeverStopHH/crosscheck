@@ -45,6 +45,7 @@ import {
   outcomeRecordedLine,
 } from "../src/cli/outcome-render.ts";
 import { FOLLOWED_USAGE, OVERRODE_USAGE } from "../src/cli/outcome.ts";
+import { defaultInteractiveProbe } from "../src/cli/pin.ts";
 import { MINE_NOT_SERVED_LINE } from "../src/cli/pilot-mine-render.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -635,6 +636,72 @@ describe("07 §13.13 HIGH-1: with no terminal, the word is the agent's", () => {
       replaced: "followed",
       stands: "overrode",
     });
+  });
+});
+
+describe("07 §13.14 LOW-3: the gate holds for overrode, and reads stdin", () => {
+  test("T2/T4: crosscheck overrode with no terminal lands on the agent's route, and says so", async () => {
+    // Arrange
+    const ref = "wc_ken_no_tty_overrode";
+    await send("POST", "/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Ken's context",
+          status: "implementing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    await deliver(LIVE, ref);
+    const home = await homeWithLive(LIVE);
+
+    // Act — no terminal and no host marker; then the agent's own route says something else
+    const result = await cli(home, ["overrode", ref, "--reason", "kept my parser"], { interactive: false });
+    const agent = await send("POST", "/api/hint-outcomes", nick.apiKey, { repo: REPO_ID, ref, outcome: "followed" });
+
+    // Assert — the agent's later word overturned it: both were the agent's
+    expect(result.stdout).toStartWith(`recorded: ${ref} — overrode`);
+    expect(result.stdout).toContain(AGENT_WORD_LINE);
+    expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({
+      replaced: "overrode",
+      stands: "followed",
+    });
+  });
+
+  test("T1: the probe asks whether stdin is a terminal — never stdout, which `| tee` takes away from a person", () => {
+    // Arrange
+    const withTtys = (stdin: boolean, stdout: boolean): boolean => {
+      const saved = {
+        stdin: Object.getOwnPropertyDescriptor(process.stdin, "isTTY"),
+        stdout: Object.getOwnPropertyDescriptor(process.stdout, "isTTY"),
+      };
+      Object.defineProperty(process.stdin, "isTTY", { value: stdin, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: stdout, configurable: true });
+      try {
+        return defaultInteractiveProbe();
+      } finally {
+        for (const [stream, descriptor] of [
+          [process.stdin, saved.stdin],
+          [process.stdout, saved.stdout],
+        ] as const) {
+          if (descriptor === undefined) {
+            delete (stream as { isTTY?: boolean }).isTTY;
+          } else {
+            Object.defineProperty(stream, "isTTY", descriptor);
+          }
+        }
+      }
+    };
+
+    // Act
+    const piped = withTtys(true, false);
+    const agentsPty = withTtys(false, true);
+
+    // Assert — `crosscheck followed | tee log` is still the person; a tool whose stdout alone is a pty is not
+    expect(piped).toBe(true);
+    expect(agentsPty).toBe(false);
   });
 });
 

@@ -399,6 +399,28 @@ describe("hint_outcomes DDL sync", () => {
     expect(intervals.rows).toEqual([{ s: "2026-07-24 09:00:00+00", e: "2026-07-24 11:00:00+00" }]);
   });
 
+  test("round-6 LOW-3 (B1): an enrolled repo whose interval the upgrade backdated before its stamp is marked reconstructed", async () => {
+    // Arrange — an outcome on a 09:00 delivery, under a stamp an older hub restamped to 10:00 at a re-enrolment
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    for (const statement of [
+      sql`DROP TABLE pilot_enrolments`,
+      sql`UPDATE team_settings SET pilot_enrolled = true, pilot_outcomes_since = '2026-07-24T10:00:00Z'`,
+    ]) {
+      await world.harness.db.execute(statement);
+    }
+    const client = (world.harness.db as unknown as { $client: { exec: (text: string) => Promise<unknown> } }).$client;
+
+    // Act
+    await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
+
+    // Assert — still open (the repo is enrolled), and its start is the upgrade's inference, not the stamp
+    const intervals = await world.harness.db.execute(
+      sql`SELECT started_at::text AS s, ended_at::text AS e, reconstructed AS x FROM pilot_enrolments`,
+    );
+    expect(intervals.rows).toEqual([{ s: "2026-07-24 09:00:00+00", e: null, x: true }]);
+  });
+
   test("when outcomes became recordable is a team_settings column in both authorities", async () => {
     // Arrange
     const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
