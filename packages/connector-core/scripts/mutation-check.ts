@@ -17783,8 +17783,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a word changed after the month moves the month's team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      WHERE o.delivery_id = so.id AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}",
-    to: "      WHERE o.delivery_id = so.id AND o.recorded_by = so.recipient",
+    from: "        AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}",
+    to: "        AND o.recorded_by = so.recipient",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "reading the closed month before and after a teammate switches a word shows which word they switched",
   },
@@ -18003,6 +18003,31 @@ export const MUTATIONS: readonly Mutation[
     to: "      : ` It does not stand: the delivery stands at ${stands}.`;",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "a hostile hub's 'stands' word reaches the agent unframed, as instruction",
+  },
+  // ── 07 §13.10, review M4: an intervention is one pointer in one session ───
+  {
+    label: "one pointer delivered twice in a session counts as two hints",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    GROUP BY hd.session_id, hd.ref_id, s.developer_id",
+    to: "    GROUP BY hd.id, hd.session_id, hd.ref_id, s.developer_id",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "a prompt hint and a tripwire ask about one work context read as two hints, one of them for ever unmarked",
+  },
+  {
+    label: "an outcome on one delivery of a pointer leaves its twin unmarked",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      WHERE od.session_id = so.session_id AND od.ref_id = so.ref_id\n",
+    to: "      WHERE od.id = so.id\n",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the word an agent recorded on the tripwire ask is not read for the hint it covers",
+  },
+  {
+    label: "a noise label on a pointer's other delivery is not what stood",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", delivery)}",
+    to: "    WHERE m.ref_kind = 'hint_delivery' AND d.id = ${delivery.id}",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the answer says nothing stood while the person's label on that pointer stood",
   },
 ];
 
@@ -18326,8 +18351,8 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 7
- * PRINTS: packages/server/test/hint-outcomes.test.ts 11
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 9
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 12
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

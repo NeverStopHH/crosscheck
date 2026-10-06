@@ -220,6 +220,23 @@ describe("GET /api/hint-outcomes/mine", () => {
     });
   });
 
+  test("review M4 (P6): one pointer delivered twice in a session is one hint, and one outcome covers it", async () => {
+    // Arrange — Ken's context reached Nick's session as a prompt hint AND as a tripwire ask
+    const world = await createOutcomeWorld();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire")],
+    });
+
+    // Act — one word on the pointer
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", session: NICK_SESSION });
+    const view = await viewOf(await readMine(world, world.nick));
+
+    // Assert — Ken's context and claim: two hints from Ken, the context followed, nothing left unmarked of it
+    const fromKen = (view["bySource"] as Record<string, unknown>[]).find((source) => source["source"] === "Ken");
+    expect(fromKen).toEqual({ source: "Ken", ...tally({ received: 2, followed: 1, unmarked: 1 }) });
+    expect(view).toMatchObject(tally({ received: 3, followed: 1, unmarked: 2 }));
+  });
+
   test("a hint delivered before the repo could record outcomes is outside my view, not unmarked", async () => {
     // Arrange — a pointer delivered an hour before enrolment stamped the instant
     const world = await createOutcomeWorld();

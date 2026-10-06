@@ -235,6 +235,26 @@ describe("POST /api/hint-outcomes", () => {
     expect(await bodyOf(response)).toMatchObject({ deliveryId: world.delivered.kenContext });
   });
 
+  test("review M4: a noise label on one delivery of a pointer stands for the pointer's other delivery", async () => {
+    // Arrange — the same pointer as a prompt hint and a tripwire ask; the person labelled the hint noise
+    const world = await createOutcomeWorld();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire")],
+    });
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the agent records on the tripwire delivery of the same pointer
+    const response = await recordOutcome(world, world.nick, {
+      ref: deliveryIdFor(NICK_SESSION, KEN_CONTEXT, "tripwire"),
+      outcome: "overrode",
+      reason: "kept the retry on the hub",
+    });
+
+    // Assert — what stood was the label, on the pointer
+    expect(await bodyOf(response)).toMatchObject({ repeated: false, replaced: "noise", stands: "overrode" });
+  });
+
   test("a teammate's delivery answers exactly like an id that does not exist", async () => {
     // Arrange — Ken never received a pointer at Mike's context; Nick did. A
     // distinct refusal would tell Ken what Nick was shown (§8.4, §11.9).

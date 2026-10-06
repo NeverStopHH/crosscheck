@@ -1161,3 +1161,15 @@ loads — for every one of its calls. It now prepares one context for the whole 
 answer, and it checks four answers per payload instead of two (the tie and the repeat that carry `stands`, #11,
 were not covered): about 0.4 s for the corpus, four parallel runs of the whole file in 3 s. The timeout was not
 raised.
+
+**13.11 — Corrections from the second adversarial review (2026-10-06).** A review of §13.10 attacked it
+with the pilot's real team, three people, and found the disclosure rule beaten by a viewer subtracting their
+own words, an agent able to overturn the person's noise label for good, and re-enrolment erasing history. The
+owner decided each fix; every probe (P1–P7) is now a regression test.
+
+*M4 — one pointer delivered twice was two hints, and the outcome landed on one (P6).* A prompt hint and a
+tripwire ask about the same work context in the same session are two `hint_deliveries` rows, so the view
+counted two interventions and a word on one left the other "unmarked" for ever. **An intervention is one
+pointer in one session**: every outcome figure counts distinct (session, ref), and a word or a noise label on
+any of that pointer's deliveries speaks for all of them — in the view (`deliveryStates`) and in the write
+path's "what stood" (`readStanding`), so the two never disagree.

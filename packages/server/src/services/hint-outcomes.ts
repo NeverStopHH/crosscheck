@@ -34,6 +34,7 @@
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { PULLED_DELIVERY_CHANNEL, containsSecret } from "@crosscheck/schema";
 import type { HintOutcome } from "@crosscheck/schema";
 
@@ -92,6 +93,8 @@ export type WriteHintOutcomeResult =
 
 interface ResolvedDelivery {
   readonly id: string;
+  readonly sessionId: string;
+  readonly refId: string;
   readonly repo: string;
   readonly recipient: string;
   readonly channel: string;
@@ -100,6 +103,8 @@ interface ResolvedDelivery {
 
 const deliveryColumns = {
   id: hintDeliveries.id,
+  sessionId: hintDeliveries.sessionId,
+  refId: hintDeliveries.refId,
   repo: agentSessions.repo,
   recipient: agentSessions.developerId,
   channel: hintDeliveries.channel,
@@ -190,25 +195,35 @@ interface Standing {
   readonly reason: string | null;
 }
 
+/**
+ * ONE POINTER IN ONE SESSION is one intervention (review M4): every word and
+ * label on any of its deliveries speaks for all of them, as the view reads it.
+ */
+const ofPointer = (alias: string, delivery: ResolvedDelivery): SQL =>
+  sql`${sql.raw(alias)}.session_id = ${delivery.sessionId} AND ${sql.raw(alias)}.ref_id = ${delivery.refId}`;
+
+type LatestOutcomeRow = { readonly outcome: HintOutcome; readonly reason: string | null; readonly at: string | Date };
+
 const readLatestOutcome = async (
   deps: Deps,
-  deliveryId: string,
+  delivery: ResolvedDelivery,
   recordedBy: string,
 ): Promise<{ readonly outcome: HintOutcome; readonly reason: string | null; readonly createdAt: Date } | undefined> => {
-  const rows = await deps.db
-    .select({ outcome: hintOutcomes.outcome, reason: hintOutcomes.reason, createdAt: hintOutcomes.createdAt })
-    .from(hintOutcomes)
-    .where(and(eq(hintOutcomes.deliveryId, deliveryId), eq(hintOutcomes.recordedBy, recordedBy)))
-    .orderBy(desc(hintOutcomes.createdAt), desc(hintOutcomes.id))
-    .limit(1);
-  return rows[0];
+  const rows = await deps.db.execute<LatestOutcomeRow>(sql`
+    SELECT o.outcome, o.reason, o.created_at AS at FROM hint_outcomes o
+    JOIN hint_deliveries d ON d.id = o.delivery_id
+    WHERE ${ofPointer("d", delivery)} AND o.recorded_by = ${recordedBy}
+    ORDER BY o.created_at DESC, o.id DESC LIMIT 1`);
+  const row = rows.rows[0];
+  return row === undefined ? undefined : { outcome: row.outcome, reason: row.reason, createdAt: new Date(row.at) };
 };
 
-/** When the recipient labelled this delivery noise, newest — the one noise concept (07 §13.2). */
-const readNoiseLabelAt = async (deps: Deps, deliveryId: string, recipient: string): Promise<Date | null> => {
+/** When the recipient labelled this pointer noise, newest — the one noise concept (07 §13.2). */
+const readNoiseLabelAt = async (deps: Deps, delivery: ResolvedDelivery, recipient: string): Promise<Date | null> => {
   const rows = await deps.db.execute<{ at: string | Date | null }>(sql`
     SELECT max(m.created_at) AS at FROM pilot_marks m
-    WHERE m.ref_kind = 'hint_delivery' AND m.ref_id = ${deliveryId}
+    JOIN hint_deliveries d ON d.id = m.ref_id
+    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", delivery)}
       AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}`);
   const at = rows.rows[0]?.at ?? null;
   return at === null ? null : new Date(at);
@@ -217,12 +232,12 @@ const readNoiseLabelAt = async (deps: Deps, deliveryId: string, recipient: strin
 /** What stands before this word, by the view's rule: the later of the two, the label on a tie. */
 const readStanding = async (
   deps: Deps,
-  deliveryId: string,
+  delivery: ResolvedDelivery,
   recipient: string,
 ): Promise<{ readonly standing: Standing | null; readonly noiseAt: Date | null }> => {
   const [latest, noiseAt] = await Promise.all([
-    readLatestOutcome(deps, deliveryId, recipient),
-    readNoiseLabelAt(deps, deliveryId, recipient),
+    readLatestOutcome(deps, delivery, recipient),
+    readNoiseLabelAt(deps, delivery, recipient),
   ]);
   const isNoise = noiseAt !== null && (latest === undefined || noiseAt.getTime() >= latest.createdAt.getTime());
   if (isNoise) {
@@ -272,7 +287,7 @@ export const writeHintOutcome = async (
   if (refusal !== null || delivery === undefined) {
     return { refusal: refusal ?? "unknown_ref" };
   }
-  const { standing, noiseAt } = await readStanding(deps, delivery.id, input.recordedBy);
+  const { standing, noiseAt } = await readStanding(deps, delivery, input.recordedBy);
   if (standing !== null && standing.word === input.outcome && standing.reason === input.reason) {
     return {
       id: delivery.id,

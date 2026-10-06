@@ -3,9 +3,15 @@
  * §13.9) — one definition for the per-person view, the source credit and the
  * team line, so the three can never disagree about a delivery.
  *
+ * ONE INTERVENTION IS ONE POINTER IN ONE SESSION (review M4): a prompt hint
+ * and a tripwire ask about the same work context in the same session are two
+ * deliveries but one hint, and a word recorded on either covers both. So
+ * every figure counts distinct (session, ref), and reads the words and labels
+ * of all that pointer's deliveries.
+ *
  * ONE NOISE CONCEPT. Noise is the person's label in `pilot_marks` (and the
  * 0.10 `off_target` spelling); an outcome is the agent's or the person's word.
- * Per delivery the LATER of the two stands, the label on a tie.
+ * Per intervention the LATER of the two stands, the label on a tie.
  *
  * A SHARED FIGURE IS A CLOSED, FROZEN PERIOD (review #4/#10). Anything but the
  * recorder's own view covers the last whole calendar month (UTC), counted as
@@ -94,15 +100,16 @@ const before = (column: SQL, until: Date | null): SQL =>
   until === null ? sql`` : sql`AND ${column} < ${until.toISOString()}::timestamptz`;
 
 /**
- * Every unasked delivery to the recipients `who` selects, on this repo, from
- * `since` (and before `until`, when given) — with its recipient, the developer
- * whose work it pointed at, and the word it stands at, as of `until` when
- * given. The source is THIS repo's: a delivery's ref is the client's own word,
- * so a pointer at another repo's work names nobody (07 §11.9).
+ * Every unasked intervention — one pointer in one session — to the recipients
+ * `who` selects, on this repo, delivered from `since` (and before `until`,
+ * when given), with its recipient, the developer whose work it pointed at, and
+ * the word it stands at, as of `until` when given. The source is THIS repo's:
+ * a delivery's ref is the client's own word, so a pointer at another repo's
+ * work names nobody (07 §11.9).
  */
 export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date | null = null): SQL => sql`
   WITH received AS (
-    SELECT hd.id, hd.ref_kind, hd.ref_id, s.developer_id AS recipient
+    SELECT min(hd.id) AS id, hd.session_id, min(hd.ref_kind) AS ref_kind, hd.ref_id, s.developer_id AS recipient
     FROM hint_deliveries hd
     JOIN agent_sessions s ON s.id = hd.session_id
     WHERE s.repo = ${repo}
@@ -110,6 +117,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
       AND hd.delivered_at >= ${since.toISOString()}::timestamptz
       ${before(sql`hd.delivered_at`, until)}
+    GROUP BY hd.session_id, hd.ref_id, s.developer_id
   ), sourced AS (
     SELECT r.*, (
       SELECT src.developer_id FROM agent_sessions src
@@ -124,11 +132,18 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     FROM sourced so
     LEFT JOIN LATERAL (
       SELECT o.outcome, o.reason, o.created_at FROM hint_outcomes o
-      WHERE o.delivery_id = so.id AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}
+      JOIN hint_deliveries od ON od.id = o.delivery_id
+      WHERE od.session_id = so.session_id AND od.ref_id = so.ref_id
+        AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}
       ORDER BY o.created_at DESC, o.id DESC LIMIT 1
     ) latest ON true
-    LEFT JOIN pilot_marks m ON m.ref_kind = 'hint_delivery' AND m.ref_id = so.id
-      AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
+    LEFT JOIN LATERAL (
+      SELECT m.created_at FROM pilot_marks m
+      JOIN hint_deliveries md ON md.id = m.ref_id
+      WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
+        AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
+      ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+    ) m ON true
   ), states AS (
     SELECT id, recipient, source_id, outcome_at,
       CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'
