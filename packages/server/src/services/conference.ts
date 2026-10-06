@@ -273,6 +273,7 @@ const cutBody = (body: string): string => {
 const listContextClaims = async (
   deps: Deps,
   workContextId: string,
+  hidden: HiddenLocations,
 ): Promise<readonly ConferenceClaimView[]> => {
   const rows = await deps.db
     .select({
@@ -282,6 +283,7 @@ const listContextClaims = async (
       confidence: claims.confidence,
       provenance: claims.provenance,
       body: claims.body,
+      authorDeveloperId: agentSessions.developerId,
       authorDeveloperName: developers.name,
       createdAt: claims.createdAt,
       // What the evidence ladder needs, off the same row. A conference report
@@ -320,17 +322,21 @@ const listContextClaims = async (
       axes.set(id, value);
     }
   }
-  return rows.map((row) => ({
-    id: row.id,
-    kind: row.kind,
-    status: row.status,
-    confidence: row.confidence,
-    provenance: row.provenance,
-    body: cutBody(row.body),
-    authorDeveloperName: row.authorDeveloperName,
-    axes: axes.get(row.id) ?? UNRESOLVED_AXES,
-    createdAt: row.createdAt.toISOString(),
-  }));
+  // Each claim by its AUTHOR (services/live-location.ts): the evidence rung's
+  // age is when her session observed the failure it cites.
+  return rows.map((row) =>
+    projectRow(hidden, { developerId: row.authorDeveloperId, kind: "claim" }, {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      confidence: row.confidence,
+      provenance: row.provenance,
+      body: cutBody(row.body),
+      authorDeveloperName: row.authorDeveloperName,
+      axes: axes.get(row.id) ?? UNRESOLVED_AXES,
+      createdAt: row.createdAt.toISOString(),
+    }),
+  );
 };
 
 interface ContextTargets {
@@ -521,6 +527,7 @@ const listOpenQuestions = async (
   const rows = await deps.db
     .select({
       id: questions.id,
+      authorDeveloperId: questions.authorDeveloperId,
       authorDeveloperName: authors.name,
       targetDeveloperId: questions.targetDeveloperId,
       targetDeveloperName: targets.name,
@@ -557,13 +564,18 @@ const listOpenQuestions = async (
         row.targetDeveloperId === viewerDeveloperId ||
         row.contextOwnerId === viewerDeveloperId,
     };
-    // The CONTEXT's owner, not the asker: the title names where they are.
+    // Two owners: the question is its asker's; the title names where the
+    // CONTEXT's owner is, so it alone is judged by them.
+    const asked = projectRow(hidden, { developerId: row.authorDeveloperId, kind: "question" }, view);
     return row.contextOwnerId === null
-      ? view
-      : projectRow(hidden, {
-          developerId: row.contextOwnerId,
-          titleFacts: { repo, branch: row.contextBranch, titleSource: row.contextTitleSource },
-        }, view);
+      ? asked
+      : {
+          ...asked,
+          ...projectRow(hidden, {
+            developerId: row.contextOwnerId,
+            titleFacts: { repo, branch: row.contextBranch, titleSource: row.contextTitleSource },
+          }, { workContextTitle: view.workContextTitle }),
+        };
   });
 };
 
@@ -588,7 +600,7 @@ export const readConference = async (
   ]);
   const ids = contexts.map((context) => context.id);
   const [claimLists, sliceTargets, contradictions] = await Promise.all([
-    Promise.all(ids.map((id) => listContextClaims(deps, id))),
+    Promise.all(ids.map((id) => listContextClaims(deps, id, hidden))),
     listSliceTargets(deps, ids),
     // SECOND, because it needs the slice. The deliberate-pull posture again:
     // no `excludeMutedForDeveloperId`, the same call findContradictionById

@@ -220,8 +220,9 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
   },
   "GET /api/pins": {
     variants: [{ path: "/api/pins", query: { repo: REPO } }],
-    colleague: { hidden: NONE_SEEDED },
-    self: { none: NONE_SEEDED },
+    // Her pin, verified after the opt-out (opted-out-world.ts ROBIN_PIN).
+    colleague: "withheld",
+    self: "located",
   },
   "GET /api/presence": {
     variants: [

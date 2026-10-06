@@ -69,7 +69,7 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const scope = await resolveSuspectScope(deps, parsed.data.repo, {
       ...(parsed.data.pin === undefined ? {} : { pinId: parsed.data.pin }),
       paths: parsed.data.paths,
-    });
+    }, c.get("developer").id);
     if (!scope.ok) {
       return scope.reason === "pin_not_found"
         ? fail(c, 404, "not_found", "no pin with that id")

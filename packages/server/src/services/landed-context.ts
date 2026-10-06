@@ -176,19 +176,23 @@ const matchFor = async (
   // An ENDED or silent session's work is published and the stop names it —
   // under a title and a start time that say nothing of where its author is
   // (services/live-location.ts). The live one is not matched at all, above.
+  // The sha is the CALLER's commit, echoed back to key the answer — outside
+  // the projection, which would withhold it as hers.
   return found === undefined
     ? null
-    : projectRow(hidden, {
-        developerId: found.developerId,
-        titleFacts: { repo: request.repo, branch: found.branch, titleSource: found.titleSource },
-      }, {
+    : {
         sha: commit.sha,
-        workContextId: found.workContextId,
-        title: found.title,
-        developerName: found.developerName,
-        intent: intentOf(found.intent),
-        workStartedAt: found.startedAt.toISOString(),
-      });
+        ...projectRow(hidden, {
+          developerId: found.developerId,
+          titleFacts: { repo: request.repo, branch: found.branch, titleSource: found.titleSource },
+        }, {
+          workContextId: found.workContextId,
+          title: found.title,
+          developerName: found.developerName,
+          intent: intentOf(found.intent),
+          workStartedAt: found.startedAt.toISOString(),
+        }),
+      };
 };
 
 /** One match per commit that has one, in the order the commits were asked. */

@@ -566,14 +566,19 @@ const toMatchViews = async (
           }
           // The weakest rung for a body that travels without one — never an
           // omission, which a reader would take for "no label reported".
-          return axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES;
+          // The rung's age is when HER evidence was observed: by its author.
+          return projectRow(
+            hidden,
+            { developerId: cause.authorDeveloperId, kind: "claim" },
+            axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES,
+          );
         })(),
         rootCauseValidity: (() => {
           const cause = rootCauses.get(winner.id);
           const validity = validityOf(cause, validities);
           return cause === undefined || validity === null
             ? validity
-            : projectRow(hidden, { developerId: cause.authorDeveloperId }, validity);
+            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: "claim" }, validity);
         })(),
       },
     ];

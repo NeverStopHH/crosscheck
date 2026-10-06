@@ -195,6 +195,9 @@ export const resolveSuspectScope = async (
   deps: Deps,
   repo: string,
   input: { readonly pinId?: string; readonly paths: readonly string[] },
+  // The pin's break and rename are their actors' instants, read as THIS
+  // viewer may (services/pins.ts pinSeenBy).
+  viewerDeveloperId: string,
 ): Promise<ScopeResult> => {
   if (input.pinId === undefined) {
     return {
@@ -217,7 +220,7 @@ export const resolveSuspectScope = async (
       },
     };
   }
-  const pin = await readPin(deps, input.pinId);
+  const pin = await readPin(deps, input.pinId, viewerDeveloperId);
   if (pin === null) {
     return { ok: false, reason: "pin_not_found" };
   }

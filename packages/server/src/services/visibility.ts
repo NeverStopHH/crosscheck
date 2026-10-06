@@ -45,8 +45,11 @@
  *
  * Location FIELDS go everywhere else, per viewer, and the row stays — the
  * work, the claims and the collision are the product. ONE projection does
- * it (services/live-location.ts `projectRow`, keyed by wire field name), and
- * every serializer of these rows hands its rows to it:
+ * it (services/live-location.ts `projectRow`), WITHHOLDING BY DEFAULT: every
+ * value that is an instant or a commit goes, at any depth, unless the row's
+ * kind lists it as the time the shared work itself carries (a claim's,
+ * context's, edge's or question's createdAt). Every serializer of these rows
+ * hands its rows to it, each nested row by its own owner:
  *
  *   - branch                      — the GET /api/work-contexts listing, in
  *                                   its SQL by this file's
@@ -93,6 +96,15 @@
  *   - last update                 — `updatedAt` on every work-context row
  *                                   (listing, by-id, diagnosis, search, hint
  *                                   candidates, the /ui pages), as null
+ *   - her activity on shared rows — a claim she re-observed reads as seen
+ *                                   once (`lastSeenAt` null, `dedupCount`
+ *                                   1); a matched target's and an evidence
+ *                                   rung's time, null; her pin's HEAD and
+ *                                   verification, break and rename times,
+ *                                   LOCATION_WITHHELD, and her verification
+ *                                   does not age the registry's
+ *                                   oldestVerifiedAt; her work's `landedAt`,
+ *                                   to the day (review round 4, H3 and M3)
  *   - activity as a FILTER or an  — every read that windows or ranks by
  *     ORDER                         activity counts a hidden owner's work
  *                                   from creation alone (activitySeenBy):

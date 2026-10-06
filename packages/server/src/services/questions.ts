@@ -773,16 +773,21 @@ const listInbox = async (
       createdAt: row.question.createdAt.toISOString(),
       expiresAt: row.question.expiresAt.toISOString(),
     };
+    // Two owners: the question is its asker's, the title its context's.
+    const asked = projectRow(hidden, { developerId: view.authorDeveloperId, kind: "question" }, view);
     return row.contextOwnerId === null
-      ? view
-      : projectRow(hidden, {
-          developerId: row.contextOwnerId,
-          titleFacts: {
-            repo: row.contextRepo ?? repo,
-            branch: row.contextBranch,
-            titleSource: row.contextTitleSource,
-          },
-        }, view);
+      ? asked
+      : {
+          ...asked,
+          ...projectRow(hidden, {
+            developerId: row.contextOwnerId,
+            titleFacts: {
+              repo: row.contextRepo ?? repo,
+              branch: row.contextBranch,
+              titleSource: row.contextTitleSource,
+            },
+          }, { workContextTitle: view.workContextTitle }),
+        };
   });
 };
 

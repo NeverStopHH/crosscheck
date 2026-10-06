@@ -17729,8 +17729,8 @@ export const MUTATIONS: readonly Mutation[
     // branch an opted-out developer's teammates are not told.
     label: "an opted-out teammate's fallback title reaches other viewers",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "      (owner.titleFacts === undefined ||\n        isLocationTitle({ title: value, ...owner.titleFacts, branches: reportedBranches }));",
-    to: "      false;",
+    from: "    (p.owner.titleFacts === undefined ||\n      isLocationTitle({ title: value, ...p.owner.titleFacts, branches: p.reportedBranches }));",
+    to: "    false;",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "Robin opts out and re-registers on feat/acquisition-talks; her context " +
@@ -17875,8 +17875,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a referee brief carries an opted-out author's HEAD as a claim's commit",
     file: `${SERVER}/src/services/referee.ts`,
-    from: "    validity: projectRow(\n      hidden,\n      { developerId: loaded.view.authorDeveloperId },",
-    to: "    validity: projectRow(\n      new Set<string>(),\n      { developerId: loaded.view.authorDeveloperId },",
+    from: "    validity: projectRow(\n      hidden,\n      { developerId: loaded.view.authorDeveloperId, kind: \"claim\" },",
+    to: "    validity: projectRow(\n      new Map(),\n      { developerId: loaded.view.authorDeveloperId, kind: \"claim\" },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "a claim bound to its session's base names the author's live HEAD, and " +
@@ -17885,8 +17885,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "hint candidates carry an opted-out author's HEAD as a claim's commit",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      validity: projectRow(hidden, { developerId: claim.authorDeveloperId }, claim.validity),",
-    to: "      validity: claim.validity,",
+    from: "      projectRow(hidden, { developerId: claim.authorDeveloperId, kind: \"claim\" }, claim),",
+    to: "      claim,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the hint the reader's prompt is shown about an opted-out teammate's " +
@@ -17895,7 +17895,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a solved pointer carries an opted-out author's HEAD as its root cause's commit",
     file: `${SERVER}/src/services/solved-matches.ts`,
-    from: "            : projectRow(hidden, { developerId: cause.authorDeveloperId }, validity);",
+    from: "            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: \"claim\" }, validity);",
     to: "            : validity;",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
@@ -18022,8 +18022,8 @@ export const MUTATIONS: readonly Mutation[
     // Review round 3, H1: the inbox titles a question with its CONTEXT.
     label: "the questions inbox titles an opted-out teammate's context with her branch",
     file: `${SERVER}/src/services/questions.ts`,
-    from: "      : projectRow(hidden, {\n          developerId: row.contextOwnerId,\n          titleFacts: {\n",
-    to: "      : projectRow(new Set<string>(), {\n          developerId: row.contextOwnerId,\n          titleFacts: {\n",
+    from: "          ...projectRow(hidden, {\n            developerId: row.contextOwnerId,\n            titleFacts: {\n",
+    to: "          ...projectRow(new Map(), {\n            developerId: row.contextOwnerId,\n            titleFacts: {\n",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "a teammate asks Nick about Robin's context and the briefing's " +
@@ -18033,8 +18033,8 @@ export const MUTATIONS: readonly Mutation[
     // Review round 3, survivor A: no test seeded a question on her context.
     label: "the conference titles a question with an opted-out teammate's branch",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "      : projectRow(hidden, {\n          developerId: row.contextOwnerId,\n          titleFacts: { repo, branch: row.contextBranch,",
-    to: "      : projectRow(new Set<string>(), {\n          developerId: row.contextOwnerId,\n          titleFacts: { repo, branch: row.contextBranch,",
+    from: "          ...projectRow(hidden, {\n            developerId: row.contextOwnerId,\n            titleFacts: { repo, branch: row.contextBranch,",
+    to: "          ...projectRow(new Map(), {\n            developerId: row.contextOwnerId,\n            titleFacts: { repo, branch: row.contextBranch,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "crosscheck conference lists open questions under the title of the " +
@@ -18045,8 +18045,8 @@ export const MUTATIONS: readonly Mutation[
     // author's whereabouts are not.
     label: "the landed stop names an opted-out teammate's branch and when she started",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "    : projectRow(hidden, {\n        developerId: found.developerId,",
-    to: "    : projectRow(new Set<string>(), {\n        developerId: found.developerId,",
+    from: "        ...projectRow(hidden, {\n          developerId: found.developerId,",
+    to: "        ...projectRow(new Map(), {\n          developerId: found.developerId,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the PreToolUse stop at Robin's landed change prints her fallback title " +
@@ -18086,8 +18086,8 @@ export const MUTATIONS: readonly Mutation[
     // Review round 3, H3: the pilot surfaces title what was delivered.
     label: "crosscheck pilot label names an opted-out teammate's context by its branch",
     file: `${SERVER}/src/services/pilot-candidates.ts`,
-    from: "        : projectRow(hidden, {\n            developerId: row.owner_developer_id,",
-    to: "        : projectRow(new Set<string>(), {\n            developerId: row.owner_developer_id,",
+    from: "            ...projectRow(hidden, {\n              developerId: row.owner_developer_id,",
+    to: "            ...projectRow(new Map(), {\n              developerId: row.owner_developer_id,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the label walk shows Nick the hint he was given under Robin's " +
@@ -18228,8 +18228,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the projection ignores the title marker",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "isLocationTitle({ title: value, ...owner.titleFacts, branches: reportedBranches })",
-    to: "isLocationTitle({ title: value, ...owner.titleFacts, titleSource: null, branches: reportedBranches })",
+    from: "isLocationTitle({ title: value, ...p.owner.titleFacts, branches: p.reportedBranches })",
+    to: "isLocationTitle({ title: value, ...p.owner.titleFacts, titleSource: null, branches: p.reportedBranches })",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the marker is stored and never read, so a host title is judged by its " +
@@ -18313,8 +18313,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "survivor A: the conference titles a question by an opted-out teammate's branch (guard)",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "      : projectRow(hidden, {\n          developerId: row.contextOwnerId,\n          titleFacts: { repo, branch: row.contextBranch,",
-    to: "      : projectRow(new Set<string>(), {\n          developerId: row.contextOwnerId,\n          titleFacts: { repo, branch: row.contextBranch,",
+    from: "          ...projectRow(hidden, {\n            developerId: row.contextOwnerId,\n            titleFacts: { repo, branch: row.contextBranch,",
+    to: "          ...projectRow(new Map(), {\n            developerId: row.contextOwnerId,\n            titleFacts: { repo, branch: row.contextBranch,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the guard never seeded a question on her context, so no route it walked " +
@@ -18415,6 +18415,147 @@ export const MUTATIONS: readonly Mutation[
     because:
       "only her sessions' CURRENT branches are known, so a local repo's bare " +
       "title on the branch she left is published",
+  },
+  // ── Review round 4, A2: withheld by default (H3, M3) ──────────────────
+  {
+    label: "the projection withholds an instant only when its field is named",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (LOCATION_BY_NAME.has(key) || isInstantOrCommit(value)) {",
+    to: "  if (LOCATION_BY_NAME.has(key) || Object.hasOwn(FIELD_FORMS, key)) {",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because:
+      "the denylist again: a field nobody named — a matched target's time, " +
+      "an evidence rung's age — carries her instant to every colleague",
+  },
+  {
+    label: "a field nobody named carries her instant to a colleague's hint",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (LOCATION_BY_NAME.has(key) || isInstantOrCommit(value)) {",
+    to: "  if (LOCATION_BY_NAME.has(key) || Object.hasOwn(FIELD_FORMS, key)) {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the hint about the file she touched says when she touched it, to the " +
+      "second, through a createdAt no vocabulary named",
+  },
+  {
+    label: "a row kind's allowlist shows every instant on the row",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (value === undefined || value === null || p.shown.has(key)) {",
+    to: "  if (value === undefined || value === null || p.shown.size > 0) {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a claim's createdAt being shareable lets its lastSeenAt through too: " +
+      "when she re-observed it",
+  },
+  {
+    label: "a re-observed claim says how often she saw it again",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = { dedupCount: 1 };",
+    to: "const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = {};",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the diagnosis prints «seen 2×» on her claim, and polling it says when " +
+      "her agent was back",
+  },
+  {
+    label: "her work's landing is shown to the instant her session reported it",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "    return [[key, toDay(value)]];",
+    to: "    return [[key, value]];",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "landed evidence about her sessions comes from her own SessionStart only, " +
+      "so landedAt is the second she was at her machine",
+  },
+  {
+    label: "nested rows pass through the projection unread",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  return [[key, isPlainObject(value) ? projectObject(p, value) : value]];",
+    to: "  return [[key, value]];",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because:
+      "an intent's capturedAt, a validity's reading, an evidence rung's age " +
+      "ride one level down and go out as they came in",
+  },
+  {
+    label: "a list keeps the commits it should withhold",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "    if (isInstantOrCommit(item)) {\n      return [];\n    }",
+    to: "    if (false) {\n      return [];\n    }",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "a list of her shas is shipped whole beside fields withheld one by one",
+  },
+  {
+    label: "a hint's matched target says when her session touched the file",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      projectRow(hidden, { developerId: row.developerId }, target, { createdAt: \"null\" }),",
+    to: "      target,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the targets-only pointer prints «touched src/auth/cache.ts 4m ago» about " +
+      "an opted-out teammate (probe-target.ts)",
+  },
+  {
+    label: "a claim on her context is judged by the context's owner, not its author",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "      return projectRow(hidden, { developerId: row.authorDeveloperId, kind: \"claim\" }, view);",
+    to: "      return projectRow(hidden, { developerId: contextRow.ownerDeveloperId, kind: \"claim\" }, view);",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Ken's own claim on Robin's context loses its re-observation, and Robin's " +
+      "claim on a visible teammate's context would keep hers",
+  },
+  {
+    label: "her pin carries the HEAD she verified at and when",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "    ...projectRow(hidden, { developerId: actors.verifiedById }, verification, {",
+    to: "    ...projectRow(new Map(), { developerId: actors.verifiedById }, verification, {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "crosscheck pin list prints her HEAD and the minute she verified (M3)",
+  },
+  {
+    label: "her pin carries the HEAD she verified at and when (guard)",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "    ...projectRow(hidden, { developerId: actors.verifiedById }, verification, {",
+    to: "    ...projectRow(new Map(), { developerId: actors.verifiedById }, verification, {",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the route walk reads GET /api/pins with her pin seeded after the opt-out",
+  },
+  {
+    label: "the pin registry is aged by an opted-out pinner's verification",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "min(${pins.verifiedAt}) filter (where ${visiblePresenceCondition(viewerDeveloperId, pins.verifiedBy)})",
+    to: "min(${pins.verifiedAt})",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the registry's oldestVerifiedAt is her pin's verifiedAt whenever hers is " +
+      "the oldest, and the coverage line prints it",
+  },
+  {
+    label: "a referee brief dates an opted-out author's claim by her evidence",
+    file: `${SERVER}/src/services/referee.ts`,
+    from: "    projectRow(hidden, { developerId: claim.authorDeveloperId, kind: \"claim\" }, claim);",
+    to: "    claim;",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "each side's evidence rung carries the instant her session touched the file",
+  },
+  {
+    label: "a solved pointer dates an opted-out author's root cause by her evidence",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "          return projectRow(\n            hidden,\n            { developerId: cause.authorDeveloperId, kind: \"claim\" },\n            axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES,\n          );",
+    to: "          return axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES;",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the root cause's evidence rung carries the instant her session touched the file",
+  },
+  {
+    label: "the conference quotes an opted-out author's claim with the age of her evidence",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    projectRow(hidden, { developerId: row.authorDeveloperId, kind: \"claim\" }, {\n      id: row.id,",
+    to: "    projectRow(new Map(), { developerId: row.authorDeveloperId, kind: \"claim\" }, {\n      id: row.id,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "crosscheck conference reads her ruled-out approach at standup with the " +
+      "instant her agent saw the failure it cites",
   },
 ];
 
@@ -18748,8 +18889,9 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/live-location-privacy.test.ts 15
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 23
+ * PRINTS: packages/server/test/live-location-privacy.test.ts 19
+ * PRINTS: packages/server/test/live-location-projection.test.ts 3
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 31
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

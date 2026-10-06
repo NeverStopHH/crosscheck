@@ -289,6 +289,7 @@ const ownerOf = (
 ): RowOwner => ({
   developerId,
   titleFacts: { repo, branch, titleSource: row.titleSource },
+  kind: "work_context",
 });
 
 const toWorkContextView = (
@@ -539,6 +540,26 @@ const listEdgesTouching = async (
     .limit(limits.maxEdges);
 };
 
+/**
+ * Who stands behind each edge's author session — the edge is projected by
+ * its own author, as every nested row is (services/live-location.ts). One
+ * bounded read: the ids are the page's edges, already capped.
+ */
+const readSessionDevelopers = async (
+  db: Db,
+  sessionIds: readonly string[],
+): Promise<ReadonlyMap<string, string>> => {
+  const unique = [...new Set(sessionIds)];
+  if (unique.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({ id: agentSessions.id, developerId: agentSessions.developerId })
+    .from(agentSessions)
+    .where(inArray(agentSessions.id, unique));
+  return new Map(rows.map((row) => [row.id, row.developerId]));
+};
+
 const listExternalClaimRefs = async (
   db: Db,
   edges: readonly ClaimEdgeRow[],
@@ -630,6 +651,7 @@ export const getDiagnosis = async (
   );
   const targets = await listDiagnosisTargets(db, workContextId);
   const chain = await readIntentChain(db, workContextId);
+  const edgeAuthors = await readSessionDevelopers(db, edgeRows.map((edge) => edge.authorSessionId));
 
   // THE SUPERSEDED LEG COSTS NOTHING HERE. Every edge touching the tree's
   // claims is already loaded above, so the "is this claim a supersedes
@@ -675,12 +697,16 @@ export const getDiagnosis = async (
         // stronger one here would be the inversion the ladder exists to stop.
         axes.get(row.claim.id) ?? UNRESOLVED_AXES,
       );
-      return {
-        ...view,
-        validity: projectRow(hidden, { developerId: row.authorDeveloperId }, view.validity),
-      };
+      // The whole view by its AUTHOR, who may not be the context's owner:
+      // the re-observation, the validity reading and the evidence age are
+      // all hers (live-location.ts).
+      return projectRow(hidden, { developerId: row.authorDeveloperId, kind: "claim" }, view);
     }),
-    edges: edgeRows.map(toClaimEdgeView),
+    edges: edgeRows.map((edge) => {
+      const author = edgeAuthors.get(edge.authorSessionId);
+      const view = toClaimEdgeView(edge);
+      return author === undefined ? view : projectRow(hidden, { developerId: author, kind: "edge" }, view);
+    }),
     externalClaims,
     targets,
     intentChain: chain.map((entry) => ({

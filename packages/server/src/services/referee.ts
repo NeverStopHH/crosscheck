@@ -435,17 +435,22 @@ const buildPosition = async (
       findSupersededBy(db, side.id),
       loadRevalidations(db, now, [side.id]),
     ]);
+  // Every claim in the case file by its OWN author — the evidence may be a
+  // teammate's — so the age of her evidence is withheld wherever it rides
+  // (services/live-location.ts).
+  const byAuthor = (claim: RefereeClaimView): RefereeClaimView =>
+    projectRow(hidden, { developerId: claim.authorDeveloperId, kind: "claim" }, claim);
   return {
-    claim: loaded.view,
+    claim: byAuthor(loaded.view),
     workContextTitle: workContextTitles.get(loaded.view.workContextId) ?? "",
-    evidence: evidence.evidence,
+    evidence: evidence.evidence.map(byAuthor),
     evidenceTruncated: evidence.truncated,
-    ruledOut: ruledOut.ruledOut,
+    ruledOut: ruledOut.ruledOut.map(byAuthor),
     ruledOutTruncated: ruledOut.truncated,
     supersededByClaimId,
     validity: projectRow(
       hidden,
-      { developerId: loaded.view.authorDeveloperId },
+      { developerId: loaded.view.authorDeveloperId, kind: "claim" },
       claimValidity(loaded.binding, revalidations.get(side.id), supersededByClaimId),
     ),
   };

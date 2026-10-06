@@ -177,7 +177,7 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // ask twice would eventually print one without the other, and "4 pins"
     // with no "nothing else is watched" beside it is the exact sentence this
     // feature exists to stop.
-    return ok(c, await listPins(deps, parsed.data.repo));
+    return ok(c, await listPins(deps, parsed.data.repo, c.get("developer").id));
   });
 
   // The sweep's RECORDING half. The computing half runs on a developer's

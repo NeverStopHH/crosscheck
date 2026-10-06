@@ -700,6 +700,7 @@ const hydrate = async (
       projectRow(hidden, {
         developerId: row.developerId,
         titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
+        kind: "work_context",
       }, {
         id: row.id,
         developerId: row.developerId,

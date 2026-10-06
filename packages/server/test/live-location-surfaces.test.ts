@@ -15,6 +15,7 @@ import {
   postRecords,
   recordEnvelope,
   registerTestSession,
+  validClaimBody,
   validWorkContextBody,
 } from "./helpers.ts";
 import {
@@ -23,7 +24,11 @@ import {
   FILE,
   HOST_CREATED_AT,
   HOST_TITLE,
+  KEN_SESSION,
+  LANDED_AT,
   LOCAL_REPO,
+  ROBIN_NEW_FILE,
+  ROBIN_PIN,
   NICK_SESSION,
   REPO,
   ROBIN_CONTEXT,
@@ -351,6 +356,75 @@ describe("the title marker (review round 3, H4 and L1)", () => {
 
     expect(titleOf(kept.body, ROBIN_HOST_CONTEXT)).toBe(HOST_TITLE);
     expect(titleOf(renamed.body, ROBIN_HOST_CONTEXT)).toBe(WITHHELD_TITLE);
+  });
+});
+
+describe("her activity after the opt-out (review round 4, H3 and M3)", () => {
+  // The work goes on and stays shared; the instants of it are hers.
+  test("a re-observed claim carries neither when she saw it again nor how often", async () => {
+    const world = await seedOptedOutWorld();
+
+    const diagnosis = await getAs(world, "nick", `/api/work-contexts/${ROBIN_CONTEXT}/diagnosis`);
+    const claim = (JSON.parse(diagnosis.body) as { data: { claims: readonly Record<string, unknown>[] } }).data.claims.find(
+      (row) => row["id"] === "clm_robin",
+    );
+
+    expect(secretsIn(diagnosis.body)).toEqual([]);
+    expect(claim?.["lastSeenAt"]).toBeNull();
+    expect(claim?.["dedupCount"]).toBe(1);
+  });
+
+  test("a teammate's claim on her context keeps its own re-observation: each row by its own owner", async () => {
+    const world = await seedOptedOutWorld();
+    const kenClaim = (id: string) =>
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id, workContextId: ROBIN_CONTEXT, authorSessionId: KEN_SESSION, kind: "observation", body: "Ken saw the refresh retry twice" }),
+        { sessionId: KEN_SESSION },
+      );
+    await postRecords(world.harness, world.ken, { records: [kenClaim("clm_ken_on_robin")] });
+    world.harness.clock.advanceSeconds(60);
+    await postRecords(world.harness, world.ken, { records: [kenClaim("clm_ken_on_robin_again")] });
+
+    const diagnosis = await getAs(world, "nick", `/api/work-contexts/${ROBIN_CONTEXT}/diagnosis`);
+    const claim = (JSON.parse(diagnosis.body) as { data: { claims: readonly Record<string, unknown>[] } }).data.claims.find(
+      (row) => row["id"] === "clm_ken_on_robin",
+    );
+
+    expect(claim?.["dedupCount"]).toBe(2);
+    expect(claim?.["lastSeenAt"]).not.toBeNull();
+  });
+
+  test("a hint about a file she touched does not say when she touched it", async () => {
+    const world = await seedOptedOutWorld();
+
+    const hints = await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: ROBIN_NEW_FILE }));
+
+    expect(hints.status).toBe(200);
+    expect(hints.body).toContain(ROBIN_NEW_FILE);
+    expect(secretsIn(hints.body)).toEqual([]);
+  });
+
+  test("her landed work says landed, to the day, not the instant her session reported it", async () => {
+    const world = await seedOptedOutWorld();
+
+    const listing = await getAs(world, "nick", url("/api/work-contexts", { repo: LOCAL_REPO }));
+    const own = await getAs(world, "robin", url("/api/work-contexts", { repo: LOCAL_REPO }));
+
+    expect(secretsIn(listing.body)).toEqual([]);
+    expect(landedAtOf(listing.body, ROBIN_LOCAL_CONTEXT)).toBe(`${LANDED_AT.slice(0, 10)}T00:00:00.000Z`);
+    expect(landedAtOf(own.body, ROBIN_LOCAL_CONTEXT)).toBe(LANDED_AT);
+  });
+
+  test("her pin is listed without her HEAD or when she verified it (M3)", async () => {
+    const world = await seedOptedOutWorld();
+
+    const pins = await getAs(world, "nick", url("/api/pins", { repo: REPO }));
+    const own = await getAs(world, "robin", url("/api/pins", { repo: REPO }));
+
+    expect(pins.body).toContain(ROBIN_PIN);
+    expect(secretsIn(pins.body)).toEqual([]);
+    expect(secretsIn(own.body)).toEqual(expect.arrayContaining(["sha 40", "pin verified"]));
   });
 });
 

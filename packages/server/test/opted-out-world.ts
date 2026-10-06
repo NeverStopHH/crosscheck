@@ -81,7 +81,11 @@ const HOST_CREATED_OFFSET_S = 1360;
 const ASKED_OFFSET_S = 1400;
 const HEARTBEAT_OFFSET_S = 4321;
 const UPDATED_OFFSET_S = 4351;
-const READ_OFFSET_S = 4371;
+const DEDUP_OFFSET_S = 4357;
+const TARGET_OFFSET_S = 4363;
+const LANDED_OFFSET_S = 4369;
+const PIN_OFFSET_S = 4375;
+const READ_OFFSET_S = 4401;
 const STALE_HOURS = 30;
 const SECONDS_PER_HOUR = 3600;
 const OLD_DAYS = 90;
@@ -103,6 +107,22 @@ export const HEARTBEAT_AT = at(HEARTBEAT_OFFSET_S);
 export const UPDATED_AT = at(UPDATED_OFFSET_S);
 /** Her stale open session's last heartbeat. */
 export const STALE_HEARTBEAT_AT = at(-STALE_HOURS * SECONDS_PER_HOUR);
+/**
+ * Her activity AFTER the opt-out (review round 4): each instant is when her
+ * agent did something, and none may reach a colleague in any form.
+ */
+/** Her agent re-observed clm_robin (dedup): its lastSeenAt. */
+export const DEDUP_AT = at(DEDUP_OFFSET_S);
+/** Her agent touched a new file on her host context: the target's createdAt. */
+export const TARGET_AT = at(TARGET_OFFSET_S);
+/** Her own session reported landed evidence: when the hub stamped landedAt. */
+export const LANDED_AT = at(LANDED_OFFSET_S);
+/** She pinned a surface: verifiedAt (and verifiedAtCommit is her HEAD). */
+export const PIN_AT = at(PIN_OFFSET_S);
+export const ROBIN_PIN = "pin_robin_refresh";
+export const ROBIN_NEW_FILE = "src/auth/cache.ts";
+/** A failure her agent observed after the opt-out: its target's createdAt is TARGET_AT. */
+export const ROBIN_FINGERPRINT = "sha256:0badc0de0badc0de";
 /** When ROBIN_OLD_CONTEXT was created: published, and outside every window. */
 export const OLD_CREATED_AT = at(-OLD_DAYS * SECONDS_PER_DAY);
 
@@ -137,6 +157,10 @@ export const SECRETS: readonly (readonly [label: string, value: string])[] = [
   ...instantForms(HEARTBEAT_AT).map((value) => ["heartbeat", value] as const),
   ...instantForms(UPDATED_AT).map((value) => ["context update", value] as const),
   ...instantForms(STALE_HEARTBEAT_AT).map((value) => ["stale heartbeat", value] as const),
+  ...instantForms(DEDUP_AT).map((value) => ["re-observation", value] as const),
+  ...instantForms(TARGET_AT).map((value) => ["file touched", value] as const),
+  ...instantForms(LANDED_AT).map((value) => ["landed report", value] as const),
+  ...instantForms(PIN_AT).map((value) => ["pin verified", value] as const),
 ];
 
 /** The labels of every secret `body` carries — empty when it carries none. */
@@ -334,6 +358,80 @@ const robinGoesOnWorking = async (harness: TestHarness, robin: TestDeveloper): P
   );
 };
 
+/**
+ * What her agent does AFTER she opted out, each at its own instant: the
+ * work goes on, and only its time is hers to keep (review round 4, H3, M3).
+ */
+const robinActsAfterOptOut = async (harness: TestHarness, robin: TestDeveloper): Promise<void> => {
+  harness.clock.advanceSeconds(DEDUP_OFFSET_S - UPDATED_OFFSET_S);
+  assertAccepted(
+    await postRecords(harness, robin, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_again", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "hypothesis", status: "rejected", body: "Rotation finished inside its window on every sampled failure", createdAt: DEDUP_AT }),
+          { sessionId: ROBIN_LIVE },
+        ),
+      ],
+    }),
+    "Robin's re-observation",
+  );
+  harness.clock.advanceSeconds(TARGET_OFFSET_S - DEDUP_OFFSET_S);
+  assertAccepted(
+    await postRecords(harness, robin, {
+      records: [
+        recordEnvelope("target", { workContextId: ROBIN_HOST_CONTEXT, kind: "file", value: ROBIN_NEW_FILE }, { sessionId: ROBIN_LIVE }),
+        // A failure her agent observed, and two findings that cite it: the
+        // evidence rung's age is the target's time, so it travels with her
+        // ruled-out approach (the referee brief) and her newest root cause
+        // (the solved pointer). Created at a PUBLISHED instant, so only the
+        // rung can carry the secret.
+        recordEnvelope("target", { workContextId: ROBIN_CONTEXT, kind: "error_fingerprint", value: ROBIN_FINGERPRINT }, { sessionId: ROBIN_LIVE }),
+        // Sent from her LIVE session: a record is a heartbeat (services/
+        // records.ts), and the stale session must stay silent.
+        recordEnvelope("target", { workContextId: ROBIN_SOLVED, kind: "error_fingerprint", value: ROBIN_FINGERPRINT }, { sessionId: ROBIN_LIVE }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_ruled_out", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "rejected_approach", status: "rejected", body: "Retrying the refresh call does not bring the key back", verificationRef: `error_fingerprint:${ROBIN_FINGERPRINT}`, createdAt: HOST_CREATED_AT }),
+          { sessionId: ROBIN_LIVE },
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_root_checked", workContextId: ROBIN_SOLVED, authorSessionId: ROBIN_LIVE, kind: "root_cause", status: "likely_root_cause", confidence: 0.9, evidenceRefs: ["clm_robin_evidence"], body: "The key id is dropped before the refresh call reaches the cache", verificationRef: `error_fingerprint:${ROBIN_FINGERPRINT}`, createdAt: HOST_CREATED_AT }),
+          { sessionId: ROBIN_LIVE },
+        ),
+      ],
+    }),
+    "Robin's new file and observed failure",
+  );
+  harness.clock.advanceSeconds(LANDED_OFFSET_S - TARGET_OFFSET_S);
+  assertAccepted(
+    await postRecords(harness, robin, {
+      records: [
+        recordEnvelope(
+          "landed_evidence",
+          { repo: LOCAL_REPO, defaultBranch: "main", checkedAt: LANDED_AT, commits: [SECRET_SHA2] },
+          { sessionId: ROBIN_LOCAL },
+        ),
+      ],
+    }),
+    "Robin's landed report",
+  );
+  harness.clock.advanceSeconds(PIN_OFFSET_S - LANDED_OFFSET_S);
+  await assertOk(
+    await harness.app.request("/api/pins", jsonRequest("POST", robin.apiKey, {
+      id: ROBIN_PIN,
+      repo: REPO,
+      surface: "Refresh keeps the session alive",
+      files: [ROBIN_NEW_FILE],
+      check: "log in, rotate the key, refresh",
+      presence: "controlling_terminal",
+      verifiedAtCommit: SECRET_SHA,
+    })),
+    "Robin's pin",
+  );
+};
+
 export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
   const harness = await createTestHarness();
   const { nick, ken, robin } = await seedTeam(harness);
@@ -356,7 +454,8 @@ export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
   );
   await setPresenceOptOutViaApi(harness, robin.apiKey, true);
   await robinGoesOnWorking(harness, robin);
-  harness.clock.advanceSeconds(READ_OFFSET_S - UPDATED_OFFSET_S);
+  await robinActsAfterOptOut(harness, robin);
+  harness.clock.advanceSeconds(READ_OFFSET_S - PIN_OFFSET_S);
   return {
     harness,
     nick,

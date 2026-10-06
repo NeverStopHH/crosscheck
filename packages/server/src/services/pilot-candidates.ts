@@ -218,13 +218,17 @@ export const readUnlabeledInterventions = async (
         title: row.title,
       };
       // The delivery is the caller's own; the TITLE is the pointed
-      // context's, and judged by its owner (services/live-location.ts).
+      // context's, and judged by its owner (services/live-location.ts). Only
+      // the title is handed over: the delivery's instant is the caller's.
       return row.owner_developer_id === null
         ? candidate
-        : projectRow(hidden, {
-            developerId: row.owner_developer_id,
-            titleFacts: { repo: input.repo, branch: row.owner_branch, titleSource: titleSourceOf(row.title_source) },
-          }, candidate);
+        : {
+            ...candidate,
+            ...projectRow(hidden, {
+              developerId: row.owner_developer_id,
+              titleFacts: { repo: input.repo, branch: row.owner_branch, titleSource: titleSourceOf(row.title_source) },
+            }, { title: candidate.title }),
+          };
     }),
     more: rows.rows.length > PILOT_LABEL_MAX_CANDIDATES,
   };

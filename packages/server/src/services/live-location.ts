@@ -5,14 +5,17 @@
  * heartbeat/last-active instants. Their work contexts, claims and diagnoses
  * stay shared; only these fields go.
  *
- * ONE FUNCTION, ONE FIELD VOCABULARY. The previous shape was a helper per
+ * ONE FUNCTION, WITHHOLDING BY DEFAULT. The first shape was a helper per
  * field called by hand at each route, and each review found a route that had
- * not called it. `projectRow` instead walks the row it is handed and treats
- * every field whose NAME is in the vocabulary below, so a serializer that
- * hands its row over cannot forget one field of it, and a field added to an
+ * not called it; the second named the fields to withhold, and each review
+ * found a field nobody had named. `projectRow` now walks the row it is
+ * handed, nested rows and lists included, and withholds every value that is
+ * an instant or a commit unless the row's KIND lists that field as the time
+ * the shared work itself carries (SHOWN_FOR_HIDDEN) — so a field added to an
  * already-projected row is withheld without anybody remembering to.
  * test/live-location-privacy.test.ts walks every route the app registers to
- * catch a serializer that does not hand its row over at all.
+ * catch a serializer that does not hand its row over at all, and
+ * test/live-location-projection.test.ts pins the rule itself.
  *
  * Withheld per FIELD, not per row, and per VIEWER: the subject's own reads
  * are untouched, and every other viewer reads the same rows with the
@@ -77,6 +80,31 @@ export const locationHiddenFrom = async (
   );
 };
 
+/**
+ * THE ALLOWLIST: the instants a hidden owner's row may still carry, by the
+ * KIND of row, because one name means different things on different rows —
+ * a claim's `createdAt` is when the finding was written, a target's is when
+ * her session touched the file. Each entry is the time her shared work itself
+ * carries, which services/visibility.ts accepts in words:
+ *
+ *   createdAt        when the claim, context, edge or question was created
+ *   solvedAt         the newest createdAt of the claims that solved a
+ *                    context (services/solved.ts) — the same time, derived
+ *   expiresAt        a question's createdAt plus its fixed term
+ *   touchingCommits  default-branch commits that touched a claim's files:
+ *                    published history, not her branch (visibility.ts)
+ *
+ * A row of no listed kind shows NONE of its instants.
+ */
+const SHOWN_FOR_HIDDEN = {
+  claim: ["createdAt", "touchingCommits"],
+  work_context: ["createdAt", "solvedAt"],
+  edge: ["createdAt"],
+  question: ["createdAt", "expiresAt"],
+} as const satisfies Readonly<Record<string, readonly string[]>>;
+
+export type SharedRowKind = keyof typeof SHOWN_FOR_HIDDEN;
+
 /** Whose row this is, and what its title is judged against. */
 export interface RowOwner {
   readonly developerId: string;
@@ -88,6 +116,8 @@ export interface RowOwner {
    * because nothing says it is not the branch.
    */
   readonly titleFacts?: Omit<TitleFacts, "title">;
+  /** Which allowlist above the row's instants are judged by; none when absent. */
+  readonly kind?: SharedRowKind;
 }
 
 /**
@@ -114,11 +144,40 @@ export const titleSourceOf = (raw: unknown): WorkContextTitleSource | null => {
 export type WithheldForm = "omit" | "null" | "empty" | "marker";
 
 /**
- * THE VOCABULARY, by wire field name, with each field's default form. A
- * route whose wire needs another form for one of them says so at its call
- * (`forms`), never by skipping the projection.
+ * WITHHELD BY DEFAULT (review round 4). For a hidden owner, every field whose
+ * VALUE is an instant or looks like a commit goes — whatever it is called,
+ * at any depth of the row — unless the row's kind lists it (SHOWN_FOR_HIDDEN).
+ * The earlier shape named the fields to withhold, and each review found one
+ * nobody had named (a re-observation's `lastSeenAt`, a matched target's
+ * `createdAt`, a pin's `verifiedAt`). A field added later is withheld before
+ * anybody remembers it.
+ *
+ *   an instant   a Date; text that opens with a calendar date (ISO, the
+ *                Postgres text form, minute precision); a number of epoch
+ *                size, in seconds or milliseconds
+ *   a commit     7 to 64 hex digits and nothing else — every abbreviation
+ *                git prints, and a digits-only epoch spelled as text
  */
-const LOCATION_FIELDS = {
+const INSTANT_TEXT = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}|$)/;
+const COMMIT_LIKE = /^[0-9a-f]{7,64}$/i;
+/** 2001-09-09 in epoch seconds: no count or score on a row gets this large. */
+const EPOCH_SIZED = 1_000_000_000;
+
+export const isInstantOrCommit = (value: unknown): boolean =>
+  value instanceof Date ||
+  (typeof value === "number" && Math.abs(value) >= EPOCH_SIZED) ||
+  (typeof value === "string" && (INSTANT_TEXT.test(value) || COMMIT_LIKE.test(value)));
+
+/**
+ * THE FORMS, by wire field name: HOW a withheld field is written, never
+ * WHETHER — that is the value's business above, or the name's for the two
+ * location fields no value test can recognise (`branch`, and `baseCommit`
+ * read as "" where it is unknown). A route whose wire needs another form
+ * says so at its call (`forms`), never by skipping the projection. A field
+ * named nowhere takes the marker when it is text (every shipped reader of a
+ * text field accepts a non-empty string) and null when it is still a Date.
+ */
+const FIELD_FORMS = {
   /** The session's CURRENT branch — re-registering moves it. */
   branch: "omit",
   /** `rev-parse HEAD` of the live branch. */
@@ -131,17 +190,44 @@ const LOCATION_FIELDS = {
   workStartedAt: "marker",
   /** A context's last update — its author's last touch, so where she was then. */
   updatedAt: "null",
+  /** When she re-observed a claim (a dedup bump). */
+  lastSeenAt: "null",
+  /**
+   * A revalidation's instant — the marker, not null: null reads "never
+   * re-checked" beside a state the reading decided — and the ref it was read
+   * at, which every reader takes as a nullable sha.
+   */
+  lastRevalidatedAt: "marker",
+  refCommit: "null",
+  /** An evidence rung's age, and the commit it was verified at: null is "unknown". */
+  observedAt: "null",
+  verifiedAtCommit: "null",
+  /** A session's last heartbeat — every reader requires a non-empty string. */
+  lastHeartbeatAt: "marker",
+  /** When she declared an intent: optional on every reader. */
+  capturedAt: "omit",
 } as const satisfies Readonly<Record<string, WithheldForm>>;
 
-export type LocationField = keyof typeof LOCATION_FIELDS;
+/** Fields withheld by NAME — values no test above can tell from any other. */
+const LOCATION_BY_NAME: ReadonlySet<string> = new Set(["branch", "baseCommit", "observedAtCommit", "refCommit"]);
 
-export type WithheldForms = Readonly<Partial<Record<LocationField, WithheldForm>>>;
+/**
+ * COUNTS OF HER ACTIVITY, read as the count a row has before any: how often
+ * she re-observed a claim says how often she was there.
+ */
+const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = { dedupCount: 1 };
+
+/**
+ * Shown TO THE DAY. Her work landing is shared — the stop and the page say
+ * it — but the stamp is the instant HER session reported it
+ * (services/landed.ts), so the hour goes.
+ */
+const DAY_PRECISION: ReadonlySet<string> = new Set(["landedAt"]);
+
+export type WithheldForms = Readonly<Record<string, WithheldForm>>;
 
 /** Title fields: withheld only when the title IS the branch. */
 const TITLE_FIELDS: ReadonlySet<string> = new Set(["title", "workContextTitle"]);
-
-const isLocationField = (key: string): key is LocationField =>
-  Object.hasOwn(LOCATION_FIELDS, key);
 
 const withheldValue = (form: Exclude<WithheldForm, "omit">): string | null => {
   switch (form) {
@@ -154,27 +240,81 @@ const withheldValue = (form: Exclude<WithheldForm, "omit">): string | null => {
   }
 };
 
+const formOf = (forms: WithheldForms, key: string, value: unknown): WithheldForm =>
+  forms[key] ??
+  (Object.hasOwn(FIELD_FORMS, key) ? FIELD_FORMS[key as keyof typeof FIELD_FORMS] : undefined) ??
+  (value instanceof Date ? "null" : "marker");
+
+/** Midnight UTC of the same day, in the type it came in; null when unreadable. */
+const toDay = (value: unknown): Date | string | null => {
+  const ms = value instanceof Date ? value.getTime() : typeof value === "string" ? Date.parse(value) : Number.NaN;
+  if (Number.isNaN(ms)) {
+    return null;
+  }
+  const day = new Date(ms);
+  const midnight = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+  return value instanceof Date ? midnight : midnight.toISOString();
+};
+
+/** One projection's fixed inputs, carried down the row. */
+interface Projection {
+  readonly owner: RowOwner;
+  readonly forms: WithheldForms;
+  readonly reportedBranches: readonly string[];
+  readonly shown: ReadonlySet<string>;
+}
+
+const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !(value instanceof Date) && !Array.isArray(value);
+
+const projectObject = (p: Projection, row: object): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(row).flatMap((entry) => projectEntry(p, entry)));
+
+/** A list's withheld members are dropped: no list on the wire is positional. */
+const projectList = (p: Projection, list: readonly unknown[]): readonly unknown[] =>
+  list.flatMap((item) => {
+    if (isInstantOrCommit(item)) {
+      return [];
+    }
+    if (Array.isArray(item)) {
+      return [projectList(p, item)];
+    }
+    return [isPlainObject(item) ? projectObject(p, item) : item];
+  });
+
+const projectTitle = (p: Projection, value: unknown): unknown => {
+  const isBranch =
+    typeof value === "string" &&
+    (p.owner.titleFacts === undefined ||
+      isLocationTitle({ title: value, ...p.owner.titleFacts, branches: p.reportedBranches }));
+  return isBranch ? WITHHELD_TITLE : value;
+};
+
 const projectEntry = (
-  owner: RowOwner,
-  forms: WithheldForms,
-  reportedBranches: readonly string[],
+  p: Projection,
   [key, value]: readonly [string, unknown],
 ): readonly (readonly [string, unknown])[] => {
-  if (value === undefined || value === null) {
+  if (value === undefined || value === null || p.shown.has(key)) {
     return [[key, value]];
   }
   if (TITLE_FIELDS.has(key)) {
-    const isBranch =
-      typeof value === "string" &&
-      (owner.titleFacts === undefined ||
-        isLocationTitle({ title: value, ...owner.titleFacts, branches: reportedBranches }));
-    return [[key, isBranch ? WITHHELD_TITLE : value]];
+    return [[key, projectTitle(p, value)]];
   }
-  if (!isLocationField(key)) {
-    return [[key, value]];
+  const counter = ACTIVITY_COUNTERS[key];
+  if (counter !== undefined) {
+    return [[key, counter]];
   }
-  const form = forms[key] ?? LOCATION_FIELDS[key];
-  return form === "omit" ? [] : [[key, withheldValue(form)]];
+  if (DAY_PRECISION.has(key)) {
+    return [[key, toDay(value)]];
+  }
+  if (LOCATION_BY_NAME.has(key) || isInstantOrCommit(value)) {
+    const form = formOf(p.forms, key, value);
+    return form === "omit" ? [] : [[key, withheldValue(form)]];
+  }
+  if (Array.isArray(value)) {
+    return [[key, projectList(p, value)]];
+  }
+  return [[key, isPlainObject(value) ? projectObject(p, value) : value]];
 };
 
 /**
@@ -210,8 +350,14 @@ export const activitySeenBy = (
 
 /**
  * `row` as THIS viewer may read it: the same object when its owner's
- * location is not hidden from them, else a copy with every vocabulary field
- * withheld. Never mutates `row`.
+ * location is not hidden from them, else a copy with every location field
+ * and every instant or commit its kind does not list withheld, nested
+ * objects and lists included. Never mutates `row`.
+ *
+ * ONE OWNER PER CALL. A row that carries somebody else's rows — a context's
+ * claims, a candidate's matched targets — is projected in parts by the
+ * caller, each part by its own owner; handed over whole, the nested rows
+ * would be judged by the outer owner.
  *
  * The caller keeps the row's type: `forms` is how it states that its wire
  * takes a field in a form other than the default, and the choice of form is
@@ -222,11 +368,11 @@ export const projectRow = <R extends object>(
   owner: RowOwner,
   row: R,
   forms: WithheldForms = {},
-): R =>
-  hidden.has(owner.developerId)
-    ? (Object.fromEntries(
-        Object.entries(row).flatMap((entry) =>
-          projectEntry(owner, forms, hidden.get(owner.developerId) ?? [], entry),
-        ),
-      ) as R)
-    : row;
+): R => {
+  const reportedBranches = hidden.get(owner.developerId);
+  if (reportedBranches === undefined) {
+    return row;
+  }
+  const shown: ReadonlySet<string> = new Set(owner.kind === undefined ? [] : SHOWN_FOR_HIDDEN[owner.kind]);
+  return projectObject({ owner, forms, reportedBranches, shown }, row) as R;
+};

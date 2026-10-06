@@ -423,7 +423,7 @@ export const listHintCandidates = async (
       // No title facts: the title above is the search row's, which the
       // search already projected for this viewer by its marker and branch;
       // judged again without them, a host title would be withheld too.
-      { developerId: row.developerId },
+      { developerId: row.developerId, kind: "work_context" },
       {
         id: row.id,
         status: row.status,
@@ -443,11 +443,16 @@ export const listHintCandidates = async (
       { baseCommit: "empty" },
       ),
     },
-    claims: (claimsByContext.get(row.id) ?? []).map((claim) => ({
-      ...claim,
-      validity: projectRow(hidden, { developerId: claim.authorDeveloperId }, claim.validity),
-    })),
-    matchedTargets: matchedTargets.get(row.id) ?? [],
+    // Each nested row by its OWN owner: a claim by its author, who may not
+    // be the context's; a matched target by the context's owner, whose
+    // session touched the file — and its `createdAt` is WHEN, so it is not
+    // a creation time the allowlist shows (live-location.ts).
+    claims: (claimsByContext.get(row.id) ?? []).map((claim) =>
+      projectRow(hidden, { developerId: claim.authorDeveloperId, kind: "claim" }, claim),
+    ),
+    matchedTargets: (matchedTargets.get(row.id) ?? []).map((target) =>
+      projectRow(hidden, { developerId: row.developerId }, target, { createdAt: "null" }),
+    ),
   }));
 };
 
