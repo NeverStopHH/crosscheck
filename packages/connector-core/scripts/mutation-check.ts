@@ -18746,6 +18746,33 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because: "the control: the plainest leak there is, which every version of the guard catches",
   },
+  // ── Review round 4, C: the boundary, executable (the differential) ────
+  // Leaks no secret SPELLING shows — a count, a stamp an action of hers
+  // makes — fail the two-world walk because they are on no residual list.
+  {
+    label: "a re-observed claim says how often she saw it again (differential)",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = { dedupCount: 1 };",
+    to: "const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = {};",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "dedupCount is no secret, so only the world without her re-observation tells it apart",
+  },
+  {
+    label: "her work's landing is shown to the instant her session reported it (differential)",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "    return [[key, toDay(value)]];",
+    to: "    return [[key, value]];",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "the landed residual is the day; the stamp to the second is her action's instant",
+  },
+  {
+    label: "the git rung is dated by an opted-out collector's SessionStart (differential)",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      total: sql`count(*) filter (where ${isToldCollector})`,\n      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      total: sql`count(*)`,\n      newest: sql`max(${commitEvidence.collectedAt})`,",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "the rung's observedAt moves to the second her report was collected, which no residual names",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19078,6 +19105,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
+ * PRINTS: packages/server/test/live-location-differential.test.ts 3
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 3
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 40
