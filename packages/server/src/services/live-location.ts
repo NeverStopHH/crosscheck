@@ -40,8 +40,14 @@ import { developers } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
 
-/** Developers whose live location THIS viewer may not be told. */
-export type HiddenLocations = ReadonlySet<string>;
+/**
+ * Developers whose live location THIS viewer may not be told, each with
+ * every branch their sessions ever reported — the current branch of every
+ * session, and the branch each `session_started` row recorded (a session
+ * that re-registered moved its branch, and an unmarked bare-branch title
+ * still names the old one; review round 4, L2).
+ */
+export type HiddenLocations = ReadonlyMap<string, readonly string[]>;
 
 export const locationHiddenFrom = async (
   db: Db,
@@ -56,7 +62,19 @@ export const locationHiddenFrom = async (
         ne(developers.id, viewerDeveloperId),
       ),
     );
-  return new Set(rows.map((row) => row.id));
+  if (rows.length === 0) {
+    return new Map();
+  }
+  const ids = rows.map((row) => row.id);
+  const branches = await db.execute<{ developer_id: string; branch: string }>(sql`
+    SELECT developer_id, branch FROM agent_sessions WHERE developer_id IN ${ids}
+    UNION
+    SELECT payload->>'developerId', payload->>'branch' FROM events
+     WHERE kind = 'session_started' AND payload->>'developerId' IN ${ids}
+       AND payload->>'branch' IS NOT NULL`);
+  return new Map(
+    ids.map((id) => [id, branches.rows.filter((row) => row.developer_id === id).map((row) => row.branch)]),
+  );
 };
 
 /** Whose row this is, and what its title is judged against. */
@@ -139,6 +157,7 @@ const withheldValue = (form: Exclude<WithheldForm, "omit">): string | null => {
 const projectEntry = (
   owner: RowOwner,
   forms: WithheldForms,
+  reportedBranches: readonly string[],
   [key, value]: readonly [string, unknown],
 ): readonly (readonly [string, unknown])[] => {
   if (value === undefined || value === null) {
@@ -147,7 +166,8 @@ const projectEntry = (
   if (TITLE_FIELDS.has(key)) {
     const isBranch =
       typeof value === "string" &&
-      (owner.titleFacts === undefined || isLocationTitle({ title: value, ...owner.titleFacts }));
+      (owner.titleFacts === undefined ||
+        isLocationTitle({ title: value, ...owner.titleFacts, branches: reportedBranches }));
     return [[key, isBranch ? WITHHELD_TITLE : value]];
   }
   if (!isLocationField(key)) {
@@ -205,6 +225,8 @@ export const projectRow = <R extends object>(
 ): R =>
   hidden.has(owner.developerId)
     ? (Object.fromEntries(
-        Object.entries(row).flatMap((entry) => projectEntry(owner, forms, entry)),
+        Object.entries(row).flatMap((entry) =>
+          projectEntry(owner, forms, hidden.get(owner.developerId) ?? [], entry),
+        ),
       ) as R)
     : row;

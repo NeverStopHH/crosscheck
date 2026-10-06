@@ -30,12 +30,14 @@ import {
   ROBIN_DETACHED_CONTEXT,
   ROBIN_HOST_CONTEXT,
   ROBIN_LIVE,
+  ROBIN_LOCAL,
   ROBIN_LOCAL_CONTEXT,
   ROBIN_OLD_CONTEXT,
   ROBIN_SOLVED,
   SECRET_BRANCH,
   SECRET_LOCAL_BRANCH,
   SECRET_SHA,
+  SECRET_SHA2,
   UPDATED_AT,
   getAs,
   postAs,
@@ -305,6 +307,24 @@ describe("the title marker (review round 3, H4 and L1)", () => {
     expect(titleOf(listing, ROBIN_DETACHED_CONTEXT)).toBe(WITHHELD_TITLE);
     expect(titleOf(own.body, ROBIN_LOCAL_CONTEXT)).toBe(SECRET_LOCAL_BRANCH);
     expect(titleOf(own.body, ROBIN_DETACHED_CONTEXT)).toBe(DETACHED_TITLE);
+  });
+
+  test("a bare-branch title stays withheld after her session moves to another branch (review round 4, L2)", async () => {
+    // Re-registering moves the session's branch; the unmarked title still
+    // names the branch she was on, which her session_started row recorded.
+    const world = await seedOptedOutWorld();
+    const moved = await registerTestSession(world.harness, world.robin.apiKey, {
+      id: ROBIN_LOCAL,
+      repo: LOCAL_REPO,
+      branch: "feat/robin-after-geneva",
+      baseCommit: SECRET_SHA2,
+    });
+    expect(moved.status).toBeLessThan(300);
+
+    const listing = await getAs(world, "nick", url("/api/work-contexts", { repo: LOCAL_REPO }));
+
+    expect(secretsIn(listing.body)).toEqual([]);
+    expect(titleOf(listing.body, ROBIN_LOCAL_CONTEXT)).toBe(WITHHELD_TITLE);
   });
 
   test("an unmarked update keeps the marker of an unchanged title, and a changed title is judged by its shape", async () => {

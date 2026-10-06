@@ -47,6 +47,12 @@ export interface TitleFacts {
   readonly titleSource: WorkContextTitleSource | null;
   /** The owning session's branch; null where the row has none. */
   readonly branch: string | null;
+  /**
+   * Every OTHER branch its owner's sessions ever reported. A session that
+   * re-registered moved its branch, and an unmarked bare-branch title still
+   * names the branch it was written on.
+   */
+  readonly branches?: readonly string[];
   readonly repo: string;
 }
 
@@ -64,6 +70,7 @@ export const isLocationTitle = (facts: TitleFacts): boolean => {
   }
   return (
     (facts.branch !== null && facts.title === facts.branch) ||
+    (facts.branches ?? []).includes(facts.title) ||
     isFallbackTitle(facts.title, facts.repo) ||
     DETACHED_TITLE_HEAD.test(facts.title)
   );

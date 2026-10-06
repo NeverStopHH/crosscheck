@@ -17729,7 +17729,7 @@ export const MUTATIONS: readonly Mutation[
     // branch an opted-out developer's teammates are not told.
     label: "an opted-out teammate's fallback title reaches other viewers",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "      (owner.titleFacts === undefined || isLocationTitle({ title: value, ...owner.titleFacts }));",
+    from: "      (owner.titleFacts === undefined ||\n        isLocationTitle({ title: value, ...owner.titleFacts, branches: reportedBranches }));",
     to: "      false;",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
@@ -18228,8 +18228,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the projection ignores the title marker",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "isLocationTitle({ title: value, ...owner.titleFacts })",
-    to: "isLocationTitle({ title: value, ...owner.titleFacts, titleSource: null })",
+    from: "isLocationTitle({ title: value, ...owner.titleFacts, branches: reportedBranches })",
+    to: "isLocationTitle({ title: value, ...owner.titleFacts, titleSource: null, branches: reportedBranches })",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the marker is stored and never read, so a host title is judged by its " +
@@ -18394,6 +18394,27 @@ export const MUTATIONS: readonly Mutation[
     because:
       "two hubs that differ only by something an opted-out teammate did list " +
       "colleagues' equally fresh rows differently, and the order is the leak",
+  },
+  {
+    // Review round 4, L2: an unmarked bare-branch title names ANY branch she was on.
+    label: "an unmarked title equal to an earlier branch of hers is shown",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    (facts.branches ?? []).includes(facts.title) ||",
+    to: "    false ||",
+    test: `${SCHEMA}/test/fallback-title.test.ts`,
+    because:
+      "her session re-registers on another branch and the title naming the " +
+      "branch she was on reaches every colleague",
+  },
+  {
+    label: "the hub forgets the branches her sessions reported before",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "     WHERE kind = 'session_started' AND payload->>'developerId' IN ${ids}",
+    to: "     WHERE kind = 'never' AND payload->>'developerId' IN ${ids}",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "only her sessions' CURRENT branches are known, so a local repo's bare " +
+      "title on the branch she left is published",
   },
 ];
 
@@ -18685,7 +18706,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
- * PRINTS: packages/schema/test/fallback-title.test.ts 1
+ * PRINTS: packages/schema/test/fallback-title.test.ts 2
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
@@ -18728,7 +18749,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 15
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 22
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 23
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

@@ -33,6 +33,16 @@ describe("isLocationTitle", () => {
     expect(isLocationTitle({ title: "detached@beefbeef", titleSource: null, branch: null, repo: LOCAL })).toBe(true);
   });
 
+  test("an unmarked title is ANY branch its owner's sessions reported, not only the current one (review round 4, L2)", () => {
+    // The session re-registered on another branch; the title still names the old one.
+    expect(
+      isLocationTitle({ title: "feat/hideout", titleSource: null, branch: "feat/next", branches: ["feat/hideout", "main"], repo: LOCAL }),
+    ).toBe(true);
+    expect(
+      isLocationTitle({ title: "Rotation drill", titleSource: null, branch: "feat/next", branches: ["feat/hideout"], repo: LOCAL }),
+    ).toBe(false);
+  });
+
   test("an unmarked title in none of those shapes is not", () => {
     expect(isLocationTitle({ title: "Login 500s on staging", titleSource: null, branch: "main", repo: REMOTE })).toBe(false);
     expect(isLocationTitle({ title: "detached@release notes", titleSource: null, branch: "main", repo: LOCAL })).toBe(false);
