@@ -18865,16 +18865,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a pointer whose twin arrives next month counts in both months",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "    HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz",
-    to: "    HAVING max(hd.delivered_at) >= ${since.toISOString()}::timestamptz",
+    from: "sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
+    to: "sql`HAVING max(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "July's followed is counted again in August when the same pointer is asked about on the first",
   },
   {
     label: "the month's population has no start",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "    HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz",
-    to: "    HAVING true",
+    from: "sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
+    to: "sql`HAVING true`;",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "every month counts every intervention since the pilot began",
   },
@@ -19128,6 +19128,16 @@ export const MUTATIONS: readonly Mutation[
     to: "    .where(eq(hintDeliveries.refId, named.refId))",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "a word about one session's hint lands on another session's pointer of the same ref",
+  },
+  // ── 07 §13.13, LOW-2: the rolling view shows what was just said (P5). (HAVING in the rolling
+  // case too is an equivalent mutant: the WHERE already keeps only in-window deliveries.) ──
+  {
+    label: "the rolling view has no start (P5)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "  until === null ? sql`AND hd.delivered_at >= ${since.toISOString()}::timestamptz` : sql``;",
+    to: "  sql``;",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "--mine --days 7 counts every intervention since the pilot began",
   },
 ];
 
@@ -19452,7 +19462,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 22
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
  * PRINTS: packages/server/test/hint-outcomes.test.ts 49
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3

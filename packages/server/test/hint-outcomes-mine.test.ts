@@ -416,6 +416,23 @@ describe("review M-2: the person's own view outlives a pause and leaving, read-o
     expect(write.status).toBe(422);
   });
 
+  test("round-5 LOW-2 (P5): a word just recorded on today's twin of an old pointer shows in the rolling view", async () => {
+    // Arrange — the pointer first reached Nick 60 days ago, outside the default window; today its twin
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(60 * SECONDS_PER_DAY);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire", world.harness.clock.now().toISOString())],
+    });
+    const write = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Act — the default window, eight weeks
+    const view = await viewOf(await readMine(world, world.nick));
+
+    // Assert — the person reads the word they just said; only closed months count a pointer once, by its first delivery
+    expect(write.status).toBe(201);
+    expect(view).toMatchObject({ received: 1, followed: 1 });
+  });
+
   test("a repo never enrolled still has no view", async () => {
     // Arrange — the world's repo is enrolled; this one never was
     const world = await createOutcomeWorld();

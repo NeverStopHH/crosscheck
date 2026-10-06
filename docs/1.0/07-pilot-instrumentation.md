@@ -1482,3 +1482,9 @@ answers "already recorded" and writes nothing; it is now pinned on the person's 
 (§13.12 H-A) searches the SAME session's deliveries of the ref only; an uncountable delivery in one session never
 borrows a countable delivery of the same ref in another — that is another pointer, and the word is refused for
 what it is.
+
+*LOW-2 — `--mine` hid a word it had just recorded (P5).* §13.12's probe-E rule (a pointer counts only in the
+window of its FIRST countable delivery) applied to the person's own rolling window too, so a word said today
+about today's twin of a pointer first delivered before the window was recorded (201) and never shown. The rule
+now holds for CLOSED months only — the team line and the credit, which must never count one intervention twice;
+the rolling window counts any pointer with a delivery inside it, so the person reads what they just said.

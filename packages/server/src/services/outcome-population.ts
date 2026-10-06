@@ -165,6 +165,20 @@ const before = (column: SQL, until: Date | null): SQL =>
   until === null ? sql`` : sql`AND ${column} < ${until.toISOString()}::timestamptz`;
 
 /**
+ * WHICH POINTERS A PERIOD COUNTS. A CLOSED month (`until` set) counts a pointer
+ * only in the month of its FIRST countable delivery, so a twin that arrives
+ * next month never counts the same intervention twice (§13.12 probe E). The
+ * person's own ROLLING window (`until` null) counts any pointer with a
+ * delivery inside it, so a word just said about today's twin of an old
+ * pointer shows at once (§13.13 LOW-2, P5).
+ */
+const rollingWindow = (since: Date, until: Date | null): SQL =>
+  until === null ? sql`AND hd.delivered_at >= ${since.toISOString()}::timestamptz` : sql``;
+
+const closedMonthStart = (since: Date, until: Date | null): SQL =>
+  until === null ? sql`` : sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;
+
+/**
  * Every unasked intervention — one pointer in one session — to the recipients
  * `who` selects, on this repo, delivered from `since` (and before `until`,
  * when given), with its recipient, the developer whose work it pointed at, and
@@ -183,10 +197,9 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       AND ${whileEnrolled(repo, sql`hd.delivered_at`)}
       ${before(sql`hd.delivered_at`, until)}
       ${before(sql`COALESCE(hd.ingested_at, hd.delivered_at)`, until)}
+      ${rollingWindow(since, until)}
     GROUP BY hd.session_id, hd.ref_id, s.developer_id
-    -- review LOW (probe E): a pointer counts in the window of its FIRST countable delivery, so a
-    -- twin that arrives next month never counts the same intervention a second time
-    HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz
+    ${closedMonthStart(since, until)}
   ), sourced AS (
     SELECT r.*, (
       SELECT src.developer_id FROM agent_sessions src
