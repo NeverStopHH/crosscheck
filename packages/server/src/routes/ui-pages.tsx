@@ -96,6 +96,12 @@ const changedLabel = (payload: Record<string, unknown>): string | null => {
  * Only a DERIVED claim is labelled: a vouched claim is the default reading of
  * "added a claim", and the label is a renderer-owned literal, never the
  * payload's text.
+ *
+ * EVENTS APPENDED BEFORE claim_added CARRIED PROVENANCE STAY UNLABELLED —
+ * accepted (review round 3, LOW-9). The outbox is append-only history, and
+ * filling `provenance` into old payloads would rewrite what the hub said at
+ * the time; a reader who needs to know opens the tree, whose claim cards
+ * label every draft. The gap closes on its own as the feed's window moves.
  */
 const DERIVED_PROVENANCE = "derived";
 

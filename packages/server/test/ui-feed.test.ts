@@ -186,5 +186,10 @@ describe("intent updates on the feed (trial finding #16)", () => {
     expect(draftRow).toContain(">derived</span>");
     expect(vouchedRow).toBeDefined();
     expect(vouchedRow).not.toContain("derived");
+    // No provenance label at all on a vouched row — the label is the
+    // renderer's literal for a draft, never the payload's text (review round
+    // 3, LOW-9 / survivor O5)
+    expect(vouchedRow).not.toContain(">declared</span>");
+    expect((vouchedRow?.match(/class="label"/g) ?? []).length).toBe(2);
   });
 });

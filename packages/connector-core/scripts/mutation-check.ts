@@ -18575,6 +18575,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "hub text lands unquoted in front of the « » frame on every nudge and briefing pointer",
   },
+  {
+    label: "the web feed labels a claim with whatever provenance its payload says",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: "  payloadString(payload, \"provenance\") === DERIVED_PROVENANCE ? DERIVED_PROVENANCE : null;",
+    to: "  payloadString(payload, \"provenance\");",
+    test: `${SERVER}/test/ui-feed.test.ts`,
+    because: "every vouched row grows a \"declared\" label and the draft's stops standing out — and the label is payload text, not the renderer's",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18954,7 +18962,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
- * PRINTS: packages/server/test/ui-feed.test.ts 2
+ * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
