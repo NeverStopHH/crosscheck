@@ -143,6 +143,8 @@ const failed = (result: Extract<HubResult<unknown>, { ok: false }>): CliResult =
 interface Target {
   readonly ctx: HubContext;
   readonly identity: RepoIdentity;
+  /** The caller's developer key, whose held deliveries alone are theirs (LOW-9); null when the config predates it. */
+  readonly developerId: string | null;
 }
 
 const UNKNOWN_REF = "unknown_ref";
@@ -195,7 +197,7 @@ const mark = async (target: Target, deliveryId: string, shortcut: LabelShortcut)
  * first (07 §13.12, review H-A) — else its newest delivery the hub has, whenever it was.
  */
 const markByRef = async (target: Target, ref: string, shortcut: LabelShortcut): Promise<CliResult> => {
-  const held = await heldDeliveryIdOf(target.ctx, target.identity, ref);
+  const held = await heldDeliveryIdOf(target.ctx, target.identity, ref, target.developerId);
   if (held !== null) {
     return mark(target, held, shortcut);
   }
@@ -234,7 +236,13 @@ const markRecent = async (target: Target, shortcut: LabelShortcut): Promise<CliR
   if (!listed.ok) {
     return failed(listed);
   }
-  const { candidates, more } = await withHeldCandidates(ctx, scan.states, listed.data, NOISE_MARK_WINDOW_MINUTES);
+  const { candidates, more } = await withHeldCandidates(
+    ctx,
+    scan.states,
+    listed.data,
+    NOISE_MARK_WINDOW_MINUTES,
+    target.developerId,
+  );
   const [only] = candidates;
   if (only === undefined) {
     return {
@@ -281,7 +289,7 @@ const runShortcut = async (
     repoKey: repoKey(config.hubUrl, identity.repoId),
     now: () => new Date(),
   };
-  const target = { ctx, identity };
+  const target: Target = { ctx, identity, developerId: config.developerId };
   if (id === undefined) {
     return markRecent(target, shortcut);
   }

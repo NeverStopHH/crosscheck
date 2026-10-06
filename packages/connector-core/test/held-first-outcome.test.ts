@@ -204,7 +204,7 @@ describe("withHeldCandidates (review H-A): what a live session here still holds,
     const live = await readLiveSessionStates(home, hubUrl, REPO_ID, new Date());
 
     // Act
-    const merged = await withHeldCandidates(setup.ctx.hub, live.states, { candidates: [], more: false }, 60);
+    const merged = await withHeldCandidates(setup.ctx.hub, live.states, { candidates: [], more: false }, 60, nick.id);
 
     // Assert
     expect(merged.candidates.map((each) => each.refId)).toEqual(["wc_recent"]);
@@ -237,12 +237,40 @@ describe("heldDeliveryIdOf (round-5 LOW-3): held first, inside the window the ca
     }
 
     // Act
-    const staleId = await heldDeliveryIdOf(setup.ctx.hub, setup.ctx.identity, "wc_held_stale");
-    const freshId = await heldDeliveryIdOf(setup.ctx.hub, setup.ctx.identity, "wc_held_fresh");
+    const staleId = await heldDeliveryIdOf(setup.ctx.hub, setup.ctx.identity, "wc_held_stale", nick.id);
+    const freshId = await heldDeliveryIdOf(setup.ctx.hub, setup.ctx.identity, "wc_held_fresh", nick.id);
 
     // Assert
     expect(staleId).toBeNull();
     expect(freshId).toBe(hintDeliveryId(NEW_SESSION, "wc_held_fresh"));
+  });
+});
+
+describe("held candidates are the caller's own (round-5 LOW-9)", () => {
+  test("a held delivery another developer's key produced is never offered or taken", async () => {
+    // Arrange — a line in this home's spool, produced under someone else's developer key
+    const theirs = envelope("dev_someone_else", NEW_SESSION, "hint_delivery", {
+      id: hintDeliveryId(NEW_SESSION, "wc_theirs"),
+      sessionId: NEW_SESSION,
+      refKind: "work_context",
+      refId: "wc_theirs",
+      channel: "prompt_hint",
+      deliveredAt: new Date().toISOString(),
+    });
+    await appendRecords(home, repoKey(hubUrl, REPO_ID), NEW_KEY, [theirs], new Date());
+    const setup = await prepareMcp(env, repo);
+    if (!setup.ok) {
+      throw new Error(setup.message);
+    }
+    const live = await readLiveSessionStates(home, hubUrl, REPO_ID, new Date());
+
+    // Act
+    const offered = await withHeldCandidates(setup.ctx.hub, live.states, { candidates: [], more: false }, 60, nick.id);
+    const taken = await heldDeliveryIdOf(setup.ctx.hub, setup.ctx.identity, "wc_theirs", nick.id);
+
+    // Assert
+    expect(offered.candidates.map((each) => each.refId)).not.toContain("wc_theirs");
+    expect(taken).toBeNull();
   });
 });
 

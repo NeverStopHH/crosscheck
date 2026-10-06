@@ -17966,8 +17966,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed with no id says nothing reached you while the spool holds a hint",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "  const { candidates, more } = await withHeldCandidates(ctx, live.states, listed.data, NOISE_MARK_WINDOW_MINUTES);",
-    to: "  const { candidates, more } = listed.data;",
+    from: "  const { candidates, more } = await withHeldCandidates(\n    ctx,\n    live.states,",
+    to: "  const { candidates, more } = listed.data ?? await withHeldCandidates(\n    ctx,\n    live.states,",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
   },
@@ -18322,8 +18322,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck noise with no id says nothing is recent while the spool holds a hint",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "  const { candidates, more } = await withHeldCandidates(ctx, scan.states, listed.data, NOISE_MARK_WINDOW_MINUTES);",
-    to: "  const { candidates, more } = listed.data;",
+    from: "  const { candidates, more } = await withHeldCandidates(\n    ctx,\n    scan.states,",
+    to: "  const { candidates, more } = listed.data ?? await withHeldCandidates(\n    ctx,\n    scan.states,",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
   },
@@ -18534,8 +18534,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed / overrode post as the agent",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '  const target: Target = { ctx, identity, via: isInteractive() ? "person" : "agent" };',
-    to: '  const target: Target = { ctx, identity, via: "agent" };',
+    from: '    via: isInteractive() ? "person" : "agent",',
+    to: '    via: "agent",',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person's terminal word is the agent's, and the agent's next word overturns it",
   },
@@ -18584,7 +18584,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "mark_hint_outcome posts the printed ref while today's delivery of it is held (probe G)",
     file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
-    from: "  const posted = (await heldDeliveryIdOf(ctx.hub, ctx.identity, ref)) ?? ref;",
+    from: "  const posted = (await heldDeliveryIdOf(ctx.hub, ctx.identity, ref, ctx.config.developerId)) ?? ref;",
     to: "  const posted = ref;",
     test: `${CORE}/test/held-first-outcome.test.ts`,
     because: "today's word lands on last week's delivery and supersedes its override, today's stays unmarked",
@@ -18592,7 +18592,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed <ref> posts the printed ref while today's delivery of it is held",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "  const posted = (await heldDeliveryIdOf(ctx, identity, ref)) ?? ref;",
+    from: "  const posted = (await heldDeliveryIdOf(ctx, identity, ref, target.developerId)) ?? ref;",
     to: "  const posted = ref;",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person's followed supersedes another session's override of the same ref",
@@ -18632,8 +18632,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a held delivery older than the hub's window is offered with no id",
     file: `${CORE}/src/spool/held-deliveries.ts`,
-    from: "  const held = (await heldCandidates(hub, sessions)).filter((candidate) => Date.parse(candidate.deliveredAt) >= since);",
-    to: "  const held = await heldCandidates(hub, sessions);",
+    from: "  const held = (await heldCandidates(hub, sessions, developerId)).filter(\n    (candidate) => Date.parse(candidate.deliveredAt) >= since,\n  );",
+    to: "  const held = await heldCandidates(hub, sessions, developerId);",
     test: `${CORE}/test/held-first-outcome.test.ts`,
     because: "an hour-old pointer stuck in a spool crowds the list the hub keeps to the last hour",
   },
@@ -19024,8 +19024,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed from an agent's Bash tool posts as the person",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '  const target: Target = { ctx, identity, via: isInteractive() ? "person" : "agent" };',
-    to: '  const target: Target = { ctx, identity, via: "person" };',
+    from: '    via: isInteractive() ? "person" : "agent",',
+    to: '    via: "person",',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "an agent overturns its own person's word by running the person's command",
   },
@@ -19153,6 +19153,15 @@ export const MUTATIONS: readonly Mutation[
     to: "      { repo: identity.repoId, ref: posted, outcome, ...(reason === undefined ? {} : { reason }) },",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the fallback asks the hub about the delivery it cannot know, and the word is refused",
+  },
+  // ── 07 §13.13, LOW-9: held candidates are the caller's own ──
+  {
+    label: "a held delivery another developer's key produced is offered to the caller",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  developerId === null || producerOf(line) === developerId;",
+    to: "  developerId !== undefined;",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "a hint that reached a colleague on this machine is offered, and posted, under the caller's key",
   },
   // ── 07 §13.13, LOW-2: the rolling view shows what was just said (P5). (HAVING in the rolling
   // case too is an equivalent mutant: the WHERE already keeps only in-window deliveries.) ──
@@ -19375,7 +19384,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
- * PRINTS: packages/connector-core/test/held-first-outcome.test.ts 5
+ * PRINTS: packages/connector-core/test/held-first-outcome.test.ts 6
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4

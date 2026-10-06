@@ -222,7 +222,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   const session = own === null || own.sessionAmbiguous ? undefined : own.crosscheckSessionId;
   // HELD FIRST (07 §13.12, review H-A): today's delivery still held here is named by its own id,
   // so the word never lands on an older delivery of the same ref the hub already has.
-  const posted = (await heldDeliveryIdOf(ctx.hub, ctx.identity, ref)) ?? ref;
+  const posted = (await heldDeliveryIdOf(ctx.hub, ctx.identity, ref, ctx.config.developerId)) ?? ref;
   // The AGENT's route (07 §13.12): what an agent says never overturns the person's own word.
   const call = (about: string): Promise<HubResult<RecordedOutcome>> =>
     postHintOutcome(

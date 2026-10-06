@@ -125,12 +125,37 @@ const newestFirst = (a: MarkCandidate, b: MarkCandidate): number =>
   Date.parse(b.deliveredAt) - Date.parse(a.deliveredAt) || a.id.localeCompare(b.id);
 
 /** The unasked deliveries still held in these live sessions' OWN spools, newest first. */
-const heldCandidates = async (hub: HubContext, sessions: readonly LiveState[]): Promise<readonly MarkCandidate[]> => {
+/** The developer key a spool line was produced under, or null when the line does not say. */
+const producerOf = (line: string): string | null => {
+  try {
+    const developerId = (JSON.parse(line) as { producer?: { developerId?: unknown } }).producer?.developerId;
+    return isString(developerId) ? developerId : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * THE CALLER'S OWN (round-5 LOW-9): a held line counts only when it was
+ * produced under the caller's developer key — a hint that reached someone else
+ * on this machine is never offered to, or taken by, this caller. With no
+ * developer id in the caller's config (one written before login stored it),
+ * nothing can be told apart and nothing is filtered, as before.
+ */
+const isCallers = (line: string, developerId: string | null): boolean =>
+  developerId === null || producerOf(line) === developerId;
+
+const heldCandidates = async (
+  hub: HubContext,
+  sessions: readonly LiveState[],
+  developerId: string | null,
+): Promise<readonly MarkCandidate[]> => {
   const spools = await Promise.all(
     sessions.map((state) => readSessionSpool(hub.home, hub.repoKey, sessionSlug(state.hostSessionKey))),
   );
   return spools
     .flatMap((spool) => spool.lines)
+    .filter((line) => isCallers(line, developerId))
     .map(heldCandidateOf)
     .filter((candidate): candidate is MarkCandidate => candidate !== null)
     .sort(newestFirst);
@@ -156,10 +181,15 @@ export const onePerPointer = (candidates: readonly MarkCandidate[]): readonly Ma
  * first; posting the ref would land the word on whatever older delivery of
  * it the hub already has (last week's), superseding a word said there.
  */
-export const heldDeliveryIdOf = async (hub: HubContext, identity: RepoIdentity, ref: string): Promise<string | null> => {
+export const heldDeliveryIdOf = async (
+  hub: HubContext,
+  identity: RepoIdentity,
+  ref: string,
+  developerId: string | null,
+): Promise<string | null> => {
   // round-5 LOW-3: inside the window the no-id candidates use — an hour-old line stuck in a spool is not today's
   const since = hub.now().getTime() - NOISE_MARK_WINDOW_MINUTES * MS_PER_MINUTE;
-  const held = (await heldCandidates(hub, await sendingSessions(hub, identity))).filter(
+  const held = (await heldCandidates(hub, await sendingSessions(hub, identity), developerId)).filter(
     (candidate) => Date.parse(candidate.deliveredAt) >= since,
   );
   return held.find((candidate) => candidate.refId === ref || candidate.id === ref)?.id ?? null;
@@ -197,9 +227,12 @@ export const withHeldCandidates = async (
   sessions: readonly LiveState[],
   fromHub: MarkCandidates,
   windowMinutes: number,
+  developerId: string | null,
 ): Promise<MarkCandidates> => {
   const since = hub.now().getTime() - windowMinutes * MS_PER_MINUTE;
-  const held = (await heldCandidates(hub, sessions)).filter((candidate) => Date.parse(candidate.deliveredAt) >= since);
+  const held = (await heldCandidates(hub, sessions, developerId)).filter(
+    (candidate) => Date.parse(candidate.deliveredAt) >= since,
+  );
   return { candidates: [...onePerPointer([...held, ...fromHub.candidates])], more: fromHub.more };
 };
 

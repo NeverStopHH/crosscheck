@@ -160,6 +160,8 @@ interface Target {
   readonly identity: RepoIdentity;
   /** The person's route at a terminal, the agent's without one (07 §13.13 HIGH-1). */
   readonly via: HintOutcomeChannel;
+  /** The caller's developer key, whose held deliveries alone are theirs (LOW-9); null when the config predates it. */
+  readonly developerId: string | null;
 }
 
 const isUnknownRef = (result: HubResult<RecordedOutcome>): boolean => !result.ok && result.code === UNKNOWN_REF;
@@ -188,7 +190,7 @@ const record = async (
   const { ctx, identity, via } = target;
   // HELD FIRST (07 §13.12, review H-A): today's delivery still held here is named by its own id,
   // so the word never lands on an older delivery of the same ref the hub already has.
-  const posted = (await heldDeliveryIdOf(ctx, identity, ref)) ?? ref;
+  const posted = (await heldDeliveryIdOf(ctx, identity, ref, target.developerId)) ?? ref;
   // At a terminal, the PERSON's route — never overturned by an agent's word; without one, the
   // AGENT's (07 §13.13 HIGH-1): the agent's Bash tool runs this very command with the same key.
   const call = (about: string): Promise<HubResult<RecordedOutcome>> =>
@@ -233,7 +235,13 @@ const recordRecent = async (target: Target, command: OutcomeCommand, reason: str
   if (!listed.ok) {
     return failed(listed);
   }
-  const { candidates, more } = await withHeldCandidates(ctx, live.states, listed.data, NOISE_MARK_WINDOW_MINUTES);
+  const { candidates, more } = await withHeldCandidates(
+    ctx,
+    live.states,
+    listed.data,
+    NOISE_MARK_WINDOW_MINUTES,
+    target.developerId,
+  );
   const [only] = candidates;
   if (only === undefined) {
     return { stdout: nothingRecentLine(NOISE_MARK_WINDOW_MINUTES, command), exitCode: EXIT_OK };
@@ -282,7 +290,12 @@ const runOutcome = async (
     repoKey: repoKey(config.hubUrl, identity.repoId),
     now: () => new Date(),
   };
-  const target: Target = { ctx, identity, via: isInteractive() ? "person" : "agent" };
+  const target: Target = {
+    ctx,
+    identity,
+    via: isInteractive() ? "person" : "agent",
+    developerId: config.developerId,
+  };
   return args.id === undefined
     ? recordRecent(target, command, args.reason)
     : record(target, args.id, COMMAND_OUTCOME[command], args.reason);

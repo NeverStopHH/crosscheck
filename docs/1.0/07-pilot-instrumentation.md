@@ -1495,3 +1495,8 @@ in a spool is never taken for today's delivery. And when the held delivery canno
 overruns — but the same pointer's twin (a prompt hint or tripwire ask of the ref in the same session) is
 already on the hub, the word or label is recorded on that twin: one intervention (M4). Only with no such twin
 is the answer "held, not sent". Never another session's delivery: that is another pointer.
+
+*LOW-9 — held candidates are the caller's own.* A held line counts — as a candidate with no id, or as today's
+delivery of a ref — only when it was produced under the caller's developer key (the `developerId` login stores
+in the config): a hint that reached a colleague on this machine is never offered to, or posted by, this caller.
+A config from before login stored the id cannot tell the two apart, and filters nothing, as before.
