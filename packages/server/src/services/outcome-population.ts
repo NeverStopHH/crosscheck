@@ -11,7 +11,9 @@
  *
  * ONE NOISE CONCEPT. Noise is the person's label in `pilot_marks` (and the
  * 0.10 `off_target` spelling); an outcome is the agent's or the person's word.
- * Per intervention the LATER of the two stands, the label on a tie.
+ * Per intervention the person's newest word stands — their own outcome or
+ * their noise, the label on a tie — and only when they said none, the
+ * agent's newest (§13.12): an agent's word never overturns the person's.
  *
  * A SHARED FIGURE IS A CLOSED, FROZEN PERIOD (review #4/#10) — frozen by the
  * hub's own clock: a delivery is read into a month only if the hub had RECEIVED
@@ -176,38 +178,33 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     ) AS source_id
     FROM received r
   ), stated AS (
-    SELECT so.id, so.recipient, so.source_id, latest.outcome, latest.reason,
-           latest.created_at AS outcome_at, m.created_at AS noise_at
+    SELECT so.id, so.recipient, so.source_id, said.word, said.reason, said.at AS outcome_at
     FROM sourced so
     LEFT JOIN LATERAL (
-      SELECT o.outcome, o.reason, o.created_at FROM hint_outcomes o
-      JOIN hint_deliveries od ON od.id = o.delivery_id
-      WHERE od.session_id = so.session_id AND od.ref_id = so.ref_id
-        AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}
-      ORDER BY o.created_at DESC, o.id DESC LIMIT 1
-    ) latest ON true
-    LEFT JOIN LATERAL (
-      SELECT noise.created_at FROM (
-        SELECT m.id, m.created_at FROM pilot_marks m
+      SELECT spoken.word, spoken.reason, spoken.at FROM (
+        SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id,
+               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label
+        FROM hint_outcomes o
+        JOIN hint_deliveries od ON od.id = o.delivery_id
+        WHERE od.session_id = so.session_id AND od.ref_id = so.ref_id
+          AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}
+        UNION ALL
+        SELECT 'noise', NULL, m.created_at, m.id, true, true FROM pilot_marks m
         JOIN hint_deliveries md ON md.id = m.ref_id
         WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
           AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
         UNION ALL
         -- review H-B: the person saying noise again is a row of its own, read before the month's end too
-        SELECT r.id, r.created_at FROM noise_reassertions r
+        SELECT 'noise', NULL, r.created_at, r.id, true, true FROM noise_reassertions r
         JOIN hint_deliveries rd ON rd.id = r.delivery_id
         WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
           AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}
-      ) noise
-      ORDER BY noise.created_at DESC, noise.id DESC LIMIT 1
-    ) m ON true
+      ) spoken
+      -- 07 §13.12: the person's newest word (the label on a tie, D-O7); only when they said none, the agent's
+      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1
+    ) said ON true
   ), states AS (
-    SELECT id, recipient, source_id, outcome_at,
-      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'
-           WHEN outcome IS NOT NULL THEN outcome
-           ELSE 'unmarked' END AS state,
-      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN NULL
-           ELSE reason END AS reason
+    SELECT id, recipient, source_id, outcome_at, COALESCE(word, 'unmarked') AS state, reason
     FROM stated
   )`;
 

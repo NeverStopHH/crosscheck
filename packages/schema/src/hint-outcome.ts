@@ -60,6 +60,16 @@ export const HintOutcomeSchema = z
 export type HintOutcomeInput = z.infer<typeof HintOutcomeSchema>;
 
 /**
+ * WHO SAID AN OUTCOME, by channel (07 §13.12): the person, through
+ * `crosscheck followed / overrode`, or their agent, through
+ * `mark_hint_outcome`. The hub stamps it from the route a word arrived on,
+ * never from a body; a person's word is never overturned by an agent's.
+ */
+export const HINT_OUTCOME_CHANNELS = ["agent", "person"] as const;
+
+export type HintOutcomeChannel = (typeof HINT_OUTCOME_CHANNELS)[number];
+
+/**
  * WHEN A SHARED OUTCOME FIGURE MAY PRINT AT ALL (07 §13.9, review #4/#10).
  *
  * A team total minus one's own `--mine` is everybody else's — with one other

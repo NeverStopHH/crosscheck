@@ -32,6 +32,7 @@ import {
   enrol,
   readMine,
   recordOutcome,
+  recordPersonOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { labelNoise } from "./fixtures/hint-outcome-crowd.ts";
@@ -159,7 +160,7 @@ describe("POST /api/hint-outcomes", () => {
   });
 
   test("review #11: a new word at the same instant as the noise label is written, and the answer says the label still stands", async () => {
-    // Arrange — a tie goes to the label (D-O7)
+    // Arrange — the agent's word, said in the label's own instant: the label stands (D-O7, §13.12)
     const world = await createOutcomeWorld();
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
     world.harness.clock.advanceSeconds(60);
@@ -173,16 +174,16 @@ describe("POST /api/hint-outcomes", () => {
   });
 
   test("review H2: the person re-asserts noise over a later word, and the answer says what now stands", async () => {
-    // Arrange — followed; the person: noise; the agent: overrode (a new word, so it stands)
+    // Arrange — followed; the person: noise; the person again: overrode (their own later word, so it stands)
     const world = await createOutcomeWorld();
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
     world.harness.clock.advanceSeconds(60);
     await labelNoise(world, world.nick, world.delivered.kenContext);
     world.harness.clock.advanceSeconds(60);
-    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
     world.harness.clock.advanceSeconds(60);
 
-    // Act — the person says noise again; one label row per person and delivery, so it is restamped
+    // Act — the person says noise again: a re-assertion row of its own (review H-B)
     const again = await markNoise(world, world.delivered.kenContext);
     const view = await mineOf(world);
 
@@ -193,14 +194,14 @@ describe("POST /api/hint-outcomes", () => {
   });
 
   test("review H-B: noise said again is a new row — the first label's instant never moves, and the new reason is kept", async () => {
-    // Arrange — the same history as above: followed, the person's noise, the agent's overrode
+    // Arrange — the same history as above: followed, the person's noise, the person's overrode
     const world = await createOutcomeWorld();
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
     world.harness.clock.advanceSeconds(60);
     await labelNoise(world, world.nick, world.delivered.kenContext);
     const labelledAt = world.harness.clock.now().toISOString();
     world.harness.clock.advanceSeconds(60);
-    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
     world.harness.clock.advanceSeconds(60);
 
     // Act — the person says noise again, with a sentence this time
@@ -381,8 +382,8 @@ describe("POST /api/hint-outcomes", () => {
     await labelNoise(world, world.nick, world.delivered.kenContext);
     world.harness.clock.advanceSeconds(60);
 
-    // Act — the agent records on the tripwire delivery of the same pointer
-    const response = await recordOutcome(world, world.nick, {
+    // Act — the person records on the tripwire delivery of the same pointer
+    const response = await recordPersonOutcome(world, world.nick, {
       ref: deliveryIdFor(NICK_SESSION, KEN_CONTEXT, "tripwire"),
       outcome: "overrode",
       reason: "kept the retry on the hub",
@@ -556,5 +557,144 @@ describe("POST /api/hint-outcomes", () => {
     // Assert
     expect(response.status).toBe(400);
     expect(await world.harness.db.select().from(pilotMarks)).toHaveLength(0);
+  });
+});
+
+describe("a person's word is never overturned by an agent's (07 §13.12)", () => {
+  test("the agent's later word is recorded, but the person's noise label still stands", async () => {
+    // Arrange — the person labelled the hint noise
+    const world = await createOutcomeWorld();
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the agent, reading the clause, says followed
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const view = await mineOf(world);
+
+    // Assert
+    expect(agent.status).toBe(201);
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, stands: "noise" });
+    expect(view).toMatchObject({ followed: 0, noise: 1 });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
+  });
+
+  test("the agent's later word never overturns the person's own followed", async () => {
+    // Arrange — the person said followed at a terminal (`crosscheck followed`)
+    const world = await createOutcomeWorld();
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    const view = await mineOf(world);
+
+    // Assert
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: "followed", stands: "followed" });
+    expect(view).toMatchObject({ followed: 1, overrode: 0 });
+  });
+
+  test("only the person's own later word changes what the person said", async () => {
+    // Arrange — the person: followed; the agent: overrode (recorded, not standing)
+    const world = await createOutcomeWorld();
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the person changes their own mind
+    const person = await recordPersonOutcome(world, world.nick, {
+      ref: KEN_CONTEXT,
+      outcome: "not_relevant_now",
+    });
+    const view = await mineOf(world);
+
+    // Assert
+    expect(await bodyOf(person)).toMatchObject({ repeated: false, replaced: "followed", stands: "not_relevant_now" });
+    expect(view).toMatchObject({ followed: 0, overrode: 0, notRelevantNow: 1 });
+  });
+
+  test("survivor M7: the person's own outcome and their label at one instant — the label stands, and the answer says so", async () => {
+    // Arrange — a tie the write path no longer makes (it stamps strictly later): a legacy pair of rows
+    const world = await createOutcomeWorld();
+    const at = world.harness.clock.now();
+    await world.harness.db.insert(hintOutcomes).values({
+      id: "ho_tied",
+      repo: REPO,
+      deliveryId: world.delivered.kenContext,
+      outcome: "followed",
+      reason: null,
+      recordedBy: world.nick.developerId,
+      createdAt: at,
+      recordedVia: "person",
+    });
+    await world.harness.db.insert(pilotMarks).values({
+      id: "pm_tied",
+      repo: REPO,
+      refKind: "hint_delivery",
+      refId: world.delivered.kenContext,
+      mark: "noise",
+      markedBy: world.nick.developerId,
+      captureMode: "human",
+      createdAt: at,
+      reason: null,
+    });
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the agent says something new
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+
+    // Assert — what stood was the label (D-O7), and it still stands
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: "noise", stands: "noise" });
+  });
+
+  test("a repeat is judged within one channel: the agent agreeing with the person is its own word, recorded", async () => {
+    // Arrange — the person said followed at a terminal
+    const world = await createOutcomeWorld();
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the agent says the same
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(agent.status).toBe(201);
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, stands: "followed" });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(2);
+  });
+
+  test("the person's same word again, after their own noise label, is a new word that stands — not a repeat", async () => {
+    // Arrange — the person: followed at a terminal, then noise
+    const world = await createOutcomeWorld();
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the person says followed once more
+    const again = await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const view = await mineOf(world);
+
+    // Assert
+    expect(again.status).toBe(201);
+    expect(await bodyOf(again)).toMatchObject({ repeated: false, replaced: "noise", stands: "followed" });
+    expect(view).toMatchObject({ followed: 1, noise: 0 });
+  });
+
+  test("the channel is the route's, never the body's: an agent cannot claim to be the person", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+
+    // Act — the agent's route, with a body that claims otherwise
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", recordedVia: "person" });
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "followed", recordedVia: "agent" });
+
+    // Assert
+    const rows = await world.harness.db.execute(
+      sql`SELECT d.ref_id AS ref, o.recorded_via AS via FROM hint_outcomes o JOIN hint_deliveries d ON d.id = o.delivery_id ORDER BY d.ref_id`,
+    );
+    expect(rows.rows).toEqual([
+      { ref: KEN_CLAIM, via: "person" },
+      { ref: KEN_CONTEXT, via: "agent" },
+    ]);
   });
 });

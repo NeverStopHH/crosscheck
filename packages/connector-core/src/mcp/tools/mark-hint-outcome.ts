@@ -79,7 +79,8 @@ export const definition = {
     "or deliberately deviate from it: followed (you reused the teammate's decision, stopped " +
     "duplicate work or coordinated), overrode (you saw it and deliberately went another way — " +
     "give the reason, one sentence on why your way was better), or not_relevant_now. A later " +
-    "call supersedes an earlier one; nothing is deleted. An off-target hint is not recorded " +
+    "call supersedes an earlier one, but never the person's own word (their crosscheck noise, " +
+    "followed or overrode), which stands; nothing is deleted. An off-target hint is not recorded " +
     "here: noise is the person's own label (crosscheck noise). The outcome is attributed to " +
     "your developer's key and shown in full only to them (crosscheck pilot --mine); others see " +
     "it only inside totals for a whole past month — the team report's, and the source " +
@@ -128,17 +129,24 @@ export const OUTCOMES_NOT_SERVED =
   "This hub does not record hint outcomes — it predates them, so nothing was recorded. " +
   "Whoever runs it can upgrade it; the hint itself is unaffected.";
 
+/** Why the agent's word is not what stands: the person said something, and it is theirs (07 §13.12). */
+const NEVER_OVERTURNS = "an agent's word never overturns the person's own";
+
+/** The person's word that stands over the agent's — their noise label, or their own outcome. */
+const personsWord = (stands: string): string =>
+  stands === NOISE_WORD ? "the person's noise label" : `the person's own ${safeId(stands)}`;
+
+const capitalised = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+
 /**
- * What the new word did to what stood before (review #11). A tie with the
- * person's noise label leaves the label standing (07 D-O7), and the answer
- * says so rather than claiming the word took.
+ * What the new word did to what stood before (review #11). The agent's word
+ * is recorded, but whenever the person said something it stands over it (07
+ * §13.12), and the answer says so rather than claiming the word took.
  */
 const supersededText = (recorded: RecordedOutcome): string => {
   const stands = recorded.stands ?? recorded.outcome;
   if (stands !== recorded.outcome) {
-    return stands === NOISE_WORD
-      ? " A noise label made at the same instant still stands: a label wins a tie."
-      : ` It does not stand: the delivery stands at ${safeId(stands)}.`;
+    return ` ${capitalised(personsWord(stands))} still stands: ${NEVER_OVERTURNS}.`;
   }
   if (recorded.replaced === null) {
     return "";
@@ -149,19 +157,18 @@ const supersededText = (recorded: RecordedOutcome): string => {
 };
 
 /**
- * A REPEAT SAYS WHAT STANDS (07 §13.11, H2): the word said again may be the
- * one the person's noise label superseded, and then the label still stands.
+ * A REPEAT SAYS WHAT STANDS (07 §13.11, H2, §13.12): the word said again may
+ * sit under something the person said, before it or since, and then the
+ * person's word still stands.
  */
 const repeatedText = (shown: string, recorded: RecordedOutcome): string => {
   const stands = recorded.stands ?? recorded.outcome;
   if (stands === recorded.outcome) {
     return `Already recorded: the hint at ${shown} stands at ${safeId(stands)}. Nothing was written a second time.`;
   }
-  const over =
-    stands === NOISE_WORD ? "the person's noise label, made since," : `${safeId(stands)}, said since,`;
   return (
-    `Already recorded: the hint at ${shown} was ${safeId(recorded.outcome)} before, and ${over} stands over it. ` +
-    "Nothing was written a second time."
+    `Already recorded: the hint at ${shown} was ${safeId(recorded.outcome)} before, and ${personsWord(stands)} ` +
+    `stands over it: ${NEVER_OVERTURNS}. Nothing was written a second time.`
   );
 };
 
@@ -205,14 +212,19 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   }
   const own = await resolveOwnWorkContext(ctx.config.home, ctx.identity, ctx.config.hubUrl);
   const session = own === null || own.sessionAmbiguous ? undefined : own.crosscheckSessionId;
+  // The AGENT's route (07 §13.12): what an agent says never overturns the person's own word.
   const call = (): Promise<HubResult<RecordedOutcome>> =>
-    postHintOutcome(ctx.hub, {
-      repo: ctx.identity.repoId,
-      ref,
-      outcome,
-      ...(reason === undefined ? {} : { reason }),
-      ...(session === undefined ? {} : { session }),
-    });
+    postHintOutcome(
+      ctx.hub,
+      {
+        repo: ctx.identity.repoId,
+        ref,
+        outcome,
+        ...(reason === undefined ? {} : { reason }),
+        ...(session === undefined ? {} : { session }),
+      },
+      "agent",
+    );
   // POST FIRST (07 §13.11): held records are sent only when the hub does not know a ref held here.
   const answer = await answerAfterSendingHeld(
     { hub: ctx.hub, identity: ctx.identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },

@@ -43,6 +43,7 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  HINT_OUTCOME_CHANNELS,
   HINT_OUTCOMES,
   MAX_HINT_OUTCOME_REASON_CHARS,
   MAX_PILOT_LABEL_REASON_CHARS,
@@ -1264,8 +1265,16 @@ export const hintOutcomes = pgTable(
       .notNull()
       .references(() => developers.id),
     createdAt: timestamptz("created_at").notNull(),
+    /**
+     * WHICH CHANNEL SAID IT (07 §13.12), stamped by the hub from the route —
+     * never taken from a body: `person` from `crosscheck followed / overrode`,
+     * `agent` from `mark_hint_outcome`. A person's word is never overturned by
+     * an agent's. Null on rows from before the column, read as an agent's.
+     */
+    recordedVia: text("recorded_via", { enum: HINT_OUTCOME_CHANNELS }),
   },
   (table) => [
+    check("hint_outcomes_recorded_via_check", sql`${table.recordedVia} IS NULL OR ${table.recordedVia} IN ('agent', 'person')`),
     check(
       "hint_outcomes_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_HINT_OUTCOME_REASON_CHARS))}`,

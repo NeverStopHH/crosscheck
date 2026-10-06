@@ -155,8 +155,10 @@ const record = async (
   reason: string | undefined,
 ): Promise<CliResult> => {
   const { ctx, identity } = target;
+  // The PERSON's route (07 §13.12): a word said at a terminal is never overturned by an agent's.
+  // An agent that shells out to this command writes as the person — attributed to the key, not prevented.
   const call = (): Promise<HubResult<RecordedOutcome>> =>
-    postHintOutcome(ctx, { repo: identity.repoId, ref, outcome, ...(reason === undefined ? {} : { reason }) });
+    postHintOutcome(ctx, { repo: identity.repoId, ref, outcome, ...(reason === undefined ? {} : { reason }) }, "person");
   // POST FIRST (07 §13.11): held records are sent only when the hub does not know a ref held here.
   const answer = await answerAfterSendingHeld(
     { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },

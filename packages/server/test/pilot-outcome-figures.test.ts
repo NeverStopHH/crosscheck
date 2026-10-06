@@ -52,6 +52,7 @@ import {
   deliveryRecord,
   enrol,
   recordOutcome,
+  recordPersonOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
@@ -544,11 +545,11 @@ describe("labels are append-only (review H-B)", () => {
   });
 
   test("a re-assertion made in August is read from August on — July keeps the word that stood at its end", async () => {
-    // Arrange — in July, after Mike's noise label, a newer word on that pointer stood: followed
+    // Arrange — in July, after Mike's noise label, Mike's own newer word on that pointer stood: followed
     const crowd = await createCrowd();
     await recordCrowdWords(crowd);
     crowd.harness.clock.advanceSeconds(60);
-    await recordOutcome(crowd, crowd.mike, { ref: NICK_CONTEXT, outcome: "followed" });
+    await recordPersonOutcome(crowd, crowd.mike, { ref: NICK_CONTEXT, outcome: "followed" });
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
     const before = await outcomesOf(crowd);
 

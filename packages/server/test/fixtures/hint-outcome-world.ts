@@ -160,6 +160,17 @@ export const recordOutcome = async (
     jsonRequest("POST", developer.apiKey, { repo: REPO, ...body }),
   );
 
+/** The person's own word — the route `crosscheck followed / overrode` posts to (07 §13.12). */
+export const recordPersonOutcome = async (
+  world: OutcomeWorld,
+  developer: TestDeveloper,
+  body: Record<string, unknown>,
+): Promise<Response> =>
+  await world.harness.app.request(
+    "/api/hint-outcomes/person",
+    jsonRequest("POST", developer.apiKey, { repo: REPO, ...body }),
+  );
+
 export const readMine = async (
   world: OutcomeWorld,
   developer: TestDeveloper,

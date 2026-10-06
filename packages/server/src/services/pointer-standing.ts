@@ -10,13 +10,18 @@
  * no answer is computed from a state that changed under it.
  *
  * ORDER IS (timestamp, id), AND NO TWO WORDS SHARE AN INSTANT. A word on a
- * pointer is stamped strictly after the pointer's newest word, so two words in
- * one millisecond are never a coin toss between rows with equal timestamps:
- * the later one stands. The label wins a tie with an outcome (D-O7).
+ * pointer is stamped strictly after the pointer's newest word of any kind, so
+ * two words in one millisecond are never a coin toss between rows with equal
+ * timestamps: the later one stands. The label wins a tie with an outcome (D-O7).
+ *
+ * THE PERSON OUTRANKS THE AGENT (§13.12). A word the person said — at a
+ * terminal, `crosscheck noise / helpful / followed / overrode` — is never
+ * overturned by their agent's (`mark_hint_outcome`); the hub knows which by
+ * the route a word arrived on, never by a claim in its body.
  */
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import type { HintOutcome } from "@crosscheck/schema";
+import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { NOISE_WORDS } from "./pilot-label-figures.ts";
 import type { DbExecutor } from "../db/client.ts";
@@ -59,19 +64,43 @@ export const pointerOfDelivery = async (tx: DbExecutor, deliveryId: string): Pro
 
 type OutcomeRow = { readonly outcome: HintOutcome; readonly reason: string | null; readonly at: string | Date };
 
+/** The person's words, or an agent's — a row from before the channel was stamped is an agent's. */
+const ofChannel = (channel: HintOutcomeChannel): SQL =>
+  channel === "person" ? sql`o.recorded_via = 'person'` : sql`o.recorded_via IS DISTINCT FROM 'person'`;
+
 export const readPointerOutcome = async (
   tx: DbExecutor,
   pointer: Pointer,
   recipient: string,
+  channel: HintOutcomeChannel,
 ): Promise<LatestOutcome | undefined> => {
   const rows = await tx.execute<OutcomeRow>(sql`
     SELECT o.outcome, o.reason, o.created_at AS at FROM hint_outcomes o
     JOIN hint_deliveries d ON d.id = o.delivery_id
-    WHERE ${ofPointer("d", pointer)} AND o.recorded_by = ${recipient}
+    WHERE ${ofPointer("d", pointer)} AND o.recorded_by = ${recipient} AND ${ofChannel(channel)}
     ORDER BY o.created_at DESC, o.id DESC LIMIT 1`);
   const row = rows.rows[0];
   return row === undefined ? undefined : { outcome: row.outcome, reason: row.reason, createdAt: new Date(row.at) };
 };
+
+/** Everything a recipient said about one pointer: their newest own word, their agent's, and their noise. */
+export interface PointerWords {
+  readonly person: LatestOutcome | undefined;
+  readonly agent: LatestOutcome | undefined;
+  readonly noise: LatestNoise | undefined;
+}
+
+export const readPointerWords = async (tx: DbExecutor, pointer: Pointer, recipient: string): Promise<PointerWords> => ({
+  person: await readPointerOutcome(tx, pointer, recipient, "person"),
+  agent: await readPointerOutcome(tx, pointer, recipient, "agent"),
+  noise: await readPointerNoise(tx, pointer, recipient),
+});
+
+/** The newest instant any word on the pointer carries — the next word is stamped strictly after it. */
+export const newestInstant = (words: PointerWords): Date | undefined =>
+  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt]
+    .filter((at): at is Date => at !== undefined)
+    .reduce<Date | undefined>((newest, at) => (newest === undefined || at.getTime() > newest.getTime() ? at : newest), undefined);
 
 type NoiseRow = { readonly id: string; readonly at: string | Date };
 
@@ -101,7 +130,7 @@ export const readPointerNoise = async (
   return row === undefined ? undefined : { id: row.id, createdAt: new Date(row.at) };
 };
 
-/** What stands, by the view's rule: the later of the newest outcome and the label, the label on a tie. */
+/** Of an outcome and the person's noise: the later one, the label on a tie (D-O7). */
 export const standingOf = (
   latest: LatestOutcome | undefined,
   noise: LatestNoise | undefined,
@@ -111,6 +140,15 @@ export const standingOf = (
   }
   return latest?.outcome ?? null;
 };
+
+/**
+ * WHAT STANDS (07 §13.12): the person's newest word — their own outcome or
+ * their noise — whenever they said anything; only otherwise the agent's
+ * newest. An agent's word is recorded but never overturns the person's; only
+ * the person's own later word changes it.
+ */
+export const standingOfWords = (words: PointerWords): StandingWord | null =>
+  standingOf(words.person, words.noise) ?? words.agent?.outcome ?? null;
 
 /** One millisecond — the smallest step the hub's clock and the stored instants share. */
 const NEXT_INSTANT_MS = 1;

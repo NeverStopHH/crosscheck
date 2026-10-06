@@ -18,12 +18,12 @@ import { pilotMarks, noiseReassertions } from "../db/schema.ts";
 import {
   instantAfter,
   lockPointer,
+  newestInstant,
   pointerOfDelivery,
-  readPointerNoise,
-  readPointerOutcome,
-  standingOf,
+  readPointerWords,
+  standingOfWords,
 } from "./pointer-standing.ts";
-import type { StandingWord } from "./pointer-standing.ts";
+import type { PointerWords, StandingWord } from "./pointer-standing.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -43,12 +43,7 @@ export interface NoiseLabelOutcome {
   readonly replaced: StandingWord | null;
 }
 
-const newestOf = (left: Date | undefined, right: Date | undefined): Date | undefined => {
-  if (left === undefined || right === undefined) {
-    return left ?? right;
-  }
-  return left.getTime() >= right.getTime() ? left : right;
-};
+const NO_WORDS: PointerWords = { person: undefined, agent: undefined, noise: undefined };
 
 export const writeNoiseOnPointer = (
   deps: Deps,
@@ -61,10 +56,10 @@ export const writeNoiseOnPointer = (
     if (pointer !== undefined) {
       await lockPointer(tx, pointer);
     }
-    const latest = pointer === undefined ? undefined : await readPointerOutcome(tx, pointer, markedBy);
-    const noise = pointer === undefined ? undefined : await readPointerNoise(tx, pointer, markedBy);
-    const before = standingOf(latest, noise);
-    const at = instantAfter(deps.now(), newestOf(latest?.createdAt, noise?.createdAt));
+    const words = pointer === undefined ? NO_WORDS : await readPointerWords(tx, pointer, markedBy);
+    // The person's label outranks every agent word (07 §13.12): noise stands over those already.
+    const before = standingOfWords(words);
+    const at = instantAfter(deps.now(), newestInstant(words));
     const label = row(`pm_${crypto.randomUUID()}`, at);
     const inserted = await tx.insert(pilotMarks).values(label).onConflictDoNothing().returning({ id: pilotMarks.id });
     if (inserted[0] !== undefined) {

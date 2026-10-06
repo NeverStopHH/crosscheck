@@ -1308,3 +1308,21 @@ as written — it is what precision counts, and precision keeps reading it — a
 newest of the label and its re-assertions before each month's end, so July reads the label and August the
 re-assertion. Said again while noise already stands, it is a repeat. A person's own later "noise" after their
 own `helpful` makes noise stand in the outcome figures while precision keeps `helpful` (survivor R7).
+
+*The principle — a person's word is never overturned by an agent's (it also settles the ping-pong LOW, R7 and
+the label-vs-word order).* A word the PERSON says at a terminal — `crosscheck noise`, `helpful`, `followed`,
+`overrode` — is theirs, and an AGENT's word (`mark_hint_outcome`) never overturns it. The agent's word is still
+recorded, as its own row, but what stands stays the person's, and the tool's answer says so ("the person's
+noise label still stands: an agent's word never overturns the person's own"); only the person's own later word
+changes it. **What stands on a pointer** is the person's newest word — their own outcome or their noise, the
+label on a tie (D-O7) — whenever they said anything, and only otherwise the agent's newest. The write path,
+the per-person view, the credit and the team line all read it so. **The hub knows the channel from the route,
+never from a claim**: `POST /api/hint-outcomes` is the agent's door, `POST /api/hint-outcomes/person` the
+person's (`crosscheck followed / overrode`), and the route stamps `hint_outcomes.recorded_via` (`agent` |
+`person`, additive; a row from before the column is an agent's). A field in the body naming a channel is
+ignored. A repeat is judged against the same channel's newest word, so an agent re-reading the clause writes
+nothing twice. What this does not do: an agent that shells out to `crosscheck followed` writes as the person —
+the key is the person's, the row is attributed to it, and nothing on one machine can tell the two apart. That
+is attributable, not prevented, exactly as the label's terminal gate is a rule and not a wall (§12.9). §13.4's
+"nothing at the hub tells a person's outcome from their agent's" is superseded to that extent: the route
+tells, by which door a word came through, and that is still not a proof of who typed it.

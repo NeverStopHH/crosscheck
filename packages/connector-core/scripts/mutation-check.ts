@@ -17395,7 +17395,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "saying the same outcome twice writes a second row",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "    if (latest !== undefined && latest.outcome === input.outcome && latest.reason === input.reason) {",
+    from: "    if (isRepeat(words, input)) {",
     to: "    if (false) {",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "an agent retrying its call doubles the history and the answer never says it was already recorded",
@@ -17427,8 +17427,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the oldest outcome of a delivery stands instead of the newest",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      ORDER BY o.created_at DESC, o.id DESC LIMIT 1",
-    to: "      ORDER BY o.created_at ASC, o.id ASC LIMIT 1",
+    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.by_person DESC, spoken.at ASC, spoken.is_label DESC, spoken.id ASC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "a changed mind is never shown: the view keeps the first word, append-only reads as frozen",
   },
@@ -17443,8 +17443,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a later noise label does not supersede an earlier outcome",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'",
-    to: "      CASE WHEN noise_at IS NOT NULL AND outcome_at IS NULL THEN 'noise'",
+    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.is_label ASC, spoken.by_person DESC, spoken.at DESC, spoken.id DESC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "the person's own verdict is overruled by whatever their agent said first",
   },
@@ -17874,15 +17874,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the word the person's noise label superseded, said again, overturns the label",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "    if (latest !== undefined && latest.outcome === input.outcome && latest.reason === input.reason) {",
-    to: '    if (before !== "noise" && latest !== undefined && latest.outcome === input.outcome && latest.reason === input.reason) {',
+    from: '  return input.recordedVia === "agent" || standingOf(words.person, words.noise) === input.outcome;',
+    to: "  return standingOf(words.person, words.noise) === input.outcome;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "an agent re-reading the clause overturns the person's verdict for good, and precision still counts noise (P3)",
   },
   {
     label: "a word that ties with the noise label is reported as standing",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "    return { ...answer, id, repeated: false, replaced: before, stands: standingOf(now, noise) ?? input.outcome };",
+    from: "    return { ...answer, id, repeated: false, replaced: before, stands: after ?? input.outcome };",
     to: "    return { ...answer, id, repeated: false, replaced: before, stands: input.outcome };",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the label wins a tie (D-O7), so 'recorded' would claim a word took that every figure overrules",
@@ -17898,8 +17898,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "mark_hint_outcome says the word took when the noise label still stands",
     file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
-    from: '      ? " A noise label made at the same instant still stands: a label wins a tie."',
-    to: '      ? ""',
+    from: "    return ` ${capitalised(personsWord(stands))} still stands: ${NEVER_OVERTURNS}.`;",
+    to: '    return "";',
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "the agent reports an outcome to its person that no figure counts",
   },
@@ -17999,8 +17999,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "mark_hint_outcome echoes the hub's standing word raw",
     file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
-    from: "      : ` It does not stand: the delivery stands at ${safeId(stands)}.`;",
-    to: "      : ` It does not stand: the delivery stands at ${stands}.`;",
+    from: "  stands === NOISE_WORD ? \"the person's noise label\" : `the person's own ${safeId(stands)}`;",
+    to: "  stands === NOISE_WORD ? \"the person's noise label\" : `the person's own ${stands}`;",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "a hostile hub's 'stands' word reaches the agent unframed, as instruction",
   },
@@ -18197,7 +18197,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "two words on a pointer in one millisecond share a timestamp",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "    const createdAt = instantAfter(deps.now(), latest?.createdAt);",
+    from: "    const createdAt = instantAfter(deps.now(), newestInstant(words));",
     to: "    const createdAt = deps.now();",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "which of two same-millisecond words stands is decided by a random id, not by which came last",
@@ -18237,8 +18237,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "mark_hint_outcome says a repeat stands while the person's label stands over it",
     file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
-    from: "    stands === NOISE_WORD ? \"the person's noise label, made since,\" : `${safeId(stands)}, said since,`;",
-    to: "    stands === NOISE_WORD ? \"nothing,\" : `${safeId(stands)}, said since,`;",
+    from: "    `Already recorded: the hint at ${shown} was ${safeId(recorded.outcome)} before, and ${personsWord(stands)} ` +",
+    to: "    `Already recorded: the hint at ${shown} was ${safeId(recorded.outcome)} before, and nothing ` +",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "the agent tells its person their own label does not stand",
   },
@@ -18394,8 +18394,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the view lets an outcome win a tie with the person's label (survivor M6)",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'",
-    to: "      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at > outcome_at) THEN 'noise'",
+    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label ASC, spoken.id DESC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "the person's verdict loses to a word said in the same millisecond, against D-O7",
   },
@@ -18455,6 +18455,95 @@ export const MUTATIONS: readonly Mutation[
     to: "  await Promise.resolve(cutoff);",
     test: `${SERVER}/test/hint-outcome-retention.test.ts`,
     because: "a person's sentences stay on the hub for ever while every outcome beside them ages out",
+  },
+  // ── 07 §13.12, the principle: a person's word is never overturned by an agent's ──
+  {
+    label: "the person's door stamps the agent's channel",
+    file: `${SERVER}/src/routes/hint-outcomes.ts`,
+    from: '  router.post("/person", developerAuth(deps), record("person"));',
+    to: '  router.post("/person", developerAuth(deps), record("agent"));',
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's crosscheck followed is filed as their agent's, and the agent's next word overturns it",
+  },
+  {
+    label: "the agent's door stamps the person's channel",
+    file: `${SERVER}/src/routes/hint-outcomes.ts`,
+    from: '  router.post("/", developerAuth(deps), record("agent"));',
+    to: '  router.post("/", developerAuth(deps), record("person"));',
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "every word mark_hint_outcome says counts as the person's, so the agent overturns the person's label",
+  },
+  {
+    label: "an outcome is stored without the channel that said it",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "    recordedVia: input.recordedVia,\n",
+    to: "\n",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the hub forgets which door a word came through, and the person's word reads as the agent's",
+  },
+  {
+    label: "what stands on the write path is the newest word of anyone, the agent's included",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  standingOf(words.person, words.noise) ?? words.agent?.outcome ?? null;",
+    to: "  standingOf(words.agent ?? words.person, words.noise) ?? null;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent's later word overturns the person's own followed, and the answer says it took",
+  },
+  {
+    label: "a repeat is judged across channels, so the agent agreeing with the person writes nothing",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  const own = input.recordedVia === "person" ? words.person : words.agent;',
+    to: "  const own = words.person ?? words.agent;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent's own word is swallowed as the person's, and its history has a hole",
+  },
+  {
+    label: "the person's same word after their own noise label is swallowed as a repeat",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  return input.recordedVia === "agent" || standingOf(words.person, words.noise) === input.outcome;',
+    to: "  return true;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person changes their mind back and the hub answers 'already recorded', leaving their noise standing",
+  },
+  {
+    label: "the view lets the agent's newer word overturn the person's",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "--mine, the credit and the team line count the agent's followed where the person said noise",
+  },
+  {
+    label: "the view reads every outcome as the person's own",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label",
+    to: "               true AS by_person, false AS is_label",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an agent's later word outranks the person's noise label in every figure",
+  },
+  {
+    label: "the client posts the person's word through the agent's door",
+    file: `${CORE}/src/http/hint-outcomes.ts`,
+    from: '  person: "/api/hint-outcomes/person",',
+    to: '  person: "/api/hint-outcomes",',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "crosscheck followed is filed as the agent's, and the agent's next word overturns the person",
+  },
+  {
+    label: "crosscheck followed / overrode post as the agent",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: '    postHintOutcome(ctx, { repo: identity.repoId, ref, outcome, ...(reason === undefined ? {} : { reason }) }, "person");',
+    to: '    postHintOutcome(ctx, { repo: identity.repoId, ref, outcome, ...(reason === undefined ? {} : { reason }) }, "agent");',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person's terminal word is the agent's, and the agent's next word overturns it",
+  },
+  {
+    label: "mark_hint_outcome posts as the person",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: '      "agent",\n    );',
+    to: '      "person",\n    );',
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent's word is filed as the person's and overturns the person's own label",
   },
 ];
 
@@ -18541,7 +18630,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 12
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 14
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
@@ -18690,7 +18779,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 16
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 17
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -18779,7 +18868,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 12
- * PRINTS: packages/server/test/hint-outcomes.test.ts 21
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 29
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

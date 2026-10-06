@@ -1246,9 +1246,18 @@ CREATE TABLE IF NOT EXISTS hint_outcomes (
   reason text,
   recorded_by text NOT NULL REFERENCES developers(id),
   created_at timestamptz NOT NULL,
+  -- 07 13.12: which channel said it, stamped by the hub from the route, never
+  -- from a body ('person' = crosscheck followed/overrode, 'agent' = the MCP
+  -- tool). A person's word is never overturned by an agent's. NULL = older row.
+  recorded_via text,
   CONSTRAINT hint_outcomes_reason_length_check
-    CHECK (reason IS NULL OR char_length(reason) <= 200)
+    CHECK (reason IS NULL OR char_length(reason) <= 200),
+  CONSTRAINT hint_outcomes_recorded_via_check
+    CHECK (recorded_via IS NULL OR recorded_via IN ('agent', 'person'))
 );
+-- 07 13.12: a hub whose hint_outcomes predates the channel gains it, its rows
+-- left NULL (read as an agent's word: never outranking a person's).
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS recorded_via text;
 
 CREATE INDEX IF NOT EXISTS hint_outcomes_delivery_created_idx
   ON hint_outcomes (delivery_id, created_at DESC);

@@ -12,7 +12,7 @@
  * outcome WORDS are open strings — a newer hub's word is printed as itself.
  */
 import { z } from "zod";
-import type { HintOutcome } from "@crosscheck/schema";
+import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { hubRequest } from "./client.ts";
 import { UNREADABLE_BLOCK } from "./pilot.ts";
@@ -60,13 +60,25 @@ export interface HintOutcomeRequest {
   readonly session?: string;
 }
 
+/**
+ * WHICH DOOR SAYS WHO SPOKE (07 §13.12): the hub stamps the channel from the
+ * route, never from the body, and a person's word is never overturned by an
+ * agent's. `mark_hint_outcome` posts as the agent; `crosscheck followed /
+ * overrode` at a terminal as the person.
+ */
+const OUTCOME_ROUTE: Readonly<Record<HintOutcomeChannel, string>> = {
+  agent: "/api/hint-outcomes",
+  person: "/api/hint-outcomes/person",
+};
+
 export const postHintOutcome = (
   ctx: HubContext,
   request: HintOutcomeRequest,
+  via: HintOutcomeChannel,
 ): Promise<HubResult<RecordedOutcome>> =>
   hubRequest(ctx, {
     method: "POST",
-    path: "/api/hint-outcomes",
+    path: OUTCOME_ROUTE[via],
     schema: RecordedOutcomeSchema,
     body: {
       repo: request.repo,

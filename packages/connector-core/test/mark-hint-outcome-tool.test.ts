@@ -314,7 +314,7 @@ describe("mark_hint_outcome", () => {
     expect(await mine()).toMatchObject({ received: 1, followed: 0, overrode: 1 });
   });
 
-  test("review H2: after the person's noise label, the agent's same word again writes nothing; a new word supersedes the label", async () => {
+  test("review H2, §13.12: after the person's noise label, the agent's same word again writes nothing, and a new word never overturns the label", async () => {
     // Arrange — the person labels the delivery noise at a terminal, after the agent's word
     const reason = "kept the narrow row: the wide one breaks the mobile layout";
     await send("/api/pilot-marks", nickApiKey, {
@@ -330,13 +330,34 @@ describe("mark_hint_outcome", () => {
     const afterRepeat = await mine();
     const changed = await call({ ref: KEN_CONTEXT, outcome: "followed" });
 
-    // Assert
+    // Assert — the agent's new word is recorded, and the person's label still stands
     expect(repeat.text).toContain(
-      `Already recorded: the hint at ${KEN_CONTEXT} was overrode before, and the person's noise label, made since, stands over it.`,
+      `Already recorded: the hint at ${KEN_CONTEXT} was overrode before, and the person's noise label stands over it: an agent's word never overturns the person's own.`,
     );
     expect(afterRepeat).toMatchObject({ received: 1, overrode: 0, noise: 1 });
-    expect(changed.text).toContain("It supersedes your earlier noise label, which stays in the history.");
-    expect(await mine()).toMatchObject({ received: 1, followed: 1, noise: 0 });
+    expect(changed.text).toContain(`Recorded: the hint at ${KEN_CONTEXT}`);
+    expect(changed.text).toContain("The person's noise label still stands: an agent's word never overturns the person's own.");
+    expect(changed.text).not.toContain("It supersedes");
+    expect(await mine()).toMatchObject({ received: 1, followed: 0, noise: 1 });
+  });
+
+  test("§13.12: the agent's word goes to the agent's route, and after the person's own word it says that word stands", async () => {
+    // Arrange — the person said followed at a terminal (the person's route); a hub that reports it standing
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
+    hostileCalls.length = 0;
+    hostileAnswer = () =>
+      Response.json({
+        ok: true,
+        data: { id: "ho_2", deliveryId: "hd_1", outcome: "overrode", repeated: false, replaced: "followed", stands: "followed" },
+      });
+
+    // Act
+    const answered = await call({ ref: KEN_CONTEXT, outcome: "overrode", reason: "the agent's own way" }, env);
+
+    // Assert
+    expect(hostileCalls).toEqual(["/api/hint-outcomes"]);
+    expect(answered.text).toContain("The person's own followed still stands: an agent's word never overturns the person's own.");
+    expect(answered.text).not.toContain("It supersedes");
   });
 
   test("review H2: a repeat under the person's newer noise label says the label stands over it", async () => {
@@ -353,12 +374,12 @@ describe("mark_hint_outcome", () => {
 
     // Assert
     expect(repeat.text).toContain(
-      `Already recorded: the hint at ${KEN_CONTEXT} was followed before, and the person's noise label, made since, stands over it. Nothing was written a second time.`,
+      `Already recorded: the hint at ${KEN_CONTEXT} was followed before, and the person's noise label stands over it: an agent's word never overturns the person's own. Nothing was written a second time.`,
     );
   });
 
-  test("review #11: a word that ties with the noise label says the label still stands", async () => {
-    // Arrange — the hub reports a tie (the label wins, D-O7)
+  test("review #11, §13.12: a word recorded under the person's noise label says the label still stands", async () => {
+    // Arrange — the hub reports the label standing over the word just recorded
     const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
     hostileAnswer = () =>
       Response.json({
@@ -370,7 +391,7 @@ describe("mark_hint_outcome", () => {
     const tied = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
 
     // Assert
-    expect(tied.text).toContain("A noise label made at the same instant still stands: a label wins a tie.");
+    expect(tied.text).toContain("The person's noise label still stands: an agent's word never overturns the person's own.");
     expect(tied.text).not.toContain("It supersedes");
   });
 

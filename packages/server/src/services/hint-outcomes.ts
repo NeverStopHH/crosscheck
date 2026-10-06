@@ -16,11 +16,12 @@
  * different word is a new row that supersedes the old by being newer. Nothing
  * is updated, nothing is deleted.
  *
- * A REPEAT IS JUDGED AGAINST WHAT STANDS (review #11), and that may be the
- * person's later noise label rather than the newest outcome row: the same word
- * said again after the label is a new word, written, superseding the label.
- * The answer always carries what stands once it is said — the label on a tie
- * (D-O7) — so no reply claims a word stands that does not.
+ * THE PERSON'S WORD STANDS (§13.12). A word arrives through the agent's door
+ * or the person's, and the route says which. The person's newest word — their
+ * own outcome or their noise label — stands over anything their agent says;
+ * the agent's word is recorded, never overturning it. The answer always
+ * carries what stands once it is said, so no reply claims a word stands that
+ * does not.
  *
  * NEVER A WORD NO FIGURE COUNTS (review #12). A delivery from before outcomes
  * became recordable on the repo is outside every outcome figure (the floor,
@@ -35,7 +36,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, sql } from "drizzle-orm";
 import { PULLED_DELIVERY_CHANNEL, containsSecret } from "@crosscheck/schema";
-import type { HintOutcome } from "@crosscheck/schema";
+import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { PILOT_RETENTION_DAYS } from "../constants.ts";
 import { agentSessions, hintDeliveries, hintOutcomes } from "../db/schema.ts";
@@ -44,11 +45,12 @@ import type { Enrolment } from "./outcome-population.ts";
 import {
   instantAfter,
   lockPointer,
-  readPointerNoise,
-  readPointerOutcome,
+  newestInstant,
+  readPointerWords,
   standingOf,
+  standingOfWords,
 } from "./pointer-standing.ts";
-import type { StandingWord } from "./pointer-standing.ts";
+import type { PointerWords, StandingWord } from "./pointer-standing.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -82,6 +84,8 @@ export interface WriteHintOutcomeInput {
   /** The caller's session, when it knows which one read the hint. */
   readonly session: string | null;
   readonly recordedBy: string;
+  /** Which channel said it — set by the route it arrived on, never by its body (07 §13.12). */
+  readonly recordedVia: HintOutcomeChannel;
 }
 
 
@@ -214,28 +218,42 @@ const countableSince = async (deps: Deps, repo: string): Promise<CountableSince>
 type Recorded = Exclude<WriteHintOutcomeResult, { readonly refusal: HintOutcomeRefusal }>;
 
 /**
- * THE WORD, DECIDED AND WRITTEN UNDER THE POINTER'S LOCK (review H2). A
- * repeat is judged against the recipient's own newest word — so the word a
- * person's noise label superseded, said again by an agent re-reading the
- * clause, writes nothing and answers that the label stands; only a NEW word
- * supersedes the label. A new word is stamped strictly after the pointer's
- * newest one, so the order of two words never depends on a millisecond.
+ * A REPEAT, by channel (07 §13.12). The agent's word is judged against the
+ * agent's own newest, so re-reading the clause writes nothing twice, whatever
+ * the person said since. The person's is judged against what the PERSON
+ * stands at — their own newest word, noise included — so their same word said
+ * after their own noise label is a new word, and it stands.
+ */
+const isRepeat = (words: PointerWords, input: WriteHintOutcomeInput): boolean => {
+  const own = input.recordedVia === "person" ? words.person : words.agent;
+  if (own === undefined || own.outcome !== input.outcome || own.reason !== input.reason) {
+    return false;
+  }
+  return input.recordedVia === "agent" || standingOf(words.person, words.noise) === input.outcome;
+};
+
+/**
+ * THE WORD, DECIDED AND WRITTEN UNDER THE POINTER'S LOCK (reviews H2, §13.12).
+ * What stands is the person's newest word whenever they said one; an agent's
+ * word is recorded but never overturns it. A new word is stamped strictly
+ * after the pointer's newest word of any kind, so the order of two words never
+ * depends on a millisecond.
  */
 const recordOnPointer = (deps: Deps, delivery: ResolvedDelivery, input: WriteHintOutcomeInput): Promise<Recorded> =>
   deps.db.transaction(async (tx) => {
     const pointer = { sessionId: delivery.sessionId, refId: delivery.refId };
     await lockPointer(tx, pointer);
-    const latest = await readPointerOutcome(tx, pointer, input.recordedBy);
-    const noise = await readPointerNoise(tx, pointer, input.recordedBy);
-    const before = standingOf(latest, noise);
+    const words = await readPointerWords(tx, pointer, input.recordedBy);
+    const before = standingOfWords(words);
     const answer = { deliveryId: delivery.id, outcome: input.outcome };
-    if (latest !== undefined && latest.outcome === input.outcome && latest.reason === input.reason) {
+    if (isRepeat(words, input)) {
       return { ...answer, id: delivery.id, repeated: true, replaced: null, stands: before ?? input.outcome };
     }
-    const createdAt = instantAfter(deps.now(), latest?.createdAt);
+    const createdAt = instantAfter(deps.now(), newestInstant(words));
     const id = await appendOutcome(tx, delivery.id, input, createdAt);
-    const now = { outcome: input.outcome, reason: input.reason, createdAt };
-    return { ...answer, id, repeated: false, replaced: before, stands: standingOf(now, noise) ?? input.outcome };
+    const said = { outcome: input.outcome, reason: input.reason, createdAt };
+    const after = standingOfWords({ ...words, [input.recordedVia]: said });
+    return { ...answer, id, repeated: false, replaced: before, stands: after ?? input.outcome };
   });
 
 /** One new row — never an update: a changed word supersedes the old by being newer. */
@@ -254,6 +272,7 @@ const appendOutcome = async (
     reason: input.reason,
     recordedBy: input.recordedBy,
     createdAt,
+    recordedVia: input.recordedVia,
   });
   return id;
 };

@@ -167,7 +167,8 @@ beforeAll(async () => {
       if (path === "/api/records") {
         return Response.json({ ok: false, error: { code: "unavailable", message: "try later" } }, { status: 503 });
       }
-      if (path === "/api/hint-outcomes") {
+      // both doors (07 §13.12): the person's `/person` and the agent's own
+      if (path === "/api/hint-outcomes" || path === "/api/hint-outcomes/person") {
         return Response.json(
           { ok: false, error: { code: "unknown_ref", message: "no hint with that id reached you on this repo" } },
           { status: 422 },
@@ -483,6 +484,43 @@ describe("crosscheck pilot --mine", () => {
 
     // Assert
     expect(result.stdout).toBe(MINE_NOT_SERVED_LINE);
+  });
+});
+
+describe("07 §13.12: a word said at a terminal is the person's", () => {
+  test("the person's crosscheck followed stands over their agent's later word, which is still recorded", async () => {
+    // Arrange — a fresh pointer to the live session, and the person's word on it at a terminal
+    const ref = "wc_ken_persons_word";
+    await send("POST", "/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Ken's context",
+          status: "implementing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    await deliver(LIVE, ref);
+    const home = await homeWithLive(LIVE);
+    await cli(home, ["followed", ref]);
+
+    // Act — the agent's word on the same hint, through the agent's own route
+    const agent = await send("POST", "/api/hint-outcomes", nick.apiKey, {
+      repo: REPO_ID,
+      ref,
+      outcome: "overrode",
+      reason: "the agent went its own way",
+    });
+
+    // Assert
+    expect(agent.status).toBe(201);
+    expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({
+      outcome: "overrode",
+      replaced: "followed",
+      stands: "followed",
+    });
   });
 });
 

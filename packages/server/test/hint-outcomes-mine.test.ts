@@ -25,6 +25,7 @@ import {
   deliveryRecord,
   readMine,
   recordOutcome,
+  recordPersonOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { SECONDS_TO_AUGUST, createCrowd, recordCrowdWords } from "./fixtures/hint-outcome-crowd.ts";
@@ -98,7 +99,7 @@ describe("GET /api/hint-outcomes/mine", () => {
 
   test("the later word stands, between two outcomes and across the noise label", async () => {
     // Arrange — Ken's context: followed, then labelled noise by the person.
-    // Mike's context: labelled noise, then the agent said it was followed.
+    // Mike's context: labelled noise, then the person said it was followed (their own later word).
     // Ken's claim: not relevant now, then overrode with a reason.
     const world = await createOutcomeWorld();
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", reason: "reused it" });
@@ -106,7 +107,7 @@ describe("GET /api/hint-outcomes/mine", () => {
     await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "not_relevant_now", reason: "later" });
     world.harness.clock.advanceSeconds(60);
     await labelNoise(world, world.nick, world.delivered.kenContext);
-    await recordOutcome(world, world.nick, { ref: MIKE_CONTEXT, outcome: "followed" });
+    await recordPersonOutcome(world, world.nick, { ref: MIKE_CONTEXT, outcome: "followed" });
     await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "overrode", reason: OVERRIDE_REASON });
 
     // Act
@@ -316,20 +317,22 @@ describe("enrolment history in the person's own view (review M3, P4)", () => {
 });
 
 describe("ties and self-pointing hints (review M5: surviving mutations)", () => {
-  test("M6: an outcome and the person's noise label at the same instant — the label stands in the view", async () => {
-    // Arrange — the clock does not move between the word and the label (D-O7)
+  test("M6: the person's own outcome and their noise label at the same instant — the label stands in the view", async () => {
+    // Arrange — a tie the write path no longer makes (it stamps strictly later),
+    // so it is a pair of rows from before that, read as D-O7 says
     const world = await createOutcomeWorld();
-    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
-    await world.harness.app.request(
-      "/api/pilot-marks",
-      jsonRequest("POST", world.nick.apiKey, {
-        repo: REPO,
-        refKind: "hint_delivery",
-        refId: world.delivered.kenContext,
-        mark: "noise",
-        presence: PIN_PRESENCE_TERMINAL,
-      }),
-    );
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    await world.harness.db.insert(pilotMarks).values({
+      id: "pm_tied",
+      repo: REPO,
+      refKind: "hint_delivery",
+      refId: world.delivered.kenContext,
+      mark: "noise",
+      markedBy: world.nick.developerId,
+      captureMode: "human",
+      createdAt: world.harness.clock.now(),
+      reason: null,
+    });
 
     // Act
     const view = await viewOf(await readMine(world, world.nick));
