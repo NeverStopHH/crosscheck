@@ -18039,6 +18039,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 6 MEDIUM-1 (RS5-B2): the stamp says failed, and the life sends nothing for five minutes although nothing was refused",
   },
+  {
+    label: "a register that lands keeps a failed walk's verdict",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  if (registration !== null) {\n    // A register that landed answers",
+    to: "  if (false) {\n    // A register that landed answers",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 LOW-1 (RS5-D): a life the hub now knows posts nothing for up to five minutes after its re-register",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18297,7 +18305,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 27
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 28
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 26
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4

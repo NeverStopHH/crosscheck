@@ -639,6 +639,28 @@ describe("the bounds", () => {
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
   });
 
+  test("a register that lands clears the failed walk's verdict, and the next flush sends (RS5-D)", async () => {
+    // Arrange: a walk the hub refused, then a SessionStart re-fire whose register lands
+    const fx = await fixture("verdict-cleared", proxyUrl);
+    refuseRegisters = true;
+    const life = await register(fx);
+    await flushAsHook(fx);
+    refuseRegisters = false;
+    const again = await register(fx);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/after-refire.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    const before = recordPosts;
+
+    // Act: the next hook, well inside the failed walk's cooldown
+    await flushAsHook(fx);
+
+    // Assert
+    expect(again.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect(recordPosts - before).toBeGreaterThan(0);
+    expect(await targetsOf(life.workContextId)).toEqual(["src/after-refire.ts"]);
+  });
+
   test("the walk stays inside the flush's budget against a slow hub", async () => {
     // Arrange
     const fx = await fixture("heal-budget", proxyUrl);

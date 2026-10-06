@@ -15,6 +15,7 @@
  */
 import type { CausalGuaranteeTriple, SeqField } from "@crosscheck/schema";
 
+import { removeFile, sessionHealPathForSlug, sessionSlug } from "../config/paths.ts";
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -327,6 +328,13 @@ export const registerSessionFlow = async (
   const crosscheckSessionId = ladder.sessionId;
   const developerId = registration?.developerId ?? input.fallbackDeveloperId;
   const workContextId = workContextIdFor(crosscheckSessionId);
+  if (registration !== null) {
+    // A register that landed answers the last failed walk's verdict: the hub
+    // knows the life now, and a stamp that still said `failed` kept every
+    // flush from sending for the rest of its cooldown (review-2 round 6,
+    // LOW-1, RS5-D).
+    await removeFile(sessionHealPathForSlug(input.home, sessionSlug(input.hostSessionKey)));
+  }
 
   // BEFORE the first append, always: `reap` decides that a spool file has no
   // writer left by finding no session state file for it, and that inference

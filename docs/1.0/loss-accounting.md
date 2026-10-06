@@ -345,7 +345,9 @@ no, the heal took it for a sibling's win, found the state still on the refused i
 just registered — and retired it: the live life ended on the hub and its first window was refused as late writes.
 The switch now answers swapped, `cas_lost` or `lock_busy`; a busy lock makes the heal `pending` with no cooldown
 and no `failed` verdict, so the next hook walks again; and an orphan is retired only after a check under the state
-lock that the state does not name it.
+lock that the state does not name it. A register that lands — a SessionStart re-fire after a failed walk — removes
+the stamp and its `failed` verdict too (round 6 LOW-1): the hub knows the life, and the verdict kept every flush from
+sending for the rest of the cooldown.
 
 **A batch a walk leaves on disk is counted once** (review-2 finding 4). What a batch has lost whatever comes next
 — torn lines, withheld stragglers, refusals no heal can carry — is written before the walk's register (review P3),
