@@ -348,8 +348,11 @@ const clearsOn = (statement: string, input: SelectHintInput): boolean => {
 };
 
 const recountsContentFloor = (context: HintContextCandidate, input: SelectHintInput): boolean => {
+  // PUSHABLE, not merely declared (round 3, M5): a refuted hypothesis is a
+  // declared claim, and its words qualified a tree a pointer then named on an
+  // unrelated observation beside it.
   const bodies = context.claims
-    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)
+    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)
     .map((claim) => claim.body);
   return bodies.length > 0 && [context.workContext.title, ...bodies].some((statement) => clearsOn(statement, input));
 };

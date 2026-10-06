@@ -18858,17 +18858,19 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a draft's body counts in the old-hub recount",
+    // RETARGETED (round 3, M5): the recount reads pushable claims, a superset rule of declared.
     file: `${CORE}/src/hints/select.ts`,
-    from: "    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
     to: "    .filter((claim) => claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "an unreviewed draft's words qualify a tree an old hub ranked on them (H4, L6)",
   },
   {
     label: "the reader's own body counts in the old-hub recount",
+    // RETARGETED (round 3, M5): the recount reads pushable claims, a superset rule of declared.
     file: `${CORE}/src/hints/select.ts`,
-    from: "    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
-    to: "    .filter((claim) => isDeclared(claim) && claim.body.trim().length > 0)",
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => isPushableClaim(claim) && claim.body.trim().length > 0)",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "the reader's own words point them at a teammate's tree (H4)",
   },
@@ -19251,6 +19253,14 @@ export const MUTATIONS: readonly Mutation[
     because: "\"shows\" is never \"show\", and the dashboard tree is pointed at for a limit report (L1)",
   },
   {
+    label: "the old-hub recount counts a refuted claim's words",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub, a rejected hypothesis that says the prompt's words points at its tree on an unrelated observation (round 3, M5)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19508,7 +19518,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
- * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 9
+ * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 10
  * PRINTS: packages/connector-core/test/hint-query-window.test.ts 1
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9

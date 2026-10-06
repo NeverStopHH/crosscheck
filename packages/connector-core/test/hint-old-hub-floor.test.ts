@@ -97,6 +97,17 @@ describe("an old hub's candidate is recounted, and refused unless it clears the 
     expect(selectionFor(context).kind).toBe("silence");
   });
 
+  test("a refuted claim's words never qualify a tree — only a pushable claim's do (round 3, M5)", () => {
+    // Arrange — the h4 probe's d2: an old hub ships a rejected hypothesis that
+    // says the prompt's words, beside an unrelated declared observation that
+    // would carry the pointer
+    const refuted = claim({ id: "clm_refuted", kind: "hypothesis", status: "rejected", body: "The zebrafrobnicator cache poisons the quuxinator on warm start." });
+    const unrelated = claim({ id: "clm_other", body: "The nightly report sorts its columns by date" });
+
+    // Act + Assert
+    expect(selectionFor(oldHubContext([refuted, unrelated])).kind).toBe("silence");
+  });
+
   test("the reader's own body in the tree counts for nothing", () => {
     // Arrange
     const context = oldHubContext([claim({ authorDeveloperId: SELF })]);
