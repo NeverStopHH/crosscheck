@@ -18567,6 +18567,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ui-work-context.test.ts`,
     because: "a link into a discarded claim reads like a link into a live one",
   },
+  {
+    label: "a draft pointer prints the hub's kind text outside the quote frame",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  (CLAIM_KINDS as readonly string[]).includes(kind) ? kind : UNKNOWN_KIND_LABEL;",
+    to: "  bareUntrusted(kind);",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "hub text lands unquoted in front of the « » frame on every nudge and briefing pointer",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18774,7 +18782,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 44
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 45
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

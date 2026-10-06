@@ -27,6 +27,7 @@ import {
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import {
+  CLAIM_KINDS,
   NO_AXES_FROM_HUB,
   NO_AXES_READABLE,
   axesLabel,
@@ -889,9 +890,21 @@ export const formatDraftLine = (
   if (id.length === 0 || body.length === 0 || ageMs === null) {
     return null;
   }
-  const kind = bareUntrusted(entry.kind);
-  return `- ${kind}, ${formatAge(ageMs)} ago: «${body}» · review_draft ${id}`;
+  return `- ${kindLabel(entry.kind)}, ${formatAge(ageMs)} ago: «${body}» · review_draft ${id}`;
 };
+
+/** What a pointer line calls a kind this client does not know. */
+const UNKNOWN_KIND_LABEL = "other";
+
+/**
+ * The kind OUTSIDE the « » frame is renderer-owned: a known claim kind by its
+ * wire name, anything else "other" — never the hub's text, which sat there
+ * unquoted (an instruction-shaped kind printed a redaction marker, an
+ * innocent unknown one verbatim; review round 3). The nudge's kinds clause
+ * counts the same way (briefing/draft-nudge.ts).
+ */
+const kindLabel = (kind: string): string =>
+  (CLAIM_KINDS as readonly string[]).includes(kind) ? kind : UNKNOWN_KIND_LABEL;
 
 /**
  * Placed AFTER solved pointers and BEFORE absences: the reminder is
