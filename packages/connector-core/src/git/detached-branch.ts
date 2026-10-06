@@ -13,9 +13,12 @@ export const DETACHED_BRANCH_PREFIX = "detached@";
 /** The branch label when git could not even name the HEAD commit. */
 export const UNNAMED_HEAD_BRANCH = "HEAD";
 
-/** git never abbreviates below 4 hex digits; a full SHA-1 is 40. */
+/**
+ * git never abbreviates below 4 hex digits; a full object id is 40 under
+ * SHA-1 and 64 under the SHA-256 object format, so the bound is the longer.
+ */
 const MIN_SHORT_SHA_HEX = 4;
-const FULL_SHA_HEX = 40;
+const FULL_SHA_HEX = 64;
 
 /**
  * Matched EXACTLY — the prefix and a lowercase hex sha git's `--short` could

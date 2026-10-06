@@ -18296,6 +18296,17 @@ export const MUTATIONS: readonly Mutation[
       "Nick reports a guessed sha as landed and reads Robin's HEAD off " +
       "whether her context's landedAt flips",
   },
+  {
+    // Review round 3, L4: SHA-256 repositories name commits in 64 hex digits.
+    label: "a SHA-256 repository's detached HEAD is read as a branch",
+    file: `${CORE}/src/git/detached-branch.ts`,
+    from: "const FULL_SHA_HEX = 64;",
+    to: "const FULL_SHA_HEX = 40;",
+    test: `${CORE}/test/detached-branch.test.ts`,
+    because:
+      "every worktree session on a SHA-256 repo whose ref git prints in full " +
+      "becomes a topic of its own instead of the one detached-HEAD topic",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18503,6 +18514,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
+ * PRINTS: packages/connector-core/test/detached-branch.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
