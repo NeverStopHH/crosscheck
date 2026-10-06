@@ -755,18 +755,18 @@ export const listHintCandidates = async (
     return [];
   }
   const humanText = humanPromptText(input.query);
-  // NOTHING TASK-BEARING, nothing to match: every word a function word or
-  // one that steers the session — continue, weiter, bitte, and "limit reset"
-  // beside a continuation (@crosscheck/schema session-control.ts). The same
-  // content terms are all the pool is ranked and counted on, so a steering
-  // word never counts beside a real one either (review 1006b, H1).
-  const { content } = promptTerms(humanText);
-  if (content.length === 0) {
+  // NOTHING TASK-BEARING, nothing to match: what is left is a command to the
+  // session — steering, a trigger beside meta words, conversation control or
+  // an agent operation (@crosscheck/schema prompt-terms.ts, hold-out review
+  // H1). The content terms are all the pool is ranked and counted on, so a
+  // steering word never counts beside a real one either (review 1006b, H1).
+  const terms = promptTerms(humanText);
+  if (terms.isContentFree) {
     return [];
   }
   return matchCandidates(deps, callerDeveloperId, {
     text: humanText,
-    terms: content.slice(0, SEARCH_MAX_QUERY_TOKENS),
+    terms: terms.content.slice(0, SEARCH_MAX_QUERY_TOKENS),
     repo: input.repo,
     on: "prompt",
   });

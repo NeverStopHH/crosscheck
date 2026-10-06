@@ -17976,39 +17976,43 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a steering word counts as a term beside a task word",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    !isFunctionWord(token) && steeringWordOf(token) === null && !isMetaSteering(token);",
-    to: "    !isFunctionWord(token) && !isMetaSteering(token);",
+    from: "  const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));",
+    to: "  const content = tokens.filter((token) => !isFunctionWord(token));",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
-    because: "\"mache weiter mit den Tests, limit zurückgesetzt, bitte\" reaches the limit tree on mache and bitte (H1)",
+    because: "\"mache bitte weiter mit dem Upload\" reaches the limit tree on mache and bitte beside one shared word (H1)",
   },
   {
     label: "session-meta words are steering in every prompt",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const isMetaSteering = reportsTheSession(tokens) ? isSessionMetaWord : (): boolean => false;",
-    to: "  const isMetaSteering = isSessionMetaWord;",
+    from: "  const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));",
+    to: "  const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token) && wordClassOf(token) !== \"meta\");",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"why does the usage limit reset\" is floored as a session command and never finds the limit tree (M3)",
   },
   {
     label: "a reset report beside a continuation is scored as a task",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const isMetaSteering = reportsTheSession(tokens) ? isSessionMetaWord : (): boolean => false;",
-    to: "  const isMetaSteering = (): boolean => false;",
+    from: "    tokens.some(isContinuationTrigger) ||\n",
+    to: "",
     test: `${CORE}/test/prompt-corpus-gate.test.ts`,
     because: "\"mach weiter, limit zurückgesetzt\" points at the tree that says Limit and zurückgesetzt",
   },
   {
-    label: "a continuation alone makes the session's machinery steering",
+    // SUPERSEDED (hold-out review, decision a): a continuation beside meta
+    // words only IS a session command now, whatever they report — "keep
+    // going on usage limits" is relabelled content-free. The guard that
+    // remains is the other direction: meta words alone stay a question.
+    label: "meta words alone are read as a session command",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  tokens.some(isContinuationTrigger) && tokens.some(isResetReport);",
-    to: "  tokens.some(isContinuationTrigger);",
+    from: "    topical.length === 0 ||\n",
+    to: "    topical.every((wordClass) => wordClass === \"meta\") ||\n",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
-    because: "\"keep going on usage limits\" — work on the limits — is floored as a session command",
+    because: "\"why does the usage limit reset\" and \"retry limit\" are floored and never find the limit tree (M3)",
   },
   {
     label: "a typo makes a session command a task again",
     file: `${SCHEMA}/src/session-control.ts`,
-    from: "  return CONTINUATION_TRIGGERS.find((trigger) => isTypoOf(folded, trigger)) ?? null;",
+    from: "  return NEAR_MISSES.has(folded) ? null : (slipTargetOf(folded)?.wordClass ?? null);",
     to: "  return null;",
     test: `${SCHEMA}/test/session-control.test.ts`,
     because: "\"wieter\" and \"wiederuafnhemen\" stop continuing, so \"limit reset\" beside them is scored as a task",
@@ -18016,10 +18020,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "typo tolerance reaches every steering word",
     file: `${SCHEMA}/src/session-control.ts`,
-    from: "  return CONTINUATION_TRIGGERS.find((trigger) => isTypoOf(folded, trigger)) ?? null;",
-    to: "  return [...CONTINUATION_TRIGGERS, ...OTHER_STEERING].find((trigger) => isTypoOf(folded, trigger)) ?? null;",
+    from: "  ...OTHER_STEERING.map((word): SlipTarget => ({ word, wordClass: \"steering\", isSlip: isSwapSlipOf })),",
+    to: "  ...OTHER_STEERING.map((word): SlipTarget => ({ word, wordClass: \"steering\", isSlip: isTypingSlipOf })),",
     test: `${SCHEMA}/test/session-control.test.ts`,
-    because: "Greta, prefect, waesome and genua are swallowed as steering words — real words a typo rule must never take",
+    because: "pass, past, bite, look and tank are swallowed as steering words — real words a typo rule must never take",
   },
   {
     label: "an umlaut or a capital makes a session command a task again",
@@ -18031,10 +18035,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a swapped pair of letters is not tolerated",
-    file: `${SCHEMA}/src/session-control.ts`,
-    from: "    const isSwap = a[index] === b[index + 1] && a[index + 1] === b[index];",
-    to: "    const isSwap = false;",
-    test: `${SCHEMA}/test/session-control.test.ts`,
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  const swapped = isSwap ? (cost[row - 2]?.[column - 2] ?? NEVER) + 1 : NEVER;",
+    to: "  const swapped = NEVER;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
     because: "\"contineu\" and \"wiederuafnhemen\" — a typist's commonest slip — stop being the words they are",
   },
   {
@@ -18184,16 +18188,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub judges the raw turn, the wrapper's words included",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  const { content } = promptTerms(humanText);",
-    to: "  const { content } = promptTerms(input.query);",
+    from: "  const terms = promptTerms(humanText);",
+    to: "  const terms = promptTerms(input.query);",
     test: `${SERVER}/test/hint-floor-integrity.test.ts`,
     because: "an older connector's \"<ide_opened_file>… current task …\" makes \"ok weiter\" a task about the current user (M5)",
   },
   {
     label: "\"mal\" is dropped from the steering words",
-    file: `${SCHEMA}/src/session-control.ts`,
-    from: "\"einfach\", \"schon\", \"mal\", \"los\",",
-    to: "\"einfach\", \"schon\", \"los\",",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"scho\", \"mal\", \"los\",",
+    to: "\"scho\", \"los\",",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"mach mal, bitte\" carries a task word nobody wrote (M5)",
   },
@@ -18391,27 +18395,27 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a mid-length trigger takes two swapped pairs",
-    file: `${SCHEMA}/src/session-control.ts`,
-    from: "const DOUBLE_TRANSPOSITION_MIN_LETTERS = 10;",
-    to: "const DOUBLE_TRANSPOSITION_MIN_LETTERS = 8;",
-    test: `${SCHEMA}/test/session-control.test.ts`,
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "const TWO_SLIPS_FROM_LETTERS = 8;",
+    to: "const TWO_SLIPS_FROM_LETTERS = 6;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
     because: "the typo rule widens toward the words it must never take; the old one-edit rule survived exactly this (M5)",
   },
   {
     label: "a four-letter trigger takes a swapped pair",
-    file: `${SCHEMA}/src/session-control.ts`,
-    from: "const TRANSPOSITION_MIN_LETTERS = 5;",
-    to: "const TRANSPOSITION_MIN_LETTERS = 4;",
-    test: `${SCHEMA}/test/session-control.test.ts`,
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "export const SLIP_MIN_TARGET_LETTERS = 5;",
+    to: "export const SLIP_MIN_TARGET_LETTERS = 4;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
     because: "a short trigger's every scramble is steering, and the shorter the word the likelier a real one (M5)",
   },
   {
     label: "a long trigger's two swapped pairs are no longer tolerated",
-    file: `${SCHEMA}/src/session-control.ts`,
-    from: "const DOUBLE_TRANSPOSITION_MIN_LETTERS = 10;",
-    to: "const DOUBLE_TRANSPOSITION_MIN_LETTERS = 16;",
-    test: `${SCHEMA}/test/session-control.test.ts`,
-    because: "\"wiederuafnhemen\" — the live pilot's own spelling — is a task word again (M5)",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "const THREE_SLIPS_FROM_LETTERS = 12;",
+    to: "const THREE_SLIPS_FROM_LETTERS = 16;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"zurukgsetz\" — the reviewer's own spelling — is a task word again (M5, H1 b)",
   },
   {
     label: "two capitals fall below the length floor again",
@@ -18456,16 +18460,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a slash command's name is scored as task words",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const tokens = promptTokens(commandArguments(text));",
-    to: "  const tokens = promptTokens(text);",
+    from: "  const written = promptTokens(commandArguments(text));",
+    to: "  const written = promptTokens(text);",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"/code-review\" reaches the review checklist on \"code\" and \"review\" (H1 d)",
   },
   {
     label: "the connector sends a bare slash command to the hub",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const tokens = promptTokens(commandArguments(text));",
-    to: "  const tokens = promptTokens(text);",
+    from: "  const written = promptTokens(commandArguments(text));",
+    to: "  const written = promptTokens(text);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "every \"/compact\" and \"/loop 5m /babysit-prs\" spends a call a 0.10.0 hub answers on the command's own words (H1 d)",
   },
@@ -18492,6 +18496,86 @@ export const MUTATIONS: readonly Mutation[
     to: "  if (head === undefined) {\n    return text;\n  }\n  if (!isCommandName(head)) {\n    return text.split(/\\s+/u).filter((word) => !isCommandName(word)).join(\" \");\n  }",
     test: `${SCHEMA}/test/slash-command.test.ts`,
     because: "\"why does /health return 503\" loses \"health\", the endpoint it asks about (H1 d)",
+  },
+  {
+    label: "a conversation or operation word makes no session command",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    topical.some(isCommandClass) ||\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"think again, shorter\", \"commit and push\" and \"Option 2 bitte\" reach the hub and point at whatever tree says them (H1 c)",
+  },
+  {
+    label: "one meta word beside a steering word is a task again",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    (topical.length === 1 && tokens.some((token) => isSteeringClass(wordClassOf(token))))",
+    to: "    false",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"retry please\" and \"Restart erneut\" are sent as a task about retries (H1 a)",
+  },
+  {
+    label: "a word of no class still lets a prompt pass as a session command",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  if (classes.includes(null)) {",
+    to: "  if (classes.length < 0) {",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"run the checkout e2e tests\" is floored on \"run\" and \"tests\" and never finds the checkout tree (H1 c)",
+  },
+  {
+    label: "a meta word takes no slip",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  ...META_WORDS.map((word): SlipTarget => ({ word, wordClass: \"meta\", isSlip: isTypingSlipOf })),\n",
+    to: "",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"macxhe weiter, limit ist zurukgsetz\" carries a task word nobody meant (H1 b)",
+  },
+  {
+    label: "a conversation word takes slips too",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  ...META_WORDS.map((word): SlipTarget => ({ word, wordClass: \"meta\", isSlip: isTypingSlipOf })),\n",
+    to: "  ...META_WORDS.map((word): SlipTarget => ({ word, wordClass: \"meta\", isSlip: isTypingSlipOf })),\n  ...CONVERSATION_CONTROL.map((word): SlipTarget => ({ word, wordClass: \"conversation\", isSlip: isTypingSlipOf })),\n",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "one key from a conversation word is a real word in a task prompt — \"shortr\" today, \"text\" for \"test\" tomorrow (H1 b)",
+  },
+  {
+    label: "a near miss is read as the slip it resembles",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  return NEAR_MISSES.has(folded) ? null : (slipTargetOf(folded)?.wordClass ?? null);",
+    to: "  return slipTargetOf(folded)?.wordClass ?? null;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"rest\", \"contest\", \"writer\" and \"weitere\" become steering and meta words (H1 b, the collateral guard)",
+  },
+  {
+    label: "a slip may touch the first letter",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "    typed[0] === target[0] &&\n",
+    to: "",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"deep\", \"date\" and \"dontinue\" are read as slips of the words they only resemble (H1 b)",
+  },
+  {
+    label: "any key may stand in for the right one",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  const hitNeighbour = areNeighbours(typedLetter, targetLetter) ? diagonal + 1 : NEVER;",
+    to: "  const hitNeighbour = typedLetter !== targetLetter ? diagonal + 1 : NEVER;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "a slip becomes plain edit distance and the dictionary's rare, rage and race read as \"rate\" (H1 b)",
+  },
+  {
+    label: "a letter left out is no slip",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  const leftOut = (cost[row]?.[column - 1] ?? NEVER) + 1;",
+    to: "  const leftOut = NEVER;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"contnue\", \"goin\" and \"zurukgsetz\" stop being the words they are (H1 b)",
+  },
+  {
+    label: "a doubled letter or a stray key is no slip",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  const strayKey = isStrayKey(typed, row - 1, target[column]) ? (cost[row - 1]?.[column] ?? NEVER) + 1 : NEVER;",
+    to: "  const strayKey = NEVER;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"weiterr\" and \"macxhe\" stop being the words they are (H1 b)",
   },
   {
     label: "the connector asks a hub about a content-free prompt",
@@ -18829,12 +18913,13 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 7
- * PRINTS: packages/schema/test/session-control.test.ts 7
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 10
+ * PRINTS: packages/schema/test/session-control.test.ts 6
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 3
  * PRINTS: packages/schema/test/substance-sentence.test.ts 12
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
+ * PRINTS: packages/schema/test/typing-slip.test.ts 8
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23

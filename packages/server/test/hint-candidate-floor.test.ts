@@ -253,6 +253,17 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
     expect(candidates).toEqual([]);
   });
 
+  test("H1: \"mache bitte weiter mit dem Upload\" — beside a task word, the steering words still never count", async () => {
+    // Arrange — the German limit tree says Upload, and Mache and bitte beside it
+    const { harness, robin } = await germanLimitTree();
+
+    // Act — one shared task word is not two
+    const candidates = await fetchCandidates(harness, robin, { query: "mache bitte weiter mit dem Upload" });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
   test.each([["why does the usage limit reset"], ["reset the limits please"], ["when does the limit reset?"]])(
     "M3: %p is a task about the limit, and finds the tree about it",
     async (prompt) => {

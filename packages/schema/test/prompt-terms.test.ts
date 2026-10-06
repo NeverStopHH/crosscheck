@@ -65,31 +65,68 @@ describe("content terms are the words left after the stop lists", () => {
   });
 
   test("a steering word is never a term, even beside a task word (H1)", () => {
-    expect(promptTerms("mache weiter mit den Tests, limit zurückgesetzt, bitte").content).toEqual(["tests"]);
-    expect(promptTerms("please continue with the tests, the limit was reset").content).toEqual(["tests"]);
+    expect(promptTerms("mache weiter mit den Tests für den Upload, bitte").content).toEqual(["tests", "upload"]);
+    expect(promptTerms("please continue with the checkout tests").content).toEqual(["checkout", "tests"]);
   });
 
-  test("session-meta words are the task in a task prompt (M3)", () => {
-    expect(promptTerms("why does the usage limit reset").content).toEqual(["usage", "limit", "reset"]);
-    expect(promptTerms("keep going on usage limits").content).toEqual(["usage", "limits"]);
-    expect(promptTerms("Limit zurücksetzen").content).toEqual(["limit", "zurücksetzen"]);
-  });
-
-  test("… and steering when the prompt reports the session and continues it", () => {
-    expect(promptTerms("the limit has been reset, you can continue now").content).toEqual([]);
-    expect(promptTerms("mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen").content).toEqual([]);
+  test("meta, conversation and operation words stay terms in a task prompt", () => {
+    expect(promptTerms("continue the StatsBomb rate limit work").content).toEqual(["statsbomb", "rate", "limit", "work"]);
+    expect(promptTerms("run the checkout e2e tests").content).toEqual(["run", "checkout", "e2e", "tests"]);
   });
 
   test.each([
-    ["mache weiter", true],
-    ["please continue", true],
-    ["session limit reset, resume", true],
-    ["mach mal, bitte", true],
-    ["reset the limits please", false],
-    ["continue the database migration", false],
-    ["", true],
-  ])("%p is content-free: %p", (prompt, contentFree) => {
-    expect(isContentFreePrompt(prompt)).toBe(contentFree);
+    ["mache weiter", "nothing but steering"],
+    ["passt scho", "nothing but steering"],
+    ["mach weiter bitet", "steering with a swapped pair"],
+    ["please continue", "a trigger alone"],
+    ["mach weiter, usage limit ist wieder da", "a trigger beside meta words (a)"],
+    ["macxhe weiter, usage limit ist zurukgsetz", "a trigger beside meta words, slipped (a, b)"],
+    ["Kontingent wieder voll, weiter", "a trigger beside meta words, whatever they report (a)"],
+    ["weekly usage limit expired, keep going", "a trigger beside meta words and their clock (a)"],
+    ["okay so the usage limit was reset a few minutes ago, please just continue with whatever you were doing", "a trigger beside meta and conversation words"],
+    ["continue with the reset", "a trigger beside a meta word (a)"],
+    ["think again, shorter", "conversation words (c)"],
+    ["Option 2 bitte", "picking an option (c)"],
+    ["wait, stop", "an interrupt (c)"],
+    ["commit and push", "agent operations (c)"],
+    ["run the tests again", "agent operations and a conversation word (c)"],
+    ["ok, commit and push, then open the PR and run the tests again please", "agent operations (c)"],
+    ["retry please", "one meta word and a steering word"],
+    ["mach mal, bitte", "a trigger and two steering words"],
+    ["/code-review", "a bare slash command (d)"],
+    ["", "nothing at all"],
+  ])("%p is content-free — %s", (prompt) => {
+    expect(isContentFreePrompt(prompt)).toBe(true);
+  });
+
+  test.each([
+    ["why does the usage limit reset", "meta words alone ask about the machinery"],
+    ["retry limit", "two meta words without a trigger"],
+    ["reset the limits please", "two meta words and a steering word"],
+    ["session expires after 15 minutes", "meta words and their clock, no trigger"],
+    ["run the checkout e2e tests", "one word of no class"],
+    ["continue the database migration", "a trigger beside a topic"],
+    ["the limit was reset but StatsBomb still returns 429, continue debugging", "a topic among meta words"],
+    ["Stop the worker before migration?", "an interrupt word beside a topic"],
+    ["who reviews my PR before merge?", "an inflection is no operation word"],
+    ["CI?", "two capitals are a topic"],
+  ])("%p names a task — %s", (prompt) => {
+    expect(isContentFreePrompt(prompt)).toBe(false);
+  });
+
+  test("the verdict stays fast on a window of distinct near-words", () => {
+    // Arrange — 4,000 distinct tokens, each starting like a class word
+    const prompt = Array.from({ length: 4000 }, (_, index) => `contin${String(index)}`).join(" ");
+    const VERDICT_BUDGET_MS = 500;
+
+    // Act
+    const started = performance.now();
+    const verdict = isContentFreePrompt(prompt);
+    const elapsed = performance.now() - started;
+
+    // Assert
+    expect(verdict).toBe(false);
+    expect(elapsed).toBeLessThan(VERDICT_BUDGET_MS);
   });
 
   test("every token is judged — a task word past the sixteenth is kept", () => {

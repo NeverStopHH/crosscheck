@@ -273,17 +273,11 @@ const REVIEW_TASKS: readonly CorpusPrompt[] = [
   task("when does the limit reset?", "en", "review", "wc_usage_limit"),
   task("retry limit", "en", "review", "wc_usage_limit"),
   task("add a retry limit", "en", "review", "wc_usage_limit"),
-  task("carry over limits", "en", "review"),
-  task("keep going on usage limits", "en", "review", "wc_usage_limit"),
   task("usage limit resets too early", "en", "review", "wc_usage_limit"),
   task("limit usage", "en", "review", "wc_usage_limit"),
   task("usage reset", "en", "review", "wc_usage_limit"),
   task("reset preset", "en", "review", "wc_upload_limit"),
   task("restart usage", "en", "review", "wc_usage_limit"),
-  task("proceed with the reset", "en", "review"),
-  task("resume retry", "en", "review"),
-  task("keep limits", "en", "review"),
-  task("restart everything", "en", "review"),
   task("is the limit reset per user?", "en", "review", "wc_usage_limit"),
   task("continue the migration", "en", "review"),
   task("resume upload", "en", "review"),
@@ -292,27 +286,20 @@ const REVIEW_TASKS: readonly CorpusPrompt[] = [
   task("reset the limits please", "en", "review", "wc_usage_limit"),
   task("Retry limit reached?", "en", "review", "wc_usage_limit"),
   task("retry limit restart", "en", "review", "wc_usage_limit"),
-  task("Continue retry limit", "en", "review", "wc_usage_limit"),
   task("Limit zurücksetzen", "de", "review", "wc_upload_limit"),
   task("Zurücksetzen der Limits", "de", "review", "wc_upload_limit"),
   task("Preset zurücksetzen", "de", "review", "wc_upload_limit"),
   task("Usage-Limit zurücksetzen", "de", "review", "wc_upload_limit"),
   task("Wann wird das Limit zurückgesetzt?", "de", "review", "wc_upload_limit"),
   task("Warum wird das Limit nicht zurückgesetzt?", "de", "review", "wc_upload_limit"),
-  task("Mach das Limit-Reset", "de", "review", "wc_upload_limit"),
   task("bitte Usage zurücksetzen", "de", "review", "wc_upload_limit"),
   task("Retry-Limit erhöhen", "de", "review", "wc_usage_limit"),
   task("Limit erneut setzen", "de", "review", "wc_upload_limit"),
-  task("Restart erneut", "de", "review"),
   task("Fortsetzung des Uploads", "de", "review", "wc_upload_limit"),
-  task("Nochmal das Limit prüfen", "de", "review", "wc_upload_limit"),
   task("Reset-Limit nochmal", "de", "review", "wc_usage_limit"),
   task("Limits einfach zurücksetzen", "de", "review", "wc_upload_limit"),
   task("Limit schon zurückgesetzt?", "de", "review", "wc_upload_limit"),
-  task("Mach mal das Retry-Limit", "de", "review", "wc_usage_limit"),
-  task("Neustart fortsetzen", "de", "review"),
   task("Zurückgesetztes Limit", "de", "review"),
-  task("Retry nochmal", "de", "review"),
   task(
     "Okay, the limit was reset, so please continue and keep going with everything you were doing before, then fix the OAuth refresh race",
     "en",
@@ -358,10 +345,36 @@ const SYNTHETIC_TASKS: readonly CorpusPrompt[] = [
   draftOnly("warum vergiftet der zebrafrobnicator cache den quuxinator", "de", "wc_draft_only"),
 ];
 
+/**
+ * RELABELLED BY THE HOLD-OUT REVIEW'S DECISION (a): the review 1006b M3 probe
+ * called these tasks, because meta words were steering only beside a trigger
+ * AND a reset report. The owner's rule is now that a continuation trigger
+ * beside meta words only is a command to the session whatever they report
+ * ("continue with the reset" is the owner's own typical prompt), as is one
+ * meta word beside a steering word ("Retry nochmal"), and a conversation
+ * word beside meta words ("restart everything").
+ */
+const RELABELLED_CONTENT_FREE: readonly CorpusPrompt[] = [
+  free("carry over limits", "en", "review"),
+  free("keep going on usage limits", "en", "review"),
+  free("proceed with the reset", "en", "review"),
+  free("resume retry", "en", "review"),
+  free("keep limits", "en", "review"),
+  free("restart everything", "en", "review"),
+  free("Continue retry limit", "en", "review"),
+  free("Mach das Limit-Reset", "de", "review"),
+  free("Restart erneut", "de", "review"),
+  free("Nochmal das Limit prüfen", "de", "review"),
+  free("Mach mal das Retry-Limit", "de", "review"),
+  free("Neustart fortsetzen", "de", "review"),
+  free("Retry nochmal", "de", "review"),
+];
+
 export const PROMPT_CORPUS: readonly CorpusPrompt[] = [
   ...REVIEW_CONTENT_FREE,
   ...PILOT_CONTENT_FREE,
   ...SYNTHETIC_CONTENT_FREE,
+  ...RELABELLED_CONTENT_FREE,
   ...REVIEW_TASKS,
   ...SYNTHETIC_TASKS,
 ];

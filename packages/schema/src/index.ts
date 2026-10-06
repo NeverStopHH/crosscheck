@@ -318,11 +318,23 @@ export type { HarnessShape } from "./harness-turn.ts";
 export { SLASH_COMMAND_SHAPES, commandArguments } from "./slash-command.ts";
 export type { SlashCommandShape } from "./slash-command.ts";
 export {
+  exactClassOf,
+  foldWord,
   isContinuationTrigger,
-  isResetReport,
-  isSessionMetaWord,
-  steeringWordOf,
+  isSteeringWord,
+  slipTargetOf,
+  wordClassOf,
 } from "./session-control.ts";
+export type { WordClass } from "./session-control.ts";
+export {
+  AGENT_OPERATION,
+  CONTINUATION_TRIGGERS,
+  CONVERSATION_CONTROL,
+  META_WORDS,
+  NEAR_MISS_WORDS,
+  OTHER_STEERING,
+} from "./prompt-vocabulary.ts";
+export { isSwapSlipOf, isTypingSlipOf, slipBudget } from "./typing-slip.ts";
 export { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS, GERMAN_STOP_SUPPLEMENT, GERMAN_STOP_WORDS } from "./stop-words.ts";
 export {
   ELLIPSIS,

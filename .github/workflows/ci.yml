@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1676
+    # PRINTS: 1686
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -378,15 +378,17 @@ jobs:
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
-    # PRINTS: packages/schema/src/prompt-terms.ts 14
+    # PRINTS: packages/schema/src/prompt-terms.ts 17
+    # PRINTS: packages/schema/src/prompt-vocabulary.ts 1
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
-    # PRINTS: packages/schema/src/session-control.ts 8
+    # PRINTS: packages/schema/src/session-control.ts 6
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/slash-command.ts 3
     # PRINTS: packages/schema/src/stop-words.ts 2
     # PRINTS: packages/schema/src/substance-sentence.ts 13
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
+    # PRINTS: packages/schema/src/typing-slip.ts 8
     # PRINTS: packages/schema/src/untrusted-text.ts 6
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 19
@@ -631,7 +633,8 @@ jobs:
     # PRINTS: probe.ts 39
     # PRINTS: profile.ts 2
     # PRINTS: project-copy.ts 9
-    # PRINTS: prompt-terms.ts 14
+    # PRINTS: prompt-terms.ts 17
+    # PRINTS: prompt-vocabulary.ts 1
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
@@ -668,7 +671,7 @@ jobs:
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 28
     # PRINTS: seq-cost.ts 8
-    # PRINTS: session-control.ts 8
+    # PRINTS: session-control.ts 6
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
@@ -708,6 +711,7 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 2
+    # PRINTS: typing-slip.ts 8
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-passkeys.tsx 1
     # PRINTS: untrusted-text.ts 6

@@ -1,124 +1,103 @@
 /**
- * Words that steer the SESSION rather than name a task (DESIGN.md §4,
- * review 1006b decision 2). Two closed lists, English and German — the
- * languages the stop lists cover — and the only lists of words this
- * product keeps: function words come from the database (stop-words.ts).
+ * Which closed class a word is in (DESIGN.md §4, hold-out review H1). The
+ * lists live in prompt-vocabulary.ts; this is how a word is looked up, and
+ * prompt-terms.ts turns the classes into a verdict.
  *
- * STEERING WORDS — continue, weiter, mache, resume, please, bitte, next,
- * step, nochmal … — are never a task word, anywhere: prompt-terms.ts drops
- * them before the verdict and before the hub counts a single shared term,
- * so "mache weiter mit den Tests, limit zurückgesetzt, bitte" cannot reach
- * the limit tree on "mache" and "bitte" (H1). A few of them CONTINUE the
- * session's work (CONTINUATION_TRIGGERS).
+ * AS WRITTEN FIRST, THEN A TYPING SLIP (typing-slip.ts), and a slip only of
+ * the classes a prompt's typos fall on — continuation triggers, steering
+ * words and meta words: "contnue", "mahce weiter bitet", "macxhe weiter,
+ * limit ist zurukgsetz". Conversation and operation words match only as
+ * written, since one key from "test" is "text" and one from "push" is
+ * "posh". A word of its own one slip from a class word (NEAR_MISS_WORDS,
+ * pinned against the system dictionary by session-control.test.ts) is never
+ * read as that slip.
  *
- * SESSION-META WORDS — limit, usage, retry, restart, session, context — and
- * the RESET REPORTS beside them — reset, zurückgesetzt, frei, back — are
- * steering only when a continuation trigger AND a reset report stand in the
- * same prompt: "the limit was reset, continue" reports the session, "why
- * does the usage limit reset" asks about the product (M3).
- *
- * TYPO TOLERANCE NEVER MAPS A REAL WORD, AND ONLY TRIGGERS GET IT: a
- * typist's swapped neighbours in a trigger of TRANSPOSITION_MIN_LETTERS or
- * more, two of them from DOUBLE_TRANSPOSITION_MIN_LETTERS ("contineu",
- * "wieter", "wiederuafnhemen"). A trigger is the one word whose slip changes
- * the verdict — it decides whether "limit reset" is a report or a task —
- * while a mistyped "plaese" is a word no tree holds. session-control.test.ts
- * runs the whole system dictionary and a German sample through the matcher;
- * a word that maps to a steering word other than itself fails the suite
- * (with the tolerance on every steering word it found "Greta", "prefect",
- * "waesome", "genua"; with one more edit, "einverstandene"). Everything else
- * matches exactly, after folding.
+ * A slip moves the VERDICT only: the terms the hub counts drop a steering
+ * word as written, never a guess at one (prompt-terms.ts).
  */
+import {
+  AGENT_OPERATION,
+  CONTINUATION_TRIGGERS,
+  CONVERSATION_CONTROL,
+  META_WORDS,
+  NEAR_MISS_WORDS,
+  OTHER_STEERING,
+} from "./prompt-vocabulary.ts";
+import { isSwapSlipOf, isTypingSlipOf } from "./typing-slip.ts";
 
-/** Verbs and particles that carry the session's work on. */
-const CONTINUATION_TRIGGERS: readonly string[] = [
-  "continue", "continuing", "resume", "carry", "keep", "going", "ahead", "try",
-  "weiter", "weitermachen", "fortfahren", "fortsetzen", "fahre", "fahr", "fort", "wiederaufnehmen",
-  "versuch", "versuche", "versuchen", "probier", "probiere", "probieren",
-];
-
-/** Steering that continues nothing by itself: assent, politeness, sequencing. */
-const OTHER_STEERING: readonly string[] = [
-  "proceed", "please", "pls", "okay", "yes", "yeah", "yep", "sure", "thanks", "thank", "cool",
-  "great", "good", "fine", "perfect", "nice", "awesome", "sounds", "looks", "lgtm", "ship", "next",
-  "step", "let", "alright",
-  "mach", "mache", "bitte", "danke", "gut", "super", "perfekt", "passt", "klar", "prima", "toll",
-  "nochmal", "erneut", "einfach", "schon", "mal", "los", "nachsten", "nachste", "nachster",
-  "naechsten", "naechste", "naechster", "schritt", "schritte", "einverstanden", "umsetzen",
-  "klingt", "genau", "jawohl",
-];
-
-/** The session's own machinery, as a reset report names it. */
-const SESSION_META: readonly string[] = [
-  "limit", "limits", "usage", "retry", "retries", "restart", "restarts", "session", "sessions",
-  "context", "quota", "quotas", "rate", "kontingent", "sitzung", "kontext", "neustart", "nutzung",
-  "zurucksetzen", "zuruecksetzen",
-];
-
-/** Words that report the machinery is back. */
-const RESET_REPORTS: readonly string[] = [
-  "reset", "resets", "zuruckgesetzt", "zurueckgesetzt", "frei", "back", "available", "cleared",
-  "lifted", "renewed", "refilled", "restored",
-];
-
-/** A trigger this long may carry one swapped pair of neighbours. */
-const TRANSPOSITION_MIN_LETTERS = 5;
-/** A trigger this long may carry two. */
-const DOUBLE_TRANSPOSITION_MIN_LETTERS = 10;
-
-const STEERING_SET: ReadonlySet<string> = new Set([...CONTINUATION_TRIGGERS, ...OTHER_STEERING]);
-const TRIGGER_SET: ReadonlySet<string> = new Set(CONTINUATION_TRIGGERS);
-const META_SET: ReadonlySet<string> = new Set([...SESSION_META, ...RESET_REPORTS]);
-const REPORT_SET: ReadonlySet<string> = new Set(RESET_REPORTS);
+export type WordClass = "trigger" | "steering" | "meta" | "conversation" | "operation";
 
 /** Lower case, accents off, ß as ss: "Zurückgesetzt" is "zuruckgesetzt". */
-const foldWord = (word: string): string =>
+export const foldWord = (word: string): string =>
   word.normalize("NFKD").replace(/\p{M}/gu, "").replace(/ß/g, "ss").toLowerCase();
 
+const classed = (words: readonly string[], wordClass: WordClass): readonly (readonly [string, WordClass])[] =>
+  words.map((word) => [word, wordClass] as const);
+
 /**
- * How many disjoint swaps of neighbours turn `a` into `b` — Infinity when
- * anything else differs. One linear pass.
+ * A word two lists share takes the later class — a trigger is a trigger
+ * before it steers — and a word that is in a class is never a slip of another.
  */
-const swapsBetween = (a: string, b: string): number => {
-  if (a.length !== b.length) {
-    return Number.POSITIVE_INFINITY;
-  }
-  const step = (index: number, swaps: number): number => {
-    if (index >= a.length) {
-      return swaps;
-    }
-    if (a[index] === b[index]) {
-      return step(index + 1, swaps);
-    }
-    const isSwap = a[index] === b[index + 1] && a[index + 1] === b[index];
-    return isSwap ? step(index + 2, swaps + 1) : Number.POSITIVE_INFINITY;
-  };
-  return step(0, 0);
-};
+const EXACT_CLASSES: ReadonlyMap<string, WordClass> = new Map([
+  ...classed(CONVERSATION_CONTROL, "conversation"),
+  ...classed(AGENT_OPERATION, "operation"),
+  ...classed(META_WORDS, "meta"),
+  ...classed(OTHER_STEERING, "steering"),
+  ...classed(CONTINUATION_TRIGGERS, "trigger"),
+]);
 
-const isTypoOf = (folded: string, trigger: string): boolean => {
-  const allowedSwaps =
-    trigger.length >= DOUBLE_TRANSPOSITION_MIN_LETTERS ? 2 : trigger.length >= TRANSPOSITION_MIN_LETTERS ? 1 : 0;
-  return swapsBetween(folded, trigger) <= allowedSwaps;
-};
+interface SlipTarget {
+  readonly word: string;
+  readonly wordClass: WordClass;
+  readonly isSlip: (typed: string, target: string) => boolean;
+}
 
-/** The steering word `word` is — a trigger with a typist's swap included — or null. */
-export const steeringWordOf = (word: string): string | null => {
+/**
+ * The words a slip may reach, keyed by the first letter a slip never
+ * touches; triggers first. Triggers and meta words take every slip a hand
+ * makes (decision b). A steering word takes the swapped pair alone — "bitet",
+ * "plaese" — since one key from "passt", "bitte" and "looks" are "pass",
+ * "bite" and "look".
+ */
+const SLIP_TARGETS: ReadonlyMap<string, readonly SlipTarget[]> = [
+  ...CONTINUATION_TRIGGERS.map((word): SlipTarget => ({ word, wordClass: "trigger", isSlip: isTypingSlipOf })),
+  ...OTHER_STEERING.map((word): SlipTarget => ({ word, wordClass: "steering", isSlip: isSwapSlipOf })),
+  ...META_WORDS.map((word): SlipTarget => ({ word, wordClass: "meta", isSlip: isTypingSlipOf })),
+].reduce<ReadonlyMap<string, readonly SlipTarget[]>>(
+  (byLetter, target) => new Map([...byLetter, [target.word[0] ?? "", [...(byLetter.get(target.word[0] ?? "") ?? []), target]]]),
+  new Map(),
+);
+
+const NEAR_MISSES: ReadonlySet<string> = new Set(NEAR_MISS_WORDS);
+
+/**
+ * The class word a slip of `word` reaches, and its class, or null — before
+ * NEAR_MISS_WORDS is consulted (the dictionary sweep reads this to find them).
+ */
+export const slipTargetOf = (word: string): { readonly word: string; readonly wordClass: WordClass } | null => {
   const folded = foldWord(word);
-  if (STEERING_SET.has(folded)) {
-    return folded;
+  const target = (SLIP_TARGETS.get(folded[0] ?? "") ?? []).find((candidate) => candidate.isSlip(folded, candidate.word));
+  return target === undefined ? null : { word: target.word, wordClass: target.wordClass };
+};
+
+/** A word in a class as written, before any slip. */
+export const exactClassOf = (word: string): WordClass | null => EXACT_CLASSES.get(foldWord(word)) ?? null;
+
+/** The class a word is in — as written, or as a slip of a class word — or null. */
+export const wordClassOf = (word: string): WordClass | null => {
+  const folded = foldWord(word);
+  const exact = EXACT_CLASSES.get(folded);
+  if (exact !== undefined) {
+    return exact;
   }
-  return CONTINUATION_TRIGGERS.find((trigger) => isTypoOf(folded, trigger)) ?? null;
+  return NEAR_MISSES.has(folded) ? null : (slipTargetOf(folded)?.wordClass ?? null);
 };
 
-/** A verb or particle that carries the session's work on. */
-export const isContinuationTrigger = (word: string): boolean => {
-  const steering = steeringWordOf(word);
-  return steering !== null && TRIGGER_SET.has(steering);
+/** A steering word or trigger AS WRITTEN: the words the hub never counts (review 1006b, H1). */
+export const isSteeringWord = (word: string): boolean => {
+  const wordClass = EXACT_CLASSES.get(foldWord(word));
+  return wordClass === "trigger" || wordClass === "steering";
 };
 
-/** limit, usage, retry, session … — or a reset report. */
-export const isSessionMetaWord = (word: string): boolean => META_SET.has(foldWord(word));
-
-/** reset, zurückgesetzt, frei, back … */
-export const isResetReport = (word: string): boolean => REPORT_SET.has(foldWord(word));
+/** A verb or particle that carries the session's work on, a slip included. */
+export const isContinuationTrigger = (word: string): boolean => wordClassOf(word) === "trigger";
