@@ -350,11 +350,15 @@ const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's 
 
 type OutcomeBlock = NonNullable<PilotReport["outcomes"]>;
 
-/** Why a figure is withheld, for each minimum (review #4); a word this client lacks prints as itself. */
+/**
+ * Why a figure is withheld, for each minimum — each holding with any one
+ * person's words left out (review #4, H1); a word this client lacks prints
+ * as itself.
+ */
 const WITHHELD_SENTENCE: Readonly<Record<string, string>> = {
-  too_few_recorders: `fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders)} people recorded an outcome`,
-  too_few_sources: `the recorded outcomes are about fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work`,
-  too_few_recorded: `fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} outcomes were recorded`,
+  too_few_recorders: `leaving out any one person, fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders)} people recorded an outcome`,
+  too_few_sources: `leaving out any one person's words, the rest are about fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work`,
+  too_few_recorded: `leaving out whoever recorded most, fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} words remain`,
 };
 
 /**

@@ -81,10 +81,10 @@ export const definition = {
     "call supersedes an earlier one; nothing is deleted. An off-target hint is not recorded " +
     "here: noise is the person's own label (crosscheck noise). The outcome is attributed to " +
     "your developer's key and shown in full only to them (crosscheck pilot --mine); others see " +
-    "it only inside the team report's totals for a whole past month, shown once at least three " +
-    "people recorded outcomes about at least three people's work; the teammate whose work it " +
-    "was sees how often it was followed in a whole past month, once at least three people " +
-    "recorded outcomes about it.",
+    "it only inside totals for a whole past month — the team report's, and the source " +
+    "teammate's count of how often their work was followed — each shown only if, leaving out " +
+    "any one person's words, words from at least three people remain, so a team of three " +
+    "never gets either.",
   inputSchema: z.toJSONSchema(ArgsSchema) as Record<string, unknown>,
 };
 

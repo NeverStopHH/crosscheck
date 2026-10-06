@@ -12,29 +12,36 @@
  *   · covers ONE FIXED, CLOSED PERIOD — the last whole calendar month (UTC) —
  *     whatever `days` the report was asked for, frozen as it stood at the
  *     month's end, so no window can be stepped or watched to isolate a day;
- *   · prints figures only when at least three people recorded words, about at
- *     least three people's work, ten words or more — otherwise it says which
- *     minimum was not met, and no figure.
+ *   · prints figures only when, leaving out ANY one person's words — the
+ *     viewer's own included, whoever views it (review H1) — at least three
+ *     people's words about at least three people's work, ten or more, remain;
+ *     otherwise it says which minimum was not met, and no figure. A team of
+ *     three never meets them.
  *
  * IT STARTS WHERE OUTCOMES COULD BE RECORDED (the H1 lesson): a delivery from
  * before `pilot_outcomes_since` is outside the population, never "unmarked".
  */
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
-import { HINT_OUTCOME_DISCLOSURE_MINIMUMS } from "@crosscheck/schema";
+import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, deliveryIdFor } from "@crosscheck/schema";
 
 import { lastWholeMonth, readPeriodAggregate } from "../src/services/outcome-population.ts";
 
 import {
-  ANNA_SESSION,
+  ANNA_CONTEXT,
+  LENA_CONTEXT,
   SECONDS_TO_AUGUST,
   createCrowd,
-  recordTenWords,
+  recordCrowdWords,
 } from "./fixtures/hint-outcome-crowd.ts";
+import type { Crowd } from "./fixtures/hint-outcome-crowd.ts";
 import {
   KEN_CLAIM,
   KEN_CONTEXT,
+  KEN_SESSION,
+  MIKE_CONTEXT,
   MIKE_SESSION,
+  NICK_SECOND_SESSION,
   NICK_SESSION,
   REPO,
   createOutcomeWorld,
@@ -42,13 +49,25 @@ import {
   recordOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
-import { TEST_ADMIN_TOKEN, jsonRequest, postRecords } from "./helpers.ts";
+import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
 
 const SECONDS_PER_HOUR = 3600;
 const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z" };
 const ENROLLED_ISO = "2026-07-24T09:00:00.000Z";
 
 const NICK_CONTEXT = `wc_${NICK_SESSION}`;
+const NICK_THIRD_SESSION = "cc_aaaaaaaa-3333-4333-8333-333333333333";
+
+/** Words in the crowd, one per pointer, as [who, ref, outcome]. */
+const say = async (
+  crowd: Crowd,
+  words: readonly (readonly [keyof Pick<Crowd, "nick" | "ken" | "mike" | "anna" | "lena">, string, string])[],
+): Promise<void> => {
+  for (const [who, ref, outcome] of words) {
+    const reason = outcome === "overrode" ? { reason: "went another way" } : {};
+    await recordOutcome(crowd, crowd[who], { ref, outcome, ...reason });
+  }
+};
 
 /** July's interventions as the closed month reads them — below the rendering, so no minimum hides it. */
 const julyInterventions = async (world: OutcomeWorld): Promise<number> => {
@@ -74,9 +93,9 @@ const outcomesOf = async (world: OutcomeWorld, days?: number): Promise<Record<st
 
 describe("the team report's outcomes block (D-O5, review #4)", () => {
   test("a big enough team gets figures for the last whole month, counted from when outcomes became recordable", async () => {
-    // Arrange — three people, ten words, four people's work, all in July
+    // Arrange — four people, fifteen words, five people's work, all in July
     const crowd = await createCrowd();
-    await recordTenWords(crowd);
+    await recordCrowdWords(crowd);
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
 
     // Act
@@ -88,16 +107,16 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
       recordableSinceIso: ENROLLED_ISO,
       countedFromIso: ENROLLED_ISO,
       pausedInPeriod: false,
-      interventions: 11,
+      interventions: 24,
       withheld: null,
-      figures: { followed: 6, overrode: 2, notRelevantNow: 1, noise: 1, unmarked: 1 },
+      figures: { followed: 9, overrode: 3, notRelevantNow: 2, noise: 1, unmarked: 9 },
     });
   });
 
   test("the month is frozen at its end: a word said after it never moves the figures", async () => {
     // Arrange
     const crowd = await createCrowd();
-    await recordTenWords(crowd, { skip: false });
+    await recordCrowdWords(crowd);
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
     const before = await outcomesOf(crowd);
 
@@ -113,7 +132,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
   test("the block ignores the report's window: no `days` can be stepped to isolate a day", async () => {
     // Arrange
     const crowd = await createCrowd();
-    await recordTenWords(crowd);
+    await recordCrowdWords(crowd);
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
 
     // Act
@@ -140,22 +159,60 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     expect(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders).toBe(3);
   });
 
-  test("words that are all about one author's work print no figure — an author never reads their overrides", async () => {
-    // Arrange — three recorders, every word about Ken's work
-    const crowd = await createCrowd();
-    await postRecords(crowd.harness, crowd.anna, {
-      records: [deliveryRecord(ANNA_SESSION, "claim", KEN_CLAIM, "prompt_hint")],
-    });
-    for (const [developer, ref, outcome] of [
-      [crowd.nick, KEN_CONTEXT, "followed"],
-      [crowd.nick, KEN_CLAIM, "followed"],
-      [crowd.mike, KEN_CONTEXT, "followed"],
-      [crowd.mike, KEN_CLAIM, "followed"],
-      [crowd.anna, KEN_CONTEXT, "followed"],
-      [crowd.anna, KEN_CLAIM, "not_relevant_now"],
-    ] as const) {
-      await recordOutcome(crowd, developer, { ref, outcome });
+  test("review H1 (P1): in a team of three, a viewer who pads the words minimum still reads no figure", async () => {
+    // Arrange — Nick follows eight of Ken's and Mike's pointers across three sessions;
+    // Ken and Mike override one each. Before H1 the line printed "followed 8 · overrode 2",
+    // and Nick, subtracting his own eight, knew both teammates had overridden once.
+    const crowd = await createOutcomeWorld();
+    for (const session of [NICK_SECOND_SESSION, NICK_THIRD_SESSION]) {
+      await registerTestSession(crowd.harness, crowd.nick.apiKey, { id: session, repo: REPO });
+      await postRecords(crowd.harness, crowd.nick, {
+        records: [
+          deliveryRecord(session, "work_context", KEN_CONTEXT, "prompt_hint"),
+          deliveryRecord(session, "claim", KEN_CLAIM, "prompt_hint"),
+          deliveryRecord(session, "work_context", MIKE_CONTEXT, "prompt_hint"),
+        ],
+      });
     }
+    await postRecords(crowd.harness, crowd.ken, {
+      records: [deliveryRecord(KEN_SESSION, "work_context", NICK_CONTEXT, "prompt_hint")],
+    });
+    const nickPointers = [NICK_SESSION, NICK_SECOND_SESSION, NICK_THIRD_SESSION].flatMap((session) =>
+      [KEN_CONTEXT, KEN_CLAIM, MIKE_CONTEXT].map((ref) => deliveryIdFor(session, ref, "prompt_hint")),
+    );
+    for (const id of nickPointers.slice(0, 8)) {
+      await recordOutcome(crowd, crowd.nick, { ref: id, outcome: "followed" });
+    }
+    await recordOutcome(crowd, crowd.ken, { ref: NICK_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    await recordOutcome(crowd, crowd.mike, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine too" });
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const outcomes = await outcomesOf(crowd);
+
+    // Assert — leaving Nick out, only two people's words remain
+    expect(outcomes["withheld"]).toBe("too_few_recorders");
+    expect(outcomes["figures"]).toBeNull();
+  });
+
+  test("review H1 (P7): when, leaving one person out, every other word is about that person's work, no figure prints", async () => {
+    // Arrange — Nick, Mike, Anna and Lena speak only about Ken's work; Ken about theirs.
+    // Before H1 this printed, and Ken, subtracting his own four, read how the team treated his work.
+    const crowd = await createCrowd();
+    await say(crowd, [
+      ["nick", KEN_CONTEXT, "followed"],
+      ["nick", KEN_CLAIM, "overrode"],
+      ["mike", KEN_CONTEXT, "overrode"],
+      ["mike", KEN_CLAIM, "followed"],
+      ["anna", KEN_CONTEXT, "followed"],
+      ["anna", KEN_CLAIM, "followed"],
+      ["lena", KEN_CONTEXT, "followed"],
+      ["lena", KEN_CLAIM, "overrode"],
+      ["ken", NICK_CONTEXT, "followed"],
+      ["ken", MIKE_CONTEXT, "not_relevant_now"],
+      ["ken", ANNA_CONTEXT, "followed"],
+      ["ken", LENA_CONTEXT, "followed"],
+    ]);
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
 
     // Act
@@ -166,10 +223,22 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     expect(outcomes["figures"]).toBeNull();
   });
 
-  test("fewer than ten recorded words print no figure", async () => {
-    // Arrange
+  test("review H1: when one person said most of it, the rest is too little to print", async () => {
+    // Arrange — Nick five words, three others two each: eleven, but six without Nick
     const crowd = await createCrowd();
-    await recordTenWords(crowd, { skip: true });
+    await say(crowd, [
+      ["nick", KEN_CONTEXT, "followed"],
+      ["nick", KEN_CLAIM, "followed"],
+      ["nick", MIKE_CONTEXT, "followed"],
+      ["nick", ANNA_CONTEXT, "followed"],
+      ["nick", LENA_CONTEXT, "followed"],
+      ["mike", KEN_CONTEXT, "overrode"],
+      ["mike", ANNA_CONTEXT, "followed"],
+      ["anna", MIKE_CONTEXT, "followed"],
+      ["anna", NICK_CONTEXT, "overrode"],
+      ["lena", KEN_CONTEXT, "followed"],
+      ["lena", NICK_CONTEXT, "followed"],
+    ]);
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
 
     // Act
@@ -178,6 +247,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     // Assert
     expect(outcomes["withheld"]).toBe("too_few_recorded");
     expect(outcomes["figures"]).toBeNull();
+    expect(HINT_OUTCOME_DISCLOSURE_MINIMUMS).toEqual({ recorders: 3, sources: 3, recorded: 10 });
   });
 
   test("a month that ended before outcomes became recordable is not recordable, and says when they became so", async () => {

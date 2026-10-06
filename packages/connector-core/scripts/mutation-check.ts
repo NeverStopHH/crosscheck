@@ -17759,7 +17759,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "two people's outcomes print as a team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "  if (aggregate.recorders < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {",
+    from: "  if (aggregate.recorders - LEFT_OUT < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {",
     to: "  if (false) {",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the team total minus one's own --mine is the other person's exact outcomes",
@@ -17767,7 +17767,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "outcomes about one or two people's work print as a team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "  if (checks.sources && aggregate.sources < HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) {",
+    from: "  if (checks.sources && aggregate.sourcesWithoutAnyOne < HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) {",
     to: "  if (false) {",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the author whose work every hint pointed at reads the team line as the overrides of their own work",
@@ -17775,7 +17775,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a handful of recorded outcomes prints as a team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: '  return checks.recorded && recorded < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded ? "too_few_recorded" : null;',
+    from: "  return checks.recorded && aggregate.wordsWithoutLargest < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded\n    ? \"too_few_recorded\"\n    : null;",
     to: "  return null;",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "with a few words in the month, one person's change of mind is one visible step in the figure",
@@ -18135,6 +18135,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "a person reads 56 days as measured when part of them was a pause",
   },
+  // ── 07 §13.11, review H1: minimums that hold with any one person left out ─
+  {
+    label: "the people-minimum counts the viewer's own words",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "  if (aggregate.recorders - LEFT_OUT < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {",
+    to: "  if (aggregate.recorders < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "in a team of three, the viewer subtracts their own words and reads each teammate's exact outcome",
+  },
+  {
+    label: "the sources minimum counts the viewer's own words",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        SELECT (SELECT count(DISTINCT w.source_id) FROM words w WHERE w.recipient <> r.recipient) AS k",
+    to: "        SELECT (SELECT count(DISTINCT w.source_id) FROM words w) AS k",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "an author supplies the other sources himself and reads the rest as how the team treated his work",
+  },
+  {
+    label: "the words minimum counts the words of whoever said most",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    wordsWithoutLargest: recorded - Number(row?.largest_recorder_words ?? 0),",
+    to: "    wordsWithoutLargest: recorded,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "one person pads the month alone, and the few words of everyone else print as a figure",
+  },
+  {
+    label: "the credit's people-minimum counts with nobody left out",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "const LEFT_OUT = 1;",
+    to: "const LEFT_OUT = 0;",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "three teammates' words about Ken's work print a count one of them can subtract to read the others'",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18457,7 +18490,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 9
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 10
  * PRINTS: packages/server/test/hint-outcomes.test.ts 14
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
@@ -18477,7 +18510,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 15
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 18
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

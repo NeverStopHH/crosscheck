@@ -921,8 +921,8 @@ enrolment** (D2's reasoning: outcomes are measurement).
 | Who | Sees | Where |
 |---|---|---|
 | the recipient | their own hints received, followed / overrode / not relevant now / noise / unmarked, by source teammate, with the reasons beside the current words | `crosscheck pilot --mine [--days N]` (`GET /api/hint-outcomes/mine`) |
-| the source teammate | ONE count: how often hints that pointed at their work were followed in the last whole month, frozen at its end, and only once at least 3 people recorded outcomes about that work (§13.10) — no recipient, no reason, no override, no noise | the same command, run by them ("your own work, in teammates' hints, July 2026: followed N times — …") |
-| the team | one per-repo line over the last whole calendar month, frozen at its end, and only once at least 3 people recorded outcomes about at least 3 people's work, 10 words or more (§13.9, §13.10) | `crosscheck pilot` |
+| the source teammate | ONE count: how often hints that pointed at their work were followed in the last whole month, frozen at its end, and only once, leaving out any one person, at least 3 people recorded outcomes about that work (§13.10, §13.11) — no recipient, no reason, no override, no noise; never in a team of three | the same command, run by them ("your own work, in teammates' hints, July 2026: followed N times — …") |
+| the team | one per-repo line over the last whole calendar month, frozen at its end, and only when, leaving out any one person's words, at least 3 people's words about at least 3 people's work, 10 or more, remain (§13.9–§13.11); never in a team of three | `crosscheck pilot` |
 | anybody else | **nothing**: no route takes a person as a parameter, so somebody else's per-person view cannot be asked for | — |
 
 **This is consistent with §8.4, and why.** §8.4 refuses a per-developer breakdown of the TEAM's counters —
@@ -946,7 +946,8 @@ why, newest first — as you or your agent wrote it:
   followed, from Ken: «reused his decision to key the cache by repo»
 your own work, in teammates' hints, September 2026: nothing to count — outcomes became recordable here after it ended
 recorded with your key — by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode); noise is your own label (crosscheck noise)
-only you see this view in full; others see your words only inside totals for a whole past month — the team report's, once at least 3 people recorded outcomes about at least 3 people's work, and a teammate's count of how often their work was followed, once at least 3 people recorded outcomes about it
+only you see this view in full; others see your words only inside totals for a whole past month: the team report's, and a teammate's count of how often their work was followed
+each is shown only if, leaving out any one person's words, words from at least 3 people remain — the team report's also about at least 3 people's work, 10 or more — so a team of three never gets either
 ```
 
 and Ken's, on the same hub: `nothing reached you unasked on this repo in this window` and the same credit line —
@@ -981,7 +982,8 @@ clause and a tally line.
 - **D-O2 — what the source sees.** One count, `followed`. Overrides, noise and reasons about a person's work
   are not shown to them, though an override's reason is often exactly what the author would want to read.
   On a team of two, "teammates followed your work N times" names the other person by elimination — stated,
-  not solved. *Solved by §13.10 (#10): the count needs three recorders, which a team of two never has.*
+  not solved. *Solved by §13.10 (#10) and §13.11 (H1): the count needs, leaving any one person out, three
+  recorders — which a team of two, or of three, never has.*
 - **D-O3 — the clause on the briefing and the tripwire ask.** *Decided by the owner, built — §13.9.*
 - **D-O4 — an agent recording noise.** Refused (D3 kept). If the owner wants the agent's view of
   off-target hints, it would be a separate, agent-attributed figure, never the label.
@@ -1194,3 +1196,18 @@ paused in says `counted only while the pilot was enrolled here` (`pausedInPeriod
 from a re-enrolment says `counted from <day>, when the pilot was enrolled here again`, a month paused through
 says `none could be recorded — the pilot was paused here for the whole month`, and a `--mine` window with a
 pause says `— counted only while the pilot was enrolled here` (`pausedInWindow`, additive).
+
+*H1 — the minimums counted the viewer's own words (P1, P7).* With three people — the pilot's real team — a
+viewer could meet the minimums alone and subtract: Nick followed eight hints, Ken and Mike overrode one each,
+July printed `followed 8 · overrode 2`, and Nick knew both teammates had overridden exactly once (P1); Ken,
+supplying two of the three sources himself, read every other word as how the team treated his work (P7). The
+rule is now **viewer-independent**: for every recorder r, the population **without r** must still hold at
+least 3 recorders, words about at least 3 people's work, and at least 10 words — which includes the
+**dominance rule**: leaving out whoever recorded most, 10 words remain (`readPeriodAggregate` computes the
+recorders, the fewest sources any one recorder's absence leaves, and the words without the largest
+recorder; `withholdingOf` applies them). The source credit takes the same logic: its population already
+leaves out the author's own words, and its people-minimum must hold with any single recorder removed — four
+teammates who recorded about the author's work. **A team of three never gets the team line or the credit**,
+and every printed promise says so: the `--mine` footer, `mark_hint_outcome`'s description, `crosscheck
+followed / overrode`'s answer and usage, and the withheld lines. The owner's own view — per source teammate,
+what each hint led to, and the reasons — is unaffected and stays complete.

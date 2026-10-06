@@ -576,7 +576,7 @@ describe("renderPilot", () => {
 
     // Assert
     expect(out).toContain(
-      "   hint outcomes, July 2026: withheld — fewer than 3 people recorded an outcome, and a figure could single someone out",
+      "   hint outcomes, July 2026: withheld — leaving out any one person, fewer than 3 people recorded an outcome, and a figure could single someone out",
     );
     expect(out).not.toContain("per 100 interventions, July");
   });

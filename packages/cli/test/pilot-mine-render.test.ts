@@ -64,7 +64,7 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
 
     // Assert
     expect(line).toBe(
-      "your own work, in teammates' hints, July 2026: followed 4 times — counted once at least 3 people recorded outcomes about it",
+      "your own work, in teammates' hints, July 2026: followed 4 times — counted once, leaving out any one person, at least 3 people recorded outcomes about it",
     );
   });
 
@@ -74,7 +74,7 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
 
     // Assert
     expect(line).toBe(
-      "your own work, in teammates' hints, July 2026: no count — fewer than 3 people recorded an outcome about it, and a count could single someone out",
+      "your own work, in teammates' hints, July 2026: no count — leaving out any one person, fewer than 3 people recorded an outcome about it, and a count could single someone out",
     );
   });
 
@@ -101,13 +101,14 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     );
   });
 
-  test("the footer's promise names both shared totals and their minimums", () => {
+  test("the footer's promise names both shared totals, their viewer-independent minimums, and the team of three (H1)", () => {
     // Act
     const out = renderMyOutcomes(viewSince("2026-08-10T12:00:00.000Z"));
 
     // Assert
     expect(out).toContain(
-      "only you see this view in full; others see your words only inside totals for a whole past month — the team report's, once at least 3 people recorded outcomes about at least 3 people's work, and a teammate's count of how often their work was followed, once at least 3 people recorded outcomes about it",
+      "only you see this view in full; others see your words only inside totals for a whole past month: the team report's, and a teammate's count of how often their work was followed\n" +
+        "each is shown only if, leaving out any one person's words, words from at least 3 people remain — the team report's also about at least 3 people's work, 10 or more — so a team of three never gets either",
     );
   });
 });

@@ -59,8 +59,8 @@ export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): str
   }
   return (
     `recorded: ${shown} — ${outcomeWord(recorded.outcome)}${supersededWords(recorded)}. It shows in full only in your own crosscheck pilot --mine; ` +
-    "others see it only inside the team's totals for a whole past month, once at least 3 people recorded outcomes; " +
-    "the teammate whose work it was sees how often it was followed in a whole past month, once at least 3 people recorded outcomes about it\n"
+    "others see it only inside totals for a whole past month — the team report's, and the teammate's count of how often their work was followed — " +
+    "each shown only if, leaving out any one person's words, words from at least 3 people remain, so never in a team of three\n"
   );
 };
 

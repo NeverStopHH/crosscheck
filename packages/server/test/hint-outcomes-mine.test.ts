@@ -27,7 +27,7 @@ import {
   recordOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
-import { SECONDS_TO_AUGUST, createCrowd, recordTenWords } from "./fixtures/hint-outcome-crowd.ts";
+import { SECONDS_TO_AUGUST, createCrowd, recordCrowdWords } from "./fixtures/hint-outcome-crowd.ts";
 import { TEST_ADMIN_TOKEN, jsonRequest, postRecords } from "./helpers.ts";
 import type { TestDeveloper } from "./helpers.ts";
 
@@ -153,22 +153,33 @@ describe("GET /api/hint-outcomes/mine", () => {
     expect(ken["bySource"]).toEqual([]);
   });
 
-  test("review #10: a teammate's credit is the last whole month's follows, once 3 people recorded about their work — nothing about who or why", async () => {
-    // Arrange — Nick, Mike and Anna each said something about Ken's work in July
+  test("review #10, H1: a teammate's credit is the last whole month's follows, once 4 people recorded about their work — nothing about who or why", async () => {
+    // Arrange — Nick, Mike, Anna and Lena each said something about Ken's work in July
     const crowd = await createCrowd();
-    await recordTenWords(crowd);
+    await recordCrowdWords(crowd);
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
 
     // Act
     const ken = await viewOf(await readMine(crowd, crowd.ken));
 
-    // Assert
-    expect(ken["yourWork"]).toEqual({ ...JULY, followed: 4, withheld: null });
-    const said = JSON.stringify(ken);
-    for (const name of ["Nick", "Mike", "Anna"]) {
-      expect(said).not.toContain(name);
-    }
-    expect(said).not.toContain("kept my own cache key");
+    // Assert — one count; no teammate's reason about Ken's work reaches him
+    expect(ken["yourWork"]).toEqual({ ...JULY, followed: 5, withheld: null });
+    expect(JSON.stringify(ken)).not.toContain("kept my own cache key");
+  });
+
+  test("review H1: three people's words about a teammate's work print no count — leaving one out leaves two", async () => {
+    // Arrange — Nick, Mike and Anna speak about Ken's work; Lena, who got it too, says nothing
+    const crowd = await createCrowd();
+    await recordOutcome(crowd, crowd.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    await recordOutcome(crowd, crowd.mike, { ref: KEN_CONTEXT, outcome: "followed" });
+    await recordOutcome(crowd, crowd.anna, { ref: KEN_CONTEXT, outcome: "overrode", reason: OVERRIDE_REASON });
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const ken = await viewOf(await readMine(crowd, crowd.ken));
+
+    // Assert — before H1 this printed "followed 2", and Ken, told by Nick what Nick said, knew Anna's
+    expect(ken["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "too_few_recorders" });
   });
 
   test("review #10: two people's words about a teammate's work print no count — a switch would show as a step", async () => {
@@ -190,7 +201,7 @@ describe("GET /api/hint-outcomes/mine", () => {
   test("review #10: a word changed after the month never moves the credit", async () => {
     // Arrange — the review's P3: Ken's count dropped the moment Nick switched
     const crowd = await createCrowd();
-    await recordTenWords(crowd);
+    await recordCrowdWords(crowd);
     crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
     const before = (await viewOf(await readMine(crowd, crowd.ken)))["yourWork"];
 
@@ -206,7 +217,7 @@ describe("GET /api/hint-outcomes/mine", () => {
   test("review #10: while the first recordable month is still open there is no credit, and it says why", async () => {
     // Arrange — enrolled 2026-07-24; July has not ended, June was never recordable
     const crowd = await createCrowd();
-    await recordTenWords(crowd);
+    await recordCrowdWords(crowd);
 
     // Act
     const ken = await viewOf(await readMine(crowd, crowd.ken));

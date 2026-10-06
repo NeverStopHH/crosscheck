@@ -203,7 +203,11 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     FROM stated
   )`;
 
-/** One closed period's counts, and how many people and how many people's work its words cover. */
+/**
+ * One closed period's counts, and what its words would still cover with any
+ * single recorder left out (review H1) — the viewer subtracting their own
+ * words, or one colleague telling the viewer theirs.
+ */
 export interface PeriodAggregate {
   readonly interventions: number;
   readonly followed: number;
@@ -211,8 +215,12 @@ export interface PeriodAggregate {
   readonly notRelevantNow: number;
   readonly noise: number;
   readonly unmarked: number;
+  /** People who recorded at least one word. */
   readonly recorders: number;
-  readonly sources: number;
+  /** The fewest distinct people's work the words cover once any one recorder's words are left out. */
+  readonly sourcesWithoutAnyOne: number;
+  /** The words left once the recorder who said most is left out — the dominance rule. */
+  readonly wordsWithoutLargest: number;
 }
 
 type AggregateRow = {
@@ -223,8 +231,21 @@ type AggregateRow = {
   readonly noise: number;
   readonly unmarked: number;
   readonly recorders: number;
-  readonly sources: number;
+  readonly sources_without_any_one: number;
+  readonly largest_recorder_words: number;
 };
+
+/**
+ * The words (what is not unmarked) and, per recorder, what the OTHERS' words
+ * cover: subtracting one person's own contribution must never isolate anyone.
+ */
+const subtractionSafeColumns = sql`
+      (SELECT count(DISTINCT recipient) FROM words)::int AS recorders,
+      COALESCE((SELECT min(k) FROM (
+        SELECT (SELECT count(DISTINCT w.source_id) FROM words w WHERE w.recipient <> r.recipient) AS k
+        FROM (SELECT DISTINCT recipient FROM words) r) per_left_out), 0)::int AS sources_without_any_one,
+      COALESCE((SELECT max(n) FROM (
+        SELECT count(*) AS n FROM words GROUP BY recipient) per_recorder), 0)::int AS largest_recorder_words`;
 
 export const readPeriodAggregate = async (
   db: Db,
@@ -238,18 +259,19 @@ export const readPeriodAggregate = async (
   },
 ): Promise<PeriodAggregate> => {
   const rows = await db.execute<AggregateRow>(sql`
-    ${deliveryStates(input.repo, input.from, input.who, input.until)}
+    ${deliveryStates(input.repo, input.from, input.who, input.until)},
+    scoped AS (SELECT * FROM states ${input.sourceIs === null ? sql`` : sql`WHERE source_id = ${input.sourceIs}`}),
+    words AS (SELECT recipient, source_id FROM scoped WHERE state <> 'unmarked')
     SELECT count(*)::int AS interventions,
       count(*) FILTER (WHERE state = 'followed')::int AS followed,
       count(*) FILTER (WHERE state = 'overrode')::int AS overrode,
       count(*) FILTER (WHERE state = 'not_relevant_now')::int AS not_relevant_now,
       count(*) FILTER (WHERE state = 'noise')::int AS noise,
       count(*) FILTER (WHERE state = 'unmarked')::int AS unmarked,
-      count(DISTINCT recipient) FILTER (WHERE state <> 'unmarked')::int AS recorders,
-      count(DISTINCT source_id) FILTER (WHERE state <> 'unmarked')::int AS sources
-    FROM states
-    ${input.sourceIs === null ? sql`` : sql`WHERE source_id = ${input.sourceIs}`}`);
+      ${subtractionSafeColumns}
+    FROM scoped`);
   const row = rows.rows[0];
+  const recorded = Number(row?.interventions ?? 0) - Number(row?.unmarked ?? 0);
   return {
     interventions: Number(row?.interventions ?? 0),
     followed: Number(row?.followed ?? 0),
@@ -258,14 +280,21 @@ export const readPeriodAggregate = async (
     noise: Number(row?.noise ?? 0),
     unmarked: Number(row?.unmarked ?? 0),
     recorders: Number(row?.recorders ?? 0),
-    sources: Number(row?.sources ?? 0),
+    sourcesWithoutAnyOne: Number(row?.sources_without_any_one ?? 0),
+    wordsWithoutLargest: recorded - Number(row?.largest_recorder_words ?? 0),
   };
 };
 
+/** "Any one person": how many recorders the minimums must survive losing (review H1). */
+const LEFT_OUT = 1;
+
 /**
- * WHICH DISCLOSURE MINIMUM A PERIOD FAILS, or null when it may print. The
- * team line checks all three; an author's credit is about their own work, so
- * only the people-minimum applies to it.
+ * WHICH DISCLOSURE MINIMUM A PERIOD FAILS, or null when it may print — the
+ * same answer whoever reads it (review H1). Every minimum must hold with any
+ * single recorder's words left out: at least three other people's words,
+ * about at least three people's work, ten or more of them. So a team of
+ * three never prints. The team line checks all three; an author's credit is
+ * about their own work, so only the people-minimum applies to it.
  */
 export const withholdingOf = (
   aggregate: PeriodAggregate,
@@ -274,12 +303,13 @@ export const withholdingOf = (
   if (aggregate.interventions === 0) {
     return "no_interventions";
   }
-  if (aggregate.recorders < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {
+  if (aggregate.recorders - LEFT_OUT < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {
     return "too_few_recorders";
   }
-  if (checks.sources && aggregate.sources < HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) {
+  if (checks.sources && aggregate.sourcesWithoutAnyOne < HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) {
     return "too_few_sources";
   }
-  const recorded = aggregate.interventions - aggregate.unmarked;
-  return checks.recorded && recorded < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded ? "too_few_recorded" : null;
+  return checks.recorded && aggregate.wordsWithoutLargest < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded
+    ? "too_few_recorded"
+    : null;
 };

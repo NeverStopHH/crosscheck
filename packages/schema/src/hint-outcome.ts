@@ -64,11 +64,12 @@ export type HintOutcomeInput = z.infer<typeof HintOutcomeSchema>;
  *
  * A team total minus one's own `--mine` is everybody else's — with one other
  * person, that person's exact outcomes; an author's credit falling 1 → 0 is a
- * teammate switching to "overrode". So a figure anybody but the recorder sees
- * rests on at least three people's words (no subtraction isolates one), about
- * at least three people's work (no author reads the overrides of their own),
- * ten words or more — and below any minimum it says which, and no number.
- * Shared here because the hub decides and the CLI writes the sentence.
+ * teammate switching to "overrode". And a minimum that counts the viewer's own
+ * words is one the viewer can meet alone and then subtract (07 §13.11, H1). So
+ * every minimum holds WITH ANY ONE RECORDER LEFT OUT, whoever reads it: at
+ * least three other people's words, about at least three people's work, ten
+ * or more of them. A team of three never meets them. Shared here because the
+ * hub decides and the CLI writes the sentence.
  */
 export const HINT_OUTCOME_DISCLOSURE_MINIMUMS = {
   recorders: 3,

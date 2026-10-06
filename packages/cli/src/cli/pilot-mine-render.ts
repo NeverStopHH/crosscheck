@@ -105,7 +105,7 @@ const PEOPLE_MINIMUM = String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders);
 const CREDIT_WITHHELD: Readonly<Record<string, string>> = {
   not_recordable: "nothing to count — outcomes became recordable here after it ended",
   no_interventions: "no hint pointed at it",
-  too_few_recorders: `no count — fewer than ${PEOPLE_MINIMUM} people recorded an outcome about it, and a count could single someone out`,
+  too_few_recorders: `no count — leaving out any one person, fewer than ${PEOPLE_MINIMUM} people recorded an outcome about it, and a count could single someone out`,
 };
 
 /**
@@ -115,7 +115,7 @@ const CREDIT_WITHHELD: Readonly<Record<string, string>> = {
  */
 const creditWords = (credit: MyHintOutcomes["yourWork"]): string => {
   if (credit.withheld === null && credit.followed !== null) {
-    return `followed ${plural(credit.followed, "time")} — counted once at least ${PEOPLE_MINIMUM} people recorded outcomes about it`;
+    return `followed ${plural(credit.followed, "time")} — counted once, leaving out any one person, at least ${PEOPLE_MINIMUM} people recorded outcomes about it`;
   }
   const withheld = credit.withheld ?? "not_recordable";
   return CREDIT_WITHHELD[withheld] ?? `no count (${bareUntrusted(withheld)})`;
@@ -127,7 +127,8 @@ const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
 const footerLines = (view: MyHintOutcomes): readonly string[] => [
   creditLine(view.yourWork),
   "recorded with your key — by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode); noise is your own label (crosscheck noise)",
-  `only you see this view in full; others see your words only inside totals for a whole past month — the team report's, once at least ${PEOPLE_MINIMUM} people recorded outcomes about at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work, and a teammate's count of how often their work was followed, once at least ${PEOPLE_MINIMUM} people recorded outcomes about it`,
+  "only you see this view in full; others see your words only inside totals for a whole past month: the team report's, and a teammate's count of how often their work was followed",
+  `each is shown only if, leaving out any one person's words, words from at least ${PEOPLE_MINIMUM} people remain — the team report's also about at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work, ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} or more — so a team of three never gets either`,
 ];
 
 export const renderMyOutcomes = (view: MyHintOutcomes): string =>
