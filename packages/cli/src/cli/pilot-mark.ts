@@ -20,10 +20,13 @@ import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import {
   bareUntrusted,
   safeId,
+  sanitizeUntrusted,
 } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import type { MarkCandidate } from "@crosscheck/connector-core/http/pilot.ts";
 import type { PilotMarkRefKind } from "@crosscheck/schema";
+
+import { outcomeWord } from "./outcome-render.ts";
 
 const INDENT = "  ";
 
@@ -64,6 +67,19 @@ export const markRecordedLine = (
 };
 
 /**
+ * WHAT NOW STANDS (07 §13.11, review H2): a noise label said over an outcome —
+ * fresh, or said again over a word recorded since — stands over it now, and
+ * the person is told which word it stands over. Every other answer adds nothing.
+ */
+export const labelStandsLine = (result: {
+  readonly stands?: string | null | undefined;
+  readonly replaced?: string | null | undefined;
+}): string =>
+  result.stands === "noise" && typeof result.replaced === "string" && result.replaced !== "noise"
+    ? `noise now stands over the earlier ${outcomeWord(result.replaced)}, which stays in the history\n`
+    : "";
+
+/**
  * MORE THAN ONE — LISTED, NEVER GUESSED. "The most recent" of several is a
  * guess, and a guessed mark is noise about noise.
  */
@@ -101,9 +117,17 @@ export const refNeverReachedLine = (ref: string): string =>
 export const markFailureLine = (
   kind: "network" | "http" | "malformed",
   message: string,
-): string => {
-  const said = bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);
-  return kind === "network"
-    ? `hub unreachable: ${said} — nothing was recorded\n`
-    : `${said}\n`;
-};
+): string =>
+  kind === "network"
+    ? `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — nothing was recorded\n`
+    : `${hubSentence(message)}\n`;
+
+/**
+ * A HUB'S SENTENCE, PRINTED AS THE WHOLE LINE (round-6 LOW-5): the prose class — invisibles,
+ * renderer-owned characters and instruction-shaped text go, bounded — and its ordinary punctuation
+ * stays. The bare class strips "—", ":" and "·" because a FIELD inside a line must not mint another
+ * field; a sentence that is the whole line has none to mint, and the strip ran its clauses together
+ * ("nothing was recorded say it again"). An unreachable hub's error sits inside this CLI's own line,
+ * so it stays bare.
+ */
+const hubSentence = (message: string): string => sanitizeUntrusted(message, MAX_HUB_MESSAGE_CHARS);

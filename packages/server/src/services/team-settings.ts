@@ -24,15 +24,17 @@
  * with the defaults, and `status` prints the effective values either way, so
  * "what is this team set to" never depends on knowing whether a row exists.
  */
-import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+
+import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   TEAM_PIN_POLICIES,
   TEAM_SUSPECT_ATTRIBUTIONS,
 } from "@crosscheck/schema";
 import type { TeamPinPolicy, TeamSuspectAttribution } from "@crosscheck/schema";
 
-import { teamSettings } from "../db/schema.ts";
-import type { Db } from "../db/client.ts";
+import { pilotEnrolments, teamSettings } from "../db/schema.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 /**
@@ -60,8 +62,9 @@ export interface TeamSettingsView {
    */
   readonly pilotLabelsSince: string | null;
   /**
-   * WHEN OUTCOMES BECAME RECORDABLE (07 §13.9), stamped exactly as
-   * `pilotLabelsSince` is. Every outcome figure starts at it. Null until first enrolled.
+   * WHEN OUTCOMES FIRST BECAME RECORDABLE (07 §13.9): the first enrolment,
+   * never restamped (§13.11, review M3) — when the repo was in the pilot since
+   * is `pilot_enrolments`. Null until first enrolled.
    */
   readonly pilotOutcomesSince: string | null;
   /** Null while the repo has never been configured — the defaults are in use. */
@@ -88,6 +91,17 @@ interface Deps {
   readonly now: Clock;
 }
 
+/** The answer for a repo nobody configured: the defaults, and no instant at all. */
+const defaultSettingsFor = (repo: string): TeamSettingsView => ({
+  repo,
+  pinPolicy: DEFAULT_TEAM_SETTINGS.pinPolicy,
+  suspectAttribution: DEFAULT_TEAM_SETTINGS.suspectAttribution,
+  pilotEnrolled: DEFAULT_TEAM_SETTINGS.pilotEnrolled,
+  pilotLabelsSince: null,
+  pilotOutcomesSince: null,
+  updatedAt: null,
+});
+
 export const readTeamSettings = async (
   deps: Deps,
   repo: string,
@@ -106,15 +120,7 @@ export const readTeamSettings = async (
     .limit(1);
   const row = rows[0];
   if (row === undefined) {
-    return {
-      repo,
-      pinPolicy: DEFAULT_TEAM_SETTINGS.pinPolicy,
-      suspectAttribution: DEFAULT_TEAM_SETTINGS.suspectAttribution,
-      pilotEnrolled: DEFAULT_TEAM_SETTINGS.pilotEnrolled,
-      pilotLabelsSince: null,
-      pilotOutcomesSince: null,
-      updatedAt: null,
-    };
+    return defaultSettingsFor(repo);
   }
   return {
     repo,
@@ -134,16 +140,116 @@ export const readTeamSettings = async (
  * the gap between were never measured — and otherwise kept as it was,
  * leaving included: a team that leaves keeps the record of when it joined.
  */
-const sinceAfter = (
-  stored: string | null,
-  current: TeamSettingsView,
-  nextEnrolled: boolean,
-  now: Date,
-): Date | null => {
-  if (nextEnrolled && !current.pilotEnrolled) {
+const sinceAfter = (stored: string | null, wasEnrolled: boolean, nextEnrolled: boolean, now: Date): Date | null => {
+  if (nextEnrolled && !wasEnrolled) {
     return now;
   }
   return stored === null ? null : new Date(stored);
+};
+
+type SettingsLockRow = {
+  readonly pin_policy: TeamPinPolicy;
+  readonly suspect_attribution: TeamSuspectAttribution;
+  readonly pilot_enrolled: boolean;
+  readonly pilot_labels_since: string | Date | null;
+  readonly pilot_outcomes_since: string | Date | null;
+  readonly updated_at: string | Date;
+};
+
+const isoOrNull = (value: string | Date | null): string | null => (value === null ? null : new Date(value).toISOString());
+
+/**
+ * WHAT A WRITE STARTS FROM — the whole settings row, read under its lock
+ * inside the write's own transaction (reviews LOW, round-5 LOW-1): two writes
+ * at once each start from what the other committed, never from a read made
+ * before either began — a write naming no enrolment once carried a stale
+ * `pilot_labels_since` (null) over the toggle beside it (P4). PGlite has one
+ * connection, so the lock is pinned by the SQL this issues, not by a race.
+ */
+export const readSettingsForUpdate = async (tx: DbExecutor, repo: string): Promise<TeamSettingsView> => {
+  // round-6 LOW-4: a repo's first two writes found no row to lock, and on real Postgres both went on
+  // from the defaults. The defaults row goes in first: the second writer waits on it, then locks the
+  // row the first committed. (The write's upsert overwrites it, its instant included.)
+  await tx.execute(sql`INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at)
+    VALUES (${repo}, ${DEFAULT_TEAM_SETTINGS.pinPolicy}, ${DEFAULT_TEAM_SETTINGS.suspectAttribution}, ${DEFAULT_TEAM_SETTINGS.pilotEnrolled}, now())
+    ON CONFLICT (repo) DO NOTHING`);
+  const rows = await tx.execute<SettingsLockRow>(
+    sql`SELECT pin_policy, suspect_attribution, pilot_enrolled, pilot_labels_since, pilot_outcomes_since, updated_at FROM team_settings WHERE repo = ${repo} FOR UPDATE`,
+  );
+  const row = rows.rows[0];
+  if (row === undefined) {
+    return defaultSettingsFor(repo);
+  }
+  return {
+    repo,
+    pinPolicy: row.pin_policy,
+    suspectAttribution: row.suspect_attribution,
+    pilotEnrolled: row.pilot_enrolled,
+    pilotLabelsSince: isoOrNull(row.pilot_labels_since),
+    pilotOutcomesSince: isoOrNull(row.pilot_outcomes_since),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+};
+
+/**
+ * WHEN OUTCOMES FIRST BECAME RECORDABLE, after this write (07 §13.11, review
+ * M3): the first enrolment's instant, kept for ever. A re-enrolment opens a
+ * new interval instead — restamping here erased everything recorded before it.
+ */
+const firstEnrolledAt = (stored: string | null, nextEnrolled: boolean, now: Date): Date | null => {
+  if (stored !== null) {
+    return new Date(stored);
+  }
+  return nextEnrolled ? now : null;
+};
+
+/**
+ * Opens an interval when enrolment turns on, closes the open one when it turns off — never rewrites one.
+ * No conflict is swallowed: a second open interval is the partial unique index's to refuse, loudly.
+ */
+const recordEnrolmentChange = async (
+  db: DbExecutor,
+  repo: string,
+  wasEnrolled: boolean,
+  isEnrolled: boolean,
+  now: Date,
+): Promise<void> => {
+  if (isEnrolled && !wasEnrolled) {
+    await db.insert(pilotEnrolments).values({ id: `pe_${randomUUID()}`, repo, startedAt: now, endedAt: null });
+  }
+  if (!isEnrolled && wasEnrolled) {
+    // round-6 LOW-2: a wall clock that stepped back past the interval's start closes it at its start —
+    // zero length, never ending before it began (the CHECK refused that, and leaving was a 500)
+    await db
+      .update(pilotEnrolments)
+      .set({ endedAt: sql`GREATEST(${now.toISOString()}::timestamptz, ${pilotEnrolments.startedAt})` })
+      .where(and(eq(pilotEnrolments.repo, repo), isNull(pilotEnrolments.endedAt)));
+  }
+};
+
+/**
+ * ANOTHER ENROLMENT WON THE RACE (round-5 LOW-10). Two first enrolments of a
+ * repo with no settings row yet have no row to lock, so both open an interval;
+ * the partial unique index refuses the second. That is the right outcome — the
+ * repo is enrolled once — and the loser is told so in a sentence, not a 500.
+ */
+export class ConcurrentEnrolmentError extends Error {
+  constructor() {
+    super("another enrolment of this repo landed at the same moment");
+    this.name = "ConcurrentEnrolmentError";
+  }
+}
+
+const ONE_OPEN_INDEX = "pilot_enrolments_one_open_idx";
+const UNIQUE_VIOLATION = "23505";
+
+/** Whether an error, or one it wraps, is the one-open-interval index refusing a second open interval. */
+const isSecondOpenInterval = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const fields = error as { code?: unknown; constraint?: unknown; cause?: unknown };
+  return (fields.code === UNIQUE_VIOLATION && fields.constraint === ONE_OPEN_INDEX) || isSecondOpenInterval(fields.cause);
 };
 
 export interface WriteTeamSettingsInput {
@@ -162,20 +268,47 @@ export const writeTeamSettings = async (
   deps: Deps,
   input: WriteTeamSettingsInput,
 ): Promise<TeamSettingsView> => {
-  const current = await readTeamSettings(deps, input.repo);
-  const now = deps.now();
-  const pilotEnrolled = input.pilotEnrolled ?? current.pilotEnrolled;
-  const next = {
-    repo: input.repo,
-    pinPolicy: input.pinPolicy ?? current.pinPolicy,
-    suspectAttribution: input.suspectAttribution ?? current.suspectAttribution,
-    pilotEnrolled,
-    pilotLabelsSince: sinceAfter(current.pilotLabelsSince, current, pilotEnrolled, now),
-    // 07 §13.9: the same consent, the same instant — outcomes are measurement too.
-    pilotOutcomesSince: sinceAfter(current.pilotOutcomesSince, current, pilotEnrolled, now),
-    updatedAt: now,
+  try {
+    return await writeSettingsOnce(deps, input);
+  } catch (error) {
+    throw isSecondOpenInterval(error) ? new ConcurrentEnrolmentError() : error;
+  }
+};
+
+const writeSettingsOnce = async (deps: Deps, input: WriteTeamSettingsInput): Promise<TeamSettingsView> => {
+  const next = await deps.db.transaction(async (tx) => {
+    // reviews LOW, round-5 LOW-1: the whole row this write starts from is read under its lock,
+    // here, and `now` is taken after the lock, so no instant predates the write it is part of
+    const current = await readSettingsForUpdate(tx, input.repo);
+    const now = deps.now();
+    const wasEnrolled = current.pilotEnrolled;
+    const pilotEnrolled = input.pilotEnrolled ?? wasEnrolled;
+    const row = {
+      repo: input.repo,
+      pinPolicy: input.pinPolicy ?? current.pinPolicy,
+      suspectAttribution: input.suspectAttribution ?? current.suspectAttribution,
+      pilotEnrolled,
+      pilotLabelsSince: sinceAfter(current.pilotLabelsSince, wasEnrolled, pilotEnrolled, now),
+      // 07 §13.9, §13.11: the first consent's instant, kept; a re-enrolment is a new interval.
+      pilotOutcomesSince: firstEnrolledAt(current.pilotOutcomesSince, pilotEnrolled, now),
+      updatedAt: now,
+    };
+    await upsertSettings(tx, row);
+    await recordEnrolmentChange(tx, input.repo, wasEnrolled, pilotEnrolled, now);
+    return row;
+  });
+  return {
+    ...next,
+    pilotLabelsSince: next.pilotLabelsSince?.toISOString() ?? null,
+    pilotOutcomesSince: next.pilotOutcomesSince?.toISOString() ?? null,
+    updatedAt: next.updatedAt.toISOString(),
   };
-  await deps.db
+};
+
+type SettingsRow = typeof teamSettings.$inferInsert;
+
+const upsertSettings = async (tx: DbExecutor, next: SettingsRow): Promise<void> => {
+  await tx
     .insert(teamSettings)
     .values(next)
     .onConflictDoUpdate({
@@ -189,10 +322,4 @@ export const writeTeamSettings = async (
         updatedAt: next.updatedAt,
       },
     });
-  return {
-    ...next,
-    pilotLabelsSince: next.pilotLabelsSince?.toISOString() ?? null,
-    pilotOutcomesSince: next.pilotOutcomesSince?.toISOString() ?? null,
-    updatedAt: next.updatedAt.toISOString(),
-  };
 };

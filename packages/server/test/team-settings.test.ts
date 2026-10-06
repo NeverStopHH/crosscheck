@@ -16,7 +16,13 @@
  * to" depends on knowing whether anybody ever pressed the switch.
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+
+import type { DbExecutor } from "../src/db/client.ts";
+import { readSettingsForUpdate, writeTeamSettings } from "../src/services/team-settings.ts";
 
 import {
   addTestDeveloperWithSession,
@@ -304,6 +310,113 @@ describe("pilot enrolment", () => {
     expect(afterOtherWrite.pilotLabelsSince).toBe(enrolledAt);
     expect(afterLeaving.pilotLabelsSince).toBe(enrolledAt);
     expect(afterRejoining.pilotLabelsSince).toBe(harness.clock.now().toISOString());
+  });
+
+  test("review LOW: what a write starts from — the whole settings row — is read under the row's lock", async () => {
+    // Arrange — PGlite has one connection, so two racing writers cannot be staged to wait on the
+    // lock; what is pinned is the SQL the write reads with: the whole row, FOR UPDATE, in its transaction
+    const issued: SQL[] = [];
+    const executor = {
+      execute: async (query: SQL) => {
+        issued.push(query);
+        return await Promise.resolve({
+          rows: [
+            {
+              pin_policy: "anyone",
+              suspect_attribution: "sessions",
+              pilot_enrolled: true,
+              pilot_labels_since: "2026-07-24T09:00:00.000Z",
+              pilot_outcomes_since: "2026-07-24T09:00:00.000Z",
+              updated_at: "2026-07-24T09:00:00.000Z",
+            },
+          ],
+        });
+      },
+    } as unknown as DbExecutor;
+
+    // Act
+    const current = await readSettingsForUpdate(executor, REPO);
+
+    // Assert
+    expect(current).toMatchObject({ pilotEnrolled: true, pilotLabelsSince: "2026-07-24T09:00:00.000Z" });
+    // round-6 LOW-4: on real Postgres a repo's first two writes found no row to lock; the defaults row
+    // goes in first, so the second writer waits on it and then locks what the first committed
+    expect(issued.map((query) => new PgDialect().sqlToQuery(query).sql.replace(/\s+/g, " "))).toEqual([
+      "INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at) VALUES ($1, $2, $3, $4, now()) ON CONFLICT (repo) DO NOTHING",
+      "SELECT pin_policy, suspect_attribution, pilot_enrolled, pilot_labels_since, pilot_outcomes_since, updated_at FROM team_settings WHERE repo = $1 FOR UPDATE",
+    ]);
+  });
+
+  test("round-6 LOW-4: a repo's first write leaves exactly the row it wrote, its defaults overwritten", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+
+    // Act
+    await writeSettings(harness, TEST_ADMIN_TOKEN, { pinPolicy: "touched_files" });
+    const rows = await harness.db.execute(
+      sql`SELECT pin_policy AS p, suspect_attribution AS s, pilot_enrolled AS e, updated_at = ${harness.clock.now().toISOString()}::timestamptz AS u FROM team_settings WHERE repo = ${REPO}`,
+    );
+
+    // Assert — one row, the write's own instant, not the database's
+    expect(rows.rows).toEqual([{ p: "touched_files", s: "sessions", e: false, u: true }]);
+  });
+
+  test("round-5 LOW-10: an enrolment that lost a race to another gets a sentence, not a 500", async () => {
+    // Arrange — the state the losing writer meets: no settings row yet (nothing to lock), and
+    // the winning writer's open interval already committed
+    const harness = await createTestHarness();
+    await harness.db.execute(sql`INSERT INTO pilot_enrolments (id, repo, started_at, ended_at)
+      VALUES ('pe_winner', ${REPO}, ${harness.clock.now().toISOString()}, NULL)`);
+
+    // Act
+    const response = await harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled: true }),
+    );
+    const body = (await response.json()) as { error: { code: string; message: string } };
+
+    // Assert — said, and nothing half-written: still exactly one open interval
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("concurrent_enrolment");
+    expect(body.error.message).toContain("at the same moment");
+    const open = await harness.db.execute(sql`SELECT count(*)::int AS n FROM pilot_enrolments WHERE ended_at IS NULL`);
+    expect(open.rows).toEqual([{ n: 1 }]);
+  });
+
+  test("review LOW (P4): two writes at once — the one naming no enrolment keeps when labels became available", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const deps = { db: harness.db, now: harness.clock.now };
+
+    // Act — PGlite queues the two transactions; the second used to start from a read made before the first
+    await Promise.all([
+      writeTeamSettings(deps, { repo: REPO, pilotEnrolled: true }),
+      writeTeamSettings(deps, { repo: REPO }),
+    ]);
+    const row = await harness.db.execute(
+      sql`SELECT pilot_enrolled AS e, pilot_labels_since IS NOT NULL AS l FROM team_settings`,
+    );
+
+    // Assert
+    expect(row.rows).toEqual([{ e: true, l: true }]);
+  });
+
+  test("round-6 LOW-2 (D4): a toggle off whose wall clock stepped back past the open interval's start closes it at its start", async () => {
+    // Arrange — enrolled at .005; the host's clock then steps back (NTP) to .001
+    const harness = await createTestHarness();
+    let at = new Date("2026-09-02T09:00:00.005Z");
+    const deps = { db: harness.db, now: () => at };
+    await writeTeamSettings(deps, { repo: REPO, pilotEnrolled: true });
+    at = new Date("2026-09-02T09:00:00.001Z");
+
+    // Act — before: the CHECK refused the close, and leaving the pilot was a 500
+    await writeTeamSettings(deps, { repo: REPO, pilotEnrolled: false });
+
+    // Assert — a zero-length interval, never one that ends before it starts
+    const rows = await harness.db.execute(
+      sql`SELECT started_at::text AS s, ended_at::text AS e FROM pilot_enrolments`,
+    );
+    expect(rows.rows).toEqual([{ s: "2026-09-02 09:00:00.005+00", e: "2026-09-02 09:00:00.005+00" }]);
   });
 });
 

@@ -179,7 +179,10 @@ CREATE TABLE IF NOT EXISTS hint_deliveries (
   -- measurement the pilot report exists to take.
   channel text NOT NULL DEFAULT 'unknown',
   delivered_at timestamptz NOT NULL,
-  pulled_at timestamptz
+  pulled_at timestamptz,
+  -- WHEN THE HUB RECEIVED IT (07 13.11, review P5), by the hub's clock: a
+  -- closed month is read by it, so a late backlog never moves the month.
+  ingested_at timestamptz
 );
 
 -- ── Search block (DESIGN.md §6) ─────────────────────────────────────────────
@@ -1146,6 +1149,9 @@ ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
 -- attributed to either. Nothing is back-filled, and the report prints
 -- 'unknown' as its own bucket rather than folding it into a guess.
 ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown';
+-- 07 13.11 (review P5): rows from before the column stay NULL and are read by
+-- delivered_at; every new row is stamped by the hub at ingest.
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS ingested_at timestamptz;
 
 -- The same column for a hub that already has the table. 07 3.6 found this
 -- missing: the spec's migration list named four new tables and one pins
@@ -1174,6 +1180,62 @@ UPDATE team_settings SET pilot_labels_since = now()
 ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_outcomes_since timestamptz;
 UPDATE team_settings SET pilot_outcomes_since = now()
   WHERE pilot_enrolled AND pilot_outcomes_since IS NULL;
+
+-- WHEN EACH REPO WAS IN THE PILOT (07 13.11, review M3): one row per enrolled
+-- interval, opened when enrolment turns on and closed when it turns off,
+-- never rewritten. An outcome is recordable and counted iff its delivery falls
+-- inside one, so a pause and a re-enrolment never erase the history before them.
+-- Keyed by its own id (review LOW): off and on again in one millisecond is a
+-- closed zero-length interval AND an open one at the same instant.
+CREATE TABLE IF NOT EXISTS pilot_enrolments (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  started_at timestamptz NOT NULL,
+  ended_at timestamptz,
+  -- review M-3: bounds an upgrade inferred from what was recorded, not a toggle's instant
+  reconstructed boolean NOT NULL DEFAULT false
+);
+-- A hub that ran the round-3 bootstrap has this table keyed by (repo, started_at), with no id
+-- (review MEDIUM-1): give every row an id of its own and make it the key. Guarded, so a hub
+-- already on this shape skips it, and idempotent, so a second start changes nothing.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'pilot_enrolments' AND column_name = 'id'
+  ) THEN
+    ALTER TABLE pilot_enrolments ADD COLUMN id text;
+    UPDATE pilot_enrolments SET id = 'pe_' || gen_random_uuid()::text WHERE id IS NULL;
+    ALTER TABLE pilot_enrolments DROP CONSTRAINT IF EXISTS pilot_enrolments_pkey;
+    ALTER TABLE pilot_enrolments ADD PRIMARY KEY (id);
+  END IF;
+END $$;
+ALTER TABLE pilot_enrolments ADD COLUMN IF NOT EXISTS reconstructed boolean NOT NULL DEFAULT false;
+-- An interval never ends before it starts (round-5 LOW-1), a database fact; added once to a
+-- table that predates it (ADD CONSTRAINT has no IF NOT EXISTS). Round-6 MEDIUM-1: an older hub
+-- can hold rows the old now-before-lock race closed before they opened, and the whole bootstrap
+-- is one statement, so one such row kept the hub from starting at all. Repair them first —
+-- closed at their own start, marked as rebuilt — then add the CHECK and validate it.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pilot_enrolments_ends_after_start'
+                 AND conrelid = 'pilot_enrolments'::regclass) THEN
+    UPDATE pilot_enrolments SET ended_at = started_at, reconstructed = true WHERE ended_at < started_at;
+    ALTER TABLE pilot_enrolments ADD CONSTRAINT pilot_enrolments_ends_after_start
+      CHECK (ended_at IS NULL OR ended_at >= started_at) NOT VALID;
+    ALTER TABLE pilot_enrolments VALIDATE CONSTRAINT pilot_enrolments_ends_after_start;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS pilot_enrolments_repo_started_idx ON pilot_enrolments (repo, started_at);
+-- Round-6 MEDIUM-1: a round-3 race (two "on"s that both read not-enrolled) could leave two open
+-- intervals, and the index below would refuse to build. Keep the earliest open; close each later
+-- one at its own start, marked as rebuilt. With the index in place this matches nothing.
+UPDATE pilot_enrolments pe SET ended_at = pe.started_at, reconstructed = true
+  WHERE pe.ended_at IS NULL AND EXISTS (
+    SELECT 1 FROM pilot_enrolments o WHERE o.repo = pe.repo AND o.ended_at IS NULL AND o.started_at < pe.started_at);
+-- At most one open interval per repo: a second "on" fails loudly, never doubles.
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;
+-- (The upgrade backfill of this table runs below, once hint_outcomes exists: it reads the words.)
 
 -- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
 
@@ -1252,9 +1314,18 @@ CREATE TABLE IF NOT EXISTS hint_outcomes (
   reason text,
   recorded_by text NOT NULL REFERENCES developers(id),
   created_at timestamptz NOT NULL,
+  -- 07 13.12: which channel said it, stamped by the hub from the route, never
+  -- from a body ('person' = crosscheck followed/overrode, 'agent' = the MCP
+  -- tool). A person's word is never overturned by an agent's. NULL = older row.
+  recorded_via text,
   CONSTRAINT hint_outcomes_reason_length_check
-    CHECK (reason IS NULL OR char_length(reason) <= 200)
+    CHECK (reason IS NULL OR char_length(reason) <= 200),
+  CONSTRAINT hint_outcomes_recorded_via_check
+    CHECK (recorded_via IS NULL OR recorded_via IN ('agent', 'person'))
 );
+-- 07 13.12: a hub whose hint_outcomes predates the channel gains it, its rows
+-- left NULL (read as an agent's word: never outranking a person's).
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS recorded_via text;
 
 CREATE INDEX IF NOT EXISTS hint_outcomes_delivery_created_idx
   ON hint_outcomes (delivery_id, created_at DESC);
@@ -1262,6 +1333,60 @@ CREATE INDEX IF NOT EXISTS hint_outcomes_delivery_created_idx
 -- from the reaper's pass across every repo — an index range, never a scan.
 CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx
   ON hint_outcomes (created_at);
+
+-- THE PERSON SAYING NOISE AGAIN (07 13.11, review H-B). pilot_marks keeps one
+-- label per person and delivery, the first being what precision counts; a later
+-- "noise" over a word recorded since is a new row here, never a restamped label,
+-- so no closed month that read the label ever moves. Precision never reads it.
+CREATE TABLE IF NOT EXISTS noise_reassertions (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  delivery_id text NOT NULL REFERENCES hint_deliveries(id),
+  marked_by text NOT NULL REFERENCES developers(id),
+  -- keep in sync with MAX_PILOT_LABEL_REASON_CHARS in @crosscheck/schema
+  reason text,
+  created_at timestamptz NOT NULL,
+  CONSTRAINT noise_reassertions_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200)
+);
+CREATE INDEX IF NOT EXISTS noise_reassertions_delivery_created_idx
+  ON noise_reassertions (delivery_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS noise_reassertions_created_idx
+  ON noise_reassertions (created_at);
+
+-- An upgraded hub keeps the enrolment it already had as the first interval,
+-- from its earliest PROVEN instant of outcomes being recordable (07 §13.12
+-- M-3, §13.13 HIGH-2) — open while the repo is enrolled; for one that left,
+-- closed at its last proven enrolled instant, its newest outcome or label —
+-- never its last settings write, which is when it left at the latest. A bound
+-- inferred from what was recorded, rather than the stamp itself, is marked
+-- reconstructed. Once per repo.
+INSERT INTO pilot_enrolments (id, repo, started_at, ended_at, reconstructed)
+  SELECT 'pe_' || gen_random_uuid()::text, b.repo, b.started_at,
+         CASE WHEN b.enrolled THEN NULL ELSE GREATEST(b.started_at, b.last_word) END,
+         (b.started_at < b.recordable OR NOT b.enrolled)
+  FROM (
+    SELECT ts.repo, ts.pilot_enrolled AS enrolled, ts.pilot_outcomes_since AS recordable,
+           LEAST(
+             -- the stamp: when this hub first let outcomes be recorded here (an older hub
+             -- restamped it at a re-enrolment, so it can be later than what it recorded)
+             ts.pilot_outcomes_since,
+             -- an outcome is proof: a hub accepted one only while outcomes were recordable here
+             (SELECT min(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
+             -- and so is its delivery: a hub accepted an outcome only for a delivery from on or
+             -- after the stamp it had then, so that delivery was inside a recordable span (this
+             -- term is never later than the one above; both are kept as stated proof)
+             (SELECT min(d.delivered_at) FROM hint_outcomes o JOIN hint_deliveries d ON d.id = o.delivery_id
+              WHERE o.repo = ts.repo)
+             -- NEVER a pilot_marks label: a 0.10 hub took labels long before any outcome was
+             -- recordable, so the first label proves enrolment, not recordability (HIGH-2, P2)
+           ) AS started_at,
+           GREATEST((SELECT max(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
+                    (SELECT max(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS last_word
+    FROM team_settings ts
+    WHERE ts.pilot_outcomes_since IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo)
+  ) b;
 
 -- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
 -- nothing and its window ends NOW, so an answer cannot be reconstructed later

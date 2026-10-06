@@ -8256,8 +8256,8 @@ export const MUTATIONS: readonly Mutation[
     label: "an agent gets to grade its own homework",
     file: `${SERVER}/src/services/pilot.ts`,
     from:
-      "      captureMode: HUMAN_CAPTURE_MODE,\n      createdAt: deps.now(),",
-    to: '      captureMode: "auto",\n      createdAt: deps.now(),',
+      "  captureMode: HUMAN_CAPTURE_MODE,\n  createdAt,",
+    to: '  captureMode: "auto",\n  createdAt,',
     test: `${SERVER}/test/pilot-marks.test.ts`,
     because:
       "the trust label on the pilot's only human input stops saying a human " +
@@ -8812,8 +8812,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2. "This machine" is the live state files, not every session the caller has.
     label: "noise reaches past this machine's live sessions",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "    sessions,\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,",
-    to: "    sessions: [],\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,",
+    from: "    sessions,\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n",
+    to: "    sessions: [],\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "the delivery beside the person loses to a newer one on their other laptop, " +
@@ -8823,8 +8823,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2. With no id, only the last NOISE_MARK_WINDOW_MINUTES.
     label: "noise with no id reaches back past the hour",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n  });",
-    to: "  });",
+    from: "    sessions,\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n",
+    to: "    sessions,\n",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "a ninety-minute-old pointer is marked as the one that just happened, which " +
@@ -8845,8 +8845,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2, D3. An agent marking the product's interventions is the product grading itself.
     label: "an agent can mark noise",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "  if (!isInteractive()) {",
-    to: "  if (!isInteractive() && id === \"never\") {",
+    from: "  if (!gate.isPerson) {",
+    to: "  if (!gate.isPerson && id === \"never\") {",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "the pilot's only human signal can be written by the model it measures, so " +
@@ -8867,8 +8867,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2, D5. "The check passed" is a human's word or nothing.
     label: "an agent can say a pin's check passed",
     file: `${CLI}/src/cli/pin.ts`,
-    from: "  if (!isInteractive()) {\n    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };\n  }\n  const result = await postPilotMark(",
-    to: "  if (!isInteractive() && pinId === \"never\") {\n    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };\n  }\n  const result = await postPilotMark(",
+    from: "  if (!gate.isPerson) {\n    return agentRefused(gate);\n  }\n  const result = await postPilotMark(",
+    to: "  if (!gate.isPerson && pinId === \"never\") {\n    return agentRefused(gate);\n  }\n  const result = await postPilotMark(",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "an agent vouches that a surface works on a human's behalf, the exact hole " +
@@ -10426,8 +10426,8 @@ export const MUTATIONS: readonly Mutation[
     // Key rotation. A person at a terminal, never an agent.
     label: "an agent can rotate the key and read the new one",
     file: `${CLI}/src/cli/key.ts`,
-    from: "  if (!isInteractive()) {",
-    to: "  if (!isInteractive() && rest.length < 0) {",
+    from: "  if (!gate.isPerson) {",
+    to: "  if (!gate.isPerson && rest.length < 0) {",
     test: `${CLI}/test/key-rotate.test.ts`,
     because:
       "an agent's Bash call rotates the developer's key and prints a live key into its own transcript",
@@ -14346,8 +14346,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §12, PIL-6, D3. The same gate as `pin` and `noise`.
     label: "an agent can label the product's own interventions",
     file: `${CLI}/src/cli/pilot-label.ts`,
-    from: "  if (!isInteractive()) {",
-    to: "  if (!isInteractive() && cwd === \"\") {",
+    from: "  if (!gate.isPerson) {",
+    to: "  if (!gate.isPerson && cwd === \"\") {",
     test: `${CLI}/test/pilot-label-cli.test.ts`,
     because:
       "the model a precision figure measures can write the verdicts it is " +
@@ -14600,7 +14600,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "enrolling never stamps when labels became available",
     file: `${SERVER}/src/services/team-settings.ts`,
-    from: "  if (nextEnrolled && !current.pilotEnrolled) {",
+    from: "  if (nextEnrolled && !wasEnrolled) {",
     to: "  if (false) {",
     test: `${SERVER}/test/team-settings.test.ts`,
     because:
@@ -18251,8 +18251,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "saying the same outcome twice writes a second row",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "  if (current !== undefined && current.outcome === input.outcome && current.reason === input.reason) {",
-    to: "  if (false) {",
+    from: "    if (isRepeat(words, input)) {",
+    to: "    if (false) {",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "an agent retrying its call doubles the history and the answer never says it was already recorded",
   },
@@ -18282,15 +18282,15 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the oldest outcome of a delivery stands instead of the newest",
-    file: `${SERVER}/src/services/hint-outcome-view.ts`,
-    from: "      ORDER BY o.created_at DESC, o.id DESC LIMIT 1",
-    to: "      ORDER BY o.created_at ASC, o.id ASC LIMIT 1",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.by_person DESC, spoken.at ASC, spoken.is_label DESC, spoken.id ASC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "a changed mind is never shown: the view keeps the first word, append-only reads as frozen",
   },
   {
     label: "the person's noise label is not read as noise in their own view",
-    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    file: `${SERVER}/src/services/outcome-population.ts`,
     from: "      AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS}",
     to: "      AND m.marked_by = so.recipient AND m.mark IN ('helpful')",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
@@ -18298,9 +18298,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a later noise label does not supersede an earlier outcome",
-    file: `${SERVER}/src/services/hint-outcome-view.ts`,
-    from: "      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'",
-    to: "      CASE WHEN noise_at IS NOT NULL AND outcome_at IS NULL THEN 'noise'",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.is_label ASC, spoken.by_person DESC, spoken.at DESC, spoken.id DESC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "the person's own verdict is overruled by whatever their agent said first",
   },
@@ -18315,8 +18315,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a source's credit counts an override as a follow",
     file: `${SERVER}/src/services/hint-outcome-view.ts`,
-    from: "    WHERE st.source_id = ${input.developerId} AND st.state = 'followed'`);",
-    to: "    WHERE st.source_id = ${input.developerId}`);",
+    from: "    followed: withheld === null ? aggregate.followed : null,\n",
+    to: "    followed: withheld === null ? aggregate.followed + aggregate.overrode : null,\n",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "Ken is told his work was followed when a teammate deliberately went another way",
   },
@@ -18516,16 +18516,18 @@ export const MUTATIONS: readonly Mutation[
   // ── 07 §13.9, D-O5: the team report's outcomes line ───────────────────────
   {
     label: "a delivery from before outcomes were recordable counts as unmarked",
-    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    file: `${SERVER}/src/services/outcome-population.ts`,
     from: "  return recordable.getTime() > windowStart.getTime() ? recordable : windowStart;",
     to: "  return windowStart;",
-    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
-    because: "every upgraded hub reports weeks of history as unmarked — the H1 error, measured as silence",
+    // round 4: since the enrolment intervals, whileEnrolled drops a pre-enrolment delivery from the
+    // counts; what this floor still decides is the window --mine says it covers
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "--mine claims a window weeks older than anything that could have been recorded in it",
   },
   {
     label: "enrolment does not stamp when outcomes became recordable",
     file: `${SERVER}/src/services/team-settings.ts`,
-    from: "    pilotOutcomesSince: sinceAfter(current.pilotOutcomesSince, current, pilotEnrolled, now),",
+    from: "    pilotOutcomesSince: firstEnrolledAt(current.pilotOutcomesSince, pilotEnrolled, now),",
     to: "    pilotOutcomesSince: current.pilotOutcomesSince === null ? null : new Date(current.pilotOutcomesSince),",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "a newly enrolled repo has no instant, so its outcome figures count nothing for ever",
@@ -18541,34 +18543,34 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the team report's outcome line counts nobody's interventions",
     file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
-    from: "    ${deliveryStates(input.repo, since, sql`true`)}",
-    to: "    ${deliveryStates(input.repo, since, sql`false`)}",
+    from: "    who: sql`true`,",
+    to: "    who: sql`false`,",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the per-repo line reads 'no intervention reached anyone' on a repo full of them",
   },
   {
     label: "an older hub's report reads as zero outcomes",
     file: `${CORE}/src/http/pilot.ts`,
-    from: "      unmarked: CountSchema,\n    })\n    .optional(),",
-    to: "      unmarked: CountSchema,\n    })\n    .default({ sinceIso: null, interventions: 0, followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 }),",
+    from: "  outcomes: z.unknown().transform(readOutcomeBlock).optional(),",
+    to: '  outcomes: z.unknown().transform(readOutcomeBlock).default({ periodStartIso: "", periodEndIso: "", recordableSinceIso: null, countedFromIso: null, withheld: null, figures: { interventions: 0, followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 } }),',
     test: `${CORE}/test/pilot-client.test.ts`,
     because: "a hub that records no outcomes looks like a team whose hints led to nothing",
   },
   {
     label: "the outcomes line prints per-100 figures over no intervention",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: "  if (outcomes.interventions === 0) {",
-    to: "  if (false) {",
+    from: "  const figures = block.withheld === null && block.figures !== null && block.figures.interventions > 0 ? block.figures : null;",
+    to: "  const figures = block.withheld === null ? block.figures : null;",
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "an empty population prints NaN or 0.0 as if somebody had measured it",
   },
   {
     label: "the outcomes line stops saying it is a floor",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: " — a FLOOR: only what agents and people chose to record; no target, nobody named`",
-    to: "`",
+    from: 'const RECORDED_ARE_FLOORS = " (FLOORS: only what agents and people chose to record)";',
+    to: 'const RECORDED_ARE_FLOORS = "";',
     test: `${CLI}/test/pilot-render.test.ts`,
-    because: "an unmarked share reads as hints nobody followed, when it is only hints nobody recorded",
+    because: "a followed share reads as how often hints were followed, when it is only how often somebody said so",
   },
   // ── 07 §13.9, D-O6: outcomes under the pilot's retention ──────────────────
   {
@@ -18590,8 +18592,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the registry's declared outcome lifetime drifts from the prune's",
     file: `${SERVER}/src/services/retention-registry.ts`,
-    from: "    ownRetentionDays: PILOT_RETENTION_DAYS,",
-    to: "    ownRetentionDays: PILOT_RETENTION_DAYS * 2,",
+    from: "    // an outcome, so deleting one at this bound strands nothing (01a, principle 6).\n    ownRetentionDays: PILOT_RETENTION_DAYS,",
+    to: "    // an outcome, so deleting one at this bound strands nothing (01a, principle 6).\n    ownRetentionDays: PILOT_RETENTION_DAYS * 2,",
     test: `${SERVER}/test/hint-outcome-retention.test.ts`,
     because: "the registry says one bound and the reaper deletes at another — no positive proof either way",
   },
@@ -20076,6 +20078,1812 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/doc-upgrade-stamp.test.ts`,
     because: "paging the stamp frees no request: the pages run back to back and hold the loop as long as one UPDATE did",
   },
+  // ── 07 §13.10, review #4: no subtraction singles somebody out ────────────
+  {
+    label: "two people's outcomes print as a team figure",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    aggregate.recorders - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders &&",
+    to: "    true &&",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the team total minus one's own --mine is the other person's exact outcomes",
+  },
+  {
+    label: "outcomes about one or two people's work print as a team figure",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    (!checks.sources || aggregate.sourcesWithoutAnyOne >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) &&",
+    to: "    true &&",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the author whose work every hint pointed at reads the team line as the overrides of their own work",
+  },
+  {
+    label: "a handful of recorded outcomes prints as a team figure",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    (!checks.recorded || aggregate.wordsWithoutLargest >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded);",
+    to: "    true;",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "with a few words in the month, one person's change of mind is one visible step in the figure",
+  },
+  {
+    label: "a word changed after the month moves the month's team figure",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "          AND o.recorded_by = la.recipient ${before(sql`o.created_at`, until)}",
+    to: "          AND o.recorded_by = la.recipient",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "reading the closed month before and after a teammate switches a word shows which word they switched",
+  },
+  {
+    label: "the report's days steps the team outcome line's window",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "        now: until,",
+    to: "        now: since,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "stepping --days a day at a time isolates one day's deliveries and so one person's words",
+  },
+  {
+    label: "the client prints figures the hub withheld",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "  .refine((block) => (block.withheld === null) === (block.figures !== null), {",
+    to: "  .refine(() => true, {",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because: "a hub that sends numbers beside 'withheld' has them printed as if the minimums were met",
+  },
+  // ── 07 §13.10, review #10: the source credit leaks nothing ────────────────
+  {
+    label: "a teammate's credit counts one or two recipients' words",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });",
+    to: '  const withheld = aggregate.interventions === 0 ? "no_interventions" : null;',
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "with two recipients the author's count drops by one the moment one of them switches to overrode",
+  },
+  {
+    label: "a word changed after the month moves a teammate's credit",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    until: period.end,",
+    to: "    until: now,",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the author reads the count before and after and learns which teammate overrode their work",
+  },
+  {
+    label: "the client prints a credit the hub withheld",
+    file: `${CORE}/src/http/hint-outcomes.ts`,
+    from: "  .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {",
+    to: "  .refine(() => true, {",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "a hub that sends a number beside 'withheld' has it printed as if the minimum were met",
+  },
+  {
+    label: "a credit over no hint reads as 'followed 0 times'",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums:",
+    to: "const BELOW_MINIMUMS_CREDIT = `followed 0 times — below the disclosure minimums:",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a month nobody was shown the work reads as a month everybody went another way",
+  },
+  // ── 07 §13.10, review #13: the right date for the right reason ──────────
+  {
+    label: "the outcome line names the month's start as when outcomes became recordable",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (block.countedFromIso === null || block.countedFromIso === block.periodStartIso) {",
+    to: "  if (block.countedFromIso === null) {",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a repo enrolled in July reads as one that could record nothing before the first of September",
+  },
+  {
+    label: "a clipped month names the wrong day as where counting starts",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  return `, counted from ${isoDay(block.countedFromIso)}, ${why}`;",
+    to: "  return `, counted from ${isoDay(block.periodStartIso)}, ${why}`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the enrolment instant is replaced by the month's first day, the review's window-start error",
+  },
+  {
+    label: "a month before enrolment names its own start as the enrolment day",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    : `outcomes became recordable here on ${isoDay(since)}`;",
+    to: "    : `outcomes became recordable here on ${isoDay(block.periodStartIso)}`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the line dates enrolment a month early, to a day nothing could be recorded on",
+  },
+  {
+    label: "the hub reports the month's start as where outcome counting starts",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    countedFromIso: span.from.toISOString(),",
+    to: "    countedFromIso: period.start.toISOString(),",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "every client prints the first of the month as when outcomes became recordable",
+  },
+  // ── 07 §13.10, review #11: a repeat reports what stands ──────────────────
+  {
+    label: "the word the person's noise label superseded, said again, overturns the label",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
+    to: "  return personsOutcomeStanding(words) === input.outcome;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an agent re-reading the clause overturns the person's verdict for good, and precision still counts noise (P3)",
+  },
+  {
+    label: "a word that ties with the noise label is reported as standing",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "      stands: after ?? input.outcome,\n    };",
+    to: "      stands: input.outcome,\n    };",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the label wins a tie (D-O7), so 'recorded' would claim a word took that every figure overrules",
+  },
+  {
+    label: "crosscheck followed says the word took when the noise label still stands",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "    return `, but ${standingWord(stands)} still stands: an agent's word never overturns yours`;",
+    to: '    return "";',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person is told their word stands while their own label still decides the delivery",
+  },
+  {
+    label: "mark_hint_outcome says the word took when the noise label still stands",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "    return ` ${capitalised(personsWord(stands))} still stands: ${NEVER_OVERTURNS}.`;",
+    to: '    return "";',
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent reports an outcome to its person that no figure counts",
+  },
+  // ── 07 §13.10, review #12: never "recorded" for a word no figure counts ─
+  {
+    label: "an outcome on a delivery from before outcomes were recordable is recorded",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (!countable.enrolments.some((enrolment) => isInside(deliveredAt, enrolment))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the answer says 'shows in your --mine' for a word every outcome figure starts after",
+  },
+  {
+    label: "an outcome on a delivery older than every window is recorded",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  return deliveredAt.getTime() < countable.windowStart.getTime() ? "past_window" : null;',
+    to: "  return null;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a word about a hint from four months ago is answered 'recorded' and never shown anywhere",
+  },
+  // ── 07 §13.10, review #14: a hint this machine holds is not "never reached you" ─
+  {
+    label: "mark_hint_outcome posts before the hint it names has been sent",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "      budgetMs: OUTCOME_FLUSH_BUDGET_MS,\n      call,\n      isUnknown: isUnknownRef,",
+    to: "      budgetMs: 0,\n      call,\n      isUnknown: isUnknownRef,",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "recording right after a prompt hint or a denied edit's tripwire fails until some later tool runs",
+  },
+  {
+    label: "mark_hint_outcome says 'never reached you' for a hint this machine holds",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  return answer.kind === \"held\" ? toolFailure(HELD_SENTENCE[answer.why]) : answerText(ctx, ref, answer.result);",
+    to: "  return answer.kind === \"held\" ? answerText(ctx, ref, await call()) : answerText(ctx, ref, answer.result);",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent is told the hint it just read never reached it, and gives up on recording it",
+  },
+  {
+    label: "a held delivery is not recognised by the ref the hint printed",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "    return [parsed.body?.id, parsed.body?.refId].filter(",
+    to: "    return [parsed.body?.id].filter(",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the work-context id a hint prints is what a reader names, and it would never match",
+  },
+  {
+    label: "crosscheck followed posts before the hint it names has been sent",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "    { hub: ctx, identity, ref: posted, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
+    to: "    { hub: ctx, identity, ref: posted, budgetMs: 0, call, isUnknown: isUnknownRef },",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person typing followed right after the hint is told it never reached them",
+  },
+  {
+    label: "crosscheck followed <id> says 'never reached you' for a hint this machine holds",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "    { hub: ctx, identity, ref: posted, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
+    to: "    { hub: ctx, identity, ref: posted, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: () => false },",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the hub's honest sentence is false from where the person sits",
+  },
+  {
+    label: "crosscheck followed with no id says nothing reached you while the spool holds a hint",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  const { candidates, more } = await withHeldCandidates(\n    ctx,\n    live.states,",
+    to: "  const { candidates, more } = listed.data ?? await withHeldCandidates(\n    ctx,\n    live.states,",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
+  },
+  // ── 07 §13.10, review LOW: a pulled answer named by its ref ──────────────
+  {
+    label: "an answer somebody asked for, named by its ref, is answered 'never reached you'",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "        eq(agentSessions.developerId, input.recordedBy),\n      ),\n    )\n    .orderBy(",
+    to: "        eq(agentSessions.developerId, input.recordedBy),\n        sql`${hintDeliveries.channel} <> ${PULLED_DELIVERY_CHANNEL}`,\n      ),\n    )\n    .orderBy(",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the reader is told a hint never reached them when they asked for it and it answered",
+  },
+  {
+    label: "a newer pulled answer outranks the unasked delivery of the same ref",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "      desc(sql`${hintDeliveries.channel} <> ${PULLED_DELIVERY_CHANNEL}`),\n",
+    to: "",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "asking about work a hint already pointed at makes that hint's outcome unrecordable",
+  },
+  // ── 07 §13.10, review LOW: each figure's direction ───────────────────────
+  {
+    label: "the outcomes line stops calling unmarked a ceiling",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: 'const UNMARKED_IS_A_CEILING = " (a CEILING: some of it was acted on and never recorded)";',
+    to: 'const UNMARKED_IS_A_CEILING = "";',
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "an unmarked share reads as hints nobody followed, when it is only hints nobody recorded",
+  },
+  // ── 07 §13.10, review LOW: the corpus covers what the hub says stands ─────
+  {
+    label: "mark_hint_outcome echoes the hub's standing word raw",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "const personsWord = (stands: string): string => PERSONS_LABELS[stands] ?? `the person's own ${safeId(stands)}`;",
+    to: "const personsWord = (stands: string): string => PERSONS_LABELS[stands] ?? `the person's own ${stands}`;",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "a hostile hub's 'stands' word reaches the agent unframed, as instruction",
+  },
+  // ── 07 §13.10, review M4: an intervention is one pointer in one session ───
+  {
+    label: "one pointer delivered twice in a session counts as two hints",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    GROUP BY hd.session_id, hd.ref_id, s.developer_id",
+    to: "    GROUP BY hd.id, hd.session_id, hd.ref_id, s.developer_id",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "a prompt hint and a tripwire ask about one work context read as two hints, one of them for ever unmarked",
+  },
+  {
+    label: "an outcome on one delivery of a pointer leaves its twin unmarked",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        WHERE od.session_id = la.session_id AND od.ref_id = la.ref_id\n",
+    to: "        WHERE od.id = la.id\n",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the word an agent recorded on the tripwire ask is not read for the hint it covers",
+  },
+  {
+    label: "a noise label on a pointer's other delivery is not what stood",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "      WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", pointer)}\n        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}",
+    to: "      WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", pointer)} AND d.channel = 'tripwire'\n        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the answer says nothing stood while the person's label on that pointer stood",
+  },
+  // ── 07 §13.11, review P5: a closed month is frozen against late ingest ────
+  {
+    label: "a delivery the hub received after the month ended is read into the month",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ${before(sql`COALESCE(hd.ingested_at, hd.delivered_at)`, until)}\n",
+    to: "",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a backlog drained in August moves the July line that was already read as closed",
+  },
+  {
+    label: "a delivery is stamped with the connector's clock as when the hub received it",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      ingestedAt: deps.now(),",
+    to: "      ingestedAt: deliveredAt,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the freeze is then the sender's word, and a late sender still moves a closed month",
+  },
+  // ── 07 §13.11, review M3: enrolment history, never erased ────────────────
+  {
+    label: "a re-enrolment restamps when outcomes first became recordable",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  if (stored !== null) {\n    return new Date(stored);\n  }\n  return nextEnrolled ? now : null;",
+    to: "  return nextEnrolled ? now : stored === null ? null : new Date(stored);",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "leaving and rejoining the pilot erases every outcome recorded before, from --mine and the team month",
+  },
+  {
+    label: "enrolment opens no interval",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    await db.insert(pilotEnrolments).values({ id: `pe_${randomUUID()}`, repo, startedAt: now, endedAt: null });",
+    to: "    await Promise.resolve(now);",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an enrolled repo has no enrolled time, so every hint is refused as from before the pilot",
+  },
+  {
+    label: "leaving the pilot never closes its interval",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "      .set({ endedAt: sql`GREATEST(${now.toISOString()}::timestamptz, ${pilotEnrolments.startedAt})` })",
+    to: "      .set({ endedAt: null })",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a hint delivered while the pilot was paused is counted as if the team had been measured",
+  },
+  {
+    label: "a delivery from a pause in the pilot is counted",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      AND ${whileEnrolled(repo, sql`hd.delivered_at`)}\n",
+    to: "",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the month counts hints nobody could have recorded a word about, as unmarked",
+  },
+  {
+    label: "a hint from a pause is refused as from before the pilot began",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '    return first === undefined || deliveredAt.getTime() < first.start.getTime() ? "before_outcomes" : "while_paused";',
+    to: '    return "before_outcomes";',
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the refusal tells a person the repo had not yet begun recording, about a hint from after it had",
+  },
+  {
+    label: "a month the pilot paused in reports itself counted unbroken",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    pausedInPeriod: span.paused,",
+    to: "    pausedInPeriod: false,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the line reads as a whole month of measurement over one with a gap in it",
+  },
+  {
+    label: "an upgraded hub forgets the enrolment it already had",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    WHERE ts.pilot_outcomes_since IS NOT NULL\n      AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo)\n",
+    to: "    WHERE false\n",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the monorepo, enrolled before the history existed, would have no enrolled time and no figure",
+  },
+  {
+    label: "the outcome line calls a re-enrolment when outcomes became recordable",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: '      : "when the pilot was enrolled here again";',
+    to: '      : "when outcomes became recordable here";',
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the line dates the first enrolment to the day the team came back",
+  },
+  {
+    label: "the outcome line says a month paused through became recordable later",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: '    ? "the pilot was paused here for the whole month"',
+    to: "    ? `outcomes became recordable here on ${isoDay(since)}`",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a team that paused reads that its outcomes only became recordable before a month it had none in",
+  },
+  {
+    label: "the outcome line hides a pause inside its month",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (block.pausedInPeriod === true) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a month with a gap reads as measured throughout",
+  },
+  {
+    label: "--mine hides a pause inside its window",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: '  view.pausedInWindow === true ? " — counted only while the pilot was enrolled here" : "";',
+    to: '  "";',
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a person reads 56 days as measured when part of them was a pause",
+  },
+  // ── 07 §13.11, review H1: minimums that hold with any one person left out ─
+  {
+    label: "the people-minimum counts the viewer's own words",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    aggregate.recorders - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders &&",
+    to: "    aggregate.recorders >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders &&",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "in a team of three, the viewer subtracts their own words and reads each teammate's exact outcome",
+  },
+  {
+    label: "the sources minimum counts the viewer's own words",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        SELECT (SELECT count(DISTINCT w.source_id) FROM words w WHERE w.recipient <> r.recipient) AS k",
+    to: "        SELECT (SELECT count(DISTINCT w.source_id) FROM words w) AS k",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "an author supplies the other sources himself and reads the rest as how the team treated his work",
+  },
+  {
+    label: "the words minimum counts the words of whoever said most",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    wordsWithoutLargest: recorded - Number(row?.largest_recorder_words ?? 0),",
+    to: "    wordsWithoutLargest: recorded,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "one person pads the month alone, and the few words of everyone else print as a figure",
+  },
+  {
+    label: "the credit's people-minimum counts with nobody left out",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "const LEFT_OUT = 1;",
+    to: "const LEFT_OUT = 0;",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "three teammates' words about Ken's work print a count one of them can subtract to read the others'",
+  },
+  // ── 07 §13.11, review M1: one generic withheld word, and no count ─────────
+  {
+    label: "a withheld team block carries the intervention count",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    reconstructed: span.reconstructed,\n    withheld,",
+    to: "    reconstructed: span.reconstructed,\n    interventions: aggregate.interventions,\n    withheld,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the count beside 'withheld' tells a viewer how much the others recorded, as P2 did",
+  },
+  {
+    label: "the team line names which minimum failed",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  return `${INDENT}hint outcomes, ${month}: ${BELOW_MINIMUMS}${clippedFrom(block)}${NEVER_A_TEAM_OF_THREE}`;",
+    to: "  return `${INDENT}hint outcomes, ${month}: withheld (${bareUntrusted(withheld)})${clippedFrom(block)}`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "an older hub's 'too_few_recorded' is printed, and the viewer learns exactly how little the others said",
+  },
+  {
+    label: "the credit names which minimum failed",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "  return credit.withheld === \"not_recordable\" ? NOT_RECORDABLE_CREDIT : BELOW_MINIMUMS_CREDIT;",
+    to: "  return credit.withheld === \"not_recordable\" ? NOT_RECORDABLE_CREDIT : `no count (${credit.withheld ?? \"\"})`;",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the author learns which minimum his teammates' words missed, and so roughly how many spoke",
+  },
+  // ── 07 §13.11, review H2: the person's label, and one order for words ────
+  {
+    label: "two words on a pointer in one millisecond share a timestamp",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "    const createdAt = instantAfter(deps.now(), newestInstant(words));",
+    to: "    const createdAt = deps.now();",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "which of two same-millisecond words stands is decided by a random id, not by which came last",
+  },
+  {
+    label: "the person's noise, said again over a later word, is swallowed as a repeat",
+    file: `${SERVER}/src/services/noise-label.ts`,
+    from: "    if (before === \"noise\") {",
+    to: "    if (true) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "once an agent's word stands over the label, the person can never say noise again",
+  },
+  {
+    label: "a noise label never looks at the pointer's outcomes",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (input.refKind === \"hint_delivery\" && storedMark(input.mark) === \"noise\") {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's second noise is a silent repeat while the agent's word still stands",
+  },
+  {
+    label: "crosscheck noise hides the word its label now stands over",
+    file: `${CLI}/src/cli/pilot-mark.ts`,
+    from: "    ? `noise now stands over the earlier ${outcomeWord(result.replaced)}, which stays in the history\\n`",
+    to: '    ? ""',
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "the person is not told that their label overturned the word their agent recorded",
+  },
+  {
+    label: "crosscheck followed says a repeat stands while the person's label stands over it",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "      : `already recorded: ${shown} — ${outcomeWord(recorded.outcome)} was said before, and ${standingWord(stands)}, made since, stands over it; nothing was written a second time\\n`;",
+    to: "      : `already recorded: ${shown} stands at ${outcomeWord(recorded.outcome)} — nothing was written a second time\\n`;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the answer claims a word stands that the person's newer label overrules — #11's lie, from the repeat side",
+  },
+  {
+    label: "mark_hint_outcome says a repeat stands while the person's label stands over it",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "    `Already recorded: the hint at ${shown} was ${safeId(recorded.outcome)} before, and ${personsWord(stands)} ` +",
+    to: "    `Already recorded: the hint at ${shown} was ${safeId(recorded.outcome)} before, and nothing ` +",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent tells its person their own label does not stand",
+  },
+  // ── 07 §13.11, review LOW: a held hint with no live session here ─────────
+  {
+    label: "crosscheck followed promises a held hint to a session that is not there",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "  return why === \"no_live_session\" ? DELIVERY_HELD_NO_LIVE_SESSION_LINE : DELIVERY_STILL_ON_THIS_MACHINE_LINE;",
+    to: "  return DELIVERY_STILL_ON_THIS_MACHINE_LINE;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person waits for 'the session's next tool call' that no live session will make",
+  },
+  // ── 07 §13.11, round 3: POST first; the one live session sends its own spool ─
+  {
+    label: "a held hint is sent before the hub was even asked",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  if (!(await stillHeld(retry, first))) {\n    return { kind: \"answered\", result: first };\n  }",
+    to: "  if (!(await stillHeld(retry, first))) {\n    const lookup = await findSender(retry.hub, retry.identity);\n    if (lookup.kind === \"live\") await flushSpool(retry.hub, lookup.sender, retry.budgetMs);\n    return { kind: \"answered\", result: first };\n  }",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "every outcome drains the spool ahead of the hooks, for a ref the hub already knew",
+  },
+  {
+    label: "held records are sent in a guessed session's name",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  if (candidates.length > 1) {\n    return { kind: \"ambiguous\" };\n  }",
+    to: "  if (false) {\n    return { kind: \"ambiguous\" };\n  }",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "with two live sessions, one session's records go out under the other's name and lose their position",
+  },
+  {
+    label: "held records are sent by a live session on another checkout",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  return onThisRoot.length > 0 ? onThisRoot : scan.states;",
+    to: "  return scan.states;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the session of this checkout is passed over for whichever live session sorts first (review M18)",
+  },
+  {
+    label: "a session that went silent is revived to send held records",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  const scan = await readLiveSessionStates(hub.home, hub.hubUrl, identity.repoId, hub.now());",
+    to: "  const scan = await readLiveSessionStates(hub.home, hub.hubUrl, identity.repoId, new Date(0));",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "records go out in the name of a session the hub may have reaped",
+  },
+  {
+    label: "a held flush sends every session's spool in one session's name",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    .filter((spool) => spool.lines.length > 0 && (onlySlug === undefined || spool.slug === onlySlug))",
+    to: "    .filter((spool) => spool.lines.length > 0)",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "another session's records are delivered under the outcome's sender, as FOREIGN_SESSION_DELIVERY",
+  },
+  {
+    label: "any held delivery is taken for the ref the reader named",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  (await readSpoolLines(hub.home, hub.repoKey)).some((line) => deliveryRefs(line).includes(ref));",
+    to: "  (await readSpoolLines(hub.home, hub.repoKey)).some((line) => deliveryRefs(line).length > 0);",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "a mistyped ref is answered 'still on this machine' whenever anything at all is held (review M15)",
+  },
+  // ── 07 §13.11, review M2: crosscheck noise / helpful on a held hint ───────
+  {
+    label: "crosscheck noise <hd_…> says nothing reached you for a delivery this machine holds",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  const asked = await askHub(target, deliveryId, call, (result) => !result.ok && result.code === UNKNOWN_REF);",
+    to: "  const asked = await askHub(target, deliveryId, call, () => false);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "the person labelling the hint they were just shown is told it never reached them",
+  },
+  {
+    label: "crosscheck noise <ref> says nothing reached you for a hint this machine holds",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  const asked = await askHub(target, ref, call, noCandidates);",
+    to: "  const asked = await askHub(target, ref, call, () => false);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "the work-context id the hint printed is answered 'never reached you' until some tool runs",
+  },
+  {
+    label: "crosscheck noise with no id says nothing is recent while the spool holds a hint",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  const { candidates, more } = await withHeldCandidates(\n    ctx,\n    scan.states,",
+    to: "  const { candidates, more } = listed.data ?? await withHeldCandidates(\n    ctx,\n    scan.states,",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
+  },
+  // ── 07 §13.11, round 3: an unreadable block is one line, never the answer lost ─
+  {
+    label: "an outcomes block this client cannot read rejects the whole report",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "  outcomes: z.unknown().transform(readOutcomeBlock).optional(),",
+    to: "  outcomes: OutcomeBlockSchema.optional(),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because: "one newer field in one block loses every proof of `crosscheck pilot` at once",
+  },
+  {
+    label: "a credit this client cannot read rejects the person's whole view",
+    file: `${CORE}/src/http/hint-outcomes.ts`,
+    from: "  yourWork: z.unknown().transform(readCredit),",
+    to: "  yourWork: CreditSchema,",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "an older hub's one count costs the person their whole --mine",
+  },
+  {
+    label: "an unreadable outcomes block is printed as if it had been read",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (\"unreadable\" in block) {\n    return UNREADABLE_OUTCOMES_LINE;\n  }\n",
+    to: "",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a block nobody could read prints as a withheld month with an unknown name",
+  },
+  {
+    label: "an unreadable credit is printed as if it had been read",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "  \"unreadable\" in credit\n    ? UNREADABLE_CREDIT_LINE",
+    to: "  false\n    ? UNREADABLE_CREDIT_LINE",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a count nobody could read is printed as a month and a sentence about it",
+  },
+  // ── 07 §13.11, review M5: the mutations that survived round 2 ────────────
+  {
+    label: "a noise label made after the month moves the closed month (survivor M1)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}",
+    to: "        AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS}",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "reading July before and after someone labels a July hint in August shows whose label it was",
+  },
+  {
+    label: "a delivery dated after the month is read into it when ingested before its end (survivor M2)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ${before(sql`hd.delivered_at`, until)}\n",
+    to: "",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "an August hint inside the connector's clock skew is counted in July",
+  },
+  {
+    label: "a recipient who recorded nothing counts as a recorder (survivor M3)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      (SELECT count(DISTINCT recipient) FROM words)::int AS recorders,",
+    to: "      (SELECT count(DISTINCT recipient) FROM scoped)::int AS recorders,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "two silent teammates lift three people's words over the people-minimum, and a viewer subtracts",
+  },
+  {
+    label: "the author's own self-pointing hints count in their credit (survivor M5)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    who: sql`s.developer_id <> ${input.developerId}`,",
+    to: "    who: sql`true`,",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "an author pads the count of how often teammates followed their work with their own follows",
+  },
+  {
+    label: "the view lets an outcome win a tie with the person's label (survivor M6)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label ASC, spoken.id DESC LIMIT 1",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the person's verdict loses to a word said in the same millisecond, against D-O7",
+  },
+  {
+    label: "the write path lets an outcome win a tie with the person's label (survivor M7)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  if (label !== undefined && (latest === undefined || label.createdAt.getTime() >= latest.createdAt.getTime())) {",
+    to: "  if (label !== undefined && (latest === undefined || label.createdAt.getTime() > latest.createdAt.getTime())) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the answer says a word stands that every figure overrules with the label",
+  },
+  {
+    label: "an enrolment exactly at the month's end makes that month recordable (survivor M11)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      enrolment.start.getTime() < end.getTime() && (enrolment.end === null || enrolment.end.getTime() > start.getTime()),",
+    to: "      enrolment.start.getTime() <= end.getTime() && (enrolment.end === null || enrolment.end.getTime() > start.getTime()),",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a month with no enrolled instant reads as one below the minimums instead of one never recordable",
+  },
+  // ── 07 §13.11, review H-B: labels are append-only ─────────────────────────
+  {
+    label: "a re-assertion made after the month is read into the closed month",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "          AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}",
+    to: "          AND r.marked_by = so.recipient",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the person saying noise in August turns a July that already printed followed into noise",
+  },
+  {
+    label: "the figures never read the person's re-asserted noise",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id",
+    to: "        WHERE false AND rd.session_id = so.session_id AND rd.ref_id = so.ref_id",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person says noise again and --mine still shows the agent's word",
+  },
+  {
+    label: "the write path never reads the person's re-asserted noise",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "      WHERE ${ofPointer(\"rd\", pointer)} AND r.marked_by = ${recipient}",
+    to: "      WHERE false AND ${ofPointer(\"rd\", pointer)} AND r.marked_by = ${recipient}",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "noise re-asserted once is re-asserted again on every call, never answered as already standing",
+  },
+  {
+    label: "a re-asserted noise loses the sentence said with it",
+    file: `${SERVER}/src/services/noise-label.ts`,
+    from: "      reason: label.reason ?? null,",
+    to: "      reason: null,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's 'still off target' is dropped without a word",
+  },
+  {
+    label: "re-asserted noise outlives the pilot's retention",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  await deps.db.delete(noiseReassertions).where(lt(noiseReassertions.createdAt, cutoff));",
+    to: "  await Promise.resolve(cutoff);",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "a person's sentences stay on the hub for ever while every outcome beside them ages out",
+  },
+  // ── 07 §13.12, the principle: a person's word is never overturned by an agent's ──
+  {
+    label: "the person's door stamps the agent's channel",
+    file: `${SERVER}/src/routes/hint-outcomes.ts`,
+    from: '  router.post("/person", developerAuth(deps), record("person"));',
+    to: '  router.post("/person", developerAuth(deps), record("agent"));',
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's crosscheck followed is filed as their agent's, and the agent's next word overturns it",
+  },
+  {
+    label: "the agent's door stamps the person's channel",
+    file: `${SERVER}/src/routes/hint-outcomes.ts`,
+    from: '  router.post("/", developerAuth(deps), record("agent"));',
+    to: '  router.post("/", developerAuth(deps), record("person"));',
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "every word mark_hint_outcome says counts as the person's, so the agent overturns the person's label",
+  },
+  {
+    label: "an outcome is stored without the channel that said it",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "    recordedVia: input.recordedVia,\n",
+    to: "\n",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the hub forgets which door a word came through, and the person's word reads as the agent's",
+  },
+  {
+    label: "what stands on the write path is the newest word of anyone, the agent's included",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  const persons = personsOutcomeStanding(words);",
+    to: "  const persons = personsOutcomeStanding({ ...words, person: words.agent ?? words.person });",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent's later word overturns the person's own followed, and the answer says it took",
+  },
+  {
+    label: "a repeat is judged across channels, so the agent agreeing with the person writes nothing",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  input.recordedVia === "person" ? words.person : words.agent;',
+    to: "  words.person ?? words.agent;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent's own word is swallowed as the person's, and its history has a hole",
+  },
+  {
+    label: "the person's same word after their own noise label is swallowed as a repeat",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
+    to: "  return true;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person changes their mind back and the hub answers 'already recorded', leaving their noise standing",
+  },
+  {
+    label: "the view lets the agent's newer word overturn the person's",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "--mine, the credit and the team line count the agent's followed where the person said noise",
+  },
+  {
+    label: "the view reads every outcome as the person's own",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label",
+    to: "               true AS by_person, false AS is_label",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an agent's later word outranks the person's noise label in every figure",
+  },
+  {
+    label: "the client posts the person's word through the agent's door",
+    file: `${CORE}/src/http/hint-outcomes.ts`,
+    from: '  person: "/api/hint-outcomes/person",',
+    to: '  person: "/api/hint-outcomes",',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "crosscheck followed is filed as the agent's, and the agent's next word overturns the person",
+  },
+  {
+    label: "crosscheck followed / overrode post as the agent",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: '  if (gate.isPerson) {\n    return { via: "person", agentLine: "" };',
+    to: '  if (gate.isPerson) {\n    return { via: "agent", agentLine: AGENT_WORD_LINE };',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person's terminal word is the agent's, and the agent's next word overturns it",
+  },
+  {
+    label: "mark_hint_outcome posts as the person",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: '      "agent",\n    );',
+    to: '      "person",\n    );',
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent's word is filed as the person's and overturns the person's own label",
+  },
+  // ── 07 §13.12, survivor R19: the same word with a changed reason is a write ──
+  {
+    label: "a repeat ignores the reason (survivor R19)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (own === undefined || own.outcome !== input.outcome || own.reason !== input.reason) {",
+    to: "  if (own === undefined || own.outcome !== input.outcome) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the owner's revised override reason is swallowed as 'already recorded', and --mine keeps the old sentence",
+  },
+  {
+    label: "the answer never says a reason was revised",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "      reasonRevised: revisesReason(words, input),",
+    to: "      reasonRevised: false,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a revised reason is reported as the word superseding itself",
+  },
+  {
+    label: "mark_hint_outcome reports a revised reason as the word superseding itself",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: '    return " The reason is revised; the earlier one stays in the history.";',
+    to: '    return "";',
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent tells its person 'it supersedes the earlier overrode' about its own sentence said better",
+  },
+  {
+    label: "crosscheck overrode reports a revised reason as the word superseding itself",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: '    return ", the reason revised (the earlier one kept in the history)";',
+    to: '    return "";',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person is told their override superseded itself when they only said the reason better",
+  },
+  // ── 07 §13.12, review H-A: held first, one candidate per pointer, any twin ──
+  {
+    label: "mark_hint_outcome posts the printed ref while today's delivery of it is held (probe G)",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  const posted = (await heldDeliveryIdOf(ctx.hub, ctx.identity, ref, ctx.config.developerId)) ?? ref;",
+    to: "  const posted = ref;",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "today's word lands on last week's delivery and supersedes its override, today's stays unmarked",
+  },
+  {
+    label: "crosscheck followed <ref> posts the printed ref while today's delivery of it is held",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  const posted = (await heldDeliveryIdOf(ctx, identity, ref, target.developerId)) ?? ref;",
+    to: "  const posted = ref;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person's followed supersedes another session's override of the same ref",
+  },
+  {
+    label: "crosscheck noise <ref> labels the hub's newest delivery while today's is held",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  if (held !== null) {\n    return mark(target, held, shortcut);",
+    to: "  if (false) {\n    return mark(target, held, shortcut);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "last week's pointer takes the noise label meant for today's",
+  },
+  {
+    label: "held first takes any held delivery for the ref the hint printed",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  return held.find((candidate) => candidate.refId === ref || candidate.id === ref)?.id ?? null;",
+    to: "  return held[0]?.id ?? null;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a word about one hint is posted against whatever else the session still holds",
+  },
+  {
+    label: "a pointer's prompt hint and tripwire ask are offered as two candidates",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "        sorted.findIndex((other) => other.sessionId === candidate.sessionId && other.refId === candidate.refId) === index,",
+    to: "        index >= 0,",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "one intervention reads as two, and the person is asked to choose between a hint and itself",
+  },
+  {
+    label: "a held pull is offered as a candidate",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "      !isString(deliveredAt) ||\n      channel === PULLED_DELIVERY_CHANNEL\n",
+    to: "      !isString(deliveredAt)\n",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "an answer somebody asked for is offered for an outcome or a label the hub then refuses",
+  },
+  {
+    label: "a held delivery older than the hub's window is offered with no id",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  const held = (await heldCandidates(hub, sessions, developerId)).filter(\n    (candidate) => Date.parse(candidate.deliveredAt) >= since,\n  );",
+    to: "  const held = await heldCandidates(hub, sessions, developerId);",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "an hour-old pointer stuck in a spool crowds the list the hub keeps to the last hour",
+  },
+  {
+    label: "a word named by an uncountable twin is refused while the pointer has a countable one",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  return twins.find((twin) => refuse(twin, input, countable) === null) ?? named;",
+    to: "  return named;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the newest twin of a candidate list, delivered in a pause, refuses a word its older twin could take",
+  },
+  {
+    label: "a twin delivered during a pause is not recovered by its countable twin",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: 'new Set(["before_outcomes", "while_paused", "past_window"]);',
+    to: 'new Set(["before_outcomes", "past_window"]);',
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a tripwire ask in a pause refuses the word for a pointer whose prompt hint was enrolled",
+  },
+  // ── 07 §13.12, review M-1: a credit counts only once three people FOLLOWED ──
+  {
+    label: "the credit's follower minimum forgets to leave one person out",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    (!checks.followers || aggregate.followers - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) &&",
+    to: "    (!checks.followers || aggregate.followers >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) &&",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "three followers and one who overrode print 'followed 3', and each follower reads the fourth's verdict",
+  },
+  {
+    label: "the credit is shown over recorders, not followers (probe B)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });",
+    to: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: false });",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "four teammates who each overrode the author print 'followed 0' — four verdicts in one number",
+  },
+  {
+    label: "the follower count counts everyone who recorded",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      count(DISTINCT recipient) FILTER (WHERE state = 'followed')::int AS followers,",
+    to: "      count(DISTINCT recipient)::int AS followers,",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "a homogeneous override reads as enough followers, and 'followed 0' prints",
+  },
+  {
+    label: "the client prints a hub's 'followed 0' credit",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "  if (credit.withheld === null && credit.followed !== null && credit.followed > 0) {",
+    to: "  if (credit.withheld === null && credit.followed !== null) {",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "an older hub's zero reaches the author as every teammate's verdict at once",
+  },
+  // ── 07 §13.12, review LOW + survivor R6: the toggle, one open interval ──
+  {
+    label: "every settings write while enrolled opens a new interval (survivor R6)",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  if (isEnrolled && !wasEnrolled) {",
+    to: "  if (isEnrolled) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an enrolled repo's history fills with overlapping intervals, one per pin-policy change",
+  },
+  {
+    label: "off and on in one millisecond drops the new interval (probe D)",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    await db.insert(pilotEnrolments).values({ id: `pe_${randomUUID()}`, repo, startedAt: now, endedAt: null });",
+    to: "    await db.insert(pilotEnrolments).values({ id: `pe_${repo}@${now.toISOString()}`, repo, startedAt: now, endedAt: null }).onConflictDoNothing();",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the repo reads as paused while it is enrolled, and every outcome is refused while_paused",
+  },
+  {
+    label: "the toggle reads what it turns from without the row's lock",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "pilot_outcomes_since, updated_at FROM team_settings WHERE repo = ${repo} FOR UPDATE`,",
+    to: "pilot_outcomes_since, updated_at FROM team_settings WHERE repo = ${repo}`,",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "two toggles at once both decide from the same stale read and open two intervals or none",
+  },
+  {
+    label: "a settings write that names no enrolment turns the pilot off",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    const pilotEnrolled = input.pilotEnrolled ?? wasEnrolled;",
+    to: "    const pilotEnrolled = input.pilotEnrolled ?? false;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "changing the pin policy pauses the pilot",
+  },
+  {
+    label: "two open intervals per repo are allowed",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE UNIQUE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;",
+    to: "CREATE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a doubled 'on' leaves two open intervals and every enrolled delivery is counted twice",
+  },
+  // ── 07 §13.12, review M-3: the upgrade backfill from what was recorded ──
+  {
+    // round 5: the first-outcome term is subsumed by its delivery's (never later), so the
+    // defect worth pinning is losing the delivery term
+    label: "the backfill starts past the delivery the first outcome was accepted on (probe F)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "             (SELECT min(d.delivered_at) FROM hint_outcomes o JOIN hint_deliveries d ON d.id = o.delivery_id\n              WHERE o.repo = ts.repo)\n",
+    to: "             NULL\n",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the very hint an outcome was recorded about falls outside every figure for good",
+  },
+  {
+    // round 5 (HIGH-2): this anchor defended the bug — a label term was its "defect". Re-pointed:
+    // the defect is putting a label term back, which starts a 0.10 hub's interval at its first label
+    label: "the backfill starts at a 0.10 hub's first label (P2)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "              WHERE o.repo = ts.repo)\n             -- NEVER a pilot_marks label",
+    to: "              WHERE o.repo = ts.repo),\n             (SELECT min(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)\n             -- NEVER a pilot_marks label",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "an outcome on a hint delivered before the upgrade is recorded and counted, and the line says 'again'",
+  },
+  {
+    label: "a left repo's reconstructed interval ends before its newest outcome",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "           GREATEST((SELECT max(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),\n",
+    to: "           GREATEST(NULL,\n",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the last proven enrolled instant is dropped, and the repo's last outcome falls outside",
+  },
+  {
+    label: "a left repo's reconstructed interval ends before its newest label",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "                    (SELECT max(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS last_word",
+    to: "                    NULL) AS last_word",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the last proven enrolled instant is dropped, and the repo's last label falls outside",
+  },
+  {
+    label: "a left repo's reconstructed interval is left open",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "         CASE WHEN b.enrolled THEN NULL ELSE GREATEST(b.started_at, b.last_word) END,",
+    to: "         NULL,",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a repo that left reads as enrolled for ever, and every later delivery counts",
+  },
+  {
+    label: "backfilled intervals are not marked reconstructed",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "         (b.started_at < b.recordable OR NOT b.enrolled)\n  FROM (",
+    to: "         false\n  FROM (",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "inferred bounds are printed as if a toggle had recorded them",
+  },
+  {
+    label: "an upgrade that only took the stamp calls its interval reconstructed (HIGH-2)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "         (b.started_at < b.recordable OR NOT b.enrolled)\n  FROM (",
+    to: "         true\n  FROM (",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a 0.10 upgrade's plain stamp is printed as 'reconstructed from recorded outcomes'",
+  },
+  {
+    label: "the span never says it was reconstructed",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    reconstructed: overlapping.some((enrolment) => enrolment.reconstructed),",
+    to: "    reconstructed: false,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a month counted over inferred bounds reads as measured",
+  },
+  {
+    label: "the team block drops that its month was reconstructed",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    reconstructed: span.reconstructed,\n    withheld,",
+    to: "    reconstructed: false,\n    withheld,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the team line counts over inferred bounds without saying so",
+  },
+  {
+    label: "the credit drops that its month was reconstructed",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    reconstructed: span.reconstructed,\n  };",
+    to: "    reconstructed: false,\n  };",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the author's credit counts over inferred bounds without saying so",
+  },
+  {
+    label: "the team line never says its enrolment was reconstructed",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  `${countedWhen(block)}${block.reconstructed === true ? `, ${RECONSTRUCTED_ENROLMENT}` : \"\"}`;",
+    to: "  countedWhen(block);",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the person reads inferred bounds as measured ones",
+  },
+  {
+    label: "the credit line never says its enrolment was reconstructed",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "      (credit.reconstructed === true ? `; ${RECONSTRUCTED_ENROLMENT}` : \"\");",
+    to: "      \"\";",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the author reads inferred bounds as measured ones",
+  },
+  // ── 07 §13.12, review M-2: read-only after a pause or leaving ──
+  {
+    label: "--mine is refused while the pilot is paused (probe C)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  if (first === undefined) {\n    return { refusal: \"not_enrolled\" };",
+    to: "  if (first === undefined || enrolments.at(-1)?.end !== null) {\n    return { refusal: \"not_enrolled\" };",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the person can no longer read what they recorded the moment the pilot pauses",
+  },
+  {
+    label: "--mine's window starts now instead of at the first enrolment",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    first.start.toISOString(),\n",
+    to: "    now.toISOString(),\n",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the view counts nothing and says its window is empty",
+  },
+  {
+    label: "a repo that left reports its enrolled month as none could be recorded",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    const outcomes = everEnrolled\n",
+    to: "    const outcomes = false\n",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "July's figures vanish the day the team leaves in August",
+  },
+  {
+    label: "the not-enrolled page drops the month the team was enrolled for",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  return counted ? [outcomeLine(report)] : [];",
+    to: "  return [];",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a team that left cannot read its last enrolled month",
+  },
+  // ── 07 §13.12, review LOW (probe E): one pointer, one month ──
+  {
+    label: "a pointer whose twin arrives next month counts in both months",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
+    to: "sql`HAVING max(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "July's followed is counted again in August when the same pointer is asked about on the first",
+  },
+  {
+    label: "the month's population has no start",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
+    to: "sql`HAVING true`;",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "every month counts every intervention since the pilot began",
+  },
+  // ── 07 §13.12, review M-4: the round-3 survivors, killed ──
+  {
+    label: "server: --mine never reports a pause in its window (survivor R1)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    pausedInWindow: enrolledSpan(since, now, enrolments)?.paused ?? false,",
+    to: "    pausedInWindow: false,",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the person's view during a pause reads as if the pilot had run throughout",
+  },
+  {
+    label: "a delivery at the instant the pilot paused counts as enrolled (survivor R2)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    AND (pe.ended_at IS NULL OR ${instant} < pe.ended_at))`;",
+    to: "    AND (pe.ended_at IS NULL OR ${instant} <= pe.ended_at))`;",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "a hint delivered as the pilot paused is counted, though no outcome of it can ever be recorded",
+  },
+  {
+    label: "a delivery at the instant the pilot paused is recordable (survivor R3)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  (enrolment.end === null || instant.getTime() < enrolment.end.getTime());",
+    to: "  (enrolment.end === null || instant.getTime() <= enrolment.end.getTime());",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "an outcome is answered 'recorded' for a hint no figure counts",
+  },
+  {
+    label: "an interval ending inside the period is not called a pause (survivor R5)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    paused: endsEarly,",
+    to: "    paused: false,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a month the team left part-way through reads as counted throughout",
+  },
+  {
+    label: "re-asserted noise is stamped at the clock, under an outcome stamped past it (survivor R10)",
+    file: `${SERVER}/src/services/noise-label.ts`,
+    from: "  const at = instantAfter(deps.now(), newestInstant(words));",
+    to: "  const at = deps.now();",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person says noise again and the hub answers 'noise stands' while every figure reads overrode",
+  },
+  {
+    label: "the pointer lock is gone (survivor R11)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "WHERE ${ofPointer(\"d\", pointer)} ORDER BY d.id FOR UPDATE`);",
+    to: "WHERE ${ofPointer(\"d\", pointer)} ORDER BY d.id`);",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a label landing mid-write decides 'what stood' from a state that changed under it",
+  },
+  {
+    label: "the pointer lock is taken in no order",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "WHERE ${ofPointer(\"d\", pointer)} ORDER BY d.id FOR UPDATE`);",
+    to: "WHERE ${ofPointer(\"d\", pointer)} FOR UPDATE`);",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "two writers locking a pointer's twins in different orders can deadlock",
+  },
+  // ── 07 §13.12, review LOW: the next word steps past the newest outcome AND the label ──
+  {
+    label: "an outcome said in the label's own millisecond ties with it",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
+    to: "  [words.person?.createdAt, words.agent?.createdAt, words.helpful?.createdAt]",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's followed is stamped at the label's instant, the label wins the tie, and noise stands",
+  },
+  {
+    label: "a word is stamped at the clock, under the agent's word stamped past it",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
+    to: "  [words.person?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "two agent words in one millisecond share a timestamp, and which stands is a coin toss",
+  },
+  // ── 07 §13.12, review LOW: the credit says when its month was paused ──
+  {
+    label: "the credit drops that its month was paused",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    pausedInPeriod: span.paused,\n",
+    to: "    pausedInPeriod: false,\n",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the author reads a month the team left part-way through as counted throughout",
+  },
+  {
+    label: "the credit line never says its month was paused",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "      (credit.pausedInPeriod === true ? `; ${COUNTED_WHILE_ENROLLED}` : \"\") +",
+    to: "      \"\" +",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a count over part of a month reads as the whole month's",
+  },
+  // ── 07 §13.13, review MEDIUM-1: a round-3 hub's enrolments get their id ──
+  {
+    label: "a hub on the round-3 enrolment shape is never migrated (P1)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  IF NOT EXISTS (\n    SELECT 1 FROM information_schema.columns\n    WHERE table_schema = current_schema() AND table_name = 'pilot_enrolments' AND column_name = 'id'",
+    to: "  IF false AND NOT EXISTS (\n    SELECT 1 FROM information_schema.columns\n    WHERE table_schema = current_schema() AND table_name = 'pilot_enrolments' AND column_name = 'id'",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a hub that ran the round-3 bootstrap no longer starts: column id does not exist",
+  },
+  {
+    label: "the migrated enrolments keep no key",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    ALTER TABLE pilot_enrolments ADD PRIMARY KEY (id);",
+    to: "    PERFORM 1;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the old key is dropped and nothing replaces it, so two rows can share an id",
+  },
+  // ── 07 §13.13, round-5 LOW-1: the toggle starts from the locked row ──
+  {
+    label: "a write starts from no stored row at all (P4)",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    const current = await readSettingsForUpdate(tx, input.repo);",
+    to: "    const current = defaultSettingsFor(input.repo);",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "a write naming no enrolment turns the pilot off and wipes when labels became available",
+  },
+  {
+    label: "an interval may end before it starts",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "      CHECK (ended_at IS NULL OR ended_at >= started_at) NOT VALID;",
+    to: "      CHECK (true) NOT VALID;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a backwards interval is stored, and whileEnrolled reads it as no time at all",
+  },
+  // ── 07 §13.13, round-5 LOW-10: a lost enrolment race is a sentence ──
+  {
+    label: "a lost enrolment race surfaces as a raw database error",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    throw isSecondOpenInterval(error) ? new ConcurrentEnrolmentError() : error;",
+    to: "    throw error;",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "the admin who enrolled a repo at the same moment as a colleague reads a 500",
+  },
+  {
+    label: "the settings route answers a lost enrolment race with a 500",
+    file: `${SERVER}/src/routes/team-settings.ts`,
+    from: "      if (error instanceof ConcurrentEnrolmentError) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "the race's loser is never told that the repo is enrolled after all",
+  },
+  // ── 07 §13.13, review HIGH-1: the person's door is behind the TTY gate ──
+  {
+    label: "crosscheck followed from an agent's Bash tool posts as the person",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  if (gate.isPerson) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "an agent overturns its own person's word by running the person's command",
+  },
+  {
+    label: "an outcome recorded as the agent's never says so",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "gate.marker === null ? AGENT_WORD_LINE : agentHostLine(gate.marker)",
+    to: 'gate.marker === null ? "" : agentHostLine(gate.marker)',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person reads their word as standing when it was filed as their agent's",
+  },
+  {
+    label: "the CLI's terminal probe never reaches crosscheck followed",
+    file: `${CLI}/src/cli/index.ts`,
+    from: "        : runFollowed(rest, env, cwd, options.isInteractive);",
+    to: "        : runFollowed(rest, env, cwd);",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person at a terminal is judged by the process's own probe and filed as the agent",
+  },
+  // ── 07 §13.13, LOW-7: a hub without the person's door fails closed, and says so ──
+  {
+    label: "a hub without the person's door is called a hub without outcomes",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  return !isOutcomesNotServed(await getMyHintOutcomes(target.ctx, { repo: target.identity.repoId }));",
+    to: "  return false;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person on a round-4 hub is told outcomes are not recorded at all, instead of to upgrade the hub",
+  },
+  // ── 07 §13.13, LOW-4: helpful is the person's word too ──
+  {
+    label: "the write path never reads the person's helpful label (P3)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  helpful: await readPointerHelpful(tx, pointer, recipient),",
+    to: "  helpful: undefined,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent's not_relevant_now overturns the person's helpful, and the answer says it stands",
+  },
+  {
+    label: "of the person's two labels, noise always wins",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  return helpful.createdAt.getTime() > noise.createdAt.getTime() ? helpful : noise;",
+    to: "  return noise;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a person who changed their mind from noise to helpful still reads as noise",
+  },
+  {
+    label: "the figures never read the person's helpful label",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "          AND h.marked_by = so.recipient AND h.mark = 'helpful' ${before(sql`h.created_at`, until)}",
+    to: "          AND h.marked_by = so.recipient AND false",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "--mine counts the agent's not_relevant_now over the person's own helpful",
+  },
+  {
+    // round 6 (HIGH-1): helpful no longer becomes a standing word in the figures; its one effect on
+    // the outcome axis, besides cancelling older noise, is the veto of an agent's not_relevant_now
+    label: "the person's helpful vetoes nothing of the agent's (P3)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "AND st.word = 'not_relevant_now' AND st.has_helpful) AS vetoed",
+    to: "AND false) AS vetoed",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent's not_relevant_now overturns the person's helpful in every figure",
+  },
+  // ── 07 §13.13, LOW-5: a pre-channel (NULL) word is the agent's ──
+  {
+    label: "write path: a pre-channel row is nobody's word (Q1)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "sql`o.recorded_via IS DISTINCT FROM 'person'`",
+    to: "sql`o.recorded_via = 'agent'`",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an agent re-reading the clause writes its pre-channel word a second time",
+  },
+  {
+    label: "write path: a pre-channel row is the person's word (Q2)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "channel === \"person\" ? sql`o.recorded_via = 'person'`",
+    to: "channel === \"person\" ? sql`o.recorded_via IS DISTINCT FROM 'agent'`",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an old agent word outranks every newer agent word as if the person had said it",
+  },
+  {
+    label: "view: a pre-channel row sorts above the person's word (Q3)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "COALESCE(o.recorded_via = 'person', false) AS by_person",
+    to: "(o.recorded_via = 'person') AS by_person",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "NULL sorts first under DESC, so an old agent word overturns the person's own in every figure",
+  },
+  // ── 07 §13.13, MEDIUM-2: the person's repeat (Q4), and twins stay in their session (Q14) ──
+  {
+    label: "the person's exact repeat writes a second row (Q4)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
+    to: '  return input.recordedVia === "agent";',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person typing crosscheck followed twice is told it was recorded twice, and the history doubles",
+  },
+  {
+    label: "the twin search crosses sessions (Q14)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "    .where(and(eq(hintDeliveries.sessionId, named.sessionId), eq(hintDeliveries.refId, named.refId)))",
+    to: "    .where(eq(hintDeliveries.refId, named.refId))",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a word about one session's hint lands on another session's pointer of the same ref",
+  },
+  // ── 07 §13.13, LOW-3: held first inside the window, and the hub twin when it cannot be sent ──
+  {
+    label: "held first takes a held delivery of the ref from any time",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  const since = hub.now().getTime() - NOISE_MARK_WINDOW_MINUTES * MS_PER_MINUTE;",
+    to: "  const since = 0;",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "an hour-old line stuck in a spool is taken for today's delivery of the ref",
+  },
+  {
+    label: "an unsendable held twin is 'held' though the pointer's twin is on the hub",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  return twin === null ? { kind: \"held\", why: \"unsent\" } : { kind: \"answered\", result: await retry.call(twin) };",
+    to: "  return { kind: \"held\", why: \"unsent\" };",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person is told nothing was recorded while the hub already has the same intervention",
+  },
+  {
+    label: "crosscheck followed re-posts the held id instead of the hub twin",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "      { repo: identity.repoId, ref: about, outcome, ...(reason === undefined ? {} : { reason }) },",
+    to: "      { repo: identity.repoId, ref: posted, outcome, ...(reason === undefined ? {} : { reason }) },",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the fallback asks the hub about the delivery it cannot know, and the word is refused",
+  },
+  // ── 07 §13.14, round-6 HIGH-1: helpful lives on the label axis ──
+  {
+    label: "a newer helpful leaves the person's older noise standing (view)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        WHERE la.label_word = 'noise'",
+    to: "        WHERE la.label_word IS NOT NULL",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person who took back their noise with helpful is still counted as noise",
+  },
+  {
+    label: "the person's own not_relevant_now is vetoed by their own helpful",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      SELECT st.*, (NOT COALESCE(st.by_person, false) AND st.word",
+    to: "      SELECT st.*, (st.word",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's own outcome is deleted by their own later verdict",
+  },
+  {
+    label: "helpful competes with the person's own outcome on the write path",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: '  return standingOf(words.person, label?.word === "noise" ? label : undefined);',
+    to: "  return standingOf(words.person, label);",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a helpful label said after the person's own override is answered as what stands, not the override",
+  },
+  {
+    label: "the write path never lets the person's helpful veto the agent's not_relevant_now",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: '  return agents === "not_relevant_now" && words.helpful !== undefined ? "helpful" : agents;',
+    to: "  return agents;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent is told its not_relevant_now stands over the person's helpful",
+  },
+  // ── 07 §13.13, LOW-6: a re-assertion's sentence is read ──
+  {
+    label: "a re-asserted noise's sentence is never read",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        SELECT 'noise', r.reason, r.created_at, r.id, true FROM noise_reassertions r",
+    to: "        SELECT 'noise', NULL, r.created_at, r.id, true FROM noise_reassertions r",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's 'still off target' is stored and never shown to them",
+  },
+  {
+    label: "a re-asserted noise's sentence is listed as if it were an outcome's",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      ...(row.reasserted ? { reasserted: true } : {}),\n",
+    to: "\n",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person cannot tell a sentence said with noise again from one said with a word",
+  },
+  {
+    label: "--mine prints a re-asserted noise's sentence as a first label's",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: '${said.reasserted === true ? ", said again" : ""}',
+    to: "",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the line reads as the first label's sentence, which was never shown",
+  },
+  // ── 07 §13.13, LOW-9: held candidates are the caller's own ──
+  {
+    label: "a held delivery another developer's key produced is offered to the caller",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  developerId === null || producerOf(line) === developerId;",
+    to: "  developerId !== undefined;",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "a hint that reached a colleague on this machine is offered, and posted, under the caller's key",
+  },
+  // ── 07 §13.13, LOW-2: the rolling view shows what was just said (P5). (HAVING in the rolling
+  // case too is an equivalent mutant: the WHERE already keeps only in-window deliveries.) ──
+  {
+    label: "the rolling view has no start (P5)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "  until === null ? sql`AND hd.delivered_at >= ${since.toISOString()}::timestamptz` : sql``;",
+    to: "  sql``;",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "--mine --days 7 counts every intervention since the pilot began",
+  },
+  // ── 07 §13.14, round-6 HIGH-1: the helpful line — the person's own label, beside the buckets ──
+  {
+    label: "the helpful line counts a helpful the person later took back with noise",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      COALESCE(label_word = 'helpful', false) AS helpful_label",
+    to: "      COALESCE(has_helpful, false) AS helpful_label",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a label the person replaced still reads as their verdict",
+  },
+  {
+    label: "--mine counts every delivery as helpful",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      count(*) FILTER (WHERE st.helpful_label)::int AS helpful",
+    to: "      count(*)::int AS helpful",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person is shown helpful labels they never gave",
+  },
+  {
+    label: "a source's helpful count is never summed",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      helpful: current.helpful + Number(row.helpful),",
+    to: "      helpful: current.helpful,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "every teammate's line says the person called none of their hints helpful",
+  },
+  {
+    label: "the total helpful count is never summed",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  const helpful = rows.reduce((sum, row) => sum + Number(row.helpful), 0);",
+    to: "  const helpful = 0;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's own total of helpful labels reads 0",
+  },
+  {
+    label: "--mine never prints the helpful line",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "          ...(source.helpful === undefined ? [] : [`${INDENT}${INDENT}helpful (your label) ${String(source.helpful)}`]),\n",
+    to: "\n",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the helpful label the person gave is recorded and never shown back to them",
+  },
+  {
+    label: "a hub's helpful that is not a count is accepted",
+    file: `${CORE}/src/http/hint-outcomes.ts`,
+    from: "  helpful: CountSchema.optional(),",
+    to: "  helpful: z.unknown().optional(),",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "any text a hub sends prints as the person's own label count",
+  },
+  // ── 07 §13.14, round-6 MEDIUM-1: a populated older table still boots ──
+  {
+    label: "a backwards interval on an older hub is never repaired (D1/D2)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    UPDATE pilot_enrolments SET ended_at = started_at, reconstructed = true WHERE ended_at < started_at;\n",
+    to: "\n",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "one row the old race closed before it opened keeps the hub from starting",
+  },
+  {
+    label: "a repaired backwards interval is not marked as rebuilt",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    UPDATE pilot_enrolments SET ended_at = started_at, reconstructed = true WHERE ended_at < started_at;",
+    to: "    UPDATE pilot_enrolments SET ended_at = started_at WHERE ended_at < started_at;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a bound the upgrade invented reads as a toggle's instant",
+  },
+  {
+    label: "the interval CHECK is added and never validated",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    ALTER TABLE pilot_enrolments VALIDATE CONSTRAINT pilot_enrolments_ends_after_start;\n",
+    to: "\n",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the database never proves the rows it already held obey the CHECK",
+  },
+  {
+    label: "the interval CHECK is added again on every start",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pilot_enrolments_ends_after_start'\n                 AND conrelid = 'pilot_enrolments'::regclass) THEN",
+    to: "  IF true THEN",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the second start fails: the constraint already exists",
+  },
+  {
+    label: "two open intervals on a round-3 hub are never repaired (D3)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  WHERE pe.ended_at IS NULL AND EXISTS (\n    SELECT 1 FROM pilot_enrolments o WHERE o.repo = pe.repo AND o.ended_at IS NULL AND o.started_at < pe.started_at);",
+    to: "  WHERE false AND EXISTS (\n    SELECT 1 FROM pilot_enrolments o WHERE o.repo = pe.repo AND o.ended_at IS NULL AND o.started_at < pe.started_at);",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the one-open index refuses to build and the hub never starts",
+  },
+  {
+    label: "the open-interval repair closes the earliest enrolment",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "AND o.ended_at IS NULL AND o.started_at < pe.started_at);",
+    to: "AND o.ended_at IS NULL AND o.started_at > pe.started_at);",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the repo reads as enrolled only from the later 'on', and the time between is lost",
+  },
+  // ── 07 §13.14, round-6 MEDIUM-2: deny-only agent-host markers ──
+  {
+    label: "Claude Code's marker is not an agent host's",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: '  "CLAUDECODE",\n',
+    to: "\n",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "an agent in a pty under Claude Code records its word as the person's",
+  },
+  {
+    label: "Cursor's agent-terminal marker is not an agent host's",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: '  "CURSOR_AGENT",\n',
+    to: "\n",
+    test: `${CLI}/test/agent-host.test.ts`,
+    because: "Cursor's agent terminal is a pty, and its agent's word stands as the person's",
+  },
+  {
+    label: "an empty marker counts as a marker",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: '  AGENT_HOST_MARKERS.find((name) => (env[name] ?? "") !== "") ?? null;',
+    to: "  AGENT_HOST_MARKERS.find((name) => name in env) ?? null;",
+    test: `${CLI}/test/agent-host.test.ts`,
+    because: "a shell that cleared a variable to nothing loses the person's door",
+  },
+  {
+    label: "an agent host's marker promotes the word to the person's",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: "{ isPerson: false, marker };",
+    to: "{ isPerson: isInteractive(), marker };",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the environment, which any agent can write, opens the person's door",
+  },
+  {
+    label: "an agent host's marker is never read",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: "  const marker = agentHostMarkerIn(env);",
+    to: "  const marker = null;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a pty an agent host gave its tool passes as the person",
+  },
+  {
+    label: "a word demoted by a host's marker says it had no terminal",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: ": agentHostLine(gate.marker) };",
+    to: ": AGENT_WORD_LINE };",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person at a terminal is told there was none, and cannot see why their word is the agent's",
+  },
+  {
+    label: "the host line never names the marker it found",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "this command ran inside an agent's tool (${marker} is set);",
+    to: "this command ran inside an agent's tool;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person cannot tell which variable to look for in the terminal they typed it in",
+  },
+  // ── 07 §13.14, round-6 LOW-1: what "not a terminal" was ──
+  {
+    label: "the agent's-word line tells the person to run it in a terminal again",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's ! prefix); type it in your own shell for it to stand as yours",
+    to: "run it in a terminal for it to stand as yours",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person who used Claude Code's ! prefix did run it in what looked like a terminal, and cannot tell why it is the agent's",
+  },
+  {
+    label: "the agent's-word line prints a backtick, which no renderer may",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "or Claude Code's ! prefix); type it in your own shell",
+    to: "or Claude Code's `!`); type it in your own shell",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a backtick in a CLI line breaks the untrusted-text invariant every surface is held to",
+  },
+  {
+    label: "the usage never says what 'not a terminal' was",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: '    "  overturns. Where its input is not a terminal (an agent\'s tool, a pipe,",\n    "  or Claude Code\'s ! prefix), or inside an agent\'s tool that marks its",\n    "  own commands, it is your agent\'s.",',
+    to: '    "  overturns; run with no terminal (by an agent) it is your agent\'s.",',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the usage promises the person's word to anything that looks like a terminal",
+  },
+  {
+    label: "the --mine footer credits the commands to the person wherever they ran",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's ! prefix)",
+    to: "by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode)",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the person reads a word their agent's tool typed as their own",
+  },
+  // ── 07 §13.14, round-6 LOW-2: a clock that stepped back (D4) ──
+  {
+    label: "leaving the pilot closes the interval at a wall clock that stepped back (D4)",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "      .set({ endedAt: sql`GREATEST(${now.toISOString()}::timestamptz, ${pilotEnrolments.startedAt})` })",
+    to: "      .set({ endedAt: now })",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "the CHECK refuses an interval that ends before it starts, and leaving the pilot is a 500",
+  },
+  // ── 07 §13.14, round-6 LOW-3: the review-5 survivors T1, T2, T4, B1 ──
+  {
+    label: "the terminal probe reads stdout, not stdin (T1)",
+    file: `${CLI}/src/cli/pin.ts`,
+    from: "  process.stdin.isTTY === true;",
+    to: "  process.stdout.isTTY === true;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "`crosscheck followed | tee log` typed by the person is the agent's, and an agent's tool with a pty stdout is the person",
+  },
+  {
+    label: "crosscheck overrode always posts as the person (T2)",
+    file: `${CLI}/src/cli/index.ts`,
+    from: "      return options.isInteractive === undefined\n        ? runOverrode(rest, env, cwd)\n        : runOverrode(rest, env, cwd, options.isInteractive);",
+    to: "      return runOverrode(rest, env, cwd, () => true);",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "an agent overturns its own person's word by running crosscheck overrode",
+  },
+  {
+    label: "the agent's-word line only for followed (T4)",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "${outcomeRecordedLine(ref, answer.result.data)}${target.agentLine}`",
+    to: '${outcomeRecordedLine(ref, answer.result.data)}${outcome === "followed" ? target.agentLine : ""}`',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "an override filed as the agent's reads as the person's",
+  },
+  {
+    label: "a backdated upgrade start on an enrolled repo is not called reconstructed (B1)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "         (b.started_at < b.recordable OR NOT b.enrolled)",
+    to: "         (NOT b.enrolled)",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "an interval the upgrade backdated from recorded outcomes is printed as the toggle's instant",
+  },
+  // ── 07 §13.14, round-6 LOW-4: a repo's first writes have a row to lock ──
+  {
+    label: "a repo's first write has no row to lock",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  await tx.execute(sql`INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at)\n    VALUES (${repo}, ${DEFAULT_TEAM_SETTINGS.pinPolicy}, ${DEFAULT_TEAM_SETTINGS.suspectAttribution}, ${DEFAULT_TEAM_SETTINGS.pilotEnrolled}, now())\n    ON CONFLICT (repo) DO NOTHING`);\n",
+    to: "\n",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "on real Postgres a repo's first two writes both go on from the defaults, and one's change is lost",
+  },
+  {
+    label: "the defaults row overwrites the stored settings",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    ON CONFLICT (repo) DO NOTHING`);",
+    to: "    ON CONFLICT (repo) DO UPDATE SET pin_policy = EXCLUDED.pin_policy`);",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "every write resets the pin policy it did not name",
+  },
+  // ── 07 §13.14, round-6 LOW-5: a hub's sentence keeps its punctuation ──
+  {
+    label: "a hub's sentence loses its dash and its colon",
+    file: `${CLI}/src/cli/pilot-mark.ts`,
+    from: "    : `${hubSentence(message)}\\n`;",
+    to: "    : `${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)}\\n`;",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "'nothing was recorded — say it again' prints as 'nothing was recorded say it again'",
+  },
+  {
+    label: "an unreachable hub's error may mint a dash in the CLI's own line",
+    file: `${CLI}/src/cli/pilot-mark.ts`,
+    from: "    ? `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — nothing was recorded\\n`",
+    to: "    ? `hub unreachable: ${hubSentence(message)} — nothing was recorded\\n`",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "an error text forges a second clause inside the line that says nothing was recorded",
+  },
+  {
+    label: "a hub's sentence is unbounded",
+    file: `${CLI}/src/cli/pilot-mark.ts`,
+    from: "sanitizeUntrusted(message, MAX_HUB_MESSAGE_CHARS);",
+    to: "sanitizeUntrusted(message, Number.MAX_SAFE_INTEGER);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "a hub floods the terminal with as much text as it likes",
+  },
+  // ── 07 §13.14, round-6 LOW-6: each label's own sentence is in the person's why ──
+  {
+    label: "a noise label's sentence is never read",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        SELECT 'noise' AS word, m.reason AS reason, m.created_at AS at",
+    to: "        SELECT 'noise' AS word, NULL AS reason, m.created_at AS at",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's 'off target for this branch' is stored and never shown to them",
+  },
+  {
+    label: "a helpful label's sentence is never read",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        SELECT 'helpful', h.reason, h.created_at, h.id, false FROM pilot_marks h",
+    to: "        SELECT 'helpful', NULL, h.created_at, h.id, false FROM pilot_marks h",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's own 'and why' is stored and never shown to them",
+  },
+  {
+    label: "--mine never lists a helpful label's sentence",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      FROM states st WHERE st.helpful_reason IS NOT NULL",
+    to: "      FROM states st WHERE false",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the helpful sentence is read and dropped before the person sees it",
+  },
+  {
+    label: "a noise label's sentence is listed again as a helpful one",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      CASE WHEN label_word = 'helpful' THEN label_reason END AS helpful_reason,",
+    to: "      label_reason AS helpful_reason,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person reads their noise sentence twice, once as praise",
+  },
+  {
+    label: "--mine prints a helpful sentence as if it were an outcome's",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: '(outcome === "helpful" ? "helpful (your label)" : outcomeWord(outcome))',
+    to: "outcomeWord(outcome)",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the person cannot tell their own label's sentence from their agent's word",
+  },
+  // ── 07 §13.14, round-6 follow-up: one person gate for every person-only gesture ──
+  {
+    label: "the one person gate lets a marked pty through to every person-only gesture",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: "{ isPerson: false, marker };",
+    to: "{ isPerson: isInteractive(), marker };",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "an agent in Cursor's or Gemini CLI's pty labels noise and vouches for a pin as the person",
+  },
+  {
+    label: "a person-only gesture's refusal never names the marker that demoted it",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: "(${gate.marker} is set), so its terminal is the agent's, not yours",
+    to: ", so its terminal is the agent's, not yours",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "the person at a terminal is refused and cannot see which variable made their terminal the agent's",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -20121,6 +21929,7 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/absence-cli.test.ts 11
+ * PRINTS: packages/cli/test/agent-host.test.ts 2
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
@@ -20165,13 +21974,13 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 4
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 35
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
- * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 1
- * PRINTS: packages/cli/test/pilot-render.test.ts 21
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 17
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 12
+ * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -20303,6 +22112,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
+ * PRINTS: packages/connector-core/test/held-first-outcome.test.ts 6
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
@@ -20330,7 +22140,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 4
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 19
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -20341,7 +22151,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
- * PRINTS: packages/connector-core/test/pilot-client.test.ts 5
+ * PRINTS: packages/connector-core/test/pilot-client.test.ts 7
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
@@ -20409,7 +22219,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 3
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 22
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -20431,9 +22241,9 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-content-floor.test.ts 5
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
- * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 5
- * PRINTS: packages/server/test/hint-outcomes.test.ts 5
+ * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 63
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
@@ -20452,7 +22262,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 3
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 30
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
@@ -20487,7 +22297,7 @@ interface Outcome {
  * PRINTS: packages/server/test/startup-boot.test.ts 3
  * PRINTS: packages/server/test/startup-upgrades.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
- * PRINTS: packages/server/test/team-settings.test.ts 2
+ * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2

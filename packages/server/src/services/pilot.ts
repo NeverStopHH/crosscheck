@@ -29,6 +29,7 @@ import {
   agentSessions,
   hintDeliveries,
   hintOutcomes,
+  noiseReassertions,
   pilotAttributions,
   pilotCounters,
   pilotMarks,
@@ -38,6 +39,9 @@ import {
 } from "../db/schema.ts";
 import { PILOT_RETENTION_DAYS } from "../constants.ts";
 import { COVERAGE_SOURCES, isJudgeable, readCoverage } from "./coverage.ts";
+import { writeNoiseOnPointer } from "./noise-label.ts";
+import type { MarkRow } from "./noise-label.ts";
+import type { StandingWord } from "./pointer-standing.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import { PILOT_SET_COUNTERS, placeSession } from "./pilot-session-set.ts";
 import type { Placement } from "./pilot-session-set.ts";
@@ -581,7 +585,13 @@ export interface WriteMarkInput {
 }
 
 export type WriteMarkOutcome =
-  | { readonly id: string; readonly repeated: boolean }
+  | {
+      readonly id: string;
+      readonly repeated: boolean;
+      /** A noise label on a delivery (07 §13.11, H2): what the pointer stands at now, and what stood before. */
+      readonly stands?: StandingWord | null;
+      readonly replaced?: StandingWord | null;
+    }
   | { readonly refusal: MarkRefusal };
 
 /**
@@ -592,6 +602,20 @@ export type WriteMarkOutcome =
  */
 const storedMark = (mark: PilotMark): PilotMark =>
   mark === PILOT_LEGACY_NOISE_MARK ? "noise" : mark;
+
+const markRow = (input: WriteMarkInput, id: string, createdAt: Date): MarkRow => ({
+  id,
+  repo: input.repo,
+  refKind: input.refKind,
+  refId: input.refId,
+  mark: storedMark(input.mark),
+  markedBy: input.markedBy,
+  // STAMPED BY THE HUB. The body said what it OBSERVED; only the hub says
+  // what that observation is worth.
+  captureMode: HUMAN_CAPTURE_MODE,
+  createdAt,
+  reason: input.reason,
+});
 
 /**
  * ONE PERSON'S ONE MARK ABOUT ONE THING (§3.2).
@@ -637,22 +661,14 @@ export const writePilotMark = async (
   if (refusal !== null) {
     return { refusal };
   }
+  // 07 §13.11 (H2): noise on a delivery is decided against the pointer's outcomes, under its lock.
+  if (input.refKind === "hint_delivery" && storedMark(input.mark) === "noise") {
+    return writeNoiseOnPointer(deps, input.refId, input.markedBy, (id, createdAt) => markRow(input, id, createdAt));
+  }
   const id = `pm_${randomUUID()}`;
   const inserted = await deps.db
     .insert(pilotMarks)
-    .values({
-      id,
-      repo: input.repo,
-      refKind: input.refKind,
-      refId: input.refId,
-      mark: storedMark(input.mark),
-      markedBy: input.markedBy,
-      // STAMPED BY THE HUB. The body said what it OBSERVED; only the hub says
-      // what that observation is worth.
-      captureMode: HUMAN_CAPTURE_MODE,
-      createdAt: deps.now(),
-      reason: input.reason,
-    })
+    .values(markRow(input, id, deps.now()))
     .onConflictDoNothing()
     .returning({ id: pilotMarks.id });
   return inserted[0] === undefined
@@ -718,4 +734,6 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
   // outcome is never older than its delivery, so no figure — whose widest
   // window is this same number — loses a row it could read.
   await deps.db.delete(hintOutcomes).where(lt(hintOutcomes.createdAt, cutoff));
+  // 07 §13.11 (H-B): the person's re-asserted noise stands beside those outcomes, under the same rule.
+  await deps.db.delete(noiseReassertions).where(lt(noiseReassertions.createdAt, cutoff));
 };

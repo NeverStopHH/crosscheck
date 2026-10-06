@@ -209,6 +209,16 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
     ownRetentionDays: PILOT_RETENTION_DAYS,
   },
   {
+    // 07 §13.11 (review H-B). The person saying noise again, a row of its own
+    // beside the label; reaches a session through its delivery, as an outcome does.
+    table: "noise_reassertions",
+    column: "delivery_id",
+    semantics: "non_retaining_edge",
+    reason: "a person saying again that a delivery was noise; reads no position in the receiving session's order",
+    // The outcomes' rule, which it stands beside; nothing references it (01a, principle 6).
+    ownRetentionDays: PILOT_RETENTION_DAYS,
+  },
+  {
     table: "questions",
     column: "author_session_id",
     semantics: "non_retaining_edge",

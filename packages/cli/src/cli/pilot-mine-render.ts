@@ -13,16 +13,17 @@
  * and no line puts a percentage beside a person (00 §8.5).
  *
  * WHO SEES WHAT IS SAID ON THE PAGE, not left to be inferred: this view is
- * the caller's alone, a teammate learns one count about their own work, and
- * the team report stays per repo.
+ * the caller's alone; a teammate learns one count about their own work, for a
+ * whole past month and only above the people-minimum (review #10); the team
+ * report's line is a whole past month above its own minimums (review #4).
  */
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
-import type { MyHintOutcomes, SourceTally } from "@crosscheck/connector-core/http/hint-outcomes.ts";
+import type { Credit, MyHintOutcomes, SourceTally } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { quoted } from "@crosscheck/connector-core/mcp/render.ts";
-import { MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
+import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
 
-import { outcomeWord } from "./outcome-render.ts";
+import { COUNTED_WHILE_ENROLLED, RECONSTRUCTED_ENROLMENT, monthOf, outcomeWord } from "./outcome-render.ts";
 
 const INDENT = "  ";
 /** A source the hub could not name — work that is not this repo's, or is gone. */
@@ -64,8 +65,12 @@ const windowWords = (view: MyHintOutcomes): string =>
     ? `since ${day(view.sinceIso)}, when outcomes became recordable here (..${day(view.untilIso)})`
     : `last ${plural(view.days, "day")} (${day(view.sinceIso)}..${day(view.untilIso)})`;
 
+/** 07 §13.11 (review M3): a pause inside the window is said, so the window is not read as unbroken. */
+const pausedWords = (view: MyHintOutcomes): string =>
+  view.pausedInWindow === true ? " — counted only while the pilot was enrolled here" : "";
+
 const headerLines = (view: MyHintOutcomes): readonly string[] => [
-  `your hint outcomes on ${bareUntrusted(view.repo)} · ${windowWords(view)}`,
+  `your hint outcomes on ${bareUntrusted(view.repo)} · ${windowWords(view)}${pausedWords(view)}`,
   QUOTED_DATA_NOTICE,
 ];
 
@@ -74,13 +79,18 @@ const receivedLines = (view: MyHintOutcomes): readonly string[] =>
     ? ["nothing reached you unasked on this repo in this window"]
     : [
         `hints that reached you unasked: ${String(view.received)} — ${tallyWords(view)}`,
-        ...view.bySource.map(
-          (source) => `${INDENT}from ${sourceName(source.source)}: ${String(source.received)} — ${tallyWords(source)}`,
-        ),
+        ...view.bySource.flatMap((source) => [
+          `${INDENT}from ${sourceName(source.source)}: ${String(source.received)} — ${tallyWords(source)}`,
+          // 07 §13.14 (round-6 HIGH-1): the person's own verdict, on its own line — never one of the buckets
+          ...(source.helpful === undefined ? [] : [`${INDENT}${INDENT}helpful (your label) ${String(source.helpful)}`]),
+        ]),
         ...(view.bySourceBeyondList > 0
           ? [`${INDENT}(+${plural(view.bySourceBeyondList, "more teammate")}, counted above, not listed)`]
           : []),
       ];
+
+/** 07 §13.14 (round-6 LOW-6): a helpful label's sentence is the person's own label's, as the helpful line says. */
+const reasonWord = (outcome: string): string => (outcome === "helpful" ? "helpful (your label)" : outcomeWord(outcome));
 
 const reasonLines = (view: MyHintOutcomes): readonly string[] =>
   view.reasons.length === 0
@@ -89,15 +99,49 @@ const reasonLines = (view: MyHintOutcomes): readonly string[] =>
         "why, newest first — as you or your agent wrote it:",
         ...view.reasons.map(
           (said) =>
-            `${INDENT}${outcomeWord(said.outcome)}, from ${sourceName(said.source)}: ${quoted(said.reason, MAX_PILOT_LABEL_REASON_UTF16_UNITS)}`,
+            `${INDENT}${reasonWord(said.outcome)}${said.reasserted === true ? ", said again" : ""}, from ${sourceName(said.source)}: ${quoted(said.reason, MAX_PILOT_LABEL_REASON_UTF16_UNITS)}`,
         ),
         ...(view.reasonsBeyondList > 0 ? [`${INDENT}(+${String(view.reasonsBeyondList)} more, not listed)`] : []),
       ];
 
+const PEOPLE_MINIMUM = String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders);
+
+/** Why a credit carries no number: the month was outside the repo's enrolment (07 §13.11, M3). */
+const NOT_RECORDABLE_CREDIT = "nothing to count — the pilot was not enrolled here during it";
+
+/** One generic sentence for every other word (review M1): which minimum failed is never said. */
+const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums: leaving out any one person, at least ${PEOPLE_MINIMUM} people must have followed it`;
+
+/**
+ * THE SOURCE CREDIT (07 §13.10, review #10, M-1): one closed month's follows
+ * of the caller's work, shown only once three people followed it with any one
+ * left out — or why there is no number. Never a "followed 0", whoever sent it:
+ * a zero is every recorder's verdict at once.
+ */
+const creditWords = (credit: Credit): string => {
+  if (credit.withheld === null && credit.followed !== null && credit.followed > 0) {
+    return `followed ${plural(credit.followed, "time")} — shown once, leaving out any one person, at least ${PEOPLE_MINIMUM} people followed it`;
+  }
+  return credit.withheld === "not_recordable" ? NOT_RECORDABLE_CREDIT : BELOW_MINIMUMS_CREDIT;
+};
+
+/** 07 §13.11 (round 3): a credit this client cannot read is one line, and the person's own view still prints. */
+const UNREADABLE_CREDIT_LINE =
+  "your own work, in teammates' hints: this hub sent a count this client cannot read — nothing is shown from it";
+
+const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
+  "unreadable" in credit
+    ? UNREADABLE_CREDIT_LINE
+    : `your own work, in teammates' hints, ${monthOf(credit.periodStartIso)}: ${creditWords(credit)}` +
+      (credit.pausedInPeriod === true ? `; ${COUNTED_WHILE_ENROLLED}` : "") +
+      (credit.reconstructed === true ? `; ${RECONSTRUCTED_ENROLMENT}` : "");
+
 const footerLines = (view: MyHintOutcomes): readonly string[] => [
-  `your own work, in teammates' hints: followed ${plural(view.yourWork.followed, "time")}`,
-  "recorded with your key — by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode); noise is your own label (crosscheck noise)",
-  "only you see this view; a teammate sees only how often their own work was followed, and the team report (crosscheck pilot) stays per repo",
+  creditLine(view.yourWork),
+  // §13.14 LOW-1: the commands are the person's only when typed in their own shell
+  "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's ! prefix); noise is your own label (crosscheck noise)",
+  "only you see this view in full; others see your words only inside totals for a whole past month: the team report's, and a teammate's count of how often their work was followed",
+  `each is shown only if, leaving out any one person's words, words from at least ${PEOPLE_MINIMUM} people remain — the team report's also about at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work, ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} or more — so a team of three never gets either`,
 ];
 
 export const renderMyOutcomes = (view: MyHintOutcomes): string =>

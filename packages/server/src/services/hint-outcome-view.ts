@@ -11,27 +11,38 @@
  * WHAT A TEAMMATE LEARNS is one count about their OWN work: how often the
  * hints that pointed at it were followed. No recipient, no reason, no
  * override and no noise rides beside it — those are other people's words
- * about their own sessions.
- *
- * ONE NOISE CONCEPT. Noise is the person's label in `pilot_marks` (and the
- * 0.10 `off_target` spelling of it); an outcome is the agent's or the
- * person's word about what happened next. Per delivery the LATER of the two
- * stands, the label on a tie — it is the person's own verdict.
+ * about their own sessions. And not even that count while it could single
+ * somebody out (review #10): it covers the last whole month, frozen at its
+ * end, and is shown only once at least three people recorded something about
+ * that work — otherwise the answer says why there is no number.
  *
  * NO RANKING. Teammates are listed in name order, never by count: a list of
  * people sorted by how often their work was taken is a score, and 00 §8.5
  * bans scoring people.
+ *
+ * What a delivery stands at is defined once, in `outcome-population.ts`.
  */
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import { PULLED_DELIVERY_CHANNEL } from "@crosscheck/schema";
-import type { HintOutcome } from "@crosscheck/schema";
+import type { HintOutcome, HintOutcomeWithholding } from "@crosscheck/schema";
 
 import { HINT_OUTCOME_MAX_REASONS, HINT_OUTCOME_MAX_SOURCES } from "../constants.ts";
-import { NOISE_WORDS } from "./pilot-label-figures.ts";
-import { readTeamSettings } from "./team-settings.ts";
+import {
+  EMPTY_TALLY,
+  addToTally,
+  deliveryStates,
+  enrolledSpan,
+  lastWholeMonth,
+  outcomePopulationStart,
+  readEnrolments,
+  readPeriodAggregate,
+  withholdingOf,
+} from "./outcome-population.ts";
+import type { DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
+
+export type { HintOutcomeTally } from "./outcome-population.ts";
 
 interface Deps {
   readonly db: Db;
@@ -40,40 +51,52 @@ interface Deps {
 
 const MS_PER_DAY = 86_400_000;
 
-/** What one delivery stands at: an outcome, the noise label, or nothing said. */
-type DeliveryState = HintOutcome | "noise" | "unmarked";
-
-export interface HintOutcomeTally {
-  readonly received: number;
-  readonly followed: number;
-  readonly overrode: number;
-  readonly notRelevantNow: number;
-  readonly noise: number;
-  readonly unmarked: number;
-}
-
 export interface SourceTally extends HintOutcomeTally {
   /** The teammate whose work the hints pointed at; null when it is not this repo's or not found. */
   readonly source: string | null;
+  /** Of `received`, those whose newest label of the caller's own is helpful — beside the buckets, never in them (07 §13.14). */
+  readonly helpful: number;
 }
 
 export interface OutcomeReason {
-  readonly outcome: HintOutcome;
+  /**
+   * The word that stands — an outcome, or the person's noise (said again: round-5 LOW-6) — or the person's
+   * own helpful label, whose sentence sits beside the outcome's (round-6 LOW-6).
+   */
+  readonly outcome: HintOutcome | "noise" | "helpful";
   readonly reason: string;
   readonly source: string | null;
+  /** Present, and true, only on the sentence of a noise said again (a re-assertion). */
+  readonly reasserted?: true;
 }
 
 export interface MyHintOutcomes extends HintOutcomeTally {
+  /** The caller's own helpful labels, beside the buckets (07 §13.14). */
+  readonly helpful: number;
   readonly repo: string;
   readonly days: number;
   readonly sinceIso: string;
   readonly untilIso: string;
+  /** The pilot paused inside the window: only its enrolled time is counted (07 §13.11, review M3). */
+  readonly pausedInWindow: boolean;
   readonly bySource: readonly SourceTally[];
   readonly bySourceBeyondList: number;
   readonly reasons: readonly OutcomeReason[];
   readonly reasonsBeyondList: number;
   /** Hints that pointed at the CALLER's work and that the teammate they reached followed. */
-  readonly yourWork: { readonly followed: number };
+  readonly yourWork: YourWork;
+}
+
+/** The source credit: one closed month's follows of the caller's work, or why there is no number. */
+export interface YourWork {
+  readonly periodStartIso: string;
+  readonly periodEndIso: string;
+  readonly followed: number | null;
+  readonly withheld: HintOutcomeWithholding | null;
+  /** The pilot paused inside the month: only its enrolled time was counted (review LOW). */
+  readonly pausedInPeriod: boolean;
+  /** The month is counted over an enrolment an upgrade reconstructed from what was recorded (review M-3). */
+  readonly reconstructed: boolean;
 }
 
 export interface ReadMyHintOutcomesInput {
@@ -81,67 +104,6 @@ export interface ReadMyHintOutcomesInput {
   readonly developerId: string;
   readonly days: number;
 }
-
-export const EMPTY_TALLY: HintOutcomeTally = {
-  received: 0,
-  followed: 0,
-  overrode: 0,
-  notRelevantNow: 0,
-  noise: 0,
-  unmarked: 0,
-};
-
-const TALLY_FIELD: Record<DeliveryState, keyof HintOutcomeTally> = {
-  followed: "followed",
-  overrode: "overrode",
-  not_relevant_now: "notRelevantNow",
-  noise: "noise",
-  unmarked: "unmarked",
-};
-
-/**
- * Every unasked delivery to the recipients `who` selects, on this repo, in
- * the window — with the developer whose work it pointed at and the word it
- * stands at. The source is THIS repo's: a delivery's ref is the client's own
- * word, so a pointer at another repo's work names nobody (07 §11.9).
- */
-export const deliveryStates = (repo: string, since: Date, who: SQL): SQL => sql`
-  WITH received AS (
-    SELECT hd.id, hd.ref_kind, hd.ref_id, s.developer_id AS recipient
-    FROM hint_deliveries hd
-    JOIN agent_sessions s ON s.id = hd.session_id
-    WHERE s.repo = ${repo}
-      AND ${who}
-      AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
-      AND hd.delivered_at >= ${since.toISOString()}::timestamptz
-  ), sourced AS (
-    SELECT r.*, (
-      SELECT src.developer_id FROM agent_sessions src
-      WHERE src.repo = ${repo} AND src.id = CASE WHEN r.ref_kind = 'work_context'
-        THEN (SELECT wc.session_id FROM work_contexts wc WHERE wc.id = r.ref_id)
-        ELSE (SELECT c.author_session_id FROM claims c WHERE c.id = r.ref_id) END
-    ) AS source_id
-    FROM received r
-  ), stated AS (
-    SELECT so.id, so.source_id, latest.outcome, latest.reason,
-           latest.created_at AS outcome_at, m.created_at AS noise_at
-    FROM sourced so
-    LEFT JOIN LATERAL (
-      SELECT o.outcome, o.reason, o.created_at FROM hint_outcomes o
-      WHERE o.delivery_id = so.id AND o.recorded_by = so.recipient
-      ORDER BY o.created_at DESC, o.id DESC LIMIT 1
-    ) latest ON true
-    LEFT JOIN pilot_marks m ON m.ref_kind = 'hint_delivery' AND m.ref_id = so.id
-      AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS}
-  ), states AS (
-    SELECT id, source_id, outcome_at,
-      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'
-           WHEN outcome IS NOT NULL THEN outcome
-           ELSE 'unmarked' END AS state,
-      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN NULL
-           ELSE reason END AS reason
-    FROM stated
-  )`;
 
 /** The caller's own deliveries — the one recipient this view is ever about. */
 const receivedBy = (developerId: string): SQL => sql`s.developer_id = ${developerId}`;
@@ -151,30 +113,15 @@ type TallyRow = {
   readonly source: string | null;
   readonly state: DeliveryState;
   readonly n: number;
+  readonly helpful: number;
 };
 
 type ReasonRow = {
-  readonly outcome: HintOutcome;
+  readonly outcome: HintOutcome | "noise" | "helpful";
   readonly reason: string;
   readonly source: string | null;
+  readonly reasserted: boolean;
   readonly total: number;
-};
-
-export const addToTally = (tally: HintOutcomeTally, state: DeliveryState, n: number): HintOutcomeTally => {
-  const field = TALLY_FIELD[state];
-  return { ...tally, received: tally.received + n, [field]: tally[field] + n };
-};
-
-/**
- * WHERE AN OUTCOME FIGURE STARTS (07 §13.9): the later of its window's start
- * and the instant outcomes became recordable on the repo. A delivery from
- * before that instant could not have had an outcome, so it is outside the
- * population — never "unmarked". No instant (never enrolled) starts at `now`:
- * nothing counts, the conservative of the two errors.
- */
-export const outcomePopulationStart = (windowStart: Date, outcomesSinceIso: string | null, now: Date): Date => {
-  const recordable = outcomesSinceIso === null ? now : new Date(outcomesSinceIso);
-  return recordable.getTime() > windowStart.getTime() ? recordable : windowStart;
 };
 
 const bySourceName = (left: SourceTally, right: SourceTally): number =>
@@ -182,15 +129,20 @@ const bySourceName = (left: SourceTally, right: SourceTally): number =>
 
 const foldTallies = (
   rows: readonly TallyRow[],
-): { readonly total: HintOutcomeTally; readonly sources: readonly SourceTally[] } => {
+): { readonly total: HintOutcomeTally & { readonly helpful: number }; readonly sources: readonly SourceTally[] } => {
   const sources = new Map<string, SourceTally>();
   for (const row of rows) {
     const key = row.source_id ?? "";
-    const current = sources.get(key) ?? { source: row.source, ...EMPTY_TALLY };
-    sources.set(key, { ...addToTally(current, row.state, row.n), source: current.source });
+    const current = sources.get(key) ?? { source: row.source, helpful: 0, ...EMPTY_TALLY };
+    sources.set(key, {
+      ...addToTally(current, row.state, row.n),
+      source: current.source,
+      helpful: current.helpful + Number(row.helpful),
+    });
   }
-  const total = rows.reduce((sum, row) => addToTally(sum, row.state, row.n), EMPTY_TALLY);
-  return { total, sources: [...sources.values()].sort(bySourceName) };
+  const tally = rows.reduce((sum, row) => addToTally(sum, row.state, row.n), EMPTY_TALLY);
+  const helpful = rows.reduce((sum, row) => sum + Number(row.helpful), 0);
+  return { total: { ...tally, helpful }, sources: [...sources.values()].sort(bySourceName) };
 };
 
 const readTallies = async (
@@ -200,7 +152,8 @@ const readTallies = async (
 ): Promise<readonly TallyRow[]> => {
   const rows = await deps.db.execute<TallyRow>(sql`
     ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
-    SELECT st.source_id, d.name AS source, st.state, count(*)::int AS n
+    SELECT st.source_id, d.name AS source, st.state, count(*)::int AS n,
+      count(*) FILTER (WHERE st.helpful_label)::int AS helpful
     FROM states st LEFT JOIN developers d ON d.id = st.source_id
     GROUP BY st.source_id, d.name, st.state`);
   return rows.rows;
@@ -214,45 +167,76 @@ const readReasons = async (
 ): Promise<readonly ReasonRow[]> => {
   const rows = await deps.db.execute<ReasonRow>(sql`
     ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
-    SELECT st.state AS outcome, st.reason, d.name AS source, count(*) OVER ()::int AS total
-    FROM states st LEFT JOIN developers d ON d.id = st.source_id
-    WHERE st.reason IS NOT NULL
-    ORDER BY st.outcome_at DESC, st.id ASC
+    SELECT r.outcome, r.reason, d.name AS source, r.reasserted, count(*) OVER ()::int AS total
+    FROM (
+      SELECT st.state AS outcome, st.reason, st.reasserted, st.outcome_at AS at, st.id, st.source_id
+      FROM states st WHERE st.reason IS NOT NULL
+      UNION ALL
+      -- round-6 LOW-6: the person's own helpful sentence, on the label axis beside the outcome's reason
+      SELECT 'helpful', st.helpful_reason, false, st.helpful_at, st.id, st.source_id
+      FROM states st WHERE st.helpful_reason IS NOT NULL
+    ) r LEFT JOIN developers d ON d.id = r.source_id
+    ORDER BY r.at DESC, r.id ASC, r.outcome ASC
     LIMIT ${HINT_OUTCOME_MAX_REASONS}`);
   return rows.rows;
 };
 
-/** How often teammates followed hints that pointed at the caller's work — one count, nothing else. */
-const readFollowedWork = async (
+/**
+ * How often teammates followed hints that pointed at the caller's work — one
+ * count over the last whole month as it stood at its end, and only once at
+ * least three people recorded something about that work (review #10).
+ */
+const readYourWork = async (
   deps: Deps,
   input: ReadMyHintOutcomesInput,
-  since: Date,
-): Promise<number> => {
-  const rows = await deps.db.execute<{ n: number }>(sql`
-    ${deliveryStates(input.repo, since, sql`s.developer_id <> ${input.developerId}`)}
-    SELECT count(*)::int AS n FROM states st
-    WHERE st.source_id = ${input.developerId} AND st.state = 'followed'`);
-  return Number(rows.rows[0]?.n ?? 0);
+  now: Date,
+  enrolments: readonly Enrolment[],
+): Promise<YourWork> => {
+  const period = lastWholeMonth(now);
+  const stamps = { periodStartIso: period.start.toISOString(), periodEndIso: period.end.toISOString() };
+  const span = enrolledSpan(period.start, period.end, enrolments);
+  if (span === null) {
+    return { ...stamps, followed: null, withheld: "not_recordable", pausedInPeriod: false, reconstructed: false };
+  }
+  const aggregate = await readPeriodAggregate(deps.db, {
+    repo: input.repo,
+    from: span.from,
+    until: period.end,
+    who: sql`s.developer_id <> ${input.developerId}`,
+    sourceIs: input.developerId,
+  });
+  // review M-1: a count only once, with any one person left out, three people FOLLOWED — never "followed 0"
+  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });
+  return {
+    ...stamps,
+    followed: withheld === null ? aggregate.followed : null,
+    withheld,
+    pausedInPeriod: span.paused,
+    reconstructed: span.reconstructed,
+  };
 };
 
 export const readMyHintOutcomes = async (
   deps: Deps,
   input: ReadMyHintOutcomesInput,
 ): Promise<MyHintOutcomes | { readonly refusal: "not_enrolled" }> => {
-  const settings = await readTeamSettings(deps, input.repo);
-  if (!settings.pilotEnrolled) {
+  // review M-2: READ-ONLY WHENEVER THE REPO WAS EVER IN THE PILOT — during a pause and after leaving,
+  // the person still reads what they recorded; only a repo never enrolled has no view (writes stay refused)
+  const enrolments = await readEnrolments(deps.db, input.repo);
+  const [first] = enrolments;
+  if (first === undefined) {
     return { refusal: "not_enrolled" };
   }
   const now = deps.now();
   const since = outcomePopulationStart(
     new Date(now.getTime() - input.days * MS_PER_DAY),
-    settings.pilotOutcomesSince,
+    first.start.toISOString(),
     now,
   );
-  const [tallies, reasons, followedWork] = await Promise.all([
+  const [tallies, reasons, yourWork] = await Promise.all([
     readTallies(deps, input, since),
     readReasons(deps, input, since),
-    readFollowedWork(deps, input, since),
+    readYourWork(deps, input, now, enrolments),
   ]);
   const { total, sources } = foldTallies(tallies);
   const reasonsTotal = Number(reasons[0]?.total ?? 0);
@@ -261,11 +245,18 @@ export const readMyHintOutcomes = async (
     days: input.days,
     sinceIso: since.toISOString(),
     untilIso: now.toISOString(),
+    pausedInWindow: enrolledSpan(since, now, enrolments)?.paused ?? false,
     ...total,
     bySource: sources.slice(0, HINT_OUTCOME_MAX_SOURCES),
     bySourceBeyondList: Math.max(0, sources.length - HINT_OUTCOME_MAX_SOURCES),
-    reasons: reasons.map((row) => ({ outcome: row.outcome, reason: row.reason, source: row.source })),
+    // round-5 LOW-6: a re-asserted noise's sentence is listed, marked as said again (added only then: additive)
+    reasons: reasons.map((row) => ({
+      outcome: row.outcome,
+      reason: row.reason,
+      source: row.source,
+      ...(row.reasserted ? { reasserted: true } : {}),
+    })),
     reasonsBeyondList: Math.max(0, reasonsTotal - reasons.length),
-    yourWork: { followed: followedWork },
+    yourWork,
   };
 };

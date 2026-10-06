@@ -37,6 +37,7 @@ import { rotateOwnKey } from "@crosscheck/connector-core/http/keys.ts";
 import { getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
 
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import type { CliResult } from "./login.ts";
@@ -209,8 +210,9 @@ export const runKey = async (
   if (subcommand !== "rotate" || unknown.length > 0) {
     return result(KEY_USAGE, EXIT_USAGE);
   }
-  if (!isInteractive()) {
-    return result(AGENT_REFUSAL, EXIT_USAGE);
+  const gate = personGate(env, isInteractive);
+  if (!gate.isPerson) {
+    return result(`${agentHostRefusalLine(gate)}${AGENT_REFUSAL}`, EXIT_USAGE);
   }
   const resolved = await resolveKeySource(env, printKey);
   if (!resolved.ok) {

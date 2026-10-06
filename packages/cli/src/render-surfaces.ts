@@ -28,6 +28,7 @@ import type { PilotView } from "./cli/pilot-render.ts";
 import {
   candidateListLines,
   markFailureLine,
+  labelStandsLine,
   markRecordedLine,
   noLiveSessionLine,
   nothingRecentLine,
@@ -359,7 +360,7 @@ const pilotWith = (payload: string): PilotView => {
         reasons: [{ label: payload, reason: payload }],
         reasonsBeyondList: 1,
       },
-      outcomes: { sinceIso: payload, interventions: 4, followed: 1, overrode: 1, notRelevantNow: 1, noise: 0, unmarked: 1 },
+      outcomes: { periodStartIso: payload, periodEndIso: payload, recordableSinceIso: ISO, countedFromIso: ISO, withheld: payload, figures: null },
       cohorts: [
         { cohort: payload, cap: 50, ...labels },
         {
@@ -618,17 +619,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // with the payload in every slot the wire fills.
     framing: "bare",
     render: (payload) => {
-      const candidate = {
-        id: payload,
-        sessionId: payload,
-        channel: payload,
-        refKind: payload,
-        refId: payload,
-        deliveredAt: payload,
-      };
+      const candidate = { id: payload, sessionId: payload, channel: payload, refKind: payload, refId: payload, deliveredAt: payload };
       return [
         markRecordedLine("hint_delivery", payload, false),
         markRecordedLine("hint_delivery", payload, true),
+        // 07 §13.11 (H2): the outcome a noise label now stands over is the hub's word.
+        labelStandsLine({ stands: "noise", replaced: payload }),
         // `crosscheck helpful` (second review, M6): the same lines, its word.
         markRecordedLine("hint_delivery", payload, false, "helpful"),
         candidateListLines([candidate], true, 60, NOW, "helpful"),

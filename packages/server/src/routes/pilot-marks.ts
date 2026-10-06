@@ -187,9 +187,12 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // 200 AND NOT 201 ON A REPEAT, because nothing was created — and the
     // caller is told WHICH it was rather than having to infer it from a
     // status code that would otherwise be identical either way.
+    // 07 §13.11 (H2): a noise label on a delivery also says what now stands.
+    const standing =
+      outcome.stands === undefined ? {} : { stands: outcome.stands, replaced: outcome.replaced ?? null };
     return ok(
       c,
-      { id: outcome.id, repeated: outcome.repeated },
+      { id: outcome.id, repeated: outcome.repeated, ...standing },
       outcome.repeated ? HTTP_OK : HTTP_CREATED,
     );
   });

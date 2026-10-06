@@ -13,12 +13,14 @@
  * none is made: every row is attributed to the developer's key, whoever held it.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import {
   HintOutcomeSchema,
   describeUnstorableText,
   unstorableTextPath,
 } from "@crosscheck/schema";
+import type { HintOutcomeChannel } from "@crosscheck/schema";
 
 import { PILOT_REPORT_DEFAULT_WINDOW_DAYS, PILOT_RETENTION_DAYS } from "../constants.ts";
 import { fail, ok } from "../http/envelope.ts";
@@ -47,6 +49,11 @@ export const HINT_OUTCOME_REFUSAL_SENTENCE: Record<HintOutcomeRefusal, string> =
     "that delivery belongs to another repo; outcomes are repo-scoped, so record it from that repo",
   not_unsolicited:
     "that was an answer somebody asked for; an outcome is recorded for what arrived unasked",
+  before_outcomes:
+    "that hint reached you before this repo began recording outcomes, so no outcome figure could ever count it — nothing was recorded",
+  while_paused:
+    "that hint reached you while this repo's pilot was paused, so no outcome figure could ever count it — nothing was recorded",
+  past_window: `that hint reached you more than ${String(PILOT_RETENTION_DAYS)} days ago, older than any outcome figure reads — nothing was recorded`,
   reason_secret:
     "the reason looks like it holds a secret (a key, a token, a password), so nothing was recorded — say it again without it",
 };
@@ -91,7 +98,13 @@ export const hintOutcomeRoutes = (deps: AppDeps): Hono<AppEnv> => {
     return ok(c, view);
   });
 
-  router.post("/", developerAuth(deps), async (c) => {
+  /**
+   * ONE HANDLER, TWO DOORS (07 §13.12). Which channel said a word is the
+   * route's to stamp, never a field the body may claim: `/` is the agent's
+   * (`mark_hint_outcome`), `/person` the person's (`crosscheck followed /
+   * overrode`). A person's word is never overturned by an agent's.
+   */
+  const record = (recordedVia: HintOutcomeChannel) => async (c: Context<AppEnv>) => {
     const parsed = HintOutcomeSchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
@@ -109,12 +122,16 @@ export const hintOutcomeRoutes = (deps: AppDeps): Hono<AppEnv> => {
       reason: parsed.data.reason ?? null,
       session: parsed.data.session ?? null,
       recordedBy: c.get("developer").id,
+      recordedVia,
     });
     if ("refusal" in result) {
       return fail(c, 422, result.refusal, HINT_OUTCOME_REFUSAL_SENTENCE[result.refusal]);
     }
     return ok(c, result, result.repeated ? HTTP_OK : HTTP_CREATED);
-  });
+  };
+
+  router.post("/", developerAuth(deps), record("agent"));
+  router.post("/person", developerAuth(deps), record("person"));
 
   return router;
 };

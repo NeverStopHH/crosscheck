@@ -161,6 +161,8 @@ export const ingestHintDelivery = async (
       // that bucket as itself instead of folding it into a guess.
       channel: body.channel,
       deliveredAt,
+      // 07 §13.11 (review P5): the hub's clock, so a closed month never moves.
+      ingestedAt: deps.now(),
     })
     .onConflictDoNothing()
     .returning({ id: hintDeliveries.id });

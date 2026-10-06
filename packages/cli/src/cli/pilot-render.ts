@@ -38,7 +38,7 @@ import {
   COVERAGE_STATES,
 } from "@crosscheck/connector-core/http/coverage.ts";
 import { quoted, safeId } from "@crosscheck/connector-core/mcp/render.ts";
-import { DELIVERY_CHANNELS, MAX_PIN_PATH_CHARS } from "@crosscheck/schema";
+import { DELIVERY_CHANNELS, HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PIN_PATH_CHARS } from "@crosscheck/schema";
 import type { PilotUnavailableReason } from "@crosscheck/schema";
 import type { FixDiffOutcome } from "@crosscheck/connector-core/git/fix-diff.ts";
 import type {
@@ -47,7 +47,10 @@ import type {
   PilotLabelFigures,
   PilotRepair,
   PilotReport,
+  UnreadableBlock,
 } from "@crosscheck/connector-core/http/pilot.ts";
+
+import { COUNTED_WHILE_ENROLLED, RECONSTRUCTED_ENROLMENT, monthOf } from "./outcome-render.ts";
 
 export interface ScoredFix {
   readonly repair: PilotRepair;
@@ -118,6 +121,17 @@ const isoDay = (iso: string): string => {
 
 const headerLine = (report: PilotReport): string =>
   `crosscheck pilot: ${bareUntrusted(report.repo)} · ${isoDay(report.sinceIso)}..${isoDay(report.untilIso)}`;
+
+/**
+ * A REPO THAT LEFT (07 §13.12, review M-2): its last whole month is counted
+ * from its enrolled intervals, so a month the team was in the pilot for still
+ * prints its line — a repo never enrolled has no counted span, and prints none.
+ */
+const lastEnrolledMonthLines = (report: PilotReport): readonly string[] => {
+  const block = report.outcomes;
+  const counted = block !== undefined && !("unreadable" in block) && block.countedFromIso !== null;
+  return counted ? [outcomeLine(report)] : [];
+};
 
 const notEnrolledLines = (report: PilotReport): readonly string[] => [
   headerLine(report),
@@ -346,27 +360,98 @@ const legacyNoiseLines = (proof: PilotReport["precision"]): readonly string[] =>
  */
 const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key`;
 
+type OutcomeBlock = Exclude<NonNullable<PilotReport["outcomes"]>, UnreadableBlock>;
+
+/** 07 §13.11 (round 3): a block this client cannot read is one line — never zeros, never the whole report lost. */
+const UNREADABLE_OUTCOMES_LINE = `${INDENT}hint outcomes: this hub sent an outcomes block this client cannot read — nothing is shown from it`;
+
 /**
- * 07 §13.9 (D-O5): WHAT THE INTERVENTIONS LED TO, one per-repo line —
- * descriptive, so no target; a floor, because only what an agent or a person
- * chose to record is in it; and counts over the repo, so nobody is named. An
- * older hub sends no block and the line says so; a population of zero says
- * so too, rather than printing "0.0" as if somebody had measured it.
+ * Why a figure is withheld: one generic sentence (review M1) — the minimums
+ * hold with any one person's words left out (H1), so a team of three never
+ * meets them, and the line says so.
+ */
+const BELOW_MINIMUMS = "withheld — below the disclosure minimums";
+const NEVER_A_TEAM_OF_THREE = "; a team of three never meets them";
+
+/**
+ * WHERE COUNTING STARTS, AND WHETHER IT PAUSED (07 §13.11, review M3) — each
+ * date for its own reason: the first enrolment is when outcomes became
+ * recordable; a later start is a re-enrolment; a pause anywhere in the month
+ * means only enrolled time was counted.
+ */
+const countedWhen = (block: OutcomeBlock): string => {
+  if (block.pausedInPeriod === true) {
+    return `, ${COUNTED_WHILE_ENROLLED}`;
+  }
+  if (block.countedFromIso === null || block.countedFromIso === block.periodStartIso) {
+    return "";
+  }
+  const why =
+    block.countedFromIso === block.recordableSinceIso
+      ? "when outcomes became recordable here"
+      : "when the pilot was enrolled here again";
+  return `, counted from ${isoDay(block.countedFromIso)}, ${why}`;
+};
+
+/** …and, 07 §13.12 (review M-3), whether those bounds were reconstructed by an upgrade. */
+const clippedFrom = (block: OutcomeBlock): string =>
+  `${countedWhen(block)}${block.reconstructed === true ? `, ${RECONSTRUCTED_ENROLMENT}` : ""}`;
+
+/** Why nothing in the month could be recorded: never enrolled, enrolled after it, or paused through it. */
+const notRecordableWhy = (block: OutcomeBlock): string => {
+  const since = block.recordableSinceIso;
+  if (since === null) {
+    return "this repo does not record them";
+  }
+  return Date.parse(since) < Date.parse(block.periodEndIso)
+    ? "the pilot was paused here for the whole month"
+    : `outcomes became recordable here on ${isoDay(since)}`;
+};
+
+const withheldOutcomeLine = (block: OutcomeBlock, month: string, withheld: string): string => {
+  if (withheld === "not_recordable") {
+    return `${INDENT}hint outcomes, ${month}: none could be recorded — ${notRecordableWhy(block)}`;
+  }
+  // ONE SENTENCE FOR EVERY OTHER WORD (review M1), an older hub's named
+  // minimum or a newer hub's unknown one alike: which minimum failed is
+  // itself what a viewer could subtract with.
+  return `${INDENT}hint outcomes, ${month}: ${BELOW_MINIMUMS}${clippedFrom(block)}${NEVER_A_TEAM_OF_THREE}`;
+};
+
+/**
+ * EACH FIGURE'S DIRECTION (review, LOW): a recorded word exists only where an
+ * agent or a person chose to say it, so followed, overrode, not relevant now
+ * and noise can only be under-counted; unmarked is everything nobody spoke
+ * about, some of which was acted on, so it can only be over-counted.
+ */
+const RECORDED_ARE_FLOORS = " (FLOORS: only what agents and people chose to record)";
+const UNMARKED_IS_A_CEILING = " (a CEILING: some of it was acted on and never recorded)";
+
+/**
+ * 07 §13.9 (D-O5, review #4): WHAT THE INTERVENTIONS LED TO, one per-repo
+ * line over ONE FIXED, CLOSED MONTH — descriptive, so no target; only what an
+ * agent or a person chose to record; and only above the disclosure minimums,
+ * so no subtraction of one's own `--mine` isolates a teammate. An older hub
+ * sends no block and the line says so; an empty month says so too, never "0.0".
  */
 const outcomeLine = (report: PilotReport): string => {
-  const outcomes = report.outcomes;
-  if (outcomes === undefined) {
+  const block = report.outcomes;
+  if (block === undefined) {
     return `${INDENT}hint outcomes: this hub does not record them`;
   }
-  const since = outcomes.sinceIso === null ? "unknown" : isoDay(outcomes.sinceIso);
-  if (outcomes.interventions === 0) {
-    return `${INDENT}hint outcomes: no intervention reached anyone since ${since}, when outcomes became recordable here`;
+  if ("unreadable" in block) {
+    return UNREADABLE_OUTCOMES_LINE;
   }
-  const per100 = (value: number): string => ((value / outcomes.interventions) * 100).toFixed(RATE_DECIMALS);
+  const month = monthOf(block.periodStartIso);
+  const figures = block.withheld === null && block.figures !== null && block.figures.interventions > 0 ? block.figures : null;
+  if (figures === null) {
+    return withheldOutcomeLine(block, month, block.withheld ?? "below_minimums");
+  }
+  const per100 = (value: number): string => ((value / figures.interventions) * 100).toFixed(RATE_DECIMALS);
   return (
-    `${INDENT}hint outcomes per 100 interventions that reached someone (${count(outcomes.interventions)} since ${since}): ` +
-    `followed ${per100(outcomes.followed)} · overrode ${per100(outcomes.overrode)} · not relevant now ${per100(outcomes.notRelevantNow)} · ` +
-    `noise ${per100(outcomes.noise)} · unmarked ${per100(outcomes.unmarked)} — a FLOOR: only what agents and people chose to record; no target, nobody named`
+    `${INDENT}hint outcomes per 100 interventions, ${month} — the last whole month, fixed (${count(figures.interventions)} reached someone${clippedFrom(block)}): ` +
+    `followed ${per100(figures.followed)} · overrode ${per100(figures.overrode)} · not relevant now ${per100(figures.notRelevantNow)} · ` +
+    `noise ${per100(figures.noise)}${RECORDED_ARE_FLOORS} · unmarked ${per100(figures.unmarked)}${UNMARKED_IS_A_CEILING} — no target, nobody named`
   );
 };
 
@@ -521,7 +606,7 @@ export const pilotFailureLine = (
 export const renderPilot = (view: PilotView): string => {
   const report = view.report;
   if (!report.enrolled) {
-    return `${notEnrolledLines(report).join("\n")}\n`;
+    return `${[...notEnrolledLines(report), ...lastEnrolledMonthLines(report)].join("\n")}\n`;
   }
   const set = report.sessionSet;
   return [

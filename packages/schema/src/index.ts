@@ -172,10 +172,13 @@ export {
 } from "./pilot-mark.ts";
 export type { PilotMarkInput } from "./pilot-mark.ts";
 export {
+  HINT_OUTCOME_CHANNELS,
+  HINT_OUTCOME_DISCLOSURE_MINIMUMS,
+  HINT_OUTCOME_WITHHOLDINGS,
   HintOutcomeSchema,
   MAX_HINT_OUTCOME_REASON_CHARS,
 } from "./hint-outcome.ts";
-export type { HintOutcomeInput } from "./hint-outcome.ts";
+export type { HintOutcomeChannel, HintOutcomeInput, HintOutcomeWithholding } from "./hint-outcome.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,

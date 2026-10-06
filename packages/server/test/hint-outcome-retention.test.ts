@@ -17,7 +17,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { PILOT_RETENTION_DAYS } from "../src/constants.ts";
-import { hintOutcomes } from "../src/db/schema.ts";
+import { hintOutcomes, noiseReassertions } from "../src/db/schema.ts";
 import { RETENTION_REGISTRY } from "../src/services/retention-registry.ts";
 import { reapStaleSessions } from "../src/services/sessions.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
@@ -80,5 +80,50 @@ describe("hint outcomes age out with the pilot (D-O6)", () => {
     // Assert
     expect(referencing).toBe(false);
     expect(rooted).toEqual([]);
+  });
+});
+
+describe("noise re-assertions age out with the outcomes they stand beside (review H-B)", () => {
+  test("a re-assertion past the window goes at the reaper's pass; the one on the boundary stays", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    const now = world.harness.clock.now();
+    const daysAgo = (days: number): Date => new Date(now.getTime() - days * MS_PER_DAY);
+    const row = (id: string, createdAt: Date) => ({
+      id,
+      repo: REPO,
+      deliveryId: world.delivered.kenContext,
+      markedBy: world.nick.developerId,
+      reason: null,
+      createdAt,
+    });
+    await world.harness.db
+      .insert(noiseReassertions)
+      .values([
+        row("nr_past", daysAgo(PILOT_RETENTION_DAYS + 1)),
+        row("nr_boundary", daysAgo(PILOT_RETENTION_DAYS)),
+        row("nr_recent", now),
+      ]);
+
+    // Act
+    await reapStaleSessions({ db: world.harness.db, now: () => now });
+
+    // Assert
+    const kept = await world.harness.db.select({ id: noiseReassertions.id }).from(noiseReassertions);
+    expect(kept.map((reassertion) => reassertion.id).sort()).toEqual(["nr_boundary", "nr_recent"]);
+  });
+
+  test("the registry declares their lifetime, the pilot's, and nothing retaining references them", async () => {
+    // Arrange
+    const ddl = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const entry = RETENTION_REGISTRY.find((relation) => relation.table === "noise_reassertions");
+
+    // Assert
+    expect(entry?.semantics === "non_retaining_edge" ? entry.ownRetentionDays : undefined).toBe(
+      PILOT_RETENTION_DAYS,
+    );
+    expect(/REFERENCES\s+noise_reassertions\b/.test(ddl)).toBe(false);
   });
 });

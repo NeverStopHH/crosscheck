@@ -6,8 +6,10 @@
  * beside the point for the task at hand. So this is the one pilot record an
  * agent may write — through `mark_hint_outcome` — and a person may write the
  * same thing with `crosscheck followed` / `crosscheck overrode`. Both are
- * attributed to the developer's key; nothing at the hub tells the two apart,
- * and nothing here claims to.
+ * attributed to the developer's key; the hub tells the two apart by the route
+ * a word arrived on (07 §13.12), and the CLI takes the person's route only at
+ * a terminal (§13.13 HIGH-1) — a rule backed by a TTY check, not a proof of
+ * who typed it.
  *
  * IT IS NOT A LABEL, and it never reaches `pilot_marks`. A label is a
  * person's verdict on whether an intervention was worth it, counted into
@@ -58,3 +60,46 @@ export const HintOutcomeSchema = z
   });
 
 export type HintOutcomeInput = z.infer<typeof HintOutcomeSchema>;
+
+/**
+ * WHO SAID AN OUTCOME, by channel (07 §13.12): the person, through
+ * `crosscheck followed / overrode`, or their agent, through
+ * `mark_hint_outcome`. The hub stamps it from the route a word arrived on,
+ * never from a body; a person's word is never overturned by an agent's.
+ */
+export const HINT_OUTCOME_CHANNELS = ["agent", "person"] as const;
+
+export type HintOutcomeChannel = (typeof HINT_OUTCOME_CHANNELS)[number];
+
+/**
+ * WHEN A SHARED OUTCOME FIGURE MAY PRINT AT ALL (07 §13.9, review #4/#10).
+ *
+ * A team total minus one's own `--mine` is everybody else's — with one other
+ * person, that person's exact outcomes; an author's credit falling 1 → 0 is a
+ * teammate switching to "overrode". And a minimum that counts the viewer's own
+ * words is one the viewer can meet alone and then subtract (07 §13.11, H1). So
+ * every minimum holds WITH ANY ONE RECORDER LEFT OUT, whoever reads it: at
+ * least three other people's words, about at least three people's work, ten
+ * or more of them. A team of three never meets them. Shared here because the
+ * hub decides and the CLI writes the sentence.
+ */
+export const HINT_OUTCOME_DISCLOSURE_MINIMUMS = {
+  recorders: 3,
+  sources: 3,
+  recorded: 10,
+} as const;
+
+/**
+ * Why a shared outcome figure printed no number — the hub picks one, the CLI
+ * says it. ONE GENERIC WORD for every minimum (07 §13.11, review M1): naming
+ * which one failed — or sending the count beside it — told a viewer exactly
+ * how much the others had recorded.
+ */
+export const HINT_OUTCOME_WITHHOLDINGS = [
+  /** No moment of the period was inside the repo's enrolment — a fact about the repo, not the people. */
+  "not_recordable",
+  /** Below the disclosure minimums, whichever: nothing reached anyone, too few people, too little. */
+  "below_minimums",
+] as const;
+
+export type HintOutcomeWithholding = (typeof HINT_OUTCOME_WITHHOLDINGS)[number];

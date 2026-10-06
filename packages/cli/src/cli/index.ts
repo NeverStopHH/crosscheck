@@ -345,12 +345,17 @@ export const runCli = async (
       return options.isInteractive === undefined
         ? runHelpful(rest, env, cwd)
         : runHelpful(rest, env, cwd, options.isInteractive);
-    // 07 §13. What a hint led to — the record an agent writes through
-    // mark_hint_outcome, so no terminal gate: only a label is a person's.
+    // 07 §13. What a hint led to. At a terminal it is the person's word, which
+    // their agent's never overturns; with none (an agent's Bash tool) it is
+    // recorded as the agent's, and says so (§13.13 HIGH-1).
     case "followed":
-      return runFollowed(rest, env, cwd);
+      return options.isInteractive === undefined
+        ? runFollowed(rest, env, cwd)
+        : runFollowed(rest, env, cwd, options.isInteractive);
     case "overrode":
-      return runOverrode(rest, env, cwd);
+      return options.isInteractive === undefined
+        ? runOverrode(rest, env, cwd)
+        : runOverrode(rest, env, cwd, options.isInteractive);
     // D5's manual trigger: the same bounded check `get_diagnosis` runs, typed
     // by a person, so a repo nobody pulls a diagnosis from stops reading
     // `unknown` forever. A pull like the two above — no hook, no injection.

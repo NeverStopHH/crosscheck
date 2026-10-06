@@ -12,9 +12,11 @@
  * outcome WORDS are open strings — a newer hub's word is printed as itself.
  */
 import { z } from "zod";
-import type { HintOutcome } from "@crosscheck/schema";
+import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { hubRequest } from "./client.ts";
+import { UNREADABLE_BLOCK } from "./pilot.ts";
+import type { UnreadableBlock } from "./pilot.ts";
 import type { HubContext, HubResult } from "./client.ts";
 
 const CountSchema = z.number().int().min(0);
@@ -36,8 +38,16 @@ const RecordedOutcomeSchema = z.looseObject({
   outcome: z.string().min(1),
   /** The caller had said exactly this already; nothing was written. */
   repeated: z.boolean(),
-  /** The outcome this one superseded — kept, never deleted — or null. */
+  /** The same word as before with a different reason: written, the reason revised (R19). Absent from an older hub. */
+  reasonRevised: z.boolean().optional(),
+  /** What this one superseded — an outcome or the person's noise label, kept, never deleted — or null. */
   replaced: z.string().nullable(),
+  /**
+   * What the delivery stands at now (review #11): the word just said, or a
+   * noise label from the same instant. Absent from an older hub, which is
+   * read as the word itself.
+   */
+  stands: z.string().min(1).optional(),
 });
 
 export type RecordedOutcome = z.infer<typeof RecordedOutcomeSchema>;
@@ -52,13 +62,25 @@ export interface HintOutcomeRequest {
   readonly session?: string;
 }
 
+/**
+ * WHICH DOOR SAYS WHO SPOKE (07 §13.12): the hub stamps the channel from the
+ * route, never from the body, and a person's word is never overturned by an
+ * agent's. `mark_hint_outcome` posts as the agent; `crosscheck followed /
+ * overrode` at a terminal as the person.
+ */
+const OUTCOME_ROUTE: Readonly<Record<HintOutcomeChannel, string>> = {
+  agent: "/api/hint-outcomes",
+  person: "/api/hint-outcomes/person",
+};
+
 export const postHintOutcome = (
   ctx: HubContext,
   request: HintOutcomeRequest,
+  via: HintOutcomeChannel,
 ): Promise<HubResult<RecordedOutcome>> =>
   hubRequest(ctx, {
     method: "POST",
-    path: "/api/hint-outcomes",
+    path: OUTCOME_ROUTE[via],
     schema: RecordedOutcomeSchema,
     body: {
       repo: request.repo,
@@ -82,6 +104,8 @@ const SourceTallySchema = z.looseObject({
   /** The teammate's display name — their own text — or null when unknown. */
   source: z.string().nullable(),
   ...TallyShape,
+  /** 07 §13.14 (round-6 HIGH-1): the caller's own helpful labels, beside the buckets. Absent from an older hub. */
+  helpful: CountSchema.optional(),
 });
 
 export type SourceTally = z.infer<typeof SourceTallySchema>;
@@ -90,21 +114,54 @@ const OutcomeReasonSchema = z.looseObject({
   outcome: z.string().min(1),
   reason: z.string(),
   source: z.string().nullable(),
+  /** 07 §13.13 (LOW-6): the sentence of a noise said again. Absent from an older hub, and on every other reason. */
+  reasserted: z.boolean().optional(),
 });
 
 export type OutcomeReason = z.infer<typeof OutcomeReasonSchema>;
+
+/**
+ * The source credit (review #10): one closed month's follows of the caller's
+ * work, or the reason there is no number — never both. Strict inside, strict
+ * about itself only: a credit this client cannot read is said to be
+ * unreadable, and the rest of the person's view is still read.
+ */
+const CreditSchema = z
+  .looseObject({
+    periodStartIso: z.string().min(1),
+    periodEndIso: z.string().min(1),
+    followed: CountSchema.nullable(),
+    withheld: z.string().min(1).nullable(),
+    /** 07 §13.12 (review LOW): the pilot paused inside the month. Absent from an older hub. */
+    pausedInPeriod: z.boolean().optional(),
+    /** 07 §13.12 (review M-3): counted over an enrolment an upgrade reconstructed. Absent from an older hub. */
+    reconstructed: z.boolean().optional(),
+  })
+  .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {
+    message: "a source credit is either withheld or counted",
+  });
+
+export type Credit = z.infer<typeof CreditSchema>;
+
+const readCredit = (raw: unknown): Credit | UnreadableBlock => {
+  const parsed = CreditSchema.safeParse(raw);
+  return parsed.success ? parsed.data : UNREADABLE_BLOCK;
+};
 
 export const MyHintOutcomesSchema = z.looseObject({
   repo: z.string().min(1),
   days: z.number().int().min(1),
   sinceIso: z.string().min(1),
   untilIso: z.string().min(1),
+  /** 07 §13.11 (review M3): the pilot paused inside the window. Absent from an older hub, which never paused. */
+  pausedInWindow: z.boolean().optional(),
   ...TallyShape,
   bySource: z.array(SourceTallySchema),
   bySourceBeyondList: CountSchema,
   reasons: z.array(OutcomeReasonSchema),
   reasonsBeyondList: CountSchema,
-  yourWork: z.looseObject({ followed: CountSchema }),
+  /** 07 §13.11 (round 3): lenient as a block — an unreadable credit never rejects the person's own view. */
+  yourWork: z.unknown().transform(readCredit),
 });
 
 export type MyHintOutcomes = z.infer<typeof MyHintOutcomesSchema>;

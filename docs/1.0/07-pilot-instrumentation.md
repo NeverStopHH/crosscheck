@@ -921,7 +921,7 @@ in `http/pilot.ts` still lists only the three human commands.
 
 Every refusal is a sentence: `not_enrolled`, `unknown_ref` (also for a delivery somebody else received —
 a distinct answer would tell the asker what a colleague was shown, §11.9), `wrong_repo`, `not_unsolicited`,
-`reason_secret` (the reason is secret-scanned by both clients before it leaves the machine and by the hub,
+`before_outcomes` and `past_window` (§13.10, #12), `reason_secret` (the reason is secret-scanned by both clients before it leaves the machine and by the hub,
 which drops the whole outcome rather than store a redacted derivative). Recording is **gated on
 enrolment** (D2's reasoning: outcomes are measurement).
 
@@ -930,8 +930,8 @@ enrolment** (D2's reasoning: outcomes are measurement).
 | Who | Sees | Where |
 |---|---|---|
 | the recipient | their own hints received, followed / overrode / not relevant now / noise / unmarked, by source teammate, with the reasons beside the current words | `crosscheck pilot --mine [--days N]` (`GET /api/hint-outcomes/mine`) |
-| the source teammate | ONE count: how often hints that pointed at their work were followed — no recipient, no reason, no override, no noise | the same command, run by them ("your own work, in teammates' hints: followed N times") |
-| the team | the per-repo report, unchanged and aggregated; outcomes do not enter it in this revision | `crosscheck pilot` |
+| the source teammate | ONE count: how often hints that pointed at their work were followed in the last whole month, frozen at its end, and only once, leaving out any one person, at least 3 people recorded outcomes about that work (§13.10, §13.11) — no recipient, no reason, no override, no noise; never in a team of three | the same command, run by them ("your own work, in teammates' hints, July 2026: followed N times — …") |
+| the team | one per-repo line over the last whole calendar month, frozen at its end, and only when, leaving out any one person's words, at least 3 people's words about at least 3 people's work, 10 or more, remain (§13.9–§13.11); never in a team of three | `crosscheck pilot` |
 | anybody else | **nothing**: no route takes a person as a parameter, so somebody else's per-person view cannot be asked for | — |
 
 **This is consistent with §8.4, and why.** §8.4 refuses a per-developer breakdown of the TEAM's counters —
@@ -939,7 +939,7 @@ employee measurement — and that refusal stands: `--by-developer` is still refu
 by `pilot --mine`. `--mine` is a reader's own history, which they already lived through. Its by-source lines
 are the reader's experience of teammates' work, listed in **name order, never by count**, with no
 percentage beside a person (00 §8.5's ban on scoring people). The source credit is one count about the
-source's own work; it is shown to the source alone. A real run against an in-process hub (Nick's agent
+source's own work, for a whole past month above the people-minimum (§13.10); it is shown to the source alone. A real run against an in-process hub (Nick's agent
 followed Ken's cache pointer with a reason and was refused when it tried `noise`; Nick overrode Ken's retry
 pointer, followed his filter pointer, and labelled Mike's export pointer noise at a terminal):
 
@@ -953,13 +953,15 @@ hints that reached you unasked: 4 — followed 2 · overrode 1 · not relevant n
 why, newest first — as you or your agent wrote it:
   overrode, from Ken: «kept the retry on the hub: the client retry doubled the uploads»
   followed, from Ken: «reused his decision to key the cache by repo»
-your own work, in teammates' hints: followed 0 times
+your own work, in teammates' hints, September 2026: nothing to count — outcomes became recordable here after it ended
 recorded with your key — by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode); noise is your own label (crosscheck noise)
-only you see this view; a teammate sees only how often their own work was followed, and the team report (crosscheck pilot) stays per repo
+only you see this view in full; others see your words only inside totals for a whole past month: the team report's, and a teammate's count of how often their work was followed
+each is shown only if, leaving out any one person's words, words from at least 3 people remain — the team report's also about at least 3 people's work, 10 or more — so a team of three never gets either
 ```
 
-and Ken's, on the same hub: `nothing reached you unasked on this repo in this window` · `your own work, in
-teammates' hints: followed 2 times` — no name, no reason, no override.
+and Ken's, on the same hub: `nothing reached you unasked on this repo in this window` and the same credit line —
+no name, no reason, no override, and (§13.10) no count before a whole month with three recorders has passed;
+before that revision his line read `followed 2 times`, live.
 
 **13.6 — The hint tells the agent, in one clause.** A delivered prompt hint (claim hint, pointer, or a
 teammate's answer) ends, as its last line, with `mark_hint_outcome <ref> records whether you followed it or
@@ -989,7 +991,8 @@ clause and a tally line.
 - **D-O2 — what the source sees.** One count, `followed`. Overrides, noise and reasons about a person's work
   are not shown to them, though an override's reason is often exactly what the author would want to read.
   On a team of two, "teammates followed your work N times" names the other person by elimination — stated,
-  not solved.
+  not solved. *Solved by §13.10 (#10) and §13.11 (H1): the count needs, leaving any one person out, three
+  recorders — which a team of two, or of three, never has.*
 - **D-O3 — the clause on the briefing and the tripwire ask.** *Decided by the owner, built — §13.9.*
 - **D-O4 — an agent recording noise.** Refused (D3 kept). If the owner wants the agent's view of
   off-target hints, it would be a separate, agent-attributed figure, never the label.
@@ -1022,6 +1025,9 @@ call the hook already makes.
    hint outcomes per 100 interventions that reached someone (8 since 2026-07-20): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 · unmarked 12.5 — a FLOOR: only what agents and people chose to record; no target, nobody named
 ```
 
+*(The form of this line and its window are superseded by §13.10: #4 for the closed month and the disclosure
+minimums, LOW for the qualifier per figure.)*
+
 Per repo, over every unasked delivery that reached someone (the report's `outcomes` block: counts and one
 instant, nothing that names a recipient or a source — tested); noise is the label, the same state the
 per-person view reads, from the same query. **No target** is declared and none is compared. **A floor**, said
@@ -1049,3 +1055,580 @@ rows may be deleted and the bound they are deleted at, side by side. **Deleted w
 the registry declares no root on it, so deleting an outcome strands nothing and releases nothing the skeleton
 sweep relies on; deliveries, which outcomes reference, are not pruned by this rule.
 
+**13.10 — Corrections from the adversarial review (2026-10-06).** A review of the merged batch read the
+figures the way a curious colleague would, and found that several printed promises were not true. Each
+fix below is pinned by a test and a mutation anchor.
+
+*#4 — the team line minus one's own `--mine` was a teammate's exact outcomes.* With two recipients, Nick
+subtracted his own view (`3: followed 1 · unmarked 2`) from the team line (`4: followed 1 · overrode 1 ·
+unmarked 2`) and read Mike's one override; Ken, whose work every hint pointed at, read "overrode 25.0" —
+the overrides of his own work, which D-O2 says an author never sees. Stepping `days` from 1 to 90 dated
+single deliveries on top of that. "Only you see this view" was false. So the team line is no longer a
+rolling window at all (`services/outcome-population.ts`, `pilot-outcome-figures.ts`):
+
+- **One fixed, closed period** — the last whole calendar month (UTC), never the report's `days`, which is
+  ignored for this block. It is counted **as it stood at the month's end**: deliveries, outcome rows and
+  noise labels created after it are not read, so a word changed in August never moves July.
+- **Disclosure minimums** (`HINT_OUTCOME_DISCLOSURE_MINIMUMS` in `@crosscheck/schema`): at least **3**
+  distinct people recorded something (an outcome or the noise label), about at least **3** distinct people's
+  work, and at least **10** recorded words in the month. Below any of them the block carries
+  `withheld: too_few_recorders | too_few_sources | too_few_recorded` and **no figure** (the client parse
+  refuses a block with both), and the line names the minimum:
+
+```
+   hint outcomes, September 2026: withheld — fewer than 3 people recorded an outcome, and a figure could single someone out
+```
+
+  Above them:
+
+```
+   hint outcomes per 100 interventions, July 2026 — the last whole month, fixed (11 reached someone): followed 54.5 · overrode 18.2 · not relevant now 9.1 · noise 9.1 (FLOORS: only what agents and people chose to record) · unmarked 9.1 (a CEILING: some of it was acted on and never recorded) — no target, nobody named
+```
+
+  The sources minimum is what keeps an author from reading the overrides of their own work out of the
+  team line; the recorders minimum is what defeats the subtraction; the words minimum keeps one person's
+  change of mind from being one visible step. A month counted from enrolment says so (`counted from
+  2026-07-24, when outcomes became recordable here`) only when that instant really falls inside it.
+
+Every printed promise was re-read against this and rewritten to be true: the `--mine` footer, the
+`mark_hint_outcome` description, `crosscheck followed / overrode`'s answer and usage all now say a word is
+shown in full only to its recorder, others see it only inside a whole past month's team totals once the
+minimums are met, and the source teammate sees how often their work was followed.
+
+*#10 — the source credit leaked overrides and timing.* Ken's "followed" fell from 1 to 0 the moment Nick
+switched his word to overrode — an override of Ken's work, read off a count that was meant to carry none —
+and stepping `days` dated the deliveries behind it. The credit now follows the team line's rule, with the
+people-minimum only (the count is already about one person's work): **the last whole calendar month, frozen
+at its end**, counted only once at least **3** distinct teammates recorded something about the caller's work
+in it (`hint-outcome-view.ts`, `readYourWork`, on `readPeriodAggregate`). The wire carries `yourWork:
+{ periodStartIso, periodEndIso, followed: number | null, withheld }` — a count or the reason, never both (the
+client refuses a credit with both) — and `--mine` prints one of:
+
+```
+your own work, in teammates' hints, July 2026: followed 4 times — counted once at least 3 people recorded outcomes about it
+your own work, in teammates' hints, July 2026: no count — fewer than 3 people recorded an outcome about it, and a count could single someone out
+your own work, in teammates' hints, July 2026: no hint pointed at it
+your own work, in teammates' hints, September 2026: nothing to count — outcomes became recordable here after it ended
+```
+
+A word changed after the month never moves it (the review's P3, pinned), and D-O2's team-of-two elimination
+is gone with it: two teammates can never reach the minimum.
+
+*#13 — the empty team line named the window start as "when outcomes became recordable here".* It printed
+`since 2026-08-07` — the report's 56-day window start — for a repo enrolled on 2026-07-24. The rewrite for #4
+already gives each date one meaning, and three render tests and four anchors now pin it: a month enrolment
+came before names **no** date (`hint outcomes, September 2026: no intervention reached anyone`); a month
+enrolment clipped names the enrolment instant (`…, counted from 2026-07-24, when outcomes became recordable
+here`), carried on the wire as `countedFromIso`, which the hub sets to the later of the month's start and
+`pilot_outcomes_since`; a month that ended before enrolment names the enrolment day
+(`…: none could be recorded — outcomes became recordable here on 2026-10-05`), from `recordableSinceIso`.
+
+*#11 — "already recorded … stands at followed" while a newer noise label stood.* The repeat check compared
+the new word with the newest outcome row only, so after the person labelled the delivery noise, the agent
+saying `followed` again was told it "stands at followed" and nothing was written — while every figure read
+noise. A repeat is now judged against **what stands**, by the view's own rule (the later of the newest
+outcome and the person's noise label, the label on a tie): the same word after a newer label is a new word,
+written, and the answer names what it superseded (`replaced: "noise"` → `superseding your earlier noise
+label (kept in the history)`). The answer carries `stands` (additive; absent from an older hub, read as the
+word itself), so a word that ties with the label is answered `…, but your noise label from the same instant
+still stands (a label wins a tie)` rather than claiming the word took.
+
+*#12 — a delivery from before enrolment was answered "recorded … shows in your --mine" and never counted.*
+Every outcome figure starts at `pilot_outcomes_since` (the floor, §13.9), so a word about an earlier delivery
+was a 201 for nothing. Refused instead, consistent with the floor and saying why (`before_outcomes`: "that
+hint reached you before this repo began recording outcomes, so no outcome figure could ever count it —
+nothing was recorded"). The same lie had a second door — a delivery older than the widest window any figure
+reads (`PILOT_RETENTION_DAYS`, 90) — refused the same way (`past_window`). A delivery at the enrolment instant
+itself counts and is accepted. **These refusals read the connector's clock** (accepted by the owner, round 3):
+they compare the delivery's `delivered_at`, which the connector stamps and ingest bounds at the hub's own clock
+plus `MAX_COMMIT_CLOCK_SKEW_MS` (2 minutes), with the hub-stamped enrolment intervals (§13.11, M3) and the
+hub's window — so a delivery made within a few minutes of an enrolment change, on a connector whose clock is
+off, can land on the other side of it. The closed months themselves are frozen by the hub's clock
+(`ingested_at`, §13.11 P5).
+
+*#14 — recording right after a tripwire ask or a prompt hint answered "no hint with that id reached you".*
+The delivery was still in this machine's spool: it is sent after the next tool runs, and a denied edit runs no
+after-tool hook at all — so the one moment D-O3 is about ("stop, Ken built it this way") was the moment the
+outcome could not be recorded. Both recorders now send this repo's held records first, bounded
+(`OUTCOME_FLUSH_BUDGET_MS`, 3 s, well inside the MCP timeout), in the name of a live session
+(`spool/held-deliveries.ts`, `sendHeldRecords`), and the outcome then finds its delivery. If the hub still
+does not know the ref and the spool still holds a delivery of it (by the id the hint printed or the delivery's
+own id), neither says "never reached you": `mark_hint_outcome` answers that the hint reached the reader but its
+delivery is still on this machine, sent after the next tool call, nothing recorded, call again then; `crosscheck
+followed / overrode` says the same, with an id and — when no recent delivery is listed while the spool holds
+one — without.
+
+*LOW — naming a pulled delivery by its ref answered "never reached you".* The ref lookup left out every
+answer the reader asked for, so a ref that only ever arrived that way read as "no hint with that id reached
+you". The lookup now reads every channel and ranks an unasked delivery first (then the named session's, then
+the newest), so a ref that only arrived because the reader asked resolves to that pulled delivery and is
+refused as `not_unsolicited` — "that was an answer somebody asked for" — while a ref that also arrived unasked
+still records against the unasked delivery, even when the pulled one is newer.
+
+*LOW — "a FLOOR" covered `unmarked`, which is a ceiling.* A recorded word exists only where an agent or a
+person chose to say it, so followed, overrode, not relevant now and noise can only be under-counted; unmarked
+is everything nobody spoke about, some of which was acted on, so it can only be over-counted. The line now
+words the qualifier per figure: `noise 9.1 (FLOORS: only what agents and people chose to record) · unmarked 9.1
+(a CEILING: some of it was acted on and never recorded) — no target, nobody named`.
+
+*LOW — the hostile-hub corpus test for `mark_hint_outcome` hit its 20 s timeout under four parallel runs*
+(6–9 s alone), which the two-CPU CI lane would hit too. It prepared the tool's context — git spawns and config
+loads — for every one of its calls. It now prepares one context for the whole corpus and varies only the hub's
+answer, and it checks four answers per payload instead of two (the tie and the repeat that carry `stands`, #11,
+were not covered): about 0.4 s for the corpus, four parallel runs of the whole file in 3 s. The timeout was not
+raised.
+
+**13.11 — Corrections from the second adversarial review (2026-10-06).** A review of §13.10 attacked it
+with the pilot's real team, three people, and found the disclosure rule beaten by a viewer subtracting their
+own words, an agent able to overturn the person's noise label for good, and re-enrolment erasing history. The
+owner decided each fix; every probe (P1–P7) is now a regression test.
+
+*M4 — one pointer delivered twice was two hints, and the outcome landed on one (P6).* A prompt hint and a
+tripwire ask about the same work context in the same session are two `hint_deliveries` rows, so the view
+counted two interventions and a word on one left the other "unmarked" for ever. **An intervention is one
+pointer in one session**: every outcome figure counts distinct (session, ref), and a word or a noise label on
+any of that pointer's deliveries speaks for all of them — in the view (`deliveryStates`) and in the write
+path's "what stood" (`readStanding`), so the two never disagree.
+
+*LOW — late ingest moved a "frozen" month (P5).* A delivery stamped 2026-07-31 by its connector and received
+in August was read into July, so the closed July line moved. `hint_deliveries.ingested_at` (both DDL
+authorities; additive, NULL on older rows, which are read by `delivered_at`) is now stamped by the hub at
+ingest, and a closed month reads a delivery only if the hub received it before the month ended — besides it
+having been delivered in the month.
+
+*M3 — re-enrolment erased history and said false things (P4).* Leaving the pilot and rejoining restamped
+`pilot_outcomes_since`, so every outcome recorded before vanished from `--mine` and from the team month, and a
+July hint was refused as "before this repo began recording outcomes". The history is now kept:
+`pilot_enrolments` (both DDL authorities, additive) holds one row per enrolled interval — opened when enrolment
+turns on, closed when it turns off, never rewritten; an upgraded hub keeps the enrolment it already had as its
+first interval. `pilot_outcomes_since` is the **first** enrolment and is never restamped. An outcome is
+recordable, and counted, iff its delivery falls inside an enrolled interval, so `--mine`, the team line and the
+source credit count over the union of the intervals. Every sentence stays true: a hint from before the first
+enrolment is refused `before_outcomes`, one from a pause `while_paused` ("that hint reached you while this
+repo's pilot was paused, so no outcome figure could ever count it — nothing was recorded"); a month the pilot
+paused in says `counted only while the pilot was enrolled here` (`pausedInPeriod`, additive), a month counted
+from a re-enrolment says `counted from <day>, when the pilot was enrolled here again`, a month paused through
+says `none could be recorded — the pilot was paused here for the whole month`, and a `--mine` window with a
+pause says `— counted only while the pilot was enrolled here` (`pausedInWindow`, additive).
+
+*H1 — the minimums counted the viewer's own words (P1, P7).* With three people — the pilot's real team — a
+viewer could meet the minimums alone and subtract: Nick followed eight hints, Ken and Mike overrode one each,
+July printed `followed 8 · overrode 2`, and Nick knew both teammates had overridden exactly once (P1); Ken,
+supplying two of the three sources himself, read every other word as how the team treated his work (P7). The
+rule is now **viewer-independent**: for every recorder r, the population **without r** must still hold at
+least 3 recorders, words about at least 3 people's work, and at least 10 words — which includes the
+**dominance rule**: leaving out whoever recorded most, 10 words remain (`readPeriodAggregate` computes the
+recorders, the fewest sources any one recorder's absence leaves, and the words without the largest
+recorder; `withholdingOf` applies them). The source credit takes the same logic: its population already
+leaves out the author's own words, and its people-minimum must hold with any single recorder removed — four
+teammates who recorded about the author's work. **A team of three never gets the team line or the credit**,
+and every printed promise says so: the `--mine` footer, `mark_hint_outcome`'s description, `crosscheck
+followed / overrode`'s answer and usage, and the withheld lines. The owner's own view — per source teammate,
+what each hint led to, and the reasons — is unaffected and stays complete.
+
+*M1 — the withheld word named the minimum, and the count rode beside it (P2).* `too_few_recorded` is only
+reachable past the people and sources checks, so with `interventions` beside it Nick read that Ken and Mike
+had recorded exactly one word each. Now there is **one generic word**: a block is `not_recordable` (a fact
+about the repo's enrolment, not about people) or `below_minimums` — whichever minimum failed, including an
+empty month — and **no count rides on the wire or in `--json` while withheld**: `interventions` moved inside
+`figures`, which is null whenever the block is withheld. The client prints one sentence for every withheld word,
+an older hub's named minimum included: `hint outcomes, July 2026: withheld — below the disclosure minimums; a
+team of three never meets them`; the credit says `no count — below the disclosure minimums: leaving out any one
+person, at least 3 people must have recorded an outcome about it`, and a month outside the enrolment `nothing to
+count — the pilot was not enrolled here during it`.
+
+*H2 — #11 let an agent's repeated word overturn the person's noise label for good (P3).* followed → the
+person's `noise` → the agent, re-reading the clause, says followed again: #11 wrote it as `replaced: "noise"`,
+the person's second `crosscheck noise` was swallowed as a repeat, and `--mine` read followed while precision
+still counted noise. Now:
+
+- **A repeat is judged against the recipient's own newest word**, so the word the label superseded, said again,
+  answers `repeated: true, stands: "noise"` and writes nothing (the CLI: `already recorded: <ref> — followed was
+  said before, and your noise label, made since, stands over it; nothing was written a second time`). Only a
+  **new** word supersedes the label.
+- **The person can always re-assert noise.** `pilot_marks` keeps one row per person and delivery, so `crosscheck
+  noise` said over a word recorded since **restamps** the label (`services/noise-label.ts`); said while the label
+  already stands, it is a repeat. A noise label on a delivery answers what now stands (`stands`, `replaced`,
+  additive), and `crosscheck noise` says it: `noise now stands over the earlier followed, which stays in the
+  history`.
+- **One transaction, one lock, one order.** The outcome write and the noise label both lock the pointer's
+  delivery rows (`FOR UPDATE`) and decide `stands` and `replaced` inside one transaction
+  (`services/pointer-standing.ts`), so a label landing mid-write waits. Words on a pointer are stamped strictly
+  after its newest word, and every read orders by (timestamp, id), so two words in the same millisecond never
+  tie — the later one stands. The label still wins a tie with an outcome (D-O7). (The lock is exercised by
+  real Postgres; the in-process PGlite hub serializes every query anyway, so the tests pin the ordering, not
+  the lock.)
+
+*LOW — with no live session, the CLI promised "the session's next tool call".* `crosscheck followed <id>` on a
+hint still in the spool said it "is sent after the session's next tool call" even when no session on this
+machine was live to make one. With none live it now says what is true: `that hint reached you, but its delivery
+is still on this machine and no crosscheck session is live here to send it; nothing was recorded — it is sent
+when a session on this repo next starts, so run this again then` (a starting session drains the spool).
+
+*LOW — the outcome tool flushed before asking, in a possibly guessed or silent session's name.*
+`mark_hint_outcome` (and `crosscheck followed / overrode`) drained the spool before every post, in the name of
+whatever session the state files named — a guess when several were live, and possibly one the hub had
+reaped. Now **the hub is asked first** (`spool/held-deliveries.ts`, `answerAfterSendingHeld`); only when it
+answers `unknown_ref` for a ref this machine still holds are held records sent, and the call made once more.
+They are sent only in the name of **the one live session of this checkout** (`findSender`: among the live
+sessions of the repo, the one on this checkout's root, or the only one) and only from **that session's own
+spool** (`FlushInput.onlySlug`), so no record is filed under another session (no FOREIGN_SESSION_DELIVERY)
+and no silent session is revived. When nothing may be sent, the answer says why: several sessions live in
+this checkout ("it was not sent in a guessed one's name"), none live ("it is sent when a session on this repo
+next starts"), or not sent in time ("after your next tool call"). A held delivery of another ref is not this
+one: the hub's own refusal stands (review M15). The CLI picks the session of this checkout, never just the
+newest (review M18).
+
+*M2 — `crosscheck noise` and `crosscheck helpful` answered "nothing with that id reached you" for a hint still in
+the spool.* They now take the same path as `crosscheck followed`: the hub is asked first — the mark by
+delivery id, the candidates by the ref the hint printed, or the recent ones with no id — and only when it does
+not know a delivery the spool holds does the one live session of this checkout send its own held records,
+after which the label is asked for once more; a delivery still held is answered with why, never "never reached
+you".
+
+*LOW — one unreadable outcome block rejected the whole answer.* The client's parse was strict about the
+outcomes block as part of the report, so a block in a shape it could not read — an older hub's credit
+`{ followed: N }`, a newer hub's field, figures beside a withholding — made `crosscheck pilot` or `--mine`
+unreadable whole. The blocks are now parsed **leniently as blocks and strictly inside**: a block this client
+cannot read becomes `{ unreadable: true }` — never zeros — and prints one line (`hint outcomes: this hub sent an
+outcomes block this client cannot read — nothing is shown from it`; for the credit, `your own work, in
+teammates' hints: this hub sent a count this client cannot read — nothing is shown from it`), while every other
+proof and the person's own view still print. This holds for both answers and for both kinds of mismatch, a
+block too old and a block too new.
+
+*M5 — mutations that survived round 2, each now killed by a test and an anchor.* A noise label made after the
+month never moves it (M1); a delivery the connector dated after the month's end is not in it, even when the hub
+received it before (M2); a recipient who recorded nothing is no recorder (M3 — the three-recorders test with
+two silent teammates); a hint pointing at the author's own work never counts in their credit, excluded on the
+hub (M5); a label and an outcome at the same instant leave the label standing, in the view (M6) and in the
+write path (M7); an enrolment that starts exactly at the month's end makes nothing of that month recordable
+(M11). M15 (any held delivery taken for any ref), M18 (the CLI's sender) and M20 (an ambiguous session) are
+killed with the POST-first fix above — M20's "no flush when ambiguous" is now the intended rule.
+
+**13.12 — Corrections from the third adversarial review (2026-10-07).** Two HIGHs, four MEDIUMs and several
+LOWs; every probe (A–G) is a regression test.
+
+*H-B — re-asserting noise restamped the label, so closed months moved (probe A).* H2's re-assertion set
+`pilot_marks.created_at` to now; Mike's July noise label, said again in August over an August word, left July
+reading noise 0 instead of 1. **Labels are append-only**: the first label per person and delivery stays exactly
+as written — it is what precision counts, and precision keeps reading it — and saying noise again is a new row in
+`noise_reassertions` (both DDL authorities; in the retention registry beside `hint_outcomes`, aged out at
+`PILOT_RETENTION_DAYS`), with the sentence said with it. No instant is ever updated. The standing noise is the
+newest of the label and its re-assertions before each month's end, so July reads the label and August the
+re-assertion. Said again while noise already stands, it is a repeat. A person's own later "noise" after their
+own `helpful` makes noise stand in the outcome figures while precision keeps `helpful` (survivor R7).
+
+*The principle — a person's word is never overturned by an agent's (it also settles the ping-pong LOW, R7 and
+the label-vs-word order).* A word the PERSON says at a terminal — `crosscheck noise`, `helpful`, `followed`,
+`overrode` — is theirs, and an AGENT's word (`mark_hint_outcome`) never overturns it. The agent's word is still
+recorded, as its own row, but what stands stays the person's, and the tool's answer says so ("the person's
+noise label still stands: an agent's word never overturns the person's own"); only the person's own later word
+changes it. **What stands on a pointer** is the person's newest word — their own outcome, their noise or
+their helpful label (§13.13 LOW-4), a label on a tie (D-O7) — whenever they said anything, and only otherwise
+the agent's newest. The write path,
+the per-person view, the credit and the team line all read it so. **The hub knows the channel from the route,
+never from a claim**: `POST /api/hint-outcomes` is the agent's door, `POST /api/hint-outcomes/person` the
+person's (`crosscheck followed / overrode`), and the route stamps `hint_outcomes.recorded_via` (`agent` |
+`person`, additive; a row from before the column is an agent's). A field in the body naming a channel is
+ignored. A repeat is judged against the same channel's newest word, so an agent re-reading the clause writes
+nothing twice. **The person's door is behind the TTY gate** (corrected in §13.13 HIGH-1: as first shipped,
+`crosscheck followed` always took it, so an agent's Bash tool wrote as the person). `crosscheck followed /
+overrode` take the person's route only with a terminal — the evidence `crosscheck noise` and `pin` use; with
+none they take the AGENT's route and say "recorded as your agent's word — run it in a terminal for it to stand
+as yours" (reworded in §13.14 LOW-1). That is a rule backed by a TTY check — and, since §13.14 MEDIUM-2, by deny-only agent-host markers —
+not a wall. It catches a command whose input is not a terminal, and one run at a pty inside a host that marks
+its agent's commands (§13.14 lists them). It does not catch keystrokes typed into the person's own terminal
+(tmux send-keys), a pty in a host with no documented marker (VS Code's agent mode among them), an agent that
+unsets its host's marker, or the key posted with curl: those still reach the person's door — the same bar as
+the label's gate (§12.9). §13.4's "nothing at the hub
+tells a person's outcome from their agent's" is superseded to that extent: the route tells, by which door a
+word came through, and that is still not a proof of who typed it.
+
+*H-A — a word landed on a stale delivery while today's delivery of the same ref was held (probe G).* "Post
+first" asked the hub about the ref the hint printed; the hub knew last week's delivery of it and recorded
+today's word there, superseding last week's override and its reason, while today's delivery — still in this
+session's spool — stayed unmarked. **Held first**: before posting, the connector looks in the sending session's
+own spool (the sessions `findSender` would choose from) for an unasked delivery of that ref, newest first, and
+posts against that delivery's own `hd_` id, so the hub's "unknown" runs the existing send-then-retry. All five
+paths do so: `mark_hint_outcome <ref>`, `crosscheck followed / overrode <ref>`, `crosscheck noise / helpful
+<ref>`, and with no id `crosscheck followed` and `crosscheck noise`, whose candidates are the hub's recent ones
+plus those the live sessions here still hold (unasked, inside the same window), one per pointer — a prompt hint
+and a tripwire ask about one ref in one session are ONE candidate (M4), offered as its newest delivery, newest
+pointer first. "Any recent one" no longer scans every session's spool: it reads the live sessions' own
+(`holdsUnsentDelivery` takes a named ref only). The send itself still goes through the public `flushSpool`
+with `onlySlug` — the one drain path, so `fix/resumed-session-rejected`'s hold rule applies to it after merge.
+At the hub, a word named by a twin no figure can count — delivered before outcomes, during a pause, or past the
+widest window — lands on the pointer's newest twin that one can, and is refused only when none can. (A pull in
+the same session shares the prompt hint's delivery id, so "not unsolicited" cannot come from a twin.)
+
+*M-1 — the credit printed "followed 0" from four people who each overrode (probe B).* A homogeneous figure is
+every recorder's verdict at once, readable by anyone who knows one of them. **The credit counts only once,
+leaving out any one recorder, at least three people FOLLOWED** (`followers − 1 ≥ 3`, the distinct recipients
+whose word stands at followed); otherwise it is the one generic sentence, now "at least 3 people must have
+followed it". A count of 0 therefore never prints — and the client refuses to print one an older hub sends.
+The team line's minimums are unchanged.
+
+*LOW — the toggle race, and off→on in one millisecond (probe D).* What a settings write turns enrolment from is
+now read inside its own transaction, under the `team_settings` row's lock (`FOR UPDATE`; PGlite has one
+connection, so the lock is pinned by the SQL it issues, not by a staged race). `pilot_enrolments` rows have
+their own id: keyed by (repo, started_at), off and on again in one millisecond closed the open interval at t
+and then silently dropped the new one at t, and the repo read as paused. A partial unique index keeps **at most
+one open interval per repo** as a database fact; nothing swallows a conflict, so a second "on" while enrolled is
+an error rather than a duplicate (survivor R6 is pinned by a write that repeats the enrolment). The table is new
+this round and unreleased, so its key changed in place.
+
+*M-3 — the upgrade backfill began at a restamped instant and ended a left repo at its last settings write
+(probe F).* An older hub restamped the first-recordable instant at a re-enrolment, so outcomes and labels
+recorded before it fell outside the reconstructed interval; and a repo that left was closed at `updated_at`,
+which is when it left at the latest — any later settings write moved it. The first interval now starts at
+`LEAST(pilot_outcomes_since, first outcome, first label)` and, for a repo that left, ends at its last PROVEN
+enrolled instant — its newest outcome or label (none: the interval is empty, not guessed). Backfilled rows are
+marked `reconstructed`, and the team line and the credit counted over one say so: "its enrolment
+reconstructed from recorded outcomes". (A delivery older than the first outcome recorded about it is still
+outside: only the outcome's instant, not its delivery's, is taken as proof.)
+
+*M-2 — the person's own view was refused during a pause and after leaving (probe C).* `--mine` answered
+`not_enrolled` the moment enrolment turned off, so a person could no longer read what they had recorded. It is
+now served **read-only whenever the repo has any enrolment interval** — during a pause and after leaving; only a
+repo never enrolled has no view, and every write is still refused while it is not enrolled. Its window starts
+at the first interval, not at a stamp. The closed months are computed from the intervals whatever the repo is
+now: a team that left still gets its last whole month's line in the team report (the not-enrolled page prints
+it under its own lines), and a month that had an enrolled interval is never "none could be recorded".
+
+*LOW — a pointer across a month boundary was counted in both months (probe E).* A July prompt hint followed in
+July, and its tripwire twin on the first of August, made August's figures count that one intervention again,
+with July's word. A pointer now counts in the window of its FIRST countable delivery (`HAVING
+min(delivered_at) >= since`), and nowhere else.
+
+*M-4 — the round-3 survivors, killed.* R1 (`--mine` reporting a pause) is pinned by the person's view during a
+pause; R2 and R3 by a hint delivered at the very instant the pilot paused, which is neither counted nor
+recordable — an interval is [start, end). R4 was an equivalent mutant: a second interval in the window can only
+start after the first ended, so "two intervals" never held without "the first ends early"; the redundant
+disjunct is gone, and R5 is pinned by a month the team left part-way through and never returned to. R6 is
+pinned by a repeated enrolment (the toggle paragraph above), R7 by the principle and H-B, R10 by noise said
+again in the same millisecond as an outcome that was stamped past it, and R19 below. R11: the pointer lock is
+`ORDER BY d.id FOR UPDATE` — one order, so two writers on a pointer's twins queue instead of deadlocking — and,
+since PGlite has one connection and no second writer can be staged, it is pinned by the SQL it issues.
+
+*LOWs, the rest.* The source credit carries `pausedInPeriod` and its line says "counted only while the pilot
+was enrolled here", as the team line does. Every new word is stamped strictly past the pointer's newest outcome
+AND its noise label (a person's word in their label's own millisecond stands, never ties). A re-asserted noise
+keeps its new sentence (H-B). `holdsUnsentDelivery` takes a named ref only (H-A). The round-2 hub's `--json`
+passthrough is unreleased and left as it is.
+
+*R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
+of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
+and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —
+never "superseding the earlier overrode" about the same word said better. Only the same word with the same
+reason is a repeat.
+
+*Release notes — mixed versions of the two doors.* A **round-3 CLI against this hub**: its `crosscheck followed /
+overrode` post to `POST /api/hint-outcomes`, the agent's door, so a person's word typed with an old CLI is
+recorded as their agent's — counted, but overturned by the person's own later word and never standing over an
+agent's; upgrading the CLI makes terminal words the person's. A **new CLI against a hub without `/person`**
+(round 4 and before, but with outcomes): the person's word fails closed — "this hub predates person-recorded
+outcomes — upgrade the hub; nothing was recorded" — and is never re-sent through the agent's door (§13.13 LOW-7).
+A hub with no outcomes at all still says it predates them.
+
+**13.13 — Corrections from the fourth adversarial review (2026-10-08).** Two HIGHs, two MEDIUMs and ten LOWs;
+every probe (P1–P5) is a regression test.
+
+*MEDIUM-1 — a hub that ran the round-3 bootstrap no longer started (P1).* §13.12 re-keyed `pilot_enrolments`
+in place, assuming the table unreleased; a hub that had run the round-3 bootstrap failed at start with "column
+id does not exist". A guarded, idempotent migration now gives every row of the old shape an id of its own
+(`'pe_' || gen_random_uuid()`) and makes it the primary key; its rows are kept, and a hub already on the new
+shape skips it.
+
+*HIGH-2 — the real 0.10.0 → 1.0 upgrade started the outcome interval at the first 0.10 label (P2).* §13.12 M-3's
+`LEAST(…, first label)` read a label as proof that outcomes were recordable; a 0.10 hub took labels long before
+any outcome could be recorded, so the upgrade backdated the interval to its first 0.10 label, a hint delivered
+before the upgrade took an outcome (201) and was counted, and the team line said "enrolled here again …
+reconstructed". **The label term is gone** (this supersedes §13.12 M-3's start): the first interval starts at
+`LEAST(pilot_outcomes_since, first outcome, earliest delivery that has an accepted outcome)` — the stamp
+itself, an outcome (accepted only while recordable), and its delivery (accepted only from on or after the stamp
+a hub had then; never later than its outcome). Labels still bound a left repo's END: a label is proof of
+enrolment at its instant. And only an inferred bound is `reconstructed` — a start earlier than the stamp, or the
+end of a repo that left; an upgrade that only took the stamp is not, and its line says neither "again" nor
+"reconstructed". On a 0.10 upgrade every pre-upgrade delivery is refused `before_outcomes`.
+
+*LOW-1 — the toggle read part of its row before the lock (P4).* §13.12 locked only `pilot_enrolled`; the rest of
+the row was read before the transaction, so of two writes at once, the one naming no enrolment carried a stale
+`pilot_labels_since` (null) over the toggle beside it. Every settings write now reads the WHOLE row under its
+lock inside its own transaction, and takes `now` after the lock. And an interval never ends before it starts:
+`CHECK (ended_at IS NULL OR ended_at >= started_at)`, added once to a table that predates it.
+
+*LOW-10 — a concurrent first enrolment was a 500.* Two first enrolments of a repo with no settings row yet have
+no row to lock, so both open an interval and the one-open-interval index refuses the second. That outcome is
+right — the repo is enrolled once — and the loser now gets `409 concurrent_enrolment`: "another enrolment of
+this repo landed at the same moment, so this write changed nothing — the repo is enrolled; read the settings
+again". (PGlite serializes transactions, so the test stages the loser's view directly.)
+
+*HIGH-1 — "person beats agent" fell to the agent's Bash tool.* `crosscheck followed / overrode` always posted to
+the person's route with the same key and no terminal check, so an agent shelling out to them overturned its own
+person's word. They now take the person's route only at a terminal (`isInteractive`, the probe `noise` and
+`pin` use) and otherwise the agent's, printing "recorded as your agent's word — run it in a terminal for it to
+stand as yours"; the usage says the same. §13.12's limit sentence is corrected: a rule backed by a TTY check,
+not a wall. (It was not "only a deliberate pty or curl" that still reached the person's door: any host that
+gives its agent a pty did — corrected again in §13.14 MEDIUM-2, which says exactly what is caught and what is
+not.)
+
+*LOW-7 — the wire between versions.* A 404 from `/person` on a hub that otherwise records outcomes (its
+`/mine` answers) now fails closed with its own sentence, never falling back to the agent's door; both
+mixed-version cases are in §13.12's release notes.
+
+*LOW-4 — the person's helpful label was overturned by the agent's word (P3).* §13.12 listed `crosscheck
+helpful` among the person's words but read only noise and the person's outcomes; an agent's `not_relevant_now`
+after the person's helpful stood, and `--mine` counted it. Helpful is now a word of the person's on the pointer:
+the agent's word is recorded, the answer says "the person's helpful label still stands", and of the person's two
+labels the newer stands. A helpful label is a verdict, not an outcome, so in the outcome figures its
+intervention stays where the label alone left it — unmarked — and never takes the agent's word it stands over;
+the person's own later `followed / overrode` changes it. (A tally of its own for helpful would add a sixth
+outcome category; that is the owner's to decide, and not done here.)
+
+*LOW-5 — a word from before the channel was stamped.* A `hint_outcomes` row with no `recorded_via` (written
+before the column) is the AGENT's, explicitly: that is the safer side for "a person's word is never overturned
+by an agent's" — a word nobody can prove the person said never outranks one they did. The write path reads
+it as the agent's (`IS DISTINCT FROM 'person'`), never as the person's, and the view's `COALESCE(…, false)`
+keeps it from sorting above the person's word (a bare comparison is NULL, which sorts first under DESC). Three
+tests pin each half (survivors Q1–Q3).
+
+*MEDIUM-2 — two survivors.* Q4: the person's exact repeat at a terminal — `crosscheck followed X` said twice —
+answers "already recorded" and writes nothing; it is now pinned on the person's route. Q14: the twin fallback
+(§13.12 H-A) searches the SAME session's deliveries of the ref only; an uncountable delivery in one session never
+borrows a countable delivery of the same ref in another — that is another pointer, and the word is refused for
+what it is.
+
+*LOW-2 — `--mine` hid a word it had just recorded (P5).* §13.12's probe-E rule (a pointer counts only in the
+window of its FIRST countable delivery) applied to the person's own rolling window too, so a word said today
+about today's twin of a pointer first delivered before the window was recorded (201) and never shown. The rule
+now holds for CLOSED months only — the team line and the credit, which must never count one intervention twice;
+the rolling window counts any pointer with a delivery inside it, so the person reads what they just said.
+
+*LOW-3 — held first, bounded; and the hub twin when the send fails.* The held-first lookup by ref (§13.12 H-A) now
+looks only inside the window the no-id candidates use (`NOISE_MARK_WINDOW_MINUTES`), so an hour-old line stuck
+in a spool is never taken for today's delivery. And when the held delivery cannot be sent — the flush fails or
+overruns — but the same pointer's twin (a prompt hint or tripwire ask of the ref in the same session) is
+already on the hub, the word or label is recorded on that twin: one intervention (M4). Only with no such twin
+is the answer "held, not sent". Never another session's delivery: that is another pointer.
+
+*LOW-9 — held candidates are the caller's own.* A held line counts — as a candidate with no id, or as today's
+delivery of a ref — only when it was produced under the caller's developer key (the `developerId` login stores
+in the config): a hint that reached a colleague on this machine is never offered to, or posted by, this caller.
+A config from before login stored the id cannot tell the two apart, and filters nothing, as before.
+
+*LOW-6 — a re-assertion's sentence was kept and never read.* §13.12 H-B kept the sentence said with noise said
+again, but nothing read it. `--mine`'s reasons list now shows it beside the noise it stands at, marked as said
+again (`reasserted: true` on the wire, added only then; "noise, said again, from Ken: «…»" on the page).
+
+*LOW-8 — the team line's homogeneity: ACCEPTED, stated.* Like the credit before M-1, the team line can print a
+homogeneous figure — say, "followed 0" when every recorder overrode — which tells each of them that all the
+others said the same. Unlike the credit it stays as it is: its minimums already hold with any one recorder left
+out (three other people's words, about three people's work, ten or more of them), so a team of three never
+prints at all, and in a team big enough to print, a homogeneous month says something about the team, not about
+one colleague a viewer could subtract. The owner accepted this residue (round 5); it is the line's known limit.
+
+**13.14 — Corrections from the fifth adversarial review (2026-10-09).** One HIGH (caused by §13.13 LOW-4), two
+MEDIUMs and six LOWs; every probe is a regression test.
+
+*HIGH-1 — a helpful label wiped outcome figures (supersedes §13.13 LOW-4's rule).* LOW-4 made helpful compete
+with the person's own outcome as "the person's newest word" and map to unmarked, so a helpful said after the
+person's own override deleted the override and its reason, a helpful over an agent's follow shrank `followed`,
+and the credit and the team line fell below their minimums. **Helpful lives on the LABEL axis.** On the outcome
+axis it may only (a) cancel an older noise of the person's — noise stands only while it is their newest label —
+and (b) veto an AGENT's `not_relevant_now` to unmarked, the answer saying the person's helpful label stands
+(the P3 case). The person's own outcome stands regardless of order, an agent's followed or overrode stays the
+outcome under a helpful label, and the write path's answer follows the same rule.
+
+*The helpful line.* What the person called helpful is now shown back to them: `--mine` prints, under each
+source, `helpful (your label) N` — the deliveries from that teammate whose newest label of the person's own is
+helpful (a helpful later taken back with noise is not counted). It sits beside the buckets, never in them: the
+buckets still add up to `received`. The wire carries `helpful` per source and in total, optional in the
+connector's schema (absent from an older hub, which prints no such line; a value that is not a count rejects
+the view like any other count). It leaks nothing new: it is counted from the caller's own deliveries only, and
+the team line and the source credit never select it.
+
+*MEDIUM-1 — a populated older table kept the hub from starting.* The bootstrap is one statement, so one row
+that breaks what the tip now enforces stops every start: a row the old now-before-lock race closed before it
+opened (round 3 or round 4) violates the interval CHECK, and two open intervals (a round-3 race of two "on"s)
+keep the one-open index from building. The upgrade now repairs both first. A backwards row is closed at its
+own start; then the CHECK is added `NOT VALID` and validated, once, guarded by `pg_constraint`. Of two open
+intervals the earliest stays open and each later one is closed at its own start — before the index is built,
+and a no-op once it exists. Every repaired row is marked `reconstructed`: its bound was inferred by the upgrade,
+not a toggle's instant. The repair keeps the time the repo was enrolled; a second start changes nothing.
+
+*MEDIUM-2 — an agent host's pty passed as the person.* The TTY gate reads whether stdin is a terminal, and a
+host that runs its agent's commands in a pty — Cursor's agent terminal, Gemini CLI's interactive shell — says
+yes. `crosscheck followed / overrode` now also read **deny-only agent-host markers**: a variable a host sets on
+the commands ITS AGENT runs demotes the word to the agent's route, and the line says which ("recorded as your
+agent's word — this command ran inside an agent's tool (CURSOR_AGENT is set); type it in your own shell for it
+to stand as yours"). Nothing in the environment ever promotes a word — any agent can write one — so a marker
+can take the person's door away and never open it. The probe stays on stdin (stdout would misfire on
+`| tee`). Only markers a host's own docs or source name are used:
+
+- `CLAUDECODE` — Claude Code, CLI and IDE extensions: every command its tools and `!` run (measured,
+  connector-core `model/runner.ts`, and seen in the agent shells that built this).
+- `CURSOR_AGENT` — Cursor's agent terminal, IDE and CLI (cursor.com/docs/agent/tools/terminal; the CLI's
+  `CURSOR_AGENT=1` confirmed by Cursor staff on their forum).
+- `GEMINI_CLI` — Gemini CLI's `run_shell_command`, its node-pty mode included (its docs/tools/shell.md).
+- `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED` — a command Codex spawns under its sandbox, or for a shell
+  tool call with the network restricted (codex-rs/core/src/spawn.rs). Not set under `danger-full-access`.
+
+A variable a host also sets in the person's own terminal (`TERM_PROGRAM`, `ZED_TERM`, `CURSOR_TRACE_ID`) is no
+marker: it would take the door away from every person typing inside that editor. **Residual, unconfirmed and
+not guessed:** VS Code's agent mode (Copilot Chat), Copilot CLI (its docs name only the variables that
+configure it), Goose, a terminal Zed or a JetBrains IDE opens for an ACP agent (`terminal/create`), Claude
+Code through Zed's ACP adapter when the client runs the terminal, and Codex under `danger-full-access` — each
+passes as the person at a pty until its host documents a marker. Beyond any marker: keystrokes typed into the
+person's own terminal (tmux send-keys), an agent that unsets its host's marker, and the key posted with curl.
+If a host ever sets its marker in the person's own terminal too, that person's word is recorded as the agent's
+and the line names the variable: the gate fails closed.
+
+*LOW-1 — "run it in a terminal" misled.* A person who typed `!crosscheck followed` in Claude Code did run it
+in what looks like a terminal, and was told to run it in one. The line now says what was missing: "recorded
+as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's
+! prefix); type it in your own shell for it to stand as yours". The usage says the same, and `--mine`'s footer
+says the commands are the person's only when typed in their own shell: "recorded with your key — by you
+(crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those
+commands run by an agent's tool, a pipe or Claude Code's ! prefix)". The `!` is named without backticks: no
+renderer here ever emits one (the untrusted-text invariants every surface is held to).
+
+*LOW-2 — a clock that stepped back made leaving the pilot a 500 (D4).* The CHECK that an interval never ends
+before it starts is a database fact since round 5, and the toggle closed the open interval at the hub's wall
+clock: one that stepped back past the interval's start (an NTP correction) had its close refused. The close
+is now `GREATEST(now, started_at)` — a zero-length interval at worst, never a backwards one.
+
+*LOW-3 — four survivors of the review's own mutants.* Each is now a regression test: the TTY probe reads
+stdin, never stdout (T1 — `crosscheck followed | tee log` typed by the person stays theirs); `crosscheck
+overrode` with no terminal takes the agent's route (T2) and says so (T4), like `followed`; and an enrolled
+repo whose interval the upgrade backdated before its stamp is marked reconstructed (B1).
+
+*LOW-4 — a repo's first two writes had no row to lock.* Round 5 read the settings row `FOR UPDATE`, but a
+repo nobody had configured has no row, so on real Postgres two first writes each went on from the defaults
+(PGlite, one connection, never shows it). The write now inserts the defaults row `ON CONFLICT (repo) DO
+NOTHING` before the `FOR UPDATE`: the second writer waits on that insert, then locks the row the first
+committed. The write's own upsert overwrites the defaults, its instant included; the SQL is pinned in a test.
+
+*LOW-5 — a hub's sentence ran its clauses together (pre-existing).* A refusal the hub words — "so nothing was
+recorded — say it again without it" — was printed through the bare class, which strips "—", ":" and "·" so a
+field inside a line cannot mint another; the sentence read "nothing was recorded say it again". A hub's
+sentence is the whole line and has no field to mint, so it is now printed through the prose class: invisibles,
+renderer-owned characters and instruction-shaped text still go, bounded by `MAX_HUB_MESSAGE_CHARS`, and its
+ordinary punctuation stays. An unreachable hub's error sits inside the CLI's own line ("hub unreachable: … —
+nothing was recorded") and stays bare.
+
+*LOW-6 — a label's own sentence was stored and never read (pre-existing).* The view selected NULL for a first
+noise label's sentence and for a helpful label's. `--mine`'s why now lists each label's own sentence: a noise
+label's beside the noise it stands at (once), and a helpful label's — the person's "and why" — on its own
+row, "helpful (your label), from Ken: «saved me an hour»", beside the outcome's own reason (`outcome:
+"helpful"` on the wire, additive: an older client prints the word as it is). Only the caller's own labels:
+a label is read only where `marked_by` is the delivery's recipient, `--mine` reads only the caller's
+deliveries, and the team line and the credit select no sentence at all.
+
+*Follow-up — one person gate for every person-only gesture.* MEDIUM-2's markers first guarded only
+`crosscheck followed / overrode`; the same pty let an agent label noise or helpful, walk `crosscheck pilot
+label`, pin, say `pin --ok` or `pin --broke`, and rotate the key as the person. Every person-only gesture now
+asks one gate, `personGate` (cli `agent-host.ts`), never the TTY probe alone, so a new gesture cannot forget
+the markers. With a marker present each behaves exactly as with no terminal — the labels, the walk, the pin
+gestures and the rotation are refused, `followed / overrode` take the agent's route — and the refusal's first
+line names the marker: "this command ran inside an agent's tool (CURSOR_AGENT is set), so its terminal is the
+agent's, not yours". The gate still answers "person" only when the probe does.

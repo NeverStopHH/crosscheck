@@ -43,6 +43,7 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  HINT_OUTCOME_CHANNELS,
   HINT_OUTCOMES,
   MAX_HINT_OUTCOME_REASON_CHARS,
   MAX_PILOT_LABEL_REASON_CHARS,
@@ -624,6 +625,13 @@ export const hintDeliveries = pgTable("hint_deliveries", {
     .default("unknown"),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
+  /**
+   * WHEN THE HUB RECEIVED IT (07 §13.11, review P5), by the hub's own clock.
+   * `delivered_at` is the connector's word and may arrive weeks late; a closed
+   * month that read it would move whenever a backlog drained. Null on rows
+   * from before the column, which are read by `delivered_at`.
+   */
+  ingestedAt: timestamptz("ingested_at"),
 }, (table) => [
   // "Delivered exactly once" for a question ANSWER is a cross-SESSION promise
   // (services/questions.ts): the asker's seen-set dies with their session, so
@@ -1156,16 +1164,52 @@ export const teamSettings = pgTable("team_settings", {
    */
   pilotLabelsSince: timestamptz("pilot_labels_since"),
   /**
-   * WHEN OUTCOMES BECAME RECORDABLE ON THIS REPO (07 §13.9): stamped exactly
-   * as `pilotLabelsSince` is, and backfilled for a repo already enrolled on the
-   * first start of a hub that records outcomes. Every outcome figure starts
-   * at the later of it and its window, so a delivery from before it is
-   * outside the population rather than "unmarked".
+   * WHEN OUTCOMES FIRST BECAME RECORDABLE ON THIS REPO (07 §13.9, §13.11):
+   * stamped at the first enrolment — and backfilled for a repo already
+   * enrolled on the first start of a hub that records outcomes — and never
+   * restamped (review M3): a re-enrolment is a new interval in
+   * `pilot_enrolments`, not a new beginning that erases the old one.
    */
   pilotOutcomesSince: timestamptz("pilot_outcomes_since"),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * WHEN EACH REPO WAS IN THE PILOT (07 §13.11, review M3): one row per
+ * enrolled interval, opened when enrolment turns on and closed when it turns
+ * off — additive, never rewritten. An outcome is recordable, and counted, iff
+ * its delivery falls inside one of them, so a pause and a re-enrolment keep
+ * the history before them instead of restamping it away.
+ */
+export const pilotEnrolments = pgTable(
+  "pilot_enrolments",
+  {
+    /**
+     * A row's own id (review LOW): off and on again in one millisecond is a
+     * closed zero-length interval AND a new open one at the same instant —
+     * keyed by (repo, started_at), the second was silently dropped and the
+     * repo read as paused.
+     */
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    startedAt: timestamptz("started_at").notNull(),
+    /** Null while the interval is open — the repo is enrolled now. */
+    endedAt: timestamptz("ended_at"),
+    /**
+     * Bounds an upgrade inferred from what was recorded (review M-3), not a
+     * toggle's instant — every line that counts over it says so.
+     */
+    reconstructed: boolean("reconstructed").notNull().default(false),
+  },
+  (table) => [
+    index("pilot_enrolments_repo_started_idx").on(table.repo, table.startedAt),
+    // AT MOST ONE OPEN INTERVAL PER REPO, a database fact: a second "on" fails loudly.
+    uniqueIndex("pilot_enrolments_one_open_idx").on(table.repo).where(sql`${table.endedAt} IS NULL`),
+    // An interval never ends before it starts (round-5 LOW-1).
+    check("pilot_enrolments_ends_after_start", sql`${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}`),
+  ],
+);
 
 /**
  * WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (1.0 spec 04 §3.6).
@@ -1275,8 +1319,16 @@ export const hintOutcomes = pgTable(
       .notNull()
       .references(() => developers.id),
     createdAt: timestamptz("created_at").notNull(),
+    /**
+     * WHICH CHANNEL SAID IT (07 §13.12), stamped by the hub from the route —
+     * never taken from a body: `person` from `crosscheck followed / overrode`,
+     * `agent` from `mark_hint_outcome`. A person's word is never overturned by
+     * an agent's. Null on rows from before the column, read as an agent's.
+     */
+    recordedVia: text("recorded_via", { enum: HINT_OUTCOME_CHANNELS }),
   },
   (table) => [
+    check("hint_outcomes_recorded_via_check", sql`${table.recordedVia} IS NULL OR ${table.recordedVia} IN ('agent', 'person')`),
     check(
       "hint_outcomes_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_HINT_OUTCOME_REASON_CHARS))}`,
@@ -1285,6 +1337,40 @@ export const hintOutcomes = pgTable(
     index("hint_outcomes_delivery_created_idx").on(table.deliveryId, table.createdAt.desc()),
     // 07 §13.9 (D-O6): the reaper's age prune, across every repo.
     index("hint_outcomes_created_idx").on(table.createdAt),
+  ],
+);
+
+/**
+ * THE PERSON SAYING NOISE AGAIN (07 §13.11, review H-B). `pilot_marks` keeps
+ * one label per person and delivery, and the first one is what precision
+ * counts; a later "noise" over a word recorded since is a NEW ROW here, never
+ * a restamped label — an instant that moves would move every closed month
+ * that read it. Precision never reads this table; the outcome figures read
+ * the newest of the label and these rows, before each month's end.
+ */
+export const noiseReassertions = pgTable(
+  "noise_reassertions",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => hintDeliveries.id),
+    markedBy: text("marked_by")
+      .notNull()
+      .references(() => developers.id),
+    /** The sentence said with it, kept; null is the ordinary case. */
+    reason: text("reason"),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "noise_reassertions_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
+    ),
+    index("noise_reassertions_delivery_created_idx").on(table.deliveryId, table.createdAt.desc()),
+    // Aged out with the outcomes it stands beside (D-O6), an index range.
+    index("noise_reassertions_created_idx").on(table.createdAt),
   ],
 );
 

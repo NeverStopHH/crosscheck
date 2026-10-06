@@ -47,6 +47,7 @@ import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { MAX_PILOT_LABEL_REASON_CHARS, containsSecret, reasonLength } from "@crosscheck/schema";
 import type { PilotInterventionLabel } from "@crosscheck/schema";
 
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { markFailureLine } from "./pilot-mark.ts";
@@ -311,8 +312,9 @@ export const runPilotLabel = async (
   if (argv.length > 0) {
     return { stdout: PILOT_LABEL_USAGE, exitCode: EXIT_USAGE };
   }
-  if (!isInteractive()) {
-    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+  const gate = personGate(env, isInteractive);
+  if (!gate.isPerson) {
+    return { stdout: `${agentHostRefusalLine(gate)}${AGENT_REFUSAL}`, exitCode: EXIT_USAGE };
   }
   const hub = await resolveHub(env, cwd);
   if ("failure" in hub) {

@@ -276,15 +276,40 @@ describe("PilotReportSchema", () => {
     expect(parsed.data?.outcomes).toBeUndefined();
   });
 
-  test("D-O5: an outcomes block missing a count is a report this client cannot read", () => {
-    // Arrange — "followed 0" from a count that never arrived is AT-9's lie
-    const outcomes = { sinceIso: null, interventions: 4, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 3 };
+  test("D-O5, round 3: an outcomes figure missing a count, or contradicting its withholding, is unreadable — and only it", () => {
+    // Arrange — "followed 0" from a count that never arrived is AT-9's lie,
+    // and figures beside "withheld" would print what the hub withheld
+    const block = {
+      periodStartIso: "2026-07-01T00:00:00.000Z",
+      periodEndIso: "2026-08-01T00:00:00.000Z",
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: "2026-07-01T00:00:00.000Z",
+    };
+    const counts = { interventions: 4, followed: 1, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 2 };
+    const { followed: _missing, ...short } = counts;
 
     // Act
-    const parsed = PilotReportSchema.safeParse({ ...wireReport(), outcomes });
+    const missing = PilotReportSchema.safeParse({ ...wireReport(), outcomes: { ...block, withheld: null, figures: short } });
+    const both = PilotReportSchema.safeParse({
+      ...wireReport(),
+      outcomes: { ...block, withheld: "below_minimums", figures: counts },
+    });
+    const shown = PilotReportSchema.safeParse({ ...wireReport(), outcomes: { ...block, withheld: null, figures: counts } });
+
+    // Assert — the block is unreadable, never zeros; the rest of the report still arrives
+    expect(missing.success && missing.data.outcomes).toEqual({ unreadable: true });
+    expect(both.success && both.data.outcomes).toEqual({ unreadable: true });
+    expect(shown.success && shown.data.outcomes).toMatchObject({ withheld: null, figures: counts });
+  });
+
+  test("round 3: an outcomes block this client cannot read never rejects the whole report", () => {
+    // Act — a newer hub's shape, or plain garbage, in the one block
+    const garbage = PilotReportSchema.safeParse({ ...wireReport(), outcomes: "a shape from the future" });
 
     // Assert
-    expect(parsed.success).toBe(false);
+    expect(garbage.success).toBe(true);
+    expect(garbage.data?.outcomes).toEqual({ unreadable: true });
+    expect(garbage.data?.duplicateWork.surfaced).toBe(312);
   });
 
   test("an uninstrumented surface keeps its null — it never becomes an empty record", () => {
