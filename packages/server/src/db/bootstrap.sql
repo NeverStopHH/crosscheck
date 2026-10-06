@@ -155,7 +155,10 @@ CREATE TABLE IF NOT EXISTS hint_deliveries (
   -- measurement the pilot report exists to take.
   channel text NOT NULL DEFAULT 'unknown',
   delivered_at timestamptz NOT NULL,
-  pulled_at timestamptz
+  pulled_at timestamptz,
+  -- WHEN THE HUB RECEIVED IT (07 13.11, review P5), by the hub's clock: a
+  -- closed month is read by it, so a late backlog never moves the month.
+  ingested_at timestamptz
 );
 
 -- ── Search block (DESIGN.md §6) ─────────────────────────────────────────────
@@ -1114,6 +1117,9 @@ ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
 -- attributed to either. Nothing is back-filled, and the report prints
 -- 'unknown' as its own bucket rather than folding it into a guess.
 ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown';
+-- 07 13.11 (review P5): rows from before the column stay NULL and are read by
+-- delivered_at; every new row is stamped by the hub at ingest.
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS ingested_at timestamptz;
 
 -- The same column for a hub that already has the table. 07 3.6 found this
 -- missing: the spec's migration list named four new tables and one pins

@@ -11,7 +11,7 @@ import { sql } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { MAX_HINT_OUTCOME_REASON_CHARS } from "@crosscheck/schema";
 
-import { hintOutcomes, teamSettings } from "../src/db/schema.ts";
+import { hintDeliveries, hintOutcomes, teamSettings } from "../src/db/schema.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
 import { createTestHarness } from "./helpers.ts";
 
@@ -50,6 +50,24 @@ describe("hint_outcomes DDL sync", () => {
     expect(match).not.toBeNull();
     expect(Number(match?.[1])).toBe(MAX_HINT_OUTCOME_REASON_CHARS);
     expect(constraint.rows).toHaveLength(1);
+  });
+
+  test("review P5: when the hub received a delivery is a hint_deliveries column in both authorities", async () => {
+    // Arrange
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const harness = await createTestHarness();
+
+    // Act
+    const drizzle = getTableConfig(hintDeliveries).columns.map((column) => column.name);
+    const columns = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'hint_deliveries' AND column_name = 'ingested_at'`,
+    );
+
+    // Assert — a fresh hub from the CREATE, an existing one from the ALTER
+    expect(drizzle).toContain("ingested_at");
+    expect(columns.rows).toHaveLength(1);
+    expect(bootstrapSql).toContain("  ingested_at timestamptz\n);");
+    expect(bootstrapSql).toContain("ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS ingested_at timestamptz;");
   });
 
   test("when outcomes became recordable is a team_settings column in both authorities", async () => {

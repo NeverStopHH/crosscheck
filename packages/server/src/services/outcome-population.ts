@@ -13,7 +13,10 @@
  * 0.10 `off_target` spelling); an outcome is the agent's or the person's word.
  * Per intervention the LATER of the two stands, the label on a tie.
  *
- * A SHARED FIGURE IS A CLOSED, FROZEN PERIOD (review #4/#10). Anything but the
+ * A SHARED FIGURE IS A CLOSED, FROZEN PERIOD (review #4/#10) — frozen by the
+ * hub's own clock: a delivery is read into a month only if the hub had RECEIVED
+ * it before the month ended (`ingested_at`, review P5), so a backlog drained in
+ * August never moves July. Anything but the
  * recorder's own view covers the last whole calendar month (UTC), counted as
  * it stood at the month's end, and prints only above the disclosure minimums
  * (`HINT_OUTCOME_DISCLOSURE_MINIMUMS`): a window that could be stepped, or a
@@ -117,6 +120,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
       AND hd.delivered_at >= ${since.toISOString()}::timestamptz
       ${before(sql`hd.delivered_at`, until)}
+      ${before(sql`COALESCE(hd.ingested_at, hd.delivered_at)`, until)}
     GROUP BY hd.session_id, hd.ref_id, s.developer_id
   ), sourced AS (
     SELECT r.*, (

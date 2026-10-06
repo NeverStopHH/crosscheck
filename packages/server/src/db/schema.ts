@@ -588,6 +588,13 @@ export const hintDeliveries = pgTable("hint_deliveries", {
     .default("unknown"),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
+  /**
+   * WHEN THE HUB RECEIVED IT (07 §13.11, review P5), by the hub's own clock.
+   * `delivered_at` is the connector's word and may arrive weeks late; a closed
+   * month that read it would move whenever a backlog drained. Null on rows
+   * from before the column, which are read by `delivered_at`.
+   */
+  ingestedAt: timestamptz("ingested_at"),
 }, (table) => [
   // "Delivered exactly once" for a question ANSWER is a cross-SESSION promise
   // (services/questions.ts): the asker's seen-set dies with their session, so

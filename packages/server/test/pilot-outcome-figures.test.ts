@@ -20,7 +20,10 @@
  * before `pilot_outcomes_since` is outside the population, never "unmarked".
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
 import { HINT_OUTCOME_DISCLOSURE_MINIMUMS } from "@crosscheck/schema";
+
+import { lastWholeMonth, readPeriodAggregate } from "../src/services/outcome-population.ts";
 
 import {
   ANNA_SESSION,
@@ -44,6 +47,21 @@ import { TEST_ADMIN_TOKEN, jsonRequest, postRecords } from "./helpers.ts";
 const SECONDS_PER_HOUR = 3600;
 const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z" };
 const ENROLLED_ISO = "2026-07-24T09:00:00.000Z";
+
+const NICK_CONTEXT = `wc_${NICK_SESSION}`;
+
+/** July's interventions as the closed month reads them — below the rendering, so no minimum hides it. */
+const julyInterventions = async (world: OutcomeWorld): Promise<number> => {
+  const july = lastWholeMonth(world.harness.clock.now());
+  const aggregate = await readPeriodAggregate(world.harness.db, {
+    repo: REPO,
+    from: july.start,
+    until: july.end,
+    who: sql`true`,
+    sourceIs: null,
+  });
+  return aggregate.interventions;
+};
 
 const outcomesOf = async (world: OutcomeWorld, days?: number): Promise<Record<string, unknown>> => {
   const window = days === undefined ? "" : `&days=${String(days)}`;
@@ -240,5 +258,24 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     expect(atEnrolment).toBe(first);
     expect(afterLeaving).toBe(first);
     expect(afterReturning).toBe(world.harness.clock.now().toISOString());
+  });
+});
+
+describe("a closed month is frozen against late ingest (review P5)", () => {
+  test("a delivery dated in July but reaching the hub in August is never read into July", async () => {
+    // Arrange — four July deliveries; then August, and Mike's connector sends a late one
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    const before = await julyInterventions(world);
+
+    // Act
+    await postRecords(world.harness, world.mike, {
+      records: [deliveryRecord(MIKE_SESSION, "work_context", NICK_CONTEXT, "prompt_hint", "2026-07-31T23:00:00.000Z")],
+    });
+    const after = await julyInterventions(world);
+
+    // Assert — a closed month read twice reads the same
+    expect(before).toBe(4);
+    expect(after).toBe(before);
   });
 });

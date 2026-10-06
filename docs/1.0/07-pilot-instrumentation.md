@@ -1173,3 +1173,9 @@ counted two interventions and a word on one left the other "unmarked" for ever. 
 pointer in one session**: every outcome figure counts distinct (session, ref), and a word or a noise label on
 any of that pointer's deliveries speaks for all of them — in the view (`deliveryStates`) and in the write
 path's "what stood" (`readStanding`), so the two never disagree.
+
+*LOW — late ingest moved a "frozen" month (P5).* A delivery stamped 2026-07-31 by its connector and received
+in August was read into July, so the closed July line moved. `hint_deliveries.ingested_at` (both DDL
+authorities; additive, NULL on older rows, which are read by `delivered_at`) is now stamped by the hub at
+ingest, and a closed month reads a delivery only if the hub received it before the month ended — besides it
+having been delivered in the month.

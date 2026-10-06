@@ -18029,6 +18029,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the answer says nothing stood while the person's label on that pointer stood",
   },
+  // ── 07 §13.11, review P5: a closed month is frozen against late ingest ────
+  {
+    label: "a delivery the hub received after the month ended is read into the month",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ${before(sql`COALESCE(hd.ingested_at, hd.delivered_at)`, until)}\n",
+    to: "",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a backlog drained in August moves the July line that was already read as closed",
+  },
+  {
+    label: "a delivery is stamped with the connector's clock as when the hub received it",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      ingestedAt: deps.now(),",
+    to: "      ingestedAt: deliveredAt,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the freeze is then the sender's word, and a late sender still moves a closed month",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18371,7 +18388,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 9
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 11
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
