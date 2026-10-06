@@ -26,6 +26,7 @@
  * forbids and what prompt-injection defences trip on.
  */
 import {
+  LOCATION_WITHHELD,
   MAX_HINT_TEXT_LENGTH,
   MAX_QUESTION_BODY_LENGTH,
 } from "@crosscheck/schema";
@@ -539,6 +540,11 @@ const commitBlock = (
 
 /** "started 3h ago", or "started at an unknown time" — never a guess. */
 const sessionStartLabel = (iso: string | undefined, now: Date): string => {
+  // The author opted out of presence: the hub withholds when they arrived
+  // (server services/live-location.ts), which is not the same as unknown.
+  if (iso === LOCATION_WITHHELD) {
+    return `start time ${LOCATION_WITHHELD}`;
+  }
   const ms = iso === undefined ? Number.NaN : Date.parse(iso);
   return Number.isNaN(ms) || ms > now.getTime()
     ? "started at an unknown time"

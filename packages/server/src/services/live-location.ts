@@ -92,6 +92,8 @@ const LOCATION_FIELDS = {
   observedAtCommit: "null",
   /** The newest activity on a context or session: when its author was there. */
   lastActiveAt: "marker",
+  /** When the session behind a piece of work started: when its author arrived. */
+  workStartedAt: "marker",
 } as const satisfies Readonly<Record<string, WithheldForm>>;
 
 export type LocationField = keyof typeof LOCATION_FIELDS;

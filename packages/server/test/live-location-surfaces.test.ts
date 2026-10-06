@@ -11,11 +11,15 @@ import { describe, expect, test } from "bun:test";
 import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
 import {
+  CREATED_AT,
+  FILE,
   REPO,
   ROBIN_CONTEXT,
+  ROBIN_SOLVED,
   SECRET_BRANCH,
   UPDATED_AT,
   getAs,
+  postAs,
   secretsIn,
   seedOptedOutWorld,
   url,
@@ -96,5 +100,28 @@ describe("the questions inbox (review round 3, H1)", () => {
     expect(answerable.status).toBe(200);
     expect(secretsIn(answerable.body)).toEqual([]);
     expect(answerable.body).toContain(WITHHELD_TITLE);
+  });
+});
+
+/** A commit of Robin's on the file Nick is about to edit — the landed stop's input. */
+const LANDED_SHA = "abcdef1234567";
+
+describe("the landed-change stop (review round 3, H2)", () => {
+  test("names Robin's landed work, under the withheld title and without when she started it", async () => {
+    const world = await seedOptedOutWorld();
+
+    const answer = await postAs(world, "nick", "/api/landed/context", {
+      repo: REPO,
+      path: FILE,
+      commits: [{ sha: LANDED_SHA, authorEmail: "robin@example.com", committedAt: CREATED_AT }],
+    });
+
+    expect(answer.status).toBe(200);
+    expect(secretsIn(answer.body)).toEqual([]);
+    // The stop stays — it is why Nick should look before editing — and the
+    // ended session's work is published; where and since when she was is not.
+    expect((JSON.parse(answer.body) as { data: { matches: readonly unknown[] } }).data.matches).toEqual([
+      expect.objectContaining({ workContextId: ROBIN_SOLVED, title: WITHHELD_TITLE, workStartedAt: LOCATION_WITHHELD }),
+    ]);
   });
 });

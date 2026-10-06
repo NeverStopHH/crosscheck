@@ -58,6 +58,8 @@ import type { Clock } from "../types.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { presenceCutoff } from "./presence.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 
 interface Deps {
   readonly db: Db;
@@ -98,6 +100,7 @@ const matchFor = async (
   callerDeveloperId: string,
   request: LandedContextRequest,
   commit: LandedContextCommit,
+  hidden: HiddenLocations,
 ): Promise<LandedContextMatch | null> => {
   const committedMs = Date.parse(commit.committedAt);
   const activeSince = new Date(committedMs - LANDED_WHY_WINDOW_DAYS * MS_PER_DAY);
@@ -110,6 +113,7 @@ const matchFor = async (
       startedAt: agentSessions.startedAt,
       workContextId: workContexts.id,
       title: workContexts.title,
+      developerId: agentSessions.developerId,
       developerName: developers.name,
       intent: workContexts.intent,
     })
@@ -148,16 +152,19 @@ const matchFor = async (
     )
     .limit(1);
   const found = rows[0];
+  // An ENDED or silent session's work is published and the stop names it —
+  // under a title and a start time that say nothing of where its author is
+  // (services/live-location.ts). The live one is not matched at all, above.
   return found === undefined
     ? null
-    : {
+    : projectRow(hidden, { developerId: found.developerId, repo: request.repo }, {
         sha: commit.sha,
         workContextId: found.workContextId,
         title: found.title,
         developerName: found.developerName,
         intent: intentOf(found.intent),
         workStartedAt: found.startedAt.toISOString(),
-      };
+      });
 };
 
 /** One match per commit that has one, in the order the commits were asked. */
@@ -167,8 +174,9 @@ export const findLandedContexts = async (
   request: LandedContextRequest,
 ): Promise<readonly LandedContextMatch[]> => {
   const matches: LandedContextMatch[] = [];
+  const hidden = await locationHiddenFrom(deps.db, callerDeveloperId);
   for (const commit of request.commits) {
-    const match = await matchFor(deps, callerDeveloperId, request, commit);
+    const match = await matchFor(deps, callerDeveloperId, request, commit, hidden);
     if (match !== null) {
       matches.push(match);
     }

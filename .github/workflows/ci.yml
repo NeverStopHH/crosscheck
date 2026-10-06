@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1597
+    # PRINTS: 1601
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -296,11 +296,11 @@ jobs:
     # PRINTS: guarantees/doctor.ts 3
     # PRINTS: hints/delivery.ts 7
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 18
+    # PRINTS: hints/render.ts 19
     # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
-    # PRINTS: http/hub.ts 12
+    # PRINTS: http/hub.ts 13
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 5
     # PRINTS: http/verdict.ts 4
@@ -421,9 +421,9 @@ jobs:
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
     # PRINTS: packages/server/src/services/hints.ts 5
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
-    # PRINTS: packages/server/src/services/landed-context.ts 20
+    # PRINTS: packages/server/src/services/landed-context.ts 21
     # PRINTS: packages/server/src/services/landed-notices.ts 28
-    # PRINTS: packages/server/src/services/live-location.ts 5
+    # PRINTS: packages/server/src/services/live-location.ts 6
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
@@ -559,7 +559,7 @@ jobs:
     # PRINTS: hint.ts 6
     # PRINTS: hints.ts 7
     # PRINTS: hook-budget.ts 2
-    # PRINTS: hub.ts 12
+    # PRINTS: hub.ts 13
     # PRINTS: index.ts 4
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 8
@@ -576,7 +576,7 @@ jobs:
     # PRINTS: junit.ts 2
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
-    # PRINTS: landed-context.ts 23
+    # PRINTS: landed-context.ts 24
     # PRINTS: landed-notice.ts 5
     # PRINTS: landed-notices.ts 33
     # PRINTS: landed-why.ts 2
@@ -584,7 +584,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
-    # PRINTS: live-location.ts 5
+    # PRINTS: live-location.ts 6
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
@@ -642,7 +642,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 2
-    # PRINTS: render.ts 101
+    # PRINTS: render.ts 102
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 10
     # PRINTS: retention-registry.ts 9

@@ -59,8 +59,10 @@
  *                                   hint candidates, referee briefs, the
  *                                   conference (its contexts AND its open
  *                                   questions), the questions inbox (the
- *                                   briefing's and answerable=1), suspect
- *                                   and the /ui pages. A question's title is
+ *                                   briefing's and answerable=1), the
+ *                                   landed-change stop (POST /api/landed/
+ *                                   context), suspect and the /ui pages. A
+ *                                   question's title is
  *                                   judged by its CONTEXT's owner, not its
  *                                   asker. A title a person or host wrote
  *                                   stays
@@ -75,6 +77,9 @@
  *                                   revalidate it against their own clone
  *   - last-active time            — GET /api/suspect and GET /api/conference,
  *                                   as LOCATION_WITHHELD
+ *   - session start               — the landed stop's workStartedAt, as
+ *                                   LOCATION_WITHHELD (every shipped reader
+ *                                   drops a value it cannot parse)
  *
  * Pinned route by route in test/live-location-privacy.test.ts, which calls
  * EVERY GET route the app registers as a colleague of an opted-out developer

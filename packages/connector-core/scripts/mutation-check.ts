@@ -18038,6 +18038,48 @@ export const MUTATIONS: readonly Mutation[
       "crosscheck conference lists open questions under the title of the " +
       "context they are about, which for a fallback title is the branch",
   },
+  {
+    // Review round 3, H2: an ended session's work is published, its
+    // author's whereabouts are not.
+    label: "the landed stop names an opted-out teammate's branch and when she started",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "    : projectRow(hidden, { developerId: found.developerId, repo: request.repo }, {",
+    to: "    : projectRow(new Set<string>(), { developerId: found.developerId, repo: request.repo }, {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the PreToolUse stop at Robin's landed change prints her fallback title " +
+      "and the instant her session began, before Nick edits the file",
+  },
+  {
+    label: "a landed stop says when an opted-out teammate's session started",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  workStartedAt: \"marker\",\n",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "workStartedAt is the moment her session began, which is when she " +
+      "arrived at that work — a heartbeat by another name",
+  },
+  {
+    label: "the landed stop reads a withheld start time as unknown",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  if (iso === LOCATION_WITHHELD) {\n    return `start time ${LOCATION_WITHHELD}`;",
+    to: "  if (false) {\n    return `start time ${LOCATION_WITHHELD}`;",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because:
+      "the stop says the hub could not tell when the work started, when its " +
+      "author chose not to share it",
+  },
+  {
+    label: "the connector drops a withheld start time before the stop can say so",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    .union([z.literal(LOCATION_WITHHELD), z.iso.datetime({ offset: true })])",
+    to: "    .union([z.iso.datetime({ offset: true }), z.iso.datetime({ offset: true })])",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because:
+      "the marker fails the datetime parse, is caught to undefined, and the " +
+      "stop prints `started at an unknown time` after all",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18267,7 +18309,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
- * PRINTS: packages/connector-core/test/landed-why-render.test.ts 5
+ * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
  * PRINTS: packages/connector-core/test/landing-branches.test.ts 6
  * PRINTS: packages/connector-core/test/landing-fetch-prompts.test.ts 6
@@ -18368,7 +18410,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 10
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 3
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 5
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
