@@ -200,6 +200,8 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     FROM sourced so
     LEFT JOIN LATERAL (
       SELECT spoken.word, spoken.reason, spoken.at FROM (
+        -- a pre-channel row (NULL) is the agent's, the safer side (round-5 LOW-5); the COALESCE is
+        -- what keeps it so: a bare comparison is NULL, and NULL sorts FIRST under DESC
         SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id,
                COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label
         FROM hint_outcomes o

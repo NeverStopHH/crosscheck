@@ -1469,3 +1469,10 @@ labels the newer stands. A helpful label is a verdict, not an outcome, so in the
 intervention stays where the label alone left it — unmarked — and never takes the agent's word it stands over;
 the person's own later `followed / overrode` changes it. (A tally of its own for helpful would add a sixth
 outcome category; that is the owner's to decide, and not done here.)
+
+*LOW-5 — a word from before the channel was stamped.* A `hint_outcomes` row with no `recorded_via` (written
+before the column) is the AGENT's, explicitly: that is the safer side for "a person's word is never overturned
+by an agent's" — a word nobody can prove the person said never outranks one they did. The write path reads
+it as the agent's (`IS DISTINCT FROM 'person'`), never as the person's, and the view's `COALESCE(…, false)`
+keeps it from sorting above the person's word (a bare comparison is NULL, which sorts first under DESC). Three
+tests pin each half (survivors Q1–Q3).

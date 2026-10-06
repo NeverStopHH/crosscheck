@@ -79,7 +79,13 @@ export const pointerOfDelivery = async (tx: DbExecutor, deliveryId: string): Pro
 
 type OutcomeRow = { readonly outcome: HintOutcome; readonly reason: string | null; readonly at: string | Date };
 
-/** The person's words, or an agent's — a row from before the channel was stamped is an agent's. */
+/**
+ * The person's words, or an agent's. A row from before the channel was stamped
+ * (NULL) is an AGENT's, deliberately (round-5 LOW-5): that is the safer side for
+ * "a person's word is never overturned by an agent's" — a word nobody can prove
+ * the person said never outranks one they did. Hence `= 'person'` for the
+ * person and `IS DISTINCT FROM 'person'` (NULL included) for the agent.
+ */
 const ofChannel = (channel: HintOutcomeChannel): SQL =>
   channel === "person" ? sql`o.recorded_via = 'person'` : sql`o.recorded_via IS DISTINCT FROM 'person'`;
 

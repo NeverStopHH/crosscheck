@@ -19087,6 +19087,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "a verdict is tallied as an outcome no figure has a place for",
   },
+  // ── 07 §13.13, LOW-5: a pre-channel (NULL) word is the agent's ──
+  {
+    label: "write path: a pre-channel row is nobody's word (Q1)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "sql`o.recorded_via IS DISTINCT FROM 'person'`",
+    to: "sql`o.recorded_via = 'agent'`",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an agent re-reading the clause writes its pre-channel word a second time",
+  },
+  {
+    label: "write path: a pre-channel row is the person's word (Q2)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "channel === \"person\" ? sql`o.recorded_via = 'person'`",
+    to: "channel === \"person\" ? sql`o.recorded_via IS DISTINCT FROM 'agent'`",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an old agent word outranks every newer agent word as if the person had said it",
+  },
+  {
+    label: "view: a pre-channel row sorts above the person's word (Q3)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "COALESCE(o.recorded_via = 'person', false) AS by_person",
+    to: "(o.recorded_via = 'person') AS by_person",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "NULL sorts first under DESC, so an old agent word overturns the person's own in every figure",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19411,7 +19436,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 22
- * PRINTS: packages/server/test/hint-outcomes.test.ts 45
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 48
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

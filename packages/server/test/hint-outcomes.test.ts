@@ -664,6 +664,62 @@ describe("POST /api/hint-outcomes", () => {
   });
 });
 
+describe("round-5 LOW-5: a word from before the channel was stamped is the agent's", () => {
+  /** A row as a hub before `recorded_via` wrote it: no channel at all. */
+  const legacyWord = async (world: OutcomeWorld, outcome: "followed" | "overrode", at: Date): Promise<void> => {
+    await world.harness.db.insert(hintOutcomes).values({
+      id: `ho_legacy_${outcome}`,
+      repo: REPO,
+      deliveryId: world.delivered.kenContext,
+      outcome,
+      reason: outcome === "overrode" ? "kept mine" : null,
+      recordedBy: world.nick.developerId,
+      createdAt: at,
+    });
+  };
+
+  test("Q1: the agent saying a pre-channel word again is a repeat — that row was the agent's", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await legacyWord(world, "followed", world.harness.clock.now());
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(agent.status).toBe(200);
+    expect(await bodyOf(agent)).toMatchObject({ repeated: true });
+  });
+
+  test("Q2: the agent's newer word stands over a pre-channel word — that row was never the person's", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await legacyWord(world, "followed", world.harness.clock.now());
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+
+    // Assert
+    expect(await bodyOf(agent)).toMatchObject({ replaced: "followed", stands: "overrode" });
+  });
+
+  test("Q3: a newer pre-channel word never ranks above the person's own in the view", async () => {
+    // Arrange — the person's followed, then a newer row with no channel
+    const world = await createOutcomeWorld();
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await legacyWord(world, "overrode", world.harness.clock.now());
+
+    // Act
+    const view = await mineOf(world);
+
+    // Assert — NULL is the agent's side, never sorted above the person's word
+    expect(view).toMatchObject({ followed: 1, overrode: 0 });
+  });
+});
+
 describe("survivors R10, R11: the order of words on one pointer", () => {
   test("R10: noise said again in the same millisecond as an outcome that was stamped past it still stands", async () => {
     // Arrange — the clock never moves: the label at t, the person's overrode bumped to t+1ms
