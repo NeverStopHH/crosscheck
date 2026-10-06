@@ -1264,3 +1264,10 @@ this checkout ("it was not sent in a guessed one's name"), none live ("it is sen
 next starts"), or not sent in time ("after your next tool call"). A held delivery of another ref is not this
 one: the hub's own refusal stands (review M15). The CLI picks the session of this checkout, never just the
 newest (review M18).
+
+*M2 — `crosscheck noise` and `crosscheck helpful` answered "nothing with that id reached you" for a hint still in
+the spool.* They now take the same path as `crosscheck followed`: the hub is asked first — the mark by
+delivery id, the candidates by the ref the hint printed, or the recent ones with no id — and only when it does
+not know a delivery the spool holds does the one live session of this checkout send its own held records,
+after which the label is asked for once more; a delivery still held is answered with why, never "never reached
+you".

@@ -24,8 +24,11 @@ import {
   EXIT_USAGE,
 } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
+import { DELIVERY_STILL_ON_THIS_MACHINE_LINE } from "../src/cli/outcome-render.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "noise-cli-admin";
@@ -40,6 +43,8 @@ const KEN_OTHER_CONTEXT = "wc_ken_filters";
 const MS_PER_MINUTE = 60_000;
 
 let server: ReturnType<typeof Bun.serve>;
+/** A hub that cannot take records yet and knows no delivery — a spooled hint's view of the world. */
+let stuckHub: ReturnType<typeof Bun.serve>;
 let hubUrl: string;
 let repo: string;
 let otherRepo: string;
@@ -122,6 +127,7 @@ const homeWithLive = async (
   sessionId: string | null,
   repoRoot: string = repo,
   repoId: string = REPO_ID,
+  hub?: string,
 ): Promise<string> => {
   const home = await makeHome("noise-cli");
   homes.push(home);
@@ -132,7 +138,7 @@ const homeWithLive = async (
       workContextId: `wc_${sessionId}`,
       repoId,
       repoRoot,
-      hubUrl,
+      hubUrl: hub ?? hubUrl,
       startedAt: new Date().toISOString(),
       lastHeartbeatAt: new Date().toISOString(),
     });
@@ -140,17 +146,32 @@ const homeWithLive = async (
   return home;
 };
 
+/** A delivery the prompt hook booked into the spool — not yet sent, no tool has run since. */
+const spoolDelivery = async (home: string, hub: string, sessionId: string, refId: string): Promise<string> => {
+  const id = hintDeliveryId(sessionId, refId);
+  const delivery = envelope(nick.id, sessionId, "hint_delivery", {
+    id,
+    sessionId,
+    refKind: "work_context",
+    refId,
+    channel: "prompt_hint",
+    deliveredAt: new Date().toISOString(),
+  });
+  await appendRecords(home, repoKey(hub, REPO_ID), sessionId.replace("cc_", ""), [delivery], new Date());
+  return id;
+};
+
 const noise = (
   home: string,
   argv: readonly string[] = [],
-  options: { readonly interactive?: boolean; readonly cwd?: string } = {},
+  options: { readonly interactive?: boolean; readonly cwd?: string; readonly hub?: string } = {},
 ): Promise<{ stdout: string; exitCode: number }> =>
   runCli(
     ["noise", ...argv],
     {
       CROSSCHECK_HOME: home,
       HOME: home,
-      CROSSCHECK_HUB_URL: hubUrl,
+      CROSSCHECK_HUB_URL: options.hub ?? hubUrl,
       CROSSCHECK_API_KEY: nick.apiKey,
       CROSSCHECK_TIMEOUT_MS: "4000",
     },
@@ -166,6 +187,22 @@ beforeAll(async () => {
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
+  stuckHub = Bun.serve({
+    port: 0,
+    fetch: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/records") {
+        return Response.json({ ok: false, error: { code: "unavailable", message: "try later" } }, { status: 503 });
+      }
+      if (path === "/api/pilot-marks") {
+        return Response.json(
+          { ok: false, error: { code: "unknown_ref", message: "no delivery with that id reached you" } },
+          { status: 422 },
+        );
+      }
+      return Response.json({ ok: true, data: { candidates: [], more: false } });
+    },
+  });
   repo = await makeRepo("noise-cli", { remote: "git@github.com:acme/api.git" });
   otherRepo = await makeRepo("noise-cli-web", { remote: "git@github.com:acme/web.git" });
   nick = await createDeveloper("Nick", "nick-noise@example.com");
@@ -205,6 +242,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   server.stop(true);
+  stuckHub.stop(true);
   await Promise.all(
     [repo, otherRepo, ...homes].map((path) =>
       rm(path, { recursive: true, force: true }),
@@ -359,6 +397,42 @@ describe("crosscheck noise", () => {
     // Assert
     expect(result.stdout).toContain(`recorded: ${id} is noise`);
     expect(result.stdout).toContain("noise now stands over the earlier followed, which stays in the history");
+  });
+
+  test("review M2: noise on a hint still on this machine sends it first, then labels it", async () => {
+    // Arrange — a fresh live session whose prompt hint is still in its spool
+    const session = "cc_66666666-2222-4333-8444-555555555555";
+    await send("POST", "/api/sessions", nick.apiKey, {
+      id: session,
+      agentKind: "claude-code",
+      repo: REPO_ID,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "implementing",
+    });
+    const home = await homeWithLive(session);
+    const id = await spoolDelivery(home, hubUrl, session, KEN_CONTEXT);
+
+    // Act — the hub does not know the delivery yet; "no delivery with that id" would be false
+    const result = await noise(home, [id]);
+
+    // Assert
+    expect(result.stdout).toContain(`recorded: ${id} is noise`);
+  });
+
+  test("review M2: noise on a hint the hub has not received yet never says it never reached you", async () => {
+    // Arrange — the hub cannot take the spooled delivery yet
+    const stuck = `http://127.0.0.1:${String(stuckHub.port)}`;
+    const home = await homeWithLive(LIVE, repo, REPO_ID, stuck);
+    await spoolDelivery(home, stuck, LIVE, "wc_ken_noise_held");
+
+    // Act — by the ref the hint printed, and with no id
+    const byRef = await noise(home, ["wc_ken_noise_held"], { hub: stuck });
+    const recent = await noise(home, [], { hub: stuck });
+
+    // Assert
+    expect(byRef.stdout).toBe(DELIVERY_STILL_ON_THIS_MACHINE_LINE);
+    expect(recent.stdout).toBe(DELIVERY_STILL_ON_THIS_MACHINE_LINE);
   });
 
   test("a repo that never enrolled is told, not ignored", async () => {

@@ -8809,8 +8809,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2. "This machine" is the live state files, not every session the caller has.
     label: "noise reaches past this machine's live sessions",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "    sessions,\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,",
-    to: "    sessions: [],\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,",
+    from: "    getMarkCandidates(ctx, { repo: identity.repoId, sessions, withinMinutes: NOISE_MARK_WINDOW_MINUTES });",
+    to: "    getMarkCandidates(ctx, { repo: identity.repoId, sessions: [], withinMinutes: NOISE_MARK_WINDOW_MINUTES });",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "the delivery beside the person loses to a newer one on their other laptop, " +
@@ -8820,8 +8820,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2. With no id, only the last NOISE_MARK_WINDOW_MINUTES.
     label: "noise with no id reaches back past the hour",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n  });",
-    to: "  });",
+    from: "    getMarkCandidates(ctx, { repo: identity.repoId, sessions, withinMinutes: NOISE_MARK_WINDOW_MINUTES });",
+    to: "    getMarkCandidates(ctx, { repo: identity.repoId, sessions });",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "a ninety-minute-old pointer is marked as the one that just happened, which " +
@@ -18300,6 +18300,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "a mistyped ref is answered 'still on this machine' whenever anything at all is held (review M15)",
   },
+  // ── 07 §13.11, review M2: crosscheck noise / helpful on a held hint ───────
+  {
+    label: "crosscheck noise <hd_…> says nothing reached you for a delivery this machine holds",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  const asked = await askHub(target, deliveryId, call, (result) => !result.ok && result.code === UNKNOWN_REF);",
+    to: "  const asked = await askHub(target, deliveryId, call, () => false);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "the person labelling the hint they were just shown is told it never reached them",
+  },
+  {
+    label: "crosscheck noise <ref> says nothing reached you for a hint this machine holds",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  const asked = await askHub(target, ref, call, noCandidates);",
+    to: "  const asked = await askHub(target, ref, call, () => false);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "the work-context id the hint printed is answered 'never reached you' until some tool runs",
+  },
+  {
+    label: "crosscheck noise with no id says nothing is recent while the spool holds a hint",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  const asked = await askHub(target, null, call, noCandidates);",
+    to: "  const asked = await askHub(target, null, call, () => false);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18389,7 +18414,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
- * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 8
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 4
  * PRINTS: packages/cli/test/pilot-render.test.ts 29
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
