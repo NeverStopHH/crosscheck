@@ -18431,6 +18431,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/draft-visibility.test.ts`,
     because: "a teammate's vouched finding reads as an unreviewed guess because a draft said it too",
   },
+  {
+    label: "excludeDerivedClaims still lets a draft's words find a tree",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "        excludeDerivedClaims ? eq(claims.provenance, DECLARED_PROVENANCE) : undefined,\n",
+    to: "",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because: "a pushed surface asking for vouched matches only is handed a tree on an unreviewed guess",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18753,7 +18761,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
- * PRINTS: packages/server/test/draft-visibility.test.ts 7
+ * PRINTS: packages/server/test/draft-visibility.test.ts 8
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1

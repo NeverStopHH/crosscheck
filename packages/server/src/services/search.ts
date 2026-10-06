@@ -291,6 +291,17 @@ export interface SearchQuery {
    * the claims filed into it" in test/search-filters.test.ts.
    */
   readonly since?: Date | undefined;
+  /**
+   * FOR A PUSHED SURFACE (the hints endpoint): drops every claim that is not
+   * DECLARED — an unreviewed draft and the rejected copy a discard appends —
+   * from the fts tier's claim pass, inside its own WHERE, so a tree is never
+   * found by a guess nobody vouched for and the bound is never spent on one.
+   * The normalized doc already folds declared claims only, so this closes the
+   * last lexical door. Omitted on the search route: a teammate who searches
+   * asked, and the result says when a draft was the only match
+   * (`derivedOnly`). The hint branch wires it into services/hints.ts.
+   */
+  readonly excludeDerivedClaims?: boolean | undefined;
   readonly limit: number;
 }
 
@@ -445,6 +456,7 @@ const listFtsTier = async (
   db: Db,
   tokens: readonly string[],
   scope: SearchScope,
+  excludeDerivedClaims: boolean,
 ): Promise<readonly TierRow[]> => {
   if (tokens.length === 0) {
     return [];
@@ -492,6 +504,7 @@ const listFtsTier = async (
         scopeCondition(scope),
         sql`${claims.tsv} @@ ${tsquery}`,
         ne(claims.status, REJECTED_STATUS),
+        excludeDerivedClaims ? eq(claims.provenance, DECLARED_PROVENANCE) : undefined,
         notExists(
           db
             .select({ one: sql`1` })
@@ -842,7 +855,7 @@ export const searchWorkContexts = async (
 
   const [exactRows, ftsRows, vector] = await Promise.all([
     listExactTier(deps.db, pathTokens, scope),
-    listFtsTier(deps.db, wordTokens, scope),
+    listFtsTier(deps.db, wordTokens, scope, input.excludeDerivedClaims === true),
     tryVectorTier(deps, query, scope),
   ]);
 
