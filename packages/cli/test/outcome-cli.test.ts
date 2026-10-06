@@ -367,7 +367,7 @@ describe("crosscheck pilot --mine", () => {
 
     // Assert — review #10: a count from one recipient would be that recipient's words
     expect(result.exitCode).toBe(EXIT_OK);
-    expect(result.stdout).toMatch(/your own work, in teammates' hints, \w+ \d{4}: nothing to count — outcomes became recordable here after it ended/);
+    expect(result.stdout).toMatch(/your own work, in teammates' hints, \w+ \d{4}: nothing to count — the pilot was not enrolled here during it/);
     expect(result.stdout).not.toContain("followed 1 time");
     expect(result.stdout).not.toContain("Nick");
     expect(result.stdout).not.toContain(OVERRIDE_REASON);
