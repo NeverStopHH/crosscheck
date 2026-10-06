@@ -15,6 +15,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   SUMMARIZER_MODEL,
+  SUMMARIZER_TIMEOUT_MAX_MS,
   SUMMARIZER_TIMEOUT_MS,
 } from "@crosscheck/connector-core/constants.ts";
 import {
@@ -95,5 +96,15 @@ describe("summarizer deadline", () => {
     expect(resolveSummarizerTimeoutMs({ CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "1500" })).toBe(1500);
     expect(resolveSummarizerTimeoutMs({ CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "0" })).toBe(60_000);
     expect(resolveSummarizerTimeoutMs({ CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "soon" })).toBe(60_000);
+  });
+
+  test("a deadline past the named maximum is clamped, and an unsafe integer falls back (review round 3)", () => {
+    // Booked with every fire, an unsafe integer made the session state file
+    // unreadable for the rest of the session (the review's fire-poison probe).
+    expect(resolveSummarizerTimeoutMs({ CROSSCHECK_SUMMARIZER_TIMEOUT_MS: String(SUMMARIZER_TIMEOUT_MAX_MS + 1) })).toBe(SUMMARIZER_TIMEOUT_MAX_MS);
+    expect(resolveSummarizerTimeoutMs({ CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "9007199254740991" })).toBe(SUMMARIZER_TIMEOUT_MAX_MS);
+    expect(resolveSummarizerTimeoutMs({ CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "9007199254740993" })).toBe(60_000);
+    expect(resolveSummarizerTimeoutMs({ CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "99999999999999999999" })).toBe(60_000);
+    expect(resolveSummarizerTimeoutMs({ CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "240000" })).toBe(240_000);
   });
 });

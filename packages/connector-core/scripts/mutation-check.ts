@@ -18226,7 +18226,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the derive history drops each run's start time",
     file: `${CORE}/src/state/derive-history.ts`,
-    from: "  deriveFires: z.array(DeriveFireSchema).catch([]),\n",
+    from: "  deriveFires: DeriveFiresSchema,\n",
     to: "",
     test: `${CORE}/test/derive-history.test.ts`,
     because: "after SessionEnd no run can be settled, so a host that kills the workers is never named",
@@ -18250,7 +18250,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the derive history forgets the deadline each run ran under",
     file: `${CORE}/src/state/derive-history.ts`,
-    from: "  deriveFires: z.array(DeriveFireSchema).catch([]),\n",
+    from: "  deriveFires: DeriveFiresSchema,\n",
     to: "  deriveFires: z.array(z.object({ at: z.string().min(1) })).catch([]),\n",
     test: `${CORE}/test/derive-history.test.ts`,
     because: "after SessionEnd every run is settled at the default grace again",
@@ -18455,6 +18455,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/similarity-gate.test.ts`,
     because: "the nearest row may be a teammate's draft, and every reachable near-duplicate behind it is never linked",
   },
+  {
+    label: "the derive fire ring is parsed as one array",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  deriveFires: DeriveFiresSchema,\n});",
+    to: "  deriveFires: z.array(DeriveFireSchema).default([]),\n});",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "one malformed fire makes the whole session state unreadable, and every later update is refused",
+  },
+  {
+    label: "the summarizer deadline is not clamped to its named maximum",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "    SUMMARIZER_TIMEOUT_MAX_MS,\n  );",
+    to: "    Number.MAX_SAFE_INTEGER,\n  );",
+    test: `${CONNECTOR}/test/summarizer-argv.test.ts`,
+    because: "an absurd deadline is booked with every fire, and doctor can never settle those runs",
+  },
+  {
+    label: "an unsafe integer passes as a summarizer deadline",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;",
+    to: "  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;",
+    test: `${CONNECTOR}/test/summarizer-argv.test.ts`,
+    because: "a deadline that is not the number written is honoured as if it were",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18628,7 +18652,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
- * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 3
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
@@ -18723,7 +18747,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
- * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 3
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
  * PRINTS: packages/connector-core/test/sharing.test.ts 29
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4

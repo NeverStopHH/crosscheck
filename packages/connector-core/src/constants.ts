@@ -1218,6 +1218,15 @@ export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
  */
 export const SUMMARIZER_TIMEOUT_MS = 60_000;
 /**
+ * The longest deadline CROSSCHECK_SUMMARIZER_TIMEOUT_MS may give a model run.
+ * Every fire books its deadline into session state (`deriveFires`), so the
+ * value must stay a safe integer the state schema accepts — an unbounded one
+ * made the state file unreadable for the rest of the session (review round
+ * 3). Thirty minutes is past any slow local model, and short enough that
+ * doctor can still settle a run the same day.
+ */
+export const SUMMARIZER_TIMEOUT_MAX_MS = 30 * 60_000;
+/**
  * The env marker the summarizer's nested `claude -p` carries
  * (model/worker-env.ts sets it on the worker, model/runner.ts on
  * the model process): EVERY crosscheck hook entry exits silently when it is

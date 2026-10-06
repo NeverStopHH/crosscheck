@@ -127,6 +127,25 @@ export const DeriveFireSchema = z.object({
 
 export type DeriveFire = z.infer<typeof DeriveFireSchema>;
 
+/**
+ * The ring read ENTRY BY ENTRY: one fire booked malformed (an unsafe deadline,
+ * a missing instant) costs only itself, and a value that is not a list reads
+ * as no fires. Parsed as one array, a single bad entry failed the whole state
+ * file — readSessionState returned null and every later update of the
+ * session was refused (review round 3). The derive history reads its copy the
+ * same way (state/derive-history.ts).
+ */
+export const DeriveFiresSchema = z
+  .array(z.unknown())
+  .optional()
+  .catch(undefined)
+  .transform((entries): DeriveFire[] =>
+    (entries ?? []).flatMap((entry) => {
+      const parsed = DeriveFireSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
+
 /** The ring after one more fire: appended, the newest DERIVE_FIRES_KEPT kept. */
 export const withDeriveFire = (
   fires: readonly DeriveFire[],
@@ -635,7 +654,7 @@ const SessionStateObjectSchema = z.looseObject({
    * (derive/sharing.ts). Empty on a state written before it existed, whose
    * runs doctor then never blames.
    */
-  deriveFires: z.array(DeriveFireSchema).default([]),
+  deriveFires: DeriveFiresSchema,
 });
 
 /**
