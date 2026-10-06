@@ -107,7 +107,6 @@ const said = (verdicts: readonly Verdict[]): readonly string[] =>
 const OPEN: ReadonlyMap<number, string> = new Map<number, string>([
   [134, "L2"],
   [184, "L1"],
-  [455, "H1"],
   [782, "M1"],
   [1255, "L1"],
   [1384, "L1"],
@@ -120,13 +119,11 @@ const OPEN: ReadonlyMap<number, string> = new Map<number, string>([
   [10102, "L1"],
   [11955, "L1"],
   [11974, "L2"],
-  [10005, "H1"],
   [10895, "M3"],
   [11151, "L1"],
   [11274, "L1"],
   [11285, "L2"],
   [11362, "L1"],
-  [11379, "H1"],
   [11645, "L1"],
   [11683, "L2"],
 ]);
@@ -322,7 +319,6 @@ interface Found extends Probe {
   readonly racy?: boolean;
 }
 
-const H1 = "H1 (the refused-lives note outlives the abandon bound)";
 const M1 = "M1 (SessionEnd marks its own life refused)";
 const M3 = "M3 (a reaped state leaves its title and status)";
 const L1 = "L1 (a re-fire keeps the status set_intent wrote)";
@@ -338,12 +334,10 @@ const ROUND_7: readonly Found[] = [
   {
     name: "seed 455 (I2, H1): an ended life's straggler, its host dead a week, sent into it by a successor",
     events: [start(1), hubEnd(1), fault("registersDown", 1, 1), start(0), edit(1), par(edit(0), edit(1)), age(1)],
-    open: H1,
   },
   {
     name: "seed 10005 (I2, H1): the same after a crash",
     events: [start(0), hubEnd(0), crash(4, "before"), edit(0), age(0)],
-    open: H1,
   },
   {
     name: "seed 11379 (I2, H1): the same behind a slow hub",
@@ -352,12 +346,10 @@ const ROUND_7: readonly Found[] = [
   {
     name: "probe A1 (I2, H1): a refused life's straggler, then a week for everything on disk",
     events: [start(0), edit(0), hubEnd(0), edit(0), { kind: "straggle", c: 0 }, age(0), start(1)],
-    open: H1,
   },
   {
     name: "probe A3 (I2, H1): a healed life's open debt, its life refused as ended, then a week",
     events: [start(0), edit(0), hubEnd(0), fault("records503", 1, 1), edit(0), hubEnd(0), intent(0, "blocked"), age(0), start(1)],
-    open: H1,
   },
   {
     name: "seed 782 (I2, M1): a reload's re-fire beside SessionEnd, then set_intent beside it, filed past the end",

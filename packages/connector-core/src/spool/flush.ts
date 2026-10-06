@@ -552,7 +552,7 @@ const nextOwnedSpool = async (
   pinned: ReadonlySet<string>,
 ): Promise<SessionSpool | null> => {
   for (const spool of spools) {
-    if (!pinned.has(spool.slug) && (await mayFlusherSend(ctx.home, spool, flusherSessionId, ctx.now()))) {
+    if (!pinned.has(spool.slug) && (await mayFlusherSend(ctx.home, ctx.repoKey, spool, flusherSessionId, ctx.now()))) {
       return spool;
     }
   }

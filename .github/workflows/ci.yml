@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1676
+    # PRINTS: 1685
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -258,7 +258,7 @@ jobs:
     # PRINTS: config/connected-repo.ts 3
     # PRINTS: config/hook-budget.ts 2
     # PRINTS: config/paths.ts 2
-    # PRINTS: constants.ts 10
+    # PRINTS: constants.ts 11
     # PRINTS: coverage/exempt-surfaces.ts 2
     # PRINTS: coverage/render.ts 20
     # PRINTS: derive/capabilities.ts 1
@@ -340,10 +340,11 @@ jobs:
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 17
     # PRINTS: spool/owed-work-context.ts 14
-    # PRINTS: spool/ownership.ts 7
-    # PRINTS: spool/reap.ts 9
-    # PRINTS: spool/refused-lives.ts 2
+    # PRINTS: spool/ownership.ts 8
+    # PRINTS: spool/reap.ts 11
+    # PRINTS: spool/refused-lives.ts 5
     # PRINTS: spool/reject-cause.ts 3
+    # PRINTS: spool/release.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
@@ -352,7 +353,7 @@ jobs:
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-lineage.ts 2
-    # PRINTS: state/session-reap.ts 1
+    # PRINTS: state/session-reap.ts 2
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 22
     # PRINTS: state/tool-window-key.ts 2
@@ -507,7 +508,7 @@ jobs:
     # PRINTS: conference.ts 17
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
-    # PRINTS: constants.ts 11
+    # PRINTS: constants.ts 12
     # PRINTS: context-group.ts 1
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
@@ -604,7 +605,7 @@ jobs:
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
     # PRINTS: owed-work-context.ts 14
-    # PRINTS: ownership.ts 7
+    # PRINTS: ownership.ts 8
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
     # PRINTS: passkeys.ts 8
@@ -642,15 +643,16 @@ jobs:
     # PRINTS: publish.yml 2
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
-    # PRINTS: reap.ts 9
+    # PRINTS: reap.ts 11
     # PRINTS: record-handlers.ts 22
     # PRINTS: records.ts 3
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
-    # PRINTS: refused-lives.ts 2
+    # PRINTS: refused-lives.ts 5
     # PRINTS: register-session.ts 16
     # PRINTS: reject-cause.ts 3
     # PRINTS: release-preflight.ts 5
+    # PRINTS: release.ts 1
     # PRINTS: render-intent-chain.ts 1
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
@@ -676,7 +678,7 @@ jobs:
     # PRINTS: session-events.ts 9
     # PRINTS: session-lineage.ts 2
     # PRINTS: session-order.ts 9
-    # PRINTS: session-reap.ts 1
+    # PRINTS: session-reap.ts 2
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 8
     # PRINTS: session-state.ts 22

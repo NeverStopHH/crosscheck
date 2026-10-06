@@ -200,6 +200,17 @@ export const spoolOwedWorkContextPath = (
   slug: string,
 ): string => join(spoolDir(home, key), `${slug}.owed-wc`);
 
+/**
+ * When a spool was released to every flusher (spool/release.ts): its host
+ * session's state reaped as stale, or the spool first sent as abandoned. Reap
+ * expires a released spool MAX_SPOOL_AGE_DAYS after this, never sooner.
+ */
+export const spoolReleasedPath = (
+  home: string,
+  key: string,
+  slug: string,
+): string => join(spoolDir(home, key), `${slug}.released`);
+
 /** Append-only ledger of dropped batches: the source of truth for `spoolDropped`. */
 export const spoolDropsPath = (
   home: string,

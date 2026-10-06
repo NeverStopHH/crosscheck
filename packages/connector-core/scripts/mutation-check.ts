@@ -18074,7 +18074,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the drain ignores whose spool it is sending",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "    if (!pinned.has(spool.slug) && (await mayFlusherSend(ctx.home, spool, flusherSessionId, ctx.now()))) {",
+    from: "    if (!pinned.has(spool.slug) && (await mayFlusherSend(ctx.home, ctx.repoKey, spool, flusherSessionId, ctx.now()))) {",
     to: "    if (!pinned.has(spool.slug)) {",
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 7 (H1, P4, p4b): a healing flusher re-sends another conversation's owed life's records without its work context, and they are spent as author_unknown",
@@ -18503,6 +18503,78 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor.test.ts`,
     because: "review-2 round 7 L4: a corrupt debt is silent — doctor says nothing is owed while a heal's work context is lost",
   },
+  {
+    label: "the refused-lives note ages out at a day (R7-M10)",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "const cutoffOf = (now: Date): number => now.getTime() - REFUSED_LIFE_KEEP_DAYS * MS_PER_DAY;",
+    to: "const cutoffOf = (now: Date): number => now.getTime() - 1 * MS_PER_DAY;",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H1: a refused life's stragglers are released before its dead host's spool is, and filed into the ended session",
+  },
+  {
+    label: "the refused-lives note is kept no longer than the age bound",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const REFUSED_LIFE_KEEP_DAYS = 2 * MAX_SPOOL_AGE_DAYS;",
+    to: "export const REFUSED_LIFE_KEEP_DAYS = MAX_SPOOL_AGE_DAYS;",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H1: the note ages out exactly when a successor may first send a dead host's spool",
+  },
+  {
+    label: "a refused life's note ages out while its host session still has records on disk",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "  isYoung(life, cutoffMs) || (await ownsLeftovers(home, key, life.sessionId));",
+    to: "  isYoung(life, cutoffMs);",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H1: a released spool waits up to a bound past its release, and its stragglers outlive the note",
+  },
+  {
+    label: "a debt does not keep its life's refused-lives note",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "    (await readSessionSpool(home, key, slug)).lines.length > 0 ||\n    (await Bun.file(spoolOwedWorkContextPath(home, key, slug)).exists())",
+    to: "    (await readSessionSpool(home, key, slug)).lines.length > 0",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H1: an open debt of an ended life is paid into it once the note that made it moot ages out",
+  },
+  {
+    label: "session-reap deletes a stale state without releasing its spool",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    await stampReleased(home, repoKey(parsed.data.hubUrl, parsed.data.repoId), file.name.slice(0, -STATE_SUFFIX.length), now);\n",
+    to: "",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: the next SessionStart expires the dead host's backlog its successor had not sent yet (2605 of 3000)",
+  },
+  {
+    label: "reap expires a released spool by its last write",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  return releasedMs === null\n    ? isOlderThanMaxAge(spool.dataPath, now)",
+    to: "  return true\n    ? isOlderThanMaxAge(spool.dataPath, now)",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: a dead host's data file is a week old the moment it is released, and expires at once",
+  },
+  {
+    label: "the first send of an abandoned spool releases nothing",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: "  if (owner === \"abandoned\") {\n    await stampReleased(home, key, spool.slug, now);\n  }\n",
+    to: "",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: a spool sent as abandoned keeps its clock unstarted until session-reap, however late that comes",
+  },
+  {
+    label: "a spool that is not there is stamped released",
+    file: `${CORE}/src/spool/release.ts`,
+    from: "  if ((await Bun.file(path).exists()) || !(await Bun.file(spoolDataPath(home, key, slug)).exists())) {",
+    to: "  if (await Bun.file(path).exists()) {",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: a later spool of the same host session inherits the stamp, and expires a bound after a release it never had",
+  },
+  {
+    label: "a release stamp outlives the spool it timed",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  await removeReleaseStamp(home, key, spool.slug);\n",
+    to: "",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: a later spool of the same host session starts on the old clock and expires at its first release",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18756,6 +18828,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/reject-cause.test.ts 5
+ * PRINTS: packages/connector-core/test/release-clock.test.ts 9
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2

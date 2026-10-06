@@ -26,6 +26,7 @@ import { stat } from "node:fs/promises";
 import { readJsonOrNull, sessionStatePathForSlug } from "../config/paths.ts";
 import { isPastReapBound } from "../state/session-reap.ts";
 import type { SessionSpool } from "./files.ts";
+import { stampReleased } from "./release.ts";
 
 /** Who a spool belongs to, as one flusher sees it. */
 export type SpoolOwner = "own" | "ended" | "abandoned" | "live-elsewhere";
@@ -71,13 +72,24 @@ export const ownerOf = async (
   return isPastReapBound(stamps, wroteAtMs, now.getTime()) ? "abandoned" : "live-elsewhere";
 };
 
-/** Whether this flusher may send the spool's records at all. */
+/**
+ * Whether this flusher may send the spool's records at all. The first send of
+ * an abandoned host's spool is its release, and is stamped so (spool/release.ts):
+ * reap's expiry clock starts there.
+ */
 export const mayFlusherSend = async (
   home: string,
+  key: string,
   spool: SessionSpool,
   flusherSessionId: string,
   now: Date,
-): Promise<boolean> => (await ownerOf(home, spool.slug, flusherSessionId, now)) !== "live-elsewhere";
+): Promise<boolean> => {
+  const owner = await ownerOf(home, spool.slug, flusherSessionId, now);
+  if (owner === "abandoned") {
+    await stampReleased(home, key, spool.slug, now);
+  }
+  return owner !== "live-elsewhere";
+};
 
 /**
  * Records that wait for their own conversation, another live session, which

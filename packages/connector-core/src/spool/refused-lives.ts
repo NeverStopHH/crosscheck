@@ -20,11 +20,29 @@
  * in the same instant can cost one line: the flush-triggered heal runs under
  * the repo's flush lock, so only a heartbeat's heal can race it, and a lost
  * line costs the withholding of that life's stragglers, never the heal.
+ *
+ * "YOUNG" OUTLIVES THE SPOOL IT GUARDS (review-2 round 8, H1). It was the age
+ * bound itself, and a dead host's spool is released as abandoned only after
+ * that very bound of silence: every entry the dead conversation wrote had aged
+ * out by the time a successor could first send its stragglers, and they were
+ * filed into the ended session. An entry is kept while its host session still
+ * has records or a debt on this repo's disk, and never less than
+ * REFUSED_LIFE_KEEP_DAYS — twice the bound, the most a released spool waits
+ * before reap expires it (spool/reap.ts).
  */
 import { z } from "zod";
 
-import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, REFUSED_LIVES_MAX } from "../constants.ts";
-import { readTextOrNull, spoolRefusedLivesPath, writePrivateFile } from "../config/paths.ts";
+import { MS_PER_DAY, REFUSED_LIFE_KEEP_DAYS, REFUSED_LIVES_MAX } from "../constants.ts";
+import {
+  readTextOrNull,
+  sessionSlug,
+  spoolOwedWorkContextPath,
+  spoolRefusedLivesPath,
+  writePrivateFile,
+} from "../config/paths.ts";
+import { conversationOf } from "../state/session-lineage.ts";
+import { crosscheckSessionIdFor } from "../state/session-state.ts";
+import { readSessionSpool } from "./files.ts";
 import { ledgerMs } from "./ledger-read.ts";
 import { toLines } from "./lines.ts";
 import { appendOnce } from "./write.ts";
@@ -49,22 +67,54 @@ const parse = (line: string): RefusedLife | null => {
 const isYoung = (life: RefusedLife, cutoffMs: number): boolean =>
   (ledgerMs(life.at) ?? Number.POSITIVE_INFINITY) > cutoffMs;
 
-const cutoffOf = (now: Date): number => now.getTime() - MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
+const cutoffOf = (now: Date): number => now.getTime() - REFUSED_LIFE_KEEP_DAYS * MS_PER_DAY;
+
+/** The spool slug of the host session a life is one of — `cc_<key>~r2` is `<key>`'s — or null for an id none minted. */
+const slugOfLife = (sessionId: string): string | null => {
+  const prefix = crosscheckSessionIdFor("");
+  const base = conversationOf(sessionId);
+  return base.startsWith(prefix) ? sessionSlug(base.slice(prefix.length)) : null;
+};
+
+/** Whether the life's host session still has records or a debt on this repo's disk: stragglers that could still go. */
+const ownsLeftovers = async (home: string, key: string, sessionId: string): Promise<boolean> => {
+  const slug = slugOfLife(sessionId);
+  if (slug === null) {
+    return false;
+  }
+  return (
+    (await readSessionSpool(home, key, slug)).lines.length > 0 ||
+    (await Bun.file(spoolOwedWorkContextPath(home, key, slug)).exists())
+  );
+};
+
+/** Young, or still guarding something on disk: a life a successor's flush must keep withholding. */
+const isKept = async (home: string, key: string, life: RefusedLife, cutoffMs: number): Promise<boolean> =>
+  isYoung(life, cutoffMs) || (await ownsLeftovers(home, key, life.sessionId));
 
 const readLines = async (home: string, key: string): Promise<readonly string[]> =>
   toLines(await readTextOrNull(spoolRefusedLivesPath(home, key)));
 
-/** The refused lives still young enough to have records waiting. */
+/** The lines whose lives are still kept, in order; an unreadable line is dropped. */
+const keptLines = async (home: string, key: string, lines: readonly string[], now: Date): Promise<readonly string[]> => {
+  const cutoffMs = cutoffOf(now);
+  const verdicts = await Promise.all(
+    lines.map(async (line) => {
+      const life = parse(line);
+      return life !== null && (await isKept(home, key, life, cutoffMs));
+    }),
+  );
+  return lines.filter((_, index) => verdicts[index] === true);
+};
+
+/** The refused lives still young enough, or still owning records, to have stragglers waiting. */
 export const readRefusedLives = async (
   home: string,
   key: string,
   now: Date,
 ): Promise<ReadonlySet<string>> => {
-  const cutoffMs = cutoffOf(now);
-  const lives = (await readLines(home, key))
-    .map(parse)
-    .filter((life): life is RefusedLife => life !== null && isYoung(life, cutoffMs));
-  return new Set(lives.map((life) => life.sessionId));
+  const kept = await keptLines(home, key, await readLines(home, key), now);
+  return new Set(kept.map(parse).flatMap((life) => (life === null ? [] : [life.sessionId])));
 };
 
 const lineOf = (sessionId: string, now: Date): string =>
@@ -82,11 +132,7 @@ export const recordRefusedLife = async (
 ): Promise<void> => {
   const path = spoolRefusedLivesPath(home, key);
   const lines = await readLines(home, key);
-  const cutoffMs = cutoffOf(now);
-  const kept = lines.filter((line) => {
-    const life = parse(line);
-    return life !== null && isYoung(life, cutoffMs);
-  });
+  const kept = await keptLines(home, key, lines, now);
   // Recorded already: every refusal of a life that stays ended says so again,
   // and a second line would only push an older life out of the window.
   if (kept.some((line) => parse(line)?.sessionId === sessionId)) {

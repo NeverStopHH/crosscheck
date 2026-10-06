@@ -1659,11 +1659,23 @@ export const OWED_WORK_CONTEXT_MAX_REFUSALS = 3;
 export const HEAL_MIN_ROOM_MS = 100;
 /**
  * Most refused lives one repo's note keeps (spool/refused-lives.ts): the newest
- * ones, each younger than MAX_SPOOL_AGE_DAYS. A machine heals a handful of
- * times a week; the bound keeps the note a few kilobytes on the drain path
- * that reads it, whatever a pathological hub does.
+ * ones, each younger than REFUSED_LIFE_KEEP_DAYS or still owning records on
+ * disk. A machine heals a handful of times a week; the bound keeps the note a
+ * few kilobytes on the drain path that reads it, whatever a pathological hub
+ * does.
  */
 export const REFUSED_LIVES_MAX = 64;
+/**
+ * The least a refused-lives entry is kept, whatever is on disk (review-2 round
+ * 8, H1): TWICE the age bound. A spool is released as abandoned only after its
+ * host has been silent MAX_SPOOL_AGE_DAYS, and expires MAX_SPOOL_AGE_DAYS after
+ * that release (spool/reap.ts) — an entry kept for one bound aged out exactly
+ * when the successor could first send the stragglers it was there to withhold.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.REFUSED_LIFE_KEEP_DAYS >= 2 * c.MAX_SPOOL_AGE_DAYS)'
+ * PRINTS: true
+ */
+export const REFUSED_LIFE_KEEP_DAYS = 2 * MAX_SPOOL_AGE_DAYS;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
 /** A session the hub holds as ended, or an id somebody else owns. */

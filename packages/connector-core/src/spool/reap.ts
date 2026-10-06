@@ -86,6 +86,7 @@ import { isSameFile, readHandleFacts } from "./identity.ts";
 import { byteLength, completeLines, toLines } from "./lines.ts";
 import { withLock } from "./lock.ts";
 import { readOwedWorkContext } from "./owed-work-context.ts";
+import { releasedAtMs, removeReleaseStamp } from "./release.ts";
 import { recordUnclosedSession } from "./unclosed.ts";
 import { appendOnce } from "./write.ts";
 
@@ -130,6 +131,19 @@ const isOlderThanMaxAge = async (path: string, now: Date): Promise<boolean> => {
   } catch {
     return false;
   }
+};
+
+/**
+ * Past the age bound, counted from the spool's RELEASE when one was stamped
+ * (spool/release.ts, review-2 round 8, H2) — a dead host's data file is a week
+ * old the moment its spool is released, and its successor needs the hooks of a
+ * whole bound to send it — else from its last write.
+ */
+const isPastExpiry = async (home: string, key: string, spool: SessionSpool, now: Date): Promise<boolean> => {
+  const releasedMs = await releasedAtMs(home, key, spool.slug);
+  return releasedMs === null
+    ? isOlderThanMaxAge(spool.dataPath, now)
+    : now.getTime() - releasedMs > MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
 };
 
 /**
@@ -255,6 +269,7 @@ const removeSessionData = async (
   // ...and any work context still owed for the spool's lives: the records it
   // was owed for are gone with the file (spool/owed-work-context.ts).
   await removeFile(spoolOwedWorkContextPath(home, key, spool.slug));
+  await removeReleaseStamp(home, key, spool.slug);
   await rescueTail(home, key, spool, handle, now);
 };
 
@@ -283,8 +298,7 @@ const reapSlug = async (
   // and nothing delivered. It has nothing to deliver and no reason to go; the
   // age branch below still stops empty files from accumulating.
   const isDelivered = spool.size > 0 && spool.offset >= spool.size;
-  const isExpired =
-    !isDelivered && (await isOlderThanMaxAge(spool.dataPath, now));
+  const isExpired = !isDelivered && (await isPastExpiry(home, key, spool, now));
   if (!isDelivered && !isExpired) {
     return NOTHING_REAPED;
   }

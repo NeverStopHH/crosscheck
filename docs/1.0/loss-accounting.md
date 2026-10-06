@@ -515,6 +515,22 @@ like a send while it was live. At production timing the sweep found the mirror i
 parallel SessionStart restarted after the other process found it ended). A send counts as into a live conversation
 now only when that conversation was live on both sides of the step.
 
+**Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
+`MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
+expired a spool whose data file was that old. So when a host died:
+
+- its spool was released exactly when the notes saying which of its lives the hub had ended aged out, and a successor
+  filed their stragglers into the ended sessions (H1, seeds 455, 10005 and 11379);
+- the first successor SessionStart reaped the dead host's state, and the next one expired whatever that successor had
+  not yet sent. In the review's probe that was 2605 of a 3000-record backlog, counted, but lost all the same (H2).
+
+Now a refused-lives entry is kept while its host session still has records or a debt on that repo's disk, and never
+less than `REFUSED_LIFE_KEEP_DAYS` (twice the bound). A spool's release is stamped once, when session-reap deletes its
+stale state or a flush first sends it as abandoned, beside the spool as `<slug>.released`. Reap expires a released
+spool `MAX_SPOOL_AGE_DAYS` after that stamp, never sooner. A spool its own SessionEnd released has no stamp and expires
+from its last write, as before. The probe's backlog is now delivered over the successor's hooks, and none of it
+expires (`connector-core/test/release-clock.test.ts`).
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

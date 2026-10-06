@@ -27,9 +27,12 @@ import {
   SESSION_STATE_REAP_MAX_PER_RUN,
   SESSION_STATE_SCAN_MAX_FILES,
 } from "../constants.ts";
-import { readJsonOrNull, sessionSlug } from "../config/paths.ts";
+import { readJsonOrNull, repoKey, sessionSlug } from "../config/paths.ts";
+import { stampReleased } from "../spool/release.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { SessionStateSchema } from "./session-state.ts";
+
+const STATE_SUFFIX = ".json";
 
 /**
  * Silent past the bound a deletion has to be certain of (header) — the one a
@@ -94,6 +97,10 @@ export const reapStaleSessionStates = async (
     if (!isPastReapBound(parsed.data, file.mtimeMs, now.getTime())) {
       continue;
     }
+    // RELEASED NOW (review-2 round 8, H2): its spool goes to every flusher from
+    // here, and reap's expiry clock starts here, not at its last write — which
+    // is as old as this state, and would expire it at the next SessionStart.
+    await stampReleased(home, repoKey(parsed.data.hubUrl, parsed.data.repoId), file.name.slice(0, -STATE_SUFFIX.length), now);
     try {
       await rm(file.path, { force: true });
       reaped += 1;

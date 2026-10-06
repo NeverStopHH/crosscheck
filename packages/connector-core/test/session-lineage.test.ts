@@ -7,7 +7,13 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { rm, utimes, writeFile } from "node:fs/promises";
 
-import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, REFUSED_LIVES_MAX, REGISTER_LADDER_MAX_ATTEMPTS } from "../src/constants.ts";
+import {
+  MAX_SPOOL_AGE_DAYS,
+  MS_PER_DAY,
+  REFUSED_LIFE_KEEP_DAYS,
+  REFUSED_LIVES_MAX,
+  REGISTER_LADDER_MAX_ATTEMPTS,
+} from "../src/constants.ts";
 import { readTextOrNull, sessionLineagePathForSlug, sessionSlug, spoolRefusedLivesPath } from "../src/config/paths.ts";
 import { readRefusedLives, recordRefusedLife } from "../src/spool/refused-lives.ts";
 import {
@@ -122,10 +128,10 @@ describe("the refused-lives note", () => {
     ((await readTextOrNull(spoolRefusedLivesPath(dir, KEY))) ?? "").split("\n").filter((line) => line.length > 0);
 
   test("a write drops the lines past their age", async () => {
-    // Arrange: two stale lives and one young one already on file
+    // Arrange: two stale lives — past the least an entry is kept (review-2 round 8, H1) — and one young one on file
     const dir = await home("refused-prune");
     const now = new Date();
-    const stale = new Date(now.getTime() - (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    const stale = new Date(now.getTime() - (REFUSED_LIFE_KEEP_DAYS + 1) * MS_PER_DAY);
     await recordRefusedLife(dir, KEY, "cc_old-1", stale);
     await recordRefusedLife(dir, KEY, "cc_old-2", stale);
     await recordRefusedLife(dir, KEY, "cc_young", now);
