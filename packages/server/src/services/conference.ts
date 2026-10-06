@@ -86,7 +86,7 @@ import {
 } from "./ghost-overlap.ts";
 import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
@@ -172,11 +172,21 @@ export interface ConferenceView {
   readonly windowDays: number;
 }
 
+/**
+ * A context's activity as THIS reader may window and rank by it: a teammate
+ * who opted out of presence counts from creation alone (services/live-
+ * location.ts activitySeenBy), or "in the window" and "first in the report"
+ * would say when she last touched her work.
+ */
+const activitySeenByReader = (viewerDeveloperId: string) =>
+  activitySeenBy(viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
+
 /** Unfinished work of this repo inside the window, whether or not attended. */
-const recentWorkCondition = (repo: string, cutoff: Date) =>
+const recentWorkCondition = (repo: string, cutoff: Date, viewerDeveloperId: string) =>
   and(
     eq(agentSessions.repo, repo),
     gte(activityExpression, cutoff),
+    gte(activitySeenByReader(viewerDeveloperId), cutoff),
     isNull(workContexts.landedAt),
   );
 
@@ -184,6 +194,7 @@ const listRecentContexts = async (
   deps: Deps,
   repo: string,
   cutoff: Date,
+  viewerDeveloperId: string,
   hidden: HiddenLocations,
 ): Promise<readonly Omit<ConferenceContextView, "claims">[]> => {
   const rows = await deps.db
@@ -199,8 +210,8 @@ const listRecentContexts = async (
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    .where(recentWorkCondition(repo, cutoff))
-    .orderBy(desc(activityExpression), asc(workContexts.id))
+    .where(recentWorkCondition(repo, cutoff, viewerDeveloperId))
+    .orderBy(desc(activitySeenByReader(viewerDeveloperId)), asc(workContexts.id))
     .limit(CONFERENCE_MAX_CONTEXTS);
   return rows.map((row) =>
     projectRow(hidden, { developerId: row.developerId, repo }, {
@@ -225,12 +236,13 @@ const countContextsInWindow = async (
   deps: Deps,
   repo: string,
   cutoff: Date,
+  viewerDeveloperId: string,
 ): Promise<{ readonly total: number; readonly capped: boolean }> => {
   const rows = await deps.db
     .select({ id: workContexts.id })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(recentWorkCondition(repo, cutoff))
+    .where(recentWorkCondition(repo, cutoff, viewerDeveloperId))
     .limit(CONFERENCE_MAX_COUNTED_CONTEXTS);
   return {
     total: rows.length,
@@ -563,8 +575,8 @@ export const readConference = async (
   );
   const hidden = await locationHiddenFrom(deps.db, viewerDeveloperId);
   const [contexts, window, questionRows] = await Promise.all([
-    listRecentContexts(deps, repo, cutoff, hidden),
-    countContextsInWindow(deps, repo, cutoff),
+    listRecentContexts(deps, repo, cutoff, viewerDeveloperId, hidden),
+    countContextsInWindow(deps, repo, cutoff, viewerDeveloperId),
     listOpenQuestions(deps, viewerDeveloperId, repo, hidden),
   ]);
   const ids = contexts.map((context) => context.id);

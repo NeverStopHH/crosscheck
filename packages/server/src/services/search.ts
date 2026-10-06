@@ -31,6 +31,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -40,7 +41,12 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import {
+  activitySeenBy,
+  locationHiddenFrom,
+  projectRow,
+  updatedAtSeenBy,
+} from "./live-location.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
@@ -368,7 +374,19 @@ interface SearchScope {
   readonly developerId: string | undefined;
   /** R1's WHEN — see SearchQuery.since for why it is activity, not creation. */
   readonly since: Date | undefined;
+  /**
+   * Who asks. Every tier windows, ranks and ages by activity AS THIS VIEWER
+   * MAY SEE IT (services/live-location.ts activitySeenBy): a teammate who
+   * opted out counts from creation alone, or a `since=` window, a
+   * freshest-first order and the decay would each say when she last touched
+   * her work, which the withheld `updatedAt` no longer does.
+   */
+  readonly viewerDeveloperId: string;
 }
+
+/** `updated_at` as the scope's viewer may see it — the tiers' `updatedAt`. */
+const updatedAtFor = (scope: SearchScope): SQL<Date | null> =>
+  updatedAtSeenBy(scope.viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt);
 
 const scopeCondition = (scope: SearchScope) =>
   and(
@@ -386,7 +404,10 @@ const scopeCondition = (scope: SearchScope) =>
       : eq(agentSessions.developerId, scope.developerId),
     scope.since === undefined
       ? undefined
-      : sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) >= ${scope.since.toISOString()}::timestamptz`,
+      : and(
+          sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) >= ${scope.since.toISOString()}::timestamptz`,
+          sql`${activityFor(scope)} >= ${scope.since.toISOString()}::timestamptz`,
+        ),
     scope.excludeMutedForDeveloperId === undefined
       ? undefined
       : notMutedCondition(
@@ -395,7 +416,10 @@ const scopeCondition = (scope: SearchScope) =>
         ),
   );
 
-const activityDesc = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) DESC`;
+const activityFor = (scope: SearchScope): SQL<Date> =>
+  activitySeenBy(scope.viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
+
+const activityDesc = (scope: SearchScope): SQL => sql`${activityFor(scope)} DESC`;
 
 const listExactTier = async (
   db: Db,
@@ -413,7 +437,7 @@ const listExactTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
     })
     .from(workContextTargets)
     .innerJoin(
@@ -422,8 +446,8 @@ const listExactTier = async (
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(and(scopeCondition(scope), or(...tokenConditions)))
-    .groupBy(workContexts.id, workContexts.createdAt, workContexts.updatedAt)
-    .orderBy(sql`count(*) DESC`, activityDesc)
+    .groupBy(workContexts.id, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)
+    .orderBy(sql`count(*) DESC`, activityDesc(scope))
     .limit(TIER_CANDIDATES);
 };
 
@@ -449,13 +473,13 @@ const listFtsTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       rank: sql<number>`ts_rank(${workContexts.tsv}, ${tsquery})`,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(and(scopeCondition(scope), sql`${workContexts.tsv} @@ ${tsquery}`))
-    .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc)
+    .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc(scope))
     .limit(TIER_CANDIDATES);
 
   // Claim bodies get their own pass: the doc caps out at
@@ -464,7 +488,7 @@ const listFtsTier = async (
     .select({
       id: claims.workContextId,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       rank: sql<number>`max(ts_rank(${claims.tsv}, ${tsquery}))`,
     })
     .from(claims)
@@ -475,6 +499,7 @@ const listFtsTier = async (
       claims.workContextId,
       workContexts.createdAt,
       workContexts.updatedAt,
+      agentSessions.developerId,
     )
     .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
     .limit(TIER_CANDIDATES);
@@ -540,7 +565,7 @@ const listVectorTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       similarity: sql<number>`1 - (${distance})`,
     })
     .from(workContexts)
@@ -565,12 +590,12 @@ const listRecencyTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(scopeCondition(scope))
-    .orderBy(activityDesc)
+    .orderBy(activityDesc(scope))
     .limit(TIER_CANDIDATES);
 
 interface FusedEntry {
@@ -765,6 +790,7 @@ export const searchWorkContexts = async (
     excludeMutedForDeveloperId: input.excludeMutedForDeveloperId,
     developerId: input.developerId,
     since: input.since,
+    viewerDeveloperId: input.viewerDeveloperId,
   };
 
   // A blank query asks "what is happening" — answered by recency alone. The

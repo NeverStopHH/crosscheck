@@ -53,7 +53,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
 import { readPin } from "./pins.ts";
 import { explanationTimingOf } from "./intent-ledger.ts";
 import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
@@ -302,11 +302,20 @@ const readCandidates = async (
   repo: string,
   files: readonly string[],
   since: Date,
+  readerDeveloperId: string,
 ): Promise<CandidateSet> => {
   if (files.length === 0) {
     return { rows: [], totalTouching: 0 };
   }
-  const activity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+  // As THIS reader may window by it: a teammate who opted out of presence is
+  // in the window by creation alone (services/live-location.ts), or being a
+  // candidate at all would say she touched the files' work recently.
+  const activity = activitySeenBy(
+    readerDeveloperId,
+    agentSessions.developerId,
+    workContexts.updatedAt,
+    workContexts.createdAt,
+  );
   const touching = deps.db.$with("touching").as(
     deps.db
       .select({
@@ -542,6 +551,7 @@ export const suspectSessions = async (
     input.repo,
     input.scope.files,
     since,
+    readerDeveloperId,
   );
   const base = {
     falsifier: {

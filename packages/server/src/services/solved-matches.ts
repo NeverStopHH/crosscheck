@@ -45,7 +45,7 @@ import {
   solvedCandidateCondition,
 } from "./solved.ts";
 import { loadClaimValidities } from "./claim-validity.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { notMutedCondition } from "./visibility.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
@@ -219,6 +219,15 @@ const listSharedTargetPairs = async (
   // The live side, bounded before it multiplies anything: the repo's freshest
   // active contexts, and no more of them than the cap. Ordered by activity so
   // the cap drops the stalest work rather than an arbitrary page.
+  // A teammate who opted out of presence is "live" by creation alone here
+  // (services/live-location.ts activitySeenBy): which solved trees the reader
+  // is shown must not move because she touched her work again.
+  const liveActivity = activitySeenBy(
+    viewerDeveloperId,
+    liveSessions.developerId,
+    liveContexts.updatedAt,
+    liveContexts.createdAt,
+  );
   const liveIds = deps.db
     .select({ id: liveContexts.id })
     .from(liveContexts)
@@ -230,12 +239,10 @@ const listSharedTargetPairs = async (
           sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`,
           cutoff,
         ),
+        gte(liveActivity, cutoff),
       ),
     )
-    .orderBy(
-      desc(sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`),
-      asc(liveContexts.id),
-    )
+    .orderBy(desc(liveActivity), asc(liveContexts.id))
     .limit(SOLVED_MATCH_MAX_LIVE_CONTEXTS);
   return deps.db
     .selectDistinct({

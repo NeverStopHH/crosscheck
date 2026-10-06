@@ -82,6 +82,19 @@
  *   - session start               — the landed stop's workStartedAt, as
  *                                   LOCATION_WITHHELD (every shipped reader
  *                                   drops a value it cannot parse)
+ *   - last update                 — `updatedAt` on every work-context row
+ *                                   (listing, by-id, diagnosis, search, hint
+ *                                   candidates, the /ui pages), as null
+ *   - activity as a FILTER or an  — every read that windows or ranks by
+ *     ORDER                         activity counts a hidden owner's work
+ *                                   from creation alone (activitySeenBy):
+ *                                   the listing's since= and order, search's
+ *                                   since= and recency, the conference's
+ *                                   fortnight and order, suspect's window,
+ *                                   the solved pointers' live side. A row
+ *                                   admitted or put first BECAUSE she just
+ *                                   touched it says what the withheld
+ *                                   updatedAt no longer does
  *
  * Pinned route by route in test/live-location-privacy.test.ts, which calls
  * EVERY GET route the app registers as a colleague of an opted-out developer

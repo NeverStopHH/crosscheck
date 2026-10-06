@@ -13,8 +13,11 @@ import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 import {
   CREATED_AT,
   FILE,
+  HOST_CREATED_AT,
   REPO,
   ROBIN_CONTEXT,
+  ROBIN_HOST_CONTEXT,
+  ROBIN_OLD_CONTEXT,
   ROBIN_SOLVED,
   SECRET_BRANCH,
   UPDATED_AT,
@@ -134,6 +137,97 @@ const priorWorkTitles = (body: string): Readonly<Record<string, string>> =>
       data: { duplicateWork: { priorWork: readonly { workContextId: string; title: string }[] } };
     }).data.duplicateWork.priorWork.map((work) => [work.workContextId, work.title]),
   );
+
+interface ListedContext {
+  readonly id: string;
+  readonly developerId: string;
+  readonly updatedAt: string | null;
+}
+
+const listed = (body: string): readonly ListedContext[] =>
+  (JSON.parse(body) as { data: { workContexts: readonly ListedContext[] } }).data.workContexts;
+
+const robinsRows = (world: Awaited<ReturnType<typeof seedOptedOutWorld>>, rows: readonly ListedContext[]) =>
+  rows.filter((row) => row.developerId === world.robin.developerId);
+
+const conferenceRows = (answer: { readonly body: string }): readonly { id: string; developerId: string }[] =>
+  (JSON.parse(answer.body) as { data: { conference: { contexts: readonly { id: string; developerId: string }[] } } })
+    .data.conference.contexts;
+
+/** After Robin's contexts were created, before she touched one again. */
+const BETWEEN_CREATION_AND_UPDATE = new Date((Date.parse(HOST_CREATED_AT) + Date.parse(UPDATED_AT)) / 2).toISOString();
+
+describe("when Robin last touched her work (review round 3, M1)", () => {
+  test("the listing, the by-id read and the diagnosis carry no updatedAt of hers", async () => {
+    const world = await seedOptedOutWorld();
+
+    const listing = await getAs(world, "nick", url("/api/work-contexts", { repo: REPO }));
+    const byId = await getAs(world, "nick", `/api/work-contexts/${ROBIN_CONTEXT}`);
+    const diagnosis = await getAs(world, "nick", `/api/work-contexts/${ROBIN_CONTEXT}/diagnosis`);
+    const page = await getAs(world, "nick", `/ui/work-contexts/${ROBIN_CONTEXT}`);
+    const own = await getAs(world, "robin", url("/api/work-contexts", { repo: REPO }));
+
+    for (const answer of [listing, byId, diagnosis, page]) {
+      expect(answer.status).toBe(200);
+      expect(secretsIn(answer.body)).toEqual([]);
+    }
+    expect(listed(listing.body).find((row) => row.id === ROBIN_CONTEXT)?.updatedAt).toBeNull();
+    expect((JSON.parse(byId.body) as { data: { workContext: ListedContext } }).data.workContext.updatedAt).toBeNull();
+    expect(listed(own.body).find((row) => row.id === ROBIN_CONTEXT)?.updatedAt).toBe(UPDATED_AT);
+  });
+
+  test("search and hint candidates carry none either", async () => {
+    const world = await seedOptedOutWorld();
+
+    const search = await getAs(world, "nick", url("/api/search", { q: "rotation window", repo: REPO }));
+    const hints = await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: "rotation window refresh key id" }));
+
+    for (const answer of [search, hints]) {
+      expect(answer.status).toBe(200);
+      expect(secretsIn(answer.body)).toEqual([]);
+      expect(answer.body).toContain(ROBIN_CONTEXT);
+    }
+  });
+
+  test("a since= window admits her work by its creation, never by her last touch", async () => {
+    const world = await seedOptedOutWorld();
+
+    const asNick = await getAs(world, "nick", url("/api/work-contexts", { repo: REPO, since: BETWEEN_CREATION_AND_UPDATE }));
+    const searched = await getAs(world, "nick", url("/api/search", { q: "rotation window", repo: REPO, since: BETWEEN_CREATION_AND_UPDATE }));
+    const asRobin = await getAs(world, "robin", url("/api/work-contexts", { repo: REPO, since: BETWEEN_CREATION_AND_UPDATE }));
+
+    // Created before the window, touched inside it: to Nick it is outside,
+    // or the window says she touched it — which the withheld updatedAt no
+    // longer does.
+    expect(listed(asNick.body).map((row) => row.id)).not.toContain(ROBIN_CONTEXT);
+    expect(searched.body).not.toContain(ROBIN_CONTEXT);
+    expect(listed(asRobin.body).map((row) => row.id)).toContain(ROBIN_CONTEXT);
+  });
+
+  test("the conference windows and orders her work by creation too", async () => {
+    const world = await seedOptedOutWorld();
+
+    const asNick = conferenceRows(await getAs(world, "nick", url("/api/conference", { repo: REPO })));
+    const asRobin = conferenceRows(await getAs(world, "robin", url("/api/conference", { repo: REPO })));
+
+    // Created a quarter ago, touched today: inside the fortnight only by her
+    // last touch, so not inside Nick's.
+    expect(asNick.map((row) => row.id)).not.toContain(ROBIN_OLD_CONTEXT);
+    expect(asRobin.map((row) => row.id)).toContain(ROBIN_OLD_CONTEXT);
+    expect(asNick.find((row) => row.developerId === world.robin.developerId)?.id).toBe(ROBIN_HOST_CONTEXT);
+    expect(asRobin.find((row) => row.developerId === world.robin.developerId)?.id).toBe(ROBIN_CONTEXT);
+  });
+
+  test("freshest-first ranks her work by creation, so the order says nothing of her last touch", async () => {
+    const world = await seedOptedOutWorld();
+
+    const asNick = await getAs(world, "nick", url("/api/work-contexts", { repo: REPO }));
+    const asRobin = await getAs(world, "robin", url("/api/work-contexts", { repo: REPO }));
+
+    expect(robinsRows(world, listed(asNick.body))[0]?.id).toBe(ROBIN_HOST_CONTEXT);
+    expect(robinsRows(world, listed(asRobin.body))[0]?.id).toBe(ROBIN_CONTEXT);
+  });
+});
 
 /** A commit of Robin's on the file Nick is about to edit — the landed stop's input. */
 const LANDED_SHA = "abcdef1234567";

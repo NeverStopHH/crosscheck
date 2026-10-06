@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import { WORK_CONTEXT_LIST_MAX } from "../constants.ts";
 
@@ -17,7 +18,7 @@ import {
 } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
@@ -357,6 +358,17 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
 const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
 
 /**
+ * The same activity as THIS viewer may window and rank by it: a teammate who
+ * opted out of presence counts from creation alone (services/live-location.ts
+ * activitySeenBy), or the window and the order would say when she last
+ * touched her work — what the withheld `updatedAt` no longer says. The WHERE
+ * keeps `contextActivityAt` beside it: a superset, and the expression
+ * `work_contexts_activity_idx` is built on.
+ */
+const contextActivitySeenBy = (viewerDeveloperId: string): SQL<Date> =>
+  activitySeenBy(viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
+
+/**
  * How fresh this row is WITHIN its own developer: 1 is that person's newest.
  * Computed after the WHERE, so mutes and the caller's window narrow the set
  * before anybody is ranked inside it.
@@ -377,7 +389,8 @@ const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts
  * cannot push another out of the answer entirely" in
  * server/test/work-context-listing.test.ts.
  */
-const contextRankPerDeveloper = sql`row_number() over (partition by ${agentSessions.developerId} order by ${contextActivityAt} desc)`;
+const contextRankPerDeveloper = (activity: SQL<Date>): SQL =>
+  sql`row_number() over (partition by ${agentSessions.developerId} order by ${activity} desc)`;
 
 /**
  * How many contexts this row's developer has in the answer BEFORE the bound.
@@ -401,6 +414,7 @@ export const listWorkContextsByRepo = async (
     WORK_CONTEXT_LIST_MAX,
   );
   const hidden = await locationHiddenFrom(db, viewerDeveloperId);
+  const activity = contextActivitySeenBy(viewerDeveloperId);
   const rows = await db
     .select({
       workContext: workContexts,
@@ -451,7 +465,7 @@ export const listWorkContextsByRepo = async (
         // server/test/work-context-listing.test.ts.
         ...(window.since === undefined
           ? []
-          : [gte(contextActivityAt, window.since)]),
+          : [gte(contextActivityAt, window.since), gte(activity, window.since)]),
       ),
     )
     // Activity, not creation: it is the timestamp the rows are FILTERED by
@@ -459,7 +473,7 @@ export const listWorkContextsByRepo = async (
     // is built on — ordering by anything else would make the bound cut a
     // different set from the one the window selected. Rank first, so every
     // teammate's freshest context is served before anyone's second.
-    .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))
+    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))
     .limit(limit);
   return rows.map((row) =>
     projectRow(hidden, { developerId: row.developerId, repo }, {

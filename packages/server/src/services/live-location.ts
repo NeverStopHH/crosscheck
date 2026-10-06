@@ -25,7 +25,9 @@
  * reads as WITHHELD_TITLE on every surface. Done here, on the hub, so a
  * connector too old to know about it cannot print the branch anyway.
  */
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   LOCATION_WITHHELD,
   WITHHELD_TITLE,
@@ -34,6 +36,7 @@ import {
 
 import { developers } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
+import { visiblePresenceCondition } from "./visibility.ts";
 
 /** Developers whose live location THIS viewer may not be told. */
 export type HiddenLocations = ReadonlySet<string>;
@@ -94,6 +97,8 @@ const LOCATION_FIELDS = {
   lastActiveAt: "marker",
   /** When the session behind a piece of work started: when its author arrived. */
   workStartedAt: "marker",
+  /** A context's last update — its author's last touch, so where she was then. */
+  updatedAt: "null",
 } as const satisfies Readonly<Record<string, WithheldForm>>;
 
 export type LocationField = keyof typeof LOCATION_FIELDS;
@@ -137,6 +142,37 @@ const projectEntry = (
   const form = forms[key] ?? LOCATION_FIELDS[key];
   return form === "omit" ? [] : [[key, withheldValue(form)]];
 };
+
+/**
+ * THE SAME RULE IN SQL, for the reads that FILTER or RANK by when a context
+ * was last touched. Withholding `updatedAt` from the row is not enough when
+ * a `since=` window admits the row because of it, or a freshest-first order
+ * puts it first because of it: the answer's membership and order would say
+ * what the field no longer does.
+ *
+ * `updated_at` for an owner whose location the viewer may see; null for a
+ * hidden one — so their activity is their `created_at`, which is published
+ * with the row anyway.
+ */
+export const updatedAtSeenBy = (
+  viewerDeveloperId: string,
+  ownerDeveloperId: AnyPgColumn | SQL,
+  updatedAt: AnyPgColumn,
+): SQL<Date | null> =>
+  // Decoded by the column's own mapper: a raw CASE comes back from the
+  // driver as a string, and every reader of a selected field expects a Date.
+  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then ${updatedAt} else null end)`
+    .mapWith(updatedAt) as SQL<Date | null>;
+
+/** `coalesce(updated_at, created_at)` as this viewer may filter and rank by it. */
+export const activitySeenBy = (
+  viewerDeveloperId: string,
+  ownerDeveloperId: AnyPgColumn | SQL,
+  updatedAt: AnyPgColumn,
+  createdAt: AnyPgColumn,
+): SQL<Date> =>
+  sql`coalesce(${updatedAtSeenBy(viewerDeveloperId, ownerDeveloperId, updatedAt)}, ${createdAt})`
+    .mapWith(createdAt) as SQL<Date>;
 
 /**
  * `row` as THIS viewer may read it: the same object when its owner's

@@ -60,6 +60,13 @@ export const ROBIN_SOLVED = "wc_robin_solved";
 export const ROBIN_LOCAL_CONTEXT = "wc_robin_local";
 export const ROBIN_DETACHED_CONTEXT = "wc_robin_detached";
 export const ROBIN_HOST_CONTEXT = "wc_robin_host";
+/**
+ * Created long before every window a surface applies (conference, suspect,
+ * a since=) and touched again at UPDATED_AT: inside a window only by her
+ * last touch — so to a colleague it must be outside.
+ */
+export const ROBIN_OLD_CONTEXT = "wc_robin_old";
+export const OLD_TITLE = "Rotation drill from last quarter";
 
 /** A host-written title that merely ends like a fallback one. */
 export const HOST_TITLE = "Fix the 500 on POST /login @ api";
@@ -70,23 +77,34 @@ const at = (offsetSeconds: number): string =>
 
 const STARTED_OFFSET_S = 1234;
 const CREATED_OFFSET_S = 1300;
+const HOST_CREATED_OFFSET_S = 1360;
 const ASKED_OFFSET_S = 1400;
 const HEARTBEAT_OFFSET_S = 4321;
 const UPDATED_OFFSET_S = 4351;
 const READ_OFFSET_S = 4371;
 const STALE_HOURS = 30;
 const SECONDS_PER_HOUR = 3600;
+const OLD_DAYS = 90;
+const SECONDS_PER_DAY = 86_400;
 
 /** When Robin's sessions started — `workStartedAt` on a landed stop. */
 export const STARTED_AT = at(STARTED_OFFSET_S);
 /** When her contexts and claims were created: PUBLISHED, so never a secret. */
 export const CREATED_AT = at(CREATED_OFFSET_S);
+/**
+ * Her host-titled context is created a minute LATER and never touched again:
+ * ranked by creation it is her freshest, ranked by her last touch it is not —
+ * which is how a test sees which of the two a colleague's order follows.
+ */
+export const HOST_CREATED_AT = at(HOST_CREATED_OFFSET_S);
 /** Her live session's last heartbeat. */
 export const HEARTBEAT_AT = at(HEARTBEAT_OFFSET_S);
 /** Her live context's last update — `updatedAt`, `lastActiveAt`. */
 export const UPDATED_AT = at(UPDATED_OFFSET_S);
 /** Her stale open session's last heartbeat. */
 export const STALE_HEARTBEAT_AT = at(-STALE_HOURS * SECONDS_PER_HOUR);
+/** When ROBIN_OLD_CONTEXT was created: published, and outside every window. */
+export const OLD_CREATED_AT = at(-OLD_DAYS * SECONDS_PER_DAY);
 
 const MS_PER_SECOND = 1000;
 
@@ -150,7 +168,15 @@ const assertOk = async (response: Response, what: string): Promise<void> => {
   }
 };
 
+const oldContext = (status: string): Record<string, unknown> =>
+  recordEnvelope(
+    "work_context",
+    validWorkContextBody({ id: ROBIN_OLD_CONTEXT, sessionId: ROBIN_LIVE, title: OLD_TITLE, titleSource: "host", status, createdAt: OLD_CREATED_AT }),
+    { sessionId: ROBIN_LIVE },
+  );
+
 const robinContexts = (): readonly Record<string, unknown>[] => [
+  oldContext("analyzing"),
   recordEnvelope(
     "work_context",
     validWorkContextBody({ id: ROBIN_CONTEXT, sessionId: ROBIN_LIVE, title: `${SECRET_BRANCH} @ api`, titleSource: "fallback", createdAt: CREATED_AT }),
@@ -158,7 +184,7 @@ const robinContexts = (): readonly Record<string, unknown>[] => [
   ),
   recordEnvelope(
     "work_context",
-    validWorkContextBody({ id: ROBIN_HOST_CONTEXT, sessionId: ROBIN_LIVE, title: HOST_TITLE, titleSource: "host", createdAt: CREATED_AT }),
+    validWorkContextBody({ id: ROBIN_HOST_CONTEXT, sessionId: ROBIN_LIVE, title: HOST_TITLE, titleSource: "host", createdAt: HOST_CREATED_AT }),
     { sessionId: ROBIN_LIVE },
   ),
   // The stale session's context is the SOLVED tree, and carries no marker:
@@ -216,6 +242,7 @@ const robinWork = (): readonly Record<string, unknown>[] => [
   ...targetsOf(ROBIN_CONTEXT, ROBIN_LIVE),
   ...targetsOf(ROBIN_HOST_CONTEXT, ROBIN_LIVE),
   ...targetsOf(ROBIN_SOLVED, ROBIN_STALE),
+  ...targetsOf(ROBIN_OLD_CONTEXT, ROBIN_LIVE),
   ...robinClaims(),
 ];
 
@@ -300,6 +327,7 @@ const robinGoesOnWorking = async (harness: TestHarness, robin: TestDeveloper): P
           validWorkContextBody({ id: ROBIN_CONTEXT, sessionId: ROBIN_LIVE, title: `${SECRET_BRANCH} @ api`, titleSource: "fallback", status: "implementing", createdAt: CREATED_AT }),
           { sessionId: ROBIN_LIVE },
         ),
+        oldContext("implementing"),
       ],
     }),
     "Robin's update",

@@ -2748,9 +2748,11 @@ export const MUTATIONS: readonly Mutation[
     label: "the search since window stops running inside the tiers",
     file: `${SERVER}/src/services/search.ts`,
     from:
-      "      : sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) " +
+      "      : and(\n          sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) " +
       ">= ${scope.since.toISOString()}::timestamptz`,",
-    to: "      : undefined,",
+    to:
+      "      : undefined && and(\n          sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) " +
+      ">= ${scope.since.toISOString()}::timestamptz`,",
     test: `${SERVER}/test/search-filters.test.ts`,
     because:
       "`since: 14d` returns 60-day-old work as if it were this fortnight's, " +
@@ -3641,8 +3643,8 @@ export const MUTATIONS: readonly Mutation[
     // cannot recover a developer the hub's own bound never sent.
     label: "the listing bound is spent on one developer",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))",
-    to: "    .orderBy(desc(contextActivityAt))",
+    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))",
+    to: "    .orderBy(desc(activity))",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "a teammate running many short sessions fills all 200 rows and the " +
@@ -3693,7 +3695,7 @@ export const MUTATIONS: readonly Mutation[
     // ORDER BY hands back the freshest rows of ALL TIME.
     label: "the listing ignores the window the reader asked for",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "          : [gte(contextActivityAt, window.since)]),",
+    from: "          : [gte(contextActivityAt, window.since), gte(activity, window.since)]),",
     to: "          : []),",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
@@ -18101,6 +18103,76 @@ export const MUTATIONS: readonly Mutation[
       "the report carries no person by design, then titles the work its " +
       "readers opened with the branch of the teammate who did it",
   },
+  {
+    // Review round 3, M1: when she last touched her work is where she was.
+    label: "every work-context read carries an opted-out teammate's last update",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  updatedAt: \"null\",\n",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the listing, the diagnosis, search and hint candidates hand colleagues " +
+      "the instant Robin last touched her context",
+  },
+  {
+    label: "a colleague's windows and orders follow an opted-out teammate's last touch",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "then ${updatedAt} else null end)`",
+    to: "then ${updatedAt} else ${updatedAt} end)`",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "with updatedAt withheld, a since= window or a freshest-first order " +
+      "still says she touched the work, by admitting it or putting it first",
+  },
+  {
+    label: "the listing's since= window admits an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "          : [gte(contextActivityAt, window.since), gte(activity, window.since)]),",
+    to: "          : [gte(contextActivityAt, window.since)]),",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a since= one minute ago lists Robin's context exactly when she has " +
+      "touched it in the last minute — her heartbeat, read off a filter",
+  },
+  {
+    label: "the listing ranks an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))",
+    to: "    .orderBy(sql`${contextRankPerDeveloper(contextActivityAt)} ASC`, desc(contextActivityAt))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the context she is on now leads her rows, which names it as surely as " +
+      "its updatedAt would",
+  },
+  {
+    label: "search's since= window admits an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "          sql`${activityFor(scope)} >= ${scope.since.toISOString()}::timestamptz`,",
+    to: "          sql`true`,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "search_related_work with since= returns her context only when she " +
+      "touched it inside the window",
+  },
+  {
+    label: "the conference windows an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    gte(activitySeenByReader(viewerDeveloperId), cutoff),\n",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a context of hers created a quarter ago enters the fortnight's report " +
+      "the moment she touches it again",
+  },
+  {
+    label: "the conference ranks an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    .orderBy(desc(activitySeenByReader(viewerDeveloperId)), asc(workContexts.id))",
+    to: "    .orderBy(desc(activityExpression), asc(workContexts.id))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the report's first context of hers is the one she is on now",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18431,7 +18503,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 10
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 7
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 14
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
