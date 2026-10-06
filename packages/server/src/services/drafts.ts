@@ -97,7 +97,14 @@ export const listOwnDrafts = async (
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .where(ownUnreviewed(db, developerId, repo))
-    .orderBy(order === "oldest" ? asc(claims.createdAt) : desc(claims.createdAt))
+    // TIED BY ID: drafts one Stop hook minted in the same instant would
+    // otherwise come back in whatever order the planner picks — the same for
+    // both directions — and the rows between the two pages reach neither.
+    .orderBy(
+      ...(order === "oldest"
+        ? [asc(claims.createdAt), asc(claims.id)]
+        : [desc(claims.createdAt), desc(claims.id)]),
+    )
     .limit(MAX_DRAFTS_LISTED);
   return rows.map((row) => ({
     id: row.claim.id,

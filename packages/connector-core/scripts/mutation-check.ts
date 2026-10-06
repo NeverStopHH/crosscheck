@@ -17818,8 +17818,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the drafts listing ignores order=oldest",
     file: `${SERVER}/src/services/drafts.ts`,
-    from: "    .orderBy(order === \"oldest\" ? asc(claims.createdAt) : desc(claims.createdAt))",
-    to: "    .orderBy(desc(claims.createdAt))",
+    from: "      ...(order === \"oldest\"\n",
+    to: "      ...(false\n",
     test: `${SERVER}/test/drafts.test.ts`,
     because: "the oldest drafts a backlog past the cap leaves out stay unreachable from every surface",
   },
@@ -18231,6 +18231,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/derive-history.test.ts`,
     because: "after SessionEnd no run can be settled, so a host that kills the workers is never named",
   },
+  {
+    label: "drafts captured in one instant come back in the planner's order",
+    file: `${SERVER}/src/services/drafts.ts`,
+    from: "        ? [asc(claims.createdAt), asc(claims.id)]\n        : [desc(claims.createdAt), desc(claims.id)]),",
+    to: "        ? [asc(claims.createdAt)]\n        : [desc(claims.createdAt)]),",
+    test: `${SERVER}/test/drafts.test.ts`,
+    because: "both ends of the listing return the same tied rows, and the drafts between the pages reach neither the briefing nor the nudge",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18553,7 +18561,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
  * PRINTS: packages/server/test/draft-visibility.test.ts 3
- * PRINTS: packages/server/test/drafts.test.ts 3
+ * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4

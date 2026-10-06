@@ -169,6 +169,34 @@ describe("GET /api/drafts", () => {
     expect(newest.drafts[0]?.id).toBe(`clm_o${String(BACKLOG - 1)}`);
   });
 
+  test("drafts captured in the same instant are ordered by id, so the two ends reach all of them", async () => {
+    // Arrange: one Stop hook can mint several drafts within one timestamp;
+    // ordered by createdAt alone, their order is the planner's to choose —
+    // the same for both directions — and the drafts between the two pages
+    // are reachable from neither end.
+    const { harness, developer } = await createHarnessWithSession();
+    const sameInstant = "2026-07-01T00:00:00.000Z";
+    const count = MAX_DRAFTS_LISTED + 5;
+    const ids = Array.from({ length: count }, (_, i) => `clm_t${String(i).padStart(2, "0")}`);
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        ...ids.map((id) => recordEnvelope("claim", draftBody(id, { createdAt: sameInstant }))),
+      ],
+    });
+
+    // Act
+    const newest = await fetchListing(harness, developer);
+    const oldest = await fetchListing(harness, developer, "oldest");
+
+    // Assert
+    const sorted = [...ids].sort();
+    expect(newest.drafts.map((draft) => draft.id)).toEqual([...sorted].reverse().slice(0, MAX_DRAFTS_LISTED));
+    expect(oldest.drafts.map((draft) => draft.id)).toEqual(sorted.slice(0, MAX_DRAFTS_LISTED));
+    const reached = new Set([...newest.drafts, ...oldest.drafts].map((draft) => draft.id));
+    expect(reached.size).toBe(count);
+  });
+
   test("an unknown order is refused rather than guessed", async () => {
     const { harness, developer } = await createHarnessWithSession();
 
