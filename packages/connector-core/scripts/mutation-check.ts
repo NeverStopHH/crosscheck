@@ -18498,8 +18498,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the doc upgrade ignores which docs are already current",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "        lt(workContexts.docVersion, NORMALIZED_DOC_VERSION),\n",
-    to: "",
+    from: "        lt(workContexts.docVersion, NORMALIZED_DOC_VERSION),\n        holdsNonDeclaredClaim(db, after),\n",
+    to: "        holdsNonDeclaredClaim(db, after),\n",
     test: `${SERVER}/test/doc-upgrade.test.ts`,
     because: "a restart re-runs the whole pass instead of resuming it, and re-embeds every draft-holding context",
   },
@@ -18642,7 +18642,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the doc upgrade leaves declared-only contexts at version 0 for every start to re-scan",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "  const stamped = await stampDeclaredOnly(deps.db);",
+    from: "  const stamped = await stampFrom(deps.db, options.stampBatch ?? DOC_UPGRADE_STAMP_BATCH, BEFORE_EVERY_ID, 0);",
     to: "  const stamped = 0;",
     test: `${SERVER}/test/doc-upgrade.test.ts`,
     because: "every start's first page walks every declared-only context again — 20 000 on the review's probe hub",
@@ -18942,6 +18942,22 @@ export const MUTATIONS: readonly Mutation[
     to: "    .set({ normalizedDoc: doc, docVersion: NORMALIZED_DOC_VERSION })",
     test: `${SERVER}/test/doc-upgrade-vectors.test.ts`,
     because: "the drafts' words leave the doc but their meaning stays in the vector tier, and the backfill never replaces a vector of the current model",
+  },
+  {
+    label: "the doc upgrade stamps every declared-only context in one UPDATE",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "    .limit(batch);\n  return rows.map((row) => row.id);\n};\n\n/**\n * DECLARED-ONLY CONTEXTS ARE STAMPED",
+    to: "    .limit(Number.MAX_SAFE_INTEGER);\n  return rows.map((row) => row.id);\n};\n\n/**\n * DECLARED-ONLY CONTEXTS ARE STAMPED",
+    test: `${SERVER}/test/doc-upgrade-stamp.test.ts`,
+    because: "the review's 20 000 declared-only contexts hold every request ~400 ms, past the connector's 400 ms hook timeout",
+  },
+  {
+    label: "the doc upgrade stamps declared-only contexts without a turn of the event loop between pages",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "  await yieldToEventLoop();\n  return stampFrom(db, batch, last, stamped + ids.length);\n",
+    to: "  return stampFrom(db, batch, last, stamped + ids.length);\n",
+    test: `${SERVER}/test/doc-upgrade-stamp.test.ts`,
+    because: "paging the stamp frees no request: the pages run back to back and hold the loop as long as one UPDATE did",
   },
 ];
 
@@ -19269,6 +19285,7 @@ interface Outcome {
  * PRINTS: packages/server/test/doc-upgrade-downgrade.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-load.test.ts 2
  * PRINTS: packages/server/test/doc-upgrade-race.test.ts 1
+ * PRINTS: packages/server/test/doc-upgrade-stamp.test.ts 2
  * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 5
  * PRINTS: packages/server/test/doc-upgrade-window.test.ts 6
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6

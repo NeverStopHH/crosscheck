@@ -146,6 +146,15 @@ export const DOC_UPGRADE_BATCH = 100;
 export const DOC_UPGRADE_PROGRESS_PAGES = 10;
 
 /**
+ * Declared-only contexts the doc upgrade stamps current per UPDATE, with a
+ * turn of the event loop between pages (services/doc-upgrade.ts stampFrom).
+ * As one UPDATE, the review's 20 000 declared-only contexts held every
+ * request for ~400 ms, past the connector's 400 ms hook timeout; 1 000 keeps
+ * one page to a few tens of milliseconds (round 5).
+ */
+export const DOC_UPGRADE_STAMP_BATCH = 1000;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says

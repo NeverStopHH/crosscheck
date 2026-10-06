@@ -43,9 +43,9 @@
  * run, an old doc only keeps matching as it did before the upgrade, so
  * nothing waits on it — and a large hub is not held offline while it runs.
  */
-import { and, asc, gt, lt, not, sql } from "drizzle-orm";
+import { and, asc, gt, inArray, lt, not, sql } from "drizzle-orm";
 
-import { DOC_UPGRADE_BATCH, DOC_UPGRADE_PROGRESS_PAGES } from "../constants.ts";
+import { DOC_UPGRADE_BATCH, DOC_UPGRADE_PROGRESS_PAGES, DOC_UPGRADE_STAMP_BATCH } from "../constants.ts";
 import type { Db } from "../db/client.ts";
 import { workContexts } from "../db/schema.ts";
 import type { Embedder } from "./embedder.ts";
@@ -71,19 +71,49 @@ export interface DocUpgradeReport {
   readonly embedFailures: number;
 }
 
+/** One page of declared-only contexts after the cursor whose doc predates the current rule. */
+const declaredOnlyPage = async (db: Db, after: string, batch: number): Promise<readonly string[]> => {
+  const rows = await db
+    .select({ id: workContexts.id })
+    .from(workContexts)
+    .where(
+      and(
+        gt(workContexts.id, after),
+        lt(workContexts.docVersion, NORMALIZED_DOC_VERSION),
+        not(holdsNonDeclaredClaim(db, after)),
+      ),
+    )
+    .orderBy(asc(workContexts.id))
+    .limit(batch);
+  return rows.map((row) => row.id);
+};
+
 /**
  * DECLARED-ONLY CONTEXTS ARE STAMPED, NOT REBUILT (review round 4, L2): their
  * doc is the same under both rules, so the version is all that is wrong — and
  * left at 0 they were re-scanned by every start's first page (20 000 of them
- * on the review's 50 000-context probe). One UPDATE, once.
+ * on the review's 50 000-context probe).
+ *
+ * A PAGE AT A TIME, with a turn of the event loop between pages (round 5): as
+ * one UPDATE, the 20 000 rows held every request for ~400 ms — past the
+ * connector's 400 ms hook timeout. The cursor is the page's last id in the
+ * database's own order, so each page starts where the last ended.
  */
-const stampDeclaredOnly = async (db: Db): Promise<number> => {
-  const stamped = await db
+const stampFrom = async (db: Db, batch: number, after: string, stamped: number): Promise<number> => {
+  const ids = await declaredOnlyPage(db, after, batch);
+  const last = ids[ids.length - 1];
+  if (last === undefined) {
+    return stamped;
+  }
+  await db
     .update(workContexts)
     .set({ docVersion: NORMALIZED_DOC_VERSION })
-    .where(and(lt(workContexts.docVersion, NORMALIZED_DOC_VERSION), not(holdsNonDeclaredClaim(db, BEFORE_EVERY_ID))))
-    .returning({ id: workContexts.id });
-  return stamped.length;
+    .where(and(inArray(workContexts.id, [...ids]), lt(workContexts.docVersion, NORMALIZED_DOC_VERSION)));
+  if (ids.length < batch) {
+    return stamped + ids.length;
+  }
+  await yieldToEventLoop();
+  return stampFrom(db, batch, last, stamped + ids.length);
 };
 
 /** One page of contexts still built under an older rule that hold a non-declared claim. */
@@ -168,9 +198,12 @@ export const upgradeNormalizedDocs = async (
     /** Where the pass says it started and how far it got (review round 4, M2). */
     readonly progress?: (line: string) => void;
     readonly progressEveryPages?: number;
+    /** Declared-only contexts stamped per UPDATE (round 5). */
+    readonly stampBatch?: number;
   } = {},
 ): Promise<DocUpgradeReport> => {
-  const stamped = await stampDeclaredOnly(deps.db);
+  const stamped = await stampFrom(deps.db, options.stampBatch ?? DOC_UPGRADE_STAMP_BATCH, BEFORE_EVERY_ID, 0);
+  await yieldToEventLoop();
   const pending = await countPendingDocs(deps.db);
   const progress = options.progress ?? SILENT;
   if (pending > 0) {
