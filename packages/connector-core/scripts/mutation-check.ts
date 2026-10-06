@@ -19154,6 +19154,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the fallback asks the hub about the delivery it cannot know, and the word is refused",
   },
+  // ── 07 §13.13, LOW-6: a re-assertion's sentence is read ──
+  {
+    label: "a re-asserted noise's sentence is never read",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        SELECT 'noise', r.reason, r.created_at, r.id, true, true, true FROM noise_reassertions r",
+    to: "        SELECT 'noise', NULL, r.created_at, r.id, true, true, true FROM noise_reassertions r",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's 'still off target' is stored and never shown to them",
+  },
+  {
+    label: "a re-asserted noise's sentence is listed as if it were an outcome's",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      ...(row.reasserted ? { reasserted: true } : {}),\n",
+    to: "\n",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person cannot tell a sentence said with noise again from one said with a word",
+  },
+  {
+    label: "--mine prints a re-asserted noise's sentence as a first label's",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: '${said.reasserted === true ? ", said again" : ""}',
+    to: "",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the line reads as the first label's sentence, which was never shown",
+  },
   // ── 07 §13.13, LOW-9: held candidates are the caller's own ──
   {
     label: "a held delivery another developer's key produced is offered to the caller",
@@ -19263,7 +19288,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 8
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 9
  * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
@@ -19497,7 +19522,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
- * PRINTS: packages/server/test/hint-outcomes.test.ts 49
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 51
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

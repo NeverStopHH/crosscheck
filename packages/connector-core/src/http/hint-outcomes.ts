@@ -112,6 +112,8 @@ const OutcomeReasonSchema = z.looseObject({
   outcome: z.string().min(1),
   reason: z.string(),
   source: z.string().nullable(),
+  /** 07 §13.13 (LOW-6): the sentence of a noise said again. Absent from an older hub, and on every other reason. */
+  reasserted: z.boolean().optional(),
 });
 
 export type OutcomeReason = z.infer<typeof OutcomeReasonSchema>;

@@ -209,32 +209,33 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     ) AS source_id
     FROM received r
   ), stated AS (
-    SELECT so.id, so.recipient, so.source_id, said.word, said.reason, said.at AS outcome_at
+    SELECT so.id, so.recipient, so.source_id, said.word, said.reason, said.at AS outcome_at, said.reasserted
     FROM sourced so
     LEFT JOIN LATERAL (
-      SELECT spoken.word, spoken.reason, spoken.at FROM (
+      SELECT spoken.word, spoken.reason, spoken.at, spoken.reasserted FROM (
         -- a pre-channel row (NULL) is the agent's, the safer side (round-5 LOW-5); the COALESCE is
         -- what keeps it so: a bare comparison is NULL, and NULL sorts FIRST under DESC
         SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id,
-               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label
+               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label, false AS reasserted
         FROM hint_outcomes o
         JOIN hint_deliveries od ON od.id = o.delivery_id
         WHERE od.session_id = so.session_id AND od.ref_id = so.ref_id
           AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}
         UNION ALL
-        SELECT 'noise', NULL, m.created_at, m.id, true, true FROM pilot_marks m
+        SELECT 'noise', NULL, m.created_at, m.id, true, true, false FROM pilot_marks m
         JOIN hint_deliveries md ON md.id = m.ref_id
         WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
           AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
         UNION ALL
-        -- review H-B: the person saying noise again is a row of its own, read before the month's end too
-        SELECT 'noise', NULL, r.created_at, r.id, true, true FROM noise_reassertions r
+        -- review H-B: the person saying noise again is a row of its own, read before the month's end too —
+        -- with the sentence said with it, which --mine reads (round-5 LOW-6)
+        SELECT 'noise', r.reason, r.created_at, r.id, true, true, true FROM noise_reassertions r
         JOIN hint_deliveries rd ON rd.id = r.delivery_id
         WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
           AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}
         UNION ALL
         -- round-5 LOW-4: the person's helpful label is their word too, which no agent's overturns
-        SELECT 'helpful', NULL, h.created_at, h.id, true, true FROM pilot_marks h
+        SELECT 'helpful', NULL, h.created_at, h.id, true, true, false FROM pilot_marks h
         JOIN hint_deliveries hd2 ON hd2.id = h.ref_id
         WHERE h.ref_kind = 'hint_delivery' AND hd2.session_id = so.session_id AND hd2.ref_id = so.ref_id
           AND h.marked_by = so.recipient AND h.mark = 'helpful' ${before(sql`h.created_at`, until)}
@@ -246,7 +247,8 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     -- a standing helpful is a verdict, not an outcome: the intervention stays where the label
     -- alone left it, unmarked — never the agent's word it stands over (round-5 LOW-4)
     SELECT id, recipient, source_id, outcome_at,
-      CASE WHEN word = 'helpful' THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state, reason
+      CASE WHEN word = 'helpful' THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state, reason,
+      COALESCE(reasserted, false) AS reasserted
     FROM stated
   )`;
 

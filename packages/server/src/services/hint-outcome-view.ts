@@ -57,9 +57,12 @@ export interface SourceTally extends HintOutcomeTally {
 }
 
 export interface OutcomeReason {
-  readonly outcome: HintOutcome;
+  /** The word that stands — an outcome, or the person's noise said again with a sentence (round-5 LOW-6). */
+  readonly outcome: HintOutcome | "noise";
   readonly reason: string;
   readonly source: string | null;
+  /** Present, and true, only on the sentence of a noise said again (a re-assertion). */
+  readonly reasserted?: true;
 }
 
 export interface MyHintOutcomes extends HintOutcomeTally {
@@ -106,9 +109,10 @@ type TallyRow = {
 };
 
 type ReasonRow = {
-  readonly outcome: HintOutcome;
+  readonly outcome: HintOutcome | "noise";
   readonly reason: string;
   readonly source: string | null;
+  readonly reasserted: boolean;
   readonly total: number;
 };
 
@@ -149,7 +153,7 @@ const readReasons = async (
 ): Promise<readonly ReasonRow[]> => {
   const rows = await deps.db.execute<ReasonRow>(sql`
     ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
-    SELECT st.state AS outcome, st.reason, d.name AS source, count(*) OVER ()::int AS total
+    SELECT st.state AS outcome, st.reason, d.name AS source, st.reasserted, count(*) OVER ()::int AS total
     FROM states st LEFT JOIN developers d ON d.id = st.source_id
     WHERE st.reason IS NOT NULL
     ORDER BY st.outcome_at DESC, st.id ASC
@@ -225,7 +229,13 @@ export const readMyHintOutcomes = async (
     ...total,
     bySource: sources.slice(0, HINT_OUTCOME_MAX_SOURCES),
     bySourceBeyondList: Math.max(0, sources.length - HINT_OUTCOME_MAX_SOURCES),
-    reasons: reasons.map((row) => ({ outcome: row.outcome, reason: row.reason, source: row.source })),
+    // round-5 LOW-6: a re-asserted noise's sentence is listed, marked as said again (added only then: additive)
+    reasons: reasons.map((row) => ({
+      outcome: row.outcome,
+      reason: row.reason,
+      source: row.source,
+      ...(row.reasserted ? { reasserted: true } : {}),
+    })),
     reasonsBeyondList: Math.max(0, reasonsTotal - reasons.length),
     yourWork,
   };

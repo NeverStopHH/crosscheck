@@ -1500,3 +1500,7 @@ is the answer "held, not sent". Never another session's delivery: that is anothe
 delivery of a ref — only when it was produced under the caller's developer key (the `developerId` login stores
 in the config): a hint that reached a colleague on this machine is never offered to, or posted by, this caller.
 A config from before login stored the id cannot tell the two apart, and filters nothing, as before.
+
+*LOW-6 — a re-assertion's sentence was kept and never read.* §13.12 H-B kept the sentence said with noise said
+again, but nothing read it. `--mine`'s reasons list now shows it beside the noise it stands at, marked as said
+again (`reasserted: true` on the wire, added only then; "noise, said again, from Ken: «…»" on the page).

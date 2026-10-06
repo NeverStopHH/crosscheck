@@ -234,6 +234,34 @@ describe("POST /api/hint-outcomes", () => {
     expect(await bodyOf(third)).toMatchObject({ repeated: true, stands: "noise" });
   });
 
+  test("round-5 LOW-6: a re-asserted noise's sentence is read — --mine lists it, as said again", async () => {
+    // Arrange — followed; the person's noise; their overrode; then noise again, with a sentence
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    world.harness.clock.advanceSeconds(60);
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    world.harness.clock.advanceSeconds(60);
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "noise",
+        reason: "still off target",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+
+    // Act
+    const view = await mineOf(world);
+
+    // Assert — beside the word that stands, its own sentence, marked as said again
+    expect(view["reasons"]).toEqual([{ outcome: "noise", reason: "still off target", source: "Ken", reasserted: true }]);
+  });
+
   test("review H-B (R7): a person's helpful label, then their noise, makes noise stand; the first label stays", async () => {
     // Arrange — the person said helpful first
     const world = await createOutcomeWorld();

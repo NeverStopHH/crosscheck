@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1752
+    # PRINTS: 1755
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -193,7 +193,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
     # PRINTS: packages/cli/src/cli/pilot-mark.ts 1
-    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 9
+    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 10
     # PRINTS: packages/cli/src/cli/pilot-mine.ts 1
     # PRINTS: packages/cli/src/cli/pilot-render.ts 35
     # PRINTS: packages/cli/src/cli/pilot.ts 3
@@ -431,7 +431,7 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 4
-    # PRINTS: packages/server/src/services/hint-outcome-view.ts 11
+    # PRINTS: packages/server/src/services/hint-outcome-view.ts 12
     # PRINTS: packages/server/src/services/hint-outcomes.ts 23
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
@@ -439,7 +439,7 @@ jobs:
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/noise-label.ts 3
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
-    # PRINTS: packages/server/src/services/outcome-population.ts 36
+    # PRINTS: packages/server/src/services/outcome-population.ts 37
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
     # PRINTS: packages/server/src/services/pilot-label-figures.ts 12
@@ -573,7 +573,7 @@ jobs:
     # PRINTS: heartbeat.ts 1
     # PRINTS: held-deliveries.ts 13
     # PRINTS: hint-deliveries.ts 4
-    # PRINTS: hint-outcome-view.ts 11
+    # PRINTS: hint-outcome-view.ts 12
     # PRINTS: hint-outcome.ts 1
     # PRINTS: hint-outcomes.ts 28
     # PRINTS: hint.ts 7
@@ -614,7 +614,7 @@ jobs:
     # PRINTS: noise.ts 11
     # PRINTS: normalized-doc.ts 2
     # PRINTS: outcome-clause.ts 2
-    # PRINTS: outcome-population.ts 36
+    # PRINTS: outcome-population.ts 37
     # PRINTS: outcome-render.ts 4
     # PRINTS: outcome.ts 12
     # PRINTS: output.ts 1
@@ -630,7 +630,7 @@ jobs:
     # PRINTS: pilot-label.ts 8
     # PRINTS: pilot-mark.ts 6
     # PRINTS: pilot-marks.ts 2
-    # PRINTS: pilot-mine-render.ts 9
+    # PRINTS: pilot-mine-render.ts 10
     # PRINTS: pilot-mine.ts 1
     # PRINTS: pilot-outcome-figures.ts 5
     # PRINTS: pilot-render.ts 35

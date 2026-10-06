@@ -156,6 +156,19 @@ describe("renderMyOutcomes' window under a paused pilot (review M3)", () => {
   });
 });
 
+describe("renderMyOutcomes' reasons (round-5 LOW-6)", () => {
+  test("the sentence of a noise said again is listed as said again", () => {
+    // Act
+    const out = renderMyOutcomes({
+      ...viewSince("2026-08-10T12:00:00.000Z"),
+      reasons: [{ outcome: "noise", reason: "still off target", source: "Ken", reasserted: true }],
+    });
+
+    // Assert
+    expect(out).toContain("noise, said again, from Ken: «still off target»");
+  });
+});
+
 describe("renderMyOutcomes' credit it cannot read (round 3)", () => {
   test("a credit this client cannot read is one line, and the person's own view still prints", () => {
     // Act
