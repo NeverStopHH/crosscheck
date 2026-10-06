@@ -32,6 +32,9 @@ export const monthOf = (iso: string): string => {
     : new Date(ms).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 };
 
+/** 07 §13.11 (M3), §13.12 (LOW): a month the pilot paused in counted only its enrolled time — every line says so. */
+export const COUNTED_WHILE_ENROLLED = "counted only while the pilot was enrolled here";
+
 /** 07 §13.12 (review M-3): a month counted over bounds an upgrade inferred says they were inferred. */
 export const RECONSTRUCTED_ENROLMENT = "its enrolment reconstructed from recorded outcomes";
 

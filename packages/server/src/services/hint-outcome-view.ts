@@ -83,6 +83,8 @@ export interface YourWork {
   readonly periodEndIso: string;
   readonly followed: number | null;
   readonly withheld: HintOutcomeWithholding | null;
+  /** The pilot paused inside the month: only its enrolled time was counted (review LOW). */
+  readonly pausedInPeriod: boolean;
   /** The month is counted over an enrolment an upgrade reconstructed from what was recorded (review M-3). */
   readonly reconstructed: boolean;
 }
@@ -170,7 +172,7 @@ const readYourWork = async (
   const stamps = { periodStartIso: period.start.toISOString(), periodEndIso: period.end.toISOString() };
   const span = enrolledSpan(period.start, period.end, enrolments);
   if (span === null) {
-    return { ...stamps, followed: null, withheld: "not_recordable", reconstructed: false };
+    return { ...stamps, followed: null, withheld: "not_recordable", pausedInPeriod: false, reconstructed: false };
   }
   const aggregate = await readPeriodAggregate(deps.db, {
     repo: input.repo,
@@ -185,6 +187,7 @@ const readYourWork = async (
     ...stamps,
     followed: withheld === null ? aggregate.followed : null,
     withheld,
+    pausedInPeriod: span.paused,
     reconstructed: span.reconstructed,
   };
 };

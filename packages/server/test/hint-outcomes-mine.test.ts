@@ -34,8 +34,13 @@ import type { TestDeveloper } from "./helpers.ts";
 
 const SECONDS_PER_DAY = 86_400;
 const KEN_SECOND_SESSION = "cc_bbbbbbbb-2222-4222-8222-222222222222";
-/** A July credit's period — counted over toggled, not reconstructed, intervals (review M-3). */
-const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z", reconstructed: false };
+/** A July credit's period — unpaused, over toggled, not reconstructed, intervals (review LOW, M-3). */
+const JULY = {
+  periodStartIso: "2026-07-01T00:00:00.000Z",
+  periodEndIso: "2026-08-01T00:00:00.000Z",
+  pausedInPeriod: false,
+  reconstructed: false,
+};
 const OVERRIDE_REASON = "kept the developer key; the repo key mixes two people's caches";
 
 const viewOf = async (response: Response): Promise<Record<string, unknown>> =>
@@ -185,6 +190,24 @@ describe("GET /api/hint-outcomes/mine", () => {
     expect(ken["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "below_minimums" });
   });
 
+  test("review LOW: a credit whose month the pilot paused in says so", async () => {
+    // Arrange — July's words, then the team leaves on 28 July
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    crowd.harness.clock.advanceSeconds(4 * 86_400);
+    await crowd.harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled: false }),
+    );
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const ken = await viewOf(await readMine(crowd, crowd.ken));
+
+    // Assert
+    expect(ken["yourWork"]).toEqual({ ...JULY, followed: 5, withheld: null, pausedInPeriod: true });
+  });
+
   test("review M-1 (probe B): four teammates who each overrode the author's work print no count — never 'followed 0'", async () => {
     // Arrange — Ken, Mike, Anna and Lena each set Nick's work aside in July
     const crowd = await createCrowd();
@@ -262,6 +285,7 @@ describe("GET /api/hint-outcomes/mine", () => {
       periodEndIso: "2026-07-01T00:00:00.000Z",
       followed: null,
       withheld: "not_recordable",
+      pausedInPeriod: false,
       reconstructed: false,
     });
   });

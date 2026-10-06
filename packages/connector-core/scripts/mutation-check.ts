@@ -18940,6 +18940,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "two agent words in one millisecond share a timestamp, and which stands is a coin toss",
   },
+  // ── 07 §13.12, review LOW: the credit says when its month was paused ──
+  {
+    label: "the credit drops that its month was paused",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    pausedInPeriod: span.paused,\n",
+    to: "    pausedInPeriod: false,\n",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the author reads a month the team left part-way through as counted throughout",
+  },
+  {
+    label: "the credit line never says its month was paused",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "      (credit.pausedInPeriod === true ? `; ${COUNTED_WHILE_ENROLLED}` : \"\") +",
+    to: "      \"\" +",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a count over part of a month reads as the whole month's",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19030,7 +19047,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 7
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 8
  * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
@@ -19263,7 +19280,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 21
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 22
  * PRINTS: packages/server/test/hint-outcomes.test.ts 41
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3

@@ -50,7 +50,7 @@ import type {
   UnreadableBlock,
 } from "@crosscheck/connector-core/http/pilot.ts";
 
-import { RECONSTRUCTED_ENROLMENT, monthOf } from "./outcome-render.ts";
+import { COUNTED_WHILE_ENROLLED, RECONSTRUCTED_ENROLMENT, monthOf } from "./outcome-render.ts";
 
 export interface ScoredFix {
   readonly repair: PilotRepair;
@@ -381,7 +381,7 @@ const NEVER_A_TEAM_OF_THREE = "; a team of three never meets them";
  */
 const countedWhen = (block: OutcomeBlock): string => {
   if (block.pausedInPeriod === true) {
-    return ", counted only while the pilot was enrolled here";
+    return `, ${COUNTED_WHILE_ENROLLED}`;
   }
   if (block.countedFromIso === null || block.countedFromIso === block.periodStartIso) {
     return "";

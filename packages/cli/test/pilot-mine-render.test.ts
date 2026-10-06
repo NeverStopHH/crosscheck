@@ -88,6 +88,16 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     );
   });
 
+  test("review LOW: a credit whose month the pilot paused in says only its enrolled time was counted", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 4, withheld: null, pausedInPeriod: true });
+
+    // Assert
+    expect(line).toBe(
+      "your own work, in teammates' hints, July 2026: followed 4 times — shown once, leaving out any one person, at least 3 people followed it; counted only while the pilot was enrolled here",
+    );
+  });
+
   test("review M-1: a hub's count of 0 is never printed — the same generic sentence", () => {
     // Act
     const line = creditLine({ ...JULY, followed: 0, withheld: null });
