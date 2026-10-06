@@ -17785,8 +17785,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a word changed after the month moves the month's team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "        AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}",
-    to: "        AND o.recorded_by = so.recipient",
+    from: "          AND o.recorded_by = la.recipient ${before(sql`o.created_at`, until)}",
+    to: "          AND o.recorded_by = la.recipient",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "reading the closed month before and after a teammate switches a word shows which word they switched",
   },
@@ -17876,8 +17876,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the word the person's noise label superseded, said again, overturns the label",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return input.recordedVia === "agent" || standingOf(words.person, newestLabel(words)) === input.outcome;',
-    to: "  return standingOf(words.person, newestLabel(words)) === input.outcome;",
+    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
+    to: "  return personsOutcomeStanding(words) === input.outcome;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "an agent re-reading the clause overturns the person's verdict for good, and precision still counts noise (P3)",
   },
@@ -18018,8 +18018,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an outcome on one delivery of a pointer leaves its twin unmarked",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      WHERE od.session_id = so.session_id AND od.ref_id = so.ref_id\n",
-    to: "      WHERE od.id = so.id\n",
+    from: "        WHERE od.session_id = la.session_id AND od.ref_id = la.ref_id\n",
+    to: "        WHERE od.id = la.id\n",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "the word an agent recorded on the tripwire ask is not read for the hint it covers",
   },
@@ -18486,8 +18486,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "what stands on the write path is the newest word of anyone, the agent's included",
     file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "  standingOf(words.person, newestLabel(words)) ?? words.agent?.outcome ?? null;",
-    to: "  standingOf(words.agent ?? words.person, newestLabel(words)) ?? null;",
+    from: "  const persons = personsOutcomeStanding(words);",
+    to: "  const persons = personsOutcomeStanding({ ...words, person: words.agent ?? words.person });",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the agent's later word overturns the person's own followed, and the answer says it took",
   },
@@ -18502,7 +18502,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the person's same word after their own noise label is swallowed as a repeat",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return input.recordedVia === "agent" || standingOf(words.person, newestLabel(words)) === input.outcome;',
+    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
     to: "  return true;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person changes their mind back and the hub answers 'already recorded', leaving their noise standing",
@@ -19080,12 +19080,14 @@ export const MUTATIONS: readonly Mutation[
     because: "--mine counts the agent's not_relevant_now over the person's own helpful",
   },
   {
-    label: "a standing helpful reaches the tallies as a word of its own",
+    // round 6 (HIGH-1): helpful no longer becomes a standing word in the figures; its one effect on
+    // the outcome axis, besides cancelling older noise, is the veto of an agent's not_relevant_now
+    label: "the person's helpful vetoes nothing of the agent's (P3)",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      CASE WHEN word = 'helpful' THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state, reason",
-    to: "      COALESCE(word, 'unmarked') AS state, reason",
+    from: "AND st.word = 'not_relevant_now' AND st.has_helpful) AS vetoed",
+    to: "AND false) AS vetoed",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "a verdict is tallied as an outcome no figure has a place for",
+    because: "the agent's not_relevant_now overturns the person's helpful in every figure",
   },
   // ── 07 §13.13, LOW-5: a pre-channel (NULL) word is the agent's ──
   {
@@ -19116,7 +19118,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the person's exact repeat writes a second row (Q4)",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return input.recordedVia === "agent" || standingOf(words.person, newestLabel(words)) === input.outcome;',
+    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
     to: '  return input.recordedVia === "agent";',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "a person typing crosscheck followed twice is told it was recorded twice, and the history doubles",
@@ -19154,12 +19156,45 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the fallback asks the hub about the delivery it cannot know, and the word is refused",
   },
+  // ── 07 §13.14, round-6 HIGH-1: helpful lives on the label axis ──
+  {
+    label: "a newer helpful leaves the person's older noise standing (view)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        WHERE la.label_word = 'noise'",
+    to: "        WHERE la.label_word IS NOT NULL",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person who took back their noise with helpful is still counted as noise",
+  },
+  {
+    label: "the person's own not_relevant_now is vetoed by their own helpful",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      SELECT st.*, (NOT COALESCE(st.by_person, false) AND st.word",
+    to: "      SELECT st.*, (st.word",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's own outcome is deleted by their own later verdict",
+  },
+  {
+    label: "helpful competes with the person's own outcome on the write path",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: '  return standingOf(words.person, label?.word === "noise" ? label : undefined);',
+    to: "  return standingOf(words.person, label);",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a helpful label said after the person's own override is answered as what stands, not the override",
+  },
+  {
+    label: "the write path never lets the person's helpful veto the agent's not_relevant_now",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: '  return agents === "not_relevant_now" && words.helpful !== undefined ? "helpful" : agents;',
+    to: "  return agents;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent is told its not_relevant_now stands over the person's helpful",
+  },
   // ── 07 §13.13, LOW-6: a re-assertion's sentence is read ──
   {
     label: "a re-asserted noise's sentence is never read",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "        SELECT 'noise', r.reason, r.created_at, r.id, true, true, true FROM noise_reassertions r",
-    to: "        SELECT 'noise', NULL, r.created_at, r.id, true, true, true FROM noise_reassertions r",
+    from: "        SELECT 'noise', r.reason, r.created_at, r.id, true FROM noise_reassertions r",
+    to: "        SELECT 'noise', NULL, r.created_at, r.id, true FROM noise_reassertions r",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person's 'still off target' is stored and never shown to them",
   },
@@ -19522,7 +19557,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
- * PRINTS: packages/server/test/hint-outcomes.test.ts 51
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 55
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

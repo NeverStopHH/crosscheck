@@ -46,9 +46,8 @@ import {
   instantAfter,
   lockPointer,
   newestInstant,
-  newestLabel,
+  personsOutcomeStanding,
   readPointerWords,
-  standingOf,
   standingOfWords,
 } from "./pointer-standing.ts";
 import type { LatestOutcome, PointerWords, StandingWord } from "./pointer-standing.ts";
@@ -267,7 +266,7 @@ const isRepeat = (words: PointerWords, input: WriteHintOutcomeInput): boolean =>
   if (own === undefined || own.outcome !== input.outcome || own.reason !== input.reason) {
     return false;
   }
-  return input.recordedVia === "agent" || standingOf(words.person, newestLabel(words)) === input.outcome;
+  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;
 };
 
 /** The same word as before with a different reason — written, and the answer says the reason was revised. */

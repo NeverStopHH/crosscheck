@@ -194,13 +194,31 @@ export const standingOf = (
 };
 
 /**
- * WHAT STANDS (07 §13.12, §13.13 LOW-4): the person's newest word — their own
- * outcome, their noise or their helpful label — whenever they said anything;
- * only otherwise the agent's newest. An agent's word is recorded but never
- * overturns the person's; only the person's own later word changes it.
+ * The person's own word on the OUTCOME axis (07 §13.14, round-6 HIGH-1): their
+ * outcome, or their noise while noise is their newest label — a newer helpful
+ * cancels an older noise (a). Helpful itself is a verdict on the LABEL axis
+ * and never competes with the person's own outcome, in either order.
  */
-export const standingOfWords = (words: PointerWords): StandingWord | null =>
-  standingOf(words.person, newestLabel(words)) ?? words.agent?.outcome ?? null;
+export const personsOutcomeStanding = (words: PointerWords): StandingWord | null => {
+  const label = newestLabel(words);
+  return standingOf(words.person, label?.word === "noise" ? label : undefined);
+};
+
+/**
+ * WHAT STANDS (07 §13.12, §13.14): the person's own word on the outcome axis
+ * whenever they said one; only otherwise the agent's newest — which a helpful
+ * label of the person's leaves standing, except an agent's `not_relevant_now`:
+ * that the person's helpful vetoes (b), and their label stands over it. An
+ * agent's word is recorded but never overturns the person's.
+ */
+export const standingOfWords = (words: PointerWords): StandingWord | null => {
+  const persons = personsOutcomeStanding(words);
+  if (persons !== null) {
+    return persons;
+  }
+  const agents = words.agent?.outcome ?? null;
+  return agents === "not_relevant_now" && words.helpful !== undefined ? "helpful" : agents;
+};
 
 /** One millisecond — the smallest step the hub's clock and the stored instants share. */
 const NEXT_INSTANT_MS = 1;

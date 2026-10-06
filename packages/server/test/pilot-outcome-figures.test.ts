@@ -23,7 +23,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
-import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
+import {
+  HINT_OUTCOME_DISCLOSURE_MINIMUMS,
+  PIN_PRESENCE_TERMINAL,
+  deliveryIdFor,
+  hintDeliveryId,
+} from "@crosscheck/schema";
 
 import { lastWholeMonth, readPeriodAggregate } from "../src/services/outcome-population.ts";
 
@@ -608,6 +613,48 @@ describe("the closed month's edges (review M5: surviving mutations)", () => {
 
     // Assert
     expect(outcomes).toMatchObject({ periodStartIso: "2026-07-01T00:00:00.000Z", withheld: "not_recordable", countedFromIso: null });
+  });
+});
+
+describe("round-6 HIGH-1: a helpful label lives on the label axis, never deleting an outcome", () => {
+  const helpful = async (crowd: Crowd, who: Crowd["nick"], deliveryId: string): Promise<void> => {
+    const response = await crowd.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", who.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: deliveryId,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    expect(response.status).toBe(201);
+  };
+
+  test("the reviewer's July: helpful under two agent follows and over the person's own override changes no figure", async () => {
+    // Arrange — Nick: helpful on Ken's context (his agent said followed); Mike: helpful on Ken's
+    // claim (his agent said followed); Nick: his own overrode on Lena's context, THEN helpful
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    crowd.harness.clock.advanceSeconds(60);
+    await helpful(crowd, crowd.nick, hintDeliveryId(NICK_SESSION, KEN_CONTEXT));
+    await helpful(crowd, crowd.mike, hintDeliveryId(MIKE_SESSION, KEN_CLAIM));
+    await recordPersonOutcome(crowd, crowd.nick, { ref: LENA_CONTEXT, outcome: "overrode", reason: "kept my own header parser" });
+    crowd.harness.clock.advanceSeconds(60);
+    await helpful(crowd, crowd.nick, hintDeliveryId(NICK_SESSION, LENA_CONTEXT));
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const nick = ((await (await readMine(crowd, crowd.nick)).json()) as { data: Record<string, unknown> }).data;
+    const ken = ((await (await readMine(crowd, crowd.ken)).json()) as { data: Record<string, unknown> }).data;
+    const team = await outcomesOf(crowd);
+
+    // Assert — the agents' follows stay, the person's override and its reason stand, and the
+    // credit and the team line keep their figures (before: followed 1, the override gone, both withheld)
+    expect(nick).toMatchObject({ received: 5, followed: 2, overrode: 2, notRelevantNow: 1, unmarked: 0 });
+    expect(JSON.stringify(nick["reasons"])).toContain("kept my own header parser");
+    expect(ken["yourWork"]).toMatchObject({ followed: 5, withheld: null });
+    expect(team).toMatchObject({ withheld: null, figures: { followed: 9, overrode: 4, unmarked: 8 } });
   });
 });
 

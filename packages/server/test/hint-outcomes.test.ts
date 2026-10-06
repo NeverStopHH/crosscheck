@@ -992,10 +992,61 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "not_relevant_now" });
     const view = await mineOf(world);
 
-    // Assert — recorded, but the person's verdict stands; a verdict is not an outcome, so the
-    // intervention stays where the label alone left it: unmarked
-    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: "helpful", stands: "helpful" });
+    // Assert — recorded, but the person's helpful vetoes their agent's not_relevant_now (round-6
+    // HIGH-1 (b)): the intervention stays unmarked, where the label alone left it
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: null, stands: "helpful" });
     expect(view).toMatchObject({ notRelevantNow: 0, unmarked: 3 });
+  });
+
+  test("round-6 HIGH-1: an agent's followed under the person's helpful label stays the outcome", async () => {
+    // Arrange — helpful first
+    const world = await createOutcomeWorld();
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const view = await mineOf(world);
+
+    // Assert — helpful is a verdict on another axis; it never deletes the outcome
+    expect(await bodyOf(agent)).toMatchObject({ replaced: null, stands: "followed" });
+    expect(view).toMatchObject({ followed: 1, unmarked: 2 });
+  });
+
+  test("round-6 HIGH-1: the person's own outcome stands under their later helpful label, and so does its reason", async () => {
+    // Arrange — the person overrode, with a reason; then labelled the hint helpful
+    const world = await createOutcomeWorld();
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept my parser" });
+    world.harness.clock.advanceSeconds(60);
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the agent says something too
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const view = await mineOf(world);
+
+    // Assert — the person's own outcome stands regardless of order
+    expect(await bodyOf(agent)).toMatchObject({ replaced: "overrode", stands: "overrode" });
+    expect(view).toMatchObject({ overrode: 1, followed: 0 });
+    expect(JSON.stringify(view["reasons"])).toContain("kept my parser");
   });
 
   test("round-5 LOW-4: of the person's two labels on one pointer, the newer stands — noise, then helpful", async () => {
@@ -1021,8 +1072,34 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     // Act
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
 
-    // Assert
-    expect(await bodyOf(agent)).toMatchObject({ replaced: "helpful", stands: "helpful" });
+    // Assert — round-6 HIGH-1 (a): the newer helpful cancels the older noise, so nothing of the
+    // person's stands on the outcome axis and the agent's followed is the outcome — in the view too
+    expect(await bodyOf(agent)).toMatchObject({ replaced: null, stands: "followed" });
+    expect(await mineOf(world)).toMatchObject({ noise: 0, followed: 1 });
+  });
+
+  test("round-6 HIGH-1: the person's own not_relevant_now is never vetoed by their own helpful", async () => {
+    // Arrange — the person said not relevant now, then labelled the hint helpful
+    const world = await createOutcomeWorld();
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "not_relevant_now" });
+    world.harness.clock.advanceSeconds(60);
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const view = await mineOf(world);
+
+    // Assert — the veto is of an AGENT's word only; the person's own outcome stands regardless
+    expect(view).toMatchObject({ notRelevantNow: 1, unmarked: 2 });
   });
 
   test("round-5 LOW-4: the person's own later outcome changes what their helpful label stood at", async () => {
@@ -1044,8 +1121,8 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     const person = await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
     const view = await mineOf(world);
 
-    // Assert
-    expect(await bodyOf(person)).toMatchObject({ replaced: "helpful", stands: "followed" });
+    // Assert — helpful alone stands at no outcome, so the person's followed replaced nothing
+    expect(await bodyOf(person)).toMatchObject({ replaced: null, stands: "followed" });
     expect(view).toMatchObject({ followed: 1 });
   });
 

@@ -208,48 +208,67 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         ELSE (SELECT c.author_session_id FROM claims c WHERE c.id = r.ref_id) END
     ) AS source_id
     FROM received r
-  ), stated AS (
-    SELECT so.id, so.recipient, so.source_id, said.word, said.reason, said.at AS outcome_at, said.reasserted
+  ), labelled AS (
+    -- 07 §13.14 (round-6 HIGH-1): the person's newest LABEL on the pointer — noise, noise said
+    -- again, or helpful — read on its own axis; and whether they ever called it helpful
+    SELECT so.*, lab.word AS label_word, lab.reason AS label_reason, lab.at AS label_at, lab.id AS label_id,
+      lab.reasserted AS label_reasserted, COALESCE(lab.has_helpful, false) AS has_helpful
     FROM sourced so
     LEFT JOIN LATERAL (
-      SELECT spoken.word, spoken.reason, spoken.at, spoken.reasserted FROM (
-        -- a pre-channel row (NULL) is the agent's, the safer side (round-5 LOW-5); the COALESCE is
-        -- what keeps it so: a bare comparison is NULL, and NULL sorts FIRST under DESC
-        SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id,
-               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label, false AS reasserted
-        FROM hint_outcomes o
-        JOIN hint_deliveries od ON od.id = o.delivery_id
-        WHERE od.session_id = so.session_id AND od.ref_id = so.ref_id
-          AND o.recorded_by = so.recipient ${before(sql`o.created_at`, until)}
-        UNION ALL
-        SELECT 'noise', NULL, m.created_at, m.id, true, true, false FROM pilot_marks m
+      SELECT l.word, l.reason, l.at, l.id, l.reasserted, bool_or(l.word = 'helpful') OVER () AS has_helpful FROM (
+        SELECT 'noise' AS word, NULL AS reason, m.created_at AS at, m.id, false AS reasserted FROM pilot_marks m
         JOIN hint_deliveries md ON md.id = m.ref_id
         WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
           AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
         UNION ALL
         -- review H-B: the person saying noise again is a row of its own, read before the month's end too —
         -- with the sentence said with it, which --mine reads (round-5 LOW-6)
-        SELECT 'noise', r.reason, r.created_at, r.id, true, true, true FROM noise_reassertions r
+        SELECT 'noise', r.reason, r.created_at, r.id, true FROM noise_reassertions r
         JOIN hint_deliveries rd ON rd.id = r.delivery_id
         WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
           AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}
         UNION ALL
-        -- round-5 LOW-4: the person's helpful label is their word too, which no agent's overturns
-        SELECT 'helpful', NULL, h.created_at, h.id, true, true, false FROM pilot_marks h
+        SELECT 'helpful', NULL, h.created_at, h.id, false FROM pilot_marks h
         JOIN hint_deliveries hd2 ON hd2.id = h.ref_id
         WHERE h.ref_kind = 'hint_delivery' AND hd2.session_id = so.session_id AND hd2.ref_id = so.ref_id
           AND h.marked_by = so.recipient AND h.mark = 'helpful' ${before(sql`h.created_at`, until)}
+      ) l
+      ORDER BY l.at DESC, l.id DESC LIMIT 1
+    ) lab ON true
+  ), stated AS (
+    SELECT la.id, la.recipient, la.source_id, la.has_helpful,
+           said.word, said.reason, said.at AS outcome_at, said.reasserted, said.by_person
+    FROM labelled la
+    LEFT JOIN LATERAL (
+      SELECT spoken.word, spoken.reason, spoken.at, spoken.reasserted, spoken.by_person FROM (
+        -- a pre-channel row (NULL) is the agent's, the safer side (round-5 LOW-5); the COALESCE is
+        -- what keeps it so: a bare comparison is NULL, and NULL sorts FIRST under DESC
+        SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id,
+               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label, false AS reasserted
+        FROM hint_outcomes o
+        JOIN hint_deliveries od ON od.id = o.delivery_id
+        WHERE od.session_id = la.session_id AND od.ref_id = la.ref_id
+          AND o.recorded_by = la.recipient ${before(sql`o.created_at`, until)}
+        UNION ALL
+        -- (a) the person's noise competes only while it is their newest label — a newer helpful cancels
+        -- it — and only the newest noise ever could: helpful itself never competes with an outcome
+        SELECT 'noise', la.label_reason, la.label_at, la.label_id, true, true, la.label_reasserted
+        WHERE la.label_word = 'noise'
       ) spoken
       -- 07 §13.12: the person's newest word (the label on a tie, D-O7); only when they said none, the agent's
       ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1
     ) said ON true
   ), states AS (
-    -- a standing helpful is a verdict, not an outcome: the intervention stays where the label
-    -- alone left it, unmarked — never the agent's word it stands over (round-5 LOW-4)
+    -- (b) the person's helpful vetoes their AGENT's not_relevant_now: unmarked, never that word
+    -- (round-6 HIGH-1); every other agent word stays the outcome under a helpful label
     SELECT id, recipient, source_id, outcome_at,
-      CASE WHEN word = 'helpful' THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state, reason,
+      CASE WHEN vetoed THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state,
+      CASE WHEN vetoed THEN NULL ELSE reason END AS reason,
       COALESCE(reasserted, false) AS reasserted
-    FROM stated
+    FROM (
+      SELECT st.*, (NOT COALESCE(st.by_person, false) AND st.word = 'not_relevant_now' AND st.has_helpful) AS vetoed
+      FROM stated st
+    ) judged
   )`;
 
 /**
