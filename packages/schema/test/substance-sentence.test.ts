@@ -44,6 +44,12 @@ describe("the first sentence that carries content", () => {
     expect(substanceSentence("Das ist nicht so, wie es war.")).toBe("");
   });
 
+  test("nor do the ones german.stop lacks (hold-out review, M4)", () => {
+    expect(substanceSentence("Ich glaube, dass es passt. Der Upload-Worker wartet auf den Lock.")).toBe(
+      "Der Upload-Worker wartet auf den Lock.",
+    );
+  });
+
   test("one-letter words are not content", () => {
     expect(substanceSentence("Q x z.")).toBe("");
   });

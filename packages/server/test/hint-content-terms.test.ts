@@ -161,6 +161,31 @@ describe("the German stop list applies only to a German prompt (L1)", () => {
   });
 });
 
+describe("German function words german.stop lacks never count on the hub (hold-out review, M4)", () => {
+  test.each([["ok, ich glaube dass es passt, weiter"], ["ja, das wurde so gemacht, passt"], ["hast du das gesehen?"]])(
+    "%p matches no German tree that says those words",
+    async (prompt) => {
+      // Arrange — both claims say glaube, dass, wurde, gemacht, hast, gesehen
+      const { harness, developer: nick } = await createHarnessWithSession();
+      const seeded = await postRecords(harness, nick, {
+        records: [
+          recordEnvelope("work_context", validWorkContextBody({ title: "Video-Upload bricht ab", description: "Gateway" })),
+          recordEnvelope("claim", validClaimBody({ id: "c_de1", body: "Ich glaube, dass der Upload-Worker wartet, weil das Limit nicht zurückgesetzt wurde." })),
+          recordEnvelope("claim", validClaimBody({ id: "c_de2", body: "Der Fix wurde gestern gemacht, hast du den Gateway-Test gesehen?" })),
+        ],
+      });
+      expect(seeded.data?.accepted).toBe(3);
+      const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+
+      // Act
+      const ids = await fetchIds(harness, robin, prompt);
+
+      // Assert
+      expect(ids).toEqual([]);
+    },
+  );
+});
+
 describe("two capitals are a shared word on the hub too (M6)", () => {
   test("\"CI rot auf main\" finds the tree about CI on main", async () => {
     // Arrange — "CI" and "main" are the two words it shares; "rot" is German for red

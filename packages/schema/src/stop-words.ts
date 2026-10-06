@@ -49,3 +49,24 @@ export const GERMAN_STOP_WORDS: ReadonlySet<string> = new Set([
   "wenn", "werde", "werden", "wie", "wieder", "will", "wir", "wird", "wirst", "wo", "wollen",
   "wollte", "würde", "würden", "zu", "zum", "zur", "zwar", "zwischen",
 ]);
+
+/**
+ * GERMAN FUNCTION WORDS german.stop LACKS (hold-out review, M4). The snowball
+ * list predates the 1996 spelling reform — it holds "daß", never "dass" — and
+ * lists the auxiliaries and modals in only some of their forms ("hat" and
+ * "kann", not "hast" or "kannst"; "würde", not "wurde"). It has no question
+ * words ("warum", "wieso") and none of the filler verbs a chat prompt is
+ * made of ("gibt", "geht", "glaube", "passt"). So "ja, das wurde so gemacht,
+ * passt" kept four words and cleared the floor on any German tree that says
+ * them. A small closed supplement for German text only; the database's own
+ * list above stays the pinned mirror.
+ */
+export const GERMAN_STOP_SUPPLEMENT: ReadonlySet<string> = new Set([
+  "dass", "wurde", "wurden", "wurdest", "hast", "hat", "gibt", "geht", "gehts", "warum", "wieso",
+  "weshalb", "wer", "wohin", "woher", "gemacht", "gesehen", "glaube", "passt", "kannst", "musst",
+  "sollst", "willst", "darfst", "seid", "wäre", "wär", "hätte", "hättest", "könntest", "würdest",
+  "halt", "eigentlich", "ganz", "bisschen", "nen", "gell",
+]);
+
+/** What a German text drops: german.stop and its supplement. */
+export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS, ...GERMAN_STOP_SUPPLEMENT]);

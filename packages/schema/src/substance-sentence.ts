@@ -32,7 +32,7 @@
  * stopped.
  */
 import { isGermanPrompt, promptTokens } from "./prompt-terms.ts";
-import { ENGLISH_STOP_WORDS, GERMAN_STOP_WORDS } from "./stop-words.ts";
+import { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
 import { spanRedacted } from "./untrusted-text.ts";
 
 const SENTENCES = new Intl.Segmenter("und", { granularity: "sentence" });
@@ -114,7 +114,7 @@ const contentWords = (sentence: string): number => {
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((token) => (token.match(/\p{L}/gu)?.length ?? 0) >= 2)
-    .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_STOP_WORDS.has(token))).length;
+    .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token))).length;
 };
 
 const ORDINAL_START = /^\(?\d{1,3}[.)]\s/u;

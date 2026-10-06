@@ -30,7 +30,20 @@ describe("content terms are the words left after the stop lists", () => {
   });
 
   test("a German prompt loses its German function words", () => {
-    expect(promptTerms("warum wird das Upload-Limit nicht erhöht").content).toEqual(["warum", "upload", "limit", "erhöht"]);
+    expect(promptTerms("warum wird das Upload-Limit nicht erhöht").content).toEqual(["upload", "limit", "erhöht"]);
+  });
+
+  test.each([
+    ["ok, ich glaube dass es passt, weiter", []],
+    ["ja, das wurde so gemacht, passt", []],
+    ["hast du das gesehen?", []],
+    ["wieso geht der Upload nicht", ["upload"]],
+  ])("German function words german.stop lacks are function words too: %p (hold-out review, M4)", (prompt, terms) => {
+    expect(promptTerms(prompt).content).toEqual(terms);
+  });
+
+  test("the supplement is German: an English prompt keeps the word", () => {
+    expect(promptTerms("the gibt parser fails").content).toEqual(["gibt", "parser", "fails"]);
   });
 
   test("words repeat once, in order, lower-cased; words under three letters are not words", () => {

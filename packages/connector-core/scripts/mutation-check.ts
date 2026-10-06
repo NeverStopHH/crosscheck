@@ -17546,7 +17546,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "German function words count as shared task words",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_STOP_WORDS.has(token));",
+    from: "ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
     to: "ENGLISH_STOP_WORDS.has(token) || false;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"passt, das ist nicht so wichtig, mach weiter\" agrees with a German team's decision on das/ist/nicht and pushes it as substance",
@@ -18120,7 +18120,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a function word counts as content in a shown sentence",
     file: `${SCHEMA}/src/substance-sentence.ts`,
-    from: "    .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_STOP_WORDS.has(token))).length;",
+    from: "    .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token))).length;",
     to: "    .length;",
     test: `${SCHEMA}/test/substance-sentence.test.ts`,
     because: "\"Use Redis here, it is this.\" is pushed as a teammate's finding on two content words (L2)",
@@ -18128,7 +18128,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "German function words count toward a German shown sentence",
     file: `${SCHEMA}/src/substance-sentence.ts`,
-    from: " && !(isGerman && GERMAN_STOP_WORDS.has(token))).length;",
+    from: " && !(isGerman && GERMAN_FUNCTION_WORDS.has(token))).length;",
     to: ").length;",
     test: `${SCHEMA}/test/substance-sentence.test.ts`,
     because: "\"Das ist nicht so, wie es war.\" passes for a sentence with content",
@@ -18438,6 +18438,22 @@ export const MUTATIONS: readonly Mutation[
     because: "\"ci\" and \"db\" in running lower-case text become words, and with them \"an\", \"to\" and \"is\" (M6)",
   },
   {
+    label: "the German supplement is dropped from the hub's function words",
+    file: `${SCHEMA}/src/stop-words.ts`,
+    from: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS, ...GERMAN_STOP_SUPPLEMENT]);",
+    to: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS]);",
+    test: `${SERVER}/test/hint-content-terms.test.ts`,
+    because: "\"ja, das wurde so gemacht, passt\" keeps four words and points at any German tree that says them (M4)",
+  },
+  {
+    label: "a German shown sentence counts the words german.stop lacks",
+    file: `${SCHEMA}/src/stop-words.ts`,
+    from: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS, ...GERMAN_STOP_SUPPLEMENT]);",
+    to: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS]);",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Ich glaube, dass es passt.\" is shown as a teammate's finding (M4)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18448,7 +18464,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the session-command rule judges stop words too",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const isFunctionWord = (token: string): boolean =>\n    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_STOP_WORDS.has(token));",
+    from: "  const isFunctionWord = (token: string): boolean =>\n    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
     to: "  const isFunctionWord = (_token: string): boolean => false;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"weiter\" and \"alles\" are not session commands, so no real prompt of them is ever content-free",
@@ -18464,16 +18480,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the German stop list strips an English prompt",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_STOP_WORDS.has(token));",
-    to: "ENGLISH_STOP_WORDS.has(token) || GERMAN_STOP_WORDS.has(token);",
+    from: "ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
+    to: "ENGLISH_STOP_WORDS.has(token) || GERMAN_FUNCTION_WORDS.has(token);",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"why does the worker die\" loses \"die\" and the worker tree it shares two words with (L1)",
   },
   {
     label: "the language signal reads English as German",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  countWhere(tokens, (token) => GERMAN_STOP_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >\n",
-    to: "  countWhere(tokens, (token) => GERMAN_STOP_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >=\n",
+    from: "  countWhere(tokens, (token) => GERMAN_FUNCTION_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >\n",
+    to: "  countWhere(tokens, (token) => GERMAN_FUNCTION_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >=\n",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "a prompt with no stop word of either language is stripped of German function words it never had",
   },
@@ -18776,7 +18792,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/prompt-terms.test.ts 7
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/substance-sentence.test.ts 11
+ * PRINTS: packages/schema/test/substance-sentence.test.ts 12
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
@@ -18806,7 +18822,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 5
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
- * PRINTS: packages/server/test/hint-content-terms.test.ts 2
+ * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 8
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 3

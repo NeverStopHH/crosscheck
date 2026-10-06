@@ -24,7 +24,7 @@ import {
   isSessionMetaWord,
   steeringWordOf,
 } from "./session-control.ts";
-import { ENGLISH_STOP_WORDS, GERMAN_STOP_WORDS } from "./stop-words.ts";
+import { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
 
 /** Shorter tokens are not words to search on — the hub's and the connector's floor. */
 export const PROMPT_MIN_TOKEN_CHARS = 3;
@@ -49,8 +49,8 @@ const countWhere = (tokens: readonly string[], predicate: (token: string) => boo
 
 /** More German-only stop words than English-only ones. */
 export const isGermanPrompt = (tokens: readonly string[]): boolean =>
-  countWhere(tokens, (token) => GERMAN_STOP_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >
-  countWhere(tokens, (token) => ENGLISH_STOP_WORDS.has(token) && !GERMAN_STOP_WORDS.has(token));
+  countWhere(tokens, (token) => GERMAN_FUNCTION_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >
+  countWhere(tokens, (token) => ENGLISH_STOP_WORDS.has(token) && !GERMAN_FUNCTION_WORDS.has(token));
 
 export interface PromptTerms {
   /** Distinct content words, in order of first appearance. */
@@ -69,7 +69,7 @@ export const promptTerms = (text: string): PromptTerms => {
   const tokens = promptTokens(text);
   const isGerman = isGermanPrompt(tokens);
   const isFunctionWord = (token: string): boolean =>
-    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_STOP_WORDS.has(token));
+    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));
   // STEERING WORDS ARE NEVER TERMS (review 1006b, H1): not in the verdict,
   // and not as a shared word beside a real one. Session-meta words only
   // when the prompt reports the session (M3).
