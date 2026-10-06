@@ -19,9 +19,10 @@
  * attempt is dropped — the query is the one place this text goes on the
  * wire, and the wire-level pin lives in connector-cursor/test/privacy.test.ts.
  * A prompt with no searchable word is not even that: it never goes on the
- * wire, and the session's intent — its own already-published sentence, held
- * to the same two gates — is the only text that can travel in its place
- * (test/hint-intent-fallback.test.ts).
+ * wire, and nothing travels in its place — not the session's intent either
+ * (review 1006b, M6; test/hint-intent-fallback.test.ts). Such a turn, and a
+ * turn the harness wrote, is COUNTED in session state, and only counted
+ * (M7): the number, never a word of it.
  *
  * ORDER AT THE END IS THE CONTRACT: telemetry spool append, then session
  * state (seen-set + echo hash), then the caller emits. A crash — or a
@@ -38,7 +39,7 @@ import {
   MAX_SEARCH_QUERY_CHARS,
 } from "../constants.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
-import type { HintRefKind } from "../capture/records.ts";
+import type { DeliveryMatching, HintRefKind } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { getHintCandidates } from "../http/hub.ts";
@@ -55,13 +56,14 @@ import {
   withCoverageNote,
 } from "../hints/render.ts";
 import { SUBSTANCE_DELIVERY_CHANNEL } from "@crosscheck/schema";
-import type { DeliveryChannel } from "@crosscheck/schema";
+import type { DeliveryChannel, IntentProvenance } from "@crosscheck/schema";
 import { selectHint } from "../hints/select.ts";
 import type { HintSelection } from "../hints/select.ts";
 import {
   readSessionState,
   updateSessionState,
 } from "../state/session-state.ts";
+import type { SessionState } from "../state/session-state.ts";
 
 
 export interface SelectAndRenderHintInput {
@@ -105,6 +107,8 @@ interface Delivery {
    * briefing's, and the reason the two are never one number again.
    */
   readonly channel: DeliveryChannel;
+  /** What it was matched on, and whose intent the session held (M7). */
+  readonly matching: DeliveryMatching;
 }
 
 /** What every rendering of one selection shares. */
@@ -112,7 +116,7 @@ interface RenderScope {
   readonly repoRoot: string;
   readonly now: Date;
   /** Who wrote the session intent a candidate may have been matched on. */
-  readonly intentProvenance: string | null;
+  readonly intentProvenance: IntentProvenance | null;
   /** What the lines appended after the hint need (`hintTrailerReserve`). */
   readonly reserveChars: number;
   /** The channel a shown finding is booked on (`substanceChannelOf`). */
@@ -156,8 +160,10 @@ const deliveryOf = (
     return null;
   }
   const context = selection.context.workContext;
-  // What the hub matched this candidate on — the hint says which (§4).
+  // What the hub matched this candidate on — the hint says which (§4), and
+  // so does its delivery record (M7).
   const matchedOn = selection.context.matchedOn;
+  const matching: DeliveryMatching = { matchedOn, intentProvenance };
   if (selection.kind === "claim") {
     const text = renderClaimHint({
       claim: selection.claim,
@@ -186,6 +192,7 @@ const deliveryOf = (
       // sentence coming back as the reader's own observation is caught.
       bodyHash: hintBodyHash(shownSubstance(selection.claim.body)),
       text,
+      matching,
     };
   }
   return {
@@ -193,6 +200,7 @@ const deliveryOf = (
     refId: context.id,
     channel: "prompt_hint",
     bodyHash: null,
+    matching,
     text: renderPointerHint({
       context,
       matchedOn,
@@ -255,6 +263,23 @@ const selectNotice = (
     .find((notice) => notice.commits.length > 0);
 };
 
+/** The counters a turn the prompt path stood down on is booked under (M7). */
+type StoodDownCounter = "flooredPromptCount" | "harnessTurnCount";
+
+/**
+ * One more turn stood down on — the count and nothing else. Best effort, one
+ * bounded write: no state file, or a busy lock, loses the count, never the
+ * silence it counts.
+ */
+const bookStoodDown = (input: SelectAndRenderHintInput, counter: StoodDownCounter): Promise<boolean> =>
+  updateSessionState(input.home, input.hostSessionKey, (fresh) => ({ ...fresh, [counter]: fresh[counter] + 1 }));
+
+/** Whose intent the session held when it was handed something (M7). */
+const matchingOf = (state: SessionState, matchedOn: DeliveryMatching["matchedOn"]): DeliveryMatching => ({
+  matchedOn,
+  intentProvenance: state.workContextIntentProvenance ?? null,
+});
+
 /**
  * The whole prompt-time pipeline; returns the rendered hint or "" (silence).
  * Every branch that cannot prove a hint is worth injecting returns "".
@@ -267,6 +292,7 @@ export const selectAndRenderHint = async (
   // prompt: no call, not even the intent in its place. Around a wrapper,
   // only the human text is a query (@crosscheck/schema harness-turn.ts).
   if (isHarnessTurn(input.prompt)) {
+    await bookStoodDown(input, "harnessTurnCount");
     return "";
   }
   const humanText = humanPromptText(input.prompt);
@@ -277,6 +303,13 @@ export const selectAndRenderHint = async (
   // never asked (review 1006b, L5). Whether a prompt WITH content matches a
   // teammate's work is the hub's call — only the hub holds their words.
   const promptQuery = isContentFreePrompt(humanText) ? "" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);
+  // NOTHING STANDS IN for a prompt that said nothing — not the session's
+  // intent either (owner decision, review 1006b M6): no call at all, and the
+  // turn is counted as floored whatever the session's budget (M7).
+  if (promptQuery.length === 0) {
+    await bookStoodDown(input, "flooredPromptCount");
+    return "";
+  }
   // SECRET GATE — the capture scan's sibling, on the QUERY. The prompt goes
   // on the wire as a GET string (into a shared hub's request path and access
   // logs), and on the Cursor connector it is captured tool output — a failing
@@ -295,11 +328,6 @@ export const selectAndRenderHint = async (
     return "";
   }
   if (state.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION) {
-    return "";
-  }
-  // NOTHING STANDS IN for a prompt that said nothing — not the session's
-  // intent either (owner decision, review 1006b M6): no call at all.
-  if (promptQuery.length === 0) {
     return "";
   }
   const result = await getHintCandidates(input.hub, {
@@ -334,6 +362,8 @@ export const selectAndRenderHint = async (
         // (hints/echo.ts, the echo-loop exclusion).
         bodyHash: hintBodyHash(answer.claimBody),
         text,
+        // A question this developer asked, never a pointer they did not (M7).
+        matching: matchingOf(state, "answer"),
       };
       // The note rides the EMITTED text, never the remembered one: the
       // delivery record is what dedup and the echo-loop exclusion hash, and a

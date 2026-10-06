@@ -43,6 +43,8 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  HINT_MATCHED_ON_VALUES,
+  INTENT_PROVENANCES,
   MAX_PILOT_LABEL_REASON_CHARS,
   PILOT_LEGACY_COHORT,
   PILOT_SESSION_COHORTS,
@@ -584,6 +586,13 @@ export const hintDeliveries = pgTable("hint_deliveries", {
   channel: text("channel", { enum: DELIVERY_CHANNELS })
     .notNull()
     .default("unknown"),
+  /**
+   * What the hint was matched on, and who wrote the receiving session's
+   * intent (review 1006b, M7) — NULL when the connector did not say, never a
+   * guess. Mirrored in db/bootstrap.sql.
+   */
+  matchedOn: text("matched_on", { enum: HINT_MATCHED_ON_VALUES }),
+  intentProvenance: text("intent_provenance", { enum: INTENT_PROVENANCES }),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
 }, (table) => [

@@ -91,6 +91,13 @@ a closed enum), so the hub now lists the channels it records in the candidates a
 older hub the shown finding is booked `prompt_hint`, counted as a pointer rather than not at all
 (batch-1006 review). Upgrading the hub first still keeps the figures clean.*
 
+*Revised 2026-10-06 (batch-1006b review, M7): two nullable columns, `matched_on` (`prompt` | `intent` |
+`answer`) and `intent_provenance` (`declared` | `derived`), say what a prompt-time delivery answered and
+whose intent the receiving session held, so the per-person followed/overrode figures can split a pointer
+nobody asked for from an answer somebody waited for. Additive: optional on the wire, never defaulted,
+NULL from an older connector and on every row written before them; an unknown `matched_on` value is
+refused like an unknown channel. Other channels leave both NULL.*
+
 ### 3.2 `pilot_marks` — the only human input, and it is never a question
 
 ```

@@ -160,16 +160,19 @@ describe("a strong, evidence-backed match carries its substance", () => {
   });
 });
 
-/** The channel of the one hint_delivery record the flow spooled. */
-const spooledChannel = async (f: Fixture): Promise<unknown> => {
+/** The body of the one hint_delivery record the flow spooled. */
+const spooledDelivery = async (f: Fixture): Promise<Record<string, unknown>> => {
   const spool = await readSessionSpool(f.home, f.key, sessionSlug(HOST_KEY));
   const record = JSON.parse(spool.lines[0] ?? "{}") as {
     kind?: string;
-    body?: { channel?: unknown };
+    body?: Record<string, unknown>;
   };
   expect(record.kind).toBe("hint_delivery");
-  return record.body?.channel;
+  return record.body ?? {};
 };
+
+/** The channel of the one hint_delivery record the flow spooled. */
+const spooledChannel = async (f: Fixture): Promise<unknown> => (await spooledDelivery(f))["channel"];
 
 describe("an inline finding is still counted, on a channel of its own", () => {
 
@@ -213,6 +216,25 @@ describe("an inline finding is still counted, on a channel of its own", () => {
     // Assert — prompt_substance only ever books a finding that was shown
     expect(text).toContain("crosscheck pointer:");
     expect(await spooledChannel(f)).toBe("prompt_hint");
+  });
+
+  test("the delivery says what it was matched on and whose intent the session held (M7)", async () => {
+    // Arrange — the session's intent was the intent worker's
+    const f = await fixture("sf-matched-on");
+    const state = await readSessionState(f.home, HOST_KEY);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+    await writeSessionState(f.home, { ...state, workContextIntent: "Make uploads survive the gateway", workContextIntentProvenance: "derived" });
+    f.hub.setCandidates([decisionTree(4)]);
+
+    // Act
+    await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    const delivery = await spooledDelivery(f);
+    expect(delivery["matchedOn"]).toBe("prompt");
+    expect(delivery["intentProvenance"]).toBe("derived");
   });
 
   test("a pointer stays on prompt_hint", async () => {

@@ -268,6 +268,8 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -408,6 +410,8 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -605,6 +609,8 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
       } satisfies SessionState);
 
       // Act

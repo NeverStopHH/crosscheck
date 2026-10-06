@@ -154,6 +154,10 @@ CREATE TABLE IF NOT EXISTS hint_deliveries (
   -- cannot be attributed to either, so guessing would manufacture the
   -- measurement the pilot report exists to take.
   channel text NOT NULL DEFAULT 'unknown',
+  -- What the hint was matched on and whose intent the session held (review
+  -- 1006b, M7); NULL when the connector did not say.
+  matched_on text,
+  intent_provenance text,
   delivered_at timestamptz NOT NULL,
   pulled_at timestamptz
 );
@@ -1110,6 +1114,13 @@ ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
 -- attributed to either. Nothing is back-filled, and the report prints
 -- 'unknown' as its own bucket rather than folding it into a guess.
 ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown';
+
+-- WHAT A DELIVERY WAS MATCHED ON, AND WHOSE INTENT THE SESSION HELD (review
+-- 1006b, M7), for the per-person followed/overrode measurement. NULL on every
+-- existing row and on every row from a connector older than the fields:
+-- nothing is back-filled, and NULL is the honest word for "not said".
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS matched_on text;
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS intent_provenance text;
 
 -- The same column for a hub that already has the table. 07 3.6 found this
 -- missing: the spec's migration list named four new tables and one pins

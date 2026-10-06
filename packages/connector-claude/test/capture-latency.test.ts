@@ -103,6 +103,8 @@ const sessionState = (repoRoot: string): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
   briefingPending: false,
   stopTurnCount: 0,
   summarizerFireCount: 0,

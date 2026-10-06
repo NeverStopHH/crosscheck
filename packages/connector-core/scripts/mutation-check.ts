@@ -17743,7 +17743,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a prompt that said nothing still costs a hub call",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  if (promptQuery.length === 0) {\n    return \"\";\n  }\n",
+    from: "  if (promptQuery.length === 0) {\n    await bookStoodDown(input, \"flooredPromptCount\");\n    return \"\";\n  }\n",
     to: "",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ja ok\" spends a round trip of the 800 ms budget on a call nothing can answer (M6)",
@@ -17935,7 +17935,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a turn that is all harness still asks the hub",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  if (isHarnessTurn(input.prompt)) {\n    return \"\";\n  }\n  const humanText",
+    from: "  if (isHarnessTurn(input.prompt)) {\n    await bookStoodDown(input, \"harnessTurnCount\");\n    return \"\";\n  }\n  const humanText",
     to: "  const humanText",
     test: `${CORE}/test/hint-harness-turn.test.ts`,
     because: "every background notification spends a call and sends the session's intent to fetch a pointer nobody prompted",
@@ -18230,6 +18230,150 @@ export const MUTATIONS: readonly Mutation[
     because: "a megabyte of pasted blanks fills the window and the human text after it is never read (M5)",
   },
   {
+    label: "a delivery record drops what it was matched on",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "      ...(matching === undefined\n        ? {}\n        : { matchedOn: matching.matchedOn, intentProvenance: matching.intentProvenance }),\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the per-person followed/overrode measurement cannot tell a prompt match from an answer or a declared intent from a derived one (M7)",
+  },
+  {
+    label: "the recorder never hands the matching to the record",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "    target.now,\n    delivery.matching,\n  );",
+    to: "    target.now,\n  );",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because: "every delivery reaches the hub saying nothing about what it answered, and the column stays NULL for good (M7)",
+  },
+  {
+    label: "an answer is booked as a prompt match",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "        matching: matchingOf(state, \"answer\"),",
+    to: "        matching: matchingOf(state, \"prompt\"),",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because: "an answer the developer waited for is counted as a pointer they never asked for, and its follow rate inflates the pointer's (M7)",
+  },
+  {
+    label: "a pointer's delivery forgets whose intent the session held",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const matching: DeliveryMatching = { matchedOn, intentProvenance };",
+    to: "  const matching: DeliveryMatching = { matchedOn, intentProvenance: null };",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a session steered by the intent worker reads like one with no intent, and a derived intent's misses are booked to nobody (M7)",
+  },
+  {
+    label: "an answer's delivery forgets whose intent the session held",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  matchedOn,\n  intentProvenance: state.workContextIntentProvenance ?? null,\n});",
+    to: "  matchedOn,\n  intentProvenance: null,\n});",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because: "a declared intent's answers are booked as intent-less, and the declared/derived split loses its solicited half (M7)",
+  },
+  {
+    label: "a harness turn is silent but never counted",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    await bookStoodDown(input, \"harnessTurnCount\");\n",
+    to: "",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "a session drowned in background notifications reads as a session nothing matched (M7)",
+  },
+  {
+    label: "a floored prompt is silent but never counted",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    await bookStoodDown(input, \"flooredPromptCount\");\n",
+    to: "",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "\"mache weiter\" all day reads as a session whose tasks matched nothing (M7)",
+  },
+  {
+    label: "a stood-down turn is booked as nothing",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "({ ...fresh, [counter]: fresh[counter] + 1 })",
+    to: "({ ...fresh, [counter]: fresh[counter] })",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "the counters exist and stay at zero, which is the false \"nothing was skipped\" (M7)",
+  },
+  {
+    label: "a compact erases the floored-prompt count",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        flooredPromptCount: previous.flooredPromptCount,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "every auto-compact resets the count to 0, so a long session reports only its last stretch (M7)",
+  },
+  {
+    label: "a compact erases the harness-turn count",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        harnessTurnCount: previous.harnessTurnCount,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "every auto-compact resets the count to 0, so a long session reports only its last stretch (M7)",
+  },
+  {
+    label: "the health read sums one session's floored prompts only",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "      flooredPrompts: total.flooredPrompts + session.flooredPromptCount,",
+    to: "      flooredPrompts: session.flooredPromptCount,",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "status shows the newest session's count as the repo's (M7)",
+  },
+  {
+    label: "the health read never sums the harness turns",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "      harnessTurns: total.harnessTurns + session.harnessTurnCount,",
+    to: "      harnessTurns: total.harnessTurns,",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "status says no harness turn was skipped however many were (M7)",
+  },
+  {
+    label: "status never says what the prompt path stood down on",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "${claims}${stoodDownPart(health)}`;",
+    to: "${claims}`;",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "a quiet hints line cannot tell \"nothing was asked\" from \"nothing matched\" (M7)",
+  },
+  {
+    label: "the hub discards what a delivery was matched on",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      matchedOn: body.matchedOn ?? null,",
+    to: "      matchedOn: null,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "the connector says it and the column stays NULL, which reads as an older connector (M7)",
+  },
+  {
+    label: "the hub discards whose intent the session held",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      intentProvenance: body.intentProvenance ?? null,",
+    to: "      intentProvenance: null,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "the declared/derived split is sent and never stored (M7)",
+  },
+  {
+    label: "the hub stores any word as what a delivery was matched on",
+    file: `${SCHEMA}/src/hint.ts`,
+    from: "  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional(),",
+    to: "  matchedOn: z.string().optional(),",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "a value no report knows lands in the measurement as its own silent bucket (M7)",
+  },
+  {
+    label: "the matched-on column reaches only hubs that do not exist yet",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS matched_on text;",
+    to: "-- (migration removed)",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "every running hub 42703s on the first delivery that says what it matched, and refuses the row (M7)",
+  },
+  {
+    label: "the intent-provenance column reaches only hubs that do not exist yet",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS intent_provenance text;",
+    to: "-- (migration removed)",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "every running hub 42703s on the first delivery that carries a provenance, and refuses the row (M7)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18315,7 +18459,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/absence-cli.test.ts 11
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
- * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/capture-health.test.ts 5
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
  * PRINTS: packages/cli/test/ci-report-build.test.ts 3
  * PRINTS: packages/cli/test/ci-report-entry.test.ts 2
@@ -18482,11 +18626,11 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
- * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
- * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 8
+ * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
  * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 16
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 5
@@ -18524,7 +18668,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 1
- * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
+ * PRINTS: packages/connector-core/test/question-delivery.test.ts 4
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
@@ -18537,7 +18681,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
- * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 4
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
@@ -18589,7 +18733,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage.test.ts 13
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
- * PRINTS: packages/server/test/ddl-sync.test.ts 11
+ * PRINTS: packages/server/test/ddl-sync.test.ts 13
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
@@ -18599,7 +18743,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 5
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 1
- * PRINTS: packages/server/test/hint-deliveries.test.ts 5
+ * PRINTS: packages/server/test/hint-deliveries.test.ts 8
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 3
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4

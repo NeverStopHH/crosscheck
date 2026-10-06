@@ -16,6 +16,7 @@ import {
 } from "../src/constants.ts";
 import {
   withBriefingSolvedRefs,
+  withCarriedCapture,
   withKnownWorktreeRoot,
   withProbedFingerprint,
   withRecordedIntent,
@@ -93,6 +94,8 @@ const baseState = (): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
 });
 
 describe("withRecordedIntent remembers who wrote the intent", () => {
@@ -106,6 +109,20 @@ describe("withRecordedIntent remembers who wrote the intent", () => {
       expect(next.workContextIntentProvenance).toBe(provenance);
     },
   );
+});
+
+describe("a SessionStart re-fire keeps the turns the prompt path stood down on (M7)", () => {
+  test("the floored and harness counts survive a compact on the same binding", () => {
+    // Arrange — the session floored three prompts and skipped two harness turns
+    const previous = { ...baseState(), flooredPromptCount: 3, harnessTurnCount: 2 };
+
+    // Act — the re-fire re-creates the state with fresh zeros
+    const next = withCarriedCapture(baseState(), previous);
+
+    // Assert
+    expect(next.flooredPromptCount).toBe(3);
+    expect(next.harnessTurnCount).toBe(2);
+  });
 });
 
 describe("withBriefingSolvedRefs", () => {

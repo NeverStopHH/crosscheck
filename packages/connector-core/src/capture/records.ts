@@ -2,7 +2,7 @@ import { PROTOCOL_VERSION } from "@crosscheck/schema";
 import type { Envelope, Intent, LandedStop } from "@crosscheck/schema";
 
 import { FOREIGN_SESSION_DELIVERY } from "./seq.ts";
-import type { DeliveryChannel } from "@crosscheck/schema";
+import type { DeliveryChannel, DeliveryMatchedOn, IntentProvenance } from "@crosscheck/schema";
 
 export interface Producer {
   readonly developerId: string;
@@ -84,7 +84,19 @@ import { deliveryIdFor } from "@crosscheck/schema";
  * its deliveries into the bucket that means "nobody can tell", silently, on
  * the one surface whose whole purpose is being counted. Required makes the
  * compiler ask.
+ *
+ * `matching` is the opposite case, and optional on purpose (review 1006b,
+ * M7): what a PROMPT-TIME delivery was matched on — the prompt, or a question
+ * this developer asked — and whose intent the session held. A briefing
+ * pointer, a failure-time solved hint or a pre-edit notice was matched on
+ * none of those, and its channel already says what it answered; inventing a
+ * value for it would be the guess the field exists to avoid.
  */
+export interface DeliveryMatching {
+  readonly matchedOn: DeliveryMatchedOn;
+  readonly intentProvenance: IntentProvenance | null;
+}
+
 export const hintDeliveryRecord = (
   receiverSessionId: string,
   refKind: HintRefKind,
@@ -92,6 +104,7 @@ export const hintDeliveryRecord = (
   channel: DeliveryChannel,
   producer: Producer,
   now: Date,
+  matching?: DeliveryMatching,
 ): Envelope =>
   buildEnvelope(
     "hint_delivery",
@@ -101,6 +114,9 @@ export const hintDeliveryRecord = (
       refKind,
       refId,
       channel,
+      ...(matching === undefined
+        ? {}
+        : { matchedOn: matching.matchedOn, intentProvenance: matching.intentProvenance }),
       deliveredAt: now.toISOString(),
     },
     producer,

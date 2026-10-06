@@ -302,6 +302,8 @@ const freshState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
   ...overrides,
 });
 
@@ -423,9 +425,31 @@ describe("the answer to my own question, on the prompt path", () => {
     // Assert: emitted, and the delivery is already on the hub.
     expect(text).toContain(`«${ANSWER_BODY}»`);
     expect(f.hub.calls.records).toBe(1);
-    const shipped = f.hub.postedRecords[0] as { kind?: string; body?: { refId?: string } };
+    const shipped = f.hub.postedRecords[0] as { kind?: string; body?: { refId?: string; matchedOn?: string } };
     expect(shipped.kind).toBe("hint_delivery");
     expect(shipped.body?.refId).toBe(ANSWER_CLAIM_ID);
+    // What it was matched on travels with it (review 1006b, M7): an answer
+    // this developer waited for, never confused with an unasked pointer.
+    expect(shipped.body?.matchedOn).toBe("answer");
+  });
+
+  test("the answer's delivery says whose intent the session held when it arrived (M7)", async () => {
+    // Arrange — the developer declared the session's intent with set_intent
+    const f = await fixture("qd-provenance");
+    const state = await readSessionState(f.home, HOST_KEY);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+    await writeSessionState(f.home, { ...state, workContextIntent: "Answer the cache question", workContextIntentProvenance: "declared" });
+    f.hub.setCandidates([]);
+    f.hub.setAnswers([answeredQuestion()]);
+
+    // Act
+    await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    const shipped = f.hub.postedRecords[0] as { body?: { intentProvenance?: unknown } };
+    expect(shipped.body?.intentProvenance).toBe("declared");
   });
 
   test("an UNSOLICITED pointer is spooled, not shipped mid-prompt", async () => {

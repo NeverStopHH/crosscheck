@@ -1,6 +1,6 @@
 import { LANDED_NOTICE_MIN_SPARE_MS, MAX_HINTS_PER_SESSION } from "../constants.ts";
 import { hintDeliveryRecord, landedNoticeDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
-import type { HintRefKind, Producer } from "../capture/records.ts";
+import type { DeliveryMatching, HintRefKind, Producer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { HubContext } from "../http/hub.ts";
 import { recordDeliveredHintHash } from "./delivered-store.ts";
@@ -46,6 +46,8 @@ export interface PendingHintDelivery {
    * report counts.
    */
   readonly channel: DeliveryChannel;
+  /** What a prompt-time delivery was matched on (records.ts, `DeliveryMatching`). */
+  readonly matching?: DeliveryMatching;
 }
 
 /**
@@ -88,6 +90,7 @@ export const rememberHintDelivery = async (
     delivery.channel,
     producer,
     target.now,
+    delivery.matching,
   );
   await appendRecords(
     target.home,

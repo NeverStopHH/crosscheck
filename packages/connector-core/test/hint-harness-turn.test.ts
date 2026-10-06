@@ -17,7 +17,7 @@ import { SYSTEM_NOTIFICATION_MARKER } from "@crosscheck/schema";
 import { selectAndRenderHint } from "../src/flows/hint.ts";
 import { repoKey } from "../src/config/paths.ts";
 import type { HubContext } from "../src/http/client.ts";
-import { writeSessionState } from "../src/state/session-state.ts";
+import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import { SELF_DEVELOPER_ID, startHintHub } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -116,6 +116,66 @@ describe("a turn that is all harness gets no hint and costs no call", () => {
     // Assert — silence, and not even the intent went out in its place
     expect(text).toBe("");
     expect(f.hub.calls.candidates).toBe(0);
+  });
+});
+
+describe("each turn the prompt path stood down on is counted, and only counted (review 1006b, M7)", () => {
+  /** The state file's whole text — a count is all it may gain. */
+  const stateText = async (f: Fixture): Promise<string> => JSON.stringify(await readSessionState(f.home, HOST_KEY));
+
+  test("a harness turn books one harness turn and no floored prompt", async () => {
+    // Arrange
+    const f = await fixture("ht-count-harness");
+
+    // Act
+    await hintFor(f, TASK_NOTIFICATION);
+    await hintFor(f, `${SYSTEM_NOTIFICATION_MARKER}\n${TASK_NOTIFICATION}`);
+
+    // Assert
+    const state = await readSessionState(f.home, HOST_KEY);
+    expect(state?.harnessTurnCount).toBe(2);
+    expect(state?.flooredPromptCount).toBe(0);
+  });
+
+  test("a content-free prompt books one floored prompt and no harness turn", async () => {
+    // Arrange
+    const f = await fixture("ht-count-floored");
+
+    // Act
+    await hintFor(f, "mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen");
+
+    // Assert
+    const state = await readSessionState(f.home, HOST_KEY);
+    expect(state?.flooredPromptCount).toBe(1);
+    expect(state?.harnessTurnCount).toBe(0);
+  });
+
+  test("a prompt with a task books neither", async () => {
+    // Arrange
+    const f = await fixture("ht-count-task");
+
+    // Act
+    await hintFor(f, "why does the refresh handler 500 after the key rotation");
+
+    // Assert
+    const state = await readSessionState(f.home, HOST_KEY);
+    expect(state?.flooredPromptCount).toBe(0);
+    expect(state?.harnessTurnCount).toBe(0);
+  });
+
+  test("PRIVACY: the counts are all that is kept — no word of either turn reaches the state", async () => {
+    // Arrange
+    const f = await fixture("ht-count-private");
+
+    // Act
+    await hintFor(f, TASK_NOTIFICATION);
+    await hintFor(f, "ok weiter, wiederuafnhemen");
+
+    // Assert
+    const text = await stateText(f);
+    expect(text).not.toContain("493ffb4f");
+    expect(text).not.toContain("Monitor");
+    expect(text).not.toContain("wiederuafnhemen");
   });
 });
 

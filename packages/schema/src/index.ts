@@ -182,13 +182,15 @@ export {
 export type { Question, QuestionAnswer, QuestionStatus } from "./question.ts";
 
 export {
+  HINT_MATCHED_ON_VALUES,
   HINT_REF_KINDS,
+  INTENT_PROVENANCES,
   HintDeliverySchema,
   HintSchema,
   HintTrustSchema,
   MAX_HINT_TEXT_LENGTH,
 } from "./hint.ts";
-export type { Hint, HintDelivery, HintTrust } from "./hint.ts";
+export type { DeliveryMatchedOn, Hint, HintDelivery, HintTrust, IntentProvenance } from "./hint.ts";
 
 export {
   CLOUD_AGENT_IDENTITIES,

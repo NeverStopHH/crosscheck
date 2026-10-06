@@ -259,6 +259,16 @@ const SessionStateObjectSchema = z.looseObject({
    */
   hintCandidatesSeen: z.number().int().min(0).default(0),
   /**
+   * The turns the prompt path stood down on before any call (review 1006b,
+   * M7), counted apart: a content-free prompt the floor refused, and a turn
+   * the harness wrote. COUNTS ONLY, never a word of either turn — so the
+   * per-person followed/overrode measurement can tell "nothing was asked"
+   * from "something was asked and nothing matched". Booked in flows/hint.ts;
+   * default 0 keeps every older state file parsing.
+   */
+  flooredPromptCount: z.number().int().min(0).default(0),
+  harnessTurnCount: z.number().int().min(0).default(0),
+  /**
    * True when registration happened OUTSIDE SessionStart — PostToolUse's
    * state-less recovery, the parent-workspace/finding-#9 shape — so this
    * session has never seen its briefing. The next UserPromptSubmit pays the
@@ -786,6 +796,8 @@ export const withCarriedCapture = (
         foreignRepoDrops: previous.foreignRepoDrops,
         outsideRootDrops: previous.outsideRootDrops,
         hintCandidatesSeen: previous.hintCandidatesSeen,
+        flooredPromptCount: previous.flooredPromptCount,
+        harnessTurnCount: previous.harnessTurnCount,
         // The #17 root cache is the session's, not the fire's: dropping it
         // makes the next tool call pay git again for a root already judged.
         knownWorktreeRoots: previous.knownWorktreeRoots,
@@ -1466,6 +1478,8 @@ export const deriveSessionState = (
     lastEditedPath: null,
     lastEditedPathResolvedAgainst: null,
     hintCandidatesSeen: 0,
+    flooredPromptCount: 0,
+    harnessTurnCount: 0,
     briefingPending: false,
     stopTurnCount: 0,
     summarizerFireCount: 0,
