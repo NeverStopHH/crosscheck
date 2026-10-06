@@ -346,10 +346,12 @@ export type { CitedHead } from "./evidence-resolution.ts";
 export {
   SUBSTANCE_MIN_EVIDENCE_REFS,
   SUBSTANCE_ROOT_CAUSE_STATUSES,
+  SUBSTANCE_MIN_MATCHED_TERMS,
+  isStrongSubstanceMatch,
   isSubstanceShape,
   qualifiesAsSubstance,
 } from "./substance-trust.ts";
-export type { SubstanceCandidate } from "./substance-trust.ts";
+export type { SubstanceCandidate, SubstanceMatch } from "./substance-trust.ts";
 export { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS, GERMAN_STOP_SUPPLEMENT, GERMAN_STOP_WORDS } from "./stop-words.ts";
 export {
   ELLIPSIS,

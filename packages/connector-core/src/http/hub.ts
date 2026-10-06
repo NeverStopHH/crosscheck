@@ -1479,10 +1479,11 @@ export const HintClaimCandidateSchema = z.looseObject({
    */
   axes: EvidenceAxesSchema.optional(),
   /**
-   * How many distinct words of the matched query THIS claim's SHOWN SENTENCE
-   * shares (the hub counts on the sentence a hint would show, never on the
-   * rest of the body, so a keyword-stuffed tail buys nothing) — the
-   * relevance half of the substance gate (hints/select.ts isStrongMatch).
+   * How many distinct TOPICAL words of the matched query THIS claim's SHOWN
+   * SENTENCE shares (the hub counts on the sentence a hint would show, never
+   * on the rest of the body, so a keyword-stuffed tail buys nothing; and
+   * closed-class words never, round 3 H3 + M6) — the relevance half of the
+   * substance gate (hints/select.ts isStrongMatch).
    * OPTIONAL, and absent fails closed: an older hub never measured it, and a
    * claim whose relevance nobody measured is a pointer, not substance.
    */
@@ -1516,9 +1517,9 @@ const HintContextSchema = z.looseObject({
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   /**
-   * How many distinct words of the matched query the context's OWN statement
-   * (title, description, intent) shares — a tree clearly about the query
-   * lends its strength to a claim of it that shares one (hints/select.ts).
+   * How many distinct TOPICAL words of the matched query the context's OWN
+   * statement (title, description, intent) shares — a tree clearly about the
+   * query lends its strength to a claim of it that shares one (hints/select.ts).
    * Optional: absent from an older hub, and then it lends nothing.
    */
   matchedTerms: z.number().int().min(0).optional(),
@@ -1563,6 +1564,10 @@ export const HintContextCandidateSchema = z
     // most query words ONE statement of the tree shares. Optional — an older
     // hub has no floor to report, and then the selector cannot look again.
     sharedTerms: z.number().int().min(0).optional(),
+    // The tree's STRENGTH (round 3, H3 + M6): the most TOPICAL query words one
+    // of its statements shares. Optional — an older hub never measured it, and
+    // then every tree is equally strong and the hub's order decides.
+    topicalTerms: z.number().int().min(0).optional(),
     // True when the hub's claim window left visible rows behind, so a count
     // read off `claims` is a lower bound. Absent from an older hub: no claim.
     claimsTruncated: z.boolean().optional(),
@@ -1574,6 +1579,7 @@ export const HintContextCandidateSchema = z
     matchedTargets: parseRows(value.matchedTargets, MatchedTargetSchema).rows,
     matchedOn: value.matchedOn,
     ...(value.sharedTerms === undefined ? {} : { sharedTerms: value.sharedTerms }),
+    ...(value.topicalTerms === undefined ? {} : { topicalTerms: value.topicalTerms }),
     ...(value.claimsTruncated === undefined ? {} : { claimsTruncated: value.claimsTruncated }),
   }));
 

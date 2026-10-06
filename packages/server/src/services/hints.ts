@@ -59,6 +59,7 @@ import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
   humanPromptText,
+  isStrongSubstanceMatch,
   promptTerms,
   qualifiesAsSubstance,
   shownSubstance,
@@ -221,7 +222,8 @@ export interface HintClaimCandidate {
    * a tree the prompt brushed (DESIGN.md §4: substance needs a strong match).
    * Counted on exactly the text a hint would show (@crosscheck/schema
    * shownSubstance: the sentence, NFKC, redaction and the cut), never on the
-   * rest of the body, and against the prompt's content terms.
+   * rest of the body, and against the prompt's TOPICAL terms — closed-class
+   * words excluded from the strong-match count (round 3, H3 + M6).
    */
   readonly matchedTerms: number;
   readonly createdAt: string;
@@ -259,11 +261,11 @@ export interface HintContextCandidate {
     readonly createdAt: string;
     readonly updatedAt: string | null;
     /**
-     * How many distinct words of the matched query the context's OWN
+     * How many distinct TOPICAL words of the matched query the context's OWN
      * statement — title, description, intent — shares: the tree is clearly
      * about the query when this reaches HINT_MIN_SHARED_TERMS, which lets a
      * claim of it that shares a single word count as a strong match
-     * (connector hints/select.ts).
+     * (`@crosscheck/schema` isStrongSubstanceMatch).
      */
     readonly matchedTerms: number;
   };
@@ -294,6 +296,13 @@ export interface HintContextCandidate {
    * on, shipped so the connector can look again (hints/select.ts).
    */
   readonly sharedTerms: number;
+  /**
+   * The most distinct TOPICAL query words ONE of its statements shares — its
+   * own, or one visible claim: the tree's STRENGTH (round 3, H3 + M6). The
+   * selector pushes substance only from a tree at least as strong as the best
+   * pointer, and points at the strongest tree, never at the hub's first.
+   */
+  readonly topicalTerms: number;
 }
 
 /**
@@ -327,7 +336,7 @@ interface ClaimWindowScope {
   readonly now: Date;
   readonly readerDeveloperId: string;
   readonly repo: string;
-  /** The matched query's FTS tokens — what `matchedTerms` counts against. */
+  /** The matched query's TOPICAL terms — what `matchedTerms` counts against (H3 + M6). */
   readonly tokens: readonly string[];
 }
 
@@ -513,10 +522,11 @@ const listContextClaims = async (
   return new Map(workContextIds.map((id, index) => [id, lists[index] ?? EMPTY_WINDOW]));
 };
 
-/** What one statement shares with the query: every word, and the floor count (C1). */
+/** What one statement shares with the query: every word, the floor count (C1), and its topical words. */
 interface StatementTerms {
   readonly all: number;
   readonly floor: number;
+  readonly topical: number;
 }
 
 /**
@@ -537,11 +547,14 @@ const listStatementTerms = async (
       id: workContexts.id,
       all: sharedTermsSql(contextStatement, terms.all),
       floor: floorTermsSql(contextStatement, terms.all, terms.topical),
+      topical: sharedTermsSql(contextStatement, terms.topical),
     })
     .from(workContexts)
     .where(inArray(workContexts.id, workContextIds))
     .limit(workContextIds.length);
-  return new Map(rows.map((row) => [row.id, { all: Number(row.all), floor: Number(row.floor) }]));
+  return new Map(
+    rows.map((row) => [row.id, { all: Number(row.all), floor: Number(row.floor), topical: Number(row.topical) }]),
+  );
 };
 
 /** The base commit of each context's owning session, for the drift label. */
@@ -633,7 +646,7 @@ const listClaimTermMaxima = async (
   readerDeveloperId: string,
   workContextIds: readonly string[],
   terms: QueryTerms,
-): Promise<ReadonlyMap<string, number>> => {
+): Promise<ReadonlyMap<string, ClaimTermMaxima>> => {
   const tokens = terms.all;
   if (workContextIds.length === 0 || tokens.length === 0) {
     return new Map();
@@ -644,6 +657,8 @@ const listClaimTermMaxima = async (
       id: claims.workContextId,
       // The best FLOOR count of one claim: the topical-word rule per claim (C1).
       terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,
+      // And its most topical words — the tree's strength beside its own statement's (H3 + M6).
+      topical: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, terms.topical)})`,
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
@@ -658,8 +673,14 @@ const listClaimTermMaxima = async (
       ),
     )
     .groupBy(claims.workContextId);
-  return new Map(rows.map((row) => [row.id, Number(row.terms)]));
+  return new Map(rows.map((row) => [row.id, { floor: Number(row.terms), topical: Number(row.topical) }]));
 };
+
+/** What one context's visible claims share at best: the floor count, and the most topical words. */
+interface ClaimTermMaxima {
+  readonly floor: number;
+  readonly topical: number;
+}
 
 /** The claim author's session, beside the context owner's the scope reads. */
 const claimAuthors = alias(agentSessions, "hint_claim_authors");
@@ -786,21 +807,23 @@ const matchCandidates = async (
   const qualified = pool
     .map((row) => ({
       row,
-      ownTerms: statementTerms.get(row.id)?.all ?? 0,
-      sharedTerms: Math.max(statementTerms.get(row.id)?.floor ?? 0, claimTerms.get(row.id) ?? 0),
+      // TOPICAL, like every relevance count the selector reads (H3 + M6).
+      ownTerms: statementTerms.get(row.id)?.topical ?? 0,
+      sharedTerms: Math.max(statementTerms.get(row.id)?.floor ?? 0, claimTerms.get(row.id)?.floor ?? 0),
+      topicalTerms: Math.max(statementTerms.get(row.id)?.topical ?? 0, claimTerms.get(row.id)?.topical ?? 0),
     }))
     .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = qualified.map(({ row }) => row.id);
   const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
     listContextClaims(
-      { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens },
+      { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens: query.terms.topical },
       ids,
     ),
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(query.text)),
   ]);
-  return qualified.map(({ row, ownTerms, sharedTerms }) => ({
+  return qualified.map(({ row, ownTerms, sharedTerms, topicalTerms }) => ({
     workContext: {
       id: row.id,
       title: row.title,
@@ -816,13 +839,39 @@ const matchCandidates = async (
       updatedAt: row.updatedAt,
       matchedTerms: ownTerms,
     },
-    claims: (claimsByContext.get(row.id) ?? EMPTY_WINDOW).claims,
+    claims: withheldUnlessStrong(
+      (claimsByContext.get(row.id) ?? EMPTY_WINDOW).claims,
+      ownTerms,
+      (matchedTargets.get(row.id) ?? []).some((target) => target.kind === CONTENT_IDENTITY_TARGET_KIND),
+    ),
     claimsTruncated: (claimsByContext.get(row.id) ?? EMPTY_WINDOW).truncated,
     matchedTargets: matchedTargets.get(row.id) ?? [],
     matchedOn: query.on,
     sharedTerms,
+    topicalTerms,
   }));
 };
+
+/** The target kind that is content identity: the prompt carried the error itself. */
+const CONTENT_IDENTITY_TARGET_KIND = "error_fingerprint";
+
+/**
+ * THE HUB'S OWN STRONG-MATCH TEST ON THE BODY (hold-out review round 3, H3 +
+ * M6): a body ships only when the claim qualifies as substance (the window
+ * already withheld every other) AND is strongly matched by the one rule the
+ * selector applies (`@crosscheck/schema` isStrongSubstanceMatch, topical
+ * counts). A connector older than the selector's best-match rule — 0.10.0
+ * pushes the first trusted claim it is handed — then has no weakly matched,
+ * wrong-tree finding to inline.
+ */
+const withheldUnlessStrong = (
+  window: readonly HintClaimCandidate[],
+  treeTerms: number,
+  isContentIdentity: boolean,
+): readonly HintClaimCandidate[] =>
+  window.map((claim) =>
+    isStrongSubstanceMatch({ claimTerms: claim.matchedTerms, treeTerms, isContentIdentity }) ? claim : { ...claim, body: "" },
+  );
 
 /**
  * The prompt's candidates, or silence. NOTHING STANDS IN for a prompt that

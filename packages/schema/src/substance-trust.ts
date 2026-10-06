@@ -32,6 +32,37 @@ export interface SubstanceCandidate {
 export const isSubstanceShape = (kind: string, status: string): boolean =>
   (kind === "root_cause" && SUBSTANCE_ROOT_CAUSE_STATUSES.has(status)) || (kind === "decision" && status === "proposed");
 
+/**
+ * THE RELEVANCE HALF (hold-out review round 3, H3 + M6): how many words a
+ * shown finding must share to be pushed unasked — the content floor's own
+ * number, HINT_MIN_SHARED_TERMS on both sides of the wire.
+ */
+export const SUBSTANCE_MIN_MATCHED_TERMS = 2;
+
+/** What a claim's relevance is judged on, all counted in TOPICAL words. */
+export interface SubstanceMatch {
+  /** Topical query words the claim's SHOWN sentence shares. */
+  readonly claimTerms: number;
+  /** Topical query words its tree's own statement — title, description, intent — shares. */
+  readonly treeTerms: number;
+  /** The match is content identity: an error fingerprint the prompt carried. */
+  readonly isContentIdentity: boolean;
+}
+
+/**
+ * A STRONG MATCH, one rule for the hub's withholding and the connector's
+ * selector: the claim shares SUBSTANCE_MIN_MATCHED_TERMS topical words, or
+ * one while its tree's own statement shares that many, or the match is an
+ * error fingerprint. Closed-class words never count (C1): "token", "minute"
+ * and "rate" beside one "key" made a rate-limit decision a strong match for
+ * "token refresh fails after key rotation" — wrong-tree substance in 12 of
+ * 119 hold-out tasks.
+ */
+export const isStrongSubstanceMatch = (match: SubstanceMatch): boolean =>
+  match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS ||
+  (match.claimTerms > 0 && match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) ||
+  match.isContentIdentity;
+
 export const qualifiesAsSubstance = (claim: SubstanceCandidate): boolean =>
   claim.provenance === "declared" &&
   claim.status !== "superseded" &&

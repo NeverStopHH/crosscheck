@@ -663,8 +663,10 @@ describe("candidate pool integrity", () => {
     expect(seeded.data?.accepted).toBe(2);
 
     // Act — the raw payload, because "must not ship" is a fact about bytes.
+    // The query shares the declared claim's topical words, so the control
+    // below is a body the hub's strong-match test lets through (round 3, H3).
     const params = new URLSearchParams({
-      query: "why does refresh.ts 500",
+      query: "why does refresh.ts 500 when the rotated key never propagated",
       repo: REPO,
     });
     const response = await harness.app.request(

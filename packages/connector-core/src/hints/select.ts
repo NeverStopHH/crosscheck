@@ -28,6 +28,16 @@
  * by the return type. Below the precision floor (no proven lexical tier), or
  * past the session cap, or with nothing unseen: SILENCE. No hint is strictly
  * better than a weak one (§10 risk 1).
+ *
+ * FROM THE BEST MATCH ONLY (hold-out review round 3, H3 + M6): the hub's
+ * order is search rank, not relevance, and taking its first trusted claim
+ * pushed a finding from the wrong tree for 12 of 119 hold-out tasks. The
+ * substance comes only from a tree at least as STRONG as any a pointer could
+ * name — an exact target first, then `topicalTerms`, the most topical words
+ * one of its statements (its own, or a claim) shares — the hub's order among
+ * equals, and the claim sharing most topical words within it; a pointer names
+ * the strongest tree, never a weaker one in its place — or nothing, once it
+ * was shown.
  */
 import {
   HINT_MIN_EVIDENCE_REFS,
@@ -35,7 +45,7 @@ import {
   MAX_HINTS_PER_SESSION,
   SUBSTANCE_MATCH_KIND,
 } from "../constants.ts";
-import { promptTokens, substanceSentence } from "@crosscheck/schema";
+import { isStrongSubstanceMatch, promptTokens, substanceSentence } from "@crosscheck/schema";
 
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
@@ -174,19 +184,46 @@ const isStatedDecision = (claim: HintClaimCandidate): boolean =>
  * A shared FILE is none of them: it says two pieces of work are near each
  * other (§4 Solved before). An older hub sends no counts, and a relevance
  * nobody measured fails closed to the pointer.
+ *
+ * ONE RULE ON BOTH SIDES (round 3, H3 + M6): `@crosscheck/schema`
+ * isStrongSubstanceMatch, over the hub's TOPICAL counts — the hub withholds
+ * every body it refuses, so a connector older than this one has nothing
+ * weakly matched to inline.
  */
 const isStrongMatch = (
   claim: HintClaimCandidate,
   context: HintContextCandidate,
-): boolean => {
-  const claimTerms = claim.matchedTerms ?? 0;
-  const treeTerms = context.workContext.matchedTerms ?? 0;
-  return (
-    claimTerms >= HINT_MIN_SHARED_TERMS ||
-    (claimTerms > 0 && treeTerms >= HINT_MIN_SHARED_TERMS) ||
-    context.matchedTargets.some((target) => target.kind === SUBSTANCE_MATCH_KIND)
-  );
-};
+): boolean =>
+  isStrongSubstanceMatch({
+    claimTerms: claim.matchedTerms ?? 0,
+    treeTerms: context.workContext.matchedTerms ?? 0,
+    isContentIdentity: context.matchedTargets.some((target) => target.kind === SUBSTANCE_MATCH_KIND),
+  });
+
+/**
+ * A TREE'S STRENGTH (round 3, H3 + M6): an exact target first — the prompt
+ * named something the tree touched, a fact — then the most TOPICAL query
+ * words one of its statements shares (the hub's `topicalTerms`). A hub too
+ * old to send the number makes every tree equally strong, and the hub's
+ * order decides, as it always did.
+ */
+interface Strength {
+  readonly isExact: boolean;
+  readonly topical: number;
+}
+
+const strengthOf = (context: HintContextCandidate): Strength => ({
+  isExact: context.workContext.tier === "exact",
+  topical: context.topicalTerms ?? 0,
+});
+
+const isAtLeastAsStrong = (strength: Strength, than: Strength): boolean =>
+  strength.isExact === than.isExact ? strength.topical >= than.topical : strength.isExact;
+
+interface SubstanceOffer {
+  readonly context: HintContextCandidate;
+  readonly claim: HintClaimCandidate;
+}
 
 /**
  * The order a tree's claims are offered in: most relevant first, more shared
@@ -398,86 +435,98 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
   }
   const seen = new Set(input.seenRefIds);
   const eligible = input.candidates.filter(isEligibleContext(input)).map(withPushableClaims);
+  // THE BEST TREE A POINTER COULD NAME, shown already or not (round 3, H3 +
+  // M6): substance comes only from a tree at least this strong, and a weaker
+  // tree is never pointed at in its place.
+  const pointable = eligible.filter((context) => pointerAt(context, selfDeveloperId) !== null);
+  const strongest = pointable.map(strengthOf).reduce<Strength | null>(
+    (best, strength) => (best === null || !isAtLeastAsStrong(best, strength) ? strength : best),
+    null,
+  );
+  const isStrongest = (context: HintContextCandidate): boolean =>
+    strongest === null || isAtLeastAsStrong(strengthOf(context), strongest);
 
   // Substance pass over ALL eligible contexts first: an evidence-backed claim
-  // in the second-ranked context beats a pointer at the first-ranked one.
-  for (const context of eligible) {
-    // Negatives first (§4), then the most relevant of the rest.
-    const foreign = context.claims.filter((claim) =>
-      isForeignClaim(claim, selfDeveloperId),
-    );
-    const injectable = offeringOrder(foreign).find(
-      (claim) => isDeliverable(claim, context) && !seen.has(claim.id),
-    );
-    if (injectable !== undefined) {
-      // The rest are the tree's OTHER claims — the reader's own among them,
-      // since get_diagnosis reads those too — what the hint's pointer line
-      // says is one call away.
+  // in the second-ranked context beats a pointer at the first-ranked one —
+  // but only from a tree as strong as any (H3 + M6). Among equally strong
+  // trees the hub's order decides, relevance and freshness (§5's
+  // stale-vs-fresh), and within a tree the claim sharing most topical words.
+  const best = eligible
+    .filter(isStrongest)
+    .map((context): SubstanceOffer | undefined => {
+      // Negatives first (§4), then the most relevant of the rest.
+      const claim = offeringOrder(context.claims.filter((member) => isForeignClaim(member, selfDeveloperId))).find(
+        (member) => isDeliverable(member, context) && !seen.has(member.id),
+      );
+      return claim === undefined ? undefined : { context, claim };
+    })
+    .find((offer) => offer !== undefined);
+  if (best !== undefined) {
+    const { context, claim } = best;
+    const foreign = context.claims.filter((member) => isForeignClaim(member, selfDeveloperId));
+    // The rest are the tree's OTHER claims — the reader's own among them,
+    // since get_diagnosis reads those too — what the hint's pointer line
+    // says is one call away.
+    return {
+      kind: "claim",
+      context,
+      claim,
+      restCount: context.claims.length - 1,
+      isRestLowerBound: context.claimsTruncated === true,
+      ifUnfit: isUnpointed(context, seen)
+        ? { kind: "pointer", context, claimCount: foreign.length }
+        : SILENCE,
+    };
+  }
+
+  // Pointer pass: the STRONGEST tree (H3 + M6), the hub's order among equals,
+  // and only if it is unseen — never a weaker tree in its place. "Unseen"
+  // covers the context id AND its claims: once substance from a context was
+  // delivered, re-surfacing the same context as a pointer is noise, not news.
+  const named = pointable.filter(isStrongest).find((context) => isUnpointed(context, seen));
+  return named === undefined ? SILENCE : (pointerAt(named, selfDeveloperId) ?? SILENCE);
+};
+
+type PointerSelection = Extract<HintSelection, { readonly kind: "pointer" }>;
+
+/**
+ * The pointer one context can carry, seen or not: one with foreign claims,
+ * one the prompt named a file of (#19), or one whose owner stated an intent
+ * (#16, the claimless "same topic, different files" case) — or none.
+ */
+const pointerAt = (context: HintContextCandidate, selfDeveloperId: string): PointerSelection | null => {
+  const foreignCount = context.claims.filter((claim) => isForeignClaim(claim, selfDeveloperId)).length;
+  if (foreignCount > 0) {
+    return { kind: "pointer", context, claimCount: foreignCount };
+  }
+  // #19 targets-only pointer: the EXACT tier is a fact — the prompt named a
+  // file this context targeted — so a body-less pointer at zero claims is
+  // precise, not a guess. FTS-only stays silent: a lexical body match is too
+  // loose to point on without a claim behind it (keep precision, §4).
+  //
+  // Self-exclusion is checked HERE too, not left to the hub. The claim
+  // pointer above gets it free (own claims are never foreign, so
+  // foreignCount stays 0); a targets-only pointer has no claim to derive it
+  // from, and the reader's OWN earlier session is exactly what an exact path
+  // match finds. The hub excludes the caller today, but §4 makes the
+  // selector the second line of defence, and one self-pointer costs a
+  // teammate's slot out of the five a session gets (§10 risk 1).
+  if (context.workContext.tier === "exact" && context.workContext.developerId !== selfDeveloperId) {
+    const target = context.matchedTargets.find((matched) => matched.kind === "file");
+    if (target !== undefined) {
       return {
-        kind: "claim",
+        kind: "pointer",
         context,
-        claim: injectable,
-        restCount: context.claims.length - 1,
-        isRestLowerBound: context.claimsTruncated === true,
-        ifUnfit: isUnpointed(context, seen)
-          ? { kind: "pointer", context, claimCount: foreign.length }
-          : SILENCE,
+        claimCount: 0,
+        matchedTarget: { value: target.value, createdAt: target.createdAt ?? null },
       };
     }
   }
-
-  // Pointer pass: the best-ranked unseen context — one with foreign claims,
-  // one the prompt named a file of (#19), or one whose owner stated an intent
-  // (#16, the claimless "same topic, different files" case). "Unseen" covers
-  // the context id AND its claims: once substance from a context was
-  // delivered, re-surfacing the same context as a pointer is noise, not news.
-  for (const context of eligible) {
-    if (!isUnpointed(context, seen)) {
-      continue;
-    }
-    const foreignCount = context.claims.filter((claim) =>
-      isForeignClaim(claim, selfDeveloperId),
-    ).length;
-    if (foreignCount > 0) {
-      return { kind: "pointer", context, claimCount: foreignCount };
-    }
-    // #19 targets-only pointer: the EXACT tier is a fact — the prompt named a
-    // file this context targeted — so a body-less pointer at zero claims is
-    // precise, not a guess. FTS-only stays silent: a lexical body match is too
-    // loose to point on without a claim behind it (keep precision, §4).
-    //
-    // Self-exclusion is checked HERE too, not left to the hub. The claim
-    // pointer above gets it free (own claims are never foreign, so
-    // foreignCount stays 0); a targets-only pointer has no claim to derive it
-    // from, and the reader's OWN earlier session is exactly what an exact path
-    // match finds. The hub excludes the caller today, but §4 makes the
-    // selector the second line of defence, and one self-pointer costs a
-    // teammate's slot out of the five a session gets (§10 risk 1).
-    if (
-      context.workContext.tier === "exact" &&
-      context.workContext.developerId !== selfDeveloperId
-    ) {
-      const target = context.matchedTargets.find(
-        (matched) => matched.kind === "file",
-      );
-      if (target !== undefined) {
-        return {
-          kind: "pointer",
-          context,
-          claimCount: 0,
-          matchedTarget: { value: target.value, createdAt: target.createdAt ?? null },
-        };
-      }
-    }
-    // #16 intent-only pointer, AFTER #19: a context can carry both an intent
-    // and a file the prompt named, and the touched-file fact is the more
-    // precise of the two — so the targets tail wins the tail slot and the
-    // intent still rides along on its own line (hints/render.ts intentLines).
-    // This fires where main was silent: any tier, no file target, but an owner
-    // who said what they are doing.
-    if (isForeignIntentOnly(context, selfDeveloperId)) {
-      return { kind: "pointer", context, claimCount: 0 };
-    }
-  }
-  return SILENCE;
+  // #16 intent-only pointer, AFTER #19: a context can carry both an intent
+  // and a file the prompt named, and the touched-file fact is the more
+  // precise of the two — so the targets tail wins the tail slot and the
+  // intent still rides along on its own line (hints/render.ts intentLines).
+  // This fires where main was silent: any tier, no file target, but an owner
+  // who said what they are doing.
+  return isForeignIntentOnly(context, selfDeveloperId) ? { kind: "pointer", context, claimCount: 0 } : null;
 };

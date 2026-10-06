@@ -2496,8 +2496,9 @@ export const MUTATIONS: readonly Mutation[
     // pointer. This narrows the pointer pass back to contexts with claims.
     label: "an intent-only context stops earning a pointer",
     file: `${CORE}/src/hints/select.ts`,
-    from: "    if (isForeignIntentOnly(context, selfDeveloperId)) {\n      return { kind: \"pointer\", context, claimCount: 0 };\n    }\n",
-    to: "",
+    // RETARGETED (round 3, H3 + M6): one context's pointer is pointerAt now.
+    from: "  return isForeignIntentOnly(context, selfDeveloperId) ? { kind: \"pointer\", context, claimCount: 0 } : null;",
+    to: "  return null;",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a teammate whose session states exactly what it is doing, but has " +
@@ -4499,8 +4500,9 @@ export const MUTATIONS: readonly Mutation[
     // session surfaces. The hub excludes the caller; this is the second line.
     label: "the targets-only pointer points at the reader's own work",
     file: `${CORE}/src/hints/select.ts`,
-    from: "      context.workContext.developerId !== selfDeveloperId",
-    to: "      true",
+    // RETARGETED (round 3, H3 + M6): one context's pointer is pointerAt now.
+    from: "  if (context.workContext.tier === \"exact\" && context.workContext.developerId !== selfDeveloperId) {",
+    to: "  if (context.workContext.tier === \"exact\" && true) {",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a hub that fails to exclude the caller makes the reader's own earlier " +
@@ -4525,8 +4527,9 @@ export const MUTATIONS: readonly Mutation[
     // back the structural death: a hub with 0 claims never hints at all.
     label: "the targets-only pointer is disabled",
     file: `${CORE}/src/hints/select.ts`,
-    from: '      context.workContext.tier === "exact" &&',
-    to: "      false &&",
+    // RETARGETED (round 3, H3 + M6): one context's pointer is pointerAt now.
+    from: "  if (context.workContext.tier === \"exact\" && context.workContext.developerId !== selfDeveloperId) {",
+    to: "  if (false && context.workContext.developerId !== selfDeveloperId) {",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a teammate's context that targeted the very file the prompt names " +
@@ -17466,9 +17469,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a strongly matched tree lends substance to a claim about something else",
-    file: `${CORE}/src/hints/select.ts`,
-    from: "    (claimTerms > 0 && treeTerms >= HINT_MIN_SHARED_TERMS) ||",
-    to: "    (treeTerms >= HINT_MIN_SHARED_TERMS) ||",
+    // RETARGETED (round 3, H3 + M6): the strong-match rule is the shared one in the schema.
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  (match.claimTerms > 0 && match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) ||",
+    to: "  (match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) ||",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a backed claim sharing no word of the prompt is injected because its tree's title matched",
   },
@@ -17482,9 +17486,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a substance hint hides how many claims stay behind",
+    // RETARGETED (round 3, H3 + M6): the selection is built outside the per-tree loop now.
     file: `${CORE}/src/hints/select.ts`,
-    from: "        restCount: context.claims.length - 1,\n",
-    to: "        restCount: 0,\n",
+    from: "      restCount: context.claims.length - 1,\n",
+    to: "      restCount: 0,\n",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the pointer to the rest says nothing remains, so nobody reads the tree",
   },
@@ -17759,9 +17764,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the too-long fallback re-points a tree already pointed at",
+    // RETARGETED (round 3, H3 + M6): the selection is built outside the per-tree loop now.
     file: `${CORE}/src/hints/select.ts`,
-    from: "        ifUnfit: isUnpointed(context, seen)\n",
-    to: "        ifUnfit: true\n",
+    from: "      ifUnfit: isUnpointed(context, seen)\n",
+    to: "      ifUnfit: true\n",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "a tree the briefing already named is pointed at a second time — the noise the seen-set exists to stop",
   },
@@ -17783,9 +17789,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the rest count leaves out the reader's own claims in the tree",
+    // RETARGETED (round 3, H3 + M6): the selection is built outside the per-tree loop now.
     file: `${CORE}/src/hints/select.ts`,
-    from: "        restCount: context.claims.length - 1,\n",
-    to: "        restCount: foreign.length - 1,\n",
+    from: "      restCount: context.claims.length - 1,\n",
+    to: "      restCount: foreign.length - 1,\n",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the pointer to the rest undercounts the tree get_diagnosis actually reads",
   },
@@ -17799,9 +17806,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the selector drops the hub's window-cut signal",
+    // RETARGETED (round 3, H3 + M6): the selection is built outside the per-tree loop now.
     file: `${CORE}/src/hints/select.ts`,
-    from: "        isRestLowerBound: context.claimsTruncated === true,",
-    to: "        isRestLowerBound: false,",
+    from: "      isRestLowerBound: context.claimsTruncated === true,",
+    to: "      isRestLowerBound: false,",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the hub says the count is a lower bound and the hint states it as exact",
   },
@@ -18984,6 +18992,86 @@ export const MUTATIONS: readonly Mutation[
     because: "the selector's topical rule is fed the meta words it exists to discount (C1)",
   },
   {
+    label: "the hub counts a claim's meta words toward its relevance",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "repo: query.repo, tokens: query.terms.topical },",
+    to: "repo: query.repo, tokens: query.terms.all },",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "\"token\" and \"minute\" beside one \"key\" make the rate-limit decision a strong match for a JWT prompt (round 3, H3 + M6)",
+  },
+  {
+    label: "the hub counts a tree's meta words toward its relevance",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      ownTerms: statementTerms.get(row.id)?.topical ?? 0,",
+    to: "      ownTerms: statementTerms.get(row.id)?.all ?? 0,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a tree whose title says token lends its strength to every claim that shares one other word (H3 + M6)",
+  },
+  {
+    label: "a tree's strength ignores its claims",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      topicalTerms: Math.max(statementTerms.get(row.id)?.topical ?? 0, claimTerms.get(row.id)?.topical ?? 0),",
+    to: "      topicalTerms: statementTerms.get(row.id)?.topical ?? 0,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a tree titled \"Investigation notes\" whose claim says the whole prompt reads as the weakest tree, and a stray tree outranks it (H3 + M6)",
+  },
+  {
+    label: "the hub ships a weakly matched body",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    isStrongSubstanceMatch({ claimTerms: claim.matchedTerms, treeTerms, isContentIdentity }) ? claim : { ...claim, body: \"\" },",
+    to: "    true ? claim : { ...claim, body: \"\" },",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a 0.10.0 connector inlines the rate-limit decision for \"token refresh fails after key rotation\" (H3 + M6)",
+  },
+  {
+    label: "the hub never reads a fingerprint as content identity",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      (matchedTargets.get(row.id) ?? []).some((target) => target.kind === CONTENT_IDENTITY_TARGET_KIND),",
+    to: "      false,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "the decision of a tree whose very error the prompt carried is withheld, for want of a shared word (H3 + M6)",
+  },
+  {
+    label: "one shared word on each side is a strong match",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  (match.claimTerms > 0 && match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) ||",
+    to: "  (match.claimTerms > 0 && match.treeTerms >= 1) ||",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "a claim and a tree that each brush the prompt with one word push the claim as a finding (H3 + M6)",
+  },
+  {
+    label: "substance comes from a weaker tree",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  const best = eligible\n    .filter(isStrongest)\n",
+    to: "  const best = eligible\n",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "the hub's first trusted claim wins, and t004 gets the rate-limit decision for a JWT prompt (round 3, H3 + M6)",
+  },
+  {
+    label: "the pointer names the hub's first, not the strongest",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  const named = pointable.filter(isStrongest).find(",
+    to: "  const named = pointable.find(",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "\"the usage limit banner shows wrong numbers\" points at the dashboard tree that shares one word (H3 + M6)",
+  },
+  {
+    label: "an exact target counts no more than words",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  strength.isExact === than.isExact ? strength.topical >= than.topical : strength.isExact;",
+    to: "  strength.topical >= than.topical;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "a tree that touched the file the prompt named loses to one that merely shares its words (H3 + M6)",
+  },
+  {
+    label: "the strongest tree is judged among unseen ones only",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  const pointable = eligible.filter((context) => pointerAt(context, selfDeveloperId) !== null);",
+    to: "  const pointable = eligible.filter((context) => pointerAt(context, selfDeveloperId) !== null && isUnpointed(context, seen));",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "once the right tree was shown, the next prompt points at the stray one beside it (H3 + M6)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -19235,6 +19323,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
+ * PRINTS: packages/connector-core/test/hint-best-match.test.ts 4
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
@@ -19328,6 +19417,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session-control.test.ts 6
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 3
+ * PRINTS: packages/schema/test/substance-match.test.ts 1
  * PRINTS: packages/schema/test/substance-sentence.test.ts 12
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/schema/test/typing-slip.test.ts 8
@@ -19366,6 +19456,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
+ * PRINTS: packages/server/test/hint-strong-match.test.ts 5
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4
  * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 6
