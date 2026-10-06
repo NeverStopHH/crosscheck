@@ -48,7 +48,8 @@ const withSessionStateLock = async <T>(
   path: string,
   fallback: T,
   action: () => Promise<T>,
-): Promise<T> => withLock(path, fallback, action, SESSION_STATE_LOCK_RETRIES);
+  retries: number = SESSION_STATE_LOCK_RETRIES,
+): Promise<T> => withLock(path, fallback, action, retries);
 
 /**
  * Past this much silence a state file is a CORPSE, not a live session: the
@@ -724,12 +725,16 @@ export const sessionStateLockPath = (
  * steal only from the provably dead, worst case ~100 ms of retries
  * (SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS) inside budgets that allow
  * for it. writeSessionState stays for the CREATE paths (SessionStart,
- * recovery), which run before any sibling exists.
+ * recovery), which run before any sibling exists. `retries` is for a caller
+ * whose own budget is shorter than that patience (spool/lock.ts
+ * lockRetriesWithin): it gives up — false, nothing written — when its budget
+ * does.
  */
 export const updateSessionState = async (
   home: string,
   hostSessionKey: string,
   transform: (fresh: SessionState) => SessionState | null,
+  retries?: number,
 ): Promise<boolean> =>
   withSessionStateLock(sessionStateLockPath(home, hostSessionKey), false, async () => {
     const fresh = await readSessionState(home, hostSessionKey);
@@ -742,7 +747,7 @@ export const updateSessionState = async (
     }
     await writeSessionState(home, next);
     return true;
-  });
+  }, retries);
 
 /** What a state file is BOUND TO: one repo, on one hub. */
 interface SessionBinding {

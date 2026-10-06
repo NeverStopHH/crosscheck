@@ -221,6 +221,30 @@ describe("the slot is spent only once the nudge is actually in the prompt", () =
     }
   });
 
+  test("the commit is bounded by what is left of the prompt budget (review round 2, L6)", async () => {
+    // Unbounded, a commit waiting on a held state lock held the prompt past
+    // its budget — the one thing the race above exists to prevent.
+    const bounds: (number | undefined)[] = [];
+    const ready = (): Promise<PreparedDraftNudge> =>
+      Promise.resolve({
+        text: "BOUNDED-NUDGE-TEXT",
+        commit: (withinMs?: number) => {
+          bounds.push(withinMs);
+          return Promise.resolve(true);
+        },
+      });
+    const { injector, capture } = await pastTheBriefing("acp-nudge-bounded", ready, "2000");
+    try {
+      await injector.decideLine(promptLine("and the next bit"));
+
+      expect(bounds).toHaveLength(1);
+      expect(Number.isFinite(bounds[0])).toBe(true);
+      expect(bounds[0]).toBeGreaterThanOrEqual(0);
+    } finally {
+      await capture.shutdown(500).catch(() => undefined);
+    }
+  });
+
   test("nothing due spends the slot, so later prompts look no more (review round 2, survivor M5)", async () => {
     // Nothing shows, so nothing can be lost by spending it: without the
     // commit every later prompt of the session fetches the drafts again.

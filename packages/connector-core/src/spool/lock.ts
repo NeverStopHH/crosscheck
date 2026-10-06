@@ -459,6 +459,14 @@ const rememberHeldLock = (path: string, token: string): void => {
   heldLocks.set(path, token);
 };
 
+/**
+ * The retries that fit inside `budgetMs`, for a caller whose wait for a
+ * lock must end with its budget rather than with the lock's own patience.
+ * Zero still makes the one first attempt.
+ */
+export const lockRetriesWithin = (budgetMs: number): number =>
+  Math.max(0, Math.floor(budgetMs / SPOOL_LOCK_RETRY_DELAY_MS));
+
 export const withLock = async <T>(
   path: string,
   fallback: T,

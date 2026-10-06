@@ -416,11 +416,15 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
       }),
       deadline - now(),
     );
+    // THE COMMIT IS BOUNDED BY THE SAME BUDGET: a state lock another hook
+    // holds would otherwise keep this prompt waiting out the lock's whole
+    // patience after the race above was won. A commit that runs out of time
+    // spends nothing, and the nudge is not shown.
     const shown = prepared === null || prepared.text.length === 0 ? null : prepared;
-    if (shown === null || !(await shown.commit())) {
+    if (shown === null || !(await shown.commit(Math.max(0, deadline - now())))) {
       // Nothing due shows nothing, so spending the slot on it cannot be lost.
       if (prepared !== null && prepared.text.length === 0) {
-        await prepared.commit();
+        await prepared.commit(Math.max(0, deadline - now()));
       }
       // Silence is not a skip worth logging per prompt — it is the normal
       // no-candidates outcome; count it, no log noise.

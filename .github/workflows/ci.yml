@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1660
+    # PRINTS: 1662
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -211,7 +211,7 @@ jobs:
     # PRINTS: packages/connector-acp/src/derive/triggers.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 3
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
-    # PRINTS: packages/connector-acp/src/inject/injector.ts 9
+    # PRINTS: packages/connector-acp/src/inject/injector.ts 10
     # PRINTS: packages/connector-acp/src/proxy.ts 1
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: packages/connector-acp/src/report.ts 1
@@ -286,7 +286,7 @@ jobs:
     # PRINTS: flows/capture-touched-files.ts 3
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
-    # PRINTS: flows/draft-nudge.ts 12
+    # PRINTS: flows/draft-nudge.ts 13
     # PRINTS: flows/end-session.ts 5
     # PRINTS: flows/heartbeat.ts 1
     # PRINTS: flows/hint.ts 5
@@ -540,7 +540,7 @@ jobs:
     # PRINTS: doctor.ts 72
     # PRINTS: draft-backlog.ts 7
     # PRINTS: draft-nudge-spent.ts 3
-    # PRINTS: draft-nudge.ts 22
+    # PRINTS: draft-nudge.ts 23
     # PRINTS: drafts.ts 4
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 10
@@ -586,7 +586,7 @@ jobs:
     # PRINTS: init-remove-report.ts 8
     # PRINTS: init-remove.ts 6
     # PRINTS: init.ts 6
-    # PRINTS: injector.ts 9
+    # PRINTS: injector.ts 10
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1

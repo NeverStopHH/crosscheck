@@ -25,15 +25,19 @@ import {
   DRAFT_RETENTION_HORIZON_DAYS,
   MAX_DRAFT_NUDGE_POINTERS,
   MS_PER_DAY,
+  SESSION_STATE_LOCK_RETRIES,
+  SPOOL_LOCK_RETRY_DELAY_MS,
 } from "../src/constants.ts";
 import { assembleBriefing } from "../src/flows/briefing.ts";
-import { deliverDraftNudge } from "../src/flows/draft-nudge.ts";
+import { deliverDraftNudge, prepareDraftNudge } from "../src/flows/draft-nudge.ts";
+import { withLock } from "../src/spool/lock.ts";
 import type { DraftEntry, HubContext } from "../src/http/hub.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import { readNudgeSpent, recordNudgeSpent } from "../src/state/draft-nudge-spent.ts";
 import {
   readSessionState,
+  sessionStateLockPath,
   updateSessionState,
   withCarriedCapture,
   writeSessionState,
@@ -699,6 +703,47 @@ describe("deliverDraftNudge (real hub)", () => {
     let calls = 0;
     const spareMs = (): number => (calls++ % 2 === 0 ? 1000 : 10);
     expect(await unnameableLoop("nudge-loop-thin", spareMs)).toEqual({ perRound: [1, 1], slot: null });
+  });
+
+  test("a commit given a budget gives up on a held state lock instead of waiting it out (review round 2, L6)", async () => {
+    await withOwnHub("draft-nudge-bounded-commit", async (own) => {
+      // Arrange: a nudge ready to spend, and another writer holding the lock
+      await own.seedDraft({ kind: "decision", body: "Keep the reaper grace at 90 s", ageMs: OLD_MS });
+      const s = await session("nudge-bounded-commit", own);
+      const prepared = await prepareDraftNudge({
+        home: s.home,
+        hub: s.ctx,
+        hostSessionKey: HOST_KEY,
+        repoId: REPO_ID,
+        now: new Date(),
+        personReads: true,
+      });
+      expect(prepared?.text).toContain("review_draft");
+      let release = (): void => undefined;
+      let holding = (): void => undefined;
+      const held = new Promise<void>((resolve) => {
+        holding = resolve;
+      });
+      const holder = withLock(sessionStateLockPath(s.home, HOST_KEY), undefined, async () => {
+        holding();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      });
+      await held;
+
+      // Act: no budget left — the default patience would wait out every retry
+      const startedAt = Date.now();
+      const spent = await prepared?.commit(0);
+      const elapsedMs = Date.now() - startedAt;
+      release();
+      await holder;
+
+      // Assert: not spent, not shown, and well inside the default patience
+      expect(spent).toBe(false);
+      expect(elapsedMs).toBeLessThan(SESSION_STATE_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS);
+      expect((await readSessionState(s.home, HOST_KEY))?.draftNudge).toBeNull();
+    });
   });
 
   test("nothing is published by the nudge itself", async () => {

@@ -4914,8 +4914,8 @@ export const MUTATIONS: readonly Mutation[
     // patience on purpose, so it is red on any machine at any load.
     label: "the session state's lock gives up at the spool's patience",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "): Promise<T> => withLock(path, fallback, action, SESSION_STATE_LOCK_RETRIES);",
-    to: "): Promise<T> => withLock(path, fallback, action);",
+    from: "  retries: number = SESSION_STATE_LOCK_RETRIES,\n): Promise<T> => withLock(path, fallback, action, retries);",
+    to: "  retries: number = SESSION_STATE_LOCK_RETRIES,\n): Promise<T> => withLock(path, fallback, action);",
     test: `${CORE}/test/session-seq.test.ts`,
     because:
       "any two hooks of one session that overlap for longer than 100 ms turn " +
@@ -17386,8 +17386,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the draft review nudge fires on every prompt of a session",
     file: `${CORE}/src/flows/draft-nudge.ts`,
-    from: "    fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },",
-    to: "    ({ ...fresh, draftNudge: null }),",
+    from: "    (fresh) => (fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome }),",
+    to: "    (fresh) => ({ ...fresh, draftNudge: null }),",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "the slot is never spent, so every quiet prompt asks the person about the same drafts again",
   },
@@ -18002,7 +18002,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the ACP proxy shows a nudge whose slot it could not spend",
     file: `${ACP}/src/inject/injector.ts`,
-    from: "    if (shown === null || !(await shown.commit())) {",
+    from: "    if (shown === null || !(await shown.commit(Math.max(0, deadline - now())))) {",
     to: "    if (shown === null) {",
     test: `${ACP}/test/draft-nudge-inject.test.ts`,
     because: "a slot another prompt already spent is shown a second time",
@@ -18370,8 +18370,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the prompt that spends the nudge slot also writes the spent ledger",
     file: `${CORE}/src/flows/draft-nudge.ts`,
-    from: "    fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },\n  );",
-    to: "    fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },\n  ).then(async (claimed) => {\n    if (claimed) {\n      const { recordNudgeSpent } = await import(\"../state/draft-nudge-spent.ts\");\n      await recordNudgeSpent(input.home, input.hostSessionKey, outcome, input.now);\n    }\n    return claimed;\n  });",
+    from: "    withinMs === undefined ? undefined : lockRetriesWithin(withinMs),\n  );",
+    to: "    withinMs === undefined ? undefined : lockRetriesWithin(withinMs),\n  ).then(async (claimed) => {\n    if (claimed) {\n      const { recordNudgeSpent } = await import(\"../state/draft-nudge-spent.ts\");\n      await recordNudgeSpent(input.home, input.hostSessionKey, outcome, input.now);\n    }\n    return claimed;\n  });",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "a second locked file write lands on the person's keystroke for a record nothing reads until SessionEnd",
   },
@@ -18382,6 +18382,22 @@ export const MUTATIONS: readonly Mutation[
     to: "  await recordNudgeSpent(home, hostSessionKey, spent ?? \"nothing_due\", at);",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "a conversation that was never nudged is never nudged after it resumes either",
+  },
+  {
+    label: "the nudge commit waits out the lock's whole patience whatever the caller's budget",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "    withinMs === undefined ? undefined : lockRetriesWithin(withinMs),\n",
+    to: "    undefined,\n",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "a held state lock keeps the prompt waiting past the budget the race was meant to keep",
+  },
+  {
+    label: "the ACP proxy commits the nudge without its budget",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "    if (shown === null || !(await shown.commit(Math.max(0, deadline - now())))) {",
+    to: "    if (shown === null || !(await shown.commit())) {",
+    test: `${ACP}/test/draft-nudge-inject.test.ts`,
+    because: "a prompt whose race was won still waits out a held state lock past its budget",
   },
 ];
 
@@ -18498,7 +18514,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 4
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 8
- * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 5
+ * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 6
  * PRINTS: packages/connector-acp/test/injector.test.ts 6
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
@@ -18590,7 +18606,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 43
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 44
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

@@ -38,6 +38,7 @@ import { renderDraftNudge } from "../briefing/draft-nudge.ts";
 import { getDraftListing } from "../http/hub.ts";
 import type { HubContext } from "../http/hub.ts";
 import type { NudgeOutcome } from "../state/draft-nudge-spent.ts";
+import { lockRetriesWithin } from "../spool/lock.ts";
 import { readSessionState, updateSessionState } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
 
@@ -75,10 +76,19 @@ const boundedHub = (input: DeliverDraftNudgeInput): HubContext | null => {
  * The session's own state is the only write on the prompt path: SessionEnd
  * records the slot per conversation and SessionStart seeds it back
  * (state/draft-nudge-spent.ts), so a resumed conversation is not nudged again.
+ * `withinMs`, when given, bounds the wait for the state lock: a busy lock past
+ * it spends nothing, and the caller shows nothing.
  */
-const claimSlot = (input: DeliverDraftNudgeInput, outcome: NudgeOutcome): Promise<boolean> =>
-  updateSessionState(input.home, input.hostSessionKey, (fresh) =>
-    fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },
+const claimSlot = (
+  input: DeliverDraftNudgeInput,
+  outcome: NudgeOutcome,
+  withinMs: number | undefined,
+): Promise<boolean> =>
+  updateSessionState(
+    input.home,
+    input.hostSessionKey,
+    (fresh) => (fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome }),
+    withinMs === undefined ? undefined : lockRetriesWithin(withinMs),
   );
 
 /**
@@ -136,11 +146,13 @@ const coolDown = (input: DeliverDraftNudgeInput): Promise<boolean> =>
  * so a caller whose budget can abandon the work (the ACP proxy races it and
  * lets the loser run on) spends the slot only once the text is certainly
  * going out. `text` "" means nothing is due; committing then spends the slot
- * as `nothing_due`, which shows nothing and so can never be lost.
+ * as `nothing_due`, which shows nothing and so can never be lost. A caller
+ * with a budget passes what is left of it as `withinMs`, so the commit's wait
+ * for the state lock ends with the budget, not with the lock's own patience.
  */
 export interface PreparedDraftNudge {
   readonly text: string;
-  readonly commit: () => Promise<boolean>;
+  readonly commit: (withinMs?: number) => Promise<boolean>;
 }
 
 /** Null whenever nothing is owed, nothing can be fetched now, or a due draft is unnameable. */
@@ -163,7 +175,7 @@ export const prepareDraftNudge = async (
   }
   const text = renderDraftNudge({ backlog: fetched.backlog, now: input.now });
   if (text.length > 0) {
-    return { text, commit: () => claimSlot(input, "delivered") };
+    return { text, commit: (withinMs) => claimSlot(input, "delivered", withinMs) };
   }
   // NEVER SPENT WHILE A DUE DRAFT EXISTS: a draft this fetch could not name
   // is still owed a nudge, so the slot waits for a prompt that can name it —
@@ -176,7 +188,7 @@ export const prepareDraftNudge = async (
     await coolDown(input);
     return null;
   }
-  return { text: "", commit: () => claimSlot(input, "nothing_due") };
+  return { text: "", commit: (withinMs) => claimSlot(input, "nothing_due", withinMs) };
 };
 
 /**
