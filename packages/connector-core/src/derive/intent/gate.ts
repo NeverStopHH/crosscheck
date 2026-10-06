@@ -8,9 +8,10 @@
 import {
   HINT_MIN_TOKEN_CHARS,
   INTENT_MIN_PROMPT_CHARS,
+  INTENT_MIN_TOPICAL_WORDS,
   SUMMARIZER_FAILURE_MAX_CHARS,
 } from "../../constants.ts";
-import { humanPromptText, isContentFreePrompt } from "@crosscheck/schema";
+import { humanPromptText, promptTerms } from "@crosscheck/schema";
 
 import { cutWellFormed } from "../../briefing/cut.ts";
 import type { SessionState } from "../../state/session-state.ts";
@@ -54,11 +55,28 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
  * to spend the fire and park "Monitor event: CI checks pass" as the intent.
  * A turn that is all harness has no human text, so it fails the length
  * floor below — `isHarnessTurn` is exactly that, and needs no second call.
+ *
+ * AND ONLY A TURN WITH A TOPIC (hold-out review round 3, H2): at least
+ * INTENT_MIN_TOPICAL_WORDS words of no closed class, so a task made of the
+ * session's machinery never parks a sentence the model can only answer with
+ * machinery. That floor is the content-free rule too: a content-free prompt
+ * is one whose every word is of a closed class, so it has no topical word.
  */
 export const intentPromptOf = (prompt: string): string | null => {
   const human = humanPromptText(prompt);
-  return isSubstantivePrompt(human) && !isContentFreePrompt(human) ? human : null;
+  if (!isSubstantivePrompt(human)) {
+    return null;
+  }
+  return promptTerms(human).topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;
 };
+
+/**
+ * A derived intent with a topic (round 3, H2): at least one of its content
+ * words of no closed class. "Continue the session after the usage limit
+ * reset" is all machinery, and such an intent pulled limit chatter onto an
+ * intent-only tree on every teammate's prompt.
+ */
+export const hasTopic = (sentence: string): boolean => promptTerms(sentence).topical.length > 0;
 
 /** One fire, booked BEFORE the spawn (the Stop hook's ordering contract). */
 export const withIntentFire = (state: SessionState): SessionState => ({

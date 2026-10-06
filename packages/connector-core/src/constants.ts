@@ -599,6 +599,17 @@ export const INTENT_MAX_CHARS = 120;
  */
 export const INTENT_MIN_PROMPT_CHARS = 40;
 /**
+ * TOPICAL words — of no closed class (`@crosscheck/schema` promptTerms) — the
+ * human text must carry before the one intent fire is spent on it (hold-out
+ * review round 3, H2). A prompt of the session's machinery with one stray
+ * word ("fix the session limit reset handling once more please") parks a
+ * sentence the model can only answer with machinery, and an intent that
+ * says "continue after a usage limit reset" became the round-3 magnet:
+ * an intent-only tree took 6 of 10 content-free hints. Two, the content
+ * floor's own number.
+ */
+export const INTENT_MIN_TOPICAL_WORDS = 2;
+/**
  * How much of the first prompt the worker hands the model — the token bill's
  * bound for the intent call (≈ INTENT_PROMPT_MAX_CHARS / 4 tokens at the
  * CHARS_PER_TOKEN_ESTIMATE rate). The prompt is written to a 0600 file under

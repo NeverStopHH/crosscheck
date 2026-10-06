@@ -443,6 +443,24 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(await fileExists(fix.promptFile)).toBe(false);
   });
 
+  test.each([
+    ["Continue the session after the usage limit reset."],
+    ["Keep the session going until the weekly quota resets."],
+  ])("a derived intent with no topical word is dropped, never spooled: %p (round 3, H2)", async (answer) => {
+    // Arrange — a real task was parked, and the model answered with machinery
+    const fix = await fixture();
+    const fake = await makeFakeModel({ output: answer });
+
+    // Act
+    await run(fix, fake);
+
+    // Assert — the meta-laden intent magnet is never born
+    expect(await spooledIntents(fix)).toHaveLength(0);
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.workContextIntent ?? null).toBeNull();
+    expect(state?.intentLastFailure).toBe("dropped: no topic");
+  });
+
   test("an empty prompt file is booked as a drop and removed", async () => {
     const fix = await fixture({}, "   ");
     await run(fix, await makeFakeModel({ output: SENTENCE }));

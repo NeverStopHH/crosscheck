@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1746
+    # PRINTS: 1748
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -265,9 +265,9 @@ jobs:
     # PRINTS: derive/conference/prompt.ts 1
     # PRINTS: derive/ghost/cost.ts 1
     # PRINTS: derive/ghost/worker.ts 5
-    # PRINTS: derive/intent/gate.ts 2
+    # PRINTS: derive/intent/gate.ts 3
     # PRINTS: derive/intent/prompt.ts 1
-    # PRINTS: derive/intent/worker.ts 4
+    # PRINTS: derive/intent/worker.ts 5
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 2
@@ -559,7 +559,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
     # PRINTS: flush.ts 2
-    # PRINTS: gate.ts 9
+    # PRINTS: gate.ts 10
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
     # PRINTS: ghost-overlap.ts 4
@@ -735,7 +735,7 @@ jobs:
     # PRINTS: wiring-scope.ts 2
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
-    # PRINTS: worker.ts 9
+    # PRINTS: worker.ts 10
     # PRINTS: working-days.ts 3
     name: Mutation proof
     runs-on: ubuntu-latest

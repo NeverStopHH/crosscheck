@@ -50,7 +50,7 @@ import {
   withRecordedIntent,
 } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
-import { intentPromptOf, withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
+import { hasTopic, intentPromptOf, withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
 import { resolveIntentArgv } from "./prompt.ts";
 import { readModelSentence } from "../../model/parse.ts";
 import {
@@ -92,6 +92,7 @@ const DROPPED_NOT_SENTENCE = "dropped: the answer was not a sentence";
 const DROPPED_TRUNCATED = "dropped: the answer hit the output cap and was cut";
 const DROPPED_ECHO = "dropped: the sentence echoes a delivered hint";
 const DROPPED_SECRET = "dropped: secret-like text";
+const DROPPED_NO_TOPIC = "dropped: no topic";
 const DROPPED_CONTRACT = "dropped: the record failed the wire contract";
 
 const bookFailure = (home: string, sessionId: string, detail: string): Promise<boolean> =>
@@ -165,6 +166,13 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
   const sentence = cutWellFormed(answer.text, MAX_INTENT_SUMMARY_CHARS);
   if (sentence.length === 0) {
     await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
+    return;
+  }
+  // AN INTENT OF MACHINERY IS NO INTENT (hold-out review round 3, H2):
+  // "Continue the session after the usage limit reset" names no topic, and an
+  // intent that said it became an intent-only tree every limit chatter found.
+  if (!hasTopic(sentence)) {
+    await bookFailure(home, args.claudeSessionId, DROPPED_NO_TOPIC);
     return;
   }
 

@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   INTENT_MIN_PROMPT_CHARS,
+  INTENT_MIN_TOPICAL_WORDS,
   SUMMARIZER_FAILURE_MAX_CHARS,
 } from "@crosscheck/connector-core/constants.ts";
 import { deriveSessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -75,6 +76,19 @@ describe("intentPromptOf: what the one intent fire is spent on, and what is park
     ["an English one", "please continue, the usage limit was reset, keep going"],
   ])("%s never spends the fire", (_, turn) => {
     expect(intentPromptOf(turn)).toBeNull();
+  });
+
+  test.each([
+    ["one topical word among meta words", "fix the session limit reset handling once more please"],
+    ["no topical word at all", "why does the usage limit reset again after the session window"],
+  ])("a task with %s never spends the fire (round 3, H2)", (_, prompt) => {
+    expect(prompt.length).toBeGreaterThanOrEqual(INTENT_MIN_PROMPT_CHARS);
+    expect(intentPromptOf(prompt)).toBeNull();
+  });
+
+  test(`the control: ${String(INTENT_MIN_TOPICAL_WORDS)} topical words beside the meta ones spend it`, () => {
+    const prompt = "fix the session limit reset in the checkout handler please";
+    expect(intentPromptOf(prompt)).toBe(prompt);
   });
 
   test("around a wrapper, only the human text is parked", () => {

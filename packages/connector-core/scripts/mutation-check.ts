@@ -18063,17 +18063,19 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the intent fire parks the harness's words",
+    // RETARGETED (round 3, H2): the gate reads the topical floor after the length floor.
     file: `${CORE}/src/derive/intent/gate.ts`,
-    from: "  const human = humanPromptText(prompt);\n  return isSubstantivePrompt(human)",
-    to: "  const human = prompt;\n  return isSubstantivePrompt(human)",
+    from: "  const human = humanPromptText(prompt);\n  if (!isSubstantivePrompt(human)) {",
+    to: "  const human = prompt;\n  if (!isSubstantivePrompt(human)) {",
     test: `${CONNECTOR}/test/intent-gate.test.ts`,
     because: "a background notification as the first long turn spends the one fire and parks \"Monitor event: CI checks pass\" as the session's intent (H2)",
   },
   {
     label: "a content-free prompt spends the session's one intent fire",
+    // RETARGETED (round 3, H2): the topical floor is the content-free rule here.
     file: `${CORE}/src/derive/intent/gate.ts`,
-    from: "  return isSubstantivePrompt(human) && !isContentFreePrompt(human) ? human : null;",
-    to: "  return isSubstantivePrompt(human) ? human : null;",
+    from: "  return promptTerms(human).topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    to: "  return human;",
     test: `${CONNECTOR}/test/content-free-prompt.test.ts`,
     because: "\"mache weiter, limit zuruckgesetzt, bitte …\" is long enough to be summarised as the session's task, and the real task after it gets no fire",
   },
@@ -19072,6 +19074,22 @@ export const MUTATIONS: readonly Mutation[
     because: "once the right tree was shown, the next prompt points at the stray one beside it (H3 + M6)",
   },
   {
+    label: "the intent fire is spent on a prompt of machinery",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  return promptTerms(human).topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    to: "  return promptTerms(human).topical.length >= 1 ? human : null;",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "\"fix the session limit reset handling once more please\" parks a sentence the model can only answer with machinery (round 3, H2)",
+  },
+  {
+    label: "a derived intent of machinery is spooled",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "  if (!hasTopic(sentence)) {\n",
+    to: "  if (false) {\n",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "\"Continue the session after the usage limit reset\" becomes an intent every limit chatter matches (round 3, H2)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -19266,8 +19284,8 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 4
+ * PRINTS: packages/connector-claude/test/intent-gate.test.ts 2
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
