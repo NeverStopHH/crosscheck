@@ -8,12 +8,16 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { createFakeEmbedder } from "./fixtures/fake-embedder.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
+  createTestDeveloper,
+  createTestHarness,
   jsonRequest,
   postRecords,
   recordEnvelope,
+  registerTestSession,
   validClaimBody,
   validClaimEdgeBody,
   validWorkContextBody,
@@ -103,5 +107,59 @@ describe("a draft's words in a teammate's explicit search", () => {
     const hit = (await search(harness, robin, DRAFT_WORD)).find((row) => row.id === WORK_CONTEXT_ID);
 
     expect(hit?.derivedOnly).toBe(false);
+  });
+});
+
+/**
+ * THE MARK IS A LEXICAL FACT (review round 3, HIGH-2): the vector tier embeds
+ * the context's doc, never a claim, so its row says nothing about which words
+ * matched — and fusing it in used to clear the mark, showing a draft-only
+ * match as vouched on every hub with an embedder.
+ */
+describe("the vector tier never decides whether a match was a draft's", () => {
+  const withEmbedder = async (): Promise<{ harness: TestHarness; nick: TestDeveloper; robin: TestDeveloper }> => {
+    const harness = await createTestHarness({ embedder: createFakeEmbedder() });
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02", branch: "x" });
+    return { harness, nick, robin };
+  };
+
+  const searchWithTiers = async (harness: TestHarness, developer: TestDeveloper, query: string) => {
+    const params = new URLSearchParams({ query, repo: VALID_SESSION_BODY.repo });
+    const response = await harness.app.request(`/api/search?${params.toString()}`, jsonRequest("GET", developer.apiKey));
+    return ((await response.json()) as { data: { vectorTierActive: boolean; results: SearchRow[] } }).data;
+  };
+
+  test("a draft-only match the vector tier also lists stays marked draft-only", async () => {
+    // Arrange: the fake embedder puts the doc and the query on the same axis
+    const { harness, nick, robin } = await withEmbedder();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Unrelated title words", description: "nothing here" })),
+        draft("clm_draft"),
+      ],
+    });
+
+    // Act
+    const data = await searchWithTiers(harness, robin, DRAFT_WORD);
+
+    // Assert
+    expect(data.vectorTierActive).toBe(true);
+    expect(data.results.find((row) => row.id === WORK_CONTEXT_ID)?.derivedOnly).toBe(true);
+  });
+
+  test("a match found by the vector tier alone is never marked draft-only", async () => {
+    // Arrange: "warm" shares the fake embedder's cache axis, and no word
+    const { harness, nick, robin } = await withEmbedder();
+    await postRecords(harness, nick, {
+      records: [recordEnvelope("work_context", validWorkContextBody({ title: "The cache misses on boot", description: "nothing here" }))],
+    });
+
+    // Act
+    const data = await searchWithTiers(harness, robin, "warm");
+
+    // Assert
+    expect(data.results.find((row) => row.id === WORK_CONTEXT_ID)?.derivedOnly).toBe(false);
   });
 });

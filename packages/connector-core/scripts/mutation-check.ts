@@ -18399,6 +18399,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/draft-nudge-inject.test.ts`,
     because: "a prompt whose race was won still waits out a held state lock past its budget",
   },
+  {
+    label: "a vector row clears the draft-only mark",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "  if (!DRAFT_MARK_TIERS.has(tier)) {\n    return before;\n  }\n",
+    to: "",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because: "on every hub with an embedder a match found only through a draft's words reads as vouched",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18721,7 +18729,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
- * PRINTS: packages/server/test/draft-visibility.test.ts 3
+ * PRINTS: packages/server/test/draft-visibility.test.ts 4
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1

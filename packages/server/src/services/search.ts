@@ -608,9 +608,30 @@ interface FusedEntry {
   readonly row: TierRow;
   readonly score: number;
   readonly tiers: ReadonlySet<SearchTier>;
-  /** Every tier row that brought this context in was a draft-only match. */
-  readonly derivedOnly: boolean;
+  /**
+   * Every LEXICAL row that brought this context in was a draft-only match;
+   * null while no lexical tier matched it. The vector tier embeds the doc,
+   * never a claim, so its row says nothing about whose words matched — it
+   * neither sets nor clears this (review round 3: fused in, it cleared the
+   * mark on every hub with an embedder).
+   */
+  readonly lexicalDerivedOnly: boolean | null;
 }
+
+/** The tiers that know which words matched: the only ones the draft mark reads. */
+const DRAFT_MARK_TIERS: ReadonlySet<SearchTier> = SOLVED_FLOOR_TIERS;
+
+const lexicalDerivedOnlyAfter = (
+  known: FusedEntry | undefined,
+  tier: SearchTier,
+  row: TierRow,
+): boolean | null => {
+  const before = known?.lexicalDerivedOnly ?? null;
+  if (!DRAFT_MARK_TIERS.has(tier)) {
+    return before;
+  }
+  return (before ?? true) && row.derivedOnly === true;
+};
 
 interface TierList {
   readonly tier: SearchTier;
@@ -643,7 +664,7 @@ const fuseTiers = (
         row: known?.row ?? row,
         score: (known?.score ?? 0) + contribution,
         tiers: new Set([...(known?.tiers ?? []), tier]),
-        derivedOnly: (known?.derivedOnly ?? true) && row.derivedOnly === true,
+        lexicalDerivedOnly: lexicalDerivedOnlyAfter(known, tier, row),
       });
     });
   }
@@ -714,7 +735,7 @@ const hydrate = async (
           ? "open"
           : "solved") as SearchResultKind,
         solvedAt: solvedAt === undefined ? null : solvedAt.toISOString(),
-        derivedOnly: entry.derivedOnly,
+        derivedOnly: entry.lexicalDerivedOnly === true,
       },
     ];
   });
