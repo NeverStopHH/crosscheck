@@ -45,6 +45,10 @@ const supersededWords = (recorded: RecordedOutcome): string => {
   if (stands !== recorded.outcome) {
     return `, but ${standingWord(stands)} from the same instant still stands (a label wins a tie)`;
   }
+  // survivor R19: the same word, said better — not a word superseding itself
+  if (recorded.reasonRevised === true) {
+    return ", the reason revised (the earlier one kept in the history)";
+  }
   if (recorded.replaced === null) {
     return "";
   }

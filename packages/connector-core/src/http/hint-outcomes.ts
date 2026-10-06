@@ -38,6 +38,8 @@ const RecordedOutcomeSchema = z.looseObject({
   outcome: z.string().min(1),
   /** The caller had said exactly this already; nothing was written. */
   repeated: z.boolean(),
+  /** The same word as before with a different reason: written, the reason revised (R19). Absent from an older hub. */
+  reasonRevised: z.boolean().optional(),
   /** What this one superseded — an outcome or the person's noise label, kept, never deleted — or null. */
   replaced: z.string().nullable(),
   /**

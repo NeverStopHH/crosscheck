@@ -148,6 +148,9 @@ const supersededText = (recorded: RecordedOutcome): string => {
   if (stands !== recorded.outcome) {
     return ` ${capitalised(personsWord(stands))} still stands: ${NEVER_OVERTURNS}.`;
   }
+  if (recorded.reasonRevised === true) {
+    return " The reason is revised; the earlier one stays in the history.";
+  }
   if (recorded.replaced === null) {
     return "";
   }

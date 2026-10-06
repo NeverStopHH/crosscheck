@@ -50,7 +50,7 @@ import {
   standingOf,
   standingOfWords,
 } from "./pointer-standing.ts";
-import type { PointerWords, StandingWord } from "./pointer-standing.ts";
+import type { LatestOutcome, PointerWords, StandingWord } from "./pointer-standing.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -95,6 +95,8 @@ export type WriteHintOutcomeResult =
       readonly deliveryId: string;
       readonly outcome: HintOutcome;
       readonly repeated: boolean;
+      /** The same word as the channel's last, with a different reason: written, the reason revised (R19). */
+      readonly reasonRevised: boolean;
       /** What this one superseded — an outcome or the noise label — or null when nothing stood. */
       readonly replaced: StandingWord | null;
       /** What the delivery stands at now: the word just said, or a noise label from the same instant. */
@@ -217,19 +219,30 @@ const countableSince = async (deps: Deps, repo: string): Promise<CountableSince>
 
 type Recorded = Exclude<WriteHintOutcomeResult, { readonly refusal: HintOutcomeRefusal }>;
 
+/** The newest word the same channel said before — the agent's own, or the person's own. */
+const ownWord = (words: PointerWords, input: WriteHintOutcomeInput): LatestOutcome | undefined =>
+  input.recordedVia === "person" ? words.person : words.agent;
+
 /**
  * A REPEAT, by channel (07 §13.12). The agent's word is judged against the
  * agent's own newest, so re-reading the clause writes nothing twice, whatever
  * the person said since. The person's is judged against what the PERSON
  * stands at — their own newest word, noise included — so their same word said
- * after their own noise label is a new word, and it stands.
+ * after their own noise label is a new word, and it stands. The reason is part
+ * of the word: said better, it is a write (survivor R19).
  */
 const isRepeat = (words: PointerWords, input: WriteHintOutcomeInput): boolean => {
-  const own = input.recordedVia === "person" ? words.person : words.agent;
+  const own = ownWord(words, input);
   if (own === undefined || own.outcome !== input.outcome || own.reason !== input.reason) {
     return false;
   }
   return input.recordedVia === "agent" || standingOf(words.person, words.noise) === input.outcome;
+};
+
+/** The same word as before with a different reason — written, and the answer says the reason was revised. */
+const revisesReason = (words: PointerWords, input: WriteHintOutcomeInput): boolean => {
+  const own = ownWord(words, input);
+  return own !== undefined && own.outcome === input.outcome && own.reason !== input.reason;
 };
 
 /**
@@ -247,13 +260,27 @@ const recordOnPointer = (deps: Deps, delivery: ResolvedDelivery, input: WriteHin
     const before = standingOfWords(words);
     const answer = { deliveryId: delivery.id, outcome: input.outcome };
     if (isRepeat(words, input)) {
-      return { ...answer, id: delivery.id, repeated: true, replaced: null, stands: before ?? input.outcome };
+      return {
+        ...answer,
+        id: delivery.id,
+        repeated: true,
+        reasonRevised: false,
+        replaced: null,
+        stands: before ?? input.outcome,
+      };
     }
     const createdAt = instantAfter(deps.now(), newestInstant(words));
     const id = await appendOutcome(tx, delivery.id, input, createdAt);
     const said = { outcome: input.outcome, reason: input.reason, createdAt };
     const after = standingOfWords({ ...words, [input.recordedVia]: said });
-    return { ...answer, id, repeated: false, replaced: before, stands: after ?? input.outcome };
+    return {
+      ...answer,
+      id,
+      repeated: false,
+      reasonRevised: revisesReason(words, input),
+      replaced: before,
+      stands: after ?? input.outcome,
+    };
   });
 
 /** One new row — never an update: a changed word supersedes the old by being newer. */

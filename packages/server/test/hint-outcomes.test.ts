@@ -613,6 +613,28 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     expect(view).toMatchObject({ followed: 0, overrode: 0, notRelevantNow: 1 });
   });
 
+  test("survivor R19: the same word with a revised reason is a write, the revised reason lands, and the answer says it was revised", async () => {
+    // Arrange — the owner overrode, with a first reason
+    const world = await createOutcomeWorld();
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the same word, the reason said better
+    const revised = await recordPersonOutcome(world, world.nick, {
+      ref: KEN_CONTEXT,
+      outcome: "overrode",
+      reason: "kept the developer key: the repo key mixes two people's caches",
+    });
+    const view = await mineOf(world);
+
+    // Assert
+    expect(revised.status).toBe(201);
+    expect(await bodyOf(revised)).toMatchObject({ repeated: false, reasonRevised: true, stands: "overrode" });
+    expect(view["reasons"]).toEqual([
+      { outcome: "overrode", reason: "kept the developer key: the repo key mixes two people's caches", source: "Ken" },
+    ]);
+  });
+
   test("survivor M7: the person's own outcome and their label at one instant — the label stands, and the answer says so", async () => {
     // Arrange — a tie the write path no longer makes (it stamps strictly later): a legacy pair of rows
     const world = await createOutcomeWorld();

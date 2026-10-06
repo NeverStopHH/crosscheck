@@ -341,6 +341,31 @@ describe("mark_hint_outcome", () => {
     expect(await mine()).toMatchObject({ received: 1, followed: 0, noise: 1 });
   });
 
+  test("survivor R19: the same word with a new reason says the reason was revised, not that it superseded itself", async () => {
+    // Arrange — the hub wrote the same word again, its reason revised
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
+    hostileAnswer = () =>
+      Response.json({
+        ok: true,
+        data: {
+          id: "ho_3",
+          deliveryId: "hd_1",
+          outcome: "overrode",
+          repeated: false,
+          reasonRevised: true,
+          replaced: "overrode",
+          stands: "overrode",
+        },
+      });
+
+    // Act
+    const revised = await call({ ref: KEN_CONTEXT, outcome: "overrode", reason: "said better" }, env);
+
+    // Assert
+    expect(revised.text).toContain("The reason is revised; the earlier one stays in the history.");
+    expect(revised.text).not.toContain("It supersedes");
+  });
+
   test("§13.12: the agent's word goes to the agent's route, and after the person's own word it says that word stands", async () => {
     // Arrange — the person said followed at a terminal (the person's route); a hub that reports it standing
     const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };

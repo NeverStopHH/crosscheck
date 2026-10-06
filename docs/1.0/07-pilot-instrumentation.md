@@ -1326,3 +1326,9 @@ the key is the person's, the row is attributed to it, and nothing on one machine
 is attributable, not prevented, exactly as the label's terminal gate is a rule and not a wall (§12.9). §13.4's
 "nothing at the hub tells a person's outcome from their agent's" is superseded to that extent: the route
 tells, by which door a word came through, and that is still not a proof of who typed it.
+
+*R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
+of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
+and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —
+never "superseding the earlier overrode" about the same word said better. Only the same word with the same
+reason is a repeat.

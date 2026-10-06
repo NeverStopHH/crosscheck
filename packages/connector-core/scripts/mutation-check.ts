@@ -17882,8 +17882,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a word that ties with the noise label is reported as standing",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "    return { ...answer, id, repeated: false, replaced: before, stands: after ?? input.outcome };",
-    to: "    return { ...answer, id, repeated: false, replaced: before, stands: input.outcome };",
+    from: "      stands: after ?? input.outcome,\n    };",
+    to: "      stands: input.outcome,\n    };",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the label wins a tie (D-O7), so 'recorded' would claim a word took that every figure overrules",
   },
@@ -18492,8 +18492,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a repeat is judged across channels, so the agent agreeing with the person writes nothing",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  const own = input.recordedVia === "person" ? words.person : words.agent;',
-    to: "  const own = words.person ?? words.agent;",
+    from: '  input.recordedVia === "person" ? words.person : words.agent;',
+    to: "  words.person ?? words.agent;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the agent's own word is swallowed as the person's, and its history has a hole",
   },
@@ -18544,6 +18544,39 @@ export const MUTATIONS: readonly Mutation[
     to: '      "person",\n    );',
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "the agent's word is filed as the person's and overturns the person's own label",
+  },
+  // ── 07 §13.12, survivor R19: the same word with a changed reason is a write ──
+  {
+    label: "a repeat ignores the reason (survivor R19)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  if (own === undefined || own.outcome !== input.outcome || own.reason !== input.reason) {",
+    to: "  if (own === undefined || own.outcome !== input.outcome) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the owner's revised override reason is swallowed as 'already recorded', and --mine keeps the old sentence",
+  },
+  {
+    label: "the answer never says a reason was revised",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "      reasonRevised: revisesReason(words, input),",
+    to: "      reasonRevised: false,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a revised reason is reported as the word superseding itself",
+  },
+  {
+    label: "mark_hint_outcome reports a revised reason as the word superseding itself",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: '    return " The reason is revised; the earlier one stays in the history.";',
+    to: '    return "";',
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent tells its person 'it supersedes the earlier overrode' about its own sentence said better",
+  },
+  {
+    label: "crosscheck overrode reports a revised reason as the word superseding itself",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: '    return ", the reason revised (the earlier one kept in the history)";',
+    to: '    return "";',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person is told their override superseded itself when they only said the reason better",
   },
 ];
 
@@ -18630,7 +18663,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 14
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 15
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
@@ -18779,7 +18812,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 17
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 18
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -18868,7 +18901,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 12
- * PRINTS: packages/server/test/hint-outcomes.test.ts 29
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 31
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

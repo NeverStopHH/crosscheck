@@ -553,6 +553,17 @@ describe("outcomeRecordedLine (review #11): the answer says what stands", () => 
     );
   });
 
+  test("survivor R19: the same word with a new reason says the reason was revised", () => {
+    // Act
+    const line = outcomeRecordedLine(
+      KEN_CONTEXT,
+      recorded({ outcome: "overrode", replaced: "overrode", stands: "overrode", reasonRevised: true }),
+    );
+
+    // Assert
+    expect(line).toStartWith(`recorded: ${KEN_CONTEXT} — overrode, the reason revised (the earlier one kept in the history). `);
+  });
+
   test("a word after the noise label names the label it superseded", () => {
     // Act
     const line = outcomeRecordedLine(KEN_CONTEXT, recorded({ replaced: "noise" }));
