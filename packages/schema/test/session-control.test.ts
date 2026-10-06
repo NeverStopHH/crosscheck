@@ -52,7 +52,7 @@ describe("as written, folded", () => {
     ["Option", "conversation"],
     ["commit", "operation"],
     ["tests", "operation"],
-  ])("%p is a %p word", (word, wordClass) => {
+  ] as const)("%p is a %p word", (word, wordClass) => {
     expect(wordClassOf(word)).toBe(wordClass);
   });
 
@@ -75,7 +75,7 @@ describe("a slip of a trigger or a meta word is that word", () => {
     ["zurukgsetz", "meta"],
     ["kontingnet", "meta"],
     ["usgae", "meta"],
-  ])("%p reads as a %p word", (word, wordClass) => {
+  ] as const)("%p reads as a %p word", (word, wordClass) => {
     expect(wordClassOf(word)).toBe(wordClass);
   });
 });
