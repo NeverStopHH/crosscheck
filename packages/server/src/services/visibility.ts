@@ -117,6 +117,15 @@
  * The cost, stated: teammates' SessionStart no longer marks her work
  * landed; only her own sessions do, so it reads unlanded longer than it is.
  *
+ * ACCEPTED: FREE TEXT IS NOT SCANNED FOR LOCATION. The projection withholds
+ * FIELDS. A branch name or a sha a person, a host or an agent wrote INTO
+ * text — a host's session title, a context's description, a claim or a
+ * draft body — is published as written, and so is a copy the hub made
+ * before the opt-out (an event row, a normalized search doc, a draft
+ * composed from her claims). Recognising location inside prose would mean
+ * guessing at every word that looks like a ref, and it would redact real
+ * knowledge on every false positive; the author controls what they write.
+ *
  * ACCEPTED, AND NOT BUILT AROUND: the events feed's ids are ONE sequence
  * every developer's rows share, and a hidden developer's rows are left out
  * of a colleague's feed (surface 4 above) — so the ids a colleague does
