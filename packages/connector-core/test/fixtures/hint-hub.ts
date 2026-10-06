@@ -158,6 +158,24 @@ export const intentOnlyCandidate = (): Record<string, unknown> => {
   };
 };
 
+/** Both rungs reaped since a week before `now`: the coverage note at its two-line length. */
+export const reapedCoverage = (repo: string, now: Date): Record<string, unknown> => {
+  const gapSince = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  return {
+    repo,
+    computedAt: now.toISOString(),
+    scope: { sinceIso: gapSince },
+    order: { state: "undeclared", reason: "hub_did_not_report" },
+    sources: [
+      { source: "agent_event", state: "incomplete", reason: "session_reaped", gapSince, observedAt: gapSince },
+      { source: "git", state: "incomplete", reason: "commits_reported", gapSince, observedAt: gapSince },
+      { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+      { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+      { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+    ],
+  };
+};
+
 export const ANSWER_QUESTION_ID = "qn_backoff";
 export const ANSWER_CLAIM_ID = "clm_answer";
 export const ANSWER_BODY =

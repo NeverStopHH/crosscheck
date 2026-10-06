@@ -17703,7 +17703,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a pointer hint leaves no room for its trailers",
     file: `${CORE}/src/hints/render.ts`,
-    from: "  const reserved = fitHint(lines, reservedCap(input.reserveChars));",
+    from: "  const reserved = fitHint(lines, reservedCap(reserveChars));",
     to: "  const reserved = fitHint(lines);",
     test: `${CORE}/test/hint-trailer-budget.test.ts`,
     because: "a long-labelled pointer on a repo with a gap loses its coverage note",
@@ -17735,8 +17735,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the prompt flow reserves nothing for the trailers",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "      reserveChars: hintTrailerReserve(result.data.coverage, input.now),",
-    to: "      reserveChars: 0,",
+    from: "  const reserveChars = hintTrailerReserve(result.data.coverage, input.now);",
+    to: "  const reserveChars = 0;",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "the renderer budgets for trailers nobody tells it about, and the note is dropped again",
   },
@@ -18374,6 +18374,22 @@ export const MUTATIONS: readonly Mutation[
     because: "every running hub 42703s on the first delivery that carries a provenance, and refuses the row (M7)",
   },
   {
+    label: "an answer leaves no room for its trailers",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return fitBesideTrailers([ANSWER_HEADER, answerLine, questionLine, tailLine], reserveChars);",
+    to: "  return fitBesideTrailers([ANSWER_HEADER, answerLine, questionLine, tailLine], undefined);",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a long answer fills the wire cap and its coverage note is dropped without a word (L3)",
+  },
+  {
+    label: "the answer path reserves nothing for the trailers",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    const text = renderAnswerHint(answer, input.now, reserveChars);",
+    to: "    const text = renderAnswerHint(answer, input.now);",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because: "the renderer can reserve and nobody asks it to, so the answer a developer waited for loses its caveat (L3)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18633,7 +18649,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
  * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 16
- * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 5
+ * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 6
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -18668,7 +18684,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 1
- * PRINTS: packages/connector-core/test/question-delivery.test.ts 4
+ * PRINTS: packages/connector-core/test/question-delivery.test.ts 5
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2

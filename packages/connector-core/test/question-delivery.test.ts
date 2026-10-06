@@ -34,6 +34,7 @@ import {
   SELF_DEVELOPER_ID,
   answeredQuestion,
   proposedOnlyCandidate,
+  reapedCoverage,
   startHintHub,
 } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
@@ -431,6 +432,28 @@ describe("the answer to my own question, on the prompt path", () => {
     // What it was matched on travels with it (review 1006b, M7): an answer
     // this developer waited for, never confused with an unasked pointer.
     expect(shipped.body?.matchedOn).toBe("answer");
+  });
+
+  test("a long answer on a repo with a gap keeps its coverage note (L3: the same reserve as a teammate hint)", async () => {
+    // Arrange — the answer and its question near their caps
+    const f = await fixture("qd-answer-reserve");
+    f.hub.setCandidates([]);
+    f.hub.setAnswers([
+      {
+        ...answeredQuestion(),
+        answererDeveloperName: "Konstantin Alexander Weißenberger-Lindqvist",
+        claimBody: `${ANSWER_BODY}, because both draw from one bucket. `.repeat(8),
+        questionBody: `${ASKED_BODY} And why does it only show under load? `.repeat(6),
+      },
+    ]);
+    f.hub.setCoverage(reapedCoverage(REPO_ID, NOW));
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert — the answer, and the note the full-cap answer used to crowd out
+    expect(text).toContain("crosscheck answer:");
+    expect(text).toContain("Coverage");
   });
 
   test("the answer's delivery says whose intent the session held when it arrived (M7)", async () => {

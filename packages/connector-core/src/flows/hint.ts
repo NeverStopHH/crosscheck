@@ -348,10 +348,13 @@ export const selectAndRenderHint = async (
       hintCandidatesSeen: fresh.hintCandidatesSeen + result.data.candidates.length,
     }));
   }
+  // Room for the lines appended after whichever hint goes out — the answer's
+  // the same as a teammate's (review 1006b, L3).
+  const reserveChars = hintTrailerReserve(result.data.coverage, input.now);
   // The solicited pass FIRST — see selectAnswer for why it outranks.
   const answer = selectAnswer(result.data.answers, state.deliveredHintRefs);
   if (answer !== undefined) {
-    const text = renderAnswerHint(answer, input.now);
+    const text = renderAnswerHint(answer, input.now, reserveChars);
     if (text.length > 0) {
       const delivery: Delivery = {
         refKind: "claim",
@@ -411,7 +414,7 @@ export const selectAndRenderHint = async (
       repoRoot: input.repoRoot,
       now: input.now,
       intentProvenance: state.workContextIntentProvenance ?? null,
-      reserveChars: hintTrailerReserve(result.data.coverage, input.now),
+      reserveChars,
       substanceChannel: substanceChannelOf(result.data.deliveryChannels),
     },
     selection,

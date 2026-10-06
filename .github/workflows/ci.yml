@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1661
+    # PRINTS: 1663
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -281,7 +281,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
-    # PRINTS: flows/hint.ts 22
+    # PRINTS: flows/hint.ts 23
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
@@ -296,7 +296,7 @@ jobs:
     # PRINTS: guarantees/doctor.ts 3
     # PRINTS: hints/delivery.ts 8
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 28
+    # PRINTS: hints/render.ts 29
     # PRINTS: hints/select.ts 28
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
@@ -562,7 +562,7 @@ jobs:
     # PRINTS: harness-turn.ts 13
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 5
-    # PRINTS: hint.ts 24
+    # PRINTS: hint.ts 25
     # PRINTS: hints.ts 25
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 13
@@ -648,7 +648,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 93
+    # PRINTS: render.ts 94
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9

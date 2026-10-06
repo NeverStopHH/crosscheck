@@ -17,13 +17,14 @@ import { HINT_CLOSING_LINE_RESERVE_CHARS, MAX_ID_CHARS } from "../src/constants.
 import { coverageNote } from "../src/coverage/render.ts";
 import {
   hintTrailerReserve,
+  renderAnswerHint,
   renderClaimHint,
   renderPointerHint,
   withCoverageNote,
 } from "../src/hints/render.ts";
 import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
 import type { CoverageRecord } from "../src/http/coverage.ts";
-import type { HintClaimCandidate, HintContextCandidate } from "../src/http/hub.ts";
+import type { AnsweredQuestion, HintClaimCandidate, HintContextCandidate } from "../src/http/hub.ts";
 
 const NOW = new Date("2026-09-15T10:00:00.000Z");
 const GAP_ISO = "2026-09-05T08:13:00.000Z";
@@ -189,5 +190,36 @@ describe("a long-labelled pointer keeps room for what follows it", () => {
     });
     expect(pointer).toContain(`work context ${CONTEXT_ID}`);
     expect(pointer.length).toBeLessThanOrEqual(MAX_HINT_TEXT_LENGTH);
+  });
+});
+
+describe("a long answer keeps the same room for what follows it (review 1006b, L3)", () => {
+  /** An answer and its question near their caps, from the longest author. */
+  const answer: AnsweredQuestion = {
+    questionId: `q_${UUID}`,
+    questionBody: `Warum antwortet der Refresh nach der Rotation mit 500? ${"Und warum hilft nur ein Neustart? ".repeat(12)}`,
+    claimId: `clm_answer_${UUID}`,
+    workContextId: CONTEXT_ID,
+    claimBody: `${SENTENCE} ${SENTENCE} ${SENTENCE}`,
+    claimKind: "root_cause",
+    claimStatus: "likely_root_cause",
+    confidence: 0.7,
+    provenance: "declared",
+    answererDeveloperName: "Konstantin Alexander Weißenberger-Lindqvist",
+    answeredAt: "2026-09-14T08:00:00.000Z",
+  };
+
+  test("the coverage note and the closing line both fit after it", () => {
+    const hint = renderAnswerHint(answer, NOW, hintTrailerReserve(reaped, NOW));
+    expect(hint).toContain("crosscheck answer:");
+    expect(withCoverageNote(hint, reaped, NOW)).not.toBe(hint);
+    expect(withTrailers(hint).length).toBeLessThanOrEqual(MAX_HINT_TEXT_LENGTH);
+  });
+
+  test("an answer whose own two lines leave no room still renders — the trailers never cost it", () => {
+    const hint = renderAnswerHint(answer, NOW, MAX_HINT_TEXT_LENGTH - 200);
+    expect(hint).toContain("crosscheck answer:");
+    expect(hint).toContain(SENTENCE.slice(0, 40));
+    expect(hint.length).toBeLessThanOrEqual(MAX_HINT_TEXT_LENGTH);
   });
 });

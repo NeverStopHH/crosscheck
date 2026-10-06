@@ -237,6 +237,17 @@ const reservedCap = (reserveChars: number | undefined): number =>
   MAX_HINT_TEXT_LENGTH - (reserveChars ?? 0);
 
 /**
+ * Room for what follows first (review 1006b) — but a hint whose own first two
+ * lines leave none still renders under the bare cap: the trailers never cost
+ * the hint (§5.1). The pointer's rule, and the answer's since L3, so a
+ * waited-for answer no longer fills the cap and loses its coverage note.
+ */
+const fitBesideTrailers = (lines: readonly string[], reserveChars: number | undefined): string => {
+  const reserved = fitHint(lines, reservedCap(reserveChars));
+  return reserved.length > 0 ? reserved : fitHint(lines);
+};
+
+/**
  * §5.1's SOFT rule on a hint, with one priority that is not negotiable: THE
  * CLAUSE NEVER COSTS THE HINT.
  *
@@ -471,10 +482,7 @@ export const renderPointerHint = (input: PointerHintInput): string => {
   // the tail is the droppable one — the intent is what says WHAT they do.
   const header = pointerHeader(input.matchedOn, input.intentProvenance);
   const lines = [header, factsLine, ...intentLines(context.intent), tailLine];
-  // Room for what follows (review 1006b) — but a pointer whose own two lines
-  // leave none still renders: the trailers never cost the hint (§5.1).
-  const reserved = fitHint(lines, reservedCap(input.reserveChars));
-  return reserved.length > 0 ? reserved : fitHint(lines);
+  return fitBesideTrailers(lines, input.reserveChars);
 };
 
 /**
@@ -498,6 +506,8 @@ export const renderPointerHint = (input: PointerHintInput): string => {
 export const renderAnswerHint = (
   answer: AnsweredQuestion,
   now: Date,
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  reserveChars?: number,
 ): string => {
   const facts = [
     `- ${authorLabel(answer.answererDeveloperName)}`,
@@ -525,7 +535,7 @@ export const renderAnswerHint = (
   const tailLine =
     `It is recorded as claim ${safeId(answer.claimId)} — name that claim id as evidence ` +
     `when you record what it supports${tree}.`;
-  return fitHint([ANSWER_HEADER, answerLine, questionLine, tailLine]);
+  return fitBesideTrailers([ANSWER_HEADER, answerLine, questionLine, tailLine], reserveChars);
 };
 
 /**
