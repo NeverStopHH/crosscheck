@@ -124,6 +124,24 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     });
   });
 
+  test("review M-2: a repo that left still reports the closed month it was enrolled for, from its intervals", async () => {
+    // Arrange — July's words, then the team leaves on the second of August
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    await crowd.harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled: false }),
+    );
+
+    // Act
+    const outcomes = await outcomesOf(crowd);
+
+    // Assert — July had an enrolled interval: never "none could be recorded"
+    expect(outcomes).toMatchObject({ ...JULY, withheld: null, countedFromIso: ENROLLED_ISO });
+    expect(outcomes["figures"]).toMatchObject({ interventions: 24, followed: 9 });
+  });
+
   test("review M-3: a month counted over an enrolment an upgrade reconstructed says so — the team line and the credit", async () => {
     // Arrange — the same July, its interval inferred by an upgrade from what was recorded
     const crowd = await createCrowd();

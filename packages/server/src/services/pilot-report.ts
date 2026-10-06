@@ -93,6 +93,7 @@ import {
 } from "./pilot-label-figures.ts";
 import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { readEnrolments } from "./outcome-population.ts";
 import { noOutcomeFigures, readOutcomeFigures } from "./pilot-outcome-figures.ts";
 import type { OutcomeFigures } from "./pilot-outcome-figures.ts";
 import type { PilotAnswerSurface } from "./pilot.ts";
@@ -848,7 +849,13 @@ export const readPilotReport = async (
     days: input.days,
   };
   if (!settings.pilotEnrolled) {
-    return { ...base, ...notEnrolled(), outcomes: noOutcomeFigures(until) };
+    // review M-2: the closed month is computed from the intervals whatever the repo is now — a month
+    // the team was enrolled for is never "none could be recorded" because it has since left
+    const everEnrolled = (await readEnrolments(deps.db, input.repo)).length > 0;
+    const outcomes = everEnrolled
+      ? await readOutcomeFigures(deps, { repo: input.repo, now: until, outcomesSinceIso: settings.pilotOutcomesSince })
+      : noOutcomeFigures(until);
+    return { ...base, ...notEnrolled(), outcomes };
   }
   // An enrolled repo always has the instant (enrolment and the bootstrap
   // backfill both write it); if one ever lacks it, NOTHING is labelled

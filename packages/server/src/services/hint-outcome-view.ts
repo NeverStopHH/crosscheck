@@ -39,7 +39,6 @@ import {
   withholdingOf,
 } from "./outcome-population.ts";
 import type { DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
-import { readTeamSettings } from "./team-settings.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -194,17 +193,19 @@ export const readMyHintOutcomes = async (
   deps: Deps,
   input: ReadMyHintOutcomesInput,
 ): Promise<MyHintOutcomes | { readonly refusal: "not_enrolled" }> => {
-  const settings = await readTeamSettings(deps, input.repo);
-  if (!settings.pilotEnrolled) {
+  // review M-2: READ-ONLY WHENEVER THE REPO WAS EVER IN THE PILOT — during a pause and after leaving,
+  // the person still reads what they recorded; only a repo never enrolled has no view (writes stay refused)
+  const enrolments = await readEnrolments(deps.db, input.repo);
+  const [first] = enrolments;
+  if (first === undefined) {
     return { refusal: "not_enrolled" };
   }
   const now = deps.now();
   const since = outcomePopulationStart(
     new Date(now.getTime() - input.days * MS_PER_DAY),
-    settings.pilotOutcomesSince,
+    first.start.toISOString(),
     now,
   );
-  const enrolments = await readEnrolments(deps.db, input.repo);
   const [tallies, reasons, yourWork] = await Promise.all([
     readTallies(deps, input, since),
     readReasons(deps, input, since),

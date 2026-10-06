@@ -192,6 +192,26 @@ describe("renderPilot", () => {
     expect(out).not.toContain("per 100");
   });
 
+  test("review M-2: a repo that left still prints the closed month it was enrolled for", () => {
+    // Arrange — not enrolled now; July was counted, from its intervals
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      pausedInPeriod: false,
+      withheld: null,
+      figures: { interventions: 20, followed: 10, overrode: 2, notRelevantNow: 2, noise: 2, unmarked: 4 },
+    };
+
+    // Act
+    const out = renderPilot(view({ enrolled: false, outcomes }));
+
+    // Assert — never "none could be recorded" for a month the team was in the pilot for
+    expect(out).toContain("not enrolled");
+    expect(out).toContain("hint outcomes per 100 interventions, July 2026");
+    expect(out).not.toContain("none could be recorded");
+  });
+
   test("every channel prints, the empty ones and `unknown` included (PIL-1)", () => {
     // Arrange & Act
     const out = renderPilot(view());

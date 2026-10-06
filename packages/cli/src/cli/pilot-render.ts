@@ -122,6 +122,17 @@ const isoDay = (iso: string): string => {
 const headerLine = (report: PilotReport): string =>
   `crosscheck pilot: ${bareUntrusted(report.repo)} · ${isoDay(report.sinceIso)}..${isoDay(report.untilIso)}`;
 
+/**
+ * A REPO THAT LEFT (07 §13.12, review M-2): its last whole month is counted
+ * from its enrolled intervals, so a month the team was in the pilot for still
+ * prints its line — a repo never enrolled has no counted span, and prints none.
+ */
+const lastEnrolledMonthLines = (report: PilotReport): readonly string[] => {
+  const block = report.outcomes;
+  const counted = block !== undefined && !("unreadable" in block) && block.countedFromIso !== null;
+  return counted ? [outcomeLine(report)] : [];
+};
+
 const notEnrolledLines = (report: PilotReport): readonly string[] => [
   headerLine(report),
   "not enrolled — nothing is measured on this repo, and nothing will be until the team decides it should be.",
@@ -595,7 +606,7 @@ export const pilotFailureLine = (
 export const renderPilot = (view: PilotView): string => {
   const report = view.report;
   if (!report.enrolled) {
-    return `${notEnrolledLines(report).join("\n")}\n`;
+    return `${[...notEnrolledLines(report), ...lastEnrolledMonthLines(report)].join("\n")}\n`;
   }
   const set = report.sessionSet;
   return [

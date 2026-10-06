@@ -17663,8 +17663,10 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/outcome-population.ts`,
     from: "  return recordable.getTime() > windowStart.getTime() ? recordable : windowStart;",
     to: "  return windowStart;",
-    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
-    because: "every upgraded hub reports weeks of history as unmarked — the H1 error, measured as silence",
+    // round 4: since the enrolment intervals, whileEnrolled drops a pre-enrolment delivery from the
+    // counts; what this floor still decides is the window --mine says it covers
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "--mine claims a window weeks older than anything that could have been recorded in it",
   },
   {
     label: "enrolment does not stamp when outcomes became recordable",
@@ -18814,6 +18816,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "the author reads inferred bounds as measured ones",
   },
+  // ── 07 §13.12, review M-2: read-only after a pause or leaving ──
+  {
+    label: "--mine is refused while the pilot is paused (probe C)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  if (first === undefined) {\n    return { refusal: \"not_enrolled\" };",
+    to: "  if (first === undefined || enrolments.at(-1)?.end !== null) {\n    return { refusal: \"not_enrolled\" };",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the person can no longer read what they recorded the moment the pilot pauses",
+  },
+  {
+    label: "--mine's window starts now instead of at the first enrolment",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    first.start.toISOString(),\n",
+    to: "    now.toISOString(),\n",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the view counts nothing and says its window is empty",
+  },
+  {
+    label: "a repo that left reports its enrolled month as none could be recorded",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    const outcomes = everEnrolled\n",
+    to: "    const outcomes = false\n",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "July's figures vanish the day the team leaves in August",
+  },
+  {
+    label: "the not-enrolled page drops the month the team was enrolled for",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  return counted ? [outcomeLine(report)] : [];",
+    to: "  return [];",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a team that left cannot read its last enrolled month",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18905,7 +18940,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 7
- * PRINTS: packages/cli/test/pilot-render.test.ts 31
+ * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -19137,7 +19172,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 15
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 18
  * PRINTS: packages/server/test/hint-outcomes.test.ts 36
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3

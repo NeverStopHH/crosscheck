@@ -1370,6 +1370,14 @@ marked `reconstructed`, and the team line and the credit counted over one say so
 reconstructed from recorded outcomes". (A delivery older than the first outcome recorded about it is still
 outside: only the outcome's instant, not its delivery's, is taken as proof.)
 
+*M-2 — the person's own view was refused during a pause and after leaving (probe C).* `--mine` answered
+`not_enrolled` the moment enrolment turned off, so a person could no longer read what they had recorded. It is
+now served **read-only whenever the repo has any enrolment interval** — during a pause and after leaving; only a
+repo never enrolled has no view, and every write is still refused while it is not enrolled. Its window starts
+at the first interval, not at a stamp. The closed months are computed from the intervals whatever the repo is
+now: a team that left still gets its last whole month's line in the team report (the not-enrolled page prints
+it under its own lines), and a month that had an enrolled interval is never "none could be recorded".
+
 *R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
 of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
 and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —

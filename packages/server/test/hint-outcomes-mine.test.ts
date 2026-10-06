@@ -349,6 +349,51 @@ describe("enrolment history in the person's own view (review M3, P4)", () => {
   });
 });
 
+describe("review M-2: the person's own view outlives a pause and leaving, read-only", () => {
+  const put = async (world: OutcomeWorld, pilotEnrolled: boolean): Promise<Response> =>
+    await world.harness.app.request("/api/team-settings", jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled }));
+
+  test("probe C: --mine while the pilot is paused shows what was recorded, and nothing new can be", async () => {
+    // Arrange — an override, then the pilot paused
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "overrode", reason: OVERRIDE_REASON });
+    world.harness.clock.advanceSeconds(3600);
+    await put(world, false);
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — a minute into the pause
+    const response = await readMine(world, world.nick);
+    const write = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(await viewOf(response)).toMatchObject({ overrode: 1, pausedInWindow: true });
+    expect(write.status).toBe(422);
+  });
+
+  test("a repo never enrolled still has no view", async () => {
+    // Arrange — the world's repo is enrolled; this one never was
+    const world = await createOutcomeWorld();
+
+    // Act
+    const response = await readMine(world, world.nick, "repo=github.com%2Facme%2Fnever&days=56");
+
+    // Assert
+    expect(response.status).toBe(422);
+  });
+
+  test("the view's window starts when outcomes first became recordable, never weeks before", async () => {
+    // Arrange — a 90-day window on a repo enrolled today
+    const world = await createOutcomeWorld();
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick, `repo=${encodeURIComponent(REPO)}&days=90`));
+
+    // Assert
+    expect(view["sinceIso"]).toBe("2026-07-24T09:00:00.000Z");
+  });
+});
+
 describe("ties and self-pointing hints (review M5: surviving mutations)", () => {
   test("M6: the person's own outcome and their noise label at the same instant — the label stands in the view", async () => {
     // Arrange — a tie the write path no longer makes (it stamps strictly later),
