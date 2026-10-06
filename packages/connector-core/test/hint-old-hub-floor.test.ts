@@ -163,13 +163,13 @@ describe("the flow recounts on the prompt's own content terms", () => {
     matchedOn: "prompt",
   });
 
-  const hintFor = async (label: string, prompt: string, body: string): Promise<string> => {
+  const hintFor = async (label: string, prompt: string, body: string, wire: (body: string) => Record<string, unknown> = oldHubWire): Promise<string> => {
     const home = await makeHome(label);
     const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
     paths.push(home, repo);
     const hub = startHintHub();
     hubs.push(hub);
-    hub.setCandidates([oldHubWire(body)]);
+    hub.setCandidates([wire(body)]);
     const key = repoKey(hub.url, REPO_ID);
     await writeSessionState(home, {
       hostSessionKey: HOST_KEY, crosscheckSessionId: `cc_${HOST_KEY}`, workContextId: `wc_cc_${HOST_KEY}`, repoId: REPO_ID, repoRoot: repo,
@@ -184,6 +184,22 @@ describe("the flow recounts on the prompt's own content terms", () => {
 
   test("a body sharing two of the prompt's task words is pointed at", async () => {
     expect(await hintFor("ohf-shared", PROMPT, "The zebrafrobnicator cache poisons the quuxinator on every warm start")).toContain("crosscheck pointer");
+  });
+
+  test("an evidence-backed verdict the old hub never sent reads as absent: a settled cause stays a pointer (L2)", async () => {
+    // Arrange — the wire default for evidenceBacked is NOT a vouch
+    const settledCause = (body: string): Record<string, unknown> => {
+      const wire = oldHubWire(body);
+      const [only] = wire["claims"] as readonly Record<string, unknown>[];
+      return { ...wire, claims: [{ ...only, kind: "root_cause", status: "likely_root_cause", evidenceRefCount: 1, matchedTerms: 3 }] };
+    };
+
+    // Act
+    const hint = await hintFor("ohf-no-verdict", PROMPT, "The zebrafrobnicator cache poisons the quuxinator on every warm start.", settledCause);
+
+    // Assert
+    expect(hint).toContain("crosscheck pointer");
+    expect(hint).not.toContain("crosscheck hint:");
   });
 
   test("a body sharing the prompt's steering words and one task word is not", async () => {

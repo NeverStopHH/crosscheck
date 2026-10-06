@@ -12,6 +12,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { SEARCH_MAX_QUERY_TOKENS } from "../src/services/search.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -320,6 +321,49 @@ describe("a slash command is scored on its arguments only (hold-out review, H1 d
 
     // Assert
     expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+  });
+});
+
+describe("the hub's own bounds before any search (hold-out review, L2)", () => {
+  test("a content-free prompt never reaches the exact tier, even on a target that says its word", async () => {
+    // Arrange — a teammate's tree touched a symbol named "weiter"
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Wizard step handler" })),
+        recordEnvelope("target", { workContextId: WORK_CONTEXT_ID, kind: "symbol", value: "weiter" }),
+        recordEnvelope("claim", validClaimBody({ id: "clm_wizard", body: "The weiter handler skips validation on the last wizard step" })),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(3);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+
+    // Act + Assert
+    expect(await fetchCandidates(harness, robin, { query: "weiter" })).toEqual([]);
+  });
+
+  /** A tree two late words of a long prompt share. */
+  const lateWordTree = () =>
+    seedTree({ title: "Unrelated title words", description: "x" }, [
+      { id: "clm_late", body: "The zebrafrobnicator cache poisons the quuxinator on every warm start" },
+    ]);
+
+  test("the control: two shared words find the tree", async () => {
+    const { harness, robin } = await lateWordTree();
+    expect(ids(await fetchCandidates(harness, robin, { query: "zebrafrobnicator quuxinator" }))).toEqual([WORK_CONTEXT_ID]);
+  });
+
+  test(`only the first ${String(SEARCH_MAX_QUERY_TOKENS)} content terms reach the database — words past them are not searched`, async () => {
+    // Arrange — the bound keeps SQL and the PGlite heap bounded; the verdict
+    // still reads every word (prompt-terms.ts), the search does not
+    const { harness, robin } = await lateWordTree();
+    const fillers = Array.from({ length: SEARCH_MAX_QUERY_TOKENS }, (_, index) => `filler${String(index).padStart(4, "0")}`);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: `${fillers.join(" ")} zebrafrobnicator quuxinator` });
+
+    // Assert
+    expect(candidates).toEqual([]);
   });
 });
 

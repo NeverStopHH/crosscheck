@@ -17949,10 +17949,13 @@ export const MUTATIONS: readonly Mutation[
     because: "a notification's task ids and status words go on the wire and top up a human prompt's count",
   },
   {
+    // RETARGETED (hold-out review, L2): the hub's own harness check was an
+    // exact equivalent of the content-free verdict on the human text and is
+    // gone; what keeps a harness turn silent on the hub is scoring only that.
     label: "the hub lets the intent stand in for a harness turn",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (isHarnessTurn(input.query)) {\n    return [];\n  }\n",
-    to: "",
+    from: "  const humanText = humanPromptText(input.query);",
+    to: "  const humanText = input.query;",
     test: `${SERVER}/test/hint-harness-turn.test.ts`,
     because: "every installed connector's background notification earns an intent-matched pointer",
   },
@@ -18890,6 +18893,30 @@ export const MUTATIONS: readonly Mutation[
     because: "a human sentence naming the tag after a notification is swallowed up to it (L1, the review's survivor)",
   },
   {
+    label: "the wire defaults evidenceBacked to true",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  evidenceBacked: z.boolean().optional(),",
+    to: "  evidenceBacked: z.boolean().default(true),",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a hub too old to judge evidence buys substance for every settled cause it sends (L2, the review's survivor)",
+  },
+  {
+    label: "the hub searches a content-free prompt anyway",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  if (terms.isContentFree) {\n    return [];\n  }\n",
+    to: "",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"weiter\" reaches the exact tier and points at the tree that touched a symbol of that name (L2)",
+  },
+  {
+    label: "the hub sends every content term to SQL, unbounded",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    terms: terms.content.slice(0, SEARCH_MAX_QUERY_TOKENS),",
+    to: "    terms: terms.content,",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "a pasted wall of text becomes one OR-query of hundreds of terms on the embedded database (L2, the review's survivor)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -19144,7 +19171,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
- * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 6
+ * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 7
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
@@ -19262,7 +19289,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-candidate-floor.test.ts 6
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 8
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 10

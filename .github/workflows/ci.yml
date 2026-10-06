@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1725
+    # PRINTS: 1728
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -300,7 +300,7 @@ jobs:
     # PRINTS: hints/select.ts 32
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
-    # PRINTS: http/hub.ts 13
+    # PRINTS: http/hub.ts 14
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 5
     # PRINTS: http/verdict.ts 4
@@ -432,7 +432,7 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-resolution.ts 3
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 5
-    # PRINTS: packages/server/src/services/hints.ts 27
+    # PRINTS: packages/server/src/services/hints.ts 29
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
@@ -571,9 +571,9 @@ jobs:
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 5
     # PRINTS: hint.ts 29
-    # PRINTS: hints.ts 30
+    # PRINTS: hints.ts 32
     # PRINTS: hook-budget.ts 2
-    # PRINTS: hub.ts 13
+    # PRINTS: hub.ts 14
     # PRINTS: index.ts 4
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 8

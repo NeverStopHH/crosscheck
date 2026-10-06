@@ -59,7 +59,6 @@ import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
   humanPromptText,
-  isHarnessTurn,
   promptTerms,
   qualifiesAsSubstance,
   shownSubstance,
@@ -808,10 +807,9 @@ export const listHintCandidates = async (
   // A TURN THE HARNESS WROTE is nobody's prompt: a background task's
   // notification or another agent's message, which an installed connector
   // still sends as the query. Only the human text outside the wrappers is
-  // scored, and a turn that is all harness gets nothing.
-  if (isHarnessTurn(input.query)) {
-    return [];
-  }
+  // scored — and a turn that is all harness has none, so the content-free
+  // verdict below refuses it (a separate harness check here was an exact
+  // equivalent of that line, removed as the hold-out review's L2 found).
   const humanText = humanPromptText(input.query);
   // NOTHING TASK-BEARING, nothing to match: what is left is a command to the
   // session — steering, a trigger beside meta words, conversation control or
