@@ -401,8 +401,10 @@ const contextActivitySeenBy = (viewerDeveloperId: string): SQL<Date> =>
  * cannot push another out of the answer entirely" in
  * server/test/work-context-listing.test.ts.
  */
+// Ties go to the context id — never to whatever order the window met the
+// rows in, which is by DEVELOPER id, random per hub (review round 4, L1).
 const contextRankPerDeveloper = (activity: SQL<Date>): SQL =>
-  sql`row_number() over (partition by ${agentSessions.developerId} order by ${activity} desc)`;
+  sql`row_number() over (partition by ${agentSessions.developerId} order by ${activity} desc, ${workContexts.id} asc)`;
 
 /**
  * How many contexts this row's developer has in the answer BEFORE the bound.
@@ -485,7 +487,7 @@ export const listWorkContextsByRepo = async (
     // is built on — ordering by anything else would make the bound cut a
     // different set from the one the window selected. Rank first, so every
     // teammate's freshest context is served before anyone's second.
-    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))
+    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))
     .limit(limit);
   return rows.map((row) =>
     projectRow(hidden, ownerOf(row.developerId, repo, row.branch, row.workContext), {

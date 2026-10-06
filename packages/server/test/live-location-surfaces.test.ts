@@ -10,7 +10,13 @@
 import { describe, expect, test } from "bun:test";
 import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
-import { postRecords, recordEnvelope, validWorkContextBody } from "./helpers.ts";
+import {
+  createTestDeveloper,
+  postRecords,
+  recordEnvelope,
+  registerTestSession,
+  validWorkContextBody,
+} from "./helpers.ts";
 import {
   CREATED_AT,
   DETACHED_TITLE,
@@ -226,6 +232,29 @@ describe("when Robin last touched her work (review round 3, M1)", () => {
     expect(asRobin.map((row) => row.id)).toContain(ROBIN_OLD_CONTEXT);
     expect(asNick.find((row) => row.developerId === world.robin.developerId)?.id).toBe(ROBIN_HOST_CONTEXT);
     expect(asRobin.find((row) => row.developerId === world.robin.developerId)?.id).toBe(ROBIN_CONTEXT);
+  });
+
+  test("equally fresh work is listed by its id, never by whatever decided the tie (review round 4, L1)", async () => {
+    // Ordered by activity alone, a tie fell to the order the rank's window
+    // met the rows in — by DEVELOPER id, which is random per hub. So two
+    // hubs differing only by something she did listed colleagues' equally
+    // fresh rows differently, and the order itself became a diff.
+    const world = await seedOptedOutWorld();
+    const tied = ["wc_tie_1", "wc_tie_2", "wc_tie_3", "wc_tie_4", "wc_tie_5", "wc_tie_6"];
+    for (const [index, id] of tied.entries()) {
+      const teammate = await createTestDeveloper(world.harness, `Tie ${String(index)}`, `tie${String(index)}@example.com`);
+      const sessionId = `cc_${String(index)}0000000-0000-4000-8000-000000000000`;
+      await registerTestSession(world.harness, teammate.apiKey, { id: sessionId });
+      await postRecords(world.harness, teammate, {
+        records: [recordEnvelope("work_context", validWorkContextBody({ id, sessionId, title: `Tied work ${String(index)}` }), { sessionId })],
+      });
+    }
+
+    const order = listed((await getAs(world, "nick", url("/api/work-contexts", { repo: REPO }))).body)
+      .map((row) => row.id)
+      .filter((id) => tied.includes(id));
+
+    expect(order).toEqual(tied);
   });
 
   test("freshest-first ranks her work by creation, so the order says nothing of her last touch", async () => {

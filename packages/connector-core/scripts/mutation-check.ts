@@ -3643,8 +3643,8 @@ export const MUTATIONS: readonly Mutation[
     // cannot recover a developer the hub's own bound never sent.
     label: "the listing bound is spent on one developer",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))",
-    to: "    .orderBy(desc(activity))",
+    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))",
+    to: "    .orderBy(desc(activity), asc(workContexts.id))",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "a teammate running many short sessions fills all 200 rows and the " +
@@ -18137,8 +18137,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the listing ranks an opted-out teammate's work by her last touch",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))",
-    to: "    .orderBy(sql`${contextRankPerDeveloper(contextActivityAt)} ASC`, desc(contextActivityAt))",
+    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))",
+    to: "    .orderBy(sql`${contextRankPerDeveloper(contextActivityAt)} ASC`, desc(contextActivityAt), asc(workContexts.id))",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the context she is on now leads her rows, which names it as surely as " +
@@ -18383,6 +18383,17 @@ export const MUTATIONS: readonly Mutation[
     because:
       "Nick sweeps committedAt and reads Robin's session start back to the " +
       "second from where the stop starts naming her work",
+  },
+  {
+    // Review round 4, L1: an order that hangs on nothing is a diff.
+    label: "equally fresh work is listed in the order the developer ids happen to sort",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))",
+    to: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "two hubs that differ only by something an opted-out teammate did list " +
+      "colleagues' equally fresh rows differently, and the order is the leak",
   },
 ];
 
@@ -18717,7 +18728,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 15
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 21
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 22
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

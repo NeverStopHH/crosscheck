@@ -419,7 +419,9 @@ const scopeCondition = (scope: SearchScope) =>
 const activityFor = (scope: SearchScope): SQL<Date> =>
   activitySeenBy(scope.viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
 
-const activityDesc = (scope: SearchScope): SQL => sql`${activityFor(scope)} DESC`;
+/** Freshest first, ties to the id — never to the order the scan met the rows in. */
+const activityDesc = (scope: SearchScope): SQL =>
+  sql`${activityFor(scope)} DESC, ${workContexts.id} ASC`;
 
 const listExactTier = async (
   db: Db,
