@@ -9,6 +9,7 @@ import { createEmbedderFromEnv } from "./services/embedder.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
 import { parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
+import { runStartupUpgrades } from "./services/startup-upgrades.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -275,6 +276,14 @@ export const startServer = async (): Promise<void> => {
       console.error("[crosscheck] skeleton identity backfill failed; unresolved rows are kept", error);
     },
   );
+  // DRAFTS OUT OF WHAT AN OLDER HUB BUILT: the auto links its gate made into
+  // teammates' trees on a draft's strength, the docs that still fold drafts
+  // in, and — with an embedder — every vector missing or from another model
+  // (services/startup-upgrades.ts runs them apart, each logging its own
+  // outcome). After serving, for the same reason: until they have run the
+  // old rows behave as they did before the upgrade, and nothing waits on
+  // them. All idempotent; each start finishes what the last left.
+  void runStartupUpgrades({ db, embedder });
   // The hub's own reaper (trial finding M6). HERE and not in `createApp`:
   // every test that builds an app would otherwise leak a timer, and the
   // registration path already reaps the registering developer's own sessions

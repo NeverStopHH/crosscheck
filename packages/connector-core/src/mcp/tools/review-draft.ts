@@ -33,7 +33,8 @@ import { quotedBody, quotingOwnText, safeId } from "../render.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
-import { getDrafts, postRecords } from "../../http/hub.ts";
+import { getDraftListing, postRecords } from "../../http/hub.ts";
+import type { HubResult } from "../../http/client.ts";
 import type { DraftEntry } from "../../http/hub.ts";
 import { readSessionState } from "../../state/session-state.ts";
 import type { OwnWorkContext } from "../session.ts";
@@ -208,6 +209,32 @@ export const successText = (
   );
 };
 
+/**
+ * The draft by id, from either end of the backlog. The newest-first page is
+ * capped, and the review nudge names the drafts that waited LONGEST — the
+ * ones a backlog past the cap leaves off that page — so when the hub says the
+ * backlog runs past it, the oldest-first page is asked too. A hub too old to
+ * honour `order=oldest` answers newest-first again and changes nothing.
+ */
+const findOwnDraft = async (
+  ctx: McpContext,
+  draftId: string,
+): Promise<HubResult<DraftEntry | undefined>> => {
+  const newest = await getDraftListing(ctx.hub, ctx.identity.repoId);
+  if (!newest.ok) {
+    return newest;
+  }
+  const hit = newest.data.drafts.find((entry) => entry.id === draftId);
+  const pastPage = newest.data.total !== null && newest.data.total > newest.data.drafts.length;
+  if (hit !== undefined || !pastPage) {
+    return { ...newest, data: hit };
+  }
+  const oldest = await getDraftListing(ctx.hub, ctx.identity.repoId, "oldest");
+  return oldest.ok
+    ? { ...oldest, data: oldest.data.drafts.find((entry) => entry.id === draftId) }
+    : oldest;
+};
+
 export const run = async (
   ctx: McpContext,
   args: unknown,
@@ -228,11 +255,11 @@ export const run = async (
   // The hub's own-drafts list IS the authority on what is reviewable: it is
   // developer-scoped by the api key, so a teammate's draft or an already
   // reviewed one simply is not in it.
-  const drafts = await getDrafts(ctx.hub, ctx.identity.repoId);
-  if (!drafts.ok) {
-    return hubFailure(ctx, drafts);
+  const found = await findOwnDraft(ctx, draftId);
+  if (!found.ok) {
+    return hubFailure(ctx, found);
   }
-  const draft = drafts.data.find((entry) => entry.id === draftId);
+  const draft = found.data;
   if (draft === undefined) {
     return toolFailure(NOT_A_DRAFT);
   }

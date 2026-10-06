@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  DERIVE_FIRES_KEPT,
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   MAX_BRIEFING_SOLVED_REFS,
   MAX_SHOWN_LANDED_NOTICE_IDS,
@@ -14,6 +15,7 @@ import {
   SECONDS_PER_MINUTE,
   SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
+  SUMMARIZER_TIMEOUT_MS,
 } from "../constants.ts";
 import {
   readJsonOrNull,
@@ -46,7 +48,8 @@ const withSessionStateLock = async <T>(
   path: string,
   fallback: T,
   action: () => Promise<T>,
-): Promise<T> => withLock(path, fallback, action, SESSION_STATE_LOCK_RETRIES);
+  retries: number = SESSION_STATE_LOCK_RETRIES,
+): Promise<T> => withLock(path, fallback, action, retries);
 
 /**
  * Past this much silence a state file is a CORPSE, not a live session: the
@@ -111,6 +114,44 @@ const dropRetiredToolWindowKeys = (value: unknown): unknown => {
     ),
   );
 };
+
+/**
+ * One model run's start and the deadline its worker was given, as the fire's
+ * gate booked them (`deriveFires`). An entry without a deadline was booked
+ * before it existed, under the default one.
+ */
+export const DeriveFireSchema = z.object({
+  at: z.string().min(1),
+  deadlineMs: z.number().int().positive().default(SUMMARIZER_TIMEOUT_MS),
+});
+
+export type DeriveFire = z.infer<typeof DeriveFireSchema>;
+
+/**
+ * The ring read ENTRY BY ENTRY: one fire booked malformed (an unsafe deadline,
+ * a missing instant) costs only itself, and a value that is not a list reads
+ * as no fires. Parsed as one array, a single bad entry failed the whole state
+ * file — readSessionState returned null and every later update of the
+ * session was refused (review round 3). The derive history reads its copy the
+ * same way (state/derive-history.ts).
+ */
+export const DeriveFiresSchema = z
+  .array(z.unknown())
+  .optional()
+  .catch(undefined)
+  .transform((entries): DeriveFire[] =>
+    (entries ?? []).flatMap((entry) => {
+      const parsed = DeriveFireSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
+
+/** The ring after one more fire: appended, the newest DERIVE_FIRES_KEPT kept. */
+export const withDeriveFire = (
+  fires: readonly DeriveFire[],
+  firedAt: Date,
+  deadlineMs: number,
+): DeriveFire[] => [...fires, { at: firedAt.toISOString(), deadlineMs }].slice(-DERIVE_FIRES_KEPT);
 
 const SessionStateObjectSchema = z.looseObject({
   /**
@@ -390,16 +431,30 @@ const SessionStateObjectSchema = z.looseObject({
    * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
    * fire that lands nothing must be a number somebody can explain): fires
    * booked by the UserPromptSubmit hook under the lock BEFORE the worker
-   * spawns, and the worker's outcome — NONE, an intent set on the spool, or
-   * a failure with its reason (runner loss, or a drop: secret, echo, empty —
-   * bounded by the writer to SUMMARIZER_FAILURE_MAX_CHARS). Defaults keep
-   * every pre-intent state file parsing.
+   * spawns, and the worker's outcome — NONE, an intent set on the spool, a
+   * runner failure with its reason (bounded by the writer to
+   * SUMMARIZER_FAILURE_MAX_CHARS), or one of the two drops below. Defaults
+   * keep every pre-intent state file parsing.
    */
   intentFireCount: z.number().int().min(0).default(0),
   intentNoneCount: z.number().int().min(0).default(0),
   intentSetCount: z.number().int().min(0).default(0),
   intentFailCount: z.number().int().min(0).default(0),
   intentLastFailure: z.string().nullable().default(null),
+  /**
+   * The model ANSWERED and the worker kept nothing of it (cut at the output
+   * cap, empty, not a sentence, an echo of a delivered hint, secret-like, off
+   * the wire contract): an answer, so doctor never reads it as a runner that
+   * fails (derive/sharing.ts).
+   */
+  intentRefusedCount: z.number().int().min(0).default(0),
+  /**
+   * The worker dropped the run before asking the model (an empty prompt file,
+   * a state file predating intent support): no answer and no model failure.
+   */
+  intentSkippedCount: z.number().int().min(0).default(0),
+  /** The newest refusal's or skip's reason, bounded like intentLastFailure. */
+  intentLastDrop: z.string().nullable().default(null),
   /**
    * The intent sentence this session last put on the hub (VISION.md §3), and
    * the reason it is stored rather than re-read: the ghost check compares
@@ -585,6 +640,21 @@ const SessionStateObjectSchema = z.looseObject({
    * session, and a second nudge inside it is the nag the slot exists to stop.
    */
   draftNudge: z.enum(["delivered", "nothing_due"]).nullable().default(null),
+  /**
+   * Until when the nudge leaves the hub alone after a FAILED draft fetch
+   * (flows/draft-nudge.ts DRAFT_NUDGE_RETRY_COOLDOWN_MS); null when nothing
+   * failed. Not a spent slot: the nudge is still owed once it passes.
+   */
+  draftNudgeRetryAt: z.string().min(1).nullable().default(null),
+  /**
+   * When each summarizer or derived-intent fire was booked, oldest first, the
+   * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
+   * flight (or one that finished after SessionEnd, with nowhere left to book
+   * its answer) from a worker that never reported back, RUN BY RUN
+   * (derive/sharing.ts). Empty on a state written before it existed, whose
+   * runs doctor then never blames.
+   */
+  deriveFires: DeriveFiresSchema,
 });
 
 /**
@@ -674,12 +744,16 @@ export const sessionStateLockPath = (
  * steal only from the provably dead, worst case ~100 ms of retries
  * (SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS) inside budgets that allow
  * for it. writeSessionState stays for the CREATE paths (SessionStart,
- * recovery), which run before any sibling exists.
+ * recovery), which run before any sibling exists. `retries` is for a caller
+ * whose own budget is shorter than that patience (spool/lock.ts
+ * lockRetriesWithin): it gives up — false, nothing written — when its budget
+ * does.
  */
 export const updateSessionState = async (
   home: string,
   hostSessionKey: string,
   transform: (fresh: SessionState) => SessionState | null,
+  retries?: number,
 ): Promise<boolean> =>
   withSessionStateLock(sessionStateLockPath(home, hostSessionKey), false, async () => {
     const fresh = await readSessionState(home, hostSessionKey);
@@ -692,7 +766,7 @@ export const updateSessionState = async (
     }
     await writeSessionState(home, next);
     return true;
-  });
+  }, retries);
 
 /** What a state file is BOUND TO: one repo, on one hub. */
 interface SessionBinding {
@@ -813,6 +887,13 @@ export const withCarriedCapture = (
         toolWindowMisses: previous.toolWindowMisses,
         // The nudge is once per SESSION, and a re-fire is the same session.
         draftNudge: previous.draftNudge,
+        // ...and so is its cooldown: dropped, the re-fire's first prompt
+        // asks the hub that just failed again at once (review round 3).
+        draftNudgeRetryAt: previous.draftNudgeRetryAt,
+        // The turns this session already finished: dropped, the nudge waits
+        // for a "first" finished turn the session had long ago, and doctor
+        // counts a compacted session as a short one.
+        stopTurnCount: previous.stopTurnCount,
       };
 
 /**
@@ -1490,6 +1571,9 @@ export const deriveSessionState = (
     intentSetCount: 0,
     intentFailCount: 0,
     intentLastFailure: null,
+    intentRefusedCount: 0,
+    intentSkippedCount: 0,
+    intentLastDrop: null,
     workContextIntent: null,
     ghostPending: false,
     gitTouchCount: 0,
@@ -1514,5 +1598,7 @@ export const deriveSessionState = (
     toolWindowEvictions: 0,
     toolWindowMisses: 0,
     draftNudge: null,
+    draftNudgeRetryAt: null,
+    deriveFires: [],
   };
 };

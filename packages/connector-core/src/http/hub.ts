@@ -993,11 +993,20 @@ export interface DraftListing {
   readonly drafts: readonly DraftEntry[];
   readonly total: number | null;
   readonly oldestCreatedAt: string | null;
+  /**
+   * Which end the rows start from, as the HUB says — null from a hub too old
+   * to say, whose rows are newest-first whatever was asked for.
+   */
+  readonly order: "newest" | "oldest" | null;
 }
+
+/** The end of the backlog a listing should start from (`?order=`). */
+export type DraftListingOrder = "newest" | "oldest";
 
 const BacklogTotalsSchema = z.looseObject({
   total: z.number().int().min(0).nullable().optional().catch(null),
   oldestCreatedAt: z.string().min(1).nullable().optional().catch(null),
+  order: z.enum(["newest", "oldest"]).nullable().optional().catch(null),
 });
 
 const DraftListingAnswerSchema = z
@@ -1008,6 +1017,7 @@ const DraftListingAnswerSchema = z
       drafts: tolerantList("drafts", DraftEntrySchema).parse(value),
       total: totals.total ?? null,
       oldestCreatedAt: totals.oldestCreatedAt ?? null,
+      order: totals.order ?? null,
     };
   });
 
@@ -1015,10 +1025,11 @@ const DraftListingAnswerSchema = z
 export const getDraftListing = (
   ctx: HubContext,
   repo: string,
+  order: DraftListingOrder = "newest",
 ): Promise<HubResult<DraftListing>> =>
   hubRequest(ctx, {
     method: "GET",
-    path: `/api/drafts${encodeRepo(repo)}`,
+    path: `/api/drafts${encodeRepo(repo)}${order === "oldest" ? "&order=oldest" : ""}`,
     schema: DraftListingAnswerSchema,
   });
 
@@ -1131,6 +1142,9 @@ export const ExternalClaimRefSchema = z.looseObject({
   id: z.string().min(1),
   kind: z.string().min(1),
   workContextId: z.string().min(1),
+  /** Optional: an older hub sends neither, and the line then says nothing more. */
+  provenance: z.string().min(1).optional().catch(undefined),
+  status: z.string().min(1).optional().catch(undefined),
 });
 
 export type ExternalClaimRef = z.infer<typeof ExternalClaimRefSchema>;
@@ -1406,6 +1420,11 @@ export const SearchResultEntrySchema = z.looseObject({
   /** Solved-tree marker (VISION.md §1); optional — older hubs send neither. */
   resultKind: z.string().min(1).optional(),
   solvedAt: z.string().nullable().optional(),
+  /**
+   * The tree matched ONLY through an unreviewed derived draft's words; the
+   * line says so. Absent from an older hub, which marks nothing.
+   */
+  derivedOnly: z.boolean().optional().catch(undefined),
 });
 
 export type SearchResultEntry = z.infer<typeof SearchResultEntrySchema>;
@@ -2264,6 +2283,25 @@ export const getIntentPositions = (
     method: "GET",
     path: "/api/intent-ledger/positions",
     schema: IntentPositionsSchema,
+  });
+
+/**
+ * What the hub is still doing on its own after an upgrade (server
+ * routes/hub-status.ts): how many search docs its start-up pass has yet to
+ * rebuild. An older hub has no such route — the result is then not ok, and
+ * a caller says nothing rather than a zero it was never told.
+ */
+const HubStatusSchema = z.looseObject({
+  searchDocsPending: z.number().int().min(0),
+});
+
+export type HubStatus = z.infer<typeof HubStatusSchema>;
+
+export const getHubStatus = (ctx: HubContext): Promise<HubResult<HubStatus>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/hub-status",
+    schema: HubStatusSchema,
   });
 
 export const putPresenceOptOut = (

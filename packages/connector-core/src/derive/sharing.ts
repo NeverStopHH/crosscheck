@@ -15,6 +15,7 @@
  *   cannot_start             the HOOKS could not start it (their PATH, not ours);
  *   runner_failing           every run that reported back failed;
  *   workers_silent           runs were started and none reported back;
+ *   cannot_judge             runs were booked with no start time to judge them by;
  *   no_transcript            the host had no transcript to summarize;
  *   answers_refused          the model spoke and nothing it said was kept;
  *   gate_quiet               no turn ever read as a conclusion — nothing broken;
@@ -41,14 +42,17 @@ import {
   DOCTOR_SHARING_QUIET_INTENT_SESSIONS_WARN,
   DOCTOR_SHARING_QUIET_TURNS_WARN,
   DOCTOR_SHARING_SILENT_FIRES_WARN,
+  DERIVE_RUN_GRACE_FACTOR,
+  DERIVE_RUN_GRACE_MS,
   DOCTOR_SUMMARIZER_REJECTED_WARN,
   DRAFT_NUDGE_MIN_AGE_HOURS,
   DRAFT_RETENTION_HORIZON_DAYS,
   INTENT_MIN_PROMPT_CHARS,
   MS_PER_DAY,
+  MS_PER_SECOND,
   SUMMARIZER_CHILD_ENV,
 } from "../constants.ts";
-import type { SessionState } from "../state/session-state.ts";
+import type { DeriveFire, SessionState } from "../state/session-state.ts";
 
 /** The derive counters of ONE session — what the history keeps of it. */
 export type DeriveDigest = Pick<
@@ -68,9 +72,15 @@ export type DeriveDigest = Pick<
   | "intentSetCount"
   | "intentFailCount"
   | "intentLastFailure"
->;
+  | "intentRefusedCount"
+  | "intentSkippedCount"
+  | "deriveFires"
+> & {
+  /** When the session ended; null while it is live. */
+  readonly endedAt: string | null;
+};
 
-export const digestOf = (state: SessionState): DeriveDigest => ({
+export const digestOf = (state: SessionState, endedAt: Date | null = null): DeriveDigest => ({
   stopTurnCount: state.stopTurnCount,
   summarizerFireCount: state.summarizerFireCount,
   summarizerNoneCount: state.summarizerNoneCount,
@@ -86,6 +96,10 @@ export const digestOf = (state: SessionState): DeriveDigest => ({
   intentSetCount: state.intentSetCount,
   intentFailCount: state.intentFailCount,
   intentLastFailure: state.intentLastFailure,
+  intentRefusedCount: state.intentRefusedCount,
+  intentSkippedCount: state.intentSkippedCount,
+  deriveFires: state.deriveFires,
+  endedAt: endedAt === null ? null : endedAt.toISOString(),
 });
 
 /**
@@ -106,6 +120,8 @@ export interface OwnDraftsFact {
 export interface SharingInput {
   /** The environment doctor runs with — its off switches and its PATH. */
   readonly env: Env;
+  /** Doctor's clock: what decides whether an unanswered run is still in flight. */
+  readonly now: Date;
   /** Digests of the live sessions of this repo + hub, newest first. */
   readonly live: readonly DeriveDigest[];
   /** Digests of ended sessions the history kept, newest first. */
@@ -121,6 +137,7 @@ export type SharingCause =
   | "cannot_start"
   | "runner_failing"
   | "workers_silent"
+  | "cannot_judge"
   | "no_transcript"
   | "answers_refused"
   | "gate_quiet"
@@ -139,8 +156,8 @@ interface Totals {
   readonly sessions: number;
   readonly turns: number;
   readonly fires: number;
-  readonly outcomes: number;
-  readonly answered: number;
+  /** Per kind of run, so a claim like "every run failed" can be checked against it. */
+  readonly kinds: readonly KindRuns[];
   readonly drafts: number;
   readonly fails: number;
   readonly lastFailure: string | null;
@@ -149,7 +166,38 @@ interface Totals {
   readonly lastNoSlice: string | null;
   readonly intentFires: number;
   readonly intentsSet: number;
+  /** Runs past their grace that no outcome accounts for (settlementOfSession). */
+  readonly silentRuns: number;
+  /** Outcomes of the sessions that have any settled run. */
+  readonly settledOutcomes: number;
+  /** Unanswered runs of LIVE sessions still inside their grace. */
+  readonly inFlight: number;
+  /** Unanswered runs booked without a start time, which nothing can settle. */
+  readonly unjudged: number;
 }
+
+/**
+ * One kind of model run (summarizer or derived intent): how many reported an
+ * ANSWER — any answer the model gave, refused or unreadable ones included,
+ * because the model spoke — and how many reported a runner failure.
+ */
+interface KindRuns {
+  readonly kind: "summarizer" | "intent";
+  readonly answered: number;
+  readonly failed: number;
+  readonly lastFailure: string | null;
+}
+
+/** What a run of that kind would have produced: the line's verb for it. */
+const KIND_LOSS: Readonly<Record<KindRuns["kind"], string>> = {
+  summarizer: "drafts nothing",
+  intent: "derives no intent",
+};
+
+const KIND_SHORT: Readonly<Record<KindRuns["kind"], string>> = {
+  summarizer: "no drafts",
+  intent: "no intents",
+};
 
 const sumOf = (digests: readonly DeriveDigest[], pick: (digest: DeriveDigest) => number): number =>
   digests.reduce((sum, digest) => sum + pick(digest), 0);
@@ -157,7 +205,111 @@ const sumOf = (digests: readonly DeriveDigest[], pick: (digest: DeriveDigest) =>
 const firstOf = (values: readonly (string | null)[]): string | null =>
   values.find((value): value is string => value !== null) ?? null;
 
-const totalsOf = (digests: readonly DeriveDigest[]): Totals => {
+const outcomesOf = (d: DeriveDigest): number =>
+  d.summarizerNoneCount +
+  d.intentNoneCount +
+  d.summarizerDraftCount +
+  d.intentSetCount +
+  d.summarizerFailCount +
+  d.intentFailCount +
+  d.summarizerRejectCount +
+  d.summarizerUnreadableCount +
+  d.intentRefusedCount +
+  d.intentSkippedCount;
+
+const firesOf = (d: DeriveDigest): number => d.summarizerFireCount + d.intentFireCount;
+
+/**
+ * Whether one run has had its time by `until` (now, or its session's end):
+ * DERIVE_RUN_GRACE_FACTOR times the deadline THAT run was given, so a raised
+ * CROSSCHECK_SUMMARIZER_TIMEOUT_MS is never judged at the default's grace.
+ */
+const isRunSettled = (fire: DeriveFire, until: number): boolean => {
+  const fired = Date.parse(fire.at);
+  return (
+    !Number.isNaN(fired) &&
+    !Number.isNaN(until) &&
+    until - fired >= DERIVE_RUN_GRACE_FACTOR * fire.deadlineMs
+  );
+};
+
+/** What one session's runs came to, each settled on its own. */
+interface RunSettlement {
+  /** Runs that have had their time. */
+  readonly settled: number;
+  /** Of those, the ones no booked outcome accounts for. */
+  readonly silent: number;
+  /** Unanswered runs of a LIVE session still inside their grace. */
+  readonly inFlight: number;
+  /** Unanswered runs with no recorded start at all: neither, and not judgeable. */
+  readonly unjudged: number;
+}
+
+/**
+ * EACH RUN AGAINST ITS OWN START (review round 2): settling a session by its
+ * NEWEST fire let one fresh run make every older silent one read as in
+ * flight. A run is settled once it has had its grace (isRunSettled), counted to
+ * now — or to SessionEnd for an ended session, whose late answer had no state
+ * file to land in, so an ended session's unsettled run is neither silent nor
+ * in flight. Fires older than the kept ring started before its oldest entry
+ * and are settled whenever that one is. Outcomes carry no run id, so they are
+ * credited to the oldest runs first — the reading that blames the fewest. A
+ * run with no recorded start is never settled: missing evidence does not get
+ * to blame the host — nor to pass it (cannotJudgeRule).
+ */
+const settlementOfSession = (d: DeriveDigest, now: Date): RunSettlement => {
+  const until = d.endedAt === null ? now.getTime() : Date.parse(d.endedAt);
+  const fires = firesOf(d);
+  const outcomes = outcomesOf(d);
+  const oldest = d.deriveFires[0];
+  const unrecorded = Math.max(0, fires - d.deriveFires.length);
+  const settled =
+    d.deriveFires.filter((fire) => isRunSettled(fire, until)).length +
+    (oldest !== undefined && isRunSettled(oldest, until) ? unrecorded : 0);
+  const silent = Math.max(0, settled - outcomes);
+  const live = d.endedAt === null && oldest !== undefined;
+  return {
+    settled,
+    silent,
+    inFlight: live ? Math.max(0, fires - outcomes - silent) : 0,
+    unjudged: oldest === undefined ? Math.max(0, fires - outcomes) : 0,
+  };
+};
+
+const settlementOf = (
+  digests: readonly DeriveDigest[],
+  now: Date,
+): Pick<Totals, "silentRuns" | "settledOutcomes" | "inFlight" | "unjudged"> => {
+  const sessions = digests.map((d) => ({ d, runs: settlementOfSession(d, now) }));
+  const withSettled = sessions.filter(({ runs }) => runs.settled > 0);
+  return {
+    silentRuns: sessions.reduce((sum, { runs }) => sum + runs.silent, 0),
+    settledOutcomes: sumOf(withSettled.map(({ d }) => d), outcomesOf),
+    inFlight: sessions.reduce((sum, { runs }) => sum + runs.inFlight, 0),
+    unjudged: sessions.reduce((sum, { runs }) => sum + runs.unjudged, 0),
+  };
+};
+
+const kindRunsOf = (digests: readonly DeriveDigest[]): readonly KindRuns[] => [
+  {
+    kind: "summarizer",
+    answered: sumOf(
+      digests,
+      (d) => d.summarizerNoneCount + d.summarizerDraftCount + d.summarizerRejectCount + d.summarizerUnreadableCount,
+    ),
+    failed: sumOf(digests, (d) => d.summarizerFailCount),
+    lastFailure: firstOf(digests.map((d) => d.summarizerLastFailure)),
+  },
+  {
+    kind: "intent",
+    // A refused answer is an answer; a skipped run is neither (never asked).
+    answered: sumOf(digests, (d) => d.intentNoneCount + d.intentSetCount + d.intentRefusedCount),
+    failed: sumOf(digests, (d) => d.intentFailCount),
+    lastFailure: firstOf(digests.map((d) => d.intentLastFailure)),
+  },
+];
+
+const totalsOf = (digests: readonly DeriveDigest[], now: Date): Totals => {
   const nones = sumOf(digests, (d) => d.summarizerNoneCount + d.intentNoneCount);
   const drafts = sumOf(digests, (d) => d.summarizerDraftCount);
   const intentsSet = sumOf(digests, (d) => d.intentSetCount);
@@ -167,8 +319,7 @@ const totalsOf = (digests: readonly DeriveDigest[]): Totals => {
     sessions: digests.length,
     turns: sumOf(digests, (d) => d.stopTurnCount),
     fires: sumOf(digests, (d) => d.summarizerFireCount + d.intentFireCount),
-    outcomes: nones + drafts + intentsSet + fails + refused,
-    answered: nones + drafts + intentsSet,
+    kinds: kindRunsOf(digests),
     drafts,
     fails,
     lastFailure: firstOf(digests.flatMap((d) => [d.summarizerLastFailure, d.intentLastFailure])),
@@ -177,6 +328,7 @@ const totalsOf = (digests: readonly DeriveDigest[]): Totals => {
     lastNoSlice: firstOf(digests.map((d) => d.summarizerLastNoSlice)),
     intentFires: sumOf(digests, (d) => d.intentFireCount),
     intentsSet,
+    ...settlementOf(digests, now),
   };
 };
 
@@ -239,23 +391,79 @@ const cannotStartRule: Rule = (input, totals) =>
       )
     : null;
 
-const runnerFailingRule: Rule = (_input, totals) =>
-  totals.fails > 0 && totals.answered === 0 && !isSpawnFailure(totals)
+/**
+ * A kind that failed on every run it reported, with a reason on record — and
+ * not by failing to START, which cannot_start and no_backend own.
+ */
+const isAllFailing = (runs: KindRuns): boolean =>
+  runs.failed > 0 &&
+  runs.answered === 0 &&
+  runs.lastFailure !== null &&
+  !runs.lastFailure.startsWith(SPAWN_FAILURE_LABEL);
+
+const RUNNER_FIX =
+  `fix: run \`${DEFAULT_BACKEND_BINARY} -p hi\` as this user to see the same error — usually a login (\`${DEFAULT_BACKEND_BINARY}\` once), ` +
+  "an outdated CLI, or a deadline too short (CROSSCHECK_SUMMARIZER_TIMEOUT_MS) — the summarizer runner check probes it";
+
+/**
+ * "Every run failed" only where it is true: per KIND of run, against that
+ * kind's own answers. A summarizer whose answers were all refused still
+ * answered, so an intent run that timed out beside it is "every intent run
+ * failed", never "every model run failed".
+ */
+const runnerFailingRule: Rule = (_input, totals) => {
+  const failing = totals.kinds.filter(isAllFailing);
+  const first = failing[0];
+  if (first === undefined) {
+    return null;
+  }
+  const reporting = totals.kinds.filter((runs) => runs.answered + runs.failed > 0);
+  const counts = (runs: KindRuns): string => `${String(runs.failed)} of ${String(runs.failed)}`;
+  const last = first.lastFailure ?? "unknown";
+  if (failing.length === reporting.length) {
+    return finding(
+      "runner_failing",
+      "your agent shares nothing because every model run that reported back failed " +
+        `(${failing.map((runs) => `${runs.kind}: ${counts(runs)}`).join("; ")}; last: ${last}); ${RUNNER_FIX}`,
+      `no drafts or intents — every model run failed (last: ${last})`,
+    );
+  }
+  const working = reporting.filter((runs) => !isAllFailing(runs));
+  const answered = working.reduce((sum, runs) => sum + runs.answered, 0);
+  return finding(
+    "runner_failing",
+    `your agent ${KIND_LOSS[first.kind]} because every ${first.kind} run that reported back failed (${counts(first)}; last: ${last}) — ` +
+      `its ${working.map((runs) => runs.kind).join(" and ")} runs answered ${String(answered)} ${answered === 1 ? "time" : "times"}, so the model is reachable; ${RUNNER_FIX}`,
+    `${KIND_SHORT[first.kind]} — every ${first.kind} run failed (last: ${last})`,
+  );
+};
+
+const workersSilentRule: Rule = (_input, totals) =>
+  totals.silentRuns >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.settledOutcomes === 0
     ? finding(
-        "runner_failing",
-        `your agent shares nothing because every model run that reported back failed (${String(totals.fails)} failed; last: ${totals.lastFailure ?? "unknown"}); ` +
-          `fix: run \`${DEFAULT_BACKEND_BINARY} -p hi\` as this user to see the same error — usually a login (\`${DEFAULT_BACKEND_BINARY}\` once) or an outdated CLI — the summarizer runner check probes it`,
-        `no drafts or intents — every model run failed (last: ${totals.lastFailure ?? "unknown"})`,
+        "workers_silent",
+        `your agent shares nothing because ${String(totals.silentRuns)} model runs went more than twice their deadline (${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s at the default) without reporting back, each counted from its own start to now or to its session's end: ` +
+          "the detached worker did not start, or died with the hook that spawned it; " +
+          "fix: run the summarizer runner check below — if it passes, the host is killing the hook's children, so send this doctor output to whoever runs your crosscheck",
+        `no drafts or intents — ${String(totals.silentRuns)} model runs never reported back`,
       )
     : null;
 
-const workersSilentRule: Rule = (_input, totals) =>
-  totals.fires >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.outcomes === 0
+const runsOf = (count: number): string => `${String(count)} model run${count === 1 ? "" : "s"}`;
+
+/**
+ * NOT A PASS (review round 2, L4): runs booked before fires carried their
+ * start can be told neither in flight nor silent, and the PASS line would
+ * claim a measurement that was never made.
+ */
+const cannotJudgeRule: Rule = (_input, totals) =>
+  totals.unjudged > 0
     ? finding(
-        "workers_silent",
-        `your agent shares nothing because ${String(totals.fires)} model runs were started and not one reported back: the detached worker did not start, or died with the hook that spawned it; ` +
-          "fix: run the summarizer runner check below — if it passes, the host is killing the hook's children, so send this doctor output to whoever runs your crosscheck",
-        `no drafts or intents — ${String(totals.fires)} model runs never reported back`,
+        "cannot_judge",
+        `doctor cannot judge yet whether your agent's model workers report back: ${runsOf(totals.unjudged)} went unanswered with no start time on record ` +
+          "(booked before crosscheck recorded one), so none can be told in flight from silent; " +
+          "fix: nothing to change — every new run records its start, so run doctor again after your next session",
+        `cannot judge yet — ${runsOf(totals.unjudged)} unanswered with no start time`,
       )
     : null;
 
@@ -283,9 +491,11 @@ const gateQuietRule: Rule = (_input, totals) =>
   totals.turns >= DOCTOR_SHARING_QUIET_TURNS_WARN && totals.fires - totals.intentFires === 0 && totals.noSlice === 0
     ? finding(
         "gate_quiet",
-        `your agent drafts nothing because none of its ${String(totals.turns)} finished turns read as a conclusion to the Tier-1 gate (a test or an error beside hypothesis language, or a stated verdict beside work it did), so the summarizer never ran; ` +
-          "fix: nothing is broken — have the agent publish_claim what it concluded, or ask it to state its conclusion in words",
-        `no drafts — none of ${String(totals.turns)} turns read as a conclusion`,
+        `your agent drafts nothing because the Tier-1 gate read ${String(totals.turns)} finished turns and none read as a conclusion ` +
+          "(a test or an error beside hypothesis language, or a stated verdict beside work it did), so the summarizer never ran — " +
+          "quiet work does that, and so does a transcript the hook can no longer read after a host update; " +
+          "fix: have the agent publish_claim what it concluded; if its turns did conclude, send this line — the transcript format may have changed",
+        `no drafts — none of ${String(totals.turns)} turns read as a conclusion (or the transcript format changed)`,
       )
     : null;
 
@@ -313,10 +523,11 @@ const draftsUnreviewedRule: Rule = (input) => {
       : ` and ${amountOf(drafts.pastHorizon)} past ${String(DRAFT_RETENTION_HORIZON_DAYS)} days (kept: crosscheck never deletes a draft)`;
   return finding(
     "drafts_unreviewed",
-    `teammates see none of your agent's findings because ${amountOf(drafts.size)} of your own drafts on this repo await review${oldestClause(drafts.oldestAgeMs)}, ` +
-      `${amountOf(drafts.due)} of them for over ${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h${old} — a draft is shown to nobody until it is confirmed; ` +
+    `your agent's drafts reach no teammate unasked because ${amountOf(drafts.size)} of your own drafts on this repo await review${oldestClause(drafts.oldestAgeMs)}, ` +
+      `${amountOf(drafts.due)} of them for over ${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h${old} — until one is confirmed it is never pushed to a teammate — ` +
+      "it shows up, marked derived, only to a teammate who opens or searches your notes; " +
       "fix: ask your agent to settle them with review_draft (it is asked once per session, and must ask you before anything is published)",
-    `${amountOf(drafts.size)} own drafts await review — teammates see none of them (review_draft)`,
+    `${amountOf(drafts.size)} own drafts await review — none is pushed to teammates until confirmed (review_draft)`,
   );
 };
 
@@ -328,6 +539,7 @@ const RULES: readonly Rule[] = [
   cannotStartRule,
   runnerFailingRule,
   workersSilentRule,
+  cannotJudgeRule,
   noTranscriptRule,
   answersRefusedRule,
   gateQuietRule,
@@ -336,7 +548,7 @@ const RULES: readonly Rule[] = [
 ];
 
 export const sharingFindings = (input: SharingInput): readonly SharingFinding[] => {
-  const totals = totalsOf([...input.live, ...input.ended]);
+  const totals = totalsOf([...input.live, ...input.ended], input.now);
   return RULES.flatMap((rule) => {
     const found = rule(input, totals);
     return found === null ? [] : [found];
@@ -345,14 +557,18 @@ export const sharingFindings = (input: SharingInput): readonly SharingFinding[] 
 
 /** The PASS line: what was read, so "nothing found" is a measurement. */
 export const sharingSummary = (input: SharingInput): string => {
-  const totals = totalsOf([...input.live, ...input.ended]);
+  const totals = totalsOf([...input.live, ...input.ended], input.now);
   if (totals.sessions === 0) {
     return "no session on this repo has been recorded on this machine yet — open one, then run doctor again";
   }
   const unreviewed =
     input.drafts === null ? "" : `, ${amountOf(input.drafts.size)} own drafts unreviewed`;
+  const inFlight =
+    totals.inFlight === 0
+      ? ""
+      : `, ${String(totals.inFlight)} model run${totals.inFlight === 1 ? "" : "s"} still in flight (inside twice their deadline, ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s at the default)`;
   return (
     `${String(input.live.length)} live and ${String(input.ended.length)} recently ended session${totals.sessions === 1 ? "" : "s"}: ` +
-    `${String(totals.drafts)} drafts and ${String(totals.intentsSet)} intents derived${unreviewed} — nothing found that keeps this agent from sharing`
+    `${String(totals.drafts)} drafts and ${String(totals.intentsSet)} intents derived${unreviewed}${inFlight} — nothing found that keeps this agent from sharing`
   );
 };

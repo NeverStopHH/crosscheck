@@ -111,7 +111,7 @@ describe("doctor: why does my agent share nothing", () => {
 
     // Assert
     const lines = sharingLines(stdout);
-    expect(lines.some((line) => line.startsWith("WARN  sharing  teammates see none of your agent's findings because 2 of your own drafts"))).toBe(true);
+    expect(lines.some((line) => line.startsWith("WARN  sharing  your agent's drafts reach no teammate unasked because 2 of your own drafts"))).toBe(true);
     expect(lines.join("\n")).toContain("review_draft");
   });
 

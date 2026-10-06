@@ -155,9 +155,11 @@ const capabilityChecks = (
   const booked: Readonly<
     Record<string, { readonly count: number; readonly last: string | null }>
   > = {
+    // A refused answer is booked against the capability; a skipped run
+    // (the model never asked) is not (intent/gate.ts withIntentSkip).
     intent: {
-      count: sum((state) => state.intentFailCount),
-      last: last((state) => state.intentLastFailure ?? null),
+      count: sum((state) => state.intentFailCount + state.intentRefusedCount),
+      last: last((state) => state.intentLastFailure ?? (state.intentRefusedCount > 0 ? state.intentLastDrop : null)),
     },
     ghost: {
       count: sum((state) => state.ghostFailCount),

@@ -92,6 +92,22 @@ const changedLabel = (payload: Record<string, unknown>): string | null => {
   return Array.isArray(changed) && changed.includes(INTENT_FIELD) ? INTENT_FIELD : null;
 };
 
+/**
+ * Only a DERIVED claim is labelled: a vouched claim is the default reading of
+ * "added a claim", and the label is a renderer-owned literal, never the
+ * payload's text.
+ *
+ * EVENTS APPENDED BEFORE claim_added CARRIED PROVENANCE STAY UNLABELLED —
+ * accepted (review round 3, LOW-9). The outbox is append-only history, and
+ * filling `provenance` into old payloads would rewrite what the hub said at
+ * the time; a reader who needs to know opens the tree, whose claim cards
+ * label every draft. The gap closes on its own as the feed's window moves.
+ */
+const DERIVED_PROVENANCE = "derived";
+
+const provenanceLabel = (payload: Record<string, unknown>): string | null =>
+  payloadString(payload, "provenance") === DERIVED_PROVENANCE ? DERIVED_PROVENANCE : null;
+
 const toFeedEntry = (
   event: EventView,
   names: ReadonlyMap<string, string>,
@@ -107,6 +123,7 @@ const toFeedEntry = (
     branch: payloadString(event.payload, "branch"),
     kindLabel: payloadString(event.payload, "kind") ?? changedLabel(event.payload),
     statusLabel: payloadString(event.payload, "status"),
+    provenanceLabel: provenanceLabel(event.payload),
     by: payloadString(event.payload, "by"),
     ageMs: Math.max(0, nowMs - Date.parse(event.createdAt)),
   };

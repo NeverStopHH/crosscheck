@@ -986,6 +986,9 @@ export const ingestClaimWithin = async (
     developerId,
     kind: body.kind,
     status: body.status,
+    // So a feed reader can tell a machine draft from a vouched claim without
+    // the body: "derived" is a guess nobody has reviewed yet.
+    provenance: body.provenance,
   });
   // IN THE SAME TRANSACTION as the row it projects — one pipeline, not two.
   // The session is the claim's OWN author, never the producer: a spool drained

@@ -11,6 +11,7 @@ import {
   SUMMARIZER_FAILURE_MAX_CHARS,
 } from "../../constants.ts";
 import { cutWellFormed } from "../../briefing/cut.ts";
+import { withDeriveFire } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
 
 /**
@@ -44,9 +45,14 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
     .some((token) => token.length >= HINT_MIN_TOKEN_CHARS);
 };
 
-/** One fire, booked BEFORE the spawn (the Stop hook's ordering contract). */
-export const withIntentFire = (state: SessionState): SessionState => ({
+/**
+ * One fire, booked BEFORE the spawn (the Stop hook's ordering contract), with
+ * the deadline the spawned worker will run under (runner.ts
+ * resolveSummarizerTimeoutMs of the hook's environment).
+ */
+export const withIntentFire = (state: SessionState, firedAt: Date, deadlineMs: number): SessionState => ({
   ...state,
+  deriveFires: withDeriveFire(state.deriveFires, firedAt, deadlineMs),
   intentFireCount: state.intentFireCount + 1,
 });
 
@@ -63,12 +69,11 @@ export const withIntentSet = (state: SessionState): SessionState => ({
 });
 
 /**
- * A fire that landed neither: a runner loss (binary missing, exit, deadline
- * — runner.ts formatSummarizerFailure's line) or a drop the worker decided
- * (secret-like sentence, a delivered hint echoed, an empty answer, a state
- * file predating intent support) — the reason named, bounded by THIS writer
- * to SUMMARIZER_FAILURE_MAX_CHARS like its summarizer twin, so one chatty
- * binary can never grow the state file.
+ * A RUNNER loss: the binary missing, a non-zero exit, the deadline
+ * (runner.ts formatSummarizerFailure's line) — the reason named, bounded by
+ * THIS writer to SUMMARIZER_FAILURE_MAX_CHARS like its summarizer twin, so
+ * one chatty binary can never grow the state file. What the worker dropped
+ * on its own is a refusal or a skip (below), never this.
  */
 export const withIntentFailure = (
   state: SessionState,
@@ -77,4 +82,18 @@ export const withIntentFailure = (
   ...state,
   intentFailCount: state.intentFailCount + 1,
   intentLastFailure: cutWellFormed(detail, SUMMARIZER_FAILURE_MAX_CHARS),
+});
+
+/** The model answered and the worker kept nothing of it — an answer, not a failure. */
+export const withIntentRefusal = (state: SessionState, detail: string): SessionState => ({
+  ...state,
+  intentRefusedCount: state.intentRefusedCount + 1,
+  intentLastDrop: cutWellFormed(detail, SUMMARIZER_FAILURE_MAX_CHARS),
+});
+
+/** The worker dropped the run before the model was asked — neither an answer nor a failure. */
+export const withIntentSkip = (state: SessionState, detail: string): SessionState => ({
+  ...state,
+  intentSkippedCount: state.intentSkippedCount + 1,
+  intentLastDrop: cutWellFormed(detail, SUMMARIZER_FAILURE_MAX_CHARS),
 });

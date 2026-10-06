@@ -25,6 +25,9 @@ import {
 } from "../constants.ts";
 import type { DraftEntry, DraftListing } from "../http/hub.ts";
 
+/** What a page contributes: its rows and, from a current hub, the totals. */
+type DraftPage = Pick<DraftListing, "drafts" | "total" | "oldestCreatedAt">;
+
 /** A draft is DUE once it has waited DRAFT_NUDGE_MIN_AGE_HOURS. */
 export const DRAFT_DUE_AGE_MS = (DRAFT_NUDGE_MIN_AGE_HOURS * MS_PER_DAY) / HOURS_PER_DAY;
 /** Past this a draft is named as old — and kept (binding principle 6). */
@@ -33,6 +36,13 @@ export const DRAFT_HORIZON_AGE_MS = DRAFT_RETENTION_HORIZON_DAYS * MS_PER_DAY;
 export interface DraftBacklog {
   /** The hub's rows, newest first. */
   readonly listed: readonly DraftEntry[];
+  /**
+   * The OTHER end of the backlog — the hub's oldest-first page — when one was
+   * fetched from a hub that said it honoured `order=oldest`. Null otherwise.
+   * It is what lets the review nudge name the drafts that waited longest when
+   * fresher ones fill the newest-first page.
+   */
+  readonly oldestFirst: readonly DraftEntry[] | null;
   /** The exact backlog size, or null when an older hub cut the listing at its cap. */
   readonly total: number | null;
   /** The oldest draft's capture instant, when known. */
@@ -58,10 +68,14 @@ const oldestListed = (drafts: readonly DraftEntry[]): string | null => {
   return instants.length === 0 ? null : new Date(Math.min(...instants)).toISOString();
 };
 
-export const backlogOf = (listing: DraftListing): DraftBacklog => {
+export const backlogOf = (
+  listing: DraftPage,
+  oldestPage: Pick<DraftListing, "drafts"> | null = null,
+): DraftBacklog => {
   const complete = listing.drafts.length < DRAFT_LISTING_CAP;
   return {
     listed: listing.drafts,
+    oldestFirst: oldestPage?.drafts ?? null,
     // A total smaller than the rows it came with is a hub contradicting
     // itself; the rows are the fact in hand, so they win.
     total:
@@ -75,15 +89,17 @@ export const backlogOf = (listing: DraftListing): DraftBacklog => {
 };
 
 /** The listed rows captured at least `ageMs` before `now`, in the hub's order. */
+const agedRows = (rows: readonly DraftEntry[], ageMs: number, now: Date): readonly DraftEntry[] =>
+  rows.filter((entry) => {
+    const ms = createdMs(entry);
+    return ms !== null && now.getTime() - ms >= ageMs;
+  });
+
 export const listedAtLeastAged = (
   backlog: DraftBacklog,
   ageMs: number,
   now: Date,
-): readonly DraftEntry[] =>
-  backlog.listed.filter((entry) => {
-    const ms = createdMs(entry);
-    return ms !== null && now.getTime() - ms >= ageMs;
-  });
+): readonly DraftEntry[] => agedRows(backlog.listed, ageMs, now);
 
 /** Age of the oldest draft, when known. */
 export const oldestAgeMs = (backlog: DraftBacklog, now: Date): number | null => {
@@ -96,6 +112,37 @@ export const backlogSize = (backlog: DraftBacklog): DraftCount =>
   backlog.total === null
     ? { count: backlog.listed.length, floor: true }
     : { count: backlog.total, floor: false };
+
+/**
+ * Oldest first, the matches are a PREFIX: one younger row ends the run, and
+ * the count is exact. A page that matches whole may stop short of the
+ * `unlisted` rows that could match — then it is a floor.
+ */
+const countFromOldestFirst = (
+  oldestFirst: readonly DraftEntry[],
+  unlisted: number,
+  ageMs: number,
+  now: Date,
+): DraftCount => {
+  const matched = agedRows(oldestFirst, ageMs, now).length;
+  if (matched < oldestFirst.length || matched >= unlisted) {
+    return { count: Math.min(matched, unlisted), floor: false };
+  }
+  return { count: matched, floor: true };
+};
+
+/**
+ * The rows the nudge names: the oldest-first page's matches when there is
+ * one (the drafts that waited longest), else the newest-first page's.
+ */
+export const reachableAtLeastAged = (
+  backlog: DraftBacklog,
+  ageMs: number,
+  now: Date,
+): { readonly rows: readonly DraftEntry[]; readonly end: "oldest" | "newest" } =>
+  backlog.oldestFirst !== null
+    ? { rows: agedRows(backlog.oldestFirst, ageMs, now), end: "oldest" }
+    : { rows: listedAtLeastAged(backlog, ageMs, now), end: "newest" };
 
 /** How many drafts of the WHOLE backlog were captured at least `ageMs` ago. */
 export const countAtLeastAged = (backlog: DraftBacklog, ageMs: number, now: Date): DraftCount => {
@@ -110,6 +157,11 @@ export const countAtLeastAged = (backlog: DraftBacklog, ageMs: number, now: Date
   }
   if (listed > 0) {
     return { count: listed + unlisted, floor: false };
+  }
+  // No newest row is old enough, so every match is behind the page — and
+  // the oldest-first page, when there is one, is exactly where they start.
+  if (backlog.oldestFirst !== null) {
+    return countFromOldestFirst(backlog.oldestFirst, unlisted, ageMs, now);
   }
   const oldest = oldestAgeMs(backlog, now);
   return oldest !== null && oldest >= ageMs ? { count: 1, floor: true } : { count: 0, floor: false };

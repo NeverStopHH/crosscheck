@@ -57,7 +57,7 @@ import {
   withSummarizerNoSlice,
   withSummarizerSliceShape,
 } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
-import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
+import { SUMMARIZER_PROMPT, resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -130,7 +130,7 @@ export const maybeSpawnCursorIntentWorker = async (
         return null;
       }
       fired = true;
-      return withIntentFire(fresh);
+      return withIntentFire(fresh, ctx.now(), resolveSummarizerTimeoutMs(ctx.env));
     });
     if (!fired) {
       return;
@@ -321,7 +321,7 @@ export const runCursorSummarizerGate = async (
       return decoded;
     }
     fired = true;
-    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText));
+    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText), ctx.now(), resolveSummarizerTimeoutMs(ctx.env));
   });
 
   if (fired && look.slice !== null && look.transcriptPath !== null) {

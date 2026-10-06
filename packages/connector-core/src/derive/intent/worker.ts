@@ -50,7 +50,7 @@ import {
   withRecordedIntent,
 } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
-import { withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
+import { withIntentFailure, withIntentNone, withIntentRefusal, withIntentSet, withIntentSkip } from "./gate.ts";
 import { resolveIntentArgv } from "./prompt.ts";
 import { readModelSentence } from "../../model/parse.ts";
 import {
@@ -93,8 +93,17 @@ const DROPPED_ECHO = "dropped: the sentence echoes a delivered hint";
 const DROPPED_SECRET = "dropped: secret-like text";
 const DROPPED_CONTRACT = "dropped: the record failed the wire contract";
 
+/** A runner loss. */
 const bookFailure = (home: string, sessionId: string, detail: string): Promise<boolean> =>
   updateSessionState(home, sessionId, (fresh) => withIntentFailure(fresh, detail));
+
+/** The model answered; nothing it said was kept. */
+const bookRefusal = (home: string, sessionId: string, detail: string): Promise<boolean> =>
+  updateSessionState(home, sessionId, (fresh) => withIntentRefusal(fresh, detail));
+
+/** Dropped before the model was asked. */
+const bookSkip = (home: string, sessionId: string, detail: string): Promise<boolean> =>
+  updateSessionState(home, sessionId, (fresh) => withIntentSkip(fresh, detail));
 
 const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => {
   const home = crosscheckHome(env);
@@ -109,13 +118,13 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
     return;
   }
   if (prompt.trim().length === 0) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_PROMPT);
+    await bookSkip(home, args.claudeSessionId, DROPPED_EMPTY_PROMPT);
     return;
   }
   if (state.workContextTitle === null || state.workContextStatus === null) {
     // A pre-upgrade state file: the update record needs title + status and
     // fabricating either would upload a title this session never chose.
-    await bookFailure(home, args.claudeSessionId, DROPPED_NO_TITLE);
+    await bookSkip(home, args.claudeSessionId, DROPPED_NO_TITLE);
     return;
   }
 
@@ -141,7 +150,7 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
     return;
   }
   if (answer.kind === "unreadable") {
-    await bookFailure(
+    await bookRefusal(
       home,
       args.claudeSessionId,
       result.truncated
@@ -154,7 +163,7 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
   }
   const sentence = cutWellFormed(answer.text, MAX_INTENT_SUMMARY_CHARS);
   if (sentence.length === 0) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
+    await bookRefusal(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
     return;
   }
 
@@ -170,11 +179,11 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
     repoKey(fresh.hubUrl, fresh.repoId),
   );
   if (isEchoOfDeliveredHint(sentence, [...fresh.deliveredHintHashes, ...persistedHashes])) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_ECHO);
+    await bookRefusal(home, args.claudeSessionId, DROPPED_ECHO);
     return;
   }
   if (containsSecret(sentence)) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_SECRET);
+    await bookRefusal(home, args.claudeSessionId, DROPPED_SECRET);
     return;
   }
   await appendIntent(home, args.claudeSessionId, fresh, sentence, env);
@@ -197,7 +206,7 @@ const appendIntent = async (
     capturedAt: now.toISOString(),
   });
   if (!intent.success || fresh.workContextTitle === null || fresh.workContextStatus === null) {
-    await bookFailure(home, claudeSessionId, DROPPED_CONTRACT);
+    await bookRefusal(home, claudeSessionId, DROPPED_CONTRACT);
     return;
   }
   const envelope = workContextRecord(
@@ -218,7 +227,7 @@ const appendIntent = async (
   // The shared wire contract, reused not duplicated: what the hub would
   // refuse never enters the spool.
   if (!parseRecord(envelope).ok) {
-    await bookFailure(home, claudeSessionId, DROPPED_CONTRACT);
+    await bookRefusal(home, claudeSessionId, DROPPED_CONTRACT);
     return;
   }
   // OFF THE HOOK PATH, so a new lock acquisition costs nobody's keystroke —

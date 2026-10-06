@@ -126,6 +126,35 @@ export const SESSION_EVENT_RETENTION_DAYS = 30;
 export const SKELETON_BACKFILL_BATCH = 500;
 
 /**
+ * Work contexts per page of the start-up doc rebuild (services/doc-upgrade.ts).
+ * A request that arrives during the pass waits for the PAGE it lands in, not
+ * the pass: PGlite runs every statement synchronously and awaited queries
+ * settle through microtasks, so requests run only where the pass yields to
+ * the event loop, which it does between pages (doc-upgrade.ts
+ * yieldToEventLoop). At ~0.7 ms per rebuilt context, a page is ~70 ms — the
+ * wait a request may see. Before the yield, "interleave between pages" was
+ * false: one request waited 18 873 ms on a 30 000-context pass (review round 4).
+ */
+export const DOC_UPGRADE_BATCH = 100;
+
+/**
+ * How many pages of the doc upgrade go by between its progress lines: 10
+ * pages of DOC_UPGRADE_BATCH is a line per 1 000 contexts — about one every
+ * second on the review's 30 000-context hub — enough to show a long pass is
+ * moving without a line per page (review round 4, M2).
+ */
+export const DOC_UPGRADE_PROGRESS_PAGES = 10;
+
+/**
+ * Declared-only contexts the doc upgrade stamps current per UPDATE, with a
+ * turn of the event loop between pages (services/doc-upgrade.ts stampFrom).
+ * As one UPDATE, the review's 20 000 declared-only contexts held every
+ * request for ~400 ms, past the connector's 400 ms hook timeout; 1 000 keeps
+ * one page to a few tens of milliseconds (round 5).
+ */
+export const DOC_UPGRADE_STAMP_BATCH = 1000;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says

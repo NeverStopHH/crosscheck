@@ -307,12 +307,14 @@ const capabilityChecks = (
   liveStates: readonly SessionState[],
 ): readonly CursorCheck[] => {
   const summarizer = summarizeStateCosts(liveStates);
+  // A refused answer is booked against the capability; a skipped run
+  // (the model never asked) is not (intent/gate.ts withIntentSkip).
   const intentFails = liveStates.reduce(
-    (total, state) => total + state.intentFailCount,
+    (total, state) => total + state.intentFailCount + state.intentRefusedCount,
     0,
   );
   const intentLastFailure = liveStates.reduce<string | null>(
-    (last, state) => state.intentLastFailure ?? last,
+    (last, state) => state.intentLastFailure ?? (state.intentRefusedCount > 0 ? state.intentLastDrop : null) ?? last,
     null,
   );
   const ghostFails = liveStates.reduce(

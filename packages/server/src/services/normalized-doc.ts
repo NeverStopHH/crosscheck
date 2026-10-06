@@ -20,6 +20,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 
 import { agentSessions, claims, workContextTargets, workContexts } from "../db/schema.ts";
 import { derivedTokenLine, repoLabelOf, titleForDoc } from "./search-tokens.ts";
+import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 
@@ -81,6 +82,15 @@ export const NORMALIZED_DOC_MAX_CHARS = 8000;
  * PRINTS: true true
  */
 export const NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS = 160;
+
+/**
+ * The rule `refreshNormalizedDoc` builds by, stamped with every doc it writes
+ * (work_contexts.doc_version). 1: DECLARED claims only (review round 2) — a
+ * doc built before it still folds in every draft's and every discard's words,
+ * and the start-up pass (services/doc-upgrade.ts) rebuilds it. Raise this
+ * only with a change to what a doc contains, and the pass rebuilds the rest.
+ */
+export const NORMALIZED_DOC_VERSION = 1;
 
 export interface NormalizedDocInput {
   readonly title: string;
@@ -188,10 +198,18 @@ export const refreshNormalizedDoc = async (
     .where(eq(workContextTargets.workContextId, workContextId))
     .orderBy(asc(workContextTargets.value))
     .limit(NORMALIZED_DOC_MAX_TARGETS);
+  // DECLARED CLAIMS ONLY. This doc (and the embedding built from it) is what
+  // a TEAMMATE's search and hint candidates match against, so a body folded
+  // in here is a body that can surface the tree to someone who never asked
+  // about this author. An unreviewed draft is a machine guess nobody vouched
+  // for and a discard is one somebody rejected (an appended derived copy,
+  // status rejected): neither may make a tree turn up for anybody. A draft
+  // folds in the moment it is CONFIRMED — review_draft appends a declared
+  // revision, and that ingest rebuilds this doc.
   const claimRows = await db
     .select({ kind: claims.kind, body: claims.body })
     .from(claims)
-    .where(eq(claims.workContextId, workContextId))
+    .where(and(eq(claims.workContextId, workContextId), eq(claims.provenance, DECLARED_PROVENANCE)))
     .orderBy(desc(claims.createdAt))
     .limit(NORMALIZED_DOC_MAX_CLAIMS);
 
@@ -207,7 +225,7 @@ export const refreshNormalizedDoc = async (
 
   await db
     .update(workContexts)
-    .set({ normalizedDoc: doc, embedding: null, embeddingModel: null })
+    .set({ normalizedDoc: doc, docVersion: NORMALIZED_DOC_VERSION, embedding: null, embeddingModel: null })
     .where(eq(workContexts.id, workContextId));
 };
 

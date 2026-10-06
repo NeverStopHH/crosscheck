@@ -15,6 +15,7 @@ import {
   MAX_PROBED_FINGERPRINTS,
 } from "../src/constants.ts";
 import {
+  SessionStateSchema,
   withBriefingSolvedRefs,
   withKnownWorktreeRoot,
   withProbedFingerprint,
@@ -65,6 +66,9 @@ const baseState = (): SessionState => ({
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -84,6 +88,8 @@ const baseState = (): SessionState => ({
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
   draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -93,6 +99,30 @@ const baseState = (): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+});
+
+describe("the derive fire ring is read entry by entry (review round 3, MEDIUM-5)", () => {
+  test("a malformed fire costs only itself, never the whole state file", () => {
+    // One fire booked with an unsafe deadline used to fail the whole parse:
+    // readSessionState returned null and every later update was refused.
+    const good = { at: "2026-10-05T12:00:00.000Z", deadlineMs: 60_000 };
+    const raw = {
+      ...baseState(),
+      deriveFires: [good, { at: "2026-10-05T12:01:00.000Z", deadlineMs: 9_007_199_254_740_992 }, { deadlineMs: 5 }, "junk"],
+    };
+
+    const parsed = SessionStateSchema.safeParse(raw);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.deriveFires).toEqual([good]);
+  });
+
+  test("a ring that is not a list at all reads as no fires", () => {
+    const parsed = SessionStateSchema.safeParse({ ...baseState(), deriveFires: "nope" });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.deriveFires).toEqual([]);
+  });
 });
 
 describe("withBriefingSolvedRefs", () => {

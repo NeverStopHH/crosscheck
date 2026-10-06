@@ -127,6 +127,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS claim_edges_from_to_kind_idx
 CREATE INDEX IF NOT EXISTS claim_edges_to_kind_idx
   ON claim_edges (to_claim_id, kind);
 
+-- Who made the edge when it was not a person: 'similarity_gate' on every edge
+-- the ingest gate writes, null on one that came over the wire — structural,
+-- so no typed note passes for the gate's (services/draft-link-cleanup.ts;
+-- review round 4, H3). ALTER so one statement covers fresh and older hubs.
+ALTER TABLE claim_edges ADD COLUMN IF NOT EXISTS origin text;
+
+-- Every claim edge a start-up pass removed, as it was, with the pass that
+-- removed it: a removal is never a loss (docs/OPERATIONS.md restores one).
+-- No foreign keys — an archive keeps its rows whatever happens to the claims
+-- and sessions they name. Mirrored in db/schema.ts.
+CREATE TABLE IF NOT EXISTS claim_edges_removed (
+  id text NOT NULL,
+  from_claim_id text NOT NULL,
+  to_claim_id text NOT NULL,
+  kind text NOT NULL,
+  author_session_id text NOT NULL,
+  note text,
+  origin text,
+  created_at timestamptz NOT NULL,
+  removed_at timestamptz NOT NULL,
+  removed_by_pass text NOT NULL,
+  PRIMARY KEY (id, removed_by_pass)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   id text PRIMARY KEY,
   claim_id text NOT NULL REFERENCES claims(id),
@@ -199,6 +223,14 @@ CREATE INDEX IF NOT EXISTS claims_embedding_hnsw_idx
 -- place that cannot call it, so it stores the minimal honest subset).
 UPDATE work_contexts SET normalized_doc = title || ' ' || status
   WHERE normalized_doc IS NULL;
+
+-- The rule a doc was built by (services/normalized-doc.ts
+-- NORMALIZED_DOC_VERSION). Every existing row reads 0: it was built before
+-- the version existed, and the start-up pass (services/doc-upgrade.ts)
+-- rebuilds the ones holding a draft — docs that still fold in drafts' and
+-- discards' words — after the hub is serving. A constant default, so adding
+-- the column writes no row.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS doc_version integer NOT NULL DEFAULT 0;
 
 -- ── Collective memory (VISION.md §1) ────────────────────────────────────────
 

@@ -15,8 +15,14 @@
  * The pointer lines are the briefing's own `formatDraftLine`, so a draft reads
  * the same in both places and its id survives: the briefing shows only
  * MAX_DRAFT_POINTERS of them, and a nudge that named no id would ask for a
- * review the agent has no handle to perform. Lines are dropped whole from the
- * tail to fit MAX_HINT_TEXT_LENGTH and counted in "+N more not shown".
+ * review the agent has no handle to perform. To fit MAX_HINT_TEXT_LENGTH,
+ * lines are dropped whole from the tail and counted in "+N more not shown" —
+ * down to DRAFT_NUDGE_POINTERS_BEFORE_CLAUSES; below that the header's
+ * descriptive clauses go first (kinds, then the backlog in all, then the
+ * retention count), and a nudge that would name NO draft is not rendered.
+ * Measured at the realistic size (clm_<uuid> ids, bodies past the 80-char
+ * cut, five kinds, floor and retention on), the full header left room for
+ * none.
  *
  * Kinds are the wire spelling of the claim kinds, which is also what
  * publish_claim and review_draft speak; a kind this client does not know is
@@ -27,6 +33,7 @@ import { CLAIM_KINDS, MAX_HINT_TEXT_LENGTH } from "@crosscheck/schema";
 
 import {
   DRAFT_NUDGE_MIN_AGE_HOURS,
+  DRAFT_NUDGE_POINTERS_BEFORE_CLAUSES,
   DRAFT_RETENTION_HORIZON_DAYS,
   MAX_DRAFT_NUDGE_POINTERS,
 } from "../constants.ts";
@@ -38,8 +45,8 @@ import {
   amountOf,
   backlogSize,
   countAtLeastAged,
-  listedAtLeastAged,
   oldestAgeMs,
+  reachableAtLeastAged,
 } from "./draft-backlog.ts";
 import type { DraftBacklog, DraftCount } from "./draft-backlog.ts";
 import { formatDraftLine, OWN_DRAFTS_QUOTED_DATA_NOTICE } from "./render.ts";
@@ -52,11 +59,23 @@ export interface DraftNudgeInput {
 
 const OTHER_KIND = "other";
 
+/**
+ * Every clause is a fact about the hub, and two of them were once false: a
+ * teammate CAN read an unreviewed draft (get_diagnosis returns its body,
+ * marked derived, and a word in it surfaces the tree in search), and a
+ * discard deletes nothing — it appends a rejected copy that stays in the
+ * history. What is true is narrower: no draft is ever PUSHED to anyone, and
+ * a rejected one is never offered as a finding (the declared-only hint gate,
+ * contradictions and solved pointers all skip it).
+ */
+const VISIBILITY =
+  " Drafts are never pushed to teammates; one shows, marked derived, only to whoever opens or searches your notes.";
+
 const ASK =
-  "When the current request is done, ask the person — do not decide yourself — " +
-  "whether to confirm, edit or discard each one, and call review_draft only with " +
-  "their answer: confirm and edit publish the claim to the team, discard retires " +
-  "it for good. Nothing is published or deleted until then.";
+  "When this request is done, ask the person — do not decide yourself — whether to " +
+  "confirm, edit or discard each, and call review_draft only with their answer: " +
+  "confirm or edit publishes it as your claim; discard marks it rejected " +
+  "(kept in history, never offered as a finding).";
 
 const kindSummary = (due: readonly DraftEntry[]): string => {
   const known = CLAIM_KINDS.map((kind) => ({
@@ -74,17 +93,20 @@ const kindSummary = (due: readonly DraftEntry[]): string => {
   ].join(", ");
 };
 
-/** The kinds are of the rows in hand; when those are fewer than the count, it says so. */
-const kindsClause = (dueListed: readonly DraftEntry[], due: DraftCount): string =>
-  dueListed.length < due.count || due.floor
-    ? `of the newest ${String(dueListed.length)}: ${kindSummary(dueListed)}`
-    : kindSummary(dueListed);
+/** The kinds are of the rows in hand; when those are fewer than the count, it says which. */
+const kindsClause = (
+  reachable: { readonly rows: readonly DraftEntry[]; readonly end: "oldest" | "newest" },
+  due: DraftCount,
+): string =>
+  reachable.rows.length < due.count || due.floor
+    ? `of the ${reachable.end} ${String(reachable.rows.length)}: ${kindSummary(reachable.rows)}`
+    : kindSummary(reachable.rows);
 
 const retentionSentence = (old: DraftCount): string =>
   old.count === 0
     ? ""
-    : ` ${old.floor ? "At least " : ""}${String(old.count)} of them ${old.count === 1 ? "is" : "are"} older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days; ` +
-      "crosscheck never deletes or auto-discards a draft, so they stay listed until settled.";
+    : ` ${old.floor ? "At least " : ""}${String(old.count)} ${old.count === 1 ? "is" : "are"} older than ` +
+      `${String(DRAFT_RETENTION_HORIZON_DAYS)} days; drafts are never deleted or auto-discarded.`;
 
 /** The backlog in all, said only when the hub (or a short listing) makes it exact. */
 const backlogSentence = (backlog: DraftBacklog, now: Date): string => {
@@ -92,18 +114,38 @@ const backlogSentence = (backlog: DraftBacklog, now: Date): string => {
   const oldest = oldestAgeMs(backlog, now);
   return size.floor || oldest === null
     ? ""
-    : ` ${String(size.count)} await review in all, the oldest captured ${formatAge(oldest)} ago.`;
+    : ` ${String(size.count)} in all, the oldest ${formatAge(oldest)} old.`;
 };
 
-const headerLine = (input: DraftNudgeInput, dueListed: readonly DraftEntry[]): string => {
+/** Which descriptive clauses the header still carries; the count, visibility and ask always stay. */
+interface HeaderClauses {
+  readonly kinds: boolean;
+  readonly backlog: boolean;
+  readonly retention: boolean;
+}
+
+/** Each step gives up one more clause, in the order the module comment names. */
+const CLAUSE_LEVELS: readonly HeaderClauses[] = [
+  { kinds: true, backlog: true, retention: true },
+  { kinds: false, backlog: true, retention: true },
+  { kinds: false, backlog: false, retention: true },
+  { kinds: false, backlog: false, retention: false },
+];
+
+const headerLine = (
+  input: DraftNudgeInput,
+  reachable: { readonly rows: readonly DraftEntry[]; readonly end: "oldest" | "newest" },
+  clauses: HeaderClauses,
+): string => {
   const due = countAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
   const verb = due.count === 1 && !due.floor ? "has" : "have";
+  const kinds = clauses.kinds ? ` (${kindsClause(reachable, due)})` : "";
   return (
     `crosscheck: ${amountOf(due)} of your own auto-captured draft claims ${verb} waited over ` +
-    `${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h for review (${kindsClause(dueListed, due)}).` +
-    backlogSentence(input.backlog, input.now) +
-    " No teammate is shown a draft until it is confirmed." +
-    retentionSentence(countAtLeastAged(input.backlog, DRAFT_HORIZON_AGE_MS, input.now))
+    `${String(DRAFT_NUDGE_MIN_AGE_HOURS)}h for review${kinds}.` +
+    (clauses.backlog ? backlogSentence(input.backlog, input.now) : "") +
+    VISIBILITY +
+    (clauses.retention ? retentionSentence(countAtLeastAged(input.backlog, DRAFT_HORIZON_AGE_MS, input.now)) : "")
   );
 };
 
@@ -121,25 +163,47 @@ const compose = (
       : []),
   ].join("\n");
 
+/** Counts from `from` down to `to`, both included; empty when `from` < `to`. */
+const countDown = (from: number, to: number): readonly number[] =>
+  Array.from({ length: Math.max(0, from - to + 1) }, (_, i) => from - i);
+
 /**
- * "" when no LISTED draft is due: the nudge names drafts by id, and
- * review_draft can only reach the rows the hub lists, so a backlog whose
- * newest rows are all fresh waits until they are due or settled.
+ * Every (clauses, shown) pair in order of preference: at each clause level
+ * the most ids down to DRAFT_NUDGE_POINTERS_BEFORE_CLAUSES, and only once
+ * every clause is gone, fewer — never zero.
+ */
+const layouts = (most: number): readonly { readonly clauses: HeaderClauses; readonly shown: number }[] => {
+  const kept = Math.min(most, DRAFT_NUDGE_POINTERS_BEFORE_CLAUSES);
+  const bare = CLAUSE_LEVELS[CLAUSE_LEVELS.length - 1] ?? CLAUSE_LEVELS[0];
+  return [
+    ...CLAUSE_LEVELS.flatMap((clauses) => countDown(most, kept).map((shown) => ({ clauses, shown }))),
+    ...(bare === undefined ? [] : countDown(kept - 1, 1).map((shown) => ({ clauses: bare, shown }))),
+  ];
+};
+
+/**
+ * "" when no draft in hand is due, or when none of them has a line to print —
+ * a nudge naming no id is unnameable, and the flow never spends the slot on
+ * it. The nudge names drafts by id, so it names rows a page actually
+ * returned: the oldest-first page's when the flow fetched one
+ * (flows/draft-nudge.ts does whenever the backlog runs past the newest-first
+ * page), and review_draft reaches both ends.
  */
 export const renderDraftNudge = (input: DraftNudgeInput): string => {
-  const dueListed = listedAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
-  if (dueListed.length === 0) {
-    return "";
-  }
-  const due = countAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
-  const fixed = [headerLine(input, dueListed), ASK, OWN_DRAFTS_QUOTED_DATA_NOTICE];
-  const pointers = dueListed.flatMap((entry) => {
+  const reachable = reachableAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
+  const pointers = reachable.rows.flatMap((entry) => {
     const line = formatDraftLine(entry, input.now);
     return line === null ? [] : [line];
   });
+  if (pointers.length === 0) {
+    return "";
+  }
+  const due = countAtLeastAged(input.backlog, DRAFT_DUE_AGE_MS, input.now);
   const most = Math.min(MAX_DRAFT_NUDGE_POINTERS, pointers.length);
-  const candidates = Array.from({ length: most + 1 }, (_, i) =>
-    compose(fixed, pointers, most - i, due),
-  );
-  return candidates.find((text) => text.length <= MAX_HINT_TEXT_LENGTH) ?? "";
+  const fits = layouts(most)
+    .map(({ clauses, shown }) =>
+      compose([headerLine(input, reachable, clauses), ASK, OWN_DRAFTS_QUOTED_DATA_NOTICE], pointers, shown, due),
+    )
+    .find((text) => text.length <= MAX_HINT_TEXT_LENGTH);
+  return fits ?? "";
 };

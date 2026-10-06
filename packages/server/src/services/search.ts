@@ -28,19 +28,24 @@ import {
   inArray,
   isNotNull,
   ne,
+  not,
+  notExists,
   or,
   sql,
 } from "drizzle-orm";
 
 import {
   agentSessions,
+  claimEdges,
   claims,
   developers,
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
+import { staleDraftDoc } from "./stale-docs.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
@@ -206,6 +211,11 @@ export interface SearchResultView {
   readonly resultKind: SearchResultKind;
   /** When the solving claim was recorded; null for open results. */
   readonly solvedAt: string | null;
+  /**
+   * The context matched ONLY through an unreviewed draft's words — a pull
+   * the searcher asked for, which every surface rendering it must label.
+   */
+  readonly derivedOnly: boolean;
 }
 
 export interface SearchResponse {
@@ -283,6 +293,24 @@ export interface SearchQuery {
    * the claims filed into it" in test/search-filters.test.ts.
    */
   readonly since?: Date | undefined;
+  /**
+   * FOR A PUSHED SURFACE (the hints endpoint): drops every claim that is not
+   * DECLARED — an unreviewed draft and the rejected copy a discard appends —
+   * from the fts tier's claim pass, inside its own WHERE, so a tree is never
+   * found by a guess nobody vouched for and the bound is never spent on one.
+   * The normalized doc already folds declared claims only, so this closes the
+   * last lexical door. Omitted on the search route: a teammate who searches
+   * asked, and the result says when a draft was the only match
+   * (`derivedOnly`). The hint branch wires it into services/hints.ts.
+   *
+   * TODO(merge with the hint branch — review round 4, M3): NO CALLER SETS
+   * THIS on this branch. When the hint branch merges, its
+   * services/hints.ts `listHintCandidates` must pass
+   * `excludeDerivedClaims: true` to its `searchWorkContexts` call; until
+   * then a prompt hint can still be pushed on an unreviewed draft's
+   * claim-body word (the review's hint-window probe, its last assertion).
+   */
+  readonly excludeDerivedClaims?: boolean | undefined;
   readonly limit: number;
 }
 
@@ -341,6 +369,11 @@ interface TierRow {
   readonly id: string;
   readonly createdAt: Date;
   readonly updatedAt: Date | null;
+  /**
+   * The row matched ONLY through unreviewed derived claim bodies (the fts
+   * tier's claim pass). Every other tier and pass leaves it unset.
+   */
+  readonly derivedOnly?: boolean;
 }
 
 /**
@@ -423,10 +456,16 @@ interface RankedRow extends TierRow {
   readonly rank: number;
 }
 
+/** A claim retired by a revision carries an edge of this kind pointing at it. */
+const SUPERSEDES_KIND = "supersedes";
+/** A discard's status, and a refuted theory's. */
+const REJECTED_STATUS = "rejected";
+
 const listFtsTier = async (
   db: Db,
   tokens: readonly string[],
   scope: SearchScope,
+  excludeDerivedClaims: boolean,
 ): Promise<readonly TierRow[]> => {
   if (tokens.length === 0) {
     return [];
@@ -446,23 +485,54 @@ const listFtsTier = async (
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(scopeCondition(scope), sql`${workContexts.tsv} @@ ${tsquery}`))
+    .where(
+      and(
+        scopeCondition(scope),
+        sql`${workContexts.tsv} @@ ${tsquery}`,
+        // A DOC THE UPGRADE HAS NOT REACHED YET still folds drafts' and
+        // discards' words in (services/stale-docs.ts), and a match in it says
+        // nothing about which claim matched: it does not answer here until it
+        // is rebuilt — the claim pass below still finds the context, each
+        // claim marked as it is (review round 4, M2).
+        not(staleDraftDoc(db)),
+      ),
+    )
     .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc)
     .limit(TIER_CANDIDATES);
 
   // Claim bodies get their own pass: the doc caps out at
   // NORMALIZED_DOC_MAX_CLAIMS summaries, and a match in claim 51 still counts.
-  const claimRows: readonly RankedRow[] = await db
+  //
+  // RETIRED CLAIMS NEVER MATCH: a rejected row (a discard, or a theory its
+  // author refuted) and any row a revision superseded (the draft a discard
+  // or a confirmation retired) are history, not something a searcher should
+  // be led to. An unreviewed DERIVED draft still matches — the searcher
+  // asked — but the row says so (`derivedOnly`) when no vouched claim did.
+  const claimRows: readonly (RankedRow & { readonly declared: boolean })[] = await db
     .select({
       id: claims.workContextId,
       createdAt: workContexts.createdAt,
       updatedAt: workContexts.updatedAt,
       rank: sql<number>`max(ts_rank(${claims.tsv}, ${tsquery}))`,
+      declared: sql<boolean>`bool_or(${claims.provenance} = ${DECLARED_PROVENANCE})`,
     })
     .from(claims)
     .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(scopeCondition(scope), sql`${claims.tsv} @@ ${tsquery}`))
+    .where(
+      and(
+        scopeCondition(scope),
+        sql`${claims.tsv} @@ ${tsquery}`,
+        ne(claims.status, REJECTED_STATUS),
+        excludeDerivedClaims ? eq(claims.provenance, DECLARED_PROVENANCE) : undefined,
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(claimEdges)
+            .where(and(eq(claimEdges.toClaimId, claims.id), eq(claimEdges.kind, SUPERSEDES_KIND))),
+        ),
+      ),
+    )
     .groupBy(
       claims.workContextId,
       workContexts.createdAt,
@@ -471,12 +541,14 @@ const listFtsTier = async (
     .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
     .limit(TIER_CANDIDATES);
 
+  const claimMatches = claimRows.map((row) => ({ ...row, derivedOnly: !row.declared }));
   const bestRank = new Map<string, RankedRow>();
-  for (const row of [...contextRows, ...claimRows]) {
+  for (const row of [...contextRows, ...claimMatches]) {
     const known = bestRank.get(row.id);
-    if (known === undefined || row.rank > known.rank) {
-      bestRank.set(row.id, row);
-    }
+    // Draft-only survives only if EVERY match of this context was a draft's.
+    const derivedOnly = (known?.derivedOnly ?? true) && row.derivedOnly === true;
+    const best = known === undefined || row.rank > known.rank ? row : known;
+    bestRank.set(row.id, { ...best, derivedOnly });
   }
   return [...bestRank.values()]
     .sort((left, right) => right.rank - left.rank)
@@ -542,6 +614,9 @@ const listVectorTier = async (
         scopeCondition(scope),
         isNotNull(workContexts.embedding),
         eq(workContexts.embeddingModel, embedder.model),
+        // Minted from a doc that still folds drafts in: not until the
+        // upgrade rebuilds it (the doc pass's rule above; round 4, M2).
+        not(staleDraftDoc(db)),
       ),
     )
     .orderBy(distance)
@@ -569,7 +644,30 @@ interface FusedEntry {
   readonly row: TierRow;
   readonly score: number;
   readonly tiers: ReadonlySet<SearchTier>;
+  /**
+   * Every LEXICAL row that brought this context in was a draft-only match;
+   * null while no lexical tier matched it. The vector tier embeds the doc,
+   * never a claim, so its row says nothing about whose words matched — it
+   * neither sets nor clears this (review round 3: fused in, it cleared the
+   * mark on every hub with an embedder).
+   */
+  readonly lexicalDerivedOnly: boolean | null;
 }
+
+/** The tiers that know which words matched: the only ones the draft mark reads. */
+const DRAFT_MARK_TIERS: ReadonlySet<SearchTier> = SOLVED_FLOOR_TIERS;
+
+const lexicalDerivedOnlyAfter = (
+  known: FusedEntry | undefined,
+  tier: SearchTier,
+  row: TierRow,
+): boolean | null => {
+  const before = known?.lexicalDerivedOnly ?? null;
+  if (!DRAFT_MARK_TIERS.has(tier)) {
+    return before;
+  }
+  return (before ?? true) && row.derivedOnly === true;
+};
 
 interface TierList {
   readonly tier: SearchTier;
@@ -602,6 +700,7 @@ const fuseTiers = (
         row: known?.row ?? row,
         score: (known?.score ?? 0) + contribution,
         tiers: new Set([...(known?.tiers ?? []), tier]),
+        lexicalDerivedOnly: lexicalDerivedOnlyAfter(known, tier, row),
       });
     });
   }
@@ -672,6 +771,7 @@ const hydrate = async (
           ? "open"
           : "solved") as SearchResultKind,
         solvedAt: solvedAt === undefined ? null : solvedAt.toISOString(),
+        derivedOnly: entry.lexicalDerivedOnly === true,
       },
     ];
   });
@@ -778,7 +878,7 @@ export const searchWorkContexts = async (
 
   const [exactRows, ftsRows, vector] = await Promise.all([
     listExactTier(deps.db, pathTokens, scope),
-    listFtsTier(deps.db, wordTokens, scope),
+    listFtsTier(deps.db, wordTokens, scope, input.excludeDerivedClaims === true),
     tryVectorTier(deps, query, scope),
   ]);
 

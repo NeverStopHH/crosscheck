@@ -127,6 +127,9 @@ const sessionState = (repoRoot: string): SessionState => ({
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -146,6 +149,8 @@ const sessionState = (repoRoot: string): SessionState => ({
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
   draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
   probedFingerprints: [],
 });
 

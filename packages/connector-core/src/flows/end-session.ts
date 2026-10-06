@@ -32,6 +32,7 @@ import { flushSpool } from "../spool/flush.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { seqAt } from "../capture/seq.ts";
 import { foldDeriveHistory } from "../state/derive-history.ts";
+import { recordSlotAtEnd } from "../state/draft-nudge-spent.ts";
 import { allocateSeq, deleteSessionState } from "../state/session-state.ts";
 import type { SeqField } from "@crosscheck/schema";
 
@@ -100,7 +101,11 @@ export const endSessionFlow = async (
   // The derive counters outlive the file they were booked in: `doctor` asks
   // "why does my agent share nothing?" after the session that could answer is
   // gone (state/derive-history.ts). Fail-open, and read before the delete.
-  await foldDeriveHistory(input.home, input.repoKey, input.hostSessionKey);
+  await foldDeriveHistory(input.home, input.hostSessionKey, input.now());
+  // ...and so does the draft nudge's spent slot, so the conversation resumed
+  // later starts with it spent (state/draft-nudge-spent.ts). Read before the
+  // delete, recorded HERE rather than on the prompt that spent it.
+  await recordSlotAtEnd(input.home, input.hostSessionKey, input.now());
   await deleteSessionState(input.home, input.hostSessionKey);
   // A first prompt parked for the derived-intent worker that never ran (a
   // spawn that failed, a session ending inside the worker's deadline) must

@@ -252,6 +252,21 @@ describe("stop hook gates, spawns detached, and never blocks", () => {
     expect(state?.summarizerLastFireTurn).toBe(1);
   });
 
+  test("a fire books the deadline its worker runs under, a raised one included", async () => {
+    // Doctor settles each run at twice ITS deadline (review round 2): a
+    // machine that raised CROSSCHECK_SUMMARIZER_TIMEOUT_MS gives its worker
+    // that long, and must not be blamed at the default's grace.
+    const fix = await fixture("deadline-booked", {
+      transcriptContent: conclusionTranscript(),
+      summarizerOutput: "NONE",
+    });
+
+    await runHook("stop", stopPayload(fix), { ...fix.env, CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "45000" });
+
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.deriveFires.map((fire) => fire.deadlineMs)).toEqual([45_000]);
+  });
+
   test("a quiet turn counts the turn but never spawns", async () => {
     const fix = await fixture("quiet", { transcriptContent: quietTranscript() });
 

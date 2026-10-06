@@ -40,6 +40,8 @@ export interface FeedEntry {
   readonly branch: string | null;
   readonly kindLabel: string | null;
   readonly statusLabel: string | null;
+  /** "derived" on a claim nobody vouched for (a draft or a discard's copy). */
+  readonly provenanceLabel: string | null;
   /** Who acted, when the event says (`developer_key_rotated`: self | admin). */
   readonly by: string | null;
   readonly ageMs: number;
@@ -100,6 +102,12 @@ const FeedLine: FC<{ readonly entry: FeedEntry }> = ({ entry }) => (
         <span class="label">
           {capped(entry.statusLabel, UI_MAX_LABEL_CHARS)}
         </span>
+      </>
+    )}
+    {entry.provenanceLabel === null ? null : (
+      <>
+        {" "}
+        <span class="label">{entry.provenanceLabel}</span>
       </>
     )}
     {entry.repo === null ? null : (

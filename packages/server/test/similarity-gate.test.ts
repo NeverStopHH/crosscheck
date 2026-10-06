@@ -28,6 +28,7 @@ import {
   createHarnessWithSession,
   createTestHarness,
   createTestDeveloper,
+  jsonRequest,
   postRecords,
   recordEnvelope,
   registerTestSession,
@@ -198,6 +199,7 @@ describe("never across authors", () => {
     expect(await countClaims(harness)).toBe(2);
 
     // And the auto edge carries the ingesting session as author, with the note
+    // — and the gate as its STRUCTURAL origin, which no wire edge can carry
     const edges = await harness.db.select().from(claimEdges);
     expect(edges.length).toBe(1);
     expect(edges[0]?.kind).toBe("relates_to");
@@ -205,6 +207,109 @@ describe("never across authors", () => {
     expect(edges[0]?.toClaimId).toBe("clm_01");
     expect(edges[0]?.authorSessionId).toBe(SECOND_SESSION_ID);
     expect(edges[0]?.note).toBe("auto: similarity");
+    expect(edges[0]?.origin).toBe("similarity_gate");
+  });
+});
+
+describe("a draft is never auto-linked into a teammate's tree", () => {
+  const derivedFields = { captureMode: "auto", provenance: "derived", confidence: 0.4 } as const;
+
+  test("a teammate's DRAFT near my declared claim gets no edge", async () => {
+    // Arrange
+    const { harness, developer } = await createGateHarness();
+    await postRecords(harness, developer, recordEnvelope("claim", validClaimBody({ body: LOGIN_OBSERVATION })));
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: SECOND_SESSION_ID });
+
+    // Act: Robin's summarizer drafts a near-duplicate into Nick's context
+    await postRecords(
+      harness,
+      robin,
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: "clm_robin_draft", authorSessionId: SECOND_SESSION_ID, body: LOGIN_REWORDED, ...derivedFields }),
+        { sessionId: SECOND_SESSION_ID },
+      ),
+    );
+
+    // Assert
+    expect(await harness.db.select().from(claimEdges)).toEqual([]);
+  });
+
+  test("my declared claim near a teammate's DRAFT gets no edge either", async () => {
+    const { harness, developer } = await createGateHarness();
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: SECOND_SESSION_ID });
+    await postRecords(harness, robin, recordEnvelope("work_context", validWorkContextBody({ id: "wc_robin", sessionId: SECOND_SESSION_ID }), { sessionId: SECOND_SESSION_ID }));
+    await postRecords(
+      harness,
+      robin,
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: "clm_robin_draft", workContextId: "wc_robin", authorSessionId: SECOND_SESSION_ID, body: LOGIN_OBSERVATION, ...derivedFields }),
+        { sessionId: SECOND_SESSION_ID },
+      ),
+    );
+
+    await postRecords(harness, developer, recordEnvelope("claim", validClaimBody({ id: "clm_mine", body: LOGIN_REWORDED })));
+
+    expect(await harness.db.select().from(claimEdges)).toEqual([]);
+  });
+
+  test("a teammate's draft as the nearest neighbour never hides their vouched near-duplicate (review round 3)", async () => {
+    // Arrange: Robin's DRAFT sits at cosine 1.0 to the login axis, her
+    // DECLARED claim at 0.94 — top-1 then filtered after the LIMIT, the draft
+    // took the only slot and the vouched link was never made
+    const { harness, developer } = await createGateHarness();
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: SECOND_SESSION_ID });
+    const asRobin = { sessionId: SECOND_SESSION_ID };
+    await postRecords(harness, robin, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_robin", sessionId: SECOND_SESSION_ID }), asRobin),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_declared", workContextId: "wc_robin", authorSessionId: SECOND_SESSION_ID, body: "neardup94 the session cookie expires early" }),
+          asRobin,
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_draft", kind: "hypothesis", workContextId: "wc_robin", authorSessionId: SECOND_SESSION_ID, body: "login breaks after refresh", ...derivedFields }),
+          asRobin,
+        ),
+      ],
+    });
+    const before = (await harness.db.select().from(claimEdges)).length;
+
+    // Act
+    await postRecords(harness, developer, recordEnvelope("claim", validClaimBody({ id: "clm_nick", body: LOGIN_OBSERVATION })));
+
+    // Assert
+    const edges = (await harness.db.select().from(claimEdges)).slice(before);
+    expect(edges.map((edge) => [edge.fromClaimId, edge.kind, edge.toClaimId])).toEqual([["clm_nick", "relates_to", "clm_robin_declared"]]);
+  });
+
+  test("my own draft still links to my own nearest claim, whoever else is nearer", async () => {
+    // Arrange: a teammate's vouched claim is the nearest; my own is next
+    const { harness, developer } = await createGateHarness();
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: SECOND_SESSION_ID });
+    await postRecords(harness, robin, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_robin", sessionId: SECOND_SESSION_ID }), { sessionId: SECOND_SESSION_ID }),
+        recordEnvelope("claim", validClaimBody({ id: "clm_robin", workContextId: "wc_robin", authorSessionId: SECOND_SESSION_ID, body: LOGIN_OBSERVATION }), { sessionId: SECOND_SESSION_ID }),
+      ],
+    });
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_02", title: "Signin flow audit" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_mine", workContextId: "wc_02", body: "neardup94 my own note on the cookie" })),
+      ],
+    });
+    const before = (await harness.db.select().from(claimEdges)).length;
+
+    // Act: my draft at cosine 1.0 to Robin's claim, 0.94 to my own
+    await postRecords(harness, developer, recordEnvelope("claim", validClaimBody({ id: "clm_my_draft", kind: "hypothesis", body: LOGIN_REWORDED, ...derivedFields })));
+
+    // Assert
+    const edges = (await harness.db.select().from(claimEdges)).slice(before);
+    expect(edges.map((edge) => [edge.fromClaimId, edge.kind, edge.toClaimId])).toEqual([["clm_my_draft", "relates_to", "clm_mine"]]);
   });
 });
 
@@ -351,6 +456,11 @@ describe("cross-context near-duplicates", () => {
     const edges = await harness.db.select().from(claimEdges);
     expect(edges.length).toBe(1);
     expect(edges[0]?.kind).toBe("relates_to");
+    // ...and the tree that edge reaches into says what the far end is: the
+    // linked claim is a draft, never presented as a vouched finding.
+    const response = await harness.app.request("/api/work-contexts/wc_01/diagnosis?telemetry=0", jsonRequest("GET", developer.apiKey));
+    const tree = (await response.json()) as { data: { externalClaims: { id: string; provenance?: string; status?: string }[] } };
+    expect(tree.data.externalClaims.find((ref) => ref.id === "clm_02")).toMatchObject({ provenance: "derived", status: "proposed" });
   });
 
   test("a developer's own cross-kind contradiction in one context is flagged", async () => {

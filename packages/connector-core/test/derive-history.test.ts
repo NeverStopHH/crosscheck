@@ -51,7 +51,17 @@ describe("foldDeriveHistory", () => {
   test("keeps each ended session's counters, newest first", async () => {
     // Arrange
     const at = await home("history-two");
-    await seed(at, "first-uuid", { stopTurnCount: 3, intentFireCount: 1, intentFailCount: 1 });
+    await seed(at, "first-uuid", {
+      stopTurnCount: 3,
+      intentFireCount: 3,
+      intentFailCount: 1,
+      intentRefusedCount: 1,
+      intentSkippedCount: 1,
+      deriveFires: [
+        { at: "2026-10-05T11:00:00.000Z", deadlineMs: 45_000 },
+        { at: "2026-10-05T11:20:00.000Z", deadlineMs: 300_000 },
+      ],
+    });
     await seed(at, "second-uuid", {
       summarizerFireCount: 1,
       summarizerFailCount: 1,
@@ -59,8 +69,8 @@ describe("foldDeriveHistory", () => {
     });
 
     // Act
-    await foldDeriveHistory(at, KEY, "first-uuid");
-    await foldDeriveHistory(at, KEY, "second-uuid");
+    await foldDeriveHistory(at, "first-uuid", new Date());
+    await foldDeriveHistory(at, "second-uuid", new Date());
     const history = await readDeriveHistory(at, KEY);
 
     // Assert
@@ -69,6 +79,15 @@ describe("foldDeriveHistory", () => {
     expect(history.sessions[0]?.summarizerLastFailure).toBe("could not start: Executable not found");
     expect(history.sessions[1]?.stopTurnCount).toBe(3);
     expect(history.sessions[1]?.intentFailCount).toBe(1);
+    // A refusal and a skip outlive the session too: without them the ended
+    // session's answers would read as runs that never reported back.
+    expect(history.sessions[1]?.intentRefusedCount).toBe(1);
+    expect(history.sessions[1]?.intentSkippedCount).toBe(1);
+    // Each run's start and deadline, so doctor can still settle it run by run.
+    expect(history.sessions[1]?.deriveFires).toEqual([
+      { at: "2026-10-05T11:00:00.000Z", deadlineMs: 45_000 },
+      { at: "2026-10-05T11:20:00.000Z", deadlineMs: 300_000 },
+    ]);
   });
 
   test("is bounded to the newest DERIVE_HISTORY_MAX_SESSIONS and counts every fold", async () => {
@@ -76,7 +95,7 @@ describe("foldDeriveHistory", () => {
     const total = DERIVE_HISTORY_MAX_SESSIONS + 3;
     for (let i = 0; i < total; i += 1) {
       await seed(at, `ring-${String(i)}-uuid`, { stopTurnCount: i });
-      await foldDeriveHistory(at, KEY, `ring-${String(i)}-uuid`);
+      await foldDeriveHistory(at, `ring-${String(i)}-uuid`, new Date());
     }
 
     const history = await readDeriveHistory(at, KEY);
@@ -89,7 +108,7 @@ describe("foldDeriveHistory", () => {
   test("a session with no state file folds nothing", async () => {
     const at = await home("history-none");
 
-    await foldDeriveHistory(at, KEY, "ghost-uuid");
+    await foldDeriveHistory(at, "ghost-uuid", new Date());
 
     expect((await readDeriveHistory(at, KEY)).folded).toBe(0);
   });
@@ -101,8 +120,34 @@ describe("foldDeriveHistory", () => {
     await seed(at, "after-uuid", { stopTurnCount: 2 });
 
     expect((await readDeriveHistory(at, KEY)).sessions).toEqual([]);
-    await foldDeriveHistory(at, KEY, "after-uuid");
+    await foldDeriveHistory(at, "after-uuid", new Date());
     expect((await readDeriveHistory(at, KEY)).sessions).toHaveLength(1);
+  });
+});
+
+describe("the history belongs to the session's own repo", () => {
+  test("a SessionEnd fired from another repo's cwd still files the digest under the session's repo", async () => {
+    // Arrange: the session worked on acme/api; its SessionEnd hook resolved
+    // the cwd of a sibling checkout (acme/web) as the hook's repo
+    const at = await home("history-own-repo");
+    await seed(at, "own-repo-uuid", { stopTurnCount: 4 });
+    const otherKey = repoKey(DEAD_HUB_URL, "github.com/acme/web");
+
+    // Act
+    await endSessionFlow({
+      home: at,
+      repoKey: otherKey,
+      hub: { hubUrl: DEAD_HUB_URL, apiKey: "k", timeoutMs: 400, home: at, repoKey: otherKey, now: () => new Date() },
+      hostSessionKey: "own-repo-uuid",
+      crosscheckSessionId: "cc_own-repo-uuid",
+      developerId: "dev_self",
+      flushBudgetMs: 200,
+      now: () => new Date(),
+    });
+
+    // Assert
+    expect((await readDeriveHistory(at, KEY)).sessions[0]?.stopTurnCount).toBe(4);
+    expect((await readDeriveHistory(at, otherKey)).folded).toBe(0);
   });
 });
 
@@ -129,5 +174,8 @@ describe("the end flow folds before it deletes", () => {
     const history = await readDeriveHistory(at, KEY);
     expect(history.sessions[0]?.stopTurnCount).toBe(7);
     expect(history.sessions[0]?.summarizerNoneCount).toBe(2);
+    // ...with WHEN it ended, which is what tells a run that finished after
+    // SessionEnd from a worker that never reported back.
+    expect(typeof history.sessions[0]?.endedAt).toBe("string");
   });
 });

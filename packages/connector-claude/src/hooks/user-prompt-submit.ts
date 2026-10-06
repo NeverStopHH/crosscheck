@@ -65,6 +65,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
+import { resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
@@ -150,7 +151,7 @@ const maybeSpawnIntentWorker = async (ctx: HookContext): Promise<void> => {
         return null;
       }
       fired = true;
-      return withIntentFire(fresh);
+      return withIntentFire(fresh, ctx.now(), resolveSummarizerTimeoutMs(ctx.env));
     });
     if (!fired) {
       return;

@@ -261,6 +261,14 @@ export const conferenceCostPath = (home: string, key: string): string =>
 export const conferenceCostLockPath = (home: string, key: string): string =>
   `${conferenceCostPath(home, key)}.lock`;
 
+/** Conversations whose draft review nudge slot is spent (state/draft-nudge-spent.ts). */
+export const draftNudgeSpentPath = (home: string): string =>
+  join(home, "state", "draft-nudge-spent.json");
+
+/** Its lock: two sessions spending their slots at once must not lose one. */
+export const draftNudgeSpentLockPath = (home: string): string =>
+  `${draftNudgeSpentPath(home)}.lock`;
+
 /** Ended sessions' derive counters for this repo+hub (state/derive-history.ts). */
 export const deriveHistoryPath = (home: string, key: string): string =>
   join(home, "state", `${key}-derive-history.json`);

@@ -324,6 +324,24 @@ describe("renderDiagnosis", () => {
     expect(rendered).toContain("wc_other");
   });
 
+  test("a linked claim in another tree says when it is a draft or rejected", () => {
+    // A same-author similarity link may point at an unreviewed draft or a
+    // discard; the reader of the tree must not take it for a vouched finding.
+    const tree = diagnosis({
+      externalClaims: [
+        { id: "clm_draft", kind: "hypothesis", workContextId: "wc_a", provenance: "derived", status: "proposed" },
+        { id: "clm_gone", kind: "hypothesis", workContextId: "wc_b", provenance: "derived", status: "rejected" },
+        { id: "clm_vouched", kind: "root_cause", workContextId: "wc_c", provenance: "declared", status: "proposed" },
+      ] as never,
+    });
+
+    const lines = renderDiagnosis(tree, NOW).split("\n");
+
+    expect(lines.find((line) => line.includes("clm_draft"))).toContain("provenance derived (unreviewed draft)");
+    expect(lines.find((line) => line.includes("clm_gone"))).toContain("status rejected");
+    expect(lines.find((line) => line.includes("clm_vouched"))).not.toContain("derived");
+  });
+
   test("a display name cannot mint a second status, author or confidence", () => {
     // Arrange: the author label is printed OUTSIDE the « » frame, on the same
     // line as the renderer's own facts, and those facts are separated by ` · `.
@@ -1032,6 +1050,16 @@ describe("renderDiagnosis", () => {
 });
 
 describe("renderSearchResults", () => {
+  test("a tree found only through an unreviewed draft's words says so", () => {
+    // The hub marks a result whose only match was a derived draft: a pull the
+    // searcher asked for, never presented as a vouched finding.
+    const drafted = renderSearchResults([hit(workContext({ derivedOnly: true } as Partial<WorkContextEntry>), 60_000)], "login");
+    const vouched = renderSearchResults([hit(workContext({ derivedOnly: false } as Partial<WorkContextEntry>), 60_000)], "login");
+
+    expect(drafted).toContain("matched only an unreviewed draft (provenance derived)");
+    expect(vouched).not.toContain("unreviewed draft");
+  });
+
   test("labels the results as quoted data too", () => {
     // Act
     const rendered = renderSearchResults([hit(workContext(), 60_000)], "login");

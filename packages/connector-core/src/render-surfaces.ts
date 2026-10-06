@@ -1148,7 +1148,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     notice: OWN_DRAFTS_QUOTED_DATA_NOTICE,
     render: (payload) =>
       renderDraftNudge({
-        backlog: { listed: draftsWith(payload), total: DRAFT_CORPUS_BACKLOG, oldestCreatedAt: DRAFT_DUE_ISO },
+        backlog: { listed: draftsWith(payload), oldestFirst: null, total: DRAFT_CORPUS_BACKLOG, oldestCreatedAt: DRAFT_DUE_ISO },
         now: NOW,
       }),
   },

@@ -231,12 +231,14 @@ describe("intent × cursor: beforeSubmitPrompt derives the session's plan", () =
     const out = await runCursorHook(
       "beforeSubmitPrompt",
       payload(fix, "beforeSubmitPrompt", { prompt: PROMPT }),
-      fix.env,
+      { ...fix.env, CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "45000" },
     );
 
     // Assert — the handler never blocks: no `continue`, no `user_message`
     expect(JSON.parse(out)).toEqual({});
-    expect((await readSessionState(fix.home, HOST_KEY))?.intentFireCount).toBe(1);
+    const fired = await readSessionState(fix.home, HOST_KEY);
+    expect(fired?.intentFireCount).toBe(1);
+    expect(fired?.deriveFires.map((fire) => fire.deadlineMs)).toEqual([45_000]);
 
     const record = await waitFor(async () => {
       const records = await spooled(fix);
@@ -445,7 +447,7 @@ describe("summarizer × cursor: the reduced rung, and its honest refusal", () =>
     await runCursorHook(
       "stop",
       payload(fix, "stop", { status: "completed", transcript_path: transcript }),
-      fix.env,
+      { ...fix.env, CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "45000" },
     );
 
     // Assert
@@ -455,6 +457,8 @@ describe("summarizer × cursor: the reduced rung, and its honest refusal", () =>
     });
     expect(state?.stopTurnCount).toBe(1);
     expect(state?.summarizerFireCount).toBe(1);
+    // The deadline its worker ran under, so doctor settles the run at twice it
+    expect(state?.deriveFires.map((fire) => fire.deadlineMs)).toEqual([45_000]);
     expect(state?.summarizerNoSliceCount).toBe(0);
     const claim = (await spooled(fix)).find((entry) => entry.kind === "claim");
     expect(claim?.producer?.agentKind).toBe(CURSOR_AGENT_KIND);

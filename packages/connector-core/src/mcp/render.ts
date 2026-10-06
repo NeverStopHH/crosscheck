@@ -616,8 +616,23 @@ const edgeLine = (
   return `- ${safeId(edge.fromClaimId)} ${bare(edge.kind)} ${safeId(edge.toClaimId)} · by ${authorLabel(index, edge.authorSessionId)}${note}`;
 };
 
+/**
+ * What the far end of a cross-tree link IS, when it is not a vouched claim:
+ * an auto similarity link may reach an unreviewed draft or a discard of the
+ * same author, and the line must not read as a finding.
+ */
+const externalTrustFacts = (ref: ExternalClaimRef): readonly string[] => [
+  ...(ref.provenance === "derived" ? ["provenance derived (unreviewed draft)"] : []),
+  ...(ref.status === "rejected" ? ["status rejected"] : []),
+];
+
 const externalLine = (ref: ExternalClaimRef): string =>
-  `- ${safeId(ref.id)} · ${bare(ref.kind)} · in work context ${safeId(ref.workContextId)}`;
+  [
+    `- ${safeId(ref.id)}`,
+    bare(ref.kind),
+    ...externalTrustFacts(ref),
+    `in work context ${safeId(ref.workContextId)}`,
+  ].join(" · ");
 
 /**
  * One captured target — WHERE this investigation happened.
@@ -1413,6 +1428,9 @@ const solvedFact = (hit: SearchHit): readonly string[] =>
       ]
     : [];
 
+/** A search hit the hub found only through an unreviewed draft. */
+const DRAFT_ONLY_MATCH = "matched only an unreviewed draft (provenance derived)";
+
 const searchLine = (hit: SearchHit): string => {
   const author =
     hit.entry.developerName === undefined ? "" : bare(hit.entry.developerName);
@@ -1422,6 +1440,9 @@ const searchLine = (hit: SearchHit): string => {
     `${formatAge(hit.ageMs)} ago`,
     `status ${bare(hit.entry.status)}`,
     ...solvedFact(hit),
+    // A pull the searcher asked for, never a vouched finding: the hub found
+    // this tree only through an unreviewed draft's words.
+    ...(hit.entry.derivedOnly === true ? [DRAFT_ONLY_MATCH] : []),
   ];
   const line = `${facts.join(" · ")}: ${quoted(hit.entry.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
   // The intent on a second, indented line of the SAME section entry (one

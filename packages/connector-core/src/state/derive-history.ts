@@ -24,12 +24,13 @@ import {
   deriveHistoryLockPath,
   deriveHistoryPath,
   readJsonOrNull,
+  repoKey,
   writePrivateFile,
 } from "../config/paths.ts";
 import { digestOf } from "../derive/sharing.ts";
 import type { DeriveDigest } from "../derive/sharing.ts";
 import { withLock } from "../spool/lock.ts";
-import { readSessionState } from "./session-state.ts";
+import { DeriveFiresSchema, readSessionState } from "./session-state.ts";
 
 const count = z.number().int().min(0).catch(0);
 const said = z.string().nullable().catch(null);
@@ -50,6 +51,10 @@ const DigestSchema = z.object({
   intentSetCount: count,
   intentFailCount: count,
   intentLastFailure: said,
+  intentRefusedCount: count,
+  intentSkippedCount: count,
+  deriveFires: DeriveFiresSchema,
+  endedAt: said,
 });
 
 const HistorySchema = z.object({
@@ -76,19 +81,25 @@ const withSession = (history: DeriveHistory, digest: DeriveDigest): DeriveHistor
   sessions: [digest, ...history.sessions].slice(0, DERIVE_HISTORY_MAX_SESSIONS),
 });
 
-/** Folds the session's digest in; a session with no state file folds nothing. */
+/**
+ * Folds the session's digest in; a session with no state file folds nothing.
+ * Filed under the SESSION'S OWN repo and hub — read off its state — never
+ * the repo of whatever cwd the ending hook resolved: a SessionEnd fired from
+ * a sibling checkout would otherwise file this repo's evidence under another.
+ */
 export const foldDeriveHistory = async (
   home: string,
-  key: string,
   hostSessionKey: string,
+  endedAt: Date,
 ): Promise<void> => {
   try {
     const state = await readSessionState(home, hostSessionKey);
     if (state === null) {
       return;
     }
+    const key = repoKey(state.hubUrl, state.repoId);
     await withLock(deriveHistoryLockPath(home, key), undefined, async () => {
-      const next = withSession(await readDeriveHistory(home, key), digestOf(state));
+      const next = withSession(await readDeriveHistory(home, key), digestOf(state, endedAt));
       await writePrivateFile(deriveHistoryPath(home, key), JSON.stringify(next));
     });
   } catch {

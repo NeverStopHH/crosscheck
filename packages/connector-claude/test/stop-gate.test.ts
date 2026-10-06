@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  DERIVE_FIRES_KEPT,
   SUMMARIZER_DEBOUNCE_TURNS,
   SUMMARIZER_MAX_FIRES_PER_SESSION,
   SUMMARIZER_SLICE_MAX_CHARS,
@@ -78,6 +79,9 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -97,6 +101,8 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
   draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -208,11 +214,33 @@ describe("debounce and hard cap (DESIGN.md §3: >=2 turns apart, 6/session)", ()
 
   test("withSummarizerFire records fire turn, count and token estimate", () => {
     const before = baseState({ stopTurnCount: 7, summarizerEstimatedTokens: 100 });
-    const after = withSummarizerFire(before, 250);
+    const firedAt = new Date("2026-10-05T12:00:00.000Z");
+    const after = withSummarizerFire(before, 250, firedAt, 90_000);
     expect(after.summarizerFireCount).toBe(1);
+    // When it fired, and under what deadline: what tells doctor a run in
+    // flight from a silent worker.
+    expect(after.deriveFires).toEqual([{ at: firedAt.toISOString(), deadlineMs: 90_000 }]);
     expect(after.summarizerLastFireTurn).toBe(7);
     expect(after.summarizerEstimatedTokens).toBe(350);
     expect(before.summarizerFireCount).toBe(0);
+    expect(before.deriveFires).toEqual([]);
+  });
+
+  test("every fire keeps its own instant, the newest DERIVE_FIRES_KEPT of them", () => {
+    // Settling a session by its NEWEST fire let one fresh run hide every
+    // older one that went silent (review round 2); each run is settled on
+    // its own now, so each needs its own instant.
+    const instants = Array.from({ length: DERIVE_FIRES_KEPT + 2 }, (_, i) => new Date(Date.UTC(2026, 9, 5, 12, i)));
+
+    const after = instants.reduce((state, at) => withSummarizerFire(state, 10, at, 60_000), baseState());
+
+    expect(after.summarizerFireCount).toBe(DERIVE_FIRES_KEPT + 2);
+    expect(after.deriveFires.map((fire) => fire.at)).toEqual(
+      instants.slice(-DERIVE_FIRES_KEPT).map((at) => at.toISOString()),
+    );
+    // A session can fire no more than this many runs, so in practice the
+    // ring holds every one of them.
+    expect(DERIVE_FIRES_KEPT).toBeGreaterThanOrEqual(SUMMARIZER_MAX_FIRES_PER_SESSION + 1);
   });
 });
 

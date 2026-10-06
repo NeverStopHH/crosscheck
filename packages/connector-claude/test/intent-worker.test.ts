@@ -280,8 +280,10 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(await spooledIntents(fix)).toHaveLength(0);
     const state = await readSessionState(fix.home, SESSION_ID);
     expect(state?.intentSetCount).toBe(0);
-    expect(state?.intentFailCount).toBe(1);
-    expect(state?.intentLastFailure).toContain("not a sentence");
+    // The model answered: a refusal, never a runner failure (review round 2)
+    expect(state?.intentRefusedCount).toBe(1);
+    expect(state?.intentFailCount).toBe(0);
+    expect(state?.intentLastDrop).toContain("not a sentence");
   });
 
   test("a fenced claim document is refused too — the fence is not the answer", async () => {
@@ -293,7 +295,7 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     await run(fix, fake);
 
     expect(await spooledIntents(fix)).toHaveLength(0);
-    expect((await readSessionState(fix.home, SESSION_ID))?.intentLastFailure).toContain(
+    expect((await readSessionState(fix.home, SESSION_ID))?.intentLastDrop).toContain(
       "not a sentence",
     );
   });
@@ -329,8 +331,9 @@ describe("runIntentWorker (end to end, faked binary)", () => {
 
     expect(await spooledIntents(fix)).toHaveLength(0);
     const state = await readSessionState(fix.home, SESSION_ID);
-    expect(state?.intentFailCount).toBe(1);
-    expect(state?.intentLastFailure).toContain("empty answer");
+    expect(state?.intentRefusedCount).toBe(1);
+    expect(state?.intentFailCount).toBe(0);
+    expect(state?.intentLastDrop).toContain("empty answer");
   });
 
   test("a secret-like sentence is dropped, never redacted, and booked with its reason", async () => {
@@ -343,8 +346,9 @@ describe("runIntentWorker (end to end, faked binary)", () => {
 
     expect(await spooledIntents(fix)).toHaveLength(0);
     const state = await readSessionState(fix.home, SESSION_ID);
-    expect(state?.intentFailCount).toBe(1);
-    expect(state?.intentLastFailure).toContain("dropped: secret-like");
+    expect(state?.intentRefusedCount).toBe(1);
+    expect(state?.intentFailCount).toBe(0);
+    expect(state?.intentLastDrop).toContain("dropped: secret-like");
   });
 
   test("a sentence that echoes a delivered hint — this session's or an earlier one's — is dropped", async () => {
@@ -353,7 +357,7 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     const fakeEcho = await makeFakeModel({ output: echoed });
     await run(inSession, fakeEcho);
     expect(await spooledIntents(inSession)).toHaveLength(0);
-    expect((await readSessionState(inSession.home, SESSION_ID))?.intentLastFailure).toContain(
+    expect((await readSessionState(inSession.home, SESSION_ID))?.intentLastDrop).toContain(
       "echoes a delivered hint",
     );
 
@@ -404,7 +408,7 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(env["CROSSCHECK_API_KEY"]).toBeUndefined();
   });
 
-  test("a pre-intent state file (no title) books a failure and fabricates nothing", async () => {
+  test("a pre-intent state file (no title) books a skip — never a model failure — and fabricates nothing", async () => {
     const fix = await fixture({ workContextTitle: null, workContextStatus: null });
     const fake = await makeFakeModel({ output: SENTENCE });
 
@@ -412,15 +416,19 @@ describe("runIntentWorker (end to end, faked binary)", () => {
 
     expect(await spooledIntents(fix)).toHaveLength(0);
     const state = await readSessionState(fix.home, SESSION_ID);
-    expect(state?.intentFailCount).toBe(1);
-    expect(state?.intentLastFailure).toContain("predates intent support");
+    expect(state?.intentSkippedCount).toBe(1);
+    expect(state?.intentFailCount).toBe(0);
+    expect(state?.intentLastDrop).toContain("predates intent support");
     expect(await fileExists(fix.promptFile)).toBe(false);
   });
 
   test("an empty prompt file is booked as a drop and removed", async () => {
     const fix = await fixture({}, "   ");
     await run(fix, await makeFakeModel({ output: SENTENCE }));
-    expect((await readSessionState(fix.home, SESSION_ID))?.intentLastFailure).toContain("empty prompt");
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.intentSkippedCount).toBe(1);
+    expect(state?.intentFailCount).toBe(0);
+    expect(state?.intentLastDrop).toContain("empty prompt");
     expect(await fileExists(fix.promptFile)).toBe(false);
   });
 

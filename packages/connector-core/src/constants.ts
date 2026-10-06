@@ -1261,6 +1261,15 @@ export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
  */
 export const SUMMARIZER_TIMEOUT_MS = 60_000;
 /**
+ * The longest deadline CROSSCHECK_SUMMARIZER_TIMEOUT_MS may give a model run.
+ * Every fire books its deadline into session state (`deriveFires`), so the
+ * value must stay a safe integer the state schema accepts — an unbounded one
+ * made the state file unreadable for the rest of the session (review round
+ * 3). Thirty minutes is past any slow local model, and short enough that
+ * doctor can still settle a run the same day.
+ */
+export const SUMMARIZER_TIMEOUT_MAX_MS = 30 * 60_000;
+/**
  * The env marker the summarizer's nested `claude -p` carries
  * (model/worker-env.ts sets it on the worker, model/runner.ts on
  * the model process): EVERY crosscheck hook entry exits silently when it is
@@ -1454,11 +1463,31 @@ export const DRAFT_NUDGE_MIN_FINISHED_TURNS = 1;
 /** Due drafts the nudge names by id; the rest are counted, never silently left out. */
 export const MAX_DRAFT_NUDGE_POINTERS = 5;
 /**
+ * Ids the nudge keeps before its header gives up a descriptive clause (the
+ * kinds, the backlog in all, the retention count — in that order): an id is
+ * what the agent acts on, a clause only describes. Below this many, every
+ * clause is gone first, and the last id is never dropped.
+ */
+export const DRAFT_NUDGE_POINTERS_BEFORE_CLAUSES = 3;
+/**
  * Below this much of the prompt hook's spare budget the nudge is not even
  * looked up and waits for the next prompt: a slot spent by a hook that then
  * runs out of time would be marked delivered and never shown.
  */
 export const DRAFT_NUDGE_MIN_SPARE_MS = 50;
+/**
+ * Conversations whose spent nudge slot is remembered past SessionEnd
+ * (state/draft-nudge-spent.ts), newest kept: a conversation resumed after it
+ * ended is the same conversation, and is not nudged twice.
+ */
+export const DRAFT_NUDGE_SPENT_MAX_SESSIONS = 500;
+/**
+ * After a draft fetch for the nudge FAILED, how long the session leaves the
+ * nudge alone. Without it an unresponsive hub cost every prompt one more GET
+ * and its timeout (two, when the oldest-first page is due) — the nudge is
+ * housekeeping, and ten minutes late costs nothing.
+ */
+export const DRAFT_NUDGE_RETRY_COOLDOWN_MS = 10 * 60_000;
 /**
  * Past this age the nudge SAYS how many drafts are that old (binding
  * principle 6): nothing in crosscheck deletes or auto-discards a draft, so an
@@ -1494,6 +1523,32 @@ export const DOCTOR_SHARING_QUIET_TURNS_WARN = 20;
  * slow laptop and two is a worker that does not report back.
  */
 export const DOCTOR_SHARING_SILENT_FIRES_WARN = 2;
+/**
+ * How long a model run may go unanswered and still be IN FLIGHT rather than
+ * silent: this many times the deadline THAT RUN was given — booked with its
+ * fire, CROSSCHECK_SUMMARIZER_TIMEOUT_MS honoured (state/session-state.ts
+ * `deriveFires`), because a machine that raised the deadline gives its worker
+ * that long. A run younger than this — counted to now for a live session, to
+ * SessionEnd for an ended one, whose late answer had no state file left to
+ * land in — is never blamed on the host.
+ */
+export const DERIVE_RUN_GRACE_FACTOR = 2;
+/**
+ * The grace at the default deadline — what doctor's lines quote as the usual
+ * figure; each run is settled at its own (DERIVE_RUN_GRACE_FACTOR).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DERIVE_RUN_GRACE_MS / 1000, c.DERIVE_RUN_GRACE_MS > c.SUMMARIZER_TIMEOUT_MS)'
+ * PRINTS: 120 true
+ */
+export const DERIVE_RUN_GRACE_MS = DERIVE_RUN_GRACE_FACTOR * SUMMARIZER_TIMEOUT_MS;
+/**
+ * Fire instants a session keeps, newest last (state/session-state.ts
+ * `deriveFires`), so doctor settles EACH run against its own start rather
+ * than the session's newest — one fresh fire used to make every older silent
+ * run read as in flight. Every fire a session can make: its summarizer cap
+ * plus the one derived-intent fire.
+ */
+export const DERIVE_FIRES_KEPT = SUMMARIZER_MAX_FIRES_PER_SESSION + 1;
 /**
  * Sessions with not one derived-intent fire before doctor says no session
  * opened with a substantive prompt. Two, because one session is one prompt.
