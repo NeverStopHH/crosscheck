@@ -37,6 +37,7 @@ import type { CausalGuaranteeTriple } from "@crosscheck/schema";
 import { HEAL_COOLDOWN_MS, HEAL_MIN_ROOM_MS } from "../constants.ts";
 import {
   readJsonOrNull,
+  removeFile,
   repoKey,
   sessionHealPathForSlug,
   sessionSlug,
@@ -259,9 +260,22 @@ const movedLife = async (input: SessionHealerInput, refusedSessionId: string): P
  * says so — and written down as the newest ended life, so a resume starts
  * above it. Best-effort: an end that does not land leaves the life to the
  * hub's reaper, and the lineage still keeps the resume off it.
+ *
+ * NEVER A LIFE THE STATE NAMES (review-2 round 6, MEDIUM-1), checked under
+ * the state lock, the end sent inside it so no switch can name the life in
+ * between. A lock that stays busy retires nothing: the state may name it.
  */
 const retireOrphan = async (input: SessionHealerInput, sessionId: string, now: Date): Promise<void> => {
-  await endSession(input.hub, sessionId, ALLOCATION_FAILED);
+  const retired = await underSessionStateLock(input.home, input.hostSessionKey, false, async () => {
+    if ((await readSessionState(input.home, input.hostSessionKey))?.crosscheckSessionId === sessionId) {
+      return false;
+    }
+    await endSession(input.hub, sessionId, ALLOCATION_FAILED);
+    return true;
+  });
+  if (!retired) {
+    return;
+  }
   const baseId = crosscheckSessionIdFor(input.hostSessionKey);
   const ended = await readEndedLifeRung(input.home, input.hostSessionKey, baseId);
   if ((lifeRungOf(baseId, sessionId) ?? 0) > (ended ?? -1)) {
@@ -325,7 +339,16 @@ const walk = async (
   // re-send pays it first.
   const workContext = nextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
   const swap = await swapLife(input, refusal.sessionId, ladder.sessionId, ladder.developerId, workContext);
-  if (swap !== "swapped") {
+  if (swap === "lock_busy") {
+    // NOT A LOST RACE (review-2 round 6, MEDIUM-1): nothing is known about the
+    // state, only that the switch could not take the lock. The heal is
+    // pending — the caller keeps its batch, and the next one walks again. A
+    // life this walk registered that the state does not name is retired; one
+    // it does name — the same id, registered as itself — never is.
+    await retireOrphan(input, ladder.sessionId, now);
+    return PENDING;
+  }
+  if (swap === "cas_lost") {
     // Lost the compare-and-swap: a sibling moved the state first. Its life is
     // the answer — usually the very one this walk just registered (review P4).
     const moved = await movedLife(input, refusal.sessionId);
@@ -383,6 +406,12 @@ const heal =
     }
     await beforeWalk?.();
     const result = await walk(boundToSession(input, state), state, refusal, deadlineMs, now);
+    if (result.outcome === "pending") {
+      // The switch met a busy lock: no verdict, so no cooldown and no
+      // `failed` — the next hook walks again (review-2 round 6, MEDIUM-1).
+      await removeFile(healPath(input));
+      return result;
+    }
     await writeStamp(input, now, "done", deadlineMs, result.outcome === "healed" ? null : refusal.sessionId);
     return result;
   };

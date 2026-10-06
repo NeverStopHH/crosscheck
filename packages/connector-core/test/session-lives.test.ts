@@ -52,12 +52,13 @@ const RACE_DELAY_MS = 50;
 /** Any position: the point is that it is withheld when another life delivers it. */
 const COMMIT_POSITION = 7;
 /**
- * How long a test holds the state lock against a walk's switch: well inside
- * the switch's own patience (SESSION_STATE_LOCK_RETRIES × the retry delay,
- * 400 ms), so the switch still lands once the lock goes.
+ * How long a test holds the state lock against a walk's switch: past the
+ * switch's own patience (SESSION_STATE_LOCK_RETRIES × the retry delay,
+ * 400 ms), so the switch finds the lock busy.
  */
-const SWAP_WAIT_MS = 200;
-const SWAP_POLL_MS = 5;
+const LOCK_PAST_PATIENCE_MS = 900;
+/** Past the switch's patience, inside the retirement's: the retirement gets the lock. */
+const LOCK_FREES_FOR_RETIREMENT_MS = 600;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -856,5 +857,81 @@ describe("SessionEnd at the edges", () => {
 
     // Assert: no state file left to pin the spool
     expect(await stateOf(fx)).toBeNull();
+  });
+});
+
+/**
+ * A HEAL WHOSE SWITCH MEETS A BUSY STATE LOCK (review-2 round 6, MEDIUM-1).
+ * The switch answered a plain no; the heal took it for a lost race, found the
+ * state still on the refused id — the very life a same-id heal had just
+ * registered — and retired it: the live life ended on the hub, and its first
+ * window was refused as late writes (RS5-B, RS5-B2).
+ */
+describe("a heal whose state switch meets a busy lock", () => {
+  /** Runs the heal while another holder keeps the state's lock past the switch's patience. */
+  const healUnderBusyLock = async (
+    fx: Fixture,
+    sessionId: string,
+    holdMs: number = LOCK_PAST_PATIENCE_MS,
+  ): Promise<unknown> => {
+    let healing: Promise<unknown> = Promise.resolve();
+    await withLock(sessionStateLockPath(fx.home, fx.hostSessionKey), false, async () => {
+      healing = healerFor(fx, fx.proxied)({ sessionId, cause: "session_unknown" }, Date.now() + BUDGET_MS);
+      await Bun.sleep(holdMs);
+      return true;
+    });
+    return healing;
+  };
+
+  test("a retirement that gets the lock checks the state first, and keeps the life it names", async () => {
+    // Arrange: the lock frees after the switch gave up and before the
+    // retirement's own patience runs out
+    const fx = await fixture("busy-then-free");
+    refuseRegisters = true;
+    const life = await register(fx, fx.proxied);
+    refuseRegisters = false;
+
+    // Act
+    await healUnderBusyLock(fx, life.crosscheckSessionId, LOCK_FREES_FOR_RETIREMENT_MS);
+
+    // Assert
+    expect(await isEnded(life.crosscheckSessionId)).toBe(false);
+  });
+
+  test("answers pending and leaves the life the state names open (RS5-B)", async () => {
+    // Arrange: a life whose register did not land, an edit of it on disk
+    const fx = await fixture("busy-swap");
+    refuseRegisters = true;
+    const life = await register(fx, fx.proxied);
+    refuseRegisters = false;
+    await captureTarget(fx, "src/busy.ts");
+
+    // Act
+    const healed = await healUnderBusyLock(fx, life.crosscheckSessionId);
+
+    // Assert
+    expect(healed).toEqual({ outcome: "pending" });
+    expect((await stateOf(fx))?.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect(await isEnded(life.crosscheckSessionId)).toBe(false);
+  });
+
+  test("the next flush heals the life, and its first window lands (RS5-B2)", async () => {
+    // Arrange
+    const fx = await fixture("busy-swap-window");
+    refuseRegisters = true;
+    const life = await register(fx, fx.proxied);
+    refuseRegisters = false;
+    for (const file of ["src/w1.ts", "src/w2.ts", "src/w3.ts"]) {
+      await captureTarget(fx, file);
+    }
+
+    // Act: the heal the busy lock defers, then the next hook's flush
+    await healUnderBusyLock(fx, life.crosscheckSessionId);
+    await flushAsHook(fx);
+
+    // Assert: no cooldown spent on it, nothing ended, every edit landed
+    expect((await stateOf(fx))?.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect(await targetsOf(life.workContextId)).toEqual(["src/w1.ts", "src/w2.ts", "src/w3.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
   });
 });

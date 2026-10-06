@@ -18015,6 +18015,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor.test.ts`,
     because: "review-2 round 6 HIGH-2: a hold that lasts a week shows nowhere until its records are counted expired",
   },
+  {
+    label: "a heal reads a busy state lock as a switch that landed",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '  if (swap === "lock_busy") {',
+    to: '  if (swap === "lock_busy" && false) {',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 MEDIUM-1 (RS5-B): the heal answers a life the state never switched to, or retires the one it names",
+  },
+  {
+    label: "an orphan is retired although the state names it",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    if ((await readSessionState(input.home, input.hostSessionKey))?.crosscheckSessionId === sessionId) {\n      return false;\n    }\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 MEDIUM-1: a same-id heal whose switch met a busy lock ends the live life on the hub, and its first window is refused as late writes",
+  },
+  {
+    label: "a heal whose switch met a busy lock spends a cooldown",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '    if (result.outcome === "pending") {\n',
+    to: "    if (false) {\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 MEDIUM-1 (RS5-B2): the stamp says failed, and the life sends nothing for five minutes although nothing was refused",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18275,7 +18299,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 27
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 23
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 26
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

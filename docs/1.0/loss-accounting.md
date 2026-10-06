@@ -334,10 +334,18 @@ in-memory session still names the old life. The delete now runs under the state 
 names (`closeSessionState`): the state goes either way, and a life other than the one being ended is ended with
 it — its own position past the counter, its own marker, written to the lineage — so the next resume starts above
 it. The backlog is counted after the state goes, so a work context the heal spooled meanwhile holds both ends back.
-And the heal spools that work context BEFORE it switches the state (review-2 LOW-4): switched first, a SessionEnd
-in between found the new life with nothing on disk, ended it, and the heal's re-send then went under an ended
-life — another conversation's backlog spent as `session_ended`, against P7 — while a parallel capture could put a
-target ahead of the work context it names. Now the state never names a life whose work context is not on disk.
+And the heal owes that work context IN THE SAME LOCKED STEP that switches the state (review-2 LOW-4, as rebuilt
+in round 6): switched first and spooled after, a SessionEnd in between found the new life with nothing on disk,
+ended it, and the heal's re-send then went under an ended life — another conversation's backlog spent as
+`session_ended`, against P7 — while a parallel capture could put a target ahead of the work context it names. Now
+the state never names a life without its owed work context, and SessionEnd counts that debt as undelivered.
+
+**A switch that meets a busy lock is not a lost race** (review-2 round 6, MEDIUM-1). The switch answered a plain
+no, the heal took it for a sibling's win, found the state still on the refused id — the very life a same-id heal had
+just registered — and retired it: the live life ended on the hub and its first window was refused as late writes.
+The switch now answers swapped, `cas_lost` or `lock_busy`; a busy lock makes the heal `pending` with no cooldown
+and no `failed` verdict, so the next hook walks again; and an orphan is retired only after a check under the state
+lock that the state does not name it.
 
 **A batch a walk leaves on disk is counted once** (review-2 finding 4). What a batch has lost whatever comes next
 — torn lines, withheld stragglers, refusals no heal can carry — is written before the walk's register (review P3),
