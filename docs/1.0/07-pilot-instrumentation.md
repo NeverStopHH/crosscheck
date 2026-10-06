@@ -95,8 +95,10 @@ older hub the shown finding is booked `prompt_hint`, counted as a pointer rather
 `answer`) and `intent_provenance` (`declared` | `derived`), say what a prompt-time delivery answered and
 whose intent the receiving session held, so the per-person followed/overrode figures can split a pointer
 nobody asked for from an answer somebody waited for. Additive: optional on the wire, never defaulted,
-NULL from an older connector and on every row written before them; an unknown `matched_on` value is
-refused like an unknown channel. Other channels leave both NULL.*
+NULL from an older connector and on every row written before them. An unknown value of either is stored
+as NULL and the delivery is still accepted (hold-out review, L3): unlike a channel, neither decides what
+the row is, so refusing it would lose the very row the figures count over one word the hub cannot read.
+Other channels leave both NULL.*
 
 ### 3.2 `pilot_marks` — the only human input, and it is never a question
 

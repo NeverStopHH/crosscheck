@@ -80,11 +80,13 @@ export const HintDeliverySchema = z.looseObject({
   /**
    * What the hint was matched on (M7). OPTIONAL and never defaulted: a
    * connector older than the field says nothing, and the hub stores nothing
-   * rather than a guess. A value this hub does not know is refused.
+   * rather than a guess. A value this hub does not know is read as nothing
+   * too (hold-out review, L3) — never a refusal, which would drop the very
+   * delivery row the measurement counts over one word it cannot read.
    */
-  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional(),
-  /** Who wrote the receiving session's intent at delivery; null when it had none. */
-  intentProvenance: z.enum(INTENT_PROVENANCES).nullable().optional(),
+  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional().catch(undefined),
+  /** Who wrote the receiving session's intent at delivery; null when it had none, or said something unknown. */
+  intentProvenance: z.enum(INTENT_PROVENANCES).nullable().optional().catch(null),
   deliveredAt: z.iso.datetime(),
 });
 

@@ -310,15 +310,22 @@ describe("the delivery channel (07 §3.1)", () => {
     expect(row?.intentProvenance).toBeNull();
   });
 
-  test("a matched-on value this hub does not know is refused, never stored", async () => {
-    // Arrange
+  test.each([
+    [{ matchedOn: "vibes" }],
+    [{ intentProvenance: "guessed" }],
+    [{ matchedOn: "telepathy", intentProvenance: 42 }],
+  ])("a value this hub does not know is stored as NULL, and the delivery still counts: %p (hold-out review, L3)", async (fields) => {
+    // Arrange — a connector newer than this hub says something it cannot read
     const { harness, developer } = await seedContextWithClaim();
 
     // Act
-    const result = await postRecords(harness, developer, recordEnvelope("hint_delivery", deliveryBody({ matchedOn: "vibes" })));
+    const result = await postRecords(harness, developer, recordEnvelope("hint_delivery", deliveryBody(fields)));
 
-    // Assert
-    expect(result.data?.rejected).toBe(1);
+    // Assert — the row the measurement counts is kept; the word it cannot read is not
+    expect(result.data?.accepted).toBe(1);
+    const [row] = await listDeliveryRows(harness);
+    expect(row?.matchedOn).toBeNull();
+    expect(row?.intentProvenance).toBeNull();
   });
 });
 

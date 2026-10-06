@@ -18356,10 +18356,26 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub stores any word as what a delivery was matched on",
     file: `${SCHEMA}/src/hint.ts`,
-    from: "  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional(),",
+    from: "  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional().catch(undefined),",
     to: "  matchedOn: z.string().optional(),",
     test: `${SERVER}/test/hint-deliveries.test.ts`,
     because: "a value no report knows lands in the measurement as its own silent bucket (M7)",
+  },
+  {
+    label: "an unknown matched-on value refuses the whole delivery",
+    file: `${SCHEMA}/src/hint.ts`,
+    from: "  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional().catch(undefined),",
+    to: "  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional(),",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "a connector newer than the hub loses every delivery row to one word the hub cannot read (L3)",
+  },
+  {
+    label: "an unknown intent provenance refuses the whole delivery",
+    file: `${SCHEMA}/src/hint.ts`,
+    from: "  intentProvenance: z.enum(INTENT_PROVENANCES).nullable().optional().catch(null),",
+    to: "  intentProvenance: z.enum(INTENT_PROVENANCES).nullable().optional(),",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "a connector newer than the hub loses every delivery row to one word the hub cannot read (L3)",
   },
   {
     label: "the matched-on column reaches only hubs that do not exist yet",
@@ -18989,7 +19005,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 6
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
- * PRINTS: packages/server/test/hint-deliveries.test.ts 8
+ * PRINTS: packages/server/test/hint-deliveries.test.ts 10
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 3
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
