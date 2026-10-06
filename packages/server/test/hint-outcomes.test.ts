@@ -14,7 +14,7 @@
  *     hit drops the whole outcome rather than a redacted derivative.
  */
 import { describe, expect, test } from "bun:test";
-import { deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
+import { PIN_PRESENCE_TERMINAL, deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
 
 import { hintOutcomes, pilotMarks } from "../src/db/schema.ts";
 import {
@@ -29,8 +29,10 @@ import {
   createOutcomeWorld,
   deliveryRecord,
   enrol,
+  readMine,
   recordOutcome,
 } from "./fixtures/hint-outcome-world.ts";
+import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { labelNoise } from "./fixtures/hint-outcome-crowd.ts";
 import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
 
@@ -39,6 +41,21 @@ const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
 
 const bodyOf = async (response: Response): Promise<Record<string, unknown>> =>
   ((await response.json()) as { data: Record<string, unknown> }).data;
+
+const mineOf = async (world: OutcomeWorld): Promise<Record<string, unknown>> =>
+  ((await (await readMine(world, world.nick)).json()) as { data: Record<string, unknown> }).data;
+
+const markNoise = async (world: OutcomeWorld, deliveryId: string): Promise<Response> =>
+  await world.harness.app.request(
+    "/api/pilot-marks",
+    jsonRequest("POST", world.nick.apiKey, {
+      repo: REPO,
+      refKind: "hint_delivery",
+      refId: deliveryId,
+      mark: "noise",
+      presence: PIN_PRESENCE_TERMINAL,
+    }),
+  );
 
 const errorOf = async (response: Response): Promise<{ code: string; message: string }> =>
   ((await response.json()) as { error: { code: string; message: string } }).error;
@@ -121,7 +138,7 @@ describe("POST /api/hint-outcomes", () => {
     expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
   });
 
-  test("review #11: the same word after a newer noise label is written, and the answer says what it superseded", async () => {
+  test("review H2 (P3): the word the person's noise label superseded, said again, writes nothing and says the label stands", async () => {
     // Arrange — the agent said followed, then the person labelled it noise
     const world = await createOutcomeWorld();
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
@@ -129,16 +146,18 @@ describe("POST /api/hint-outcomes", () => {
     await labelNoise(world, world.nick, world.delivered.kenContext);
     world.harness.clock.advanceSeconds(60);
 
-    // Act — "already recorded … stands at followed" would be false: noise stands
+    // Act — the agent, re-reading the clause, says followed again. #11 wrote it, for good.
     const again = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const view = await mineOf(world);
 
     // Assert
-    expect(again.status).toBe(201);
-    expect(await bodyOf(again)).toMatchObject({ repeated: false, replaced: "noise", stands: "followed" });
-    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(2);
+    expect(again.status).toBe(200);
+    expect(await bodyOf(again)).toMatchObject({ repeated: true, stands: "noise" });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
+    expect(view).toMatchObject({ followed: 0, noise: 1 });
   });
 
-  test("review #11: a word at the same instant as the noise label is written, and the answer says the label still stands", async () => {
+  test("review #11: a new word at the same instant as the noise label is written, and the answer says the label still stands", async () => {
     // Arrange — a tie goes to the label (D-O7)
     const world = await createOutcomeWorld();
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
@@ -146,10 +165,64 @@ describe("POST /api/hint-outcomes", () => {
     await labelNoise(world, world.nick, world.delivered.kenContext);
 
     // Act
-    const tied = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const tied = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
 
     // Assert
     expect(await bodyOf(tied)).toMatchObject({ repeated: false, replaced: "noise", stands: "noise" });
+  });
+
+  test("review H2: the person re-asserts noise over a later word, and the answer says what now stands", async () => {
+    // Arrange — followed; the person: noise; the agent: overrode (a new word, so it stands)
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    world.harness.clock.advanceSeconds(60);
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the person says noise again; one label row per person and delivery, so it is restamped
+    const again = await markNoise(world, world.delivered.kenContext);
+    const view = await mineOf(world);
+
+    // Assert
+    expect(again.status).toBe(201);
+    expect(await bodyOf(again)).toMatchObject({ repeated: false, stands: "noise", replaced: "overrode" });
+    expect(view).toMatchObject({ overrode: 0, noise: 1 });
+  });
+
+  test("review H2: a label that already stands, said again, is a repeat that says it stands", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const again = await markNoise(world, world.delivered.kenContext);
+
+    // Assert
+    expect(again.status).toBe(200);
+    expect(await bodyOf(again)).toMatchObject({ repeated: true, stands: "noise" });
+  });
+
+  test("review H2: two words in the same millisecond — the later one stands, every time", async () => {
+    // Arrange — the clock does not move: every word below shares one instant
+    const world = await createOutcomeWorld();
+
+    // Act — on each of three pointers, three words back to back; the last is overrode
+    const answers: Record<string, unknown>[] = [];
+    for (const ref of [KEN_CONTEXT, KEN_CLAIM, MIKE_CONTEXT]) {
+      await recordOutcome(world, world.nick, { ref, outcome: "followed" });
+      await recordOutcome(world, world.nick, { ref, outcome: "not_relevant_now" });
+      answers.push(await bodyOf(await recordOutcome(world, world.nick, { ref, outcome: "overrode", reason: "kept mine" })));
+    }
+    const view = await mineOf(world);
+
+    // Assert — not a draw between rows that share one timestamp
+    expect(answers.map((answer) => answer["stands"])).toEqual(["overrode", "overrode", "overrode"]);
+    expect(view).toMatchObject({ followed: 0, notRelevantNow: 0, overrode: 3 });
   });
 
   test("a different word supersedes the first and deletes nothing", async () => {

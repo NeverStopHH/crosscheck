@@ -254,7 +254,7 @@ describe("mark_hint_outcome", () => {
     expect(await mine()).toMatchObject({ received: 1, followed: 0, overrode: 1 });
   });
 
-  test("review #11: after the person's noise label the same word is written, and the answer names the label it superseded", async () => {
+  test("review H2: after the person's noise label, the agent's same word again writes nothing; a new word supersedes the label", async () => {
     // Arrange — the person labels the delivery noise at a terminal, after the agent's word
     const reason = "kept the narrow row: the wide one breaks the mobile layout";
     await send("/api/pilot-marks", nickApiKey, {
@@ -265,14 +265,36 @@ describe("mark_hint_outcome", () => {
       presence: PIN_PRESENCE_TERMINAL,
     });
 
-    // Act — "Already recorded … stands at overrode" would be false: the label stands
-    const again = await call({ ref: KEN_CONTEXT, outcome: "overrode", reason });
+    // Act — the agent repeats itself (#11 wrote this, for good); then says something new
     const repeat = await call({ ref: KEN_CONTEXT, outcome: "overrode", reason });
+    const afterRepeat = await mine();
+    const changed = await call({ ref: KEN_CONTEXT, outcome: "followed" });
 
     // Assert
-    expect(again.text).toContain("It supersedes your earlier noise label, which stays in the history.");
-    expect(await mine()).toMatchObject({ received: 1, overrode: 1, noise: 0 });
-    expect(repeat.text).toContain(`Already recorded: the hint at ${KEN_CONTEXT} stands at overrode.`);
+    expect(repeat.text).toContain(
+      `Already recorded: the hint at ${KEN_CONTEXT} was overrode before, and the person's noise label, made since, stands over it.`,
+    );
+    expect(afterRepeat).toMatchObject({ received: 1, overrode: 0, noise: 1 });
+    expect(changed.text).toContain("It supersedes your earlier noise label, which stays in the history.");
+    expect(await mine()).toMatchObject({ received: 1, followed: 1, noise: 0 });
+  });
+
+  test("review H2: a repeat under the person's newer noise label says the label stands over it", async () => {
+    // Arrange — the hub answers a repeat whose word the person's label superseded
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
+    hostileAnswer = () =>
+      Response.json({
+        ok: true,
+        data: { id: "hd_1", deliveryId: "hd_1", outcome: "followed", repeated: true, replaced: null, stands: "noise" },
+      });
+
+    // Act
+    const repeat = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
+
+    // Assert
+    expect(repeat.text).toContain(
+      `Already recorded: the hint at ${KEN_CONTEXT} was followed before, and the person's noise label, made since, stands over it. Nothing was written a second time.`,
+    );
   });
 
   test("review #11: a word that ties with the noise label says the label still stands", async () => {

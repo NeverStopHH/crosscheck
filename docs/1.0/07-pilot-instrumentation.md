@@ -1222,3 +1222,25 @@ an older hub's named minimum included: `hint outcomes, July 2026: withheld — b
 team of three never meets them`; the credit says `no count — below the disclosure minimums: leaving out any one
 person, at least 3 people must have recorded an outcome about it`, and a month outside the enrolment `nothing to
 count — the pilot was not enrolled here during it`.
+
+*H2 — #11 let an agent's repeated word overturn the person's noise label for good (P3).* followed → the
+person's `noise` → the agent, re-reading the clause, says followed again: #11 wrote it as `replaced: "noise"`,
+the person's second `crosscheck noise` was swallowed as a repeat, and `--mine` read followed while precision
+still counted noise. Now:
+
+- **A repeat is judged against the recipient's own newest word**, so the word the label superseded, said again,
+  answers `repeated: true, stands: "noise"` and writes nothing (the CLI: `already recorded: <ref> — followed was
+  said before, and your noise label, made since, stands over it; nothing was written a second time`). Only a
+  **new** word supersedes the label.
+- **The person can always re-assert noise.** `pilot_marks` keeps one row per person and delivery, so `crosscheck
+  noise` said over a word recorded since **restamps** the label (`services/noise-label.ts`); said while the label
+  already stands, it is a repeat. A noise label on a delivery answers what now stands (`stands`, `replaced`,
+  additive), and `crosscheck noise` says it: `noise now stands over the earlier followed, which stays in the
+  history`.
+- **One transaction, one lock, one order.** The outcome write and the noise label both lock the pointer's
+  delivery rows (`FOR UPDATE`) and decide `stands` and `replaced` inside one transaction
+  (`services/pointer-standing.ts`), so a label landing mid-write waits. Words on a pointer are stamped strictly
+  after its newest word, and every read orders by (timestamp, id), so two words in the same millisecond never
+  tie — the later one stands. The label still wins a tie with an outcome (D-O7). (The lock is exercised by
+  real Postgres; the in-process PGlite hub serializes every query anyway, so the tests pin the ordering, not
+  the lock.)

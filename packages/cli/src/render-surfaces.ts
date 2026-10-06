@@ -28,6 +28,7 @@ import type { PilotView } from "./cli/pilot-render.ts";
 import {
   candidateListLines,
   markFailureLine,
+  labelStandsLine,
   markRecordedLine,
   noLiveSessionLine,
   nothingRecentLine,
@@ -618,17 +619,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // with the payload in every slot the wire fills.
     framing: "bare",
     render: (payload) => {
-      const candidate = {
-        id: payload,
-        sessionId: payload,
-        channel: payload,
-        refKind: payload,
-        refId: payload,
-        deliveredAt: payload,
-      };
+      const candidate = { id: payload, sessionId: payload, channel: payload, refKind: payload, refId: payload, deliveredAt: payload };
       return [
         markRecordedLine("hint_delivery", payload, false),
         markRecordedLine("hint_delivery", payload, true),
+        // 07 §13.11 (H2): the outcome a noise label now stands over is the hub's word.
+        labelStandsLine({ stands: "noise", replaced: payload }),
         // `crosscheck helpful` (second review, M6): the same lines, its word.
         markRecordedLine("hint_delivery", payload, false, "helpful"),
         candidateListLines([candidate], true, 60, NOW, "helpful"),

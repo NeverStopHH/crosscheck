@@ -54,8 +54,11 @@ const supersededWords = (recorded: RecordedOutcome): string => {
 export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): string => {
   const shown = safeId(ref);
   if (recorded.repeated) {
-    const stands = standingWord(recorded.stands ?? recorded.outcome);
-    return `already recorded: ${shown} stands at ${stands} — nothing was written a second time\n`;
+    const stands = recorded.stands ?? recorded.outcome;
+    // 07 §13.11 (H2): the word said again may be the one the person's label superseded.
+    return stands === recorded.outcome
+      ? `already recorded: ${shown} stands at ${standingWord(stands)} — nothing was written a second time\n`
+      : `already recorded: ${shown} — ${outcomeWord(recorded.outcome)} was said before, and ${standingWord(stands)}, made since, stands over it; nothing was written a second time\n`;
   }
   return (
     `recorded: ${shown} — ${outcomeWord(recorded.outcome)}${supersededWords(recorded)}. It shows in full only in your own crosscheck pilot --mine; ` +

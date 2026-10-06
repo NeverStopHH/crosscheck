@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1634
+    # PRINTS: 1640
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -187,11 +187,12 @@ jobs:
     # PRINTS: packages/cli/src/cli/init.ts 5
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
-    # PRINTS: packages/cli/src/cli/outcome-render.ts 1
+    # PRINTS: packages/cli/src/cli/outcome-render.ts 2
     # PRINTS: packages/cli/src/cli/outcome.ts 6
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
+    # PRINTS: packages/cli/src/cli/pilot-mark.ts 1
     # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 5
     # PRINTS: packages/cli/src/cli/pilot-mine.ts 1
     # PRINTS: packages/cli/src/cli/pilot-render.ts 32
@@ -325,7 +326,7 @@ jobs:
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/get-diagnosis.ts 2
-    # PRINTS: mcp/tools/mark-hint-outcome.ts 8
+    # PRINTS: mcp/tools/mark-hint-outcome.ts 9
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
@@ -434,6 +435,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
+    # PRINTS: packages/server/src/services/noise-label.ts 1
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/outcome-population.ts 16
     # PRINTS: packages/server/src/services/passkeys.ts 7
@@ -442,8 +444,9 @@ jobs:
     # PRINTS: packages/server/src/services/pilot-outcome-figures.ts 4
     # PRINTS: packages/server/src/services/pilot-report.ts 20
     # PRINTS: packages/server/src/services/pilot-session-set.ts 9
-    # PRINTS: packages/server/src/services/pilot.ts 28
+    # PRINTS: packages/server/src/services/pilot.ts 29
     # PRINTS: packages/server/src/services/pins.ts 9
+    # PRINTS: packages/server/src/services/pointer-standing.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
     # PRINTS: packages/server/src/services/record-handlers.ts 22
@@ -604,12 +607,13 @@ jobs:
     # PRINTS: loss-refusals.ts 1
     # PRINTS: loss-report.ts 14
     # PRINTS: manifest-doc.ts 2
-    # PRINTS: mark-hint-outcome.ts 8
+    # PRINTS: mark-hint-outcome.ts 9
+    # PRINTS: noise-label.ts 1
     # PRINTS: noise.ts 7
     # PRINTS: normalized-doc.ts 2
     # PRINTS: outcome-clause.ts 2
     # PRINTS: outcome-population.ts 16
-    # PRINTS: outcome-render.ts 1
+    # PRINTS: outcome-render.ts 2
     # PRINTS: outcome.ts 6
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
@@ -622,7 +626,7 @@ jobs:
     # PRINTS: pilot-label-figures.ts 12
     # PRINTS: pilot-label-render.ts 1
     # PRINTS: pilot-label.ts 8
-    # PRINTS: pilot-mark.ts 5
+    # PRINTS: pilot-mark.ts 6
     # PRINTS: pilot-marks.ts 2
     # PRINTS: pilot-mine-render.ts 5
     # PRINTS: pilot-mine.ts 1
@@ -630,13 +634,14 @@ jobs:
     # PRINTS: pilot-render.ts 32
     # PRINTS: pilot-report.ts 20
     # PRINTS: pilot-session-set.ts 9
-    # PRINTS: pilot.ts 38
+    # PRINTS: pilot.ts 39
     # PRINTS: pin-observability.ts 14
     # PRINTS: pin-paths.ts 8
     # PRINTS: pin-render.ts 7
     # PRINTS: pin-sweep.ts 2
     # PRINTS: pin.ts 11
     # PRINTS: pins.ts 12
+    # PRINTS: pointer-standing.ts 1
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 9
     # PRINTS: post.ts 1

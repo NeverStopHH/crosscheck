@@ -416,6 +416,16 @@ describe("outcomeRecordedLine (review #11): the answer says what stands", () => 
     expect(line).toBe(`already recorded: ${KEN_CONTEXT} stands at followed — nothing was written a second time\n`);
   });
 
+  test("review H2: a repeat under the person's newer noise label says the label stands over it", () => {
+    // Act
+    const line = outcomeRecordedLine(KEN_CONTEXT, recorded({ repeated: true, stands: "noise" }));
+
+    // Assert
+    expect(line).toBe(
+      `already recorded: ${KEN_CONTEXT} — followed was said before, and your noise label, made since, stands over it; nothing was written a second time\n`,
+    );
+  });
+
   test("a word after the noise label names the label it superseded", () => {
     // Act
     const line = outcomeRecordedLine(KEN_CONTEXT, recorded({ replaced: "noise" }));

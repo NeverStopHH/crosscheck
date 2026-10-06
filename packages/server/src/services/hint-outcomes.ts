@@ -34,7 +34,6 @@
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
 import { PULLED_DELIVERY_CHANNEL, containsSecret } from "@crosscheck/schema";
 import type { HintOutcome } from "@crosscheck/schema";
 
@@ -42,9 +41,16 @@ import { PILOT_RETENTION_DAYS } from "../constants.ts";
 import { agentSessions, hintDeliveries, hintOutcomes } from "../db/schema.ts";
 import { readEnrolments } from "./outcome-population.ts";
 import type { Enrolment } from "./outcome-population.ts";
-import { NOISE_WORDS } from "./pilot-label-figures.ts";
+import {
+  instantAfter,
+  lockPointer,
+  readPointerNoise,
+  readPointerOutcome,
+  standingOf,
+} from "./pointer-standing.ts";
+import type { StandingWord } from "./pointer-standing.ts";
 import { readTeamSettings } from "./team-settings.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
@@ -78,8 +84,6 @@ export interface WriteHintOutcomeInput {
   readonly recordedBy: string;
 }
 
-/** What a delivery can stand at once something was said: an outcome, or the person's noise label. */
-type StandingWord = HintOutcome | "noise";
 
 export type WriteHintOutcomeResult =
   | {
@@ -207,80 +211,51 @@ const countableSince = async (deps: Deps, repo: string): Promise<CountableSince>
   windowStart: new Date(deps.now().getTime() - PILOT_RETENTION_DAYS * MS_PER_DAY),
 });
 
-interface Standing {
-  readonly word: StandingWord;
-  readonly reason: string | null;
-}
+type Recorded = Exclude<WriteHintOutcomeResult, { readonly refusal: HintOutcomeRefusal }>;
 
 /**
- * ONE POINTER IN ONE SESSION is one intervention (review M4): every word and
- * label on any of its deliveries speaks for all of them, as the view reads it.
+ * THE WORD, DECIDED AND WRITTEN UNDER THE POINTER'S LOCK (review H2). A
+ * repeat is judged against the recipient's own newest word — so the word a
+ * person's noise label superseded, said again by an agent re-reading the
+ * clause, writes nothing and answers that the label stands; only a NEW word
+ * supersedes the label. A new word is stamped strictly after the pointer's
+ * newest one, so the order of two words never depends on a millisecond.
  */
-const ofPointer = (alias: string, delivery: ResolvedDelivery): SQL =>
-  sql`${sql.raw(alias)}.session_id = ${delivery.sessionId} AND ${sql.raw(alias)}.ref_id = ${delivery.refId}`;
-
-type LatestOutcomeRow = { readonly outcome: HintOutcome; readonly reason: string | null; readonly at: string | Date };
-
-const readLatestOutcome = async (
-  deps: Deps,
-  delivery: ResolvedDelivery,
-  recordedBy: string,
-): Promise<{ readonly outcome: HintOutcome; readonly reason: string | null; readonly createdAt: Date } | undefined> => {
-  const rows = await deps.db.execute<LatestOutcomeRow>(sql`
-    SELECT o.outcome, o.reason, o.created_at AS at FROM hint_outcomes o
-    JOIN hint_deliveries d ON d.id = o.delivery_id
-    WHERE ${ofPointer("d", delivery)} AND o.recorded_by = ${recordedBy}
-    ORDER BY o.created_at DESC, o.id DESC LIMIT 1`);
-  const row = rows.rows[0];
-  return row === undefined ? undefined : { outcome: row.outcome, reason: row.reason, createdAt: new Date(row.at) };
-};
-
-/** When the recipient labelled this pointer noise, newest — the one noise concept (07 §13.2). */
-const readNoiseLabelAt = async (deps: Deps, delivery: ResolvedDelivery, recipient: string): Promise<Date | null> => {
-  const rows = await deps.db.execute<{ at: string | Date | null }>(sql`
-    SELECT max(m.created_at) AS at FROM pilot_marks m
-    JOIN hint_deliveries d ON d.id = m.ref_id
-    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", delivery)}
-      AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}`);
-  const at = rows.rows[0]?.at ?? null;
-  return at === null ? null : new Date(at);
-};
-
-/** What stands before this word, by the view's rule: the later of the two, the label on a tie. */
-const readStanding = async (
-  deps: Deps,
-  delivery: ResolvedDelivery,
-  recipient: string,
-): Promise<{ readonly standing: Standing | null; readonly noiseAt: Date | null }> => {
-  const [latest, noiseAt] = await Promise.all([
-    readLatestOutcome(deps, delivery, recipient),
-    readNoiseLabelAt(deps, delivery, recipient),
-  ]);
-  const isNoise = noiseAt !== null && (latest === undefined || noiseAt.getTime() >= latest.createdAt.getTime());
-  if (isNoise) {
-    return { standing: { word: "noise", reason: null }, noiseAt };
-  }
-  return { standing: latest === undefined ? null : { word: latest.outcome, reason: latest.reason }, noiseAt };
-};
+const recordOnPointer = (deps: Deps, delivery: ResolvedDelivery, input: WriteHintOutcomeInput): Promise<Recorded> =>
+  deps.db.transaction(async (tx) => {
+    const pointer = { sessionId: delivery.sessionId, refId: delivery.refId };
+    await lockPointer(tx, pointer);
+    const latest = await readPointerOutcome(tx, pointer, input.recordedBy);
+    const noise = await readPointerNoise(tx, pointer, input.recordedBy);
+    const before = standingOf(latest, noise);
+    const answer = { deliveryId: delivery.id, outcome: input.outcome };
+    if (latest !== undefined && latest.outcome === input.outcome && latest.reason === input.reason) {
+      return { ...answer, id: delivery.id, repeated: true, replaced: null, stands: before ?? input.outcome };
+    }
+    const createdAt = instantAfter(deps.now(), latest?.createdAt);
+    const id = await appendOutcome(tx, delivery.id, input, createdAt);
+    const now = { outcome: input.outcome, reason: input.reason, createdAt };
+    return { ...answer, id, repeated: false, replaced: before, stands: standingOf(now, noise) ?? input.outcome };
+  });
 
 /** One new row — never an update: a changed word supersedes the old by being newer. */
 const appendOutcome = async (
-  deps: Deps,
+  tx: DbExecutor,
   deliveryId: string,
   input: WriteHintOutcomeInput,
-): Promise<{ readonly id: string; readonly now: Date }> => {
+  createdAt: Date,
+): Promise<string> => {
   const id = `ho_${randomUUID()}`;
-  const now = deps.now();
-  await deps.db.insert(hintOutcomes).values({
+  await tx.insert(hintOutcomes).values({
     id,
     repo: input.repo,
     deliveryId,
     outcome: input.outcome,
     reason: input.reason,
     recordedBy: input.recordedBy,
-    createdAt: now,
+    createdAt,
   });
-  return { id, now };
+  return id;
 };
 
 export const writeHintOutcome = async (
@@ -304,24 +279,5 @@ export const writeHintOutcome = async (
   if (refusal !== null || delivery === undefined) {
     return { refusal: refusal ?? "unknown_ref" };
   }
-  const { standing, noiseAt } = await readStanding(deps, delivery, input.recordedBy);
-  if (standing !== null && standing.word === input.outcome && standing.reason === input.reason) {
-    return {
-      id: delivery.id,
-      deliveryId: delivery.id,
-      outcome: input.outcome,
-      repeated: true,
-      replaced: null,
-      stands: input.outcome,
-    };
-  }
-  const { id, now } = await appendOutcome(deps, delivery.id, input);
-  return {
-    id,
-    deliveryId: delivery.id,
-    outcome: input.outcome,
-    repeated: false,
-    replaced: standing?.word ?? null,
-    stands: noiseAt !== null && noiseAt.getTime() >= now.getTime() ? "noise" : input.outcome,
-  };
+  return recordOnPointer(deps, delivery, input);
 };

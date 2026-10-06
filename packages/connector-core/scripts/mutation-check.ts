@@ -8253,8 +8253,8 @@ export const MUTATIONS: readonly Mutation[
     label: "an agent gets to grade its own homework",
     file: `${SERVER}/src/services/pilot.ts`,
     from:
-      "      captureMode: HUMAN_CAPTURE_MODE,\n      createdAt: deps.now(),",
-    to: '      captureMode: "auto",\n      createdAt: deps.now(),',
+      "  captureMode: HUMAN_CAPTURE_MODE,\n  createdAt,",
+    to: '  captureMode: "auto",\n  createdAt,',
     test: `${SERVER}/test/pilot-marks.test.ts`,
     because:
       "the trust label on the pilot's only human input stops saying a human " +
@@ -17395,8 +17395,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "saying the same outcome twice writes a second row",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "  if (standing !== null && standing.word === input.outcome && standing.reason === input.reason) {",
-    to: "  if (false) {",
+    from: "    if (latest !== undefined && latest.outcome === input.outcome && latest.reason === input.reason) {",
+    to: "    if (false) {",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "an agent retrying its call doubles the history and the answer never says it was already recorded",
   },
@@ -17872,18 +17872,18 @@ export const MUTATIONS: readonly Mutation[
   },
   // ── 07 §13.10, review #11: a repeat reports what stands ──────────────────
   {
-    label: "a repeat is judged against the newest outcome, not against what stands",
+    label: "the word the person's noise label superseded, said again, overturns the label",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "  const isNoise = noiseAt !== null && (latest === undefined || noiseAt.getTime() >= latest.createdAt.getTime());",
-    to: "  const isNoise = false;",
+    from: "    if (latest !== undefined && latest.outcome === input.outcome && latest.reason === input.reason) {",
+    to: '    if (before !== "noise" && latest !== undefined && latest.outcome === input.outcome && latest.reason === input.reason) {',
     test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the answer says 'stands at followed' while the person's newer noise label stands, and nothing is written",
+    because: "an agent re-reading the clause overturns the person's verdict for good, and precision still counts noise (P3)",
   },
   {
     label: "a word that ties with the noise label is reported as standing",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '    stands: noiseAt !== null && noiseAt.getTime() >= now.getTime() ? "noise" : input.outcome,',
-    to: "    stands: input.outcome,",
+    from: "    return { ...answer, id, repeated: false, replaced: before, stands: standingOf(now, noise) ?? input.outcome };",
+    to: "    return { ...answer, id, repeated: false, replaced: before, stands: input.outcome };",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the label wins a tie (D-O7), so 'recorded' would claim a word took that every figure overrules",
   },
@@ -18023,9 +18023,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a noise label on a pointer's other delivery is not what stood",
-    file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", delivery)}",
-    to: "    WHERE m.ref_kind = 'hint_delivery' AND d.id = ${delivery.id}",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", pointer)}",
+    to: "    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", pointer)} AND d.channel = 'tripwire'",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the answer says nothing stood while the person's label on that pointer stood",
   },
@@ -18193,6 +18193,55 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "the author learns which minimum his teammates' words missed, and so roughly how many spoke",
   },
+  // ── 07 §13.11, review H2: the person's label, and one order for words ────
+  {
+    label: "two words on a pointer in one millisecond share a timestamp",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "    const createdAt = instantAfter(deps.now(), latest?.createdAt);",
+    to: "    const createdAt = deps.now();",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "which of two same-millisecond words stands is decided by a random id, not by which came last",
+  },
+  {
+    label: "the person's noise, said again over a later word, is swallowed as a repeat",
+    file: `${SERVER}/src/services/noise-label.ts`,
+    from: "    if (own === undefined || !NOISE_LABELS.includes(own.mark) || before === \"noise\") {",
+    to: "    if (true) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "once an agent's word stands over the label, the person can never say noise again",
+  },
+  {
+    label: "a noise label never looks at the pointer's outcomes",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (input.refKind === \"hint_delivery\" && storedMark(input.mark) === \"noise\") {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's second noise is a silent repeat while the agent's word still stands",
+  },
+  {
+    label: "crosscheck noise hides the word its label now stands over",
+    file: `${CLI}/src/cli/pilot-mark.ts`,
+    from: "    ? `noise now stands over the earlier ${outcomeWord(result.replaced)}, which stays in the history\\n`",
+    to: '    ? ""',
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "the person is not told that their label overturned the word their agent recorded",
+  },
+  {
+    label: "crosscheck followed says a repeat stands while the person's label stands over it",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "      : `already recorded: ${shown} — ${outcomeWord(recorded.outcome)} was said before, and ${standingWord(stands)}, made since, stands over it; nothing was written a second time\\n`;",
+    to: "      : `already recorded: ${shown} stands at ${outcomeWord(recorded.outcome)} — nothing was written a second time\\n`;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the answer claims a word stands that the person's newer label overrules — #11's lie, from the repeat side",
+  },
+  {
+    label: "mark_hint_outcome says a repeat stands while the person's label stands over it",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "    stands === NOISE_WORD ? \"the person's noise label, made since,\" : `${safeId(stands)}, said since,`;",
+    to: "    stands === NOISE_WORD ? \"nothing,\" : `${safeId(stands)}, said since,`;",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent tells its person their own label does not stand",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18278,11 +18327,11 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 9
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 10
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
- * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 8
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 4
  * PRINTS: packages/cli/test/pilot-render.test.ts 29
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
@@ -18427,7 +18476,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 9
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 10
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -18516,7 +18565,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 10
- * PRINTS: packages/server/test/hint-outcomes.test.ts 14
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 17
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

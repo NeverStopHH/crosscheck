@@ -130,11 +130,27 @@ const supersededText = (recorded: RecordedOutcome): string => {
   return ` It supersedes ${earlier}, which stays in the history.`;
 };
 
+/**
+ * A REPEAT SAYS WHAT STANDS (07 §13.11, H2): the word said again may be the
+ * one the person's noise label superseded, and then the label still stands.
+ */
+const repeatedText = (shown: string, recorded: RecordedOutcome): string => {
+  const stands = recorded.stands ?? recorded.outcome;
+  if (stands === recorded.outcome) {
+    return `Already recorded: the hint at ${shown} stands at ${safeId(stands)}. Nothing was written a second time.`;
+  }
+  const over =
+    stands === NOISE_WORD ? "the person's noise label, made since," : `${safeId(stands)}, said since,`;
+  return (
+    `Already recorded: the hint at ${shown} was ${safeId(recorded.outcome)} before, and ${over} stands over it. ` +
+    "Nothing was written a second time."
+  );
+};
+
 const recordedText = (ref: string, recorded: RecordedOutcome): string => {
   const shown = safeId(ref);
   if (recorded.repeated) {
-    const stands = safeId(recorded.stands ?? recorded.outcome);
-    return `Already recorded: the hint at ${shown} stands at ${stands}. Nothing was written a second time.`;
+    return repeatedText(shown, recorded);
   }
   return (
     `Recorded: the hint at ${shown} (delivery ${safeId(recorded.deliveryId)}) was ${safeId(recorded.outcome)}.` +

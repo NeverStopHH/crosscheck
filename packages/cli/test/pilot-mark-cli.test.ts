@@ -337,6 +337,30 @@ describe("crosscheck noise", () => {
     expect(human.stdout).toContain("recorded:");
   });
 
+  test("review H2: noise over a word recorded since says it now stands over that word", async () => {
+    // Arrange — a fresh session, a hint after enrolment, and Nick's agent said followed
+    const session = "cc_55555555-2222-4333-8444-555555555555";
+    await send("POST", "/api/sessions", nick.apiKey, {
+      id: session,
+      agentKind: "claude-code",
+      repo: REPO_ID,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "implementing",
+    });
+    const id = await deliver(session, KEN_OTHER_CONTEXT, 0);
+    const recorded = await send("POST", "/api/hint-outcomes", nick.apiKey, { repo: REPO_ID, ref: id, outcome: "followed" });
+    expect(recorded.status).toBe(201);
+    const home = await homeWithLive(session);
+
+    // Act
+    const result = await noise(home, [id]);
+
+    // Assert
+    expect(result.stdout).toContain(`recorded: ${id} is noise`);
+    expect(result.stdout).toContain("noise now stands over the earlier followed, which stays in the history");
+  });
+
   test("a repo that never enrolled is told, not ignored", async () => {
     // Arrange
     const home = await homeWithLive(LIVE, otherRepo, OTHER_REPO_ID);

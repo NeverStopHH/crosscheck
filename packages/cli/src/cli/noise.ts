@@ -56,6 +56,7 @@ import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import {
   candidateListLines,
+  labelStandsLine,
   markFailureLine,
   markRecordedLine,
   noLiveSessionLine,
@@ -138,7 +139,8 @@ const mark = async (
     return failed(result);
   }
   return {
-    stdout: markRecordedLine(HUB_KIND, deliveryId, result.data.repeated, shortcut.command),
+    stdout:
+      markRecordedLine(HUB_KIND, deliveryId, result.data.repeated, shortcut.command) + labelStandsLine(result.data),
     exitCode: EXIT_OK,
   };
 };

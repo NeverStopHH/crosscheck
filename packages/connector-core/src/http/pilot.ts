@@ -248,6 +248,10 @@ const MarkResultSchema = z.looseObject({
   id: z.string().min(1),
   /** The person had said this already; it still counts once. */
   repeated: z.boolean(),
+  /** 07 §13.11 (H2), a noise label on a delivery: what the pointer stands at now. Absent from an older hub. */
+  stands: z.string().min(1).nullable().optional(),
+  /** What stood before the label — an outcome it now stands over, the label itself, or nothing. */
+  replaced: z.string().min(1).nullable().optional(),
 });
 
 export type MarkResult = z.infer<typeof MarkResultSchema>;

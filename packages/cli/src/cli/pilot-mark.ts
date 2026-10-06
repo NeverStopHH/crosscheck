@@ -25,6 +25,8 @@ import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import type { MarkCandidate } from "@crosscheck/connector-core/http/pilot.ts";
 import type { PilotMarkRefKind } from "@crosscheck/schema";
 
+import { outcomeWord } from "./outcome-render.ts";
+
 const INDENT = "  ";
 
 /**
@@ -62,6 +64,19 @@ export const markRecordedLine = (
     ? `already recorded: you had labelled ${shown} — a label counts once, and a second one changes nothing\n`
     : `recorded: ${shown} is ${word}. It counts once toward this repo's pilot figures, and it names nobody\n`;
 };
+
+/**
+ * WHAT NOW STANDS (07 §13.11, review H2): a noise label said over an outcome —
+ * fresh, or said again over a word recorded since — stands over it now, and
+ * the person is told which word it stands over. Every other answer adds nothing.
+ */
+export const labelStandsLine = (result: {
+  readonly stands?: string | null | undefined;
+  readonly replaced?: string | null | undefined;
+}): string =>
+  result.stands === "noise" && typeof result.replaced === "string" && result.replaced !== "noise"
+    ? `noise now stands over the earlier ${outcomeWord(result.replaced)}, which stays in the history\n`
+    : "";
 
 /**
  * MORE THAN ONE — LISTED, NEVER GUESSED. "The most recent" of several is a
