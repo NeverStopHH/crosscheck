@@ -42,6 +42,7 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import { resolvedEvidenceCounts } from "./evidence-resolution.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
@@ -134,10 +135,6 @@ export type HintMatchedOn = "prompt" | "intent";
 /** Same-author revision edge (DESIGN.md §5); its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
-/** A cited guess: a hypothesis still proposed, or one its author rejected. */
-const HYPOTHESIS_KIND = "hypothesis";
-const PROPOSED_STATUS = "proposed";
-const REJECTED_STATUS = "rejected";
 
 /**
  * How many distinct LEXEMES of `terms` the document matches — the count
@@ -368,7 +365,9 @@ const listClaimsForContext = async (
     now,
     rows.map((row) => row.claim.id),
   );
-  const backed = await listEvidenceBacked(
+  // WHICH REFS RESOLVE, by the one rule the solved label and the connector's
+  // mirror apply too (services/evidence-resolution.ts; hold-out review H5).
+  const resolvedRefs = await resolvedEvidenceCounts(
     db,
     rows.map((row) => row.claim.id),
   );
@@ -412,7 +411,7 @@ const listClaimsForContext = async (
     provenance: row.claim.provenance,
     captureMode: row.claim.captureMode,
     evidenceRefCount: row.claim.evidenceRefs.length,
-    evidenceBacked: backed.has(row.claim.id),
+    evidenceBacked: (resolvedRefs.get(row.claim.id) ?? 0) > 0,
     authorDeveloperId: row.authorDeveloperId,
     authorDeveloperName: row.authorDeveloperName,
     // WITHHELD unless somebody vouched for it (audit row V2-X4). A derived,
@@ -443,29 +442,6 @@ const listClaimsForContext = async (
     createdAt: row.claim.createdAt.toISOString(),
   }));
   return { claims: windowed, truncated: fetched.length > rows.length };
-};
-
-/**
- * Which of `claimIds` cite at least one evidence ref that RESOLVES (review
- * 1006b, H4): to an existing claim other than the citing one, and not a
- * hypothesis still proposed or rejected — a guess is not evidence. One query
- * for the whole window. Resolution is a read-time question by design (refs
- * are stored unresolved: schema claim.ts), so the answer can change as the
- * cited rows arrive.
- */
-const listEvidenceBacked = async (db: Db, claimIds: readonly string[]): Promise<ReadonlySet<string>> => {
-  if (claimIds.length === 0) {
-    return new Set();
-  }
-  const result = await db.execute<{ id: string }>(sql`
-    SELECT DISTINCT citing.id AS id
-    FROM claims AS citing
-    CROSS JOIN LATERAL jsonb_array_elements_text(citing.evidence_refs) AS ref(target)
-    JOIN claims AS cited ON cited.id = ref.target
-    WHERE citing.id IN (${sql.join(claimIds.map((id) => sql`${id}`), sql`, `)})
-      AND cited.id <> citing.id
-      AND NOT (cited.kind = ${HYPOTHESIS_KIND} AND cited.status IN (${PROPOSED_STATUS}, ${REJECTED_STATUS}))`);
-  return new Set(result.rows.map((row) => row.id));
 };
 
 /**

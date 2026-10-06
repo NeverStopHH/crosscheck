@@ -335,6 +335,14 @@ export {
   OTHER_STEERING,
 } from "./prompt-vocabulary.ts";
 export { isSwapSlipOf, isTypingSlipOf, slipBudget } from "./typing-slip.ts";
+export {
+  EVIDENCE_KINDS,
+  EVIDENCE_MIN_CONTENT_WORDS,
+  REVISION_MAX_DEPTH,
+  isEvidenceFor,
+  revisionHeads,
+} from "./evidence-resolution.ts";
+export type { CitedHead } from "./evidence-resolution.ts";
 export { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS, GERMAN_STOP_SUPPLEMENT, GERMAN_STOP_WORDS } from "./stop-words.ts";
 export {
   ELLIPSIS,

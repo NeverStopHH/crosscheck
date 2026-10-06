@@ -117,6 +117,9 @@ const contentWords = (sentence: string): number => {
     .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token))).length;
 };
 
+/** The same count, for any text the product asks "does this carry content" of (evidence-resolution.ts). */
+export const contentWordCount = (text: string): number => contentWords(text);
+
 const ORDINAL_START = /^\(?\d{1,3}[.)]\s/u;
 
 /** A short sentence after the chosen one qualifies it ("U.S. traffic only.") — never the next list item. */

@@ -72,10 +72,17 @@ const contradictsEdge = (): DiagnosisEdge => ({
   createdAt: SOLVED_ISO,
 });
 
+/** The observations the two root causes cite: evidence that resolves inside the tree (hold-out review, H5 + M2). */
+const EVIDENCE_IN_TREE: readonly DiagnosisClaim[] = [
+  rootCauseClaim({ id: "clm_ev", kind: "observation", status: "proposed", evidenceRefs: [], body: "The importer retries with the old key id after every rotation" }),
+  rootCauseClaim({ id: "clm_ev2", kind: "observation", status: "proposed", evidenceRefs: [], body: "The session cache answers before the mapping is ever read" }),
+];
+
 const diagnosis = (
   claims: readonly DiagnosisClaim[],
   edges: readonly DiagnosisEdge[] = [],
   landedAt: string | null = null,
+  evidence: readonly DiagnosisClaim[] = EVIDENCE_IN_TREE,
 ): Diagnosis => ({
   workContext: {
     id: "wc_1",
@@ -88,7 +95,7 @@ const diagnosis = (
     createdAt: SOLVED_ISO,
     updatedAt: null,
   },
-  claims,
+  claims: [...claims, ...evidence],
   edges,
   externalClaims: [],
   targets: [{ kind: "file", value: "src/auth/refresh.ts" }],
@@ -105,6 +112,43 @@ describe("solvedAtFromTree", () => {
   test("an evidenced, non-superseded likely_root_cause marks the tree solved", () => {
     // Act
     const solvedAtMs = solvedAtFromTree(diagnosis([rootCauseClaim()]));
+
+    // Assert
+    expect(solvedAtMs).toBe(Date.parse(SOLVED_ISO));
+  });
+
+  test.each([
+    ["itself", [rootCauseClaim({ evidenceRefs: ["clm_rc"] })], []],
+    ["a claim outside this tree — not resolvable here, so not solved here", [rootCauseClaim({ evidenceRefs: ["clm_elsewhere"] })], []],
+    [
+      "a refuted observation",
+      [rootCauseClaim({ evidenceRefs: ["clm_no"] }), rootCauseClaim({ id: "clm_no", kind: "observation", status: "rejected", evidenceRefs: [], body: "The cache entry survives the rotation, refuted" })],
+      [],
+    ],
+    [
+      "a decision that cites it back",
+      [rootCauseClaim({ evidenceRefs: ["clm_dec"] }), rootCauseClaim({ id: "clm_dec", kind: "decision", status: "proposed", evidenceRefs: ["clm_rc"], body: "Invalidate the kid cache on every rotation" })],
+      [],
+    ],
+    ["an observation of one letter", [rootCauseClaim({ evidenceRefs: ["clm_x"] }), rootCauseClaim({ id: "clm_x", kind: "observation", status: "proposed", evidenceRefs: [], body: "x" })], []],
+  ])("a root cause citing %s does not mark the tree solved (hold-out review, H5 + M2)", (_, claims, edges) => {
+    // Act
+    const solvedAtMs = solvedAtFromTree(diagnosis(claims, edges, null, []));
+
+    // Assert
+    expect(solvedAtMs).toBeNull();
+  });
+
+  test("a cited observation that was revised resolves to its standing revision", () => {
+    // Arrange — clm_ev was revised into clm_ev_v2, which stands
+    const revised = [
+      rootCauseClaim({ id: "clm_ev", kind: "observation", status: "proposed", evidenceRefs: [], body: "Old note." }),
+      rootCauseClaim({ id: "clm_ev_v2", kind: "observation", status: "proposed", evidenceRefs: [], body: "The importer retries with the old key id after every rotation" }),
+    ];
+    const revision: DiagnosisEdge = { ...supersedesEdge(), id: "edge_rev", fromClaimId: "clm_ev_v2", toClaimId: "clm_ev" };
+
+    // Act
+    const solvedAtMs = solvedAtFromTree(diagnosis([rootCauseClaim()], [revision], null, revised));
 
     // Assert
     expect(solvedAtMs).toBe(Date.parse(SOLVED_ISO));

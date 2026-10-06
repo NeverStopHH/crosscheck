@@ -26,6 +26,8 @@
 import {
   MAX_CLAIM_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
+  isEvidenceFor,
+  revisionHeads,
 } from "@crosscheck/schema";
 import type { ClaimValidity, ClaimValidityState } from "@crosscheck/schema";
 
@@ -1064,22 +1066,44 @@ const SOLVED_CLAIM_PROVENANCE = "declared";
  * failed toward not-solved; the truncated gate makes the edge side fail
  * the same honest direction.
  */
+/**
+ * How many of a claim's evidence refs RESOLVE inside this tree, by the one
+ * rule the hub applies (`@crosscheck/schema` evidence-resolution.ts,
+ * hold-out review H5 + M2): each ref followed through the tree's supersedes
+ * edges to its head, and the head judged. A ref to a claim outside the tree
+ * cannot be resolved here, so it does not count — a tree solved only by
+ * evidence elsewhere reads unsolved on this side, the direction that never
+ * vouches too much.
+ */
+const resolvedRefsInTree = (
+  claim: Diagnosis["claims"][number],
+  claims: Diagnosis["claims"],
+  supersedes: Diagnosis["edges"],
+): number => {
+  const byId = new Map(claims.map((member) => [member.id, member]));
+  const successorsOf = (id: string): readonly string[] =>
+    supersedes.filter((edge) => edge.toClaimId === id).map((edge) => edge.fromClaimId);
+  return claim.evidenceRefs.filter((ref) =>
+    revisionHeads(ref, successorsOf).some((headId) => {
+      const head = byId.get(headId);
+      return head !== undefined && isEvidenceFor(claim.id, ref, head);
+    }),
+  ).length;
+};
+
 export const solvedAtFromTree = (
   diagnosis: Pick<Diagnosis, "claims" | "edges" | "truncated">,
 ): number | null => {
   if (diagnosis.truncated) {
     return null;
   }
-  const supersededIds = new Set(
-    diagnosis.edges
-      .filter((edge) => edge.kind === SUPERSEDES_EDGE_KIND)
-      .map((edge) => edge.toClaimId),
-  );
+  const supersedes = diagnosis.edges.filter((edge) => edge.kind === SUPERSEDES_EDGE_KIND);
+  const supersededIds = new Set(supersedes.map((edge) => edge.toClaimId));
   const qualifying = diagnosis.claims.filter(
     (claim) =>
       claim.status === SOLVED_CLAIM_STATUS &&
       claim.provenance === SOLVED_CLAIM_PROVENANCE &&
-      claim.evidenceRefs.length > 0 &&
+      resolvedRefsInTree(claim, diagnosis.claims, supersedes) > 0 &&
       !supersededIds.has(claim.id),
   );
   const qualifyingIds = new Set(qualifying.map((claim) => claim.id));

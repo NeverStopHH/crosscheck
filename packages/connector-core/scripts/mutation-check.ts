@@ -760,7 +760,7 @@ export const MUTATIONS: readonly Mutation[
     // sharing the predicate buys. This gives the body reader its own rule.
     label: "the solved body stops obeying the standing-claim rule",
     file: `${SERVER}/src/services/solved.ts`,
-    from: `    .where(solvedClaimCondition(contextIds))
+    from: `    .where(candidateClaimCondition(contextIds))
     .orderBy(desc(claims.createdAt))`,
     to: `    .where(inArray(claims.workContextId, [...contextIds]))
     .orderBy(desc(claims.createdAt))`,
@@ -17590,24 +17590,24 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a claim's reference to itself counts as evidence",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "      AND cited.id <> citing.id\n",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  citedId !== citingId &&\n  head.id !== citingId &&\n",
     to: "",
     test: `${SERVER}/test/hint-evidence-backed.test.ts`,
     because: "a root cause that cites its own id is evidence-backed and pushed as substance",
   },
   {
     label: "a cited guess counts as evidence",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "      AND NOT (cited.kind = ${HYPOTHESIS_KIND} AND cited.status IN (${PROPOSED_STATUS}, ${REJECTED_STATUS}))`);",
-    to: "      `);",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\"]);",
+    to: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\", \"hypothesis\"]);",
     test: `${SERVER}/test/hint-evidence-backed.test.ts`,
     because: "a cause backed only by a proposed or rejected hypothesis — a guess on a guess — is inlined as a finding",
   },
   {
     label: "the hub never says a claim's evidence resolves",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "    evidenceBacked: backed.has(row.claim.id),",
+    from: "    evidenceBacked: (resolvedRefs.get(row.claim.id) ?? 0) > 0,",
     to: "    evidenceBacked: false,",
     test: `${SERVER}/test/hint-evidence-backed.test.ts`,
     because: "no finding is ever substance again — the pilot's 95 pointers and 0 opens",
@@ -18634,6 +18634,110 @@ export const MUTATIONS: readonly Mutation[
     because: "a turn parked before the rule knew better becomes the session's derived intent, and the floors meet \"mach weiter\" as the session's purpose (H3)",
   },
   {
+    label: "an unreviewed draft counts as evidence",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  head.provenance === DECLARED &&\n",
+    to: "",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a model's guess backs a root cause, and the tree reads solved on a vouch nobody made (H5)",
+  },
+  {
+    label: "a refuted or superseded claim counts as evidence",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  !NOT_STANDING.has(head.status) &&\n",
+    to: "",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "an observation its author refuted still backs the cause that cites it (H5)",
+  },
+  {
+    label: "a root cause counts as evidence for another",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\"]);",
+    to: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\", \"root_cause\"]);",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "two theories cite each other into a solved tree; the review's root_cause-as-evidence survivor (H5, L2)",
+  },
+  {
+    label: "a decision counts as evidence, and a citing cycle backs itself",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\"]);",
+    to: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\", \"decision\"]);",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a root cause and a decision that cite each other read solved (H5)",
+  },
+  {
+    label: "a one-letter observation counts as evidence",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  contentWordCount(head.body) >= EVIDENCE_MIN_CONTENT_WORDS;",
+    to: "  true;",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "\"x\" and \"See above.\" back a root cause (H5)",
+  },
+  {
+    label: "a revised claim is never followed to its revision",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  const successors = successorsOf(claimId);",
+    to: "  const successors: readonly string[] = [];",
+    test: `${CORE}/test/mcp-solved-render.test.ts`,
+    because: "a ref to an observation its author revised backs nothing, though the revision stands (H5)",
+  },
+  {
+    label: "the hub never follows a ref to its revision",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "      WHERE chain.depth < ${REVISION_MAX_DEPTH}",
+    to: "      WHERE chain.depth < 0",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a ref to a revised observation backs nothing on the hub while the connector's mirror says it does (H5)",
+  },
+  {
+    label: "the hub resolves evidence across repos",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "    WHERE head_session.repo = citing_session.repo\n      AND NOT EXISTS (",
+    to: "    WHERE NOT EXISTS (",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "an observation in another repo backs this repo's root cause (H5)",
+  },
+  {
+    label: "the hub counts a revised-away claim as the head",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "    WHERE head_session.repo = citing_session.repo\n      AND NOT EXISTS (\n        SELECT 1 FROM claim_edges AS later\n        WHERE later.to_claim_id = head.id AND later.kind = ${SUPERSEDES_EDGE_KIND}\n      )`);",
+    to: "    WHERE head_session.repo = citing_session.repo`);",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a retracted observation still backs the cause beside its retraction (H5)",
+  },
+  {
+    label: "the solved label counts stored refs again",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: "  const qualifying = candidates.filter((claim) => (resolved.get(claim.id) ?? 0) >= SOLVED_MIN_EVIDENCE_REFS);",
+    to: "  const qualifying = candidates;",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a self-cite, a draft or a decision that cites it back reads SOLVED and earns the ranking floor (M2)",
+  },
+  {
+    label: "an unbacked rival deadlocks a solved tree",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: "  const deadlocked = await listDeadlocked(db, qualifying);",
+    to: "  const deadlocked = await listDeadlocked(db, candidates);",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a drive-by theory whose evidence resolves to nothing unsolves the tree (M2)",
+  },
+  {
+    label: "the connector's solved mirror counts stored refs",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "      resolvedRefsInTree(claim, diagnosis.claims, supersedes) > 0 &&",
+    to: "      claim.evidenceRefs.length > 0 &&",
+    test: `${CORE}/test/mcp-solved-render.test.ts`,
+    because: "get_diagnosis labels a tree solved that the hub does not (M2)",
+  },
+  {
+    label: "the hint's evidenceBacked counts stored refs",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    evidenceBacked: (resolvedRefs.get(row.claim.id) ?? 0) > 0,",
+    to: "    evidenceBacked: row.claim.evidenceRefs.length > 0,",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a self-cite or a ref to nothing buys a pushed finding (H5)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18919,6 +19023,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
+ * PRINTS: packages/connector-core/test/mcp-solved-render.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
@@ -18964,6 +19069,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/evidence-resolution.test.ts 2
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/harness-turn.test.ts 13
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
@@ -19007,7 +19113,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 10
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
- * PRINTS: packages/server/test/hint-evidence-backed.test.ts 3
+ * PRINTS: packages/server/test/hint-evidence-backed.test.ts 9
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hints.test.ts 6
@@ -19053,6 +19159,7 @@ interface Outcome {
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
+ * PRINTS: packages/server/test/solved-evidence.test.ts 3
  * PRINTS: packages/server/test/solved-fanout.test.ts 2
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
