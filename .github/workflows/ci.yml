@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1672
+    # PRINTS: 1677
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -429,6 +429,7 @@ jobs:
     # PRINTS: packages/server/src/services/developer-settings.ts 1
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 7
+    # PRINTS: packages/server/src/services/doc-upgrade.ts 4
     # PRINTS: packages/server/src/services/drafts.ts 3
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
@@ -437,7 +438,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
-    # PRINTS: packages/server/src/services/normalized-doc.ts 3
+    # PRINTS: packages/server/src/services/normalized-doc.ts 4
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
     # PRINTS: packages/server/src/services/pilot-label-figures.ts 12
@@ -530,6 +531,7 @@ jobs:
     # PRINTS: developer-settings.ts 1
     # PRINTS: developers.ts 13
     # PRINTS: diagnosis.ts 7
+    # PRINTS: doc-upgrade.ts 4
     # PRINTS: doctor-global.ts 4
     # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
@@ -609,7 +611,7 @@ jobs:
     # PRINTS: loss-report.ts 14
     # PRINTS: manifest-doc.ts 2
     # PRINTS: noise.ts 7
-    # PRINTS: normalized-doc.ts 3
+    # PRINTS: normalized-doc.ts 4
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4

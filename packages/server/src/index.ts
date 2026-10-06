@@ -9,6 +9,7 @@ import { createEmbedderFromEnv } from "./services/embedder.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
 import { parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
+import { upgradeNormalizedDocs } from "./services/doc-upgrade.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -273,6 +274,21 @@ export const startServer = async (): Promise<void> => {
     },
     (error: unknown) => {
       console.error("[crosscheck] skeleton identity backfill failed; unresolved rows are kept", error);
+    },
+  );
+  // DRAFTS OUT OF DOCS AN OLDER HUB BUILT (services/doc-upgrade.ts). After
+  // serving, for the same reason: until it has run an old doc matches as it
+  // did before the upgrade, and nothing waits on it. Paged and resumable;
+  // each start finishes what the last left.
+  void upgradeNormalizedDocs({ db, embedder }).then(
+    (report) => {
+      console.log(
+        `[crosscheck] doc upgrade: ${String(report.contexts)} work context doc(s) rebuilt without drafts, ` +
+          `${String(report.reembedded)} re-embedded`,
+      );
+    },
+    (error: unknown) => {
+      console.error("[crosscheck] doc upgrade failed; the next start resumes it", error);
     },
   );
   // The hub's own reaper (trial finding M6). HERE and not in `createApp`:

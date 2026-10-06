@@ -18479,6 +18479,46 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/summarizer-argv.test.ts`,
     because: "a deadline that is not the number written is honoured as if it were",
   },
+  {
+    label: "the start-up doc upgrade rebuilds nothing",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "    await refreshNormalizedDoc(deps.db, id);\n",
+    to: "",
+    test: `${SERVER}/test/doc-upgrade.test.ts`,
+    because: "an upgraded hub keeps every draft's and discard's words in its old docs, and teammates find discarded words as vouched matches for good",
+  },
+  {
+    label: "a rebuilt doc is never stamped with the rule it was built by",
+    file: `${SERVER}/src/services/normalized-doc.ts`,
+    from: "    .set({ normalizedDoc: doc, docVersion: NORMALIZED_DOC_VERSION, embedding: null, embeddingModel: null })",
+    to: "    .set({ normalizedDoc: doc, embedding: null, embeddingModel: null })",
+    test: `${SERVER}/test/doc-upgrade.test.ts`,
+    because: "the pass keeps no progress, so every start rebuilds and re-embeds the same contexts again",
+  },
+  {
+    label: "the doc upgrade ignores which docs are already current",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "        lt(workContexts.docVersion, NORMALIZED_DOC_VERSION),\n",
+    to: "",
+    test: `${SERVER}/test/doc-upgrade.test.ts`,
+    because: "a restart re-runs the whole pass instead of resuming it, and re-embeds every draft-holding context",
+  },
+  {
+    label: "the doc upgrade rebuilds contexts that hold no draft",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "            .where(and(eq(claims.workContextId, workContexts.id), ne(claims.provenance, DECLARED_PROVENANCE))),",
+    to: "            .where(eq(claims.workContextId, workContexts.id)),",
+    test: `${SERVER}/test/doc-upgrade.test.ts`,
+    because: "every context's vector is dropped and re-minted for a doc that did not change",
+  },
+  {
+    label: "the doc upgrade leaves rebuilt contexts out of the vector tier",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "    await embedContextDoc(deps.db, deps.embedder, id);\n",
+    to: "",
+    test: `${SERVER}/test/doc-upgrade.test.ts`,
+    because: "every rebuilt context loses its embedding until some later ingest happens to touch it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18801,6 +18841,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
+ * PRINTS: packages/server/test/doc-upgrade.test.ts 5
  * PRINTS: packages/server/test/draft-visibility.test.ts 8
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2

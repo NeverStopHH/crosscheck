@@ -126,6 +126,14 @@ export const SESSION_EVENT_RETENTION_DAYS = 30;
 export const SKELETON_BACKFILL_BATCH = 500;
 
 /**
+ * Work contexts per page of the start-up doc rebuild (services/doc-upgrade.ts).
+ * Each context costs a doc rebuild and, with an embedder, one embedding call,
+ * so a page is bounded by this many of each — small enough that requests the
+ * hub is already serving interleave between pages.
+ */
+export const DOC_UPGRADE_BATCH = 100;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says

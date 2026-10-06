@@ -200,6 +200,14 @@ CREATE INDEX IF NOT EXISTS claims_embedding_hnsw_idx
 UPDATE work_contexts SET normalized_doc = title || ' ' || status
   WHERE normalized_doc IS NULL;
 
+-- The rule a doc was built by (services/normalized-doc.ts
+-- NORMALIZED_DOC_VERSION). Every existing row reads 0: it was built before
+-- the version existed, and the start-up pass (services/doc-upgrade.ts)
+-- rebuilds the ones holding a draft — docs that still fold in drafts' and
+-- discards' words — after the hub is serving. A constant default, so adding
+-- the column writes no row.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS doc_version integer NOT NULL DEFAULT 0;
+
 -- ── Collective memory (VISION.md §1) ────────────────────────────────────────
 
 -- Merged-branch detection (DESIGN.md §5): stamped when landed_evidence maps

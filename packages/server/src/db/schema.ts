@@ -247,6 +247,13 @@ export const workContexts = pgTable("work_contexts", {
   intent: jsonb("intent").$type<Record<string, unknown>>(),
   status: text("status", { enum: SESSION_STATUSES }).notNull(),
   normalizedDoc: text("normalized_doc"),
+  /**
+   * The rule `normalized_doc` was built by (services/normalized-doc.ts
+   * NORMALIZED_DOC_VERSION), stamped with every doc written. 0 on a doc an
+   * older hub built — which the start-up pass (services/doc-upgrade.ts)
+   * rebuilds when it holds a draft — so this column is that pass's progress.
+   */
+  docVersion: integer("doc_version").notNull().default(0),
   tsv: tsvector("tsv").generatedAlwaysAs(
     sql`to_tsvector('english', coalesce(normalized_doc, ''))`,
   ),

@@ -83,6 +83,15 @@ export const NORMALIZED_DOC_MAX_CHARS = 8000;
  */
 export const NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS = 160;
 
+/**
+ * The rule `refreshNormalizedDoc` builds by, stamped with every doc it writes
+ * (work_contexts.doc_version). 1: DECLARED claims only (review round 2) — a
+ * doc built before it still folds in every draft's and every discard's words,
+ * and the start-up pass (services/doc-upgrade.ts) rebuilds it. Raise this
+ * only with a change to what a doc contains, and the pass rebuilds the rest.
+ */
+export const NORMALIZED_DOC_VERSION = 1;
+
 export interface NormalizedDocInput {
   readonly title: string;
   readonly status: string;
@@ -216,7 +225,7 @@ export const refreshNormalizedDoc = async (
 
   await db
     .update(workContexts)
-    .set({ normalizedDoc: doc, embedding: null, embeddingModel: null })
+    .set({ normalizedDoc: doc, docVersion: NORMALIZED_DOC_VERSION, embedding: null, embeddingModel: null })
     .where(eq(workContexts.id, workContextId));
 };
 
