@@ -273,7 +273,8 @@ describe("the claim-hint corpus sees the state word, in every package", () => {
     expect(hints.length).toBe(4);
     for (const surface of hints) {
       expect(
-        surface.kind === "corpus" ? surface.render("rate limit fix") : "",
+        // Three topical words: "rate limit fix" is all machinery (round 3, M1)
+        surface.kind === "corpus" ? surface.render("the cache key drops on rotation") : "",
         `${surface.name} renders no validity state word`,
       ).toContain("validity ");
     }
@@ -304,7 +305,7 @@ describe("the briefing-solved corpus sees the state word", () => {
     // and the new label beside it.
     expect(solved.length).toBe(1);
     const rendered =
-      solved[0]?.kind === "corpus" ? solved[0].render("rate limit fix") : "";
+      solved[0]?.kind === "corpus" ? solved[0].render("the cache key drops on rotation") : "";
     expect(rendered).toContain("validity ");
     expect(rendered).toContain("root cause · ");
   });

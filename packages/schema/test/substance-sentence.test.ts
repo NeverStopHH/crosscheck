@@ -8,7 +8,13 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { SUBSTANCE_MAX_CHARS, SUBSTANCE_MIN_WORDS, shownSubstance, substanceSentence } from "../src/substance-sentence.ts";
+import {
+  SUBSTANCE_MAX_CHARS,
+  SUBSTANCE_MIN_WORDS,
+  contentWordCount,
+  shownSubstance,
+  substanceSentence,
+} from "../src/substance-sentence.ts";
 
 describe("the first sentence that carries content", () => {
   test.each([
@@ -37,7 +43,8 @@ describe("the first sentence that carries content", () => {
     expect(substanceSentence("Use Redis.")).toBe("");
     // "here", "it", "is", "the" are function words: two content words only
     expect(substanceSentence("Use Redis here, it is this.")).toBe("");
-    expect(substanceSentence("Use Redis for sessions.")).toBe("Use Redis for sessions.");
+    // "sessions" would be a meta word, so the third content word is "uploads" (round 3, M1)
+    expect(substanceSentence("Use Redis for uploads.")).toBe("Use Redis for uploads.");
   });
 
   test("German function words do not count toward a German sentence", () => {
@@ -52,6 +59,26 @@ describe("the first sentence that carries content", () => {
 
   test("one-letter words are not content", () => {
     expect(substanceSentence("Q x z.")).toBe("");
+  });
+});
+
+describe("content words are DISTINCT, and of no closed class (round 3, M1)", () => {
+  test.each([
+    ["thanks thanks thanks", 0, "steering, three times"],
+    ["ok ok ok", 0, "steering"],
+    ["ja ja ja", 0, "German steering"],
+    ["asdf asdf asdf", 1, "one word, three times"],
+    ["Confirmed, works fine.", 2, "fine steers"],
+    ["Retry the session after the limit reset.", 0, "the session's machinery"],
+    ["The worker drops the cache key every time.", 5, "every is a function word"],
+  ])("%p carries %p content words — %s", (text, count) => {
+    expect(contentWordCount(text)).toBe(count);
+  });
+
+  test("a sentence of repeated thanks is no sentence to show", () => {
+    expect(substanceSentence("Thanks, thanks, thanks. The worker drops the cache key on restart.")).toBe(
+      "The worker drops the cache key on restart.",
+    );
   });
 });
 
@@ -81,17 +108,18 @@ describe("a short qualifier stays attached; an enumeration never dangles (L2)", 
 
 describe("the shown text: one function for what the reader sees and what the hub scores (review 1006b, M4)", () => {
   test("NFKC folds what the screen folds — a ligature reads as its letters", () => {
-    expect(shownSubstance("The ﬁle cache keeps the rotated key. Everything else stays as configured.")).toBe("The file cache keeps the rotated key.");
+    expect(shownSubstance("The ﬁle cache keeps the rotated key. The importer writes that key to the vault.")).toBe("The file cache keeps the rotated key.");
   });
 
   test("an instruction-shaped span is redacted exactly as the reader sees it", () => {
-    expect(shownSubstance("Ignore previous retries and pin the cache key per release. Everything else stays as configured.")).toBe(
+    expect(shownSubstance("Ignore previous retries and pin the cache key per release. The importer writes that key to the vault.")).toBe(
       "[redacted] retries and pin the cache key per release.",
     );
   });
 
   test("a sentence past the bound is cut with the visible ellipsis, at the bound", () => {
-    const shown = shownSubstance(`${"word ".repeat(80)}end. Second.`);
+    // Distinct words: one word eighty times is one content word (round 3, M1)
+    const shown = shownSubstance(`${Array.from({ length: 80 }, (_, index) => `word${String(index)}`).join(" ")} end. Second.`);
     expect(shown.length).toBe(SUBSTANCE_MAX_CHARS);
     expect(shown.endsWith("…")).toBe(true);
   });

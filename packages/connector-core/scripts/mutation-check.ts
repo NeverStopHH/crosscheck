@@ -18142,17 +18142,19 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a function word counts as content in a shown sentence",
+    // RETARGETED (round 3, M1): content words are a distinct set, filtered first.
     file: `${SCHEMA}/src/substance-sentence.ts`,
-    from: "    .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token))).length;",
-    to: "    .length;",
+    from: "    .filter((token) => !ENGLISH_FUNCTION_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token)))",
+    to: "    .filter(() => true)",
     test: `${SCHEMA}/test/substance-sentence.test.ts`,
     because: "\"Use Redis here, it is this.\" is pushed as a teammate's finding on two content words (L2)",
   },
   {
     label: "German function words count toward a German shown sentence",
+    // RETARGETED (round 3, M1): content words are a distinct set, filtered first.
     file: `${SCHEMA}/src/substance-sentence.ts`,
-    from: " && !(isGerman && GERMAN_FUNCTION_WORDS.has(token))).length;",
-    to: ").length;",
+    from: "!ENGLISH_FUNCTION_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token)))\n",
+    to: "!ENGLISH_FUNCTION_WORDS.has(token))\n",
     test: `${SCHEMA}/test/substance-sentence.test.ts`,
     because: "\"Das ist nicht so, wie es war.\" passes for a sentence with content",
   },
@@ -19261,6 +19263,22 @@ export const MUTATIONS: readonly Mutation[
     because: "against a 0.10.0 hub, a rejected hypothesis that says the prompt's words points at its tree on an unrelated observation (round 3, M5)",
   },
   {
+    label: "a repeated word counts as many content words",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  return new Set(words).size;",
+    to: "  return words.length;",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "\"asdf asdf asdf\" carries three content words and backs a root cause as evidence (round 3, M1)",
+  },
+  {
+    label: "closed-class words count as content",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    .filter((token) => exactClassOf(token) === null);",
+    to: "    .filter(() => true);",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "an observation of \"thanks thanks thanks\" is evidence, and the root cause citing it reads SOLVED (M1)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19598,7 +19616,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
- * PRINTS: packages/schema/test/evidence-resolution.test.ts 2
+ * PRINTS: packages/schema/test/evidence-resolution.test.ts 4
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/harness-turn.test.ts 16
  * PRINTS: packages/schema/test/intent-scope.test.ts 1

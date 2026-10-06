@@ -66,7 +66,8 @@ describe("the substance is the claim's first sentence, bounded", () => {
   });
 
   test("a first sentence longer than the bound is cut, and the cut is visible", () => {
-    const text = render({ body: `${"word ".repeat(80)}end. Second.` });
+    // Distinct words: one word eighty times is one content word (round 3, M1)
+    const text = render({ body: `${Array.from({ length: 80 }, (_, index) => `word${String(index)}`).join(" ")} end. Second.` });
     const quoted = /«([^»]*)»/u.exec(text.split("\n")[1] ?? "")?.[1] ?? "";
     expect(quoted.length).toBeLessThanOrEqual(HINT_SUBSTANCE_MAX_CHARS);
     expect(quoted.endsWith("…")).toBe(true);

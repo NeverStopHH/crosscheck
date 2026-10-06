@@ -32,7 +32,8 @@
  * stopped.
  */
 import { isGermanPrompt, promptTokens } from "./prompt-terms.ts";
-import { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
+import { exactClassOf } from "./session-control.ts";
+import { ENGLISH_FUNCTION_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
 import { spanRedacted } from "./untrusted-text.ts";
 
 const SENTENCES = new Intl.Segmenter("und", { granularity: "sentence" });
@@ -107,14 +108,23 @@ const sentencesOf = (body: string): readonly string[] => {
   return [...glued.done, glued.open].map((sentence) => sentence.trim());
 };
 
-/** Content words: two letters or more, and no function word of either stop list in force. */
+/**
+ * Content words: DISTINCT words of two letters or more, no function word of
+ * the lists in force, and of NO closed class (hold-out review round 3, M1) —
+ * "thanks thanks thanks" carries none and "ok ok ok" none, where three
+ * tokens used to make three words and an observation of thanks backed a
+ * root cause. As written, never a slip: a typo is not what a body's reader
+ * sees.
+ */
 const contentWords = (sentence: string): number => {
   const isGerman = isGermanPrompt(promptTokens(sentence));
-  return sentence
+  const words = sentence
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((token) => (token.match(/\p{L}/gu)?.length ?? 0) >= 2)
-    .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token))).length;
+    .filter((token) => !ENGLISH_FUNCTION_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token)))
+    .filter((token) => exactClassOf(token) === null);
+  return new Set(words).size;
 };
 
 /** The same count, for any text the product asks "does this carry content" of (evidence-resolution.ts). */

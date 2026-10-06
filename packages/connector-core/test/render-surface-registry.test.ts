@@ -299,8 +299,10 @@ describe("§4.4: the corpus runs on every registered surface", () => {
   test.each(CORPUS_SURFACES.map((surface) => [surface.name, surface] as const))(
     "%s renders substance for a benign payload — adapters cannot rot silently",
     (_name, surface) => {
-      // Arrange: ordinary teammate text, nothing for the sanitizer to strip.
-      const output = surface.render("rate limit fix");
+      // Arrange: ordinary teammate text, nothing for the sanitizer to strip —
+      // and three topical words, since "rate limit fix" is all machinery and
+      // no sentence worth showing (round 3, M1).
+      const output = surface.render("the cache key drops on rotation");
 
       // Assert
       expect(output.length, surface.name).toBeGreaterThan(0);

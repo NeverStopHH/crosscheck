@@ -38,6 +38,10 @@ describe("a cited head that is not evidence backs nothing", () => {
     ["a rejected approach", { ...OBSERVATION, kind: "rejected_approach" }],
     ["two content words", { ...OBSERVATION, body: "See above." }],
     ["one letter", { ...OBSERVATION, body: "x" }],
+    ["thanks, three times — no distinct content (round 3, M1)", { ...OBSERVATION, body: "thanks thanks thanks" }],
+    ["ok, three times", { ...OBSERVATION, body: "ok ok ok" }],
+    ["one word repeated", { ...OBSERVATION, body: "asdf asdf asdf" }],
+    ["two content words beside a steering one", { ...OBSERVATION, body: "Confirmed, works fine." }],
   ])("%s", (_, head) => {
     expect(isEvidenceFor("clm_cause", "clm_obs", head)).toBe(false);
   });
