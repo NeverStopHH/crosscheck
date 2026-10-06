@@ -1411,6 +1411,13 @@ export const DRAFT_NUDGE_MIN_FINISHED_TURNS = 1;
 /** Due drafts the nudge names by id; the rest are counted, never silently left out. */
 export const MAX_DRAFT_NUDGE_POINTERS = 5;
 /**
+ * Ids the nudge keeps before its header gives up a descriptive clause (the
+ * kinds, the backlog in all, the retention count — in that order): an id is
+ * what the agent acts on, a clause only describes. Below this many, every
+ * clause is gone first, and the last id is never dropped.
+ */
+export const DRAFT_NUDGE_POINTERS_BEFORE_CLAUSES = 3;
+/**
  * Below this much of the prompt hook's spare budget the nudge is not even
  * looked up and waits for the next prompt: a slot spent by a hook that then
  * runs out of time would be marked delivered and never shown.
