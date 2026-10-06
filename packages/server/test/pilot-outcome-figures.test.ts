@@ -511,6 +511,38 @@ describe("enrolment history (review M3)", () => {
   });
 });
 
+describe("a pointer across a month boundary (review LOW, probe E)", () => {
+  const monthAggregate = async (world: OutcomeWorld): Promise<{ interventions: number; followed: number }> => {
+    const month = lastWholeMonth(world.harness.clock.now());
+    return await readPeriodAggregate(world.harness.db, {
+      repo: REPO,
+      from: month.start,
+      until: month.end,
+      who: sql`true`,
+      sourceIs: null,
+    });
+  };
+
+  test("a July pointer whose tripwire twin arrives in August counts in July only", async () => {
+    // Arrange — followed in July; the same pointer asked about again on the first of August
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    const july = await monthAggregate(world);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire", world.harness.clock.now().toISOString())],
+    });
+    world.harness.clock.advanceSeconds(31 * 86_400);
+
+    // Act
+    const august = await monthAggregate(world);
+
+    // Assert — one intervention, counted once, in the month it was first delivered
+    expect(july).toMatchObject({ followed: 1 });
+    expect(august).toMatchObject({ interventions: 0, followed: 0 });
+  });
+});
+
 describe("the closed month's edges (review M5: surviving mutations)", () => {
   test("M1: a noise label made after the month never moves the month's figures", async () => {
     // Arrange — a printed July; in August Nick labels a July hint noise, and a minute passes

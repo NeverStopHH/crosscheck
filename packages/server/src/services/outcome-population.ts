@@ -178,10 +178,12 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       AND ${who}
       AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
       AND ${whileEnrolled(repo, sql`hd.delivered_at`)}
-      AND hd.delivered_at >= ${since.toISOString()}::timestamptz
       ${before(sql`hd.delivered_at`, until)}
       ${before(sql`COALESCE(hd.ingested_at, hd.delivered_at)`, until)}
     GROUP BY hd.session_id, hd.ref_id, s.developer_id
+    -- review LOW (probe E): a pointer counts in the window of its FIRST countable delivery, so a
+    -- twin that arrives next month never counts the same intervention a second time
+    HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz
   ), sourced AS (
     SELECT r.*, (
       SELECT src.developer_id FROM agent_sessions src

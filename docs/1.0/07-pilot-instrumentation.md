@@ -1378,6 +1378,11 @@ at the first interval, not at a stamp. The closed months are computed from the i
 now: a team that left still gets its last whole month's line in the team report (the not-enrolled page prints
 it under its own lines), and a month that had an enrolled interval is never "none could be recorded".
 
+*LOW — a pointer across a month boundary was counted in both months (probe E).* A July prompt hint followed in
+July, and its tripwire twin on the first of August, made August's figures count that one intervention again,
+with July's word. A pointer now counts in the window of its FIRST countable delivery (`HAVING
+min(delivered_at) >= since`), and nowhere else.
+
 *R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
 of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
 and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —

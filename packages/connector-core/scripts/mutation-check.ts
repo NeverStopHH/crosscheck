@@ -18849,6 +18849,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "a team that left cannot read its last enrolled month",
   },
+  // ── 07 §13.12, review LOW (probe E): one pointer, one month ──
+  {
+    label: "a pointer whose twin arrives next month counts in both months",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz",
+    to: "    HAVING max(hd.delivered_at) >= ${since.toISOString()}::timestamptz",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "July's followed is counted again in August when the same pointer is asked about on the first",
+  },
+  {
+    label: "the month's population has no start",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz",
+    to: "    HAVING true",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "every month counts every intervention since the pilot began",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19192,7 +19209,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 27
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 29
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
