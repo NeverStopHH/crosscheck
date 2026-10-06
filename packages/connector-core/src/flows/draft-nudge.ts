@@ -37,7 +37,6 @@ import type { DraftBacklog } from "../briefing/draft-backlog.ts";
 import { renderDraftNudge } from "../briefing/draft-nudge.ts";
 import { getDraftListing } from "../http/hub.ts";
 import type { HubContext } from "../http/hub.ts";
-import { readNudgeSpent, recordNudgeSpent } from "../state/draft-nudge-spent.ts";
 import type { NudgeOutcome } from "../state/draft-nudge-spent.ts";
 import { readSessionState, updateSessionState } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
@@ -73,37 +72,14 @@ const boundedHub = (input: DeliverDraftNudgeInput): HubContext | null => {
 
 /**
  * Spends the slot under the lock; true only for the caller that spent it.
- * Also recorded per conversation past SessionEnd (state/draft-nudge-spent.ts),
- * so a resumed conversation is not nudged again.
+ * The session's own state is the only write on the prompt path: SessionEnd
+ * records the slot per conversation and SessionStart seeds it back
+ * (state/draft-nudge-spent.ts), so a resumed conversation is not nudged again.
  */
-const claimSlot = async (
-  input: DeliverDraftNudgeInput,
-  outcome: NudgeOutcome,
-): Promise<boolean> => {
-  const claimed = await updateSessionState(input.home, input.hostSessionKey, (fresh) =>
+const claimSlot = (input: DeliverDraftNudgeInput, outcome: NudgeOutcome): Promise<boolean> =>
+  updateSessionState(input.home, input.hostSessionKey, (fresh) =>
     fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },
   );
-  if (claimed) {
-    await recordNudgeSpent(input.home, input.hostSessionKey, outcome, input.now);
-  }
-  return claimed;
-};
-
-/**
- * A conversation that spent its slot in an EARLIER session state (it ended,
- * then was resumed): the spent outcome is copied in, so later prompts skip
- * this file read, and nothing is fetched.
- */
-const spentEarlier = async (input: DeliverDraftNudgeInput): Promise<boolean> => {
-  const spent = await readNudgeSpent(input.home, input.hostSessionKey);
-  if (spent === null) {
-    return false;
-  }
-  await updateSessionState(input.home, input.hostSessionKey, (fresh) =>
-    fresh.draftNudge !== null ? null : { ...fresh, draftNudge: spent },
-  );
-  return true;
-};
 
 /**
  * The backlog, with the oldest-first page too whenever it runs past the
@@ -175,7 +151,7 @@ export const prepareDraftNudge = async (
     return null;
   }
   const state = await readSessionState(input.home, input.hostSessionKey);
-  if (!isDraftNudgeOpen(state) || isCoolingDown(state, input.now) || (await spentEarlier(input))) {
+  if (!isDraftNudgeOpen(state) || isCoolingDown(state, input.now)) {
     return null;
   }
   const fetched = await fetchBacklog(input);

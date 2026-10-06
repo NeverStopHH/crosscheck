@@ -8,6 +8,14 @@
  * One small per-home file, keyed by the host session key, newest
  * DRAFT_NUDGE_SPENT_MAX_SESSIONS kept.
  *
+ * WRITTEN AT SESSIONEND, READ AT SESSIONSTART — never on the prompt path. The
+ * prompt that spends the slot writes only the session's own state; SessionEnd
+ * copies the slot here before deleting that state (recordSlotAtEnd), and
+ * SessionStart seeds `draftNudge` from here (flows/register-session.ts), so a
+ * resumed conversation starts with its slot already spent. A second locked
+ * file write on the prompt hook cost the person's keystroke for a record
+ * nothing reads until the session is over.
+ *
  * Fail-open both ways, like every counter file here: a corrupt file reads as
  * "nothing spent" (the cost is one repeated nudge, never a silent one), and a
  * write that fails costs the record, never the prompt.
@@ -22,6 +30,7 @@ import {
   writePrivateFile,
 } from "../config/paths.ts";
 import { withLock } from "../spool/lock.ts";
+import { readSessionState } from "./session-state.ts";
 
 export type NudgeOutcome = "delivered" | "nothing_due";
 
@@ -87,6 +96,22 @@ export const recordNudgeSpent = async (
       await writePrivateFile(draftNudgeSpentPath(home), JSON.stringify(next));
     });
   } catch {
-    // Fail open: the record is lost, the prompt is not.
+    // Fail open: the record is lost, the session's end is not.
+  }
+};
+
+/**
+ * SessionEnd's half: the slot this session spent, read off its state before
+ * the delete. An unspent slot records nothing, so the next session of the
+ * conversation is still owed its nudge.
+ */
+export const recordSlotAtEnd = async (
+  home: string,
+  hostSessionKey: string,
+  at: Date,
+): Promise<void> => {
+  const spent = (await readSessionState(home, hostSessionKey))?.draftNudge ?? null;
+  if (spent !== null) {
+    await recordNudgeSpent(home, hostSessionKey, spent, at);
   }
 };

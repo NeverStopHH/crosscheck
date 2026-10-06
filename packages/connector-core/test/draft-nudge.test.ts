@@ -33,11 +33,15 @@ import { prepareMcp } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import { readNudgeSpent, recordNudgeSpent } from "../src/state/draft-nudge-spent.ts";
 import {
-  deleteSessionState,
   readSessionState,
+  updateSessionState,
   withCarriedCapture,
   writeSessionState,
 } from "../src/state/session-state.ts";
+import { DEFAULT_AGENT_KIND } from "../src/constants.ts";
+import { endSessionFlow } from "../src/flows/end-session.ts";
+import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/register-session.ts";
+import { guaranteeDeclarationFor } from "../src/guarantees/declarations.ts";
 import { bootDraftHub } from "./fixtures/draft-hub.ts";
 import type { DraftHub } from "./fixtures/draft-hub.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -717,6 +721,39 @@ describe("deliverDraftNudge (real hub)", () => {
 });
 
 describe("the nudge slot survives the session that spent it", () => {
+  /** SessionEnd and SessionStart through the real flows, as every host runs them. */
+  const endThenResume = async (s: Session, own: DraftHub): Promise<void> => {
+    await endSessionFlow({
+      home: s.home,
+      repoKey: s.ctx.repoKey,
+      hub: s.ctx,
+      hostSessionKey: HOST_KEY,
+      crosscheckSessionId: SESSION_ID,
+      developerId: own.developerId,
+      flushBudgetMs: 500,
+      now: () => new Date(),
+    });
+    expect(await readSessionState(s.home, HOST_KEY)).toBeNull();
+    await registerSessionFlow({
+      home: s.home,
+      repoKey: s.ctx.repoKey,
+      hub: s.ctx,
+      agentKind: DEFAULT_AGENT_KIND,
+      hostSessionKey: HOST_KEY,
+      repoId: REPO_ID,
+      repoRoot: s.repo,
+      branch: "main",
+      baseCommit: "0000000000000000000000000000000000000000",
+      hubUrl: own.hubUrl,
+      fallbackDeveloperId: own.developerId,
+      title: fallbackWorkContextTitle("main", REPO_ID),
+      status: "analyzing",
+      now: new Date(),
+      guarantees: guaranteeDeclarationFor(DEFAULT_AGENT_KIND),
+    });
+    await updateSessionState(s.home, HOST_KEY, (fresh) => ({ ...fresh, stopTurnCount: 1 }));
+  };
+
   test("a conversation resumed after SessionEnd is not nudged a second time", async () => {
     await withOwnHub("draft-nudge-resume", async (own) => {
       // Arrange: the nudge is delivered, then the session ends — SessionEnd
@@ -724,25 +761,44 @@ describe("the nudge slot survives the session that spent it", () => {
       await own.seedDraft({ kind: "decision", body: "Keep the reaper grace at 90 s", ageMs: OLD_MS });
       const s = await session("nudge-resume", own);
       expect(await nudge(s)).toContain("review_draft");
-      await deleteSessionState(s.home, HOST_KEY);
 
-      // Act: `--resume` brings the same conversation back with a fresh state
-      await writeSessionState(s.home, {
-        hostSessionKey: HOST_KEY,
-        crosscheckSessionId: SESSION_ID,
-        workContextId: WORK_CONTEXT_ID,
-        repoId: REPO_ID,
-        repoRoot: s.repo,
-        hubUrl: own.hubUrl,
-        developerId: own.developerId,
-        startedAt: new Date().toISOString(),
-        stopTurnCount: 1,
-      });
+      // Act: `--resume` brings the same conversation back through SessionStart
+      await endThenResume(s, own);
       const again = await nudge(s);
 
-      // Assert
+      // Assert: SessionStart seeded the slot from what SessionEnd recorded
       expect(again).toBe("");
       expect((await readSessionState(s.home, HOST_KEY))?.draftNudge).toBe("delivered");
+    });
+  });
+
+  test("the prompt that spends the slot writes only the session's own state (review round 2, L2)", async () => {
+    // The ledger is a second locked file write; on the prompt path it cost
+    // the person's keystroke. SessionEnd records it instead.
+    await withOwnHub("draft-nudge-prompt-path", async (own) => {
+      await own.seedDraft({ kind: "decision", body: "Keep the reaper grace at 90 s", ageMs: OLD_MS });
+      const s = await session("nudge-prompt-path", own);
+
+      expect(await nudge(s)).toContain("review_draft");
+
+      expect((await readSessionState(s.home, HOST_KEY))?.draftNudge).toBe("delivered");
+      expect(await readNudgeSpent(s.home, HOST_KEY)).toBeNull();
+    });
+  });
+
+  test("SessionEnd records the slot whatever it was spent on, and an unspent slot not at all", async () => {
+    await withOwnHub("draft-nudge-end-records", async (own) => {
+      await own.seedDraft({ kind: "hypothesis", body: "The lock file outlives its holder", ageMs: YOUNG_MS });
+      const spent = await session("nudge-end-nothing-due", own);
+      expect(await nudge(spent)).toBe("");
+      const unspent = await session("nudge-end-unspent", own, 0);
+
+      await endThenResume(spent, own);
+      await endThenResume(unspent, own);
+
+      expect(await readNudgeSpent(spent.home, HOST_KEY)).toBe("nothing_due");
+      expect(await readNudgeSpent(unspent.home, HOST_KEY)).toBeNull();
+      expect((await readSessionState(unspent.home, HOST_KEY))?.draftNudge).toBeNull();
     });
   });
 

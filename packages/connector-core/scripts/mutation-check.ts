@@ -17945,16 +17945,16 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a conversation resumed after SessionEnd is nudged again",
-    file: `${CORE}/src/flows/draft-nudge.ts`,
-    from: "  if (!isDraftNudgeOpen(state) || isCoolingDown(state, input.now) || (await spentEarlier(input))) {",
-    to: "  if (!isDraftNudgeOpen(state) || isCoolingDown(state, input.now)) {",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    draftNudge: await readNudgeSpent(input.home, input.hostSessionKey),\n",
+    to: "",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "`claude --resume` brings back a conversation already asked once, and it is asked again",
   },
   {
     label: "a spent nudge slot is forgotten at SessionEnd",
-    file: `${CORE}/src/flows/draft-nudge.ts`,
-    from: "    await recordNudgeSpent(input.home, input.hostSessionKey, outcome, input.now);\n",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  await recordSlotAtEnd(input.home, input.hostSessionKey, input.now());\n",
     to: "",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "the only record of the spent slot dies with the state file SessionEnd deletes",
@@ -17978,8 +17978,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a failed nudge fetch is retried on every prompt",
     file: `${CORE}/src/flows/draft-nudge.ts`,
-    from: "  if (!isDraftNudgeOpen(state) || isCoolingDown(state, input.now) || (await spentEarlier(input))) {",
-    to: "  if (!isDraftNudgeOpen(state) || (await spentEarlier(input))) {",
+    from: "  if (!isDraftNudgeOpen(state) || isCoolingDown(state, input.now)) {",
+    to: "  if (!isDraftNudgeOpen(state)) {",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "an unresponsive hub costs every prompt one more GET and its timeout",
   },
@@ -18367,6 +18367,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "every resumed conversation is nudged a second time, and the next write makes the loss permanent",
   },
+  {
+    label: "the prompt that spends the nudge slot also writes the spent ledger",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "    fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },\n  );",
+    to: "    fresh.draftNudge !== null ? null : { ...fresh, draftNudge: outcome },\n  ).then(async (claimed) => {\n    if (claimed) {\n      const { recordNudgeSpent } = await import(\"../state/draft-nudge-spent.ts\");\n      await recordNudgeSpent(input.home, input.hostSessionKey, outcome, input.now);\n    }\n    return claimed;\n  });",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "a second locked file write lands on the person's keystroke for a record nothing reads until SessionEnd",
+  },
+  {
+    label: "SessionEnd records an unspent nudge slot as spent",
+    file: `${CORE}/src/state/draft-nudge-spent.ts`,
+    from: "  if (spent !== null) {\n    await recordNudgeSpent(home, hostSessionKey, spent, at);\n  }",
+    to: "  await recordNudgeSpent(home, hostSessionKey, spent ?? \"nothing_due\", at);",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "a conversation that was never nudged is never nudged after it resumes either",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18574,7 +18590,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 41
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 43
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

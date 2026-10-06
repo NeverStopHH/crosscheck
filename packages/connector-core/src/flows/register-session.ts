@@ -30,6 +30,7 @@ import {
   readSessionState,
   workContextIdFor,
 } from "../state/session-state.ts";
+import { readNudgeSpent } from "../state/draft-nudge-spent.ts";
 
 /** A resumed session whose crosscheck session was closed gets a fresh suffix. */
 const RETRY_SUFFIXES = ["", "~r1", "~r2"] as const;
@@ -269,6 +270,11 @@ export const registerSessionFlow = async (
     // costing comparability, and never correctness.
     seqEpoch: mintedEpoch,
     eventSeq: 0,
+    // A conversation that spent its draft nudge in an earlier session (it
+    // ended, then was resumed) starts with the slot spent — the record
+    // SessionEnd left (state/draft-nudge-spent.ts). A re-fire inside a live
+    // session carries its own slot instead (withCarriedCapture).
+    draftNudge: await readNudgeSpent(input.home, input.hostSessionKey),
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
   if (input.recovery === true) {
