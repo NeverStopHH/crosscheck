@@ -177,8 +177,7 @@ export const handleCursorSessionStart = async (
   await reapStaleLineages(ctx.config.home, now);
   // ...and the state files of sessions that died without sessionEnd, the
   // way Claude's SessionStart sweeps them (state/session-reap.ts): a corpse
-  // pins its spool against reap and, while marked unregistered, holds its
-  // records from every other flusher (review-2 round 6, HIGH-2).
+  // pins its spool against reap.
   await reapStaleSessionStates(ctx.config.home, now, { keepHostSessionKey: ctx.hostSessionKey });
 
   return briefing.length === 0 ? "" : cursorInjectionOutput(briefing);

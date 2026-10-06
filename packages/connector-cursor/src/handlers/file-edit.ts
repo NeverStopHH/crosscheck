@@ -144,7 +144,6 @@ export const handleAfterFileEdit = async (
   const current = (await readSessionState(ctx.config.home, ctx.hostSessionKey)) ?? state;
   const didHeartbeat = await heartbeatMaybe({
     hub: ctx.hub,
-    hostSessionKey: ctx.hostSessionKey,
     crosscheckSessionId: current.crosscheckSessionId,
     lastHeartbeatAt: current.lastHeartbeatAt,
     now,

@@ -26,7 +26,7 @@ import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/serv
 import type { Db } from "@crosscheck/server";
 
 import { HEAL_COOLDOWN_MS, MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
-import { repoKey, sessionSlug, spoolDataPath } from "../src/config/paths.ts";
+import { repoKey, sessionSlug, sessionStatePath, spoolDataPath } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
@@ -280,11 +280,12 @@ describe("a flush whose own session the hub ended", () => {
 
   test("re-sends what the refused life did not author, and withholds what it did", async () => {
     // Arrange: the refused life's own batch (a body-naming target and a
-    // producer-filed commit_evidence), then another session's backlog
+    // producer-filed commit_evidence), then an ended session's backlog
     const fx = await fixture("heal-resend");
     const life = await register(fx);
     const otherHost = `${fx.hostSessionKey}-other`;
     const otherLife = await register(fx, otherHost);
+    await flushSpool(fx.hub, { sessionId: otherLife.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
     await flushAsHook(fx);
     await endOnHub(life.crosscheckSessionId);
     const author = { name: "Dev", email: "dev@example.com", latestCommitAt: new Date().toISOString(), commitCount: 1 };
@@ -300,6 +301,7 @@ describe("a flush whose own session the hub ended", () => {
     await appendTo(fx, otherHost, [
       targetRecord(otherLife.workContextId, "file", "src/other-backlog.ts", producerOf(otherLife.crosscheckSessionId), new Date()),
     ]);
+    await rm(sessionStatePath(fx.home, otherHost), { force: true });
 
     // Act
     await flushAsHook(fx);
@@ -311,7 +313,7 @@ describe("a flush whose own session the hub ended", () => {
       [next],
     );
     expect(observed).toEqual([{ seq_n: null, seq_reason: "foreign_session_delivery" }]);
-    // ...the other session's backlog landed where its body names, as any successor flush delivers it
+    // ...the ended session's backlog landed where its body names, as any successor flush delivers it
     expect(await targetsOf(otherLife.workContextId)).toEqual(["src/other-backlog.ts"]);
     // ...and the refused life's own target was withheld and counted
     expect(await targetsOf(life.workContextId)).toEqual([]);
@@ -480,10 +482,11 @@ describe("a life the hub never registered keeps its work context", () => {
 
 /**
  * ANOTHER LOCAL LIFE THE HUB HAS NOT REGISTERED YET (review-2 MEDIUM-1). A
- * live conversation's flush drains the whole repo spool, and delivered such a
+ * live conversation's flush drained the whole repo spool, and delivered such a
  * life's records under its own name: the hub refused the work context
  * ("session not found") and every target of it ("work context not found"),
- * and they were spent — before that life's own heal could register it.
+ * and they were spent — before that life's own heal could register it. A
+ * flush now sends no other live conversation's records (spool/ownership.ts).
  */
 describe("a successor flush beside a live life the hub has not registered", () => {
   test("leaves that life's records on disk and delivers its own, and the life's heal delivers them", async () => {
@@ -516,69 +519,6 @@ describe("a successor flush beside a live life the hub has not registered", () =
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
   });
 
-  test("holds that life's records only: another life's record behind them goes, once (review-2 round 6, LOW-4)", async () => {
-    // Arrange: D unregistered; behind D's first edit in D's own spool, a
-    // record another life wrote — a straggler a worker appended late
-    const fx = await fixture("held-per-life", proxyUrl);
-    refuseRegisters = true;
-    const deaf = await register(fx);
-    refuseRegisters = false;
-    const otherHost = `${fx.hostSessionKey}-other`;
-    const other = await register(fx, otherHost);
-    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
-    await appendTo(fx, fx.hostSessionKey, [
-      targetRecord(deaf.workContextId, "file", "src/deaf.ts", producerOf(deaf.crosscheckSessionId), new Date()),
-      targetRecord(other.workContextId, "file", "src/behind.ts", producerOf(other.crosscheckSessionId), new Date()),
-    ]);
-
-    // Act: two of O's flushes, then D's own
-    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
-    const otherAfterFirst = await targetsOf(other.workContextId);
-    const postsBefore = recordPosts;
-    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
-    const postsForSecond = recordPosts - postsBefore;
-    const deafBeforeHeal = await targetsOf(deaf.workContextId);
-    await flushAsHook(fx);
-
-    // Assert: the straggler went with O's first flush and never again; D's
-    // edit waited for D; nothing is left on disk
-    expect(otherAfterFirst).toEqual(["src/behind.ts"]);
-    expect(postsForSecond).toBe(0);
-    expect(deafBeforeHeal).toEqual([]);
-    expect(await targetsOf(deaf.workContextId)).toEqual(["src/deaf.ts"]);
-    expect((await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines.length).toBe(0);
-    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
-  });
-
-  test("expires only the held life's old records, never the other life's record behind them (F5, H3)", async () => {
-    // Arrange: D unregistered and still beating; D's two old edits, then an
-    // old record another life wrote, in D's own spool
-    const fx = await fixture("expiry-edge", proxyUrl);
-    refuseRegisters = true;
-    const deaf = await register(fx);
-    refuseRegisters = false;
-    const otherHost = `${fx.hostSessionKey}-other`;
-    const other = await register(fx, otherHost);
-    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
-    const spool = await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey));
-    await writeCursorOffset(spool.dataPath, spool.cursorPath, spool.size, spool);
-    const old = new Date(Date.now() - 60_000);
-    await appendTo(fx, fx.hostSessionKey, [
-      targetRecord(deaf.workContextId, "file", "src/old-1.ts", producerOf(deaf.crosscheckSessionId), old),
-      targetRecord(deaf.workContextId, "file", "src/old-2.ts", producerOf(deaf.crosscheckSessionId), old),
-      targetRecord(other.workContextId, "file", "src/behind-old.ts", producerOf(other.crosscheckSessionId), old),
-    ]);
-    const later = new Date(Date.now() + (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
-    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, lastHeartbeatAt: later.toISOString() }));
-
-    // Act: O's flush, a week and a day on
-    await flushSpool({ ...fx.hub, now: () => later }, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
-
-    // Assert: D's two counted expired, the other life's record delivered
-    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ expired: 2 });
-    expect(await targetsOf(other.workContextId)).toEqual(["src/behind-old.ts"]);
-  });
-
   test("holds them only while the life is live: after its end they are delivered and every refusal counted", async () => {
     // Arrange: life D unregistered with an edit, then ended; a registered conversation O
     const fx = await fixture("held-until-end", proxyUrl);
@@ -609,34 +549,6 @@ describe("a successor flush beside a live life the hub has not registered", () =
     const drops = await readDropDetail(fx.home, fx.key);
     expect(drops.byReason).toEqual({ rejected: 2 });
     expect(drops.rejectedCauses).toEqual({ author_unknown: 2 });
-  });
-
-  test("holds them only until they age out, and then counts them expired", async () => {
-    // Arrange: life D unregistered with an edit; a registered conversation O
-    const fx = await fixture("held-until-expiry", proxyUrl);
-    refuseRegisters = true;
-    const deaf = await register(fx);
-    refuseRegisters = false;
-    await appendTo(fx, fx.hostSessionKey, [
-      targetRecord(deaf.workContextId, "file", "src/deaf.ts", producerOf(deaf.crosscheckSessionId), new Date()),
-    ]);
-    const otherHost = `${fx.hostSessionKey}-other`;
-    const other = await register(fx, otherHost);
-    const later = new Date(Date.now() + (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
-    // ...and D still beating a week and a day on: a silent state is not held
-    // at all (spool/held-lives.ts), so only a live life's records can age out
-    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, lastHeartbeatAt: later.toISOString() }));
-
-    // Act: O's flush, a week and a day on
-    await flushSpool(
-      { ...fx.hub, now: () => later },
-      { sessionId: other.crosscheckSessionId, developerId },
-      GENEROUS_BUDGET_MS,
-    );
-
-    // Assert
-    expect((await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines.length).toBe(0);
-    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ expired: 2 });
   });
 });
 
@@ -672,6 +584,34 @@ describe("the bounds", () => {
     expect(inside).toBe(1);
     expect(registerCalls - before).toBe(2);
     expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+  });
+
+  test("a heal asked inside a failed walk's cooldown walks nothing, whoever asks — a heartbeat too", async () => {
+    // Arrange: a walk the hub refused
+    const fx = await fixture("cooldown-beat", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+    refuseRegisters = true;
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/a.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await flushAsHook(fx);
+    const before = registerCalls;
+
+    // Act: the heartbeat the hub refuses as ended asks the healer, inside the cooldown
+    await heartbeatMaybe({
+      hub: fx.hub,
+      crosscheckSessionId: life.crosscheckSessionId,
+      lastHeartbeatAt: null,
+      now: new Date(),
+      onRefused: (cause) =>
+        healerFor(fx)({ sessionId: life.crosscheckSessionId, cause }, Date.now() + GENEROUS_BUDGET_MS),
+    });
+    refuseRegisters = false;
+
+    // Assert
+    expect(registerCalls - before).toBe(0);
   });
 
   test("a flush inside a failed walk's cooldown says it failed, with its records still pending (F7)", async () => {

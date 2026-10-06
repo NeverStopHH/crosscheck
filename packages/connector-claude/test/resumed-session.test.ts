@@ -381,18 +381,29 @@ describe("a PostToolUse after SessionEnd with no SessionStart in between", () =>
     expect(await rejectedDrops(fx)).toBe(0);
   });
 
-  test("a recovery whose register the hub refused marks the life unregistered (review-2 round 6, P1)", async () => {
-    // Arrange: no state, and a hub refusing every register
+  test("a recovery whose register the hub refused keeps its edit for its own heal, whatever another conversation flushes (review-2 round 6, P1)", async () => {
+    // Arrange: no state, a hub refusing every register, and a live conversation beside it
     const fx = await fixture("recover-refused", { url: proxyUrl });
     const sessionId = "recover-refused-uuid";
+    const live = "recover-refused-live-uuid";
+    await sessionStart(fx, live, "startup");
     refuseRegisters = true;
 
-    // Act: the hook's state-less recovery
+    // Act: the hook's state-less recovery; the live conversation's flush; the
+    // cooldown over, the recovered conversation's next edit
     await edit(fx, sessionId, "src/recover-refused/a.ts");
     refuseRegisters = false;
+    await edit(fx, live, "src/recover-refused/live.ts");
+    await rm(sessionHealPathForSlug(fx.home, sessionSlug(sessionId)), { force: true });
+    await edit(fx, sessionId, "src/recover-refused/b.ts");
 
-    // Assert: another conversation's flush will leave this life's records for its own heal
-    expect((await readSessionState(fx.home, sessionId))?.unregistered).toBe(true);
+    // Assert: nothing spent, both of its edits landed
+    expect(await capturedFiles("src/recover-refused/")).toEqual([
+      "src/recover-refused/a.ts",
+      "src/recover-refused/b.ts",
+      "src/recover-refused/live.ts",
+    ]);
+    expect(await rejectedDrops(fx)).toBe(0);
   });
 });
 

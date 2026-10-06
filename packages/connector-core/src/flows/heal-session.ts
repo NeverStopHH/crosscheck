@@ -205,7 +205,6 @@ const swapLife = (
       workContextId: workContextIdFor(sessionId),
       developerId: developerId ?? fresh.developerId,
       seenTargets: [],
-      unregistered: false,
     });
     return "swapped";
   });

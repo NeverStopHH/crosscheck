@@ -31,6 +31,21 @@ import { readJsonOrNull, sessionSlug } from "../config/paths.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { SessionStateSchema } from "./session-state.ts";
 
+/**
+ * Silent past the bound a deletion has to be certain of (header) — the one a
+ * state file is reaped on, and the one past which a flush reads its host
+ * session as abandoned rather than another live conversation
+ * (spool/ownership.ts).
+ */
+export const isPastReapBound = (
+  state: { readonly lastHeartbeatAt: string | null; readonly startedAt: string },
+  wroteAtMs: number | null,
+  nowMs: number,
+): boolean => {
+  const silentMs = sessionSilentForMs(state, wroteAtMs, nowMs);
+  return silentMs !== null && silentMs > MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
+};
+
 export interface StateReapOptions {
   /** Never reaped, whatever its age: the caller is mid-session inside it. */
   readonly keepHostSessionKey?: string;
@@ -62,7 +77,6 @@ export const reapStaleSessionStates = async (
     options.keepHostSessionKey === undefined
       ? null
       : `${sessionSlug(options.keepHostSessionKey)}.json`;
-  const maxAgeMs = MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
   let reaped = 0;
   // Oldest first: `listSessionStateFiles` answers newest-first, and the files
   // worth spending this run's budget on are at the other end.
@@ -77,8 +91,7 @@ export const reapStaleSessionStates = async (
     if (!parsed.success) {
       continue;
     }
-    const ageMs = sessionSilentForMs(parsed.data, file.mtimeMs, now.getTime());
-    if (ageMs === null || ageMs <= maxAgeMs) {
+    if (!isPastReapBound(parsed.data, file.mtimeMs, now.getTime())) {
       continue;
     }
     try {

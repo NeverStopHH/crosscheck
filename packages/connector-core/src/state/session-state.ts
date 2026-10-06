@@ -53,7 +53,7 @@ const withSessionStateLock = async <T>(
  * same hour `doctor` calls a state file zombie, so the two surfaces cannot
  * disagree about which sessions exist.
  */
-export const STALE_SESSION_STATE_MS =
+const STALE_SESSION_STATE_MS =
   DOCTOR_ZOMBIE_STATE_WARN_HOURS * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
 
 /**
@@ -269,15 +269,6 @@ const SessionStateObjectSchema = z.looseObject({
    * sessions debt-free.
    */
   briefingPending: z.boolean().default(false),
-  /**
-   * True while the hub has not registered the life this state names: its
-   * register did not land, and no heal has registered it since (review-2
-   * MEDIUM-1). Another conversation's flush leaves such a life's records on
-   * disk (spool/held-lives.ts) instead of delivering them into a session the
-   * hub does not know. Optional, so every state file before it parses — and
-   * reads as registered, the old reading.
-   */
-  unregistered: z.boolean().optional(),
   /**
    * Tier-1 summarizer bookkeeping (DESIGN.md §3 Tier 1): the Stop-turn
    * counter the debounce is measured against, the fires already spent
@@ -926,19 +917,6 @@ export const underSessionStateLock = <T>(
   fallback: T,
   action: () => Promise<T>,
 ): Promise<T> => withSessionStateLock(sessionStateLockPath(home, hostSessionKey), fallback, action);
-
-/**
- * The hub has answered for this life — a 2xx heartbeat, a record it took
- * under the life's own id — so it knows the life, whatever the register's
- * answer said (review-2 round 6, HIGH-2). A register the hub committed but
- * answered too late reads as refused, and the mark it left held the life's
- * records from every other flusher for good. Only the life the state still
- * names, and only a mark that is set: nothing else is written.
- */
-export const markLifeRegistered = (home: string, hostSessionKey: string, sessionId: string): Promise<boolean> =>
-  updateSessionState(home, hostSessionKey, (fresh) =>
-    fresh.crosscheckSessionId === sessionId && fresh.unregistered === true ? { ...fresh, unregistered: false } : null,
-  );
 
 /** A life SessionEnd found the state on that is not the one it ends, and that life's end position. */
 export interface MovedLife {

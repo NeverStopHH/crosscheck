@@ -259,18 +259,6 @@ export const registerSessionLadder = async (
   return { outcome: "unregistered", sessionId: lifeSessionId(baseId, (rungs.at(-1) ?? start) + 1) };
 };
 
-/**
- * Whether the hub may not know the life a register settled on: the register
- * did not land, and the state does not already name that life as registered
- * — a re-fire whose register failed keeps a life the hub took earlier.
- */
-const isUnregisteredLife = (
-  registered: boolean,
-  previous: SessionState | null,
-  crosscheckSessionId: string,
-): boolean =>
-  !registered && !(previous?.crosscheckSessionId === crosscheckSessionId && previous.unregistered !== true);
-
 /** The session-start recipe: register → state BEFORE append → work context. */
 export const registerSessionFlow = async (
   input: RegisterSessionFlowInput,
@@ -381,7 +369,6 @@ export const registerSessionFlow = async (
     seqEpoch: mintedEpoch,
     eventSeq: 0,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
-    ...(isUnregisteredLife(registration !== null, previous, crosscheckSessionId) ? { unregistered: true } : {}),
   };
   if (input.recovery === true) {
     // CLAIM, never overwrite: a sibling recovery that published first keeps

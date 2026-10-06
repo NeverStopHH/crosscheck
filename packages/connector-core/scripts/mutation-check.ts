@@ -17426,8 +17426,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the healed life keeps the refused life's seen-set",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "      seenTargets: [],\n      unregistered: false,",
-    to: "      seenTargets: fresh.seenTargets,\n      unregistered: false,",
+    from: "      seenTargets: [],\n    });",
+    to: "      seenTargets: fresh.seenTargets,\n    });",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "a file the ended life had captured is never captured into the next life's work context",
   },
@@ -17728,22 +17728,6 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 finding 2: an ACP proxy that exits while its in-memory session still names the life a heal moved off leaves the healed life open for the next session/load",
   },
   {
-    label: "every walk writes a stuck batch's torn lines again",
-    file: `${CORE}/src/spool/batch-losses.ts`,
-    from: "    const torn = lines.filter((line) => line.record === null && isNew(line));",
-    to: "    const torn = lines.filter((line) => line.record === null);",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 finding 4: one torn line reads as one more per cooldown for as long as the batch waits, and the hub's loss_total with it",
-  },
-  {
-    label: "every walk writes a stuck batch's withheld stragglers again",
-    file: `${CORE}/src/spool/batch-losses.ts`,
-    from: "      (line): line is SpooledLine => line.record !== null && isWithheld(line.record) && isNew(line),",
-    to: "      (line): line is SpooledLine => line.record !== null && isWithheld(line.record),",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 finding 4: one straggler reads as one more per cooldown for as long as the batch waits",
-  },
-  {
     label: "a batch a walk leaves on disk never notes what the walk wrote down",
     file: `${CORE}/src/spool/batch-losses.ts`,
     from: "      await writeCountedLines(spool.dataPath, spool.cursorPath, spool.offset, withEnds(earlier, counted), spool);\n",
@@ -17786,34 +17770,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a heal onto the same id keeps the seen-set",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "      seenTargets: [],\n      unregistered: false,",
-    to: "      seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],\n      unregistered: false,",
+    from: "      seenTargets: [],\n    });",
+    to: "      seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],\n    });",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 MEDIUM-1 (M18): a file whose records the refused life lost is never captured again, and no further loss is counted",
-  },
-  {
-    label: "a successor flush spends a live life the hub has not registered",
-    file: `${CORE}/src/spool/held-lives.ts`,
-    from: "typeof lifeId !== \"string\" || state.unregistered !== true || lifeId === flusherSessionId",
-    to: "true",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 MEDIUM-1: another conversation's flush delivers that life's work context and edits into a session the hub does not know, and they are refused and spent before its own heal",
-  },
-  {
-    label: "a register that did not land leaves its life unmarked",
-    file: `${CORE}/src/flows/register-session.ts`,
-    from: "    ...(isUnregisteredLife(registration !== null, previous, crosscheckSessionId) ? { unregistered: true } : {}),\n",
-    to: "",
-    test: `${CONNECTOR}/test/resumed-session.test.ts`,
-    because: "review-2 MEDIUM-1: the live conversation beside it spends its first edits, and of a, b, c, d only c and d reach the hub",
-  },
-  {
-    label: "a held record past the age bound is kept for good",
-    file: `${CORE}/src/spool/held-lives.ts`,
-    from: "    return { spool, held, lines: 0, expired };",
-    to: "    return { spool, held, lines: 0, expired: 0 };",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 MEDIUM-1: a life that never registers and never ends pins its records past the bound every spool obeys, counted nowhere",
   },
   {
     label: "a later life's marker is a name an older connector's reap lists",
@@ -17898,8 +17858,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a refusal an earlier walk wrote down is counted again when the batch goes (M5)",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "  const lines: readonly BatchLine[] = all.filter((line) => !line.held && !earlier.has(line.end));",
-    to: "  const lines: readonly BatchLine[] = all.filter((line) => !line.held);",
+    from: "    .filter((line) => !earlier.has(line.end));",
+    to: "    .filter(() => true);",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 LOW-6: one refused record reads as two in the ledger and in the hub's loss_total",
   },
@@ -17968,52 +17928,28 @@ export const MUTATIONS: readonly Mutation[
     because: "the side file of every heal whose life ended with no records piles up in the spool directory",
   },
   {
-    label: "a heartbeat the hub answered leaves the life marked unregistered",
-    file: `${CORE}/src/flows/heartbeat.ts`,
-    from: "  if (result.ok && input.hostSessionKey !== undefined) {\n    await markLifeRegistered(input.hub.home, input.hostSessionKey, input.crosscheckSessionId);\n  }\n",
-    to: "",
-    test: `${CORE}/test/unregistered-hold.test.ts`,
-    because: "review-2 round 6 HIGH-2: a register the hub took but answered late keeps the life's records held from every other flusher for good",
-  },
-  {
-    label: "a record the hub took from the life itself leaves it marked unregistered",
-    file: `${CORE}/src/spool/flush.ts`,
-    from: "  await forgetUnregistered(ctx.home, spool.slug, healed.heal?.sessionId ?? input.sessionId, summary);\n",
-    to: "",
-    test: `${CORE}/test/unregistered-hold.test.ts`,
-    because: "review-2 round 6 HIGH-2 (RS5-C): a crashed life's backlog is held for a week and then counted expired — of four edits, one landed",
-  },
-  {
-    label: "a life whose state went silent is still held",
-    file: `${CORE}/src/spool/held-lives.ts`,
-    from: "  return (await isSilent(home, slug, state, now)) ? null : lifeId;",
-    to: "  return lifeId;",
-    test: `${CORE}/test/unregistered-hold.test.ts`,
-    because: "review-2 round 6 HIGH-2: a host that died without SessionEnd pins its backlog until it expires",
-  },
-  {
     label: "a Cursor-only machine never reaps stale session states",
     file: `${CURSOR}/src/handlers/session-start.ts`,
     from: "  await reapStaleSessionStates(ctx.config.home, now, { keepHostSessionKey: ctx.hostSessionKey });\n",
     to: "",
     test: `${CURSOR}/test/resumed-session.test.ts`,
-    because: "review-2 round 6 HIGH-2: corpses pin their spools and keep their marked lives held, with no path that removes them",
+    because: "review-2 round 6 HIGH-2: corpses pin their spools, with no path that removes them",
   },
   {
     label: "an ACP-only machine never reaps stale session states",
     file: `${ACP}/src/capture/engine.ts`,
-    from: "          await reapStaleSessionStates(session.config.home, now());\n",
+    from: "          await reapStaleSessionStates(session.config.home, now(), { keepHostSessionKey: session.hostSessionKey });\n",
     to: "",
     test: `${ACP}/test/resumed-session.test.ts`,
     because: "review-2 round 6 HIGH-2: the proxy's machines keep every corpse of every session that died without an end",
   },
   {
-    label: "doctor says nothing of records held for an unregistered life",
+    label: "doctor says nothing of records waiting for their own conversation",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "    ...(await heldChecks(home, key, now)),\n",
+    from: "    ...(await waitingChecks(home, key, now)),\n",
     to: "",
     test: `${CLI}/test/doctor.test.ts`,
-    because: "review-2 round 6 HIGH-2: a hold that lasts a week shows nowhere until its records are counted expired",
+    because: "review-2 round 7: another live session's backlog, which no other flusher sends, shows nowhere",
   },
   {
     label: "a heal reads a busy state lock as a switch that landed",
@@ -18056,46 +17992,6 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 6 LOW-2: `<slug>@r1.pending-end` has no spool of its own, so the life is ended while its records are still on disk",
   },
   {
-    label: "a held life's first record holds every line behind it",
-    file: `${CORE}/src/spool/held-lives.ts`,
-    from: "  return { spool, held, lines: free.length, expired: 0 };",
-    to: "  return { spool, held, lines: 0, expired: 0 };",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 round 6 LOW-4: a straggler another life wrote behind the held life's first record waits as long as the hold does",
-  },
-  {
-    label: "a line settled behind a held one is sent again",
-    file: `${CORE}/src/spool/flush.ts`,
-    from: "  await moveCursor(spool, settledUpTo, [...earlier, ...all.filter((line) => !line.held).map((line) => line.end)]);",
-    to: "  await moveCursor(spool, settledUpTo, [...earlier]);",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 round 6 LOW-4: every flush while the hold lasts posts the same straggler again",
-  },
-  {
-    label: "a heal that registers the life leaves it marked unregistered (S1)",
-    file: `${CORE}/src/flows/heal-session.ts`,
-    from: '      unregistered: false,\n    });\n    return "swapped";',
-    to: '    });\n    return "swapped";',
-    test: `${CORE}/test/unregistered-hold.test.ts`,
-    because: "review-2 round 6 MEDIUM-2: a life the hub now holds stays held from every other flusher until its next accepted record",
-  },
-  {
-    label: "a re-fire whose register fails drops the mark of a life still unregistered (R1)",
-    file: `${CORE}/src/flows/register-session.ts`,
-    from: "!(previous?.crosscheckSessionId === crosscheckSessionId && previous.unregistered !== true)",
-    to: "!(previous?.crosscheckSessionId === crosscheckSessionId)",
-    test: `${CORE}/test/unregistered-hold.test.ts`,
-    because: "review-2 round 6 MEDIUM-2: a /compact on a life the hub never registered lets another conversation's flush spend its records",
-  },
-  {
-    label: "Claude's recovery never marks a life it could not register (P1)",
-    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: '    ...(ladder.outcome === "registered" ? {} : { unregistered: true }),\n',
-    to: "",
-    test: `${CONNECTOR}/test/resumed-session.test.ts`,
-    because: "review-2 round 6 MEDIUM-2: a recovered life the hub refused has its first edits spent by the live conversation beside it",
-  },
-  {
     label: "ACP keeps its seen-set on a heal onto the same id (E1)",
     file: `${ACP}/src/capture/engine.ts`,
     from: '      if (healed.outcome === "healed") {',
@@ -18110,22 +18006,6 @@ export const MUTATIONS: readonly Mutation[
     to: "twin",
     test: `${ACP}/test/resumed-session.test.ts`,
     because: "review-2 round 6 MEDIUM-2: every capture inside a failed walk's cooldown posts a batch the hub refuses again",
-  },
-  {
-    label: "expiry moves the cursor one line past what it counted (F5)",
-    file: `${CORE}/src/spool/flush.ts`,
-    from: "    spool.offset + bytesOfLines(spool.pending, count),",
-    to: "    spool.offset + bytesOfLines(spool.pending, count + 1),",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 round 6 MEDIUM-2: the record behind the expired ones is skipped — neither sent nor counted",
-  },
-  {
-    label: "expiry runs past the held life into other lives' old records (H3)",
-    file: `${CORE}/src/spool/held-lives.ts`,
-    from: "    (line) => writerOf(line) !== held || (lineTimestampMs(line) ?? spool.mtimeMs) >= cutoffMs,",
-    to: "    (line) => (lineTimestampMs(line) ?? spool.mtimeMs) >= cutoffMs,",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 round 6 MEDIUM-2: another life's deliverable record is counted expired with the held ones",
   },
   {
     label: "a heal's re-send reads its answers one place off (A1)",
@@ -18166,6 +18046,62 @@ export const MUTATIONS: readonly Mutation[
     to: "!parsed.success || parsed.data.offset !== at.offset",
     test: `${CORE}/test/spool-durability.test.ts`,
     because: "review-2 round 6 MEDIUM-2: the new file's lines are taken for settled and are never sent",
+  },
+  {
+    label: "a flusher sends another live conversation's spool",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  return isPastReapBound(stamps, wroteAtMs, now.getTime()) ? "abandoned" : "live-elsewhere";',
+    to: '  return "abandoned";',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7 (H1, M2, P3): another conversation spends a live life's records — before its register, or without the work context it is owed",
+  },
+  {
+    label: "an ended conversation's spool waits for an owner that never comes",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  if (wroteAtMs === null) {\n    return "ended";',
+    to: '  if (wroteAtMs === null) {\n    return "live-elsewhere";',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7: what a conversation left on disk at its end is delivered by nobody and expires",
+  },
+  {
+    label: "an abandoned conversation's spool waits for an owner that never comes",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '? "abandoned" : "live-elsewhere";',
+    to: '? "live-elsewhere" : "live-elsewhere";',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7: a host that died without SessionEnd leaves its backlog to expire, its state past the reap bound",
+  },
+  {
+    label: "a flusher's own spool reads as another conversation's",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return "own";',
+    to: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return "live-elsewhere";',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7: a conversation never delivers its own records",
+  },
+  {
+    label: "the drain ignores whose spool it is sending",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    if (await mayFlusherSend(ctx.home, spool, flusherSessionId, ctx.now())) {",
+    to: "    if (true) {",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7 (H1, P4, p4b): a healing flusher re-sends another conversation's owed life's records without its work context, and they are spent as author_unknown",
+  },
+  {
+    label: "the abandoned bound is any silence at all",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "  return silentMs !== null && silentMs > MAX_SPOOL_AGE_DAYS * MS_PER_DAY;",
+    to: "  return silentMs !== null;",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7 (M2): an idle but alive conversation's records are spent by a successor, and session-reap deletes its state",
+  },
+  {
+    label: "doctor counts no live session's waiting records",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    if ((await ownerOf(home, spool.slug, "", now)) === "live-elsewhere") {',
+    to: '    if ((await ownerOf(home, spool.slug, "", now)) === "own") {',
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7: records that wait for their own conversation show nowhere",
   },
 ];
 
@@ -18237,7 +18173,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
- * PRINTS: packages/cli/test/doctor.test.ts 2
+ * PRINTS: packages/cli/test/doctor.test.ts 3
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
@@ -18327,7 +18263,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/resumed-session.test.ts 12
+ * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
@@ -18425,7 +18361,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 35
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 27
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 28
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
@@ -18436,11 +18372,11 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
+ * PRINTS: packages/connector-core/test/spool-ownership.test.ts 6
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
- * PRINTS: packages/connector-core/test/unregistered-hold.test.ts 5
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1

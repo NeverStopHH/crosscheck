@@ -83,15 +83,14 @@ export const batchLosses = (
   earlier: ReadonlySet<number>,
 ): BatchLosses => {
   let running: Promise<void> | null = null;
-  const isNew = (line: BatchLine): boolean => !earlier.has(line.end);
+  // `lines` holds only what no earlier walk wrote down: the batch comes off
+  // the cursor's note already (spool/flush.ts), so every line here is new.
   const run = async (sealed: readonly number[]): Promise<void> => {
-    const torn = lines.filter((line) => line.record === null && isNew(line));
-    const withheld = lines.filter(
-      (line): line is SpooledLine => line.record !== null && isWithheld(line.record) && isNew(line),
-    );
+    const torn = lines.filter((line) => line.record === null);
+    const withheld = lines.filter((line): line is SpooledLine => line.record !== null && isWithheld(line.record));
     const refused = sealed
       .map((index) => sendable[index])
-      .filter((line): line is SpooledLine => line !== undefined && isNew(line));
+      .filter((line): line is SpooledLine => line !== undefined);
     await recordDrop(ctx.home, ctx.repoKey, spool.slug, torn.length, "unparsable", ctx.now());
     await recordWithheld(ctx, spool, withheld.map((line) => line.record));
     await recordSealed(ctx, spool, refused.map((line) => line.record));

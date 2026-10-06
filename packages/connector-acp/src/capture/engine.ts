@@ -917,7 +917,6 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     const at = now();
     const attempted = await heartbeatMaybe({
       hub: session.hub,
-      hostSessionKey: session.hostSessionKey,
       crosscheckSessionId: session.crosscheckSessionId,
       lastHeartbeatAt: session.lastHeartbeatAt,
       now: at,
@@ -1432,9 +1431,9 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           await reapStaleLineages(session.config.home, now());
           // ...and the state files of sessions that died without an end, the
           // way Claude's SessionStart sweeps them (state/session-reap.ts): a
-          // corpse pins its spool and, while marked unregistered, holds its
-          // records from every other flusher (review-2 round 6, HIGH-2).
-          await reapStaleSessionStates(session.config.home, now());
+          // corpse pins its spool against reap. Never this session's own,
+          // whatever its age, like every other host's sweep.
+          await reapStaleSessionStates(session.config.home, now(), { keepHostSessionKey: session.hostSessionKey });
         }
       } catch (error) {
         counters.errors += 1;

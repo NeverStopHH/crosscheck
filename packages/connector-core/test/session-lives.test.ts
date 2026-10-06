@@ -325,7 +325,11 @@ describe("a register that does not land never leaves a life on an ended id (revi
     expect(await targetsOf(`wc_${next}`)).toEqual(["src/resumed.ts"]);
   });
 
-  /** Another conversation's pending edit, OLDER than anything of this one, so it drains first. */
+  /**
+   * An ENDED conversation's pending edit — the only other conversation's
+   * records a flusher sends (spool/ownership.ts) — OLDER than anything of this
+   * one, so it drains first.
+   */
   const otherBacklog = async (fx: Fixture): Promise<{ readonly host: string; readonly workContextId: string }> => {
     const host = `${fx.hostSessionKey}-other`;
     const other = await register(fx, fx.hub, host);
@@ -337,7 +341,15 @@ describe("a register that does not land never leaves a life on an ended id (revi
       [targetRecord(other.workContextId, "file", "src/other.ts", producerOf(other.crosscheckSessionId), new Date(Date.now() - OLDER_MS))],
       new Date(),
     );
+    await rm(sessionStatePath(fx.home, host), { force: true });
     return { host, workContextId: other.workContextId };
+  };
+
+  /** A third, live conversation's flush — whoever comes next for an ended conversation's records. */
+  const successorFlush = async (fx: Fixture): Promise<void> => {
+    const host = `${fx.hostSessionKey}-successor`;
+    await register(fx, fx.hub, host);
+    await flushAs(fx, host);
   };
 
   test("a refused flusher that cannot heal leaves another conversation's records on disk", async () => {
@@ -348,12 +360,12 @@ describe("a register that does not land never leaves a life on an ended id (revi
     const life = await register(fx);
     await endSession(fx.hub, life.crosscheckSessionId);
 
-    // Act: this conversation's flush, refused and unhealable; then the other's own flush
+    // Act: this conversation's flush, refused and unhealable; then a live successor's
     refuseRegisters = true;
     await flushAs(fx, fx.hostSessionKey, fx.proxied);
     refuseRegisters = false;
     const spent = (await readDropDetail(fx.home, fx.key)).byReason["rejected"] ?? 0;
-    await flushAs(fx, other.host);
+    await successorFlush(fx);
 
     // Assert: nothing was spent under the refused producer, and the edit landed
     expect(spent).toBe(0);
@@ -370,7 +382,7 @@ describe("a register that does not land never leaves a life on an ended id (revi
     // Act: a drain under the refused session with no healer — SessionEnd's
     await flushSpool(fx.hub, { sessionId: life.crosscheckSessionId, developerId }, BUDGET_MS);
     const spent = (await readDropDetail(fx.home, fx.key)).byReason["rejected"] ?? 0;
-    await flushAs(fx, other.host);
+    await successorFlush(fx);
 
     // Assert
     expect(spent).toBe(0);
@@ -809,7 +821,7 @@ describe("a heal that moves the state while SessionEnd runs", () => {
  */
 describe("a SessionEnd between a heal's switch and its re-send", () => {
   test("defers the healed life's end, and the re-send under it lands", async () => {
-    // Arrange: life K delivered, then another conversation's backlog on disk,
+    // Arrange: life K delivered, then an ended conversation's backlog on disk,
     // both conversations' lives ended by the hub
     const fx = await fixture("end-before-resend");
     const k = await register(fx);
@@ -823,6 +835,7 @@ describe("a SessionEnd between a heal's switch and its re-send", () => {
       [targetRecord(other.workContextId, "file", "src/other.ts", producerOf(other.crosscheckSessionId), new Date())],
       new Date(),
     );
+    await rm(sessionStatePath(fx.home, otherHost), { force: true });
     await endSession(fx.hub, k.crosscheckSessionId);
     await endSession(fx.hub, other.crosscheckSessionId);
     const healed = await healerFor(fx)({ sessionId: k.crosscheckSessionId, cause: "session_ended" }, Date.now() + BUDGET_MS);

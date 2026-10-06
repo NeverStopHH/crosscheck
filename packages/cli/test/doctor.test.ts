@@ -18,7 +18,6 @@ import {
   spoolDropsPath,
   spoolFlushLockPath,
 } from "@crosscheck/connector-core/config/paths.ts";
-import { MAX_SPOOL_AGE_DAYS } from "@crosscheck/connector-core/constants.ts";
 import { targetRecord } from "@crosscheck/connector-core/capture/records.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
@@ -458,11 +457,11 @@ describe("crosscheck doctor flush lock check", () => {
   });
 });
 
-describe("crosscheck doctor unregistered life check (review-2 round 6, HIGH-2)", () => {
-  test("names the records held for a live life the hub has not registered, and when they expire", async () => {
-    // Arrange: a live session marked unregistered, two of its edits on disk
+describe("crosscheck doctor waiting records check (review-2 round 7)", () => {
+  test("names the records that wait for their own conversation, another live session", async () => {
+    // Arrange: a live session, two of its edits on disk
     const { repo, home } = await fixture();
-    const host = "doctor-held";
+    const host = "doctor-waiting";
     const at = new Date();
     const state = deriveSessionState({
       hostSessionKey: host,
@@ -472,7 +471,7 @@ describe("crosscheck doctor unregistered life check (review-2 round 6, HIGH-2)",
       developerId: null,
       startedAt: at.toISOString(),
     });
-    await writeSessionState(home, { ...state, lastHeartbeatAt: at.toISOString(), unregistered: true });
+    await writeSessionState(home, { ...state, lastHeartbeatAt: at.toISOString() });
     const producer = { developerId: "d", agentKind: "claude-code", sessionId: state.crosscheckSessionId };
     await appendRecords(
       home,
@@ -489,12 +488,11 @@ describe("crosscheck doctor unregistered life check (review-2 round 6, HIGH-2)",
     const result = await runCli(["doctor"], doctorEnv(home), repo);
 
     // Assert
-    const expires = new Date(at.getTime() + MAX_SPOOL_AGE_DAYS * MS_PER_DAY).toISOString().slice(0, 10);
-    expect(result.stdout).toContain("WARN  unregistered life");
-    expect(result.stdout).toContain(`2 records held for an unregistered life (expire on ${expires})`);
+    expect(result.stdout).toContain("WARN  waiting records");
+    expect(result.stdout).toContain("2 records wait for their own conversation (another live session)");
   });
 
-  test("prints nothing while nothing is held", async () => {
+  test("prints nothing while no record waits", async () => {
     // Arrange
     const { repo, home } = await fixture();
 
@@ -502,7 +500,7 @@ describe("crosscheck doctor unregistered life check (review-2 round 6, HIGH-2)",
     const result = await runCli(["doctor"], doctorEnv(home), repo);
 
     // Assert
-    expect(result.stdout).not.toContain("held for an unregistered life");
+    expect(result.stdout).not.toContain("waiting records");
   });
 });
 

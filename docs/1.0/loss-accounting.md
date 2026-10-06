@@ -376,11 +376,10 @@ flush drained the deaf life's spool under its own name, the hub refused its work
 and its targets ("work context not found"), and they were spent as someone else's refusals; the heal five
 minutes later registered the life as itself and spooled its work context at the TAIL, behind the very edit that
 named it, and the seen-set kept every lost file from being captured again — of a, b, c, d edited, the hub held c
-and d. Three changes, each needed: the state records `unregistered` for a life whose register did not land, and a
-successor flush leaves that life's records where they are while it is live (`spool/held-lives.ts`) — the drain
-goes on past it, its heal clears the flag, its end lifts the hold, and a held record past `MAX_SPOOL_AGE_DAYS` is
-counted `expired`; a heal sends the life's work context AHEAD of the batch it re-sends (`flush-heal.ts`), the
-spooled copy a duplicate at worst; and every heal clears the seen-set, the same id's too.
+and d. Three changes, each needed: a successor flush leaves that life's records where they are (the ownership rule
+below, which replaced round 6's `unregistered` hold); a heal sends the life's work context AHEAD of the batch it
+re-sends (`flush-heal.ts`), the spooled copy a duplicate at worst; and every heal clears the seen-set, the same
+id's too.
 
 **The work context a heal owes is a persisted debt** (review-2 round 6, HIGH-1). That ahead copy rode only the
 healing flush's one re-send: any failure of that POST — a 503, a timeout, no room left, or a full batch plus the
@@ -395,22 +394,18 @@ SessionEnd counts an open debt for the life it ends — or the one a heal moved 
 The life's own records refused `author_unknown` while its debt is open are kept, never spent. Reap removes a debt
 with its spool, or once no live session and no spool can ever pay it.
 
-**The hold on an unregistered life ends** (review-2 round 6, HIGH-2). The `unregistered` mark could stick for good:
-a register the hub committed but answered too late reads as refused, the life's own accepted flushes and its 2xx
-heartbeats left the mark standing, and "live" meant only that its state file existed — a host that exited without
-SessionEnd left a corpse whose backlog was held for seven days and then counted `expired` (of four edits, one
-landed). Now a heartbeat the hub answered and a record it took under the life's own id clear the mark
-(`markLifeRegistered`); a life whose state has said nothing for `STALE_SESSION_STATE_MS` (the hour doctor calls a
-state file a corpse, by `sessionSilentForMs`) is never held; doctor says `N records held for an unregistered life
-(expire on <date>)` while a hold exists; and Cursor's sessionStart and the ACP proxy's shutdown reap stale session
-states as Claude's SessionStart already did, so no host leaves corpses behind.
-
-**The hold is per life, not per file position** (review-2 round 6, LOW-4). A record of ANOTHER life can sit in the
-host session's own spool behind the held life's first record — a detached worker, or a hook that read the state
-before a resume switched it, appends late — and it waited as long as the hold did. The held life's first line now
-stops the cursor, not the batch: every other line of the batch is settled — sent, or counted — and those beyond the
-cursor are noted on it (the same note the counted losses use, `spool/cursor.ts`), so no flush sends or counts them
-twice and the cursor passes them once the hold ends.
+**A flush sends only what is its own** (review-2 round 7). Round 6 held an `unregistered` life's records from
+other flushers, and each repair of the hold opened another way to lose them: a mark that never cleared held a
+crashed life's backlog until it expired; an hour of silence released a life that was idle but alive, and a
+successor spent its records (P3); and a flusher healing its own life inside a batch of ANOTHER conversation's
+owed life re-sent those records without the work context they were owed, so all three were refused
+`author_unknown` (H1, P4). The hold, its mark, its expiry and its per-life cursor notes are gone. In their place is
+one rule (`spool/ownership.ts`): a flusher sends its own host session's spool (the state names its life), an ENDED
+one's (no state file), or an ABANDONED one's (a state silent past the bound session-reap deletes on,
+`isPastReapBound`), and never another live conversation's. That conversation delivers its own records, heals
+its own life and pays its own work context. Doctor says `N records wait for their own conversation (another live
+session)` while any do. Cursor's sessionStart and the ACP proxy's shutdown reap stale session states as Claude's
+SessionStart does, each sparing its own.
 
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
