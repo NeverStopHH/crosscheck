@@ -31,11 +31,18 @@
  * dropped cannot open a frame or mint a field the sanitizer would have
  * stopped.
  */
+import { isGermanPrompt, promptTokens } from "./prompt-terms.ts";
+import { ENGLISH_STOP_WORDS, GERMAN_STOP_WORDS } from "./stop-words.ts";
 import { spanRedacted } from "./untrusted-text.ts";
 
 const SENTENCES = new Intl.Segmenter("und", { granularity: "sentence" });
 
-/** Words a shown sentence needs, each of at least two letters. */
+/**
+ * CONTENT words a shown sentence needs: at least two letters each, and not a
+ * function word of PostgreSQL's stop lists — the English one always, the
+ * German one in a German sentence (stop-words.ts; review 1006b, L2). "Use
+ * Redis here, it is the one." carries two.
+ */
 export const SUBSTANCE_MIN_WORDS = 3;
 
 /**
@@ -100,14 +107,40 @@ const sentencesOf = (body: string): readonly string[] => {
   return [...glued.done, glued.open].map((sentence) => sentence.trim());
 };
 
-/** Words of at least two letters — what "carries content" is counted in. */
-const contentWords = (sentence: string): number =>
-  sentence
+/** Content words: two letters or more, and no function word of either stop list in force. */
+const contentWords = (sentence: string): number => {
+  const isGerman = isGermanPrompt(promptTokens(sentence));
+  return sentence
+    .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
-    .filter((token) => (token.match(/\p{L}/gu)?.length ?? 0) >= 2).length;
+    .filter((token) => (token.match(/\p{L}/gu)?.length ?? 0) >= 2)
+    .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_STOP_WORDS.has(token))).length;
+};
 
-export const substanceSentence = (body: string): string =>
-  sentencesOf(body).find((sentence) => contentWords(sentence) >= SUBSTANCE_MIN_WORDS) ?? "";
+const ORDINAL_START = /^\(?\d{1,3}[.)]\s/u;
+
+/** A short sentence after the chosen one qualifies it ("U.S. traffic only.") — never the next list item. */
+const isQualifier = (sentence: string): boolean =>
+  sentence.length > 0 && contentWords(sentence) < SUBSTANCE_MIN_WORDS && !ORDINAL_START.test(sentence);
+
+/** A sentence that introduces what follows ("… three causes:") never stands alone. */
+const isLeadIn = (sentence: string): boolean => sentence.endsWith(":");
+
+/**
+ * The first sentence that carries content, with what it cannot be read
+ * without (L2): a short qualifier after it stays attached, and a sentence
+ * that introduces a list keeps the item after it — one sentence, never more.
+ */
+export const substanceSentence = (body: string): string => {
+  const sentences = sentencesOf(body);
+  const index = sentences.findIndex((sentence) => contentWords(sentence) >= SUBSTANCE_MIN_WORDS);
+  const chosen = sentences[index];
+  if (chosen === undefined) {
+    return "";
+  }
+  const next = sentences[index + 1] ?? "";
+  return next.length > 0 && (isLeadIn(chosen) || isQualifier(next)) ? `${chosen} ${next}` : chosen;
+};
 
 /**
  * EXACTLY WHAT A READER IS SHOWN of a claim (review 1006b, M4): the sentence

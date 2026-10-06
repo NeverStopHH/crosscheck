@@ -17647,8 +17647,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a one-word acknowledgement is shown as the substance",
     file: `${SCHEMA}/src/substance-sentence.ts`,
-    from: "sentencesOf(body).find((sentence) => contentWords(sentence) >= SUBSTANCE_MIN_WORDS) ?? \"\";",
-    to: "sentencesOf(body).find((sentence) => sentence.length > 0) ?? \"\";",
+    from: "  const index = sentences.findIndex((sentence) => contentWords(sentence) >= SUBSTANCE_MIN_WORDS);",
+    to: "  const index = sentences.findIndex((sentence) => sentence.length > 0);",
     test: `${SCHEMA}/test/substance-sentence.test.ts`,
     because: "\"Yes.\" or a full stop behind zero-width spaces is pushed as a teammate's finding",
   },
@@ -18118,6 +18118,46 @@ export const MUTATIONS: readonly Mutation[
     because: "the hub counts a redacted word and misses a ligature's — scoring a text the reader never sees (M4)",
   },
   {
+    label: "a function word counts as content in a shown sentence",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    .filter((token) => !ENGLISH_STOP_WORDS.has(token) && !(isGerman && GERMAN_STOP_WORDS.has(token))).length;",
+    to: "    .length;",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Use Redis here, it is this.\" is pushed as a teammate's finding on two content words (L2)",
+  },
+  {
+    label: "German function words count toward a German shown sentence",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: " && !(isGerman && GERMAN_STOP_WORDS.has(token))).length;",
+    to: ").length;",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Das ist nicht so, wie es war.\" passes for a sentence with content",
+  },
+  {
+    label: "a short qualifier is cut off the finding it qualifies",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "(isLeadIn(chosen) || isQualifier(next))",
+    to: "isLeadIn(chosen)",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Disable the edge cache for uploads.\" arrives without \"U.S. traffic only.\" — the opposite of the finding for everyone else",
+  },
+  {
+    label: "a list's lead-in is shown without the item it introduces",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "(isLeadIn(chosen) || isQualifier(next))",
+    to: "isQualifier(next)",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"We ruled out three causes in the pipeline:\" dangles with nothing after the colon",
+  },
+  {
+    label: "the next list item is attached as a qualifier",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: " && !ORDINAL_START.test(sentence);",
+    to: ";",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"1. … 2. Rest.\" shows two list items as if one were a qualifier of the other",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18456,7 +18496,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/prompt-terms.test.ts 4
  * PRINTS: packages/schema/test/session-control.test.ts 4
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/substance-sentence.test.ts 3
+ * PRINTS: packages/schema/test/substance-sentence.test.ts 8
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
