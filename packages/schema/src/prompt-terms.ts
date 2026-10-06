@@ -29,12 +29,20 @@ import { ENGLISH_STOP_WORDS, GERMAN_STOP_WORDS } from "./stop-words.ts";
 /** Shorter tokens are not words to search on — the hub's and the connector's floor. */
 export const PROMPT_MIN_TOKEN_CHARS = 3;
 
-/** Lower-cased letter/digit runs of at least PROMPT_MIN_TOKEN_CHARS, in order. */
+/**
+ * Two capitals are a word however short (hold-out review, M6): "CI rot", "DB
+ * down", "PR #74" name their topic in two letters, and the length floor read
+ * them as nothing. Only in capitals as written — "ci" or "db" in running
+ * lower-case text stays below the floor, where "an", "to" and "is" live.
+ */
+const isCapitalPair = (token: string): boolean => /^\p{Lu}{2}$/u.test(token);
+
+/** Lower-cased letter/digit runs of at least PROMPT_MIN_TOKEN_CHARS, or two capitals, in order. */
 export const promptTokens = (text: string): readonly string[] =>
   text
-    .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
-    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS);
+    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token))
+    .map((token) => token.toLowerCase());
 
 const countWhere = (tokens: readonly string[], predicate: (token: string) => boolean): number =>
   tokens.filter(predicate).length;

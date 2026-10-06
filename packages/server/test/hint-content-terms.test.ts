@@ -160,3 +160,24 @@ describe("the German stop list applies only to a German prompt (L1)", () => {
     expect(ids.length).toBe(1);
   });
 });
+
+describe("two capitals are a shared word on the hub too (M6)", () => {
+  test("\"CI rot auf main\" finds the tree about CI on main", async () => {
+    // Arrange — "CI" and "main" are the two words it shares; "rot" is German for red
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "CI pipeline red on main", description: "Lint before build" })),
+        recordEnvelope("claim", validClaimBody({ id: "c_ci", body: "CI is red on main because the lint step runs before the build." })),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(2);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+
+    // Act
+    const ids = await fetchIds(harness, robin, "CI rot auf main");
+
+    // Assert
+    expect(ids.length).toBe(1);
+  });
+});

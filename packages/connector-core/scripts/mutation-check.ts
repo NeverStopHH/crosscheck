@@ -18040,8 +18040,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "only the first sixteen tokens of a prompt are judged",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS);",
-    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS)\n    .slice(0, 16);",
+    from: "    .map((token) => token.toLowerCase());",
+    to: "    .map((token) => token.toLowerCase())\n    .slice(0, 16);",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "a long prompt whose task word comes late is judged on its preamble and floored",
   },
@@ -18414,6 +18414,30 @@ export const MUTATIONS: readonly Mutation[
     because: "\"wiederuafnhemen\" — the live pilot's own spelling — is a task word again (M5)",
   },
   {
+    label: "two capitals fall below the length floor again",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token))",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS)",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"CI rot\", \"DB down\" and \"CI?\" lose the word they are about and are floored as content-free (M6)",
+  },
+  {
+    label: "the hub never counts a two-capital word as shared",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token))",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS)",
+    test: `${SERVER}/test/hint-content-terms.test.ts`,
+    because: "\"CI rot auf main\" shares only \"main\" with the CI tree and is never pointed at it (M6)",
+  },
+  {
+    label: "any two letters are a word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "const isCapitalPair = (token: string): boolean => /^\\p{Lu}{2}$/u.test(token);",
+    to: "const isCapitalPair = (token: string): boolean => token.length === 2;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"ci\" and \"db\" in running lower-case text become words, and with them \"an\", \"to\" and \"is\" (M6)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18749,7 +18773,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 5
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 7
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/substance-sentence.test.ts 11
@@ -18782,7 +18806,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 5
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
- * PRINTS: packages/server/test/hint-content-terms.test.ts 1
+ * PRINTS: packages/server/test/hint-content-terms.test.ts 2
  * PRINTS: packages/server/test/hint-deliveries.test.ts 8
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 3

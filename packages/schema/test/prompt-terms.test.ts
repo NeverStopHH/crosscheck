@@ -37,6 +37,20 @@ describe("content terms are the words left after the stop lists", () => {
     expect(promptTerms("Cache cache KEY on a db").content).toEqual(["cache", "key"]);
   });
 
+  test.each([
+    ["CI rot", ["ci", "rot"]],
+    ["DB down", ["db"]],
+    ["CI?", ["ci"]],
+    ["UI kaputt", ["ui", "kaputt"]],
+  ])("two capitals are a word however short: %p (hold-out review, M6)", (prompt, terms) => {
+    expect(promptTerms(prompt).content).toEqual(terms);
+    expect(isContentFreePrompt(prompt)).toBe(false);
+  });
+
+  test("two lower-case letters stay too short to be a word", () => {
+    expect(promptTokens("npm ci kaputt, db leer")).toEqual(["npm", "kaputt", "leer"]);
+  });
+
   test("a steering word is never a term, even beside a task word (H1)", () => {
     expect(promptTerms("mache weiter mit den Tests, limit zurückgesetzt, bitte").content).toEqual(["tests"]);
     expect(promptTerms("please continue with the tests, the limit was reset").content).toEqual(["tests"]);
