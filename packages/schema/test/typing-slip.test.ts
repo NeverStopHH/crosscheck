@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { isTypingSlipOf, slipBudget } from "../src/typing-slip.ts";
+import { isShortSwapSlipOf, isTypingSlipOf, slipBudget } from "../src/typing-slip.ts";
 
 describe("the slips a hand makes are recognised", () => {
   test.each([
@@ -41,6 +41,28 @@ describe("what a hand does not do is never a slip", () => {
     ["continue", "continue", "the word itself"],
   ])("%p is not a slip of %p — %s", (typed, target) => {
     expect(isTypingSlipOf(typed, target)).toBe(false);
+  });
+});
+
+describe("a four-letter trigger takes the swapped pair alone (round 3, H1)", () => {
+  test.each([
+    ["kepe", "keep"],
+    ["mahc", "mach"],
+    ["mcah", "mach"],
+    ["fhar", "fahr"],
+    ["frot", "fort"],
+  ])("%p is a swapped %p", (typed, target) => {
+    expect(isShortSwapSlipOf(typed, target)).toBe(true);
+  });
+
+  test.each([
+    ["mavh", "mach", "a neighbouring key"],
+    ["mac", "mach", "a letter left out"],
+    ["amch", "mach", "the first letter moved"],
+    ["mach", "mach", "the word itself"],
+    ["contiune", "continue", "a longer word keeps its own budget"],
+  ])("%p is not one of %p — %s", (typed, target) => {
+    expect(isShortSwapSlipOf(typed, target)).toBe(false);
   });
 });
 

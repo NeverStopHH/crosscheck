@@ -65,7 +65,9 @@ export interface PromptTerms {
   readonly isContentFree: boolean;
 }
 
-const isSteeringClass = (wordClass: WordClass | null): boolean => wordClass === "trigger" || wordClass === "steering";
+/** Words that never name a task: steering, triggers and filler (round 3, H1). */
+const isSteeringClass = (wordClass: WordClass | null): boolean =>
+  wordClass === "trigger" || wordClass === "steering" || wordClass === "filler";
 
 const isCommandClass = (wordClass: WordClass | null): boolean =>
   wordClass === "conversation" || wordClass === "operation";

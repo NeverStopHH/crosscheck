@@ -64,6 +64,10 @@ describe("content terms are the words left after the stop lists", () => {
     expect(promptTokens("npm ci kaputt, db leer")).toEqual(["npm", "kaputt", "leer"]);
   });
 
+  test("a filler word is never a term either (round 3, H1)", () => {
+    expect(promptTerms("ähm der Upload Komma bricht ab Punkt").content).toEqual(["upload", "bricht"]);
+  });
+
   test("a steering word is never a term, even beside a task word (H1)", () => {
     expect(promptTerms("mache weiter mit den Tests für den Upload, bitte").content).toEqual(["tests", "upload"]);
     expect(promptTerms("please continue with the checkout tests").content).toEqual(["checkout", "tests"]);
@@ -107,6 +111,27 @@ describe("content terms are the words left after the stop lists", () => {
     ["rerun", "a restart verb alone (C1)"],
     ["retry", "a restart verb alone (C1)"],
     ["mach mal, bitte", "a trigger and two steering words"],
+    ["okay Komma mach weiter Punkt", "dictated punctuation (round 3, H1)"],
+    ["äh weiter Fragezeichen", "dictated punctuation and a filler (H1)"],
+    ["okay neue Zeile mach weiter", "a dictated new line (H1)"],
+    ["jaja weiter weiter", "a filler assent (H1)"],
+    ["ja nee passt schon mach weiter", "a filler no (H1)"],
+    ["sure thing", "a filler noun (H1)"],
+    ["gut, dann weiter im text", "a filler noun (H1)"],
+    ["sorry war limit, weiter", "an apology beside a trigger and a meta word (H1)"],
+    ["mahc weiter", "a swapped four-letter trigger (H1)"],
+    ["mcah weiter bitte", "a swapped four-letter trigger (H1)"],
+    ["kepe going", "a swapped four-letter trigger (H1)"],
+    ["it keeps going, continue", "a trigger's inflection (H1)"],
+    ["ok continued, thanks", "a trigger's inflection (H1)"],
+    ["tried again, retrying", "a trigger's inflections (H1)"],
+    ["sorry, limit", "a filler beside one meta word (H1)"],
+    ["session limit hit earlier, it's back now, continue", "the clock and a limit report (H1)"],
+    ["token limit war erreicht, jetzt weiter", "a German limit report (H1)"],
+    ["limit zurückgesetzt um 14 uhr, weiter gehts", "the clock in German (H1)"],
+    ["erklär nochmal einfacher", "a German conversation word (H1)"],
+    ["committe und pushe bitte", "German forms of operations (H1)"],
+    ["tests laufen lassen", "German forms of operations (H1)"],
     ["/code-review", "a bare slash command (d)"],
     ["", "nothing at all"],
   ])("%p is content-free — %s", (prompt) => {
@@ -124,6 +149,8 @@ describe("content terms are the words left after the stop lists", () => {
     ["Stop the worker before migration?", "an interrupt word beside a topic"],
     ["who reviews my PR before merge?", "an inflection is no operation word"],
     ["CI?", "two capitals are a topic"],
+    ["test runner keeps rerunning failed tests", "an inflected trigger beside a topic (H1)"],
+    ["the text field overflows the dialog", "a filler noun beside a topic (H1)"],
   ])("%p names a task — %s", (prompt) => {
     expect(isContentFreePrompt(prompt)).toBe(false);
   });

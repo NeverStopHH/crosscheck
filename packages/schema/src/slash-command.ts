@@ -24,13 +24,24 @@ export const SLASH_COMMAND_SHAPES: readonly SlashCommandShape[] = [
   { name: "a hyphenated name", sample: "/code-review", arguments: "" },
   { name: "a namespaced name", sample: "/everything-claude-code:plan", arguments: "" },
   { name: "a command with arguments", sample: "/model haiku", arguments: "haiku" },
-  { name: "a command as an argument", sample: "/loop 5m /babysit-prs", arguments: "5m" },
+  { name: "a command as an argument", sample: "/loop 5m /babysit-prs", arguments: "" },
+  { name: "a unit-number argument", sample: "/loop 10m /babysit-prs", arguments: "" },
 ];
 
 /** "/name": a slash, then a letter or digit, then no further slash or space. */
 const COMMAND_NAME = /^\/[\p{L}\p{N}][\p{L}\p{N}_.:-]*$/u;
 
+/**
+ * A NUMBER WITH A UNIT, or none (round 3, H1): an interval or a count the
+ * command takes — "/loop 10m", "/loop 90s", "/retry 3" — never a task word.
+ * "10m" is three characters and was scored as one.
+ */
+const UNIT_NUMBER = /^\d+(?:ms|s|sec|secs|m|min|mins|h|hr|hrs|d|w)?$/iu;
+
 const isCommandName = (word: string): boolean => COMMAND_NAME.test(word);
+
+/** An argument that is the command's own, never the prompt's: another command, or a unit number. */
+const isCommandOwn = (word: string): boolean => isCommandName(word) || UNIT_NUMBER.test(word);
 
 /** The text a prompt's classifier scores: a leading command's arguments, else the prompt. */
 export const commandArguments = (text: string): string => {
@@ -38,5 +49,5 @@ export const commandArguments = (text: string): string => {
   if (head === undefined || !isCommandName(head)) {
     return text;
   }
-  return rest.filter((word) => !isCommandName(word)).join(" ");
+  return rest.filter((word) => !isCommandOwn(word)).join(" ");
 };

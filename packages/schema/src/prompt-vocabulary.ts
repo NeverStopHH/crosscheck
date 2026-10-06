@@ -21,6 +21,22 @@ export const CONTINUATION_TRIGGERS: readonly string[] = [
   "ahead", "try", "weiter", "weida", "weitermachen", "weiterarbeiten", "weitergehen", "fortfahren",
   "fortsetzen", "fahre", "fahr", "fort", "wiederaufnehmen", "versuch", "versuche", "versuchen",
   "probier", "probiere", "probieren", "mach", "mache", "machen",
+  // round 3, H1: the inflections a report of carrying on is written in
+  "continued", "keeps", "kept", "tried", "tries", "retrying", "resumed",
+];
+
+/**
+ * FILLER AND DICTATION (hold-out review round 3, H1): what speech-to-text and
+ * a hesitating hand leave in a prompt — "ähm", "hm", the dictated
+ * punctuation ("Komma", "Punkt", "Fragezeichen", "neue Zeile", "period"),
+ * an apology, a filler assent or no ("jaja", "joa", "nee") and the filler
+ * nouns of "sure thing" and "weiter im Text". Like a steering word it never
+ * names a task and is never a term; "ok" and "okay" stay steering words.
+ */
+export const FILLER_WORDS: readonly string[] = [
+  "ahm", "ahh", "uhm", "umm", "uhh", "hmm", "komma", "punkt", "fragezeichen", "ausrufezeichen",
+  "doppelpunkt", "neue", "zeile", "absatz", "comma", "period", "sorry", "sry", "jaja", "joa", "nee",
+  "thing", "text",
 ];
 
 export const OTHER_STEERING: readonly string[] = [
@@ -43,6 +59,8 @@ export const META_WORDS: readonly string[] = [
   "abgelaufen", "gone", "vorbei", "weekly", "daily", "hourly", "minute", "minutes", "hour", "hours",
   "minuten", "stunde", "stunden", "ago", "vorhin", "gerade", "eben", "today", "heute", "window",
   "left", "aufgehort",
+  // round 3, H1: the clock and the limit reports the round-3 set showed missing
+  "earlier", "vorher", "gleich", "uhr", "sec", "secs", "hit", "erreicht",
 ];
 
 /**
@@ -73,6 +91,8 @@ export const CONVERSATION_CONTROL: readonly string[] = [
   "sense", "makes", "got", "understood", "verstanden", "reasonable", "vernunftig", "wunderbar",
   "top", "absolutely", "definitely", "indeed", "noted", "actually", "really", "maybe", "perhaps",
   "still", "simply",
+  // round 3, H1: German forms of words above the round-3 set showed missing
+  "einfacher", "entscheidest",
 ];
 
 export const AGENT_OPERATION: readonly string[] = [
@@ -83,6 +103,8 @@ export const AGENT_OPERATION: readonly string[] = [
   "deploy", "deployen", "build", "bauen", "check", "checks", "prufe", "prufen", "log", "logs",
   "show", "zeig", "zeige", "zeigen", "schau", "open", "offne", "close", "git", "main", "master",
   "fix", "fixen", "compile", "typecheck", "pr", "prs",
+  // round 3, H1: forms of the operations above, and the harness's own compact
+  "committe", "pushe", "lassen", "getestet", "tested", "compact",
 ];
 
 /**
@@ -97,12 +119,14 @@ export const AGENT_OPERATION: readonly string[] = [
 export const NEAR_MISS_WORDS: readonly string[] = [
   // the system dictionary
   "carr", "carty", "cary", "cleaded", "confine", "confining", "conine", "contect", "contest",
-  "continued", "continuer", "cotinus", "dail", "expiree", "expirer", "fare", "genre", "genua", "ging",
+  "continuer", "cotinus", "dail", "expiree", "expirer", "fare", "genre", "genua", "ging",
   "gong", "grade", "greta", "hurly", "lifter", "mace", "minuet", "minuter", "prefect", "probeer",
   "prober", "proceeds", "quot", "redstart", "reeming", "reest", "reet", "refill", "refresh",
   "refresher", "renewer", "resing", "rest", "restate", "restes", "restore", "restorer", "resue",
   "resuing", "resumer", "retired", "retorted", "rewet", "stude", "toady", "toda", "tody", "toke",
   "tooken", "usager", "widow", "windrow", "winrow", "writer",
+  // round 3's trigger inflections and four-letter swaps
+  "confined", "frot", "kees", "rering", "restring", "retrain", "retting", "retying", "tied", "tired", "trier",
   // the German sample
   "weitere", "weitet", "masche", "macher", "probiert", "probierte", "resumee", "verfugbare",
   "abgelaufene", "fahrer", "gerader", "kontinent", "kontingenz",

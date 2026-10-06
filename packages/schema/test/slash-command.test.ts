@@ -22,8 +22,11 @@ describe("only a leading command is one", () => {
   test.each([
     ["/review the checkout flow", "the checkout flow"],
     ["  /compact", ""],
-    ["/loop 5m /babysit-prs", "5m"],
-  ])("%p scores %p", (prompt, expected) => {
+    ["/loop 5m /babysit-prs", ""],
+    ["/loop 10m /babysit-prs", ""],
+    ["/loop 90s check the deploy", "check the deploy"],
+    ["/model haiku", "haiku"],
+  ])("%p scores %p — a unit-number argument is the command's own (round 3, H1)", (prompt, expected) => {
     expect(commandArguments(prompt)).toBe(expected);
   });
 
@@ -37,7 +40,7 @@ describe("only a leading command is one", () => {
 });
 
 describe("the classifier scores the arguments", () => {
-  test.each([["/code-review"], ["/compact"], ["/walkthrough"], ["/loop 5m /babysit-prs"]])(
+  test.each([["/code-review"], ["/compact"], ["/walkthrough"], ["/loop 5m /babysit-prs"], ["/loop 10m /babysit-prs"]])(
     "a bare command %p is content-free",
     (prompt) => {
       expect(isContentFreePrompt(prompt)).toBe(true);

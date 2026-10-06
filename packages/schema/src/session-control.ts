@@ -19,14 +19,15 @@ import {
   AGENT_OPERATION,
   CONTINUATION_TRIGGERS,
   CONVERSATION_CONTROL,
+  FILLER_WORDS,
   META_WORDS,
   NEAR_MISS_WORDS,
   OTHER_STEERING,
   RESTART_VERBS,
 } from "./prompt-vocabulary.ts";
-import { isSwapSlipOf, isTypingSlipOf } from "./typing-slip.ts";
+import { isShortSwapSlipOf, isSwapSlipOf, isTypingSlipOf } from "./typing-slip.ts";
 
-export type WordClass = "trigger" | "steering" | "meta" | "conversation" | "operation";
+export type WordClass = "trigger" | "steering" | "filler" | "meta" | "conversation" | "operation";
 
 /** Lower case, accents off, ß as ss: "Zurückgesetzt" is "zuruckgesetzt". */
 export const foldWord = (word: string): string =>
@@ -43,6 +44,7 @@ const EXACT_CLASSES: ReadonlyMap<string, WordClass> = new Map([
   ...classed(CONVERSATION_CONTROL, "conversation"),
   ...classed(AGENT_OPERATION, "operation"),
   ...classed(META_WORDS, "meta"),
+  ...classed(FILLER_WORDS, "filler"),
   ...classed(OTHER_STEERING, "steering"),
   ...classed(CONTINUATION_TRIGGERS, "trigger"),
 ]);
@@ -58,10 +60,14 @@ interface SlipTarget {
  * touches; triggers first. Triggers and meta words take every slip a hand
  * makes (decision b). A steering word takes the swapped pair alone — "bitet",
  * "plaese" — since one key from "passt", "bitte" and "looks" are "pass",
- * "bite" and "look".
+ * "bite" and "look". A four-letter TRIGGER takes the swapped pair as well,
+ * where the budget gives it none (round 3, H1): "mahc weiter", "kepe going".
  */
+const isTriggerSlipOf = (typed: string, target: string): boolean =>
+  isTypingSlipOf(typed, target) || isShortSwapSlipOf(typed, target);
+
 const SLIP_TARGETS: ReadonlyMap<string, readonly SlipTarget[]> = [
-  ...CONTINUATION_TRIGGERS.map((word): SlipTarget => ({ word, wordClass: "trigger", isSlip: isTypingSlipOf })),
+  ...CONTINUATION_TRIGGERS.map((word): SlipTarget => ({ word, wordClass: "trigger", isSlip: isTriggerSlipOf })),
   ...OTHER_STEERING.map((word): SlipTarget => ({ word, wordClass: "steering", isSlip: isSwapSlipOf })),
   ...META_WORDS.map((word): SlipTarget => ({ word, wordClass: "meta", isSlip: isTypingSlipOf })),
 ].reduce<ReadonlyMap<string, readonly SlipTarget[]>>(
@@ -94,10 +100,13 @@ export const wordClassOf = (word: string): WordClass | null => {
   return NEAR_MISSES.has(folded) ? null : (slipTargetOf(folded)?.wordClass ?? null);
 };
 
-/** A steering word or trigger AS WRITTEN: the words the hub never counts (review 1006b, H1). */
+/**
+ * A steering word, a trigger or a filler AS WRITTEN: the words the hub never
+ * counts (review 1006b, H1; filler since round 3).
+ */
 export const isSteeringWord = (word: string): boolean => {
   const wordClass = EXACT_CLASSES.get(foldWord(word));
-  return wordClass === "trigger" || wordClass === "steering";
+  return wordClass === "trigger" || wordClass === "steering" || wordClass === "filler";
 };
 
 /** A verb or particle that carries the session's work on, a slip included. */

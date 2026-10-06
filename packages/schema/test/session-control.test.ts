@@ -52,6 +52,16 @@ describe("as written, folded", () => {
     ["Option", "conversation"],
     ["commit", "operation"],
     ["tests", "operation"],
+    ["ähm", "filler"],
+    ["Komma", "filler"],
+    ["Fragezeichen", "filler"],
+    ["sorry", "filler"],
+    ["jaja", "filler"],
+    ["thing", "filler"],
+    ["keeps", "trigger"],
+    ["continued", "trigger"],
+    ["tried", "trigger"],
+    ["retrying", "trigger"],
   ] as const)("%p is a %p word", (word, wordClass) => {
     expect(wordClassOf(word)).toBe(wordClass);
   });
@@ -75,6 +85,10 @@ describe("a slip of a trigger or a meta word is that word", () => {
     ["zurukgsetz", "meta"],
     ["kontingnet", "meta"],
     ["usgae", "meta"],
+    ["mahc", "trigger"],
+    ["mcah", "trigger"],
+    ["kepe", "trigger"],
+    ["fhar", "trigger"],
   ] as const)("%p reads as a %p word", (word, wordClass) => {
     expect(wordClassOf(word)).toBe(wordClass);
   });
@@ -91,7 +105,7 @@ describe("a steering word takes the swapped pair alone", () => {
 });
 
 describe("a conversation or operation word matches only as written", () => {
-  test.each([["text"], ["tesst"], ["posh"], ["comit"], ["shortr"]])("%p is no class word", (word) => {
+  test.each([["tesr"], ["tesst"], ["posh"], ["comit"], ["shortr"]])("%p is no class word", (word) => {
     expect(wordClassOf(word)).toBeNull();
   });
 });
@@ -99,7 +113,8 @@ describe("a conversation or operation word matches only as written", () => {
 describe("what a hand does not do is never a slip", () => {
   test.each([
     ["ocntineu", "the first letter moved"],
-    ["fhar", "a four-letter word takes no slip"],
+    ["mavh", "a four-letter trigger takes the swapped pair alone"],
+    ["bakc", "a four-letter meta word takes no slip"],
     ["cache", "a word of its own"],
     ["process", "two slips from a seven-letter word"],
     ["preset", "another first letter"],
@@ -111,7 +126,7 @@ describe("what a hand does not do is never a slip", () => {
 });
 
 describe("only triggers and steering words are never terms", () => {
-  test.each([["continue"], ["weiter"], ["bitte"], ["please"]])("%p is steering as written", (word) => {
+  test.each([["continue"], ["weiter"], ["bitte"], ["please"], ["Komma"], ["ähm"], ["text"]])("%p is steering or filler as written", (word) => {
     expect(isSteeringWord(word)).toBe(true);
   });
 

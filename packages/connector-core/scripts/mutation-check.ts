@@ -18505,9 +18505,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a command passed as an argument is scored",
+    // RETARGETED (round 3, H1): an argument the command owns is a command or a unit number.
     file: `${SCHEMA}/src/slash-command.ts`,
-    from: "  return rest.filter((word) => !isCommandName(word)).join(\" \");",
-    to: "  return rest.join(\" \");",
+    from: "const isCommandOwn = (word: string): boolean => isCommandName(word) || UNIT_NUMBER.test(word);",
+    to: "const isCommandOwn = (word: string): boolean => UNIT_NUMBER.test(word);",
     test: `${SCHEMA}/test/slash-command.test.ts`,
     because: "\"/loop 5m /babysit-prs\" is a task about babysitting PRs (H1 d)",
   },
@@ -19090,6 +19091,78 @@ export const MUTATIONS: readonly Mutation[
     because: "\"Continue the session after the usage limit reset\" becomes an intent every limit chatter matches (round 3, H2)",
   },
   {
+    label: "a filler word steers nothing in the verdict",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  wordClass === \"trigger\" || wordClass === \"steering\" || wordClass === \"filler\";",
+    to: "  wordClass === \"trigger\" || wordClass === \"steering\";",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"sorry, limit\" reads as a question about the limit and reaches the hub (round 3, H1)",
+  },
+  {
+    label: "filler words are terms",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  return wordClass === \"trigger\" || wordClass === \"steering\" || wordClass === \"filler\";",
+    to: "  return wordClass === \"trigger\" || wordClass === \"steering\";",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a dictated \"Komma\" and \"Punkt\" are counted as shared words beside a real one (H1)",
+  },
+  {
+    label: "the filler class loses dictated punctuation",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"ahm\", \"ahh\", \"uhm\", \"umm\", \"uhh\", \"hmm\", \"komma\", \"punkt\",",
+    to: "  \"ahm\", \"ahh\", \"uhm\", \"umm\", \"uhh\", \"hmm\", \"punkt\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"okay Komma mach weiter Punkt\" reaches the hub on \"komma\" (H1)",
+  },
+  {
+    label: "a four-letter trigger takes no swapped pair",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  isTypingSlipOf(typed, target) || isShortSwapSlipOf(typed, target);",
+    to: "  isTypingSlipOf(typed, target);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"mahc weiter\" and \"kepe going\" reach the hub as tasks (round 3, H1)",
+  },
+  {
+    label: "the short swap reaches longer words too",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  target.length === SWAP_ONLY_TARGET_LETTERS &&",
+    to: "  target.length >= SWAP_ONLY_TARGET_LETTERS &&",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "every word longer than four letters takes a free swap on top of its budget (H1)",
+  },
+  {
+    label: "a unit-number argument of a slash command is scored",
+    file: `${SCHEMA}/src/slash-command.ts`,
+    from: "const isCommandOwn = (word: string): boolean => isCommandName(word) || UNIT_NUMBER.test(word);",
+    to: "const isCommandOwn = (word: string): boolean => isCommandName(word);",
+    test: `${SCHEMA}/test/slash-command.test.ts`,
+    because: "\"/loop 10m /babysit-prs\" reaches the hub on \"10m\" (round 3, H1)",
+  },
+  {
+    label: "the trigger inflections are words of no class",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"continued\", \"keeps\", \"kept\", \"tried\", \"tries\", \"retrying\", \"resumed\",",
+    to: "  \"kept\", \"tries\", \"resumed\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"it keeps going, continue\" and \"tried again, retrying\" reach the hub as tasks (H1)",
+  },
+  {
+    label: "the clock and limit reports the round-3 set found are words of no class",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"earlier\", \"vorher\", \"gleich\", \"uhr\", \"sec\", \"secs\", \"hit\", \"erreicht\",",
+    to: "  \"vorher\", \"gleich\", \"sec\", \"secs\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"session limit hit earlier, it's back now, continue\" reaches the hub and points at the session-resume tree (H1)",
+  },
+  {
+    label: "the German forms of conversation and operation words are words of no class",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"committe\", \"pushe\", \"lassen\", \"getestet\", \"tested\", \"compact\",",
+    to: "  \"getestet\", \"tested\", \"compact\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"committe und pushe bitte\" and \"tests laufen lassen\" reach the hub as tasks (H1)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -19431,14 +19504,14 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 12
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 19
  * PRINTS: packages/schema/test/session-control.test.ts 6
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/slash-command.test.ts 3
+ * PRINTS: packages/schema/test/slash-command.test.ts 4
  * PRINTS: packages/schema/test/substance-match.test.ts 1
  * PRINTS: packages/schema/test/substance-sentence.test.ts 12
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
- * PRINTS: packages/schema/test/typing-slip.test.ts 8
+ * PRINTS: packages/schema/test/typing-slip.test.ts 9
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23

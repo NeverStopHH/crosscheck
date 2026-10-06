@@ -136,3 +136,19 @@ export const isTypingSlipOf = (typed: string, target: string): boolean => isSlip
  * one that leaves "pass", "past", "bite" and "look" words of their own.
  */
 export const isSwapSlipOf = (typed: string, target: string): boolean => isSlipOf(typed, target, "swaps");
+
+/** The length of word that takes no slip of the budget, but one swapped pair (round 3, H1). */
+export const SWAP_ONLY_TARGET_LETTERS = 4;
+
+/**
+ * A FOUR-LETTER word takes one slip, the swapped pair alone, never in the
+ * first letter (hold-out review round 3, H1): "mahc", "mcah" and "kepe" are
+ * a hand on "mach" and "keep", while one neighbouring key from a four-letter
+ * word is dozens of real words ("rare", "cook", "find", "shop", "tool").
+ */
+export const isShortSwapSlipOf = (typed: string, target: string): boolean =>
+  target.length === SWAP_ONLY_TARGET_LETTERS &&
+  typed.length === target.length &&
+  typed !== target &&
+  typed[0] === target[0] &&
+  slipsBetween(typed, target, "swaps") <= 1;
