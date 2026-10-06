@@ -680,6 +680,20 @@ describe("survivors R10, R11: the order of words on one pointer", () => {
     expect(view).toMatchObject({ overrode: 0, noise: 1 });
   });
 
+  test("review LOW: the person's outcome said in their label's own millisecond is stamped past the label, and stands", async () => {
+    // Arrange — the clock never moves: the noise label at t
+    const world = await createOutcomeWorld();
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+
+    // Act — the person's followed, still at t: a tie would leave the label standing (D-O7)
+    const person = await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const view = await mineOf(world);
+
+    // Assert
+    expect(await bodyOf(person)).toMatchObject({ repeated: false, replaced: "noise", stands: "followed" });
+    expect(view).toMatchObject({ followed: 1, noise: 0 });
+  });
+
   test("R11: the pointer's deliveries are locked FOR UPDATE, in id order", async () => {
     // Arrange — PGlite has one connection, so a second writer cannot be staged to wait on the
     // lock; what is pinned is the SQL that takes it: FOR UPDATE, in one order, so two writers

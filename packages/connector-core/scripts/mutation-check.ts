@@ -18923,6 +18923,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "two writers locking a pointer's twins in different orders can deadlock",
   },
+  // ── 07 §13.12, review LOW: the next word steps past the newest outcome AND the label ──
+  {
+    label: "an outcome said in the label's own millisecond ties with it",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt]",
+    to: "  [words.person?.createdAt, words.agent?.createdAt]",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's followed is stamped at the label's instant, the label wins the tie, and noise stands",
+  },
+  {
+    label: "a word is stamped at the clock, under the agent's word stamped past it",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt]",
+    to: "  [words.person?.createdAt, words.noise?.createdAt]",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "two agent words in one millisecond share a timestamp, and which stands is a coin toss",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19247,7 +19264,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 21
- * PRINTS: packages/server/test/hint-outcomes.test.ts 39
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 41
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
