@@ -18303,6 +18303,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/derive.test.ts`,
     because: "a raised deadline is invisible to doctor, which then calls a healthy slow run silent",
   },
+  {
+    label: "doctor passes model runs it had no start time to judge",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  totals.unjudged > 0\n",
+    to: "  false\n",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the PASS line claims a measurement of the workers that was never made",
+  },
+  {
+    label: "doctor counts no run as unjudged",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "    unjudged: oldest === undefined ? Math.max(0, fires - outcomes) : 0,",
+    to: "    unjudged: 0,",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "runs booked without a start time vanish from every line instead of being named",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18573,7 +18589,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 24
+ * PRINTS: packages/connector-core/test/sharing.test.ts 26
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2

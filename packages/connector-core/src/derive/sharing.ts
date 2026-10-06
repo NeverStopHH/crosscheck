@@ -15,6 +15,7 @@
  *   cannot_start             the HOOKS could not start it (their PATH, not ours);
  *   runner_failing           every run that reported back failed;
  *   workers_silent           runs were started and none reported back;
+ *   cannot_judge             runs were booked with no start time to judge them by;
  *   no_transcript            the host had no transcript to summarize;
  *   answers_refused          the model spoke and nothing it said was kept;
  *   gate_quiet               no turn ever read as a conclusion — nothing broken;
@@ -136,6 +137,7 @@ export type SharingCause =
   | "cannot_start"
   | "runner_failing"
   | "workers_silent"
+  | "cannot_judge"
   | "no_transcript"
   | "answers_refused"
   | "gate_quiet"
@@ -170,6 +172,8 @@ interface Totals {
   readonly settledOutcomes: number;
   /** Unanswered runs of LIVE sessions still inside their grace. */
   readonly inFlight: number;
+  /** Unanswered runs booked without a start time, which nothing can settle. */
+  readonly unjudged: number;
 }
 
 /**
@@ -237,6 +241,8 @@ interface RunSettlement {
   readonly silent: number;
   /** Unanswered runs of a LIVE session still inside their grace. */
   readonly inFlight: number;
+  /** Unanswered runs with no recorded start at all: neither, and not judgeable. */
+  readonly unjudged: number;
 }
 
 /**
@@ -249,7 +255,7 @@ interface RunSettlement {
  * and are settled whenever that one is. Outcomes carry no run id, so they are
  * credited to the oldest runs first — the reading that blames the fewest. A
  * run with no recorded start is never settled: missing evidence does not get
- * to blame the host.
+ * to blame the host — nor to pass it (cannotJudgeRule).
  */
 const settlementOfSession = (d: DeriveDigest, now: Date): RunSettlement => {
   const until = d.endedAt === null ? now.getTime() : Date.parse(d.endedAt);
@@ -266,19 +272,21 @@ const settlementOfSession = (d: DeriveDigest, now: Date): RunSettlement => {
     settled,
     silent,
     inFlight: live ? Math.max(0, fires - outcomes - silent) : 0,
+    unjudged: oldest === undefined ? Math.max(0, fires - outcomes) : 0,
   };
 };
 
 const settlementOf = (
   digests: readonly DeriveDigest[],
   now: Date,
-): Pick<Totals, "silentRuns" | "settledOutcomes" | "inFlight"> => {
+): Pick<Totals, "silentRuns" | "settledOutcomes" | "inFlight" | "unjudged"> => {
   const sessions = digests.map((d) => ({ d, runs: settlementOfSession(d, now) }));
   const withSettled = sessions.filter(({ runs }) => runs.settled > 0);
   return {
     silentRuns: sessions.reduce((sum, { runs }) => sum + runs.silent, 0),
     settledOutcomes: sumOf(withSettled.map(({ d }) => d), outcomesOf),
     inFlight: sessions.reduce((sum, { runs }) => sum + runs.inFlight, 0),
+    unjudged: sessions.reduce((sum, { runs }) => sum + runs.unjudged, 0),
   };
 };
 
@@ -441,6 +449,24 @@ const workersSilentRule: Rule = (_input, totals) =>
       )
     : null;
 
+const runsOf = (count: number): string => `${String(count)} model run${count === 1 ? "" : "s"}`;
+
+/**
+ * NOT A PASS (review round 2, L4): runs booked before fires carried their
+ * start can be told neither in flight nor silent, and the PASS line would
+ * claim a measurement that was never made.
+ */
+const cannotJudgeRule: Rule = (_input, totals) =>
+  totals.unjudged > 0
+    ? finding(
+        "cannot_judge",
+        `doctor cannot judge yet whether your agent's model workers report back: ${runsOf(totals.unjudged)} went unanswered with no start time on record ` +
+          "(booked before crosscheck recorded one), so none can be told in flight from silent; " +
+          "fix: nothing to change — every new run records its start, so run doctor again after your next session",
+        `cannot judge yet — ${runsOf(totals.unjudged)} unanswered with no start time`,
+      )
+    : null;
+
 const noTranscriptRule: Rule = (_input, totals) =>
   totals.noSlice > 0 && totals.drafts === 0
     ? finding(
@@ -513,6 +539,7 @@ const RULES: readonly Rule[] = [
   cannotStartRule,
   runnerFailingRule,
   workersSilentRule,
+  cannotJudgeRule,
   noTranscriptRule,
   answersRefusedRule,
   gateQuietRule,

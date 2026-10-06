@@ -347,10 +347,21 @@ describe("sharingFindings — what the workers booked", () => {
     expect(sharingSummary(value)).not.toContain("in flight");
   });
 
-  test("runs with no recorded start time are never blamed on the host", () => {
+  test("runs with no recorded start time are never blamed on the host — and never passed either", () => {
+    // A digest written before fires booked their start (review round 2, L4):
+    // three unanswered runs nobody can settle. PASS would claim a check that
+    // was never made; doctor says it cannot judge them yet.
     const value = input({ ended: [session({ summarizerFireCount: 2, intentFireCount: 1 }, new Date(NOW.getTime() - MINUTE_MS))] });
 
     expect(causes(value)).not.toContain("workers_silent");
+    expect(detailFor(value, "cannot_judge")).toContain("cannot judge yet");
+    expect(detailFor(value, "cannot_judge")).toContain("3 model runs");
+  });
+
+  test("runs that all reported back need no start time to be judged", () => {
+    const value = input({ ended: [session({ summarizerFireCount: 1, summarizerNoneCount: 1 }, new Date(NOW.getTime() - MINUTE_MS))] });
+
+    expect(causes(value)).not.toContain("cannot_judge");
   });
 
   test("one unanswered run is not yet a silent worker", () => {
