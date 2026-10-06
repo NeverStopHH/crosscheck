@@ -1130,7 +1130,12 @@ was a 201 for nothing. Refused instead, consistent with the floor and saying why
 hint reached you before this repo began recording outcomes, so no outcome figure could ever count it —
 nothing was recorded"). The same lie had a second door — a delivery older than the widest window any figure
 reads (`PILOT_RETENTION_DAYS`, 90) — refused the same way (`past_window`). A delivery at the enrolment instant
-itself counts and is accepted.
+itself counts and is accepted. **These refusals read the connector's clock** (accepted by the owner, round 3):
+they compare the delivery's `delivered_at`, which the connector stamps and ingest bounds at the hub's own clock
+plus `MAX_COMMIT_CLOCK_SKEW_MS` (2 minutes), with the hub-stamped enrolment intervals (§13.11, M3) and the
+hub's window — so a delivery made within a few minutes of an enrolment change, on a connector whose clock is
+off, can land on the other side of it. The closed months themselves are frozen by the hub's clock
+(`ingested_at`, §13.11 P5).
 
 *#14 — recording right after a tripwire ask or a prompt hint answered "no hint with that id reached you".*
 The delivery was still in this machine's spool: it is sent after the next tool runs, and a denied edit runs no
