@@ -383,6 +383,16 @@ SessionEnd counts an open debt for the life it ends — or the one a heal moved 
 The life's own records refused `author_unknown` while its debt is open are kept, never spent. Reap removes a debt
 with its spool, or once no live session and no spool can ever pay it.
 
+**The hold on an unregistered life ends** (review-2 round 6, HIGH-2). The `unregistered` mark could stick for good:
+a register the hub committed but answered too late reads as refused, the life's own accepted flushes and its 2xx
+heartbeats left the mark standing, and "live" meant only that its state file existed — a host that exited without
+SessionEnd left a corpse whose backlog was held for seven days and then counted `expired` (of four edits, one
+landed). Now a heartbeat the hub answered and a record it took under the life's own id clear the mark
+(`markLifeRegistered`); a life whose state has said nothing for `STALE_SESSION_STATE_MS` (the hour doctor calls a
+state file a corpse, by `sessionSilentForMs`) is never held; doctor says `N records held for an unregistered life
+(expire on <date>)` while a hold exists; and Cursor's sessionStart and the ACP proxy's shutdown reap stale session
+states as Claude's SessionStart already did, so no host leaves corpses behind.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

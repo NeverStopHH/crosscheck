@@ -560,6 +560,9 @@ describe("a successor flush beside a live life the hub has not registered", () =
     const otherHost = `${fx.hostSessionKey}-other`;
     const other = await register(fx, otherHost);
     const later = new Date(Date.now() + (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    // ...and D still beating a week and a day on: a silent state is not held
+    // at all (spool/held-lives.ts), so only a live life's records can age out
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, lastHeartbeatAt: later.toISOString() }));
 
     // Act: O's flush, a week and a day on
     await flushSpool(

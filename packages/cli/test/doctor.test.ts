@@ -18,6 +18,9 @@ import {
   spoolDropsPath,
   spoolFlushLockPath,
 } from "@crosscheck/connector-core/config/paths.ts";
+import { MAX_SPOOL_AGE_DAYS } from "@crosscheck/connector-core/constants.ts";
+import { targetRecord } from "@crosscheck/connector-core/capture/records.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   deriveSessionState,
@@ -452,6 +455,54 @@ describe("crosscheck doctor flush lock check", () => {
 
     // Assert
     expect(result.stdout).toContain("PASS  flush lock  free");
+  });
+});
+
+describe("crosscheck doctor unregistered life check (review-2 round 6, HIGH-2)", () => {
+  test("names the records held for a live life the hub has not registered, and when they expire", async () => {
+    // Arrange: a live session marked unregistered, two of its edits on disk
+    const { repo, home } = await fixture();
+    const host = "doctor-held";
+    const at = new Date();
+    const state = deriveSessionState({
+      hostSessionKey: host,
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl: HUB_URL,
+      developerId: null,
+      startedAt: at.toISOString(),
+    });
+    await writeSessionState(home, { ...state, lastHeartbeatAt: at.toISOString(), unregistered: true });
+    const producer = { developerId: "d", agentKind: "claude-code", sessionId: state.crosscheckSessionId };
+    await appendRecords(
+      home,
+      repoKey(HUB_URL, REPO_ID),
+      host,
+      [
+        targetRecord(state.workContextId, "file", "src/a.ts", producer, at),
+        targetRecord(state.workContextId, "file", "src/b.ts", producer, at),
+      ],
+      at,
+    );
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    const expires = new Date(at.getTime() + MAX_SPOOL_AGE_DAYS * MS_PER_DAY).toISOString().slice(0, 10);
+    expect(result.stdout).toContain("WARN  unregistered life");
+    expect(result.stdout).toContain(`2 records held for an unregistered life (expire on ${expires})`);
+  });
+
+  test("prints nothing while nothing is held", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).not.toContain("held for an unregistered life");
   });
 });
 

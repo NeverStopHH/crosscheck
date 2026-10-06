@@ -187,6 +187,8 @@ import {
 } from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
+import { readAllSessionSpools } from "@crosscheck/connector-core/spool/files.ts";
+import { readHeldRecords } from "@crosscheck/connector-core/spool/held-lives.ts";
 import {
   conferenceRemedies,
   formatConferenceCost,
@@ -1379,9 +1381,30 @@ const checkSpool = async (
   return [
     depthCheck,
     ageCheck,
+    ...(await heldChecks(home, key, now)),
     ...lossLines,
     unclosedCheck,
     await checkFlushLock(home, key),
+  ];
+};
+
+/**
+ * Records another flusher leaves on disk for a live life the hub has not
+ * registered (core spool/held-lives.ts) — said while a hold exists, with the
+ * day the oldest of them is counted `expired` if the life never registers
+ * (review-2 round 6, HIGH-2). Nothing while nothing is held.
+ */
+const heldChecks = async (home: string, key: string, now: Date): Promise<readonly Check[]> => {
+  const held = await readHeldRecords(home, await readAllSessionSpools(home, key), now);
+  if (held.records === 0 || held.expiresAt === null) {
+    return [];
+  }
+  return [
+    check(
+      "WARN",
+      "unregistered life",
+      `${String(held.records)} record${held.records === 1 ? "" : "s"} held for an unregistered life (expire on ${held.expiresAt.slice(0, 10)})`,
+    ),
   ];
 };
 

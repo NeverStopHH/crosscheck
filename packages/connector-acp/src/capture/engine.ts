@@ -94,6 +94,7 @@ import type { AssembledBriefing } from "@crosscheck/connector-core/flows/briefin
 import { endSessionFlow } from "@crosscheck/connector-core/flows/end-session.ts";
 import { sessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
 import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
+import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 import type { SessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
@@ -916,6 +917,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     const at = now();
     const attempted = await heartbeatMaybe({
       hub: session.hub,
+      hostSessionKey: session.hostSessionKey,
       crosscheckSessionId: session.crosscheckSessionId,
       lastHeartbeatAt: session.lastHeartbeatAt,
       now: at,
@@ -1428,6 +1430,11 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           // back (state/session-lineage.ts): a machine that only ever runs this
           // proxy has no other path that sweeps them.
           await reapStaleLineages(session.config.home, now());
+          // ...and the state files of sessions that died without an end, the
+          // way Claude's SessionStart sweeps them (state/session-reap.ts): a
+          // corpse pins its spool and, while marked unregistered, holds its
+          // records from every other flusher (review-2 round 6, HIGH-2).
+          await reapStaleSessionStates(session.config.home, now());
         }
       } catch (error) {
         counters.errors += 1;

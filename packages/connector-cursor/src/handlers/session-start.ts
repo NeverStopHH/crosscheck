@@ -55,6 +55,7 @@ import { recordInjectionOutcome } from "../inject/ledger.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { healerFor } from "./heal.ts";
 import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
+import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 
 const INITIAL_STATUS = "analyzing";
 
@@ -174,6 +175,11 @@ export const handleCursorSessionStart = async (
   // (state/session-lineage.ts) — Claude's SessionStart sweeps them too, but a
   // Cursor-only machine has no other path that does.
   await reapStaleLineages(ctx.config.home, now);
+  // ...and the state files of sessions that died without sessionEnd, the
+  // way Claude's SessionStart sweeps them (state/session-reap.ts): a corpse
+  // pins its spool against reap and, while marked unregistered, holds its
+  // records from every other flusher (review-2 round 6, HIGH-2).
+  await reapStaleSessionStates(ctx.config.home, now, { keepHostSessionKey: ctx.hostSessionKey });
 
   return briefing.length === 0 ? "" : cursorInjectionOutput(briefing);
 };

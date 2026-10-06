@@ -167,6 +167,7 @@ export const handleCursorPostToolUse = async (
       ? false
       : await heartbeatMaybe({
           hub: { ...ctx.hub, timeoutMs: Math.min(ctx.hub.timeoutMs, roomMs) },
+          hostSessionKey: ctx.hostSessionKey,
           crosscheckSessionId: current.crosscheckSessionId,
           lastHeartbeatAt: current.lastHeartbeatAt,
           now,

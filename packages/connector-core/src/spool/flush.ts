@@ -46,7 +46,7 @@ import { recordDrop } from "./drops.ts";
 import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
 import { healAndResend, isRefusedLifeRecord } from "./flush-heal.ts";
-import { deliverableOf } from "./held-lives.ts";
+import { deliverableOf, forgetUnregistered } from "./held-lives.ts";
 import { deliverOwed, isOwedFor, readOwedWorkContext, settleOwedWorkContext } from "./owed-work-context.ts";
 import type { OwedWorkContext } from "./owed-work-context.ts";
 import type { Deliverable } from "./held-lives.ts";
@@ -276,6 +276,9 @@ const flushOneBatch = async (
   if (await isPinnedByDebt(ctx, spool, summary, sendable, healed.heal?.sessionId ?? input.sessionId)) {
     return null;
   }
+  // The hub took a record under the producer's own id: it knows that life
+  // (spool/held-lives.ts, review-2 round 6 HIGH-2).
+  await forgetUnregistered(ctx.home, spool.slug, healed.heal?.sessionId ?? input.sessionId, summary);
   await losses.write([]);
   // The refusals a heal's walk already wrote down are not counted twice —
   // this walk's, or an earlier one's that left the batch on disk.

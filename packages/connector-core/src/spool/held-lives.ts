@@ -21,11 +21,25 @@
  * every refusal counted. And a held record older than MAX_SPOOL_AGE_DAYS is
  * not kept past the bound every spool obeys: it is counted `expired` and
  * passed over — never silent.
+ *
+ * AND THE MARK DOES NOT STICK (review-2 round 6, HIGH-2). A register the hub
+ * committed but answered too late reads as refused; the life's own accepted
+ * records and its answered heartbeats clear the mark (`forgetUnregistered`,
+ * flows/heartbeat.ts). A life whose state has said nothing for
+ * STALE_SESSION_STATE_MS — the hour doctor calls a state file a corpse — is
+ * not held at all: a host that died without SessionEnd must not pin its
+ * backlog for a week.
  */
+import { stat } from "node:fs/promises";
+
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../constants.ts";
 import { readJsonOrNull, sessionStatePathForSlug } from "../config/paths.ts";
+import type { IngestSummary } from "../http/hub.ts";
+import { sessionSilentForMs } from "../state/session-scan.ts";
+import { STALE_SESSION_STATE_MS, markLifeRegistered } from "../state/session-state.ts";
 import type { SessionSpool } from "./files.ts";
 import { lineTimestampMs } from "./lines.ts";
+import { isTaken } from "./owed-work-context.ts";
 
 /** What of one spool a flusher may do now. */
 export interface Deliverable {
@@ -36,16 +50,81 @@ export interface Deliverable {
   readonly expired: number;
 }
 
-/** The live, unregistered life a spool's host session is on — unless it is the flusher. */
-const heldLifeOf = async (home: string, slug: string, flusherSessionId: string): Promise<string | null> => {
-  const state = (await readJsonOrNull(sessionStatePathForSlug(home, slug))) as {
-    crosscheckSessionId?: unknown;
-    unregistered?: unknown;
-  } | null;
+interface MarkedState {
+  readonly crosscheckSessionId?: unknown;
+  readonly unregistered?: unknown;
+  readonly startedAt?: unknown;
+  readonly lastHeartbeatAt?: unknown;
+}
+
+const readMarkedState = async (home: string, slug: string): Promise<MarkedState | null> =>
+  (await readJsonOrNull(sessionStatePathForSlug(home, slug))) as MarkedState | null;
+
+const writtenAtMs = async (path: string): Promise<number | null> => {
+  try {
+    return (await stat(path)).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+
+/** Whether the state has said nothing — no heartbeat, no write — for STALE_SESSION_STATE_MS. */
+const isSilent = async (home: string, slug: string, state: MarkedState, now: Date): Promise<boolean> => {
+  const silentMs = sessionSilentForMs(
+    {
+      startedAt: typeof state.startedAt === "string" ? state.startedAt : "",
+      lastHeartbeatAt: typeof state.lastHeartbeatAt === "string" ? state.lastHeartbeatAt : null,
+    },
+    await writtenAtMs(sessionStatePathForSlug(home, slug)),
+    now.getTime(),
+  );
+  return silentMs !== null && silentMs > STALE_SESSION_STATE_MS;
+};
+
+/** The live, unregistered life a spool's host session is on — unless it is the flusher, or silent. */
+const heldLifeOf = async (
+  home: string,
+  slug: string,
+  flusherSessionId: string,
+  now: Date,
+): Promise<string | null> => {
+  const state = await readMarkedState(home, slug);
   const lifeId = state?.crosscheckSessionId;
-  return typeof lifeId === "string" && state?.unregistered === true && lifeId !== flusherSessionId
-    ? lifeId
-    : null;
+  if (state === null || typeof lifeId !== "string" || state.unregistered !== true || lifeId === flusherSessionId) {
+    return null;
+  }
+  return (await isSilent(home, slug, state, now)) ? null : lifeId;
+};
+
+/** The host session a spool slug belongs to; null for a name no slug is. */
+const hostSessionKeyOf = (slug: string): string | null => {
+  try {
+    return decodeURIComponent(slug);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The hub took a record this batch delivered under `producerId`: it knows
+ * that life, so the mark on the spool's state goes when it names it.
+ */
+export const forgetUnregistered = async (
+  home: string,
+  slug: string,
+  producerId: string,
+  summary: IngestSummary,
+): Promise<void> => {
+  const tookOne =
+    summary.results === undefined ? summary.accepted + summary.duplicates > 0 : summary.results.some(isTaken);
+  if (!tookOne) {
+    return;
+  }
+  const state = await readMarkedState(home, slug);
+  const hostSessionKey = hostSessionKeyOf(slug);
+  if (state?.unregistered === true && state.crosscheckSessionId === producerId && hostSessionKey !== null) {
+    await markLifeRegistered(home, hostSessionKey, producerId);
+  }
 };
 
 /** The session that wrote a spooled line, as its envelope says. */
@@ -66,7 +145,7 @@ export const deliverableOf = async (
   limit: number,
 ): Promise<Deliverable> => {
   const head = spool.lines.slice(0, limit);
-  const held = await heldLifeOf(home, spool.slug, flusherSessionId);
+  const held = await heldLifeOf(home, spool.slug, flusherSessionId, now);
   const firstHeld = held === null ? -1 : head.findIndex((line) => writerOf(line) === held);
   if (firstHeld !== 0) {
     return { spool, lines: firstHeld === -1 ? head.length : firstHeld, expired: 0 };
@@ -76,4 +155,39 @@ export const deliverableOf = async (
     (line) => writerOf(line) !== held || (lineTimestampMs(line) ?? spool.mtimeMs) >= cutoffMs,
   );
   return { spool, lines: 0, expired: young === -1 ? head.length : young };
+};
+
+/** What doctor says while a hold exists: how many records, and when the first of them expires. */
+export interface HeldRecords {
+  readonly records: number;
+  /** When the oldest held record passes MAX_SPOOL_AGE_DAYS and is counted `expired`; null when none is held. */
+  readonly expiresAt: string | null;
+}
+
+/** Every record held for a live life the hub has not registered, across the repo's spools. */
+export const readHeldRecords = async (
+  home: string,
+  spools: readonly SessionSpool[],
+  now: Date,
+): Promise<HeldRecords> => {
+  let records = 0;
+  let oldestMs: number | null = null;
+  for (const spool of spools) {
+    const held = await heldLifeOf(home, spool.slug, "", now);
+    if (held === null) {
+      continue;
+    }
+    for (const line of spool.lines) {
+      if (writerOf(line) !== held) {
+        continue;
+      }
+      records += 1;
+      const atMs = lineTimestampMs(line) ?? spool.mtimeMs;
+      oldestMs = oldestMs === null ? atMs : Math.min(oldestMs, atMs);
+    }
+  }
+  return {
+    records,
+    expiresAt: oldestMs === null ? null : new Date(oldestMs + MAX_SPOOL_AGE_DAYS * MS_PER_DAY).toISOString(),
+  };
 };

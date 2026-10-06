@@ -206,6 +206,7 @@ const maybeHeartbeat = async (
   const current = (await readSessionState(ctx.config.home, ctx.payload.session_id)) ?? state;
   return heartbeatMaybe({
     hub: ctx.hub,
+    hostSessionKey: ctx.payload.session_id,
     crosscheckSessionId: current.crosscheckSessionId,
     lastHeartbeatAt: current.lastHeartbeatAt,
     now,

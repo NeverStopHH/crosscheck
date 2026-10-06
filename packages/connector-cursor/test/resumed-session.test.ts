@@ -15,12 +15,17 @@ import {
   sessionHealPathForSlug,
   sessionLineagePathForSlug,
   sessionSlug,
+  sessionStatePath,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { getDiagnosis } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { readDropDetail } from "@crosscheck/connector-core/spool/drops.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  deriveSessionState,
+  readSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 
 import { runCursorHook } from "../src/index.ts";
 import type { CursorHookEvent } from "../src/index.ts";
@@ -183,5 +188,36 @@ describe("a Cursor-only machine sweeps the side files of lives that never came b
     for (const path of sideFiles) {
       expect(await Bun.file(path).exists()).toBe(false);
     }
+  });
+
+  test("sessionStart removes the state file of a session silent for a week (review-2 round 6, HIGH-2)", async () => {
+    // Arrange: a host that died without sessionEnd a week ago — its state is
+    // what keeps its spool held and unreapable
+    const repo = await makeRepo("cursor-corpse", { remote: "git@github.com:acme/api.git" });
+    const home = await makeHome("cursor-corpse");
+    cleanups.push(repo, home);
+    const env: Env = {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.hubUrl,
+      CROSSCHECK_API_KEY: hub.apiKey,
+      CROSSCHECK_TIMEOUT_MS: "4000",
+    };
+    const old = new Date(Date.now() - (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    const corpse = deriveSessionState({
+      hostSessionKey: "cur-corpse",
+      repoId: "github.com/acme/api",
+      repoRoot: repo,
+      hubUrl: hub.hubUrl,
+      developerId: null,
+      startedAt: old.toISOString(),
+    });
+    await writeSessionState(home, { ...corpse, lastHeartbeatAt: old.toISOString() });
+    await utimes(sessionStatePath(home, "cur-corpse"), old, old);
+
+    // Act
+    await run("sessionStart", inRepo(SESSION_START_INPUT, repo, "conv-corpse"), env);
+
+    // Assert
+    expect(await Bun.file(sessionStatePath(home, "cur-corpse")).exists()).toBe(false);
   });
 });

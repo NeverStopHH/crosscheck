@@ -18,9 +18,16 @@ import { heartbeatSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import type { RefusalCause } from "../spool/flush-heal.ts";
+import { markLifeRegistered } from "../state/session-state.ts";
 
 export interface HeartbeatMaybeInput {
   readonly hub: HubContext;
+  /**
+   * The host session the beat speaks for. Given, a beat the hub answered
+   * clears the life's `unregistered` mark: the hub knows the life
+   * (state/session-state.ts markLifeRegistered, review-2 round 6 HIGH-2).
+   */
+  readonly hostSessionKey?: string;
   readonly crosscheckSessionId: string;
   readonly lastHeartbeatAt: string | null;
   readonly now: Date;
@@ -57,6 +64,9 @@ export const heartbeatMaybe = async (
   // beats nothing pays nothing; a local read of the ledgers, no round trip.
   const losses = await readTelemetryLossReport(input.hub.home, input.hub.repoKey);
   const result = await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);
+  if (result.ok && input.hostSessionKey !== undefined) {
+    await markLifeRegistered(input.hub.home, input.hostSessionKey, input.crosscheckSessionId);
+  }
   const refused = result.ok ? null : refusalOf(result.status);
   if (refused !== null) {
     await input.onRefused?.(refused);

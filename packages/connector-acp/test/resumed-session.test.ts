@@ -20,7 +20,9 @@ import {
   sessionHealPathForSlug,
   sessionLineagePathForSlug,
   sessionSlug,
+  sessionStatePath,
 } from "@crosscheck/connector-core/config/paths.ts";
+import { deriveSessionState, writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readDropDetail } from "@crosscheck/connector-core/spool/drops.ts";
 // By path, the wire-loss suite's arrangement: this package has no drizzle edge.
 import { developers, workContextTargets, workContexts } from "../../server/src/db/schema.ts";
@@ -260,6 +262,30 @@ describe("an ACP-only machine sweeps the side files of lives that never came bac
     for (const path of sideFiles) {
       expect(await Bun.file(path).exists()).toBe(false);
     }
+  });
+
+  test("the proxy's shutdown removes the state file of a session silent for a week (review-2 round 6, HIGH-2)", async () => {
+    // Arrange: a session that died without an end a week before the engine's clock
+    const h = await createHarness(hub, cleanups, "acp-corpse");
+    handshake(h, "sess_corpse_witness", h.repo);
+    await h.capture.settle();
+    const old = new Date(h.clock.value.getTime() - (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    const corpse = deriveSessionState({
+      hostSessionKey: "acp-gone-corpse",
+      repoId: REPO_ID,
+      repoRoot: h.repo,
+      hubUrl: hub.hubUrl,
+      developerId: null,
+      startedAt: old.toISOString(),
+    });
+    await writeSessionState(h.home, { ...corpse, lastHeartbeatAt: old.toISOString() });
+    await utimes(sessionStatePath(h.home, "acp-gone-corpse"), old, old);
+
+    // Act
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert
+    expect(await Bun.file(sessionStatePath(h.home, "acp-gone-corpse")).exists()).toBe(false);
   });
 });
 

@@ -17794,8 +17794,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a successor flush spends a live life the hub has not registered",
     file: `${CORE}/src/spool/held-lives.ts`,
-    from: "state?.unregistered === true && lifeId !== flusherSessionId",
-    to: "false",
+    from: "typeof lifeId !== \"string\" || state.unregistered !== true || lifeId === flusherSessionId",
+    to: "true",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 MEDIUM-1: another conversation's flush delivers that life's work context and edits into a session the hub does not know, and they are refused and spent before its own heal",
   },
@@ -17967,6 +17967,54 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "the side file of every heal whose life ended with no records piles up in the spool directory",
   },
+  {
+    label: "a heartbeat the hub answered leaves the life marked unregistered",
+    file: `${CORE}/src/flows/heartbeat.ts`,
+    from: "  if (result.ok && input.hostSessionKey !== undefined) {\n    await markLifeRegistered(input.hub.home, input.hostSessionKey, input.crosscheckSessionId);\n  }\n",
+    to: "",
+    test: `${CORE}/test/unregistered-hold.test.ts`,
+    because: "review-2 round 6 HIGH-2: a register the hub took but answered late keeps the life's records held from every other flusher for good",
+  },
+  {
+    label: "a record the hub took from the life itself leaves it marked unregistered",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  await forgetUnregistered(ctx.home, spool.slug, healed.heal?.sessionId ?? input.sessionId, summary);\n",
+    to: "",
+    test: `${CORE}/test/unregistered-hold.test.ts`,
+    because: "review-2 round 6 HIGH-2 (RS5-C): a crashed life's backlog is held for a week and then counted expired — of four edits, one landed",
+  },
+  {
+    label: "a life whose state went silent is still held",
+    file: `${CORE}/src/spool/held-lives.ts`,
+    from: "  return (await isSilent(home, slug, state, now)) ? null : lifeId;",
+    to: "  return lifeId;",
+    test: `${CORE}/test/unregistered-hold.test.ts`,
+    because: "review-2 round 6 HIGH-2: a host that died without SessionEnd pins its backlog until it expires",
+  },
+  {
+    label: "a Cursor-only machine never reaps stale session states",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "  await reapStaleSessionStates(ctx.config.home, now, { keepHostSessionKey: ctx.hostSessionKey });\n",
+    to: "",
+    test: `${CURSOR}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 HIGH-2: corpses pin their spools and keep their marked lives held, with no path that removes them",
+  },
+  {
+    label: "an ACP-only machine never reaps stale session states",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          await reapStaleSessionStates(session.config.home, now());\n",
+    to: "",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 HIGH-2: the proxy's machines keep every corpse of every session that died without an end",
+  },
+  {
+    label: "doctor says nothing of records held for an unregistered life",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(await heldChecks(home, key, now)),\n",
+    to: "",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 6 HIGH-2: a hold that lasts a week shows nowhere until its records are counted expired",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18037,7 +18085,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
- * PRINTS: packages/cli/test/doctor.test.ts 1
+ * PRINTS: packages/cli/test/doctor.test.ts 2
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
@@ -18082,7 +18130,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
- * PRINTS: packages/connector-acp/test/resumed-session.test.ts 4
+ * PRINTS: packages/connector-acp/test/resumed-session.test.ts 5
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -18240,6 +18288,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
+ * PRINTS: packages/connector-core/test/unregistered-hold.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
@@ -18250,7 +18299,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
- * PRINTS: packages/connector-cursor/test/resumed-session.test.ts 2
+ * PRINTS: packages/connector-cursor/test/resumed-session.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
