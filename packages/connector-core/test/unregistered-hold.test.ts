@@ -26,6 +26,7 @@ import { repoKey, sessionStatePath } from "../src/config/paths.ts";
 import { targetRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
 import type { HubContext } from "../src/http/client.ts";
+import { sessionHealer } from "../src/flows/heal-session.ts";
 import { heartbeatMaybe } from "../src/flows/heartbeat.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/register-session.ts";
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declarations.ts";
@@ -53,8 +54,9 @@ let hubUrl: string;
 let proxyUrl: string;
 let apiKey: string;
 let developerId: string;
-/** The proxy's dial: commit the register on the hub, answer after the client gave up. */
+/** The proxy's dials: commit the register on the hub and answer after the client gave up; refuse it outright. */
 let answerRegistersLate = false;
+let refuseRegisters = false;
 const cleanups: string[] = [];
 
 const raw = async <T>(text: string, params: readonly unknown[] = []): Promise<readonly T[]> =>
@@ -141,6 +143,9 @@ beforeAll(async () => {
           headers: request.headers,
           body: request.method === "GET" ? undefined : await request.arrayBuffer(),
         });
+      if (request.method === "POST" && pathname === "/api/sessions" && refuseRegisters) {
+        return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
+      }
       if (request.method === "POST" && pathname === "/api/sessions" && answerRegistersLate) {
         const answer = await forward();
         await Bun.sleep(LATE_ANSWER_MS);
@@ -224,6 +229,56 @@ describe("the unregistered mark", () => {
     // Assert
     expect(markedAtStart).toBe(true);
     expect(await landed(life.workContextId)).toBe(5);
+  });
+});
+
+describe("the mark, set and cleared where it should be (review-2 round 6, MEDIUM-2)", () => {
+  test("a heal that registers the life clears it, a heartbeat's heal included (S1)", async () => {
+    // Arrange: a life whose register did not land
+    const fx = await fixture("heal-clears");
+    refuseRegisters = true;
+    const life = await register(fx);
+    refuseRegisters = false;
+    const markedAtStart = await isMarked(fx);
+    const healer = sessionHealer({
+      home: fx.home,
+      repoKey: fx.key,
+      hub: fx.hub,
+      agentKind: "acp:test",
+      hostSessionKey: fx.hostSessionKey,
+      repoId: REPO_ID,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+      now: () => new Date(),
+    });
+
+    // Act: the beat the hub answers 404, whose heal registers the life as itself
+    await heartbeatMaybe({
+      hub: fx.hub,
+      crosscheckSessionId: life.crosscheckSessionId,
+      lastHeartbeatAt: null,
+      now: new Date(),
+      onRefused: (cause) => healer({ sessionId: life.crosscheckSessionId, cause }, Date.now() + BUDGET_MS),
+    });
+
+    // Assert
+    expect(markedAtStart).toBe(true);
+    expect(await isMarked(fx)).toBe(false);
+  });
+
+  test("a re-fire whose register fails again keeps it on a life still unregistered (R1)", async () => {
+    // Arrange: a life whose register did not land
+    const fx = await fixture("refire-keeps");
+    refuseRegisters = true;
+    await register(fx);
+
+    // Act: SessionStart fires again, the hub still refusing
+    await register(fx);
+    refuseRegisters = false;
+
+    // Assert
+    expect(await isMarked(fx)).toBe(true);
   });
 });
 

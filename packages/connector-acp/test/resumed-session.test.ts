@@ -12,7 +12,9 @@ import { join } from "node:path";
 
 import { readSessionCausalOrder } from "@crosscheck/server";
 
-import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "@crosscheck/connector-core/constants.ts";
+import { HEAL_COOLDOWN_MS, MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "@crosscheck/connector-core/constants.ts";
+import { writeCursorOffset } from "@crosscheck/connector-core/spool/cursor.ts";
+import { readSessionSpool } from "@crosscheck/connector-core/spool/files.ts";
 import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
 import { sessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
@@ -30,6 +32,7 @@ import { developers, workContextTargets, workContexts } from "../../server/src/d
 import {
   REPO_ID,
   SHUTDOWN_BUDGET_MS,
+  advanceClock,
   bootCaptureHub,
   createHarness,
   handshake,
@@ -342,5 +345,99 @@ describe("an ACP proxy that exits while a heal has moved its session on", () => 
       { workContextId: `wc_${base}~r2`, value: "src/heal-exit/after.ts" },
     ]);
     expect(await readSessionCausalOrder(hub.db, healedLife)).toMatchObject({ state: "usable", epochs: 1 });
+  });
+});
+
+/**
+ * THE PROXY'S TWIN OF THE HEALER (review-2 round 6, MEDIUM-2): it forwards
+ * the cooldown's verdict, and clears its in-memory seen-set on a heal onto
+ * the same id as it does on a move to the next life (E1, E2).
+ */
+describe("an ACP session whose register the hub keeps refusing", () => {
+  /** A front to the hub that refuses registers while asked to, and counts record deliveries. */
+  const front = () => {
+    const dials = { refuseRegisters: true, recordPosts: 0 };
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const { pathname, search } = new URL(request.url);
+        if (request.method === "POST" && pathname === "/api/records") {
+          dials.recordPosts += 1;
+        }
+        if (request.method === "POST" && pathname === "/api/sessions" && dials.refuseRegisters) {
+          return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
+        }
+        return fetch(`${hub.hubUrl}${pathname}${search}`, {
+          method: request.method,
+          headers: request.headers,
+          body: request.method === "GET" ? undefined : await request.arrayBuffer(),
+        });
+      },
+    });
+    return { dials, server, url: `http://127.0.0.1:${String(server.port)}` };
+  };
+
+  /** A logged-in machine behind the front, its session on and its first walk refused. */
+  const refusedSession = async (label: string, sessionId: string) => {
+    const proxy = front();
+    const h = await createHarness({ ...hub, hubUrl: proxy.url }, cleanups, label);
+    const [developer] = await hub.db.select({ id: developers.id }).from(developers);
+    await saveConfig(h.home, { version: 1, hubUrl: proxy.url, apiKey: hub.apiKey, developerId: developer?.id ?? "" });
+    handshake(h, sessionId, h.repo);
+    await h.capture.settle();
+    return { h, proxy };
+  };
+
+  const editOnce = async (h: Harness, sessionId: string, file: string, call: string): Promise<void> => {
+    await writeRepoFile(h.repo, file, `export const a = ${call.length};\n`);
+    h.capture.offer(
+      "a2c",
+      toolCallUpdate(sessionId, {
+        sessionUpdate: "tool_call",
+        toolCallId: call,
+        kind: "edit",
+        status: "completed",
+        locations: [{ path: join(h.repo, file) }],
+      }),
+    );
+    await h.capture.settle();
+  };
+
+  test("posts nothing inside the failed walk's cooldown (E2)", async () => {
+    // Arrange
+    const sessionId = "sess_cooldown_twin";
+    const { h, proxy } = await refusedSession("acp-cooldown-twin", sessionId);
+    const before = proxy.dials.recordPosts;
+
+    // Act: a capture inside the cooldown
+    await editOnce(h, sessionId, "src/twin/inside.ts", "call_inside");
+    proxy.server.stop(true);
+
+    // Assert
+    expect(proxy.dials.recordPosts - before).toBe(0);
+  });
+
+  test("captures a file again after a heal onto the same id (E1)", async () => {
+    // Arrange: an edit captured while the hub refuses the life, then spent by
+    // an older connector's flush (the cursor past it, nothing sent)
+    const sessionId = "sess_seen_twin";
+    const { h, proxy } = await refusedSession("acp-seen-twin", sessionId);
+    await editOnce(h, sessionId, "src/seen/a.ts", "call_a_first");
+    const spool = await readSessionSpool(h.home, h.hub.repoKey, sessionSlug(`acp-fake-agent--${sessionId}`));
+    await writeCursorOffset(spool.dataPath, spool.cursorPath, spool.size, spool);
+    proxy.dials.refuseRegisters = false;
+    advanceClock(h, HEAL_COOLDOWN_MS + 1);
+
+    // Act: the edit whose flush heals the life as itself, then a.ts edited again
+    await editOnce(h, sessionId, "src/seen/b.ts", "call_b");
+    await editOnce(h, sessionId, "src/seen/a.ts", "call_a_again");
+    proxy.server.stop(true);
+
+    // Assert
+    const rows = await hub.db.select({ value: workContextTargets.value }).from(workContextTargets);
+    expect(rows.map((row) => row.value).filter((value) => value.startsWith("src/seen/")).sort()).toEqual([
+      "src/seen/a.ts",
+      "src/seen/b.ts",
+    ]);
   });
 });

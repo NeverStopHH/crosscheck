@@ -39,7 +39,7 @@ import {
   spoolDropsPath,
   spoolPendingEndPath,
 } from "../src/config/paths.ts";
-import { bytesOfLines, writeCursorOffset } from "../src/spool/cursor.ts";
+import { bytesOfLines, readCountedLines, writeCountedLines, writeCursorOffset } from "../src/spool/cursor.ts";
 import { recordDrop } from "../src/spool/drops.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import type { SessionSpool } from "../src/spool/files.ts";
@@ -511,6 +511,23 @@ describe("cursor trust", () => {
     expect(received).toEqual(["keep_1", "keep_2"]);
     expect((await readDropSummary(path, KEY)).records).toBe(0);
     server.stop(true);
+  });
+
+  test("a note of settled lines belongs to its own data file, never to one recreated in its place (M6)", async () => {
+    // Arrange: a note against one file, then the file recreated with other records
+    const path = await home();
+    await appendRecords(path, KEY, SESSION, [envelope("first_file")], NOW);
+    const before = await readSessionSpool(path, KEY, SLUG);
+    await writeCountedLines(before.dataPath, before.cursorPath, 0, new Set([before.size]), before);
+    await rm(before.dataPath);
+    await appendRecords(path, KEY, SESSION, [envelope("second_file")], NOW);
+
+    // Act
+    const after = await readSessionSpool(path, KEY, SLUG);
+    const noted = await readCountedLines(after.cursorPath, after);
+
+    // Assert: the recreated file's line is not taken for settled
+    expect(noted.size).toBe(0);
   });
 });
 

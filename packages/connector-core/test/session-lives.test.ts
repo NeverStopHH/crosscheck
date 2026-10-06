@@ -682,6 +682,26 @@ describe("a resumed life's end beside a deferred end before it", () => {
     expect(await pendingEnds(fx)).toEqual([]);
   });
 
+  test("a host session whose slug holds `.r` keeps its whole slug in a later life's marker (K1)", async () => {
+    // Arrange: a host key with `.r` in it; life 0 ended; the resumed life's
+    // end deferred with its edit on disk
+    const fx = await fixture("dotted.repo");
+    await register(fx);
+    await endViaFlow(fx);
+    const r1 = await register(fx);
+    await captureTarget(fx, "src/dotted.ts");
+    refuseRecords = true;
+    await endViaFlow(fx, fx.proxied);
+    refuseRecords = false;
+
+    // Act: a reap while the edit is on disk
+    await reapAsSessionStart(fx);
+
+    // Assert: the marker was read against the right spool, so the end waits
+    expect(await pendingEnds(fx)).toEqual([`${sessionSlug(fx.hostSessionKey)}.r1.pending-life`]);
+    expect(await isEnded(r1.crosscheckSessionId)).toBe(false);
+  });
+
   test("a later life's marker is no name an older connector's reap lists (review-2 MEDIUM-2)", async () => {
     // Arrange: life 0 ended; the resumed life's end deferred with its edit on disk
     const fx = await fixture("older-reap");

@@ -18071,6 +18071,102 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 round 6 LOW-4: every flush while the hold lasts posts the same straggler again",
   },
+  {
+    label: "a heal that registers the life leaves it marked unregistered (S1)",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '      unregistered: false,\n    });\n    return "swapped";',
+    to: '    });\n    return "swapped";',
+    test: `${CORE}/test/unregistered-hold.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a life the hub now holds stays held from every other flusher until its next accepted record",
+  },
+  {
+    label: "a re-fire whose register fails drops the mark of a life still unregistered (R1)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "!(previous?.crosscheckSessionId === crosscheckSessionId && previous.unregistered !== true)",
+    to: "!(previous?.crosscheckSessionId === crosscheckSessionId)",
+    test: `${CORE}/test/unregistered-hold.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a /compact on a life the hub never registered lets another conversation's flush spend its records",
+  },
+  {
+    label: "Claude's recovery never marks a life it could not register (P1)",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: '    ...(ladder.outcome === "registered" ? {} : { unregistered: true }),\n',
+    to: "",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a recovered life the hub refused has its first edits spent by the live conversation beside it",
+  },
+  {
+    label: "ACP keeps its seen-set on a heal onto the same id (E1)",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: '      if (healed.outcome === "healed") {',
+    to: '      if (healed.outcome === "healed" && healed.sessionId !== session.crosscheckSessionId) {',
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a file whose record was lost before the heal is never captured again by the proxy",
+  },
+  {
+    label: "ACP's twin of the healer drops the cooldown's verdict (E2)",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "heal.refusedFor === undefined ? twin : Object.assign(twin, { refusedFor: heal.refusedFor })",
+    to: "twin",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: every capture inside a failed walk's cooldown posts a batch the hub refuses again",
+  },
+  {
+    label: "expiry moves the cursor one line past what it counted (F5)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    spool.offset + bytesOfLines(spool.pending, count),",
+    to: "    spool.offset + bytesOfLines(spool.pending, count + 1),",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: the record behind the expired ones is skipped — neither sent nor counted",
+  },
+  {
+    label: "expiry runs past the held life into other lives' old records (H3)",
+    file: `${CORE}/src/spool/held-lives.ts`,
+    from: "    (line) => writerOf(line) !== held || (lineTimestampMs(line) ?? spool.mtimeMs) >= cutoffMs,",
+    to: "    (line) => (lineTimestampMs(line) ?? spool.mtimeMs) >= cutoffMs,",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: another life's deliverable record is counted expired with the held ones",
+  },
+  {
+    label: "a heal's re-send reads its answers one place off (A1)",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "merged(input.first, resent, again.data, ahead.length)",
+    to: "merged(input.first, resent, again.data, 0)",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: each re-sent record wears the answer of the one before it, and the last refusal is never counted",
+  },
+  {
+    label: "a batch whose walk counted a single line leaves no note (B1)",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "    if (counted.length > 0) {",
+    to: "    if (counted.length > 1) {",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: one torn line of a stuck batch is counted again on every walk",
+  },
+  {
+    label: "reap cuts a later life's slug at its first `.r` (K1)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);",
+    to: '    : name.endsWith(PENDING_LIFE_SUFFIX) ? name.split(".r")[0] ?? null : null;',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a host session whose slug holds `.r` has its later life ended while its records wait",
+  },
+  {
+    label: "a flush inside a failed walk's cooldown answers empty (F7)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '    return { outcome: "failed", remaining: pendingTotal(await pendingSpools(ctx)) };\n  }\n  let sent = 0;',
+    to: '    return { outcome: "empty" };\n  }\n  let sent = 0;',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a caller reading the outcome believes the spool is empty while the life's records wait",
+  },
+  {
+    label: "a cursor note is believed for a data file recreated in its place (M6)",
+    file: `${CORE}/src/spool/cursor.ts`,
+    from: "!parsed.success || !isSameFile(at, parsed.data) || parsed.data.offset !== at.offset",
+    to: "!parsed.success || parsed.data.offset !== at.offset",
+    test: `${CORE}/test/spool-durability.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: the new file's lines are taken for settled and are never sent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18186,7 +18282,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
- * PRINTS: packages/connector-acp/test/resumed-session.test.ts 5
+ * PRINTS: packages/connector-acp/test/resumed-session.test.ts 7
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -18231,7 +18327,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/resumed-session.test.ts 11
+ * PRINTS: packages/connector-claude/test/resumed-session.test.ts 12
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
@@ -18329,22 +18425,22 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 30
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 35
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 27
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 28
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
- * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
+ * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
- * PRINTS: packages/connector-core/test/unregistered-hold.test.ts 3
+ * PRINTS: packages/connector-core/test/unregistered-hold.test.ts 5
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1

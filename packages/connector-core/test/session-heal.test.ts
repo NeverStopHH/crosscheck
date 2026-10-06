@@ -550,6 +550,35 @@ describe("a successor flush beside a live life the hub has not registered", () =
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
   });
 
+  test("expires only the held life's old records, never the other life's record behind them (F5, H3)", async () => {
+    // Arrange: D unregistered and still beating; D's two old edits, then an
+    // old record another life wrote, in D's own spool
+    const fx = await fixture("expiry-edge", proxyUrl);
+    refuseRegisters = true;
+    const deaf = await register(fx);
+    refuseRegisters = false;
+    const otherHost = `${fx.hostSessionKey}-other`;
+    const other = await register(fx, otherHost);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+    const spool = await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey));
+    await writeCursorOffset(spool.dataPath, spool.cursorPath, spool.size, spool);
+    const old = new Date(Date.now() - 60_000);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(deaf.workContextId, "file", "src/old-1.ts", producerOf(deaf.crosscheckSessionId), old),
+      targetRecord(deaf.workContextId, "file", "src/old-2.ts", producerOf(deaf.crosscheckSessionId), old),
+      targetRecord(other.workContextId, "file", "src/behind-old.ts", producerOf(other.crosscheckSessionId), old),
+    ]);
+    const later = new Date(Date.now() + (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, lastHeartbeatAt: later.toISOString() }));
+
+    // Act: O's flush, a week and a day on
+    await flushSpool({ ...fx.hub, now: () => later }, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+
+    // Assert: D's two counted expired, the other life's record delivered
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ expired: 2 });
+    expect(await targetsOf(other.workContextId)).toEqual(["src/behind-old.ts"]);
+  });
+
   test("holds them only while the life is live: after its end they are delivered and every refusal counted", async () => {
     // Arrange: life D unregistered with an edit, then ended; a registered conversation O
     const fx = await fixture("held-until-end", proxyUrl);
@@ -643,6 +672,25 @@ describe("the bounds", () => {
     expect(inside).toBe(1);
     expect(registerCalls - before).toBe(2);
     expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+  });
+
+  test("a flush inside a failed walk's cooldown says it failed, with its records still pending (F7)", async () => {
+    // Arrange: a life whose register and SessionStart walk the hub refused
+    const fx = await fixture("cooldown-outcome", proxyUrl);
+    refuseRegisters = true;
+    const life = await register(fx);
+    await flushAsHook(fx);
+    refuseRegisters = false;
+
+    // Act: the next hook's flush, inside the cooldown
+    const outcome = await flushSpool(
+      fx.hub,
+      { sessionId: life.crosscheckSessionId, developerId, heal: healerFor(fx) },
+      GENEROUS_BUDGET_MS,
+    );
+
+    // Assert: never `empty` — a caller deferring an end must see the records
+    expect(outcome).toEqual({ outcome: "failed", remaining: 1 });
   });
 
   test("a hook inside a failed walk's cooldown sends nothing the hub would refuse again (review-2 LOW-5)", async () => {
@@ -769,6 +817,67 @@ describe("a batch a walk leaves on disk", () => {
     const after = (await readDropDetail(fx.home, fx.key)).byReason;
     expect(after["unparsable"]).toBe(1);
     expect(after["withheld"]).toBe(1);
+  });
+
+  test("with a single torn line, has it counted once too (B1)", async () => {
+    // Arrange: an ended life behind another conversation's backlog — one
+    // record of its unregistered next life, one torn line
+    const fx = await fixture("one-torn", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    const otherHost = `${fx.hostSessionKey}-other`;
+    const otherBase = `cc_${otherHost}`;
+    const older = new Date(Date.now() - 60_000);
+    await appendRecords(
+      fx.home,
+      fx.key,
+      otherHost,
+      [targetRecord(`wc_${otherBase}~r1`, "file", "src/other-live.ts", producerOf(`${otherBase}~r1`), older)],
+      older,
+    );
+    await appendFile(spoolDataPath(fx.home, fx.key, sessionSlug(otherHost)), "{torn\n");
+    await endOnHub(life.crosscheckSessionId);
+    const clock = { ms: Date.now() };
+    const now = () => new Date(clock.ms);
+    refuseRegisters = true;
+
+    // Act: three walks the hub refuses, one per cooldown
+    for (let walk = 0; walk < 3; walk += 1) {
+      await flushAsHook(fx, GENEROUS_BUDGET_MS, now);
+      clock.ms += HEAL_COOLDOWN_MS + 1;
+    }
+    refuseRegisters = false;
+
+    // Assert
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ unparsable: 1 });
+  });
+});
+
+/** THE EDGES OF A HEAL'S RE-SEND (review-2 round 6, MEDIUM-2). */
+describe("a heal's re-send with the owed work context ahead of it", () => {
+  test("reads the hub's answers for the batch past the one for the work context (A1)", async () => {
+    // Arrange: an unregistered life whose spooled work context was spent;
+    // an edit, and last an edit naming a work context that exists nowhere —
+    // both refused for the unknown life, only the second for itself after the heal
+    const fx = await fixture("ahead-answers", proxyUrl);
+    refuseRegisters = true;
+    const life = await register(fx);
+    refuseRegisters = false;
+    const spool = await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey));
+    await writeCursorOffset(spool.dataPath, spool.cursorPath, spool.size, spool);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/edit.ts", producerOf(life.crosscheckSessionId), new Date()),
+      targetRecord("wc_nowhere", "file", "src/nowhere.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+
+    // Act: the flush whose walk heals and re-sends both, the work context ahead
+    await flushAsHook(fx);
+
+    // Assert: the edit landed, and the last record's refusal is the one booked
+    expect(await targetsOf(life.workContextId)).toEqual(["src/edit.ts"]);
+    const drops = await readDropDetail(fx.home, fx.key);
+    expect(drops.byReason).toEqual({ rejected: 1 });
+    expect(drops.rejectedCauses).toEqual({ author_unknown: 1 });
   });
 });
 
