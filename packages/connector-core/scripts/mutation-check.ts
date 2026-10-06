@@ -18664,6 +18664,37 @@ export const MUTATIONS: readonly Mutation[
       "Nick's evidence about Ken is overwritten by hers and vanishes for every " +
       "colleague, so the rung says somebody hidden reported",
   },
+  // ── Review round 4, H1: a hidden session is counted, never named ──────
+  {
+    label: "coverage names how an opted-out teammate's session went quiet",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  const isOnlyWithheld = toCount(row?.toldGaps) === 0 && toldLost === 0;",
+    to: "  const isOnlyWithheld = false;",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because:
+      "get_diagnosis of her context names her session, and «session_silent» or " +
+      "«telemetry_lost» says what happened to it",
+  },
+  {
+    label: "a told session's gap is reported as an opted-out teammate's reap",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      toldReaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null and ${isTold})`,",
+    to: "      toldReaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because:
+      "reap-over-silence precedence picks her session's reap over Nick's own " +
+      "silence, which says hers was reaped",
+  },
+  {
+    label: "the coverage line drops the word for a withheld session",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  session_withheld: \"withheld: presence opt-out\",",
+    to: "",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "«went quiet» with no word reads as a teammate's ordinary silence, and " +
+      "the reader cannot tell the rung counted a session it may not name",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18868,7 +18899,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 21
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/detached-branch.test.ts 1
@@ -18971,7 +19002,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
- * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 3
+ * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 5
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2

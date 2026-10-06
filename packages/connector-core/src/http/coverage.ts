@@ -59,6 +59,8 @@ export const COVERAGE_REASONS = [
   "ci_lanes_missing",
   "ci_awaiting_rerun",
   "ci_not_reported_yet",
+  // Appended (review round 4, H1), so 05's block stays contiguous and nothing moves.
+  "session_withheld",
 ] as const;
 
 export type CoverageSource = (typeof COVERAGE_SOURCES)[number];

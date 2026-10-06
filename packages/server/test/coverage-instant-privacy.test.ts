@@ -20,6 +20,7 @@
  * session is newer, which can only make the rung look staler.
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
 
 import type { CoverageRecord, CoverageSourceRecord } from "../src/services/coverage.ts";
 import {
@@ -107,10 +108,12 @@ describe("a session the viewer may not be told about weakens the rung and lends 
       "/api/work-contexts/wc_n/diagnosis?telemetry=0",
     );
     // Assert
+    // Counted, never NAMED (review round 4, H1): the answer names Ken's
+    // session, and "session_silent" would say how his session went quiet.
     expect(agentEventOf(data.coverage)).toEqual({
       source: "agent_event",
       state: "incomplete",
-      reason: "session_silent",
+      reason: "session_withheld",
       gapSince: null,
       observedAt: harness.clock.now().toISOString(),
     });
@@ -143,12 +146,48 @@ describe("a session the viewer may not be told about weakens the rung and lends 
     });
     // Act
     const data = await dataOf<{ coverage: CoverageRecord }>(harness, nick, absencesUrl);
-    // Assert
+    // Assert: incomplete — the loss is real — and his loss is not named.
     expect(agentEventOf(data.coverage)).toMatchObject({
       state: "incomplete",
-      reason: "telemetry_lost",
+      reason: "session_withheld",
       gapSince: null,
     });
+  });
+});
+
+describe("a hidden session is counted, never named (review round 4, H1)", () => {
+  /** Nick live; Ken, opted out, live or gone quiet. */
+  const world = async (kenBeats: boolean): Promise<CoverageSourceRecord> => {
+    const { harness, nick, ken } = await seed();
+    await registerTestSession(harness, ken.apiKey, { id: "ses_ken" });
+    harness.clock.advanceSeconds(HOUR_SECONDS);
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    if (kenBeats) {
+      const beat = await harness.app.request("/api/sessions/ses_ken/heartbeat", jsonRequest("POST", ken.apiKey, { status: "implementing" }));
+      expect(beat.status).toBe(200);
+    }
+    return agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, nick, absencesUrl)).coverage);
+  };
+
+  test("his silent session makes the rung incomplete — SOME session went silent — and says nothing of it", async () => {
+    expect(await world(false)).toMatchObject({ state: "incomplete", reason: "session_withheld", gapSince: null });
+  });
+
+  test("his live session reads as every session reporting", async () => {
+    expect(await world(true)).toMatchObject({ state: "complete", reason: "sessions_reported" });
+  });
+
+  test("a told session's gap is named as before, whatever his does", async () => {
+    // Arrange: Nick's session went quiet; Ken's, hidden, was reaped.
+    const { harness, nick, ken } = await seed();
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    await registerTestSession(harness, ken.apiKey, { id: "ses_ken" });
+    await harness.db.execute(sql`UPDATE agent_sessions SET reaped_at = ${harness.clock.now().toISOString()} WHERE id = 'ses_ken'`);
+    harness.clock.advanceSeconds(HOUR_SECONDS);
+    // Act
+    const nickView = agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, nick, absencesUrl)).coverage);
+    // Assert: Nick's own silence, not Ken's reap.
+    expect(nickView).toMatchObject({ state: "incomplete", reason: "session_silent" });
   });
 });
 

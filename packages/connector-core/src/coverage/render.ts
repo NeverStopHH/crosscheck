@@ -159,6 +159,9 @@ const scopeWindow = (record: CoverageRecord, now: Date): string | null => {
 const INCOMPLETE_LABELS: Record<string, string> = {
   session_reaped: "reaped",
   session_silent: "unclosed",
+  // Counted, never named (hub coverage.ts): whose session, and how it went
+  // quiet, is the opted-out teammate's to keep.
+  session_withheld: "withheld: presence opt-out",
 };
 
 /**

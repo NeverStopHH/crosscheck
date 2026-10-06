@@ -163,6 +163,21 @@ describe("01a §3.7: the order block on the coverage line", () => {
     expect(fitsTheSeat(clause)).toBe(true);
   });
 
+  test("an opted-out teammate's quiet session is counted and never named (review round 4, H1)", () => {
+    // Arrange: the hub withholds the instant and the kind of her gap.
+    const record = recordOf([
+      row("agent_event", "incomplete", "session_withheld", null, GAP_ISO),
+      row("git", "complete", "commits_reported", null, GAP_ISO),
+    ]);
+    // Act
+    const clause = coverageClause(record, NOW);
+    // Assert
+    expect(clause).toBe(
+      "Coverage incomplete: agent sessions on this repo went quiet (withheld: presence opt-out); git evidence reported; order: undeclared (hub_did_not_report).",
+    );
+    expect(fitsTheSeat(clause)).toBe(true);
+  });
+
   test("the git rung's instant is shortened to its day before anything is dropped", () => {
     // Arrange: 165 characters with the git rung's minute, the longest reason.
     const record = withOrder(
@@ -612,15 +627,16 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
   });
 
   test("every clause fits the seat: at most two lines, each within MAX_COVERAGE_LINE_CHARS", () => {
-    // Arrange: 4 states x 18 reasons, squared — every shape the enum admits
+    // Arrange: 4 states x 19 reasons, squared — every shape the enum admits
     // (16 reasons before loss-accounting added `telemetry_lost` and
-    // `record_kinds_ignored`; the literal moves with the enum on purpose, so
-    // a reason added without a render case is a red line here, not a silent
+    // `record_kinds_ignored`, 18 before review round 4 added
+    // `session_withheld`; the literal moves with the enum on purpose, so a
+    // reason added without a render case is a red line here, not a silent
     // widening of the sweep)
     const shapes = everyShape();
 
     // Assert
-    expect(shapes.length).toBe(5184);
+    expect(shapes.length).toBe(5776);
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
       expect(fitsTheSeat(clause), clause).toBe(true);

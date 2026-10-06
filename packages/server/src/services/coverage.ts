@@ -97,7 +97,13 @@ export type CoverageState = (typeof COVERAGE_STATES)[number];
  * kinds the hub answered 200 to and ignored — that one's remedy is specific,
  * upgrade the hub, which is why it is its own word.
  *
- * The last four are RESERVED FOR 05 AND DORMANT until CI ingestion lands.
+ * `session_withheld` (review round 4, H1) is the gap of a session whose
+ * owner opted out of presence, as a viewer she is hidden from reads it: the
+ * rung stays honestly `incomplete` — SOME session went quiet — and says
+ * nothing of whose or how (silent, reaped, lossy), because naming that
+ * would describe her session. A told session's gap is named as before.
+ *
+ * The four `ci_*` words are RESERVED FOR 05 AND DORMANT until CI ingestion lands.
  * They are minted here rather than there because 05 §9.1 requests them, and a
  * second coverage enum living in a second package is exactly the drift
  * 00 §9.6 forbids.
@@ -121,6 +127,8 @@ export const COVERAGE_REASONS = [
   "ci_lanes_missing",
   "ci_awaiting_rerun",
   "ci_not_reported_yet",
+  // Appended (review round 4, H1), so 05's block stays contiguous.
+  "session_withheld",
 ] as const;
 
 export type CoverageReason = (typeof COVERAGE_REASONS)[number];
@@ -574,15 +582,19 @@ const readAgentEventCoverage = async (
     .select({
       // The window alone can say somebody was reporting (sessionScope).
       reporting: sql`count(*) filter (where ${scope.window})`,
-      reaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,
       gaps: sql`count(*) filter (where ${isGap})`,
       gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
       hiddenGaps: sql`count(*) filter (where ${isGap} and not ${isTold})`,
       lost: sql`count(*) filter (where ${isLost})`,
-      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,
       lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
       hiddenLosses: sql`count(*) filter (where ${isLost} and not ${isTold})`,
       observedAt: sql`max(${agentSessions.lastHeartbeatAt}) filter (where ${isTold})`,
+      // The REASON is the told sessions' alone (review round 4, H1): her
+      // gap counts towards the state and is never named.
+      toldGaps: sql`count(*) filter (where ${isGap} and ${isTold})`,
+      toldReaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null and ${isTold})`,
+      toldLost: sql`count(*) filter (where ${isLost} and ${isTold})`,
+      toldIgnored: sql`count(*) filter (where ${isLost} and ${isTold} and ${ignoredKindCondition(agentSessions, since)})`,
     })
     .from(agentSessions)
     .where(inScope(scope));
@@ -590,6 +602,7 @@ const readAgentEventCoverage = async (
   const observedAt = toIso(row?.observedAt);
   const gaps = toCount(row?.gaps);
   const lost = toCount(row?.lost);
+  const toldLost = toCount(row?.toldLost);
   const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;
   if (gaps === 0 && lost === 0) {
     return toCount(row?.reporting) === 0
@@ -602,10 +615,13 @@ const readAgentEventCoverage = async (
           observedAt,
         );
   }
+  const isOnlyWithheld = toCount(row?.toldGaps) === 0 && toldLost === 0;
   return sourceRecord(
     "agent_event",
     "incomplete",
-    agentGapReason(lost, toCount(row?.ignored), toCount(row?.reaped)),
+    isOnlyWithheld
+      ? "session_withheld"
+      : agentGapReason(toldLost, toCount(row?.toldIgnored), toCount(row?.toldReaped)),
     isGapSinceWithheld
       ? null
       : earliestIso(
