@@ -110,10 +110,26 @@ const stalePage = async (db: Db, after: string, batch: number): Promise<readonly
   return rows.map((row) => row.id);
 };
 
+/**
+ * ONE REBUILD, ONE TRANSACTION, THE ROW LOCKED (review round 4, M1). The
+ * rebuild reads the context's claims, then writes its doc; outside a
+ * transaction PGlite's FIFO let a queued ingest commit a vouched claim
+ * between the two, and the pass's stale write landed on top of the ingest's
+ * own rebuild — the context stamped current without the claim, for good. In
+ * a transaction the ingest waits for the commit and rebuilds after it; on a
+ * shared Postgres the FOR UPDATE row lock gives the same order against an
+ * ingest on another connection.
+ */
+const rebuildLocked = (db: Db, id: string): Promise<void> =>
+  db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM work_contexts WHERE id = ${id} FOR UPDATE`);
+    await refreshNormalizedDoc(tx, id);
+  });
+
 /** Rebuilds, then (with an embedder) re-embeds, one page — one context at a time. */
 const upgradePage = async (deps: Deps, ids: readonly string[]): Promise<number> => {
   for (const id of ids) {
-    await refreshNormalizedDoc(deps.db, id);
+    await rebuildLocked(deps.db, id);
   }
   if (deps.embedder === null) {
     return 0;

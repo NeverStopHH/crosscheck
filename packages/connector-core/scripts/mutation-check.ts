@@ -18482,7 +18482,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up doc upgrade rebuilds nothing",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "    await refreshNormalizedDoc(deps.db, id);\n",
+    from: "    await refreshNormalizedDoc(tx, id);\n",
     to: "",
     test: `${SERVER}/test/doc-upgrade.test.ts`,
     because: "an upgraded hub keeps every draft's and discard's words in its old docs, and teammates find discarded words as vouched matches for good",
@@ -18646,6 +18646,14 @@ export const MUTATIONS: readonly Mutation[
     to: "  const stamped = 0;",
     test: `${SERVER}/test/doc-upgrade.test.ts`,
     because: "every start's first page walks every declared-only context again — 20 000 on the review's probe hub",
+  },
+  {
+    label: "the doc upgrade rebuilds a context outside a transaction",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "    await rebuildLocked(deps.db, id);\n",
+    to: "    await refreshNormalizedDoc(deps.db, id);\n",
+    test: `${SERVER}/test/doc-upgrade-race.test.ts`,
+    because: "an ingest committing a vouched claim mid-rebuild loses it from the doc, and the context is stamped current for good",
   },
 ];
 
@@ -18970,6 +18978,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-load.test.ts 1
+ * PRINTS: packages/server/test/doc-upgrade-race.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 4
  * PRINTS: packages/server/test/draft-visibility.test.ts 8
