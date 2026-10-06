@@ -371,4 +371,32 @@ describe("the landed-change stop (review round 3, H2)", () => {
       expect.objectContaining({ workContextId: ROBIN_SOLVED, title: WITHHELD_TITLE, workStartedAt: LOCATION_WITHHELD }),
     ]);
   });
+
+  test("answers the same whatever commit time the caller claims (review round 4, C1)", async () => {
+    // The commit time is the CALLER's word. Compared with her session start
+    // and last heartbeat, "matched / not matched" let a colleague binary-
+    // search both instants to the second in 44 requests.
+    const world = await seedOptedOutWorld();
+    const now = world.harness.clock.now().getTime();
+    const claimed = [-90, -40, -30, -10, -2, -1, 0, 1, 2, 10, 30, 31, 45, 90].map((days) =>
+      new Date(now + days * MS_PER_DAY).toISOString(),
+    );
+
+    const answers = await Promise.all(
+      claimed.map(async (committedAt) =>
+        (
+          await postAs(world, "nick", "/api/landed/context", {
+            repo: REPO,
+            path: FILE,
+            commits: [{ sha: LANDED_SHA, authorEmail: "robin@example.com", committedAt }],
+          })
+        ).body,
+      ),
+    );
+
+    expect(new Set(answers).size).toBe(1);
+    expect(answers[0]).toContain(ROBIN_SOLVED);
+  });
 });
+
+const MS_PER_DAY = 86_400_000;

@@ -11714,8 +11714,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the why names the oldest work, not the latest",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "      desc(agentSessions.startedAt),\n      desc(workContexts.createdAt),",
-    to: "      agentSessions.startedAt,\n      desc(workContexts.createdAt),",
+    from: "      sql`(case when ${visible} then ${agentSessions.startedAt} end) DESC NULLS LAST`,",
+    to: "      sql`(case when ${visible} then ${agentSessions.startedAt} end) ASC NULLS LAST`,",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a teammate's first attempt at the file is named, not the work that landed",
   },
@@ -11853,7 +11853,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a session that only touched the file after the commit wins",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "      sql`coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false) DESC`,",
+    from: "      sql`(${visible} AND coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false)) DESC`,",
     to: "      sql`1`,",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a follow-up begun just before the commit takes the credit for the work that made it",
@@ -11861,8 +11861,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an opted-out teammate's live work is shown",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "          visiblePresenceCondition(callerDeveloperId, agentSessions.developerId),",
-    to: "          sql`true`,",
+    from: "            not(visible),\n            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n",
+    to: "            not(visible),\n",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "an unasked stop reveals what a teammate who switched presence off is doing right now",
   },
@@ -11910,7 +11910,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a follow-up within the flush hour takes the credit",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "      sql`coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false) DESC`,",
+    from: "      sql`(${visible} AND coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false)) DESC`,",
     to: "      sql`1`,",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "work touched half an hour after the commit is named as the work behind it",
@@ -11926,8 +11926,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a just-ended opted-out session is hidden as if live",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "          isNotNull(agentSessions.endedAt),",
-    to: "          sql`false`,",
+    from: "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n          ),\n        ),",
+    to: "            or(sql`false`, lte(agentSessions.lastHeartbeatAt, live)),\n          ),\n        ),",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "an opted-out teammate's finished work goes unnamed for the presence window after every session",
   },
@@ -18371,6 +18371,19 @@ export const MUTATIONS: readonly Mutation[
       "the guard's secrets were branch and HEAD only, so an instant of hers " +
       "under a name the projection does not know passed",
   },
+  {
+    // Review round 4, C1: the landed stop's commit time is the caller's word.
+    label: "the landed stop compares a caller's commit time with an opted-out teammate's session start",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n",
+    to:
+      "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n" +
+      "            lte(agentSessions.startedAt, startedBy),\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Nick sweeps committedAt and reads Robin's session start back to the " +
+      "second from where the stop starts naming her work",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18704,7 +18717,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 15
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 20
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 21
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
