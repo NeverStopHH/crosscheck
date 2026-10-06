@@ -18935,6 +18935,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a link an operator put back disappears again on the next restart",
   },
+  {
+    label: "a doc rebuild keeps the vector of the doc it replaced",
+    file: `${SERVER}/src/services/normalized-doc.ts`,
+    from: "    .set({ normalizedDoc: doc, docVersion: NORMALIZED_DOC_VERSION, embedding: null, embeddingModel: null })",
+    to: "    .set({ normalizedDoc: doc, docVersion: NORMALIZED_DOC_VERSION })",
+    test: `${SERVER}/test/doc-upgrade-vectors.test.ts`,
+    because: "the drafts' words leave the doc but their meaning stays in the vector tier, and the backfill never replaces a vector of the current model",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19261,7 +19269,7 @@ interface Outcome {
  * PRINTS: packages/server/test/doc-upgrade-downgrade.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-load.test.ts 2
  * PRINTS: packages/server/test/doc-upgrade-race.test.ts 1
- * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 4
+ * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 5
  * PRINTS: packages/server/test/doc-upgrade-window.test.ts 6
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 18

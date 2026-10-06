@@ -61,6 +61,22 @@ const giveOldVectors = async (db: Db, ids: readonly string[], embedder: Embedder
   }
 };
 
+describe("a rebuild never keeps the vector of the doc it replaced", () => {
+  test("a keyless rebuild clears the old vector and its model, so the drafts' meaning leaves the vector tier", async () => {
+    // Arrange: a vector minted from the pre-round doc, drafts folded in
+    const { harness } = await inMemoryUpgradeHub();
+    const ids = await seedPreRoundContexts(harness.db, 1);
+    const fake = createFakeEmbedder();
+    await giveOldVectors(harness.db, ids, fake, fake.model);
+
+    // Act
+    await upgradeNormalizedDocs({ db: harness.db, embedder: null });
+
+    // Assert
+    expect(await vectors(harness.db)).toEqual([{ id: ids[0] ?? "", has_embedding: false, embedding_model: null }]);
+  });
+});
+
 describe("the rebuild embeds what it rebuilt, and counts only what landed", () => {
   test("an embedder that throws on one page heals on the next start", async () => {
     // Arrange: three contexts, one page each; the second embed call fails
