@@ -28,7 +28,10 @@ import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
-import { DELIVERY_STILL_ON_THIS_MACHINE_LINE } from "../src/cli/outcome-render.ts";
+import {
+  DELIVERY_HELD_NO_LIVE_SESSION_LINE,
+  DELIVERY_STILL_ON_THIS_MACHINE_LINE,
+} from "../src/cli/outcome-render.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "noise-cli-admin";
@@ -456,6 +459,19 @@ describe("crosscheck noise", () => {
     // Assert
     expect(result.stdout).toContain(`recorded: ${today} is noise`);
     expect(result.stdout).not.toContain(lastWeek);
+  });
+
+  test("review H-A: noise <ref> held by a session no longer live here says so — never 'it never reached you'", async () => {
+    // Arrange — the hub does not know it, and only a session that went silent still holds it
+    const stuck = `http://127.0.0.1:${String(stuckHub.port)}`;
+    const home = await homeWithLive(null, repo, REPO_ID, stuck);
+    await spoolDelivery(home, stuck, GONE, "wc_ken_noise_orphan");
+
+    // Act
+    const result = await noise(home, ["wc_ken_noise_orphan"], { hub: stuck });
+
+    // Assert
+    expect(result.stdout).toBe(DELIVERY_HELD_NO_LIVE_SESSION_LINE);
   });
 
   test("review H-A: noise with no id offers a pointer still held here beside an older one, newest first", async () => {
