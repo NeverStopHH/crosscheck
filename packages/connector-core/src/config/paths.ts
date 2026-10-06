@@ -10,8 +10,21 @@ import {
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
-export const crosscheckHome = (env: Env): string =>
-  env["CROSSCHECK_HOME"] ?? join(homedir(), ".crosscheck");
+/**
+ * An EMPTY or whitespace-only CROSSCHECK_HOME is unset, not a path (review
+ * 2026-10-06). `""` is not nullish, so it used to come back as the home
+ * itself, and every path joined under it — state/, spool/, config.json, the
+ * temp sweep's deletions — resolved against whatever directory the process
+ * ran in, which for a hook is the developer's repo. A shell that exports the
+ * variable empty is not asking for that. Any other value is used verbatim:
+ * a path with spaces in it is still a path.
+ */
+export const crosscheckHome = (env: Env): string => {
+  const configured = env["CROSSCHECK_HOME"];
+  return configured === undefined || configured.trim() === ""
+    ? join(homedir(), ".crosscheck")
+    : configured;
+};
 
 /**
  * Path-safe and hub-scoped: the same repo on two hubs never shares a spool,
@@ -295,12 +308,41 @@ export const ensureDir = async (path: string): Promise<void> => {
   await mkdir(path, { recursive: true, mode: HOME_DIR_MODE });
 };
 
-const tempSibling = (path: string): string =>
+/**
+ * Exported so the sweep's tests name the files THIS produces, not a copy of
+ * the idea typed out by hand.
+ */
+export const tempSibling = (path: string): string =>
   `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+
+/**
+ * Exactly the names `tempSibling` produces and nothing looser: a target name,
+ * `.tmp-`, the writer's pid in decimal, `-`, and one to eight lower-case
+ * base36 characters (`slice(2, 10)` of a base36 `Math.random()`), then the
+ * end of the name. The sweep (state/temp-sweep.ts) deletes on this test plus
+ * an age, so every character it accepts beyond that shape is a file nobody
+ * abandoned put up for deletion. `tempSibling` is the only thing that names a
+ * temp — writePrivateFile and the CLI's writeConfigAtomically (cli/init-io.ts)
+ * both call it rather than spell the shape out — so this pattern changes when
+ * `tempSibling` does, and at no other time.
+ */
+const TEMP_SIBLING_NAME = /^.+\.tmp-[0-9]+-[0-9a-z]{1,8}$/;
+
+export const isTempSiblingName = (name: string): boolean =>
+  TEMP_SIBLING_NAME.test(name);
 
 /**
  * Atomic write: a crashed hook must never leave a half-written state file that
  * the next hook parses as truth.
+ *
+ * A FAILED write removes its own temp (pilot finding, 2026-10-06). A
+ * `writeFile` that died part-way, a refused chmod or a rename that threw used
+ * to leave `<path>.tmp-<pid>-<rand>` beside the target for good: nothing
+ * reads those names, and nothing removed them. The removal is best-effort —
+ * `removeFile` swallows its own failure — so what the caller catches is
+ * always the write's own error. A writer that DIES between the two steps
+ * runs no catch at all; that half is SessionStart's age sweep
+ * (state/temp-sweep.ts).
  */
 export const writePrivateFile = async (
   path: string,
@@ -308,9 +350,14 @@ export const writePrivateFile = async (
 ): Promise<void> => {
   await ensureDir(dirname(path));
   const temp = tempSibling(path);
-  await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });
-  await chmod(temp, PRIVATE_FILE_MODE);
-  await rename(temp, path);
+  try {
+    await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });
+    await chmod(temp, PRIVATE_FILE_MODE);
+    await rename(temp, path);
+  } catch (error) {
+    await removeFile(temp);
+    throw error;
+  }
 };
 
 export type TextRead =

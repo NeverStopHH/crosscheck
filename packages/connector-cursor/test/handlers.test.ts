@@ -6,12 +6,16 @@
  * output must be directive-free JSON.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
+import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  MS_PER_DAY,
+} from "@crosscheck/connector-core/constants.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
@@ -170,6 +174,32 @@ describe("sessionStart (§3.2 row 1)", () => {
       .map((record) => record.producer.agentKind)
       .sort();
     expect(producers).toEqual(["cursor-background", "cursor-ide"]);
+  });
+
+  test("sweeps a writePrivateFile temp past ABANDONED_TEMP_MAX_AGE_MS and keeps a fresh one", async () => {
+    // Arrange: the pilot finding's two ages, in the home's state/ — a
+    // Cursor-only machine has no Claude SessionStart to sweep for it
+    const f = await fixture("start-temp-sweep");
+    const state = join(f.home, "state");
+    await mkdir(state, { recursive: true });
+    const abandoned = "0123456789abcdef-hooks.json.tmp-4242-k3j9x0qa";
+    const inFlight = "0123456789abcdef.json.tmp-4243-p0w8rt2z";
+    for (const [name, ageMs] of [
+      [abandoned, ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY],
+      [inFlight, 60 * 60 * 1000],
+    ] as const) {
+      await writeFile(join(state, name), "", "utf8");
+      const when = new Date(Date.now() - ageMs);
+      await utimes(join(state, name), when, when);
+    }
+
+    // Act: the real handler
+    await run("sessionStart", inRepo(SESSION_START_INPUT, f.repo, "conv-temp-sweep"), f.env);
+
+    // Assert
+    const names = await readdir(state);
+    expect(names).not.toContain(abandoned);
+    expect(names).toContain(inFlight);
   });
 });
 

@@ -23,6 +23,8 @@ import {
   crosscheckHome,
   ensureDir,
   readText,
+  removeFile,
+  tempSibling,
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -195,6 +197,13 @@ const backUp = async (path: string, raw: string | null): Promise<void> => {
  * (the rename would otherwise silently reset a user's chosen permissions).
  * A crash between the two leaves the original untouched — never a torn
  * settings file that Claude Code parses as truth.
+ *
+ * NOT writePrivateFile, which forces 0600: these are files the user and
+ * their repo own (`.claude/settings.json`, `.mcp.json`), whose mode is
+ * theirs to keep. Everything else it shares (review 2026-10-06): the temp is
+ * named by `tempSibling`, never a copy of its shape, and a write or rename
+ * that throws removes its temp before the error goes on — the same cleanup,
+ * for the same reason, as writePrivateFile's.
  */
 export const writeConfigAtomically = async (
   path: string,
@@ -205,11 +214,16 @@ export const writeConfigAtomically = async (
     (info) => info.mode & 0o777,
     () => null,
   );
-  const temp = `${path}.tmp-${String(process.pid)}-${Math.random().toString(36).slice(2, 10)}`;
-  await writeFile(temp, content, {
-    ...(existingMode === null ? {} : { mode: existingMode }),
-  });
-  await rename(temp, path);
+  const temp = tempSibling(path);
+  try {
+    await writeFile(temp, content, {
+      ...(existingMode === null ? {} : { mode: existingMode }),
+    });
+    await rename(temp, path);
+  } catch (error) {
+    await removeFile(temp);
+    throw error;
+  }
 };
 
 export interface WriteOutcome {

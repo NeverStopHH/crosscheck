@@ -8,27 +8,49 @@
  * file exists, so each corpse pinned a delivered `.jsonl` that could never be
  * reaped.
  *
+ * The same maintenance region sweeps abandoned `writePrivateFile` temp
+ * siblings (pilot finding, 2026-10-06: 40 in one machine's `state/`, aged up
+ * to 925 h, and still being produced). The pure sweep is pinned in
+ * connector-core/test/abandoned-temps.test.ts; this file pins that the hook
+ * runs it.
+ *
  * This runs the REAL `crosscheck hook session-start` against a throwaway hub,
  * because the interesting part is that the reap happens on the hook path at
  * all — not that the pure function works.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdir, rm, utimes } from "node:fs/promises";
+import { mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runHook } from "../src/index.ts";
 import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
   MAX_SPOOL_AGE_DAYS,
   MS_PER_DAY,
 } from "@crosscheck/connector-core/constants.ts";
+import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import {
   deriveSessionState,
   writeSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import {
+  makeHome,
+  makeRepo,
+  seedAbandonedTemps,
+} from "../../connector-core/test/helpers.ts";
+import { TEAMMATE_NAME, startSlowHub } from "./fixtures/slow-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
 const LIVE_SESSION_ID = "state-reap-live";
+/**
+ * The review's backlog: the uncapped sweep took the real hook to 1006 ms
+ * with it (default timeout, fast hub), past the 1000 ms budget.
+ */
+const LARGE_BACKLOG = 20_000;
+/** Seeding twenty thousand files is most of this test's time, not the hook. */
+const LARGE_BACKLOG_TEST_TIMEOUT_MS = 60_000;
 
 const paths: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
@@ -166,4 +188,95 @@ describe("SessionStart reaps zombie state files", () => {
     expect(names).toContain("recent-a.json");
     expect(names).toContain("recent-b.json");
   });
+});
+
+/** A temp sibling in `<home>/state`, its mtime `ageMs` in the past. */
+const seedStateTemp = async (
+  home: string,
+  name: string,
+  ageMs: number,
+): Promise<void> => {
+  await mkdir(join(home, "state"), { recursive: true });
+  const path = join(home, "state", name);
+  await writeFile(path, "", "utf8");
+  const when = new Date(Date.now() - ageMs);
+  await utimes(path, when, when);
+};
+
+describe("SessionStart sweeps abandoned temp siblings", () => {
+  test("a temp past ABANDONED_TEMP_MAX_AGE_MS goes; a fresh one stays", async () => {
+    // Arrange: the two shapes the pilot machine had — an hour old and weeks old
+    const repo = await makeRepo("temp-sweep", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("temp-sweep");
+    paths.push(repo, home);
+    const hubUrl = acceptingHub();
+    const abandoned = "0123456789abcdef-hooks.json.tmp-4242-k3j9x0qa";
+    const inFlight = "0123456789abcdef.json.tmp-4243-p0w8rt2z";
+    await seedStateTemp(home, abandoned, ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY);
+    await seedStateTemp(home, inFlight, 60 * 60 * 1000);
+
+    // Act: the real hook
+    await runHook(
+      "session-start",
+      JSON.stringify({ session_id: LIVE_SESSION_ID, cwd: repo }),
+      hookEnv(home, hubUrl),
+    );
+
+    // Assert
+    const names = await readdir(join(home, "state"));
+    expect(names).not.toContain(abandoned);
+    expect(names).toContain(inFlight);
+  });
+
+  test(
+    "a 20 000-orphan backlog never costs the briefing or books a hook timeout",
+    async () => {
+      // Arrange: the review's probe — a fast hub with a teammate to brief
+      // about, the DEFAULT request timeout (so the real 1000 ms budget and
+      // 400 ms reserve), and a backlog the uncapped sweep needed over a
+      // second for
+      const hub = startSlowHub({ ingest: 0, end: 0, other: 0 });
+      const repo = await makeRepo("temp-sweep-backlog", {
+        remote: "git@github.com:acme/api.git",
+      });
+      const home = await makeHome("temp-sweep-backlog");
+      paths.push(repo, home);
+      await seedAbandonedTemps(
+        join(home, "state"),
+        LARGE_BACKLOG,
+        ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+      );
+
+      try {
+        // Act: the real hook
+        const out = await runHook(
+          "session-start",
+          JSON.stringify({ session_id: LIVE_SESSION_ID, cwd: repo }),
+          {
+            CROSSCHECK_HOME: home,
+            HOME: home,
+            CROSSCHECK_HUB_URL: hub.url,
+            CROSSCHECK_API_KEY: "test-key",
+          },
+        );
+
+        // Assert: the briefing arrived, nothing was booked as a timeout, and
+        // this run took at most its cap — the rest is the next session's
+        expect(out).toContain(TEAMMATE_NAME);
+        const losses = await readCaptureLosses(home, repoKey(hub.url, REPO_ID));
+        expect(losses.byDetail["hook_timed_out:session-start"]).toBeUndefined();
+        const left = (await readdir(join(home, "state"))).filter((name) =>
+          name.startsWith("seeded-"),
+        );
+        expect(left.length).toBeGreaterThanOrEqual(
+          LARGE_BACKLOG - ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
+        );
+      } finally {
+        hub.stop();
+      }
+    },
+    LARGE_BACKLOG_TEST_TIMEOUT_MS,
+  );
 });

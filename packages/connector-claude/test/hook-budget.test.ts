@@ -11,9 +11,14 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { appendRecords, readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
+import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  MS_PER_DAY,
+} from "@crosscheck/connector-core/constants.ts";
 import {
   ensureDir,
   sessionSlug,
@@ -23,7 +28,11 @@ import {
 } from "@crosscheck/connector-core/config/paths.ts";
 import { withBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import {
+  makeHome,
+  makeRepo,
+  seedAbandonedTemps,
+} from "../../connector-core/test/helpers.ts";
 import { SELF_DEVELOPER_ID, startSlowHub } from "./fixtures/slow-hub.ts";
 import type { HubCalls, HubLatency } from "./fixtures/slow-hub.ts";
 
@@ -43,6 +52,8 @@ const SESSION_START_BUDGET_MS = 1000;
 const SLOW_HUB_MS = 300;
 /** An `end` this hub will never answer inside any budget the hook can give it. */
 const UNANSWERABLE_MS = 5000;
+/** Old enough to sweep, few enough that any sweep at all would take them. */
+const ABANDONED_TEMPS = 5;
 
 const paths: string[] = [];
 
@@ -166,6 +177,38 @@ describe("SessionStart under a backlog", () => {
       hookSpecificOutput: { additionalContext: string };
     };
     expect(parsed.hookSpecificOutput.additionalContext).toContain("Teammate");
+    fixed.stop();
+  });
+
+  test("a drain that spends the spare leaves the temp sweep nothing: abandoned temps wait for the next session", async () => {
+    // Arrange: the same 350 ms drain, which runs to its deadline by
+    // construction, and five temps old enough to sweep
+    const fixed = await fixture("budget-start-temps");
+    await seedBacklog(fixed.home, fixed.key, "old-session");
+    const temps = await seedAbandonedTemps(
+      join(fixed.home, "state"),
+      ABANDONED_TEMPS,
+      ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+    );
+
+    // Act
+    const stdout = await runHook(
+      "session-start",
+      JSON.stringify({
+        session_id: "start-temps-uuid",
+        cwd: fixed.repo,
+        hook_event_name: "SessionStart",
+        source: "startup",
+      }),
+      fixed.env,
+    );
+
+    // Assert: the briefing went out and the sweep read spareMs() = 0 — it
+    // took nothing from the reserve, so every temp is still there
+    expect(stdout).toContain("Teammate");
+    for (const temp of temps) {
+      expect(await Bun.file(temp).exists()).toBe(true);
+    }
     fixed.stop();
   });
 });

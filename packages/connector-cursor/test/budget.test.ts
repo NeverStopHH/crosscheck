@@ -23,13 +23,18 @@
  * deterministic pin in connector-claude/test/hook-budget.test.ts.
  */
 import { describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
+import { readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
   HTTP_TIMEOUT_MS,
+  MS_PER_DAY,
   POST_TOOL_USE_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
+import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import {
   ensureDir,
   repoKey,
@@ -58,9 +63,18 @@ import {
   rejectedApproachCandidate,
   startHintHub,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
-import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import {
+  makeHome,
+  makeRepo,
+  seedAbandonedTemps,
+} from "../../connector-core/test/helpers.ts";
 
 const REMOTE = "git@github.com:acme/api.git";
+const REPO_ID = "github.com/acme/api";
+/** The backlog a review measured taking the uncapped sweep past a budget. */
+const LARGE_TEMP_BACKLOG = 20_000;
+/** Seeding twenty thousand files is most of that test's time, not the hook. */
+const LARGE_TEMP_BACKLOG_TEST_TIMEOUT_MS = 60_000;
 const DEAD_HUB_URL = "http://127.0.0.1:1";
 
 /**
@@ -642,4 +656,107 @@ describe("fail-open within budget", () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  test("a drain that spends the spare leaves the temp sweep nothing: abandoned temps wait for the next session", async () => {
+    // Arrange: an old session's 600-record backlog at 350 ms a batch, so the
+    // drain runs to its deadline by construction, and five sweepable temps
+    const hub = startSlowHub({ ingest: 350, end: 0, other: 0 });
+    const repo = await makeRepo("budget-temp-spent", { remote: REMOTE });
+    const home = await makeHome("budget-temp-spent");
+    const key = repoKey(hub.url, REPO_ID);
+    await appendRecords(
+      home,
+      key,
+      "old-session",
+      Array.from({ length: 600 }, (_unused, index) => ({
+        cx: "0.1",
+        id: `env_backlog_${index}`,
+        ts: new Date().toISOString(),
+        producer: {
+          developerId: "dev_self",
+          agentKind: "cursor-ide",
+          sessionId: "cc_old-session",
+        },
+        kind: "target",
+        body: { workContextId: "wc_1", kind: "file", value: `src/f${index}.ts` },
+      })),
+      new Date(),
+    );
+    const temps = await seedAbandonedTemps(
+      join(home, "state"),
+      5,
+      ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+    );
+
+    try {
+      // Act — the real runner, at the documented default timeout and budget
+      const out = await runCursorHook(
+        "sessionStart",
+        payloadIn(repo, "conv-budget-temp-spent"),
+        {
+          CROSSCHECK_HOME: home,
+          CROSSCHECK_HUB_URL: hub.url,
+          CROSSCHECK_API_KEY: "test-key",
+        },
+      );
+
+      // Assert: the briefing went out and the sweep read spareMs() = 0 — it
+      // took nothing from the reserve, so every temp is still there
+      expect(deliveredAdditionalContext(out)).toContain(TEAMMATE_NAME);
+      for (const temp of temps) {
+        expect(await Bun.file(temp).exists()).toBe(true);
+      }
+    } finally {
+      hub.stop();
+      await rm(repo, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test(
+    "a 20 000-orphan temp backlog never costs the briefing or books a hook timeout",
+    async () => {
+      // Arrange: a fast hub with a teammate to brief about, the DEFAULT
+      // request timeout (the real budget and reserve), and the backlog that
+      // took the uncapped sweep past the Claude SessionStart's budget
+      const hub = startSlowHub({ ingest: 0, end: 0, other: 0 });
+      const repo = await makeRepo("budget-temp-backlog", { remote: REMOTE });
+      const home = await makeHome("budget-temp-backlog");
+      await seedAbandonedTemps(
+        join(home, "state"),
+        LARGE_TEMP_BACKLOG,
+        ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+      );
+
+      try {
+        // Act
+        const out = await runCursorHook(
+          "sessionStart",
+          payloadIn(repo, "conv-budget-temps"),
+          {
+            CROSSCHECK_HOME: home,
+            CROSSCHECK_HUB_URL: hub.url,
+            CROSSCHECK_API_KEY: "test-key",
+          },
+        );
+
+        // Assert: the briefing arrived, no timeout was booked, and this run
+        // took at most its cap
+        expect(deliveredAdditionalContext(out)).toContain(TEAMMATE_NAME);
+        const losses = await readCaptureLosses(home, repoKey(hub.url, REPO_ID));
+        expect(losses.byDetail["hook_timed_out:sessionStart"]).toBeUndefined();
+        const left = (await readdir(join(home, "state"))).filter((name) =>
+          name.startsWith("seeded-"),
+        );
+        expect(left.length).toBeGreaterThanOrEqual(
+          LARGE_TEMP_BACKLOG - ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
+        );
+      } finally {
+        hub.stop();
+        await rm(repo, { recursive: true, force: true });
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    LARGE_TEMP_BACKLOG_TEST_TIMEOUT_MS,
+  );
 });

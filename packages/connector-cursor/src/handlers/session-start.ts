@@ -4,7 +4,7 @@
  * flow) — record the observed cursor_version for doctor, assemble the
  * briefing through the SAME core flow as the Claude SessionStart, then
  * maintenance on the spare budget: flush what earlier sessions left, reap
- * what nothing owns.
+ * what nothing owns, sweep the temp files abandoned writes left behind.
  *
  * INJECTION ORDER IS THE CLAUDE ORDER: everything the developer actually
  * sees — the session, the work context, the briefing — is in hand before
@@ -48,6 +48,7 @@ import type {
 } from "@crosscheck/connector-core/spool/reap.ts";
 import { CURSOR_BACKGROUND_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { updateSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
+import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 import type { CursorHookContext } from "../runner.ts";
@@ -166,6 +167,12 @@ export const handleCursorSessionStart = async (
     budget.spareMs() - endHoldbackMs,
   );
   await reapSpool(ctx.config.home, ctx.repoKey, now, deferredEnder(ctx, budget));
+  // Abandoned writePrivateFile temps, home-wide — the Claude SessionStart's
+  // sweep at the same point, because a Cursor-only machine has no Claude
+  // SessionStart to run it (state/temp-sweep.ts carries the finding and
+  // the cost). Held to the spare budget and a per-run cap, never the
+  // reserve; local readdirs only, no hub call, never throws.
+  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);
 
   return briefing.length === 0 ? "" : cursorInjectionOutput(briefing);
 };

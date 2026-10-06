@@ -1724,6 +1724,50 @@ export const SESSION_STATE_SCAN_MAX_FILES = 200;
  * unlink storm on the hook whose latency the developer feels most.
  */
 export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
+/**
+ * Age past which a `writePrivateFile` temp sibling (`<path>.tmp-<pid>-<rand>`)
+ * is certainly abandoned, and SessionStart's sweep removes it
+ * (state/temp-sweep.ts; pilot finding 2026-10-06: 40 in one machine's
+ * `state/`, 0.7 h to 925 h old, nothing ever removing them).
+ *
+ * WHY A DAY, when a writer holds its temp for microseconds. A temp lives from
+ * its `writeFile` to its `rename`: one small write, a chmod and a rename in a
+ * single function, with nothing between them that waits on anything else —
+ * no network call, no lock. Nothing the writer does can stretch that; only
+ * being STOPPED can — a laptop lid closed mid-write, a SIGSTOP, a debugger —
+ * and the wall clock runs on through all three, so a bound in seconds would
+ * read a writer that just woke as abandoned and take its temp the instant
+ * before its rename. A day means that writer sat stopped between two adjacent
+ * steps for over 24 h — and, for a sleeping laptop, then also lost a race to
+ * a sweep that cannot start until the machine is awake again. Even then it
+ * loses one update, never the file: its rename fails, writePrivateFile
+ * throws, and the file the temp was meant to replace is untouched.
+ *
+ * WHY NOT LONGER. Nothing reads a temp name, so there is nothing to wait for
+ * but that rename, and a longer bound only keeps more dead files: the pilot
+ * machine made about one a day.
+ *
+ * NOT MAX_SPOOL_AGE_DAYS: those seven days are for records that might still
+ * be DELIVERED. A temp carries nothing anybody will ever read.
+ */
+export const ABANDONED_TEMP_MAX_AGE_MS = MS_PER_DAY;
+/**
+ * Most abandoned temps ONE sweep removes — the SESSION_STATE_REAP_MAX_PER_RUN
+ * argument, because the sweep runs inside SessionStart's budget race too. A
+ * review measured the uncapped sweep through the real hook against a fast
+ * hub at the default 400 ms request timeout: 20 000 orphans took the hook to
+ * 1006 ms, it answered "" instead of its briefing and booked a false
+ * `hook_timed_out`.
+ *
+ * WHY 100. Twice the pilot machine's whole backlog (44), so a machine like it
+ * drains in one session. One removal measured 55 µs (1000 in 55 ms, bun
+ * 1.3.13, M4 Max), so a full run is about 5.5 ms — under 2% of the 400 ms
+ * reserve, with room for a disk ten times slower. At the pilot's rate of
+ * about one orphan a day the cap only ever binds on a backlog, and a backlog
+ * drains by a hundred per session. The cap bounds the WORK; the caller's
+ * spare budget bounds the TIME, and the sweep stops at whichever comes first.
+ */
+export const ABANDONED_TEMP_SWEEP_MAX_PER_RUN = 100;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
 

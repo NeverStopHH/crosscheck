@@ -18611,6 +18611,303 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "a person reads eight weeks of silence where nothing could have been recorded",
   },
+  {
+    // Pilot finding 2026-10-06: 40 abandoned temp siblings in one state/, and
+    // a write whose rename threw was one of the two ways they got there.
+    label: "a failed atomic write leaves its temp sibling behind",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  } catch (error) {\n    await removeFile(temp);\n    throw error;\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "every write that fails after creating its temp leaves `<path>.tmp-<pid>-<rand>` on disk until the sweep's day is up, and forever on a machine whose SessionStart never runs",
+  },
+  {
+    label: "a failed atomic write is reported as a success",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  } catch (error) {\n    await removeFile(temp);\n    throw error;\n  }",
+    to: "  } catch (error) {\n    await removeFile(temp);\n  }",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "the cleanup swallows the write's own error, and a caller that persisted nothing goes on as if its state were on disk",
+  },
+  {
+    label: "the temp sweep takes any name containing .tmp-",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "const TEMP_SIBLING_NAME = /^.+\\.tmp-[0-9]+-[0-9a-z]{1,8}$/;",
+    to: "const TEMP_SIBLING_NAME = /\\.tmp-/;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a day-old file that merely contains `.tmp-` is deleted from the crosscheck home although nothing abandoned it",
+  },
+  {
+    label: "the temp sweep takes a file whose name only begins with the temp shape",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "const TEMP_SIBLING_NAME = /^.+\\.tmp-[0-9]+-[0-9a-z]{1,8}$/;",
+    to: "const TEMP_SIBLING_NAME = /^.+\\.tmp-[0-9]+-[0-9a-z]{1,8}/;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "`notes.tmp-123-abcdefgh.json` and a nine-character suffix tempSibling can never produce are deleted as if they were temps",
+  },
+  {
+    label: "an abandoned temp sibling is never swept",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "      await rm(path, { force: true });\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "the pilot machine's orphans keep accumulating exactly as before — the sweep walks every directory and removes nothing",
+  },
+  {
+    label: "a temp still inside its writer's window is swept",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "    if (now.getTime() - mtimeMs > ABANDONED_TEMP_MAX_AGE_MS) {",
+    to: "    if (true) {",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a temp whose writer is between its write and its rename is deleted under it, the rename fails and that update is lost",
+  },
+  {
+    label: "the temp sweep skips state/",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  join(home, \"state\"),\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "the directory the pilot machine had 40 orphans in is the one left to grow",
+  },
+  {
+    label: "the temp sweep skips sessions/",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  join(home, \"sessions\"),\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "session-state and intent-prompt temps, three of them on the pilot machine, are never removed",
+  },
+  {
+    label: "the temp sweep skips cache/",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  join(home, \"cache\"),\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "the presence cache SessionStart and the statusline write inside a budget race keeps every temp they abandon",
+  },
+  {
+    label: "the temp sweep skips every repo's spool",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  ...(await spoolDirectories(home)),\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "cursor, drop-aggregate and `.pending-end` temps under spool/<key>/ are never removed",
+  },
+  {
+    label: "a missing home subdirectory makes the temp sweep throw",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  } catch {\n    return false;\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a home with no cache/ yet throws inside SessionStart's raced handler, and the hook answers \"\" — the briefing is lost to a cleanup",
+  },
+  {
+    label: "one temp the sweep may not remove fails the whole sweep",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  } catch {\n    // Refused (EACCES), or gone under a concurrent sweep: this one file",
+    to: "  } catch (error) {\n    throw error;\n    // Refused (EACCES), or gone under a concurrent sweep: this one file",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "an EACCES on one temp, or a concurrent sweeper winning the race, stops every directory after it and throws into SessionStart",
+  },
+  {
+    label: "SessionStart never sweeps abandoned temps",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);\n",
+    to: "",
+    test: `${CONNECTOR}/test/state-reap.test.ts`,
+    because: "the sweep exists and nothing on the hook path calls it, so the orphans grow exactly as the pilot machine's did",
+  },
+  {
+    label: "Cursor SessionStart never sweeps abandoned temps",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);\n",
+    to: "",
+    test: `${CURSOR}/test/handlers.test.ts`,
+    because: "a Cursor-only machine has no Claude SessionStart, so its abandoned temps grow without bound exactly as the pilot machine's did",
+  },
+  {
+    label: "ACP shutdown never sweeps abandoned temps",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          await sweepAbandonedTemps(home, now(), remaining);\n",
+    to: "",
+    test: `${ACP}/test/capture-engine.test.ts`,
+    because: "an ACP-only machine has no SessionStart hook at all, and the child-exit drain is its only maintenance point — its abandoned temps grow without bound",
+  },
+  {
+    // Review 2026-10-06 (M1): uncapped, 20 000 orphans took a real
+    // SessionStart to 1006 ms, cost its briefing and booked a false timeout.
+    label: "the temp sweep ignores its per-run cap",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "    removed < ABANDONED_TEMP_SWEEP_MAX_PER_RUN && spareMs() > 0;",
+    to: "    spareMs() > 0;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a large backlog is removed in one run for as long as the spare lasts, and one SessionStart pays for a year of orphans",
+  },
+  {
+    label: "the temp sweep spends past its caller's spare budget",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "    removed < ABANDONED_TEMP_SWEEP_MAX_PER_RUN && spareMs() > 0;",
+    to: "    removed < ABANDONED_TEMP_SWEEP_MAX_PER_RUN;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a sweep that started with the spare already spent eats the reserve that carries the briefing out",
+  },
+  {
+    label: "SessionStart's temp sweep is handed more than the spare",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);\n",
+    to: "  await sweepAbandonedTemps(ctx.config.home, now, () => Number.POSITIVE_INFINITY);\n",
+    test: `${CONNECTOR}/test/hook-budget.test.ts`,
+    because: "after a drain ran to its deadline the sweep still runs, on the reserve the briefing needs",
+  },
+  {
+    label: "Cursor SessionStart's temp sweep is handed more than the spare",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);\n",
+    to: "  await sweepAbandonedTemps(ctx.config.home, now, () => Number.POSITIVE_INFINITY);\n",
+    test: `${CURSOR}/test/budget.test.ts`,
+    because: "after a drain ran to its deadline the Cursor sweep still runs, on the reserve its briefing needs",
+  },
+  {
+    label: "ACP shutdown's temp sweep outlives its exit budget",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          await sweepAbandonedTemps(home, now(), remaining);\n",
+    to: "          await sweepAbandonedTemps(home, now(), () => Number.POSITIVE_INFINITY);\n",
+    test: `${ACP}/test/capture-engine.test.ts`,
+    because: "the proxy keeps the client waiting on its exit code past ACP_CAPTURE_EXIT_BUDGET_MS for a cleanup",
+  },
+  {
+    // Review 2026-10-06 (M2): every other test derived its ages from the
+    // constant, so 0, a minute and 65 minutes all survived.
+    label: "the abandoned-temp bound shrinks to a minute",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const ABANDONED_TEMP_MAX_AGE_MS = MS_PER_DAY;",
+    to: "export const ABANDONED_TEMP_MAX_AGE_MS = 60_000;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a writer stopped for a minute between its write and its rename — a closed lid, a debugger — has its temp swept and loses that update",
+  },
+  {
+    label: "the abandoned-temp bound grows to a week",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const ABANDONED_TEMP_MAX_AGE_MS = MS_PER_DAY;",
+    to: "export const ABANDONED_TEMP_MAX_AGE_MS = 7 * MS_PER_DAY;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "temps nothing will ever read or rename stay on disk for a week instead of a day",
+  },
+  {
+    // Review 2026-10-06 (L1): SessionStart rewrites config.json inside its
+    // budget race, and that temp carries the API key.
+    label: "the temp sweep skips the home root",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  home,\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "an abandoned config.json temp — the API key in a second file — stays beside config.json for good",
+  },
+  {
+    // Review 2026-10-06 (L2): the ACP sweep sat inside the end-and-reap try,
+    // so any throw there skipped it.
+    label: "a throw while ending ACP sessions skips the temp sweep",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        logger.line(`capture-shutdown-error ${describeError(error)}`);\n      }\n",
+    to: "        logger.line(`capture-shutdown-error ${describeError(error)}`);\n        return;\n      }\n",
+    test: `${ACP}/test/capture-engine.test.ts`,
+    because: "one unwritable spool directory and the ACP-only machine's only sweep never runs again",
+  },
+  {
+    // Review 2026-10-06 (L3): only a failing rename was tested, so moving
+    // the write and the chmod out of the try survived.
+    label: "a write that dies part-way leaves its temp behind",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  try {\n    await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });\n",
+    to: "  await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });\n  try {\n",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a disk that fills mid-write leaves a torn `<path>.tmp-…` beside every file it was writing",
+  },
+  {
+    label: "a refused chmod leaves its temp behind",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  try {\n    await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });\n    await chmod(temp, PRIVATE_FILE_MODE);\n",
+    to: "  await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });\n  await chmod(temp, PRIVATE_FILE_MODE);\n  try {\n",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a whole temp — content and all — stays on disk whenever the mode cannot be set",
+  },
+  {
+    label: "the temp sweep removes a temp-shaped symlink",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "      if (!entry.isFile() || !isTempSiblingName(entry.name)) {",
+    to: "      if (!isTempSiblingName(entry.name)) {",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a link somebody placed in the crosscheck home is deleted because its NAME looks like ours, though writePrivateFile never makes one",
+  },
+  {
+    label: "the temp shape's dot matches any character",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "const TEMP_SIBLING_NAME = /^.+\\.tmp-[0-9]+-[0-9a-z]{1,8}$/;",
+    to: "const TEMP_SIBLING_NAME = /^.+.tmp-[0-9]+-[0-9a-z]{1,8}$/;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "`notes-tmp-123-abcdefgh` is not a temp of anything and is deleted once a day old",
+  },
+  {
+    // Review 2026-10-06 (L4): the inits' atomic write was writePrivateFile's
+    // defect in a second copy.
+    label: "init's atomic write leaves its temp behind when it fails",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  } catch (error) {\n    await removeFile(temp);\n    throw error;\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${CLI}/test/init-io-atomic.test.ts`,
+    because: "a failed `crosscheck init` leaves `settings.json.tmp-…` in the repo's .claude/ for git status to offer",
+  },
+  {
+    label: "init names its temp by hand again",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  const temp = tempSibling(path);\n",
+    to: "  const temp = `${path}.tmp`;\n",
+    test: `${CLI}/test/init-io-atomic.test.ts`,
+    because: "the shape drifts from tempSibling's the way it did before, with nothing to notice",
+  },
+  {
+    // Review 2026-10-06 (L5): a linked spool/<key> was skipped, a linked
+    // state/ followed — the sweep deletes, so it follows no link at all.
+    label: "the temp sweep follows a symlinked home subdirectory",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "    return (await lstat(dir)).isDirectory();",
+    to: "    return true;",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a `state/` linked to a shared directory has a day-old temp-shaped file deleted out of somebody else's tree",
+  },
+  {
+    label: "the temp sweep follows a symlinked spool/<key>",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "        .filter((entry) => entry.isDirectory())\n",
+    to: "",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "a repo key linked out of the home is walked and its temp-shaped files deleted",
+  },
+  {
+    label: "an unlistable home subdirectory makes the temp sweep throw",
+    file: `${CORE}/src/state/temp-sweep.ts`,
+    from: "  } catch {\n    return [];\n  }",
+    to: "  } catch (error) {\n    throw error;\n  }",
+    test: `${CORE}/test/abandoned-temps.test.ts`,
+    because: "one directory whose listing is refused throws inside SessionStart's raced handler, and the hook answers \"\" — the briefing lost to a cleanup",
+  },
+  {
+    // Review 2026-10-06 (L6): `""` is not nullish.
+    label: "an empty CROSSCHECK_HOME puts the home in the working directory",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  return configured === undefined || configured.trim() === \"\"\n",
+    to: "  return configured === undefined\n",
+    test: `${CORE}/test/crosscheck-home.test.ts`,
+    because: "state/, spool/ and config.json are written into the developer's repo, and the temp sweep deletes from it",
+  },
+  {
+    label: "a whitespace CROSSCHECK_HOME is taken as a path",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  return configured === undefined || configured.trim() === \"\"\n",
+    to: "  return configured === undefined || configured === \"\"\n",
+    test: `${CORE}/test/crosscheck-home.test.ts`,
+    because: "an export with a stray space makes a directory named ' ' in the repo and keeps the home there",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18690,6 +18987,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
  * PRINTS: packages/cli/test/init-backups.test.ts 7
  * PRINTS: packages/cli/test/init-global.test.ts 3
+ * PRINTS: packages/cli/test/init-io-atomic.test.ts 2
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 14
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
@@ -18724,7 +19022,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/waiver-render.test.ts 12
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
- * PRINTS: packages/connector-acp/test/capture-engine.test.ts 1
+ * PRINTS: packages/connector-acp/test/capture-engine.test.ts 4
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
@@ -18763,7 +19061,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
- * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
+ * PRINTS: packages/connector-claude/test/hook-budget.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
@@ -18781,6 +19079,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
+ * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
@@ -18791,6 +19090,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
+ * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 17
@@ -18818,6 +19118,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
+ * PRINTS: packages/connector-core/test/crosscheck-home.test.ts 2
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 2
  * PRINTS: packages/connector-core/test/draft-nudge.test.ts 22
@@ -18901,13 +19202,13 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
- * PRINTS: packages/connector-cursor/test/budget.test.ts 1
+ * PRINTS: packages/connector-cursor/test/budget.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
  * PRINTS: packages/connector-cursor/test/draft-nudge.test.ts 3
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
- * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
+ * PRINTS: packages/connector-cursor/test/handlers.test.ts 5
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
