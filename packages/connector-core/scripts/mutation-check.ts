@@ -18729,20 +18729,24 @@ export const MUTATIONS: readonly Mutation[
   },
   // ── 07 §13.12, review M-3: the upgrade backfill from what was recorded ──
   {
-    label: "the backfill starts at the restamped instant, past the first outcome (probe F)",
+    // round 5: the first-outcome term is subsumed by its delivery's (never later), so the
+    // defect worth pinning is losing the delivery term
+    label: "the backfill starts past the delivery the first outcome was accepted on (probe F)",
     file: `${SERVER}/src/db/bootstrap.sql`,
-    from: "                 (SELECT min(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),\n",
-    to: "",
+    from: "             (SELECT min(d.delivered_at) FROM hint_outcomes o JOIN hint_deliveries d ON d.id = o.delivery_id\n              WHERE o.repo = ts.repo)\n",
+    to: "             NULL\n",
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
-    because: "outcomes recorded before an old hub's re-enrolment fall outside every figure for good",
+    because: "the very hint an outcome was recorded about falls outside every figure for good",
   },
   {
-    label: "the backfill starts past the first label",
+    // round 5 (HIGH-2): this anchor defended the bug — a label term was its "defect". Re-pointed:
+    // the defect is putting a label term back, which starts a 0.10 hub's interval at its first label
+    label: "the backfill starts at a 0.10 hub's first label (P2)",
     file: `${SERVER}/src/db/bootstrap.sql`,
-    from: "                 (SELECT min(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS started_at,",
-    to: "                 NULL) AS started_at,",
+    from: "              WHERE o.repo = ts.repo)\n             -- NEVER a pilot_marks label",
+    to: "              WHERE o.repo = ts.repo),\n             (SELECT min(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)\n             -- NEVER a pilot_marks label",
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
-    because: "a label made before the first outcome proves an enrolled instant the interval then leaves out",
+    because: "an outcome on a hint delivered before the upgrade is recorded and counted, and the line says 'again'",
   },
   {
     label: "a left repo's reconstructed interval ends before its newest outcome",
@@ -18771,10 +18775,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "backfilled intervals are not marked reconstructed",
     file: `${SERVER}/src/db/bootstrap.sql`,
-    from: "         true\n  FROM (",
+    from: "         (b.started_at < b.recordable OR NOT b.enrolled)\n  FROM (",
     to: "         false\n  FROM (",
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "inferred bounds are printed as if a toggle had recorded them",
+  },
+  {
+    label: "an upgrade that only took the stamp calls its interval reconstructed (HIGH-2)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "         (b.started_at < b.recordable OR NOT b.enrolled)\n  FROM (",
+    to: "         true\n  FROM (",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a 0.10 upgrade's plain stamp is printed as 'reconstructed from recorded outcomes'",
   },
   {
     label: "the span never says it was reconstructed",
@@ -19285,7 +19297,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 13
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 14
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11

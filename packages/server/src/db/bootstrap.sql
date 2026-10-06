@@ -1302,21 +1302,32 @@ CREATE INDEX IF NOT EXISTS noise_reassertions_created_idx
   ON noise_reassertions (created_at);
 
 -- An upgraded hub keeps the enrolment it already had as the first interval,
--- RECONSTRUCTED from what it recorded (07 §13.12, review M-3): from the
--- earliest proven instant — the first-recordable stamp, the first outcome or
--- the first label, whichever is earliest (an older hub restamped that stamp at
--- a re-enrolment) — open while the repo is enrolled; for one that left, closed
--- at its last PROVEN enrolled instant, its newest outcome or label — never its
--- last settings write, which is when it left at the latest. Once per repo.
+-- from its earliest PROVEN instant of outcomes being recordable (07 §13.12
+-- M-3, §13.13 HIGH-2) — open while the repo is enrolled; for one that left,
+-- closed at its last proven enrolled instant, its newest outcome or label —
+-- never its last settings write, which is when it left at the latest. A bound
+-- inferred from what was recorded, rather than the stamp itself, is marked
+-- reconstructed. Once per repo.
 INSERT INTO pilot_enrolments (id, repo, started_at, ended_at, reconstructed)
   SELECT 'pe_' || gen_random_uuid()::text, b.repo, b.started_at,
          CASE WHEN b.enrolled THEN NULL ELSE GREATEST(b.started_at, b.last_word) END,
-         true
+         (b.started_at < b.recordable OR NOT b.enrolled)
   FROM (
-    SELECT ts.repo, ts.pilot_enrolled AS enrolled,
-           LEAST(ts.pilot_outcomes_since,
-                 (SELECT min(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
-                 (SELECT min(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS started_at,
+    SELECT ts.repo, ts.pilot_enrolled AS enrolled, ts.pilot_outcomes_since AS recordable,
+           LEAST(
+             -- the stamp: when this hub first let outcomes be recorded here (an older hub
+             -- restamped it at a re-enrolment, so it can be later than what it recorded)
+             ts.pilot_outcomes_since,
+             -- an outcome is proof: a hub accepted one only while outcomes were recordable here
+             (SELECT min(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
+             -- and so is its delivery: a hub accepted an outcome only for a delivery from on or
+             -- after the stamp it had then, so that delivery was inside a recordable span (this
+             -- term is never later than the one above; both are kept as stated proof)
+             (SELECT min(d.delivered_at) FROM hint_outcomes o JOIN hint_deliveries d ON d.id = o.delivery_id
+              WHERE o.repo = ts.repo)
+             -- NEVER a pilot_marks label: a 0.10 hub took labels long before any outcome was
+             -- recordable, so the first label proves enrolment, not recordability (HIGH-2, P2)
+           ) AS started_at,
            GREATEST((SELECT max(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
                     (SELECT max(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS last_word
     FROM team_settings ts

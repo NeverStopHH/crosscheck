@@ -14,8 +14,15 @@ import { MAX_HINT_OUTCOME_REASON_CHARS } from "@crosscheck/schema";
 import { hintDeliveries, hintOutcomes, noiseReassertions, pilotEnrolments, teamSettings } from "../src/db/schema.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
 import { labelNoise } from "./fixtures/hint-outcome-crowd.ts";
-import { KEN_CONTEXT, createOutcomeWorld, recordOutcome } from "./fixtures/hint-outcome-world.ts";
-import { createTestHarness } from "./helpers.ts";
+import {
+  KEN_CONTEXT,
+  NICK_SESSION,
+  REPO,
+  createOutcomeWorld,
+  deliveryRecord,
+  recordOutcome,
+} from "./fixtures/hint-outcome-world.ts";
+import { createTestHarness, jsonRequest, postRecords } from "./helpers.ts";
 
 const REASON_CHECK_PATTERN =
   /hint_outcomes_reason_length_check\s+CHECK \(reason IS NULL OR char_length\(reason\) <= (\d+)\)/;
@@ -177,10 +184,53 @@ describe("hint_outcomes DDL sync", () => {
     const intervals = await harness.db.execute(
       sql`SELECT repo AS r, started_at::text AS s, ended_at::text AS e, reconstructed AS x FROM pilot_enrolments ORDER BY repo`,
     );
+    // and only an inferred bound is "reconstructed": the enrolled repo's start is the stamp itself
     expect(intervals.rows).toEqual([
-      { r: "github.com/acme/api", s: "2026-07-24 09:00:00+00", e: null, x: true },
+      { r: "github.com/acme/api", s: "2026-07-24 09:00:00+00", e: null, x: false },
       { r: "github.com/acme/old", s: "2026-07-01 09:00:00+00", e: "2026-07-01 09:00:00+00", x: true },
     ]);
+  });
+
+  test("review HIGH-2 (P2): a 0.10 hub's upgrade starts at the instant outcomes became recordable, never at a 0.10 label", async () => {
+    // Arrange — enrolled at 09:00 under 0.10; a 0.10 noise label at 10:00; a 0.10-era delivery at
+    // 11:00; the upgrade at 12:00 stamps when outcomes became recordable (its UPDATE uses the wall
+    // clock, so the stamp is set here)
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(3600);
+    await labelNoise(world, world.nick, world.delivered.mikeContext);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", "wc_ken_preupgrade", "prompt_hint", "2026-07-24T11:00:00.000Z")],
+    });
+    for (const statement of [
+      sql`DROP TABLE noise_reassertions`,
+      sql`DROP TABLE hint_outcomes`,
+      sql`DROP TABLE pilot_enrolments`,
+      sql`UPDATE team_settings SET pilot_outcomes_since = '2026-07-24T12:00:00Z'`,
+    ]) {
+      await world.harness.db.execute(statement);
+    }
+    const client = (world.harness.db as unknown as { $client: { exec: (text: string) => Promise<unknown> } }).$client;
+    await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
+    world.harness.clock.advanceSeconds(3 * 3600);
+
+    // Act
+    const intervals = await world.harness.db.execute(
+      sql`SELECT started_at::text AS s, ended_at::text AS e, reconstructed AS x FROM pilot_enrolments`,
+    );
+    const write = await recordOutcome(world, world.nick, { ref: "wc_ken_preupgrade", outcome: "followed" });
+    world.harness.clock.advanceSeconds(9 * 86_400);
+    const report = await world.harness.app.request(
+      `/api/pilot/report?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", world.nick.apiKey),
+    );
+    const outcomes = ((await report.json()) as { data: { outcomes: Record<string, unknown> } }).data.outcomes;
+
+    // Assert — the pre-upgrade delivery is outside; the line says neither "again" nor "reconstructed"
+    expect(intervals.rows).toEqual([{ s: "2026-07-24 12:00:00+00", e: null, x: false }]);
+    expect(write.status).toBe(422);
+    expect(((await write.json()) as { error: { code: string } }).error.code).toBe("before_outcomes");
+    expect(outcomes).toMatchObject({ reconstructed: false, pausedInPeriod: false });
+    expect(outcomes["countedFromIso"]).toBe(outcomes["recordableSinceIso"]);
   });
 
   test("review M-3 (probe F): the backfill starts at the earliest proven instant and ends a left repo at its newest word", async () => {
@@ -205,14 +255,15 @@ describe("hint_outcomes DDL sync", () => {
     await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
     await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
 
-    // Assert — from the first outcome (not the restamped instant) to the newest label (not the last write)
+    // Assert — from the delivery the first outcome was accepted on (09:00, not the restamped
+    // instant) to the newest label (not the last write)
     const intervals = await world.harness.db.execute(
       sql`SELECT started_at::text AS s, ended_at::text AS e, reconstructed AS x FROM pilot_enrolments`,
     );
-    expect(intervals.rows).toEqual([{ s: "2026-07-24 10:00:00+00", e: "2026-07-24 11:00:00+00", x: true }]);
+    expect(intervals.rows).toEqual([{ s: "2026-07-24 09:00:00+00", e: "2026-07-24 11:00:00+00", x: true }]);
   });
 
-  test("review M-3: a label before the first outcome starts the reconstructed interval, and an outcome after it ends it", async () => {
+  test("review M-3, HIGH-2: a label before the first outcome never starts the interval — the outcome's delivery does — and the outcome ends it", async () => {
     // Arrange — the mirror order: a noise label at 10:00, an outcome at 11:00
     const world = await createOutcomeWorld();
     world.harness.clock.advanceSeconds(3600);
@@ -235,7 +286,7 @@ describe("hint_outcomes DDL sync", () => {
     const intervals = await world.harness.db.execute(
       sql`SELECT started_at::text AS s, ended_at::text AS e FROM pilot_enrolments`,
     );
-    expect(intervals.rows).toEqual([{ s: "2026-07-24 10:00:00+00", e: "2026-07-24 11:00:00+00" }]);
+    expect(intervals.rows).toEqual([{ s: "2026-07-24 09:00:00+00", e: "2026-07-24 11:00:00+00" }]);
   });
 
   test("when outcomes became recordable is a team_settings column in both authorities", async () => {

@@ -1413,3 +1413,15 @@ in place, assuming the table unreleased; a hub that had run the round-3 bootstra
 id does not exist". A guarded, idempotent migration now gives every row of the old shape an id of its own
 (`'pe_' || gen_random_uuid()`) and makes it the primary key; its rows are kept, and a hub already on the new
 shape skips it.
+
+*HIGH-2 — the real 0.10.0 → 1.0 upgrade started the outcome interval at the first 0.10 label (P2).* §13.12 M-3's
+`LEAST(…, first label)` read a label as proof that outcomes were recordable; a 0.10 hub took labels long before
+any outcome could be recorded, so the upgrade backdated the interval to its first 0.10 label, a hint delivered
+before the upgrade took an outcome (201) and was counted, and the team line said "enrolled here again …
+reconstructed". **The label term is gone** (this supersedes §13.12 M-3's start): the first interval starts at
+`LEAST(pilot_outcomes_since, first outcome, earliest delivery that has an accepted outcome)` — the stamp
+itself, an outcome (accepted only while recordable), and its delivery (accepted only from on or after the stamp
+a hub had then; never later than its outcome). Labels still bound a left repo's END: a label is proof of
+enrolment at its instant. And only an inferred bound is `reconstructed` — a start earlier than the stamp, or the
+end of a repo that left; an upgrade that only took the stamp is not, and its line says neither "again" nor
+"reconstructed". On a 0.10 upgrade every pre-upgrade delivery is refused `before_outcomes`.
