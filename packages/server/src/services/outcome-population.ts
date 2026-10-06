@@ -217,12 +217,21 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         JOIN hint_deliveries rd ON rd.id = r.delivery_id
         WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
           AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}
+        UNION ALL
+        -- round-5 LOW-4: the person's helpful label is their word too, which no agent's overturns
+        SELECT 'helpful', NULL, h.created_at, h.id, true, true FROM pilot_marks h
+        JOIN hint_deliveries hd2 ON hd2.id = h.ref_id
+        WHERE h.ref_kind = 'hint_delivery' AND hd2.session_id = so.session_id AND hd2.ref_id = so.ref_id
+          AND h.marked_by = so.recipient AND h.mark = 'helpful' ${before(sql`h.created_at`, until)}
       ) spoken
       -- 07 §13.12: the person's newest word (the label on a tie, D-O7); only when they said none, the agent's
       ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1
     ) said ON true
   ), states AS (
-    SELECT id, recipient, source_id, outcome_at, COALESCE(word, 'unmarked') AS state, reason
+    -- a standing helpful is a verdict, not an outcome: the intervention stays where the label
+    -- alone left it, unmarked — never the agent's word it stands over (round-5 LOW-4)
+    SELECT id, recipient, source_id, outcome_at,
+      CASE WHEN word = 'helpful' THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state, reason
     FROM stated
   )`;
 

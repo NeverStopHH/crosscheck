@@ -43,7 +43,7 @@ export interface NoiseLabelOutcome {
   readonly replaced: StandingWord | null;
 }
 
-const NO_WORDS: PointerWords = { person: undefined, agent: undefined, noise: undefined };
+const NO_WORDS: PointerWords = { person: undefined, agent: undefined, noise: undefined, helpful: undefined };
 
 export const writeNoiseOnPointer = (
   deps: Deps,

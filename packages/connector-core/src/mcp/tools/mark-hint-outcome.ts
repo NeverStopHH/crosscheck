@@ -132,9 +132,14 @@ export const OUTCOMES_NOT_SERVED =
 /** Why the agent's word is not what stands: the person said something, and it is theirs (07 §13.12). */
 const NEVER_OVERTURNS = "an agent's word never overturns the person's own";
 
-/** The person's word that stands over the agent's — their noise label, or their own outcome. */
-const personsWord = (stands: string): string =>
-  stands === NOISE_WORD ? "the person's noise label" : `the person's own ${safeId(stands)}`;
+/** The person's labels, by the word the hub sends for them (07 §13.12, §13.13 LOW-4). */
+const PERSONS_LABELS: Readonly<Record<string, string>> = {
+  [NOISE_WORD]: "the person's noise label",
+  helpful: "the person's helpful label",
+};
+
+/** The person's word that stands over the agent's — one of their labels, or their own outcome. */
+const personsWord = (stands: string): string => PERSONS_LABELS[stands] ?? `the person's own ${safeId(stands)}`;
 
 const capitalised = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
 

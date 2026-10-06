@@ -366,6 +366,22 @@ describe("mark_hint_outcome", () => {
     expect(revised.text).not.toContain("It supersedes");
   });
 
+  test("round-5 LOW-4: under the person's helpful label, the agent is told that label still stands", async () => {
+    // Arrange
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
+    hostileAnswer = () =>
+      Response.json({
+        ok: true,
+        data: { id: "ho_4", deliveryId: "hd_1", outcome: "not_relevant_now", repeated: false, replaced: "helpful", stands: "helpful" },
+      });
+
+    // Act
+    const answered = await call({ ref: KEN_CONTEXT, outcome: "not_relevant_now" }, env);
+
+    // Assert
+    expect(answered.text).toContain("The person's helpful label still stands: an agent's word never overturns the person's own.");
+  });
+
   test("§13.12: the agent's word goes to the agent's route, and after the person's own word it says that word stands", async () => {
     // Arrange — the person said followed at a terminal (the person's route); a hub that reports it standing
     const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };

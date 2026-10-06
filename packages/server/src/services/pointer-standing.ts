@@ -32,8 +32,18 @@ export interface Pointer {
   readonly refId: string;
 }
 
-/** What a pointer can stand at once something was said: an outcome, or the person's noise label. */
-export type StandingWord = HintOutcome | "noise";
+/**
+ * What a pointer can stand at once something was said: an outcome, or one of
+ * the person's labels — noise, or helpful (round-5 LOW-4: a verdict of the
+ * person's, never overturned by an agent's word either).
+ */
+export type StandingWord = HintOutcome | "noise" | "helpful";
+
+/** The person's newest label on the pointer, and which word it is. */
+export interface LatestLabel {
+  readonly word: "noise" | "helpful";
+  readonly createdAt: Date;
+}
 
 export interface LatestOutcome {
   readonly outcome: HintOutcome;
@@ -88,22 +98,24 @@ export const readPointerOutcome = async (
   return row === undefined ? undefined : { outcome: row.outcome, reason: row.reason, createdAt: new Date(row.at) };
 };
 
-/** Everything a recipient said about one pointer: their newest own word, their agent's, and their noise. */
+/** Everything a recipient said about one pointer: their newest own word, their agent's, and their labels. */
 export interface PointerWords {
   readonly person: LatestOutcome | undefined;
   readonly agent: LatestOutcome | undefined;
   readonly noise: LatestNoise | undefined;
+  readonly helpful: LatestNoise | undefined;
 }
 
 export const readPointerWords = async (tx: DbExecutor, pointer: Pointer, recipient: string): Promise<PointerWords> => ({
   person: await readPointerOutcome(tx, pointer, recipient, "person"),
   agent: await readPointerOutcome(tx, pointer, recipient, "agent"),
   noise: await readPointerNoise(tx, pointer, recipient),
+  helpful: await readPointerHelpful(tx, pointer, recipient),
 });
 
 /** The newest instant any word on the pointer carries — the next word is stamped strictly after it. */
 export const newestInstant = (words: PointerWords): Date | undefined =>
-  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt]
+  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]
     .filter((at): at is Date => at !== undefined)
     .reduce<Date | undefined>((newest, at) => (newest === undefined || at.getTime() > newest.getTime() ? at : newest), undefined);
 
@@ -135,25 +147,54 @@ export const readPointerNoise = async (
   return row === undefined ? undefined : { id: row.id, createdAt: new Date(row.at) };
 };
 
-/** Of an outcome and the person's noise: the later one, the label on a tie (D-O7). */
+/**
+ * The recipient's newest helpful label on the pointer (round-5 LOW-4). One
+ * label per person and delivery, so a helpful said twins apart is the newest.
+ */
+export const readPointerHelpful = async (
+  tx: DbExecutor,
+  pointer: Pointer,
+  recipient: string,
+): Promise<LatestNoise | undefined> => {
+  const rows = await tx.execute<NoiseRow>(sql`
+    SELECT m.id, m.created_at AS at FROM pilot_marks m
+    JOIN hint_deliveries d ON d.id = m.ref_id
+    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", pointer)}
+      AND m.marked_by = ${recipient} AND m.mark = 'helpful'
+    ORDER BY m.created_at DESC, m.id DESC LIMIT 1`);
+  const row = rows.rows[0];
+  return row === undefined ? undefined : { id: row.id, createdAt: new Date(row.at) };
+};
+
+/** The person's newest label of either word — noise or helpful — or undefined when they gave none. */
+export const newestLabel = (words: PointerWords): LatestLabel | undefined => {
+  const noise = words.noise === undefined ? undefined : { word: "noise" as const, createdAt: words.noise.createdAt };
+  const helpful = words.helpful === undefined ? undefined : { word: "helpful" as const, createdAt: words.helpful.createdAt };
+  if (noise === undefined || helpful === undefined) {
+    return noise ?? helpful;
+  }
+  return helpful.createdAt.getTime() > noise.createdAt.getTime() ? helpful : noise;
+};
+
+/** Of the person's outcome and their newest label: the later one, the label on a tie (D-O7). */
 export const standingOf = (
   latest: LatestOutcome | undefined,
-  noise: LatestNoise | undefined,
+  label: LatestLabel | undefined,
 ): StandingWord | null => {
-  if (noise !== undefined && (latest === undefined || noise.createdAt.getTime() >= latest.createdAt.getTime())) {
-    return "noise";
+  if (label !== undefined && (latest === undefined || label.createdAt.getTime() >= latest.createdAt.getTime())) {
+    return label.word;
   }
   return latest?.outcome ?? null;
 };
 
 /**
- * WHAT STANDS (07 §13.12): the person's newest word — their own outcome or
- * their noise — whenever they said anything; only otherwise the agent's
- * newest. An agent's word is recorded but never overturns the person's; only
- * the person's own later word changes it.
+ * WHAT STANDS (07 §13.12, §13.13 LOW-4): the person's newest word — their own
+ * outcome, their noise or their helpful label — whenever they said anything;
+ * only otherwise the agent's newest. An agent's word is recorded but never
+ * overturns the person's; only the person's own later word changes it.
  */
 export const standingOfWords = (words: PointerWords): StandingWord | null =>
-  standingOf(words.person, words.noise) ?? words.agent?.outcome ?? null;
+  standingOf(words.person, newestLabel(words)) ?? words.agent?.outcome ?? null;
 
 /** One millisecond — the smallest step the hub's clock and the stored instants share. */
 const NEXT_INSTANT_MS = 1;

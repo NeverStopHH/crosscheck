@@ -858,6 +858,83 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     expect(view).toMatchObject({ followed: 1, noise: 0 });
   });
 
+  test("round-5 LOW-4 (P3): the person's helpful label is never overturned by their agent's word", async () => {
+    // Arrange — the person labelled the hint helpful
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(60);
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the agent says the hint was not needed
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "not_relevant_now" });
+    const view = await mineOf(world);
+
+    // Assert — recorded, but the person's verdict stands; a verdict is not an outcome, so the
+    // intervention stays where the label alone left it: unmarked
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: "helpful", stands: "helpful" });
+    expect(view).toMatchObject({ notRelevantNow: 0, unmarked: 3 });
+  });
+
+  test("round-5 LOW-4: of the person's two labels on one pointer, the newer stands — noise, then helpful", async () => {
+    // Arrange — noise on the prompt hint; later, helpful on its tripwire twin (one label per delivery)
+    const world = await createOutcomeWorld();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire")],
+    });
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    world.harness.clock.advanceSeconds(60);
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: deliveryIdFor(NICK_SESSION, KEN_CONTEXT, "tripwire"),
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert
+    expect(await bodyOf(agent)).toMatchObject({ replaced: "helpful", stands: "helpful" });
+  });
+
+  test("round-5 LOW-4: the person's own later outcome changes what their helpful label stood at", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const person = await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const view = await mineOf(world);
+
+    // Assert
+    expect(await bodyOf(person)).toMatchObject({ replaced: "helpful", stands: "followed" });
+    expect(view).toMatchObject({ followed: 1 });
+  });
+
   test("the channel is the route's, never the body's: an agent cannot claim to be the person", async () => {
     // Arrange
     const world = await createOutcomeWorld();

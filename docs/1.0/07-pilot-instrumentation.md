@@ -1314,8 +1314,9 @@ the label-vs-word order).* A word the PERSON says at a terminal — `crosscheck 
 `overrode` — is theirs, and an AGENT's word (`mark_hint_outcome`) never overturns it. The agent's word is still
 recorded, as its own row, but what stands stays the person's, and the tool's answer says so ("the person's
 noise label still stands: an agent's word never overturns the person's own"); only the person's own later word
-changes it. **What stands on a pointer** is the person's newest word — their own outcome or their noise, the
-label on a tie (D-O7) — whenever they said anything, and only otherwise the agent's newest. The write path,
+changes it. **What stands on a pointer** is the person's newest word — their own outcome, their noise or
+their helpful label (§13.13 LOW-4), a label on a tie (D-O7) — whenever they said anything, and only otherwise
+the agent's newest. The write path,
 the per-person view, the credit and the team line all read it so. **The hub knows the channel from the route,
 never from a claim**: `POST /api/hint-outcomes` is the agent's door, `POST /api/hint-outcomes/person` the
 person's (`crosscheck followed / overrode`), and the route stamps `hint_outcomes.recorded_via` (`agent` |
@@ -1459,3 +1460,12 @@ not a wall — a deliberate pty, or the key posted with curl, still reaches the 
 *LOW-7 — the wire between versions.* A 404 from `/person` on a hub that otherwise records outcomes (its
 `/mine` answers) now fails closed with its own sentence, never falling back to the agent's door; both
 mixed-version cases are in §13.12's release notes.
+
+*LOW-4 — the person's helpful label was overturned by the agent's word (P3).* §13.12 listed `crosscheck
+helpful` among the person's words but read only noise and the person's outcomes; an agent's `not_relevant_now`
+after the person's helpful stood, and `--mine` counted it. Helpful is now a word of the person's on the pointer:
+the agent's word is recorded, the answer says "the person's helpful label still stands", and of the person's two
+labels the newer stands. A helpful label is a verdict, not an outcome, so in the outcome figures its
+intervention stays where the label alone left it — unmarked — and never takes the agent's word it stands over;
+the person's own later `followed / overrode` changes it. (A tally of its own for helpful would add a sixth
+outcome category; that is the owner's to decide, and not done here.)

@@ -17876,8 +17876,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the word the person's noise label superseded, said again, overturns the label",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return input.recordedVia === "agent" || standingOf(words.person, words.noise) === input.outcome;',
-    to: "  return standingOf(words.person, words.noise) === input.outcome;",
+    from: '  return input.recordedVia === "agent" || standingOf(words.person, newestLabel(words)) === input.outcome;',
+    to: "  return standingOf(words.person, newestLabel(words)) === input.outcome;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "an agent re-reading the clause overturns the person's verdict for good, and precision still counts noise (P3)",
   },
@@ -17892,7 +17892,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed says the word took when the noise label still stands",
     file: `${CLI}/src/cli/outcome-render.ts`,
-    from: "    return `, but ${standingWord(stands)} from the same instant still stands (a label wins a tie)`;",
+    from: "    return `, but ${standingWord(stands)} still stands: an agent's word never overturns yours`;",
     to: '    return "";',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person is told their word stands while their own label still decides the delivery",
@@ -18001,8 +18001,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "mark_hint_outcome echoes the hub's standing word raw",
     file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
-    from: "  stands === NOISE_WORD ? \"the person's noise label\" : `the person's own ${safeId(stands)}`;",
-    to: "  stands === NOISE_WORD ? \"the person's noise label\" : `the person's own ${stands}`;",
+    from: "const personsWord = (stands: string): string => PERSONS_LABELS[stands] ?? `the person's own ${safeId(stands)}`;",
+    to: "const personsWord = (stands: string): string => PERSONS_LABELS[stands] ?? `the person's own ${stands}`;",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "a hostile hub's 'stands' word reaches the agent unframed, as instruction",
   },
@@ -18026,8 +18026,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a noise label on a pointer's other delivery is not what stood",
     file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", pointer)}",
-    to: "    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", pointer)} AND d.channel = 'tripwire'",
+    from: "      WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", pointer)}\n        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}",
+    to: "      WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer(\"d\", pointer)} AND d.channel = 'tripwire'\n        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the answer says nothing stood while the person's label on that pointer stood",
   },
@@ -18404,8 +18404,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the write path lets an outcome win a tie with the person's label (survivor M7)",
     file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "  if (noise !== undefined && (latest === undefined || noise.createdAt.getTime() >= latest.createdAt.getTime())) {",
-    to: "  if (noise !== undefined && (latest === undefined || noise.createdAt.getTime() > latest.createdAt.getTime())) {",
+    from: "  if (label !== undefined && (latest === undefined || label.createdAt.getTime() >= latest.createdAt.getTime())) {",
+    to: "  if (label !== undefined && (latest === undefined || label.createdAt.getTime() > latest.createdAt.getTime())) {",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the answer says a word stands that every figure overrules with the label",
   },
@@ -18486,8 +18486,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "what stands on the write path is the newest word of anyone, the agent's included",
     file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "  standingOf(words.person, words.noise) ?? words.agent?.outcome ?? null;",
-    to: "  standingOf(words.agent ?? words.person, words.noise) ?? null;",
+    from: "  standingOf(words.person, newestLabel(words)) ?? words.agent?.outcome ?? null;",
+    to: "  standingOf(words.agent ?? words.person, newestLabel(words)) ?? null;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the agent's later word overturns the person's own followed, and the answer says it took",
   },
@@ -18502,7 +18502,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the person's same word after their own noise label is swallowed as a repeat",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return input.recordedVia === "agent" || standingOf(words.person, words.noise) === input.outcome;',
+    from: '  return input.recordedVia === "agent" || standingOf(words.person, newestLabel(words)) === input.outcome;',
     to: "  return true;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person changes their mind back and the hub answers 'already recorded', leaving their noise standing",
@@ -18939,16 +18939,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an outcome said in the label's own millisecond ties with it",
     file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt]",
-    to: "  [words.person?.createdAt, words.agent?.createdAt]",
+    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
+    to: "  [words.person?.createdAt, words.agent?.createdAt, words.helpful?.createdAt]",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person's followed is stamped at the label's instant, the label wins the tie, and noise stands",
   },
   {
     label: "a word is stamped at the clock, under the agent's word stamped past it",
     file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt]",
-    to: "  [words.person?.createdAt, words.noise?.createdAt]",
+    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
+    to: "  [words.person?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "two agent words in one millisecond share a timestamp, and which stands is a coin toss",
   },
@@ -19053,6 +19053,39 @@ export const MUTATIONS: readonly Mutation[
     to: "  return false;",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "a person on a round-4 hub is told outcomes are not recorded at all, instead of to upgrade the hub",
+  },
+  // ── 07 §13.13, LOW-4: helpful is the person's word too ──
+  {
+    label: "the write path never reads the person's helpful label (P3)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  helpful: await readPointerHelpful(tx, pointer, recipient),",
+    to: "  helpful: undefined,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the agent's not_relevant_now overturns the person's helpful, and the answer says it stands",
+  },
+  {
+    label: "of the person's two labels, noise always wins",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  return helpful.createdAt.getTime() > noise.createdAt.getTime() ? helpful : noise;",
+    to: "  return noise;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a person who changed their mind from noise to helpful still reads as noise",
+  },
+  {
+    label: "the figures never read the person's helpful label",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "          AND h.marked_by = so.recipient AND h.mark = 'helpful' ${before(sql`h.created_at`, until)}",
+    to: "          AND h.marked_by = so.recipient AND false",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "--mine counts the agent's not_relevant_now over the person's own helpful",
+  },
+  {
+    label: "a standing helpful reaches the tallies as a word of its own",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      CASE WHEN word = 'helpful' THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state, reason",
+    to: "      COALESCE(word, 'unmarked') AS state, reason",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a verdict is tallied as an outcome no figure has a place for",
   },
 ];
 
@@ -19378,7 +19411,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 22
- * PRINTS: packages/server/test/hint-outcomes.test.ts 41
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 45
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

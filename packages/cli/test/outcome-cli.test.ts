@@ -733,13 +733,23 @@ describe("outcomeRecordedLine (review #11): the answer says what stands", () => 
     expect(line).toStartWith(`recorded: ${KEN_CONTEXT} — followed, superseding your earlier noise label (kept in the history). `);
   });
 
-  test("a word that ties with the noise label says the label still stands", () => {
+  test("a word recorded under the person's noise label says the label still stands", () => {
     // Act
     const line = outcomeRecordedLine(KEN_CONTEXT, recorded({ replaced: "noise", stands: "noise" }));
 
+    // Assert — 07 §13.12: an agent's word (crosscheck followed with no terminal) never overturns yours
+    expect(line).toStartWith(
+      `recorded: ${KEN_CONTEXT} — followed, but your noise label still stands: an agent's word never overturns yours. `,
+    );
+  });
+
+  test("round-5 LOW-4: a word recorded under the person's helpful label says that label still stands", () => {
+    // Act
+    const line = outcomeRecordedLine(KEN_CONTEXT, recorded({ replaced: "helpful", stands: "helpful" }));
+
     // Assert
     expect(line).toStartWith(
-      `recorded: ${KEN_CONTEXT} — followed, but your noise label from the same instant still stands (a label wins a tie). `,
+      `recorded: ${KEN_CONTEXT} — followed, but your helpful label still stands: an agent's word never overturns yours. `,
     );
   });
 });

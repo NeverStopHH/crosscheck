@@ -46,6 +46,7 @@ import {
   instantAfter,
   lockPointer,
   newestInstant,
+  newestLabel,
   readPointerWords,
   standingOf,
   standingOfWords,
@@ -266,7 +267,7 @@ const isRepeat = (words: PointerWords, input: WriteHintOutcomeInput): boolean =>
   if (own === undefined || own.outcome !== input.outcome || own.reason !== input.reason) {
     return false;
   }
-  return input.recordedVia === "agent" || standingOf(words.person, words.noise) === input.outcome;
+  return input.recordedVia === "agent" || standingOf(words.person, newestLabel(words)) === input.outcome;
 };
 
 /** The same word as before with a different reason — written, and the answer says the reason was revised. */

@@ -44,18 +44,24 @@ export const COUNTED_WHILE_ENROLLED = "counted only while the pilot was enrolled
 /** 07 §13.12 (review M-3): a month counted over bounds an upgrade inferred says they were inferred. */
 export const RECONSTRUCTED_ENROLMENT = "its enrolment reconstructed from recorded outcomes";
 
-/** What a delivery stood or stands at, as a person reads it: the noise label is theirs. */
-const standingWord = (word: string): string => (word === "noise" ? "your noise label" : outcomeWord(word));
+/** The person's labels, as the person reads them (07 §13.12, §13.13 LOW-4). */
+const YOUR_LABELS: Readonly<Record<string, string>> = {
+  noise: "your noise label",
+  helpful: "your helpful label",
+};
+
+/** What a delivery stood or stands at, as a person reads it: the labels are theirs. */
+const standingWord = (word: string): string => YOUR_LABELS[word] ?? outcomeWord(word);
 
 /**
  * What the new word did to what stood before (review #11): superseded it —
- * an outcome, or the person's noise label — or, on a tie with the label,
- * nothing, and the label still stands.
+ * an outcome, or one of the person's labels — or, said as the agent's (no
+ * terminal) under a word of the person's, nothing: theirs still stands (§13.12).
  */
 const supersededWords = (recorded: RecordedOutcome): string => {
   const stands = recorded.stands ?? recorded.outcome;
   if (stands !== recorded.outcome) {
-    return `, but ${standingWord(stands)} from the same instant still stands (a label wins a tie)`;
+    return `, but ${standingWord(stands)} still stands: an agent's word never overturns yours`;
   }
   // survivor R19: the same word, said better — not a word superseding itself
   if (recorded.reasonRevised === true) {
