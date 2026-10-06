@@ -18514,8 +18514,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the doc upgrade leaves rebuilt contexts out of the vector tier",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "    await embedContextDoc(deps.db, deps.embedder, id);\n",
-    to: "",
+    from: "  return deps.embedder === null ? NO_EMBEDS : embedContextDocs(deps.db, deps.embedder, ids);\n",
+    to: "  return NO_EMBEDS;\n",
     test: `${SERVER}/test/doc-upgrade.test.ts`,
     because: "every rebuilt context loses its embedding until some later ingest happens to touch it",
   },
@@ -18634,8 +18634,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up doc upgrade never yields to the event loop",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "  const reembedded = await upgradePage(deps, ids);\n  await yieldToEventLoop();\n",
-    to: "  const reembedded = await upgradePage(deps, ids);\n",
+    from: "  const embeds = await upgradePage(deps, ids);\n  await yieldToEventLoop();\n",
+    to: "  const embeds = await upgradePage(deps, ids);\n",
     test: `${SERVER}/test/doc-upgrade-load.test.ts`,
     because: "the hub answers no request for the whole pass — 18 873 ms on a 30 000-context hub",
   },
@@ -18654,6 +18654,46 @@ export const MUTATIONS: readonly Mutation[
     to: "    await refreshNormalizedDoc(deps.db, id);\n",
     test: `${SERVER}/test/doc-upgrade-race.test.ts`,
     because: "an ingest committing a vouched claim mid-rebuild loses it from the doc, and the context is stamped current for good",
+  },
+  {
+    label: "a failed embed is counted as re-embedded",
+    file: `${SERVER}/src/services/embedding-backfill.ts`,
+    from: "    return { embedded: 0, failed: docs.length };",
+    to: "    return { embedded: docs.length, failed: 0 };",
+    test: `${SERVER}/test/doc-upgrade-vectors.test.ts`,
+    because: "the start-up log reports every vector re-embedded while the provider's 503 left them null",
+  },
+  {
+    label: "the vector backfill never re-embeds a vector of another model",
+    file: `${SERVER}/src/services/embedding-backfill.ts`,
+    from: "sql`${workContexts.embeddingModel} IS DISTINCT FROM ${model}`",
+    to: "sql`false`",
+    test: `${SERVER}/test/doc-upgrade-vectors.test.ts`,
+    because: "after a model change the vector tier compares queries of the new model against vectors of the old one",
+  },
+  {
+    label: "the vector backfill skips a context whose vector was cleared but its model kept",
+    file: `${SERVER}/src/services/embedding-backfill.ts`,
+    from: "or(isNull(workContexts.embedding), ",
+    to: "or(",
+    test: `${SERVER}/test/doc-upgrade-vectors.test.ts`,
+    because: "a vector an operator cleared to force a re-embed stays out of the vector tier for good",
+  },
+  {
+    label: "the vector backfill stores a vector of a doc that changed under it",
+    file: `${SERVER}/src/services/embedding-backfill.ts`,
+    from: ".where(and(eq(workContexts.id, entry.id), eq(workContexts.normalizedDoc, entry.doc)))",
+    to: ".where(eq(workContexts.id, entry.id))",
+    test: `${SERVER}/test/doc-upgrade-vectors.test.ts`,
+    because: "an ingest's rebuild mid-embed is left with a vector of the old doc, which no later start re-embeds",
+  },
+  {
+    label: "the vector backfill never yields to the event loop",
+    file: `${SERVER}/src/services/embedding-backfill.ts`,
+    from: "  const page = await embedContextDocs(deps.db, deps.embedder, ids);\n  await yieldToEventLoop();\n",
+    to: "  const page = await embedContextDocs(deps.db, deps.embedder, ids);\n",
+    test: `${SERVER}/test/doc-upgrade-load.test.ts`,
+    because: "the hub answers no request while every vector of a keyless hub's contexts is re-minted",
   },
 ];
 
@@ -18977,8 +19017,9 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
- * PRINTS: packages/server/test/doc-upgrade-load.test.ts 1
+ * PRINTS: packages/server/test/doc-upgrade-load.test.ts 2
  * PRINTS: packages/server/test/doc-upgrade-race.test.ts 1
+ * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 4
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 4
  * PRINTS: packages/server/test/draft-visibility.test.ts 8

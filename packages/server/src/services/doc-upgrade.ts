@@ -24,10 +24,20 @@
  * restart picks up exactly the contexts not yet rebuilt, and a finished hub
  * finds none. Within one run a page cursor on the id keeps the pass finite
  * even if a rebuild could not stamp its row. Each page is DOC_UPGRADE_BATCH
- * contexts; the rebuild clears the context's embedding (a vector of the old
- * doc no longer describes the new one), and with an embedder the same page
- * is re-embedded right after — the vector tier misses a context only between
- * the two, never for good.
+ * contexts.
+ *
+ * THE VECTOR. A rebuild clears the context's embedding — a vector of the old
+ * doc no longer describes the new one — in the same UPDATE that stamps the
+ * version. With an embedder the page is re-embedded in ONE call right after
+ * its rebuild, and only vectors actually stored are counted. Whatever keeps
+ * one from landing — the provider failing, no embedder on this start, a kill
+ * between the rebuild and the embed — leaves the vector null with the doc
+ * stamped current, so THIS pass will not revisit it: the every-start
+ * backfill (services/embedding-backfill.ts) re-embeds any context without a
+ * vector of the current model, and the loss heals on the next start that has
+ * an embedder. (This comment once said the vector tier "misses a context
+ * only between the two, never for good" — false until that backfill
+ * existed; review round 4, H2.)
  *
  * Run AFTER the hub is serving (index.ts), in the background: until it has
  * run, an old doc only keeps matching as it did before the upgrade, so
@@ -39,7 +49,10 @@ import { DOC_UPGRADE_BATCH } from "../constants.ts";
 import type { Db } from "../db/client.ts";
 import { claims, workContexts } from "../db/schema.ts";
 import type { Embedder } from "./embedder.ts";
-import { embedContextDoc, NORMALIZED_DOC_VERSION, refreshNormalizedDoc } from "./normalized-doc.ts";
+import { embedContextDocs } from "./embedding-backfill.ts";
+import type { EmbedOutcome } from "./embedding-backfill.ts";
+import { yieldToEventLoop } from "./event-loop.ts";
+import { NORMALIZED_DOC_VERSION, refreshNormalizedDoc } from "./normalized-doc.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 
 interface Deps {
@@ -52,8 +65,10 @@ export interface DocUpgradeReport {
   readonly contexts: number;
   /** Declared-only contexts this run stamped current without a rebuild. */
   readonly stamped: number;
-  /** Of the rebuilt, the ones handed to the embedder afterwards. */
+  /** Of the rebuilt, the ones whose new vector was minted and stored. */
   readonly reembedded: number;
+  /** Of the rebuilt, the ones whose vector could not be minted (healed by the backfill). */
+  readonly embedFailures: number;
 }
 
 /** No id sorts before this, so the first page starts at the beginning. */
@@ -126,31 +141,15 @@ const rebuildLocked = (db: Db, id: string): Promise<void> =>
     await refreshNormalizedDoc(tx, id);
   });
 
-/** Rebuilds, then (with an embedder) re-embeds, one page — one context at a time. */
-const upgradePage = async (deps: Deps, ids: readonly string[]): Promise<number> => {
+const NO_EMBEDS: EmbedOutcome = { embedded: 0, failed: 0 };
+
+/** Rebuilds one page, one context at a time, then (with an embedder) embeds it in one call. */
+const upgradePage = async (deps: Deps, ids: readonly string[]): Promise<EmbedOutcome> => {
   for (const id of ids) {
     await rebuildLocked(deps.db, id);
   }
-  if (deps.embedder === null) {
-    return 0;
-  }
-  for (const id of ids) {
-    await embedContextDoc(deps.db, deps.embedder, id);
-  }
-  return ids.length;
+  return deps.embedder === null ? NO_EMBEDS : embedContextDocs(deps.db, deps.embedder, ids);
 };
-
-/**
- * A turn of the event loop. PGlite runs each statement synchronously and an
- * awaited query settles through microtasks only, so a chain of them never
- * lets a timer or an incoming request run: without this between pages, the
- * whole pass held every request — the review measured one at 18 873 ms
- * during a 30 000-context keyless pass (round 4, H1).
- */
-const yieldToEventLoop = (): Promise<void> =>
-  new Promise((resolve) => {
-    setImmediate(resolve);
-  });
 
 const upgradeFrom = async (
   deps: Deps,
@@ -163,12 +162,13 @@ const upgradeFrom = async (
   if (last === undefined) {
     return done;
   }
-  const reembedded = await upgradePage(deps, ids);
+  const embeds = await upgradePage(deps, ids);
   await yieldToEventLoop();
   return upgradeFrom(deps, batch, last, {
     ...done,
     contexts: done.contexts + ids.length,
-    reembedded: done.reembedded + reembedded,
+    reembedded: done.reembedded + embeds.embedded,
+    embedFailures: done.embedFailures + embeds.failed,
   });
 };
 
@@ -178,5 +178,10 @@ export const upgradeNormalizedDocs = async (
 ): Promise<DocUpgradeReport> => {
   const stamped = await stampDeclaredOnly(deps.db);
   await yieldToEventLoop();
-  return upgradeFrom(deps, options.batch ?? DOC_UPGRADE_BATCH, BEFORE_EVERY_ID, { contexts: 0, stamped, reembedded: 0 });
+  return upgradeFrom(deps, options.batch ?? DOC_UPGRADE_BATCH, BEFORE_EVERY_ID, {
+    contexts: 0,
+    stamped,
+    reembedded: 0,
+    embedFailures: 0,
+  });
 };

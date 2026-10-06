@@ -162,7 +162,7 @@ describe("a hub upgraded across the declared-only doc rule", () => {
         const report = await upgradeNormalizedDocs({ db: hub.harness.db, embedder });
 
         // Assert
-        expect(report).toEqual({ contexts: 1, stamped: 0, reembedded: 1 });
+        expect(report).toEqual({ contexts: 1, stamped: 0, reembedded: 1, embedFailures: 0 });
         expect(await search(hub.harness, robin, DISCARDED_WORD)).toEqual([]);
         const draftHit = (await search(hub.harness, robin, DRAFT_WORD)).find((row) => row.id === WORK_CONTEXT_ID);
         expect(draftHit?.derivedOnly).toBe(true);
@@ -193,7 +193,7 @@ describe("a hub upgraded across the declared-only doc rule", () => {
 
       const second = await boot(dataDir, embedder);
       try {
-        expect(await upgradeNormalizedDocs({ db: second.harness.db, embedder })).toEqual({ contexts: 0, stamped: 0, reembedded: 0 });
+        expect(await upgradeNormalizedDocs({ db: second.harness.db, embedder })).toEqual({ contexts: 0, stamped: 0, reembedded: 0, embedFailures: 0 });
       } finally {
         await second.close();
       }
@@ -248,7 +248,7 @@ describe("which contexts the pass rebuilds", () => {
 
     // Assert: the declared-only doc is the same under both rules, so it is
     // only STAMPED — and no later start scans it again (review round 4, L2)
-    expect(report).toEqual({ contexts: ids.length, stamped: 1, reembedded: 0 });
+    expect(report).toEqual({ contexts: ids.length, stamped: 1, reembedded: 0, embedFailures: 0 });
     const versions = await hub.harness.db.execute(sql`SELECT id, doc_version FROM work_contexts ORDER BY id`);
     expect(versions.rows).toEqual([
       { id: "wc_a", doc_version: NORMALIZED_DOC_VERSION },
@@ -258,7 +258,12 @@ describe("which contexts the pass rebuilds", () => {
     ]);
     const declaredDocAfter = await hub.harness.db.execute(sql`SELECT normalized_doc FROM work_contexts WHERE id = 'wc_declared'`);
     expect(declaredDocAfter.rows).toEqual(declaredDocBefore.rows);
-    expect(await upgradeNormalizedDocs({ db: hub.harness.db, embedder: null })).toEqual({ contexts: 0, stamped: 0, reembedded: 0 });
+    expect(await upgradeNormalizedDocs({ db: hub.harness.db, embedder: null })).toEqual({
+      contexts: 0,
+      stamped: 0,
+      reembedded: 0,
+      embedFailures: 0,
+    });
   });
 
   test("a run interrupted part-way resumes with exactly the contexts it had not reached", async () => {
@@ -272,6 +277,11 @@ describe("which contexts the pass rebuilds", () => {
     // wc_a was rebuilt by the run that was cut off; wc_b was not reached
     await markPreRound(hub.harness, "wc_b");
 
-    expect(await upgradeNormalizedDocs({ db: hub.harness.db, embedder: null })).toEqual({ contexts: 1, stamped: 0, reembedded: 0 });
+    expect(await upgradeNormalizedDocs({ db: hub.harness.db, embedder: null })).toEqual({
+      contexts: 1,
+      stamped: 0,
+      reembedded: 0,
+      embedFailures: 0,
+    });
   });
 });

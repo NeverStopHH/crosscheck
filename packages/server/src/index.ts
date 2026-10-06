@@ -11,6 +11,7 @@ import { parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
 import { upgradeNormalizedDocs } from "./services/doc-upgrade.ts";
 import { removeCrossDeveloperDraftLinks } from "./services/draft-link-cleanup.ts";
+import { backfillEmbeddings } from "./services/embedding-backfill.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -279,17 +280,22 @@ export const startServer = async (): Promise<void> => {
   );
   // DRAFTS OUT OF WHAT AN OLDER HUB BUILT: the auto links its gate made into
   // teammates' trees on a draft's strength (services/draft-link-cleanup.ts),
-  // then the docs that still fold drafts in (services/doc-upgrade.ts). After
-  // serving, for the same reason: until they have run the old rows behave as
-  // they did before the upgrade, and nothing waits on them. Both idempotent;
-  // each start finishes what the last left.
+  // then the docs that still fold drafts in (services/doc-upgrade.ts), then —
+  // with an embedder — every vector that is missing or from another model
+  // (services/embedding-backfill.ts), so no rebuild's cleared vector is lost
+  // for good. After serving, for the same reason: until they have run the old
+  // rows behave as they did before the upgrade, and nothing waits on them.
+  // All idempotent; each start finishes what the last left.
   void removeCrossDeveloperDraftLinks(db)
     .then(async (linksRemoved) => ({ linksRemoved, docs: await upgradeNormalizedDocs({ db, embedder }) }))
+    .then(async (done) => ({ ...done, vectors: embedder === null ? null : await backfillEmbeddings({ db, embedder }) }))
     .then(
-      ({ linksRemoved, docs }) => {
+      ({ linksRemoved, docs, vectors }) => {
         console.log(
           `[crosscheck] draft upgrade: ${String(linksRemoved)} cross-developer draft link(s) removed, ` +
-            `${String(docs.contexts)} work context doc(s) rebuilt without drafts, ${String(docs.reembedded)} re-embedded`,
+            `${String(docs.contexts)} work context doc(s) rebuilt without drafts, ${String(docs.reembedded)} re-embedded` +
+            (docs.embedFailures === 0 ? "" : `, ${String(docs.embedFailures)} embed failure(s)`) +
+            (vectors === null ? "" : `; vector backfill: ${String(vectors.embedded)} embedded, ${String(vectors.failed)} failed`),
         );
       },
       (error: unknown) => {
