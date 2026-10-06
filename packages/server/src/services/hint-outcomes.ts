@@ -217,6 +217,36 @@ const countableSince = async (deps: Deps, repo: string): Promise<CountableSince>
   windowStart: new Date(deps.now().getTime() - PILOT_RETENTION_DAYS * MS_PER_DAY),
 });
 
+/** What one delivery of a pointer may be refused for while another of the same pointer is countable. */
+const TWIN_REFUSALS: ReadonlySet<HintOutcomeRefusal> = new Set(["before_outcomes", "while_paused", "past_window"]);
+
+/**
+ * ONE POINTER, ANY TWIN (review H-A, M4). A prompt hint and a tripwire ask
+ * about one ref in one session are one intervention, so a word named by the
+ * twin no figure can count — delivered before outcomes, in a pause, or past
+ * the widest window — lands on the pointer's newest twin that one can, and is
+ * refused only when none can. A candidate list that collapses a pointer to its
+ * newest delivery never earns a refusal its older twin would not.
+ */
+const countableDeliveryOf = async (
+  deps: Deps,
+  named: ResolvedDelivery | undefined,
+  input: WriteHintOutcomeInput,
+  countable: CountableSince,
+): Promise<ResolvedDelivery | undefined> => {
+  const refusal = refuse(named, input, countable);
+  if (named === undefined || refusal === null || !TWIN_REFUSALS.has(refusal)) {
+    return named;
+  }
+  const twins = await deps.db
+    .select(deliveryColumns)
+    .from(hintDeliveries)
+    .innerJoin(agentSessions, eq(hintDeliveries.sessionId, agentSessions.id))
+    .where(and(eq(hintDeliveries.sessionId, named.sessionId), eq(hintDeliveries.refId, named.refId)))
+    .orderBy(desc(hintDeliveries.deliveredAt), desc(hintDeliveries.id));
+  return twins.find((twin) => refuse(twin, input, countable) === null) ?? named;
+};
+
 type Recorded = Exclude<WriteHintOutcomeResult, { readonly refusal: HintOutcomeRefusal }>;
 
 /** The newest word the same channel said before — the agent's own, or the person's own. */
@@ -318,10 +348,12 @@ export const writeHintOutcome = async (
   if (input.reason !== null && containsSecret(input.reason)) {
     return { refusal: "reason_secret" };
   }
-  const delivery = input.ref.startsWith(DELIVERY_ID_PREFIX)
+  const named = input.ref.startsWith(DELIVERY_ID_PREFIX)
     ? await readDeliveryById(deps, input.ref)
     : await readDeliveryByRef(deps, input);
-  const refusal = refuse(delivery, input, await countableSince(deps, input.repo));
+  const countable = await countableSince(deps, input.repo);
+  const delivery = await countableDeliveryOf(deps, named, input, countable);
+  const refusal = refuse(delivery, input, countable);
   if (refusal !== null || delivery === undefined) {
     return { refusal: refusal ?? "unknown_ref" };
   }

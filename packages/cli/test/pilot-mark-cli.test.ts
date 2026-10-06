@@ -435,6 +435,53 @@ describe("crosscheck noise", () => {
     expect(recent.stdout).toBe(DELIVERY_STILL_ON_THIS_MACHINE_LINE);
   });
 
+  test("review H-A: noise <ref> labels today's held delivery, never last week's of the same ref", async () => {
+    // Arrange — a week ago GONE got the pointer (on the hub); today a fresh live session holds it
+    const session = "cc_77777777-2222-4333-8444-555555555555";
+    await send("POST", "/api/sessions", nick.apiKey, {
+      id: session,
+      agentKind: "claude-code",
+      repo: REPO_ID,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "implementing",
+    });
+    const lastWeek = await deliver(GONE, "wc_ken_ha_noise", 7 * 24 * 60);
+    const home = await homeWithLive(session);
+    const today = await spoolDelivery(home, hubUrl, session, "wc_ken_ha_noise");
+
+    // Act
+    const result = await noise(home, ["wc_ken_ha_noise"]);
+
+    // Assert
+    expect(result.stdout).toContain(`recorded: ${today} is noise`);
+    expect(result.stdout).not.toContain(lastWeek);
+  });
+
+  test("review H-A: noise with no id offers a pointer still held here beside an older one, newest first", async () => {
+    // Arrange — an older pointer the hub has, and a newer one still in this session's spool
+    const session = "cc_88888888-2222-4333-8444-555555555555";
+    await send("POST", "/api/sessions", nick.apiKey, {
+      id: session,
+      agentKind: "claude-code",
+      repo: REPO_ID,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "implementing",
+    });
+    const older = await deliver(session, "wc_ken_ha_noise_older", 5);
+    const home = await homeWithLive(session);
+    const held = await spoolDelivery(home, hubUrl, session, "wc_ken_ha_noise_newer");
+
+    // Act
+    const result = await noise(home);
+
+    // Assert — listed, never labelled on the older one
+    expect(result.stdout).toContain("name the one you mean");
+    expect(result.stdout.indexOf(held)).toBeGreaterThan(-1);
+    expect(result.stdout.indexOf(held)).toBeLessThan(result.stdout.indexOf(older));
+  });
+
   test("a repo that never enrolled is told, not ignored", async () => {
     // Arrange
     const home = await homeWithLive(LIVE, otherRepo, OTHER_REPO_ID);

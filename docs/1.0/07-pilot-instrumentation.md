@@ -1327,6 +1327,23 @@ is attributable, not prevented, exactly as the label's terminal gate is a rule a
 "nothing at the hub tells a person's outcome from their agent's" is superseded to that extent: the route
 tells, by which door a word came through, and that is still not a proof of who typed it.
 
+*H-A — a word landed on a stale delivery while today's delivery of the same ref was held (probe G).* "Post
+first" asked the hub about the ref the hint printed; the hub knew last week's delivery of it and recorded
+today's word there, superseding last week's override and its reason, while today's delivery — still in this
+session's spool — stayed unmarked. **Held first**: before posting, the connector looks in the sending session's
+own spool (the sessions `findSender` would choose from) for an unasked delivery of that ref, newest first, and
+posts against that delivery's own `hd_` id, so the hub's "unknown" runs the existing send-then-retry. All five
+paths do so: `mark_hint_outcome <ref>`, `crosscheck followed / overrode <ref>`, `crosscheck noise / helpful
+<ref>`, and with no id `crosscheck followed` and `crosscheck noise`, whose candidates are the hub's recent ones
+plus those the live sessions here still hold (unasked, inside the same window), one per pointer — a prompt hint
+and a tripwire ask about one ref in one session are ONE candidate (M4), offered as its newest delivery, newest
+pointer first. "Any recent one" no longer scans every session's spool: it reads the live sessions' own
+(`holdsUnsentDelivery` takes a named ref only). The send itself still goes through the public `flushSpool`
+with `onlySlug` — the one drain path, so `fix/resumed-session-rejected`'s hold rule applies to it after merge.
+At the hub, a word named by a twin no figure can count — delivered before outcomes, during a pause, or past the
+widest window — lands on the pointer's newest twin that one can, and is refused only when none can. (A pull in
+the same session shares the prompt hint's delivery id, so "not unsolicited" cannot come from a twin.)
+
 *R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
 of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
 and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —

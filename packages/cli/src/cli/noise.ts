@@ -57,7 +57,11 @@ import {
 } from "@crosscheck/connector-core/http/pilot.ts";
 import type { MarkCandidates, MarkResult } from "@crosscheck/connector-core/http/pilot.ts";
 import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
-import { answerAfterSendingHeld } from "@crosscheck/connector-core/spool/held-deliveries.ts";
+import {
+  answerAfterSendingHeld,
+  heldDeliveryIdOf,
+  withHeldCandidates,
+} from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import type { HeldRetry } from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import { SAFE_ID_PATTERN } from "@crosscheck/schema";
@@ -148,7 +152,7 @@ const noCandidates = (result: HubResult<MarkCandidates>): boolean => result.ok &
 /** The hub's answer — after sending what this machine holds, when the hub did not know the ref (review M2). */
 const askHub = async <T>(
   target: Target,
-  ref: string | null,
+  ref: string,
   call: () => Promise<HubResult<T>>,
   isUnknown: HeldRetry<T>["isUnknown"],
 ): Promise<{ readonly held: CliResult } | { readonly result: HubResult<T> }> => {
@@ -185,8 +189,15 @@ const mark = async (target: Target, deliveryId: string, shortcut: LabelShortcut)
   };
 };
 
-/** The ref a hint printed: its newest delivery to the caller, whenever it was. */
+/**
+ * The ref a hint printed: today's delivery of it still held in the sending session's own spool,
+ * first (07 §13.12, review H-A) — else its newest delivery the hub has, whenever it was.
+ */
 const markByRef = async (target: Target, ref: string, shortcut: LabelShortcut): Promise<CliResult> => {
+  const held = await heldDeliveryIdOf(target.ctx, target.identity, ref);
+  if (held !== null) {
+    return mark(target, held, shortcut);
+  }
   const call = (): Promise<HubResult<MarkCandidates>> =>
     getMarkCandidates(target.ctx, { repo: target.identity.repoId, ref });
   const asked = await askHub(target, ref, call, noCandidates);
@@ -202,7 +213,10 @@ const markByRef = async (target: Target, ref: string, shortcut: LabelShortcut): 
     : mark(target, newest.id, shortcut);
 };
 
-/** No id: the one recent delivery to a session live on this machine. */
+/**
+ * No id: the one recent delivery to a session live on this machine — the hub's and those still
+ * held in those sessions' own spools, one per pointer (07 §13.12, review H-A).
+ */
 const markRecent = async (target: Target, shortcut: LabelShortcut): Promise<CliResult> => {
   const { ctx, identity } = target;
   const now = ctx.now();
@@ -211,16 +225,15 @@ const markRecent = async (target: Target, shortcut: LabelShortcut): Promise<CliR
   if (sessions.length === 0) {
     return { stdout: noLiveSessionLine(shortcut.command), exitCode: EXIT_OK };
   }
-  const call = (): Promise<HubResult<MarkCandidates>> =>
-    getMarkCandidates(ctx, { repo: identity.repoId, sessions, withinMinutes: NOISE_MARK_WINDOW_MINUTES });
-  const asked = await askHub(target, null, call, noCandidates);
-  if ("held" in asked) {
-    return asked.held;
+  const listed = await getMarkCandidates(ctx, {
+    repo: identity.repoId,
+    sessions,
+    withinMinutes: NOISE_MARK_WINDOW_MINUTES,
+  });
+  if (!listed.ok) {
+    return failed(listed);
   }
-  if (!asked.result.ok) {
-    return failed(asked.result);
-  }
-  const { candidates, more } = asked.result.data;
+  const { candidates, more } = await withHeldCandidates(ctx, scan.states, listed.data, NOISE_MARK_WINDOW_MINUTES);
   const [only] = candidates;
   if (only === undefined) {
     return {

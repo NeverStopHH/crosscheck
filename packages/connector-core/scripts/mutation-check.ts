@@ -8809,8 +8809,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2. "This machine" is the live state files, not every session the caller has.
     label: "noise reaches past this machine's live sessions",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "    getMarkCandidates(ctx, { repo: identity.repoId, sessions, withinMinutes: NOISE_MARK_WINDOW_MINUTES });",
-    to: "    getMarkCandidates(ctx, { repo: identity.repoId, sessions: [], withinMinutes: NOISE_MARK_WINDOW_MINUTES });",
+    from: "    sessions,\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n",
+    to: "    sessions: [],\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "the delivery beside the person loses to a newer one on their other laptop, " +
@@ -8820,8 +8820,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2. With no id, only the last NOISE_MARK_WINDOW_MINUTES.
     label: "noise with no id reaches back past the hour",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "    getMarkCandidates(ctx, { repo: identity.repoId, sessions, withinMinutes: NOISE_MARK_WINDOW_MINUTES });",
-    to: "    getMarkCandidates(ctx, { repo: identity.repoId, sessions });",
+    from: "    sessions,\n    withinMinutes: NOISE_MARK_WINDOW_MINUTES,\n",
+    to: "    sessions,\n",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "a ninety-minute-old pointer is marked as the one that just happened, which " +
@@ -17924,8 +17924,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "mark_hint_outcome posts before the hint it names has been sent",
     file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
-    from: "    { hub: ctx.hub, identity: ctx.identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
-    to: "    { hub: ctx.hub, identity: ctx.identity, ref, budgetMs: 0, call, isUnknown: isUnknownRef },",
+    from: "      budgetMs: OUTCOME_FLUSH_BUDGET_MS,\n      call,\n      isUnknown: isUnknownRef,",
+    to: "      budgetMs: 0,\n      call,\n      isUnknown: isUnknownRef,",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "recording right after a prompt hint or a denied edit's tripwire fails until some later tool runs",
   },
@@ -17948,24 +17948,24 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed posts before the hint it names has been sent",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
-    to: "    { hub: ctx, identity, ref, budgetMs: 0, call, isUnknown: isUnknownRef },",
+    from: "    { hub: ctx, identity, ref: posted, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
+    to: "    { hub: ctx, identity, ref: posted, budgetMs: 0, call, isUnknown: isUnknownRef },",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "a person typing followed right after the hint is told it never reached them",
   },
   {
     label: "crosscheck followed <id> says 'never reached you' for a hint this machine holds",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
-    to: "    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: () => false },",
+    from: "    { hub: ctx, identity, ref: posted, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
+    to: "    { hub: ctx, identity, ref: posted, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: () => false },",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the hub's honest sentence is false from where the person sits",
   },
   {
     label: "crosscheck followed with no id says nothing reached you while the spool holds a hint",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "    { hub: ctx, identity, ref: null, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: noCandidates },",
-    to: "    { hub: ctx, identity, ref: null, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: () => false },",
+    from: "  const { candidates, more } = await withHeldCandidates(ctx, live.states, listed.data, NOISE_MARK_WINDOW_MINUTES);",
+    to: "  const { candidates, more } = listed.data;",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
   },
@@ -18271,8 +18271,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "held records are sent by a live session on another checkout",
     file: `${CORE}/src/spool/held-deliveries.ts`,
-    from: "  const candidates = onThisRoot.length > 0 ? onThisRoot : scan.states;",
-    to: "  const candidates = scan.states;",
+    from: "  return onThisRoot.length > 0 ? onThisRoot : scan.states;",
+    to: "  return scan.states;",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the session of this checkout is passed over for whichever live session sorts first (review M18)",
   },
@@ -18295,8 +18295,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "any held delivery is taken for the ref the reader named",
     file: `${CORE}/src/spool/held-deliveries.ts`,
-    from: "    return ref === null ? refs.length > 0 : refs.includes(ref);",
-    to: "    return refs.length > 0;",
+    from: "  (await readSpoolLines(hub.home, hub.repoKey)).some((line) => deliveryRefs(line).includes(ref));",
+    to: "  (await readSpoolLines(hub.home, hub.repoKey)).some((line) => deliveryRefs(line).length > 0);",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "a mistyped ref is answered 'still on this machine' whenever anything at all is held (review M15)",
   },
@@ -18320,8 +18320,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck noise with no id says nothing is recent while the spool holds a hint",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "  const asked = await askHub(target, null, call, noCandidates);",
-    to: "  const asked = await askHub(target, null, call, () => false);",
+    from: "  const { candidates, more } = await withHeldCandidates(ctx, scan.states, listed.data, NOISE_MARK_WINDOW_MINUTES);",
+    to: "  const { candidates, more } = listed.data;",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
   },
@@ -18532,8 +18532,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed / overrode post as the agent",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '    postHintOutcome(ctx, { repo: identity.repoId, ref, outcome, ...(reason === undefined ? {} : { reason }) }, "person");',
-    to: '    postHintOutcome(ctx, { repo: identity.repoId, ref, outcome, ...(reason === undefined ? {} : { reason }) }, "agent");',
+    from: '      "person",\n    );',
+    to: '      "agent",\n    );',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person's terminal word is the agent's, and the agent's next word overturns it",
   },
@@ -18577,6 +18577,79 @@ export const MUTATIONS: readonly Mutation[
     to: '    return "";',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person is told their override superseded itself when they only said the reason better",
+  },
+  // ── 07 §13.12, review H-A: held first, one candidate per pointer, any twin ──
+  {
+    label: "mark_hint_outcome posts the printed ref while today's delivery of it is held (probe G)",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  const posted = (await heldDeliveryIdOf(ctx.hub, ctx.identity, ref)) ?? ref;",
+    to: "  const posted = ref;",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "today's word lands on last week's delivery and supersedes its override, today's stays unmarked",
+  },
+  {
+    label: "crosscheck followed <ref> posts the printed ref while today's delivery of it is held",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  const posted = (await heldDeliveryIdOf(ctx, identity, ref)) ?? ref;",
+    to: "  const posted = ref;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person's followed supersedes another session's override of the same ref",
+  },
+  {
+    label: "crosscheck noise <ref> labels the hub's newest delivery while today's is held",
+    file: `${CLI}/src/cli/noise.ts`,
+    from: "  if (held !== null) {\n    return mark(target, held, shortcut);",
+    to: "  if (false) {\n    return mark(target, held, shortcut);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "last week's pointer takes the noise label meant for today's",
+  },
+  {
+    label: "held first takes any held delivery for the ref the hint printed",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  return held.find((candidate) => candidate.refId === ref || candidate.id === ref)?.id ?? null;",
+    to: "  return held[0]?.id ?? null;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a word about one hint is posted against whatever else the session still holds",
+  },
+  {
+    label: "a pointer's prompt hint and tripwire ask are offered as two candidates",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "        sorted.findIndex((other) => other.sessionId === candidate.sessionId && other.refId === candidate.refId) === index,",
+    to: "        index >= 0,",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "one intervention reads as two, and the person is asked to choose between a hint and itself",
+  },
+  {
+    label: "a held pull is offered as a candidate",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "      !isString(deliveredAt) ||\n      channel === PULLED_DELIVERY_CHANNEL\n",
+    to: "      !isString(deliveredAt)\n",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "an answer somebody asked for is offered for an outcome or a label the hub then refuses",
+  },
+  {
+    label: "a held delivery older than the hub's window is offered with no id",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  const held = (await heldCandidates(hub, sessions)).filter((candidate) => Date.parse(candidate.deliveredAt) >= since);",
+    to: "  const held = await heldCandidates(hub, sessions);",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "an hour-old pointer stuck in a spool crowds the list the hub keeps to the last hour",
+  },
+  {
+    label: "a word named by an uncountable twin is refused while the pointer has a countable one",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  return twins.find((twin) => refuse(twin, input, countable) === null) ?? named;",
+    to: "  return named;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the newest twin of a candidate list, delivered in a pause, refuses a word its older twin could take",
+  },
+  {
+    label: "a twin delivered during a pause is not recovered by its countable twin",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: 'new Set(["before_outcomes", "while_paused", "past_window"]);',
+    to: 'new Set(["before_outcomes", "past_window"]);',
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a tripwire ask in a pause refuses the word for a pointer whose prompt hint was enrolled",
   },
 ];
 
@@ -18663,11 +18736,11 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 15
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 17
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
- * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 11
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 5
  * PRINTS: packages/cli/test/pilot-render.test.ts 30
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
@@ -18789,6 +18862,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
+ * PRINTS: packages/connector-core/test/held-first-outcome.test.ts 4
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
@@ -18901,7 +18975,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 12
- * PRINTS: packages/server/test/hint-outcomes.test.ts 31
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 33
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

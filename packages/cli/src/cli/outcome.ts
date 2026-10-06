@@ -44,8 +44,11 @@ import type { HubContext, HubResult } from "@crosscheck/connector-core/http/clie
 import { isOutcomesNotServed, postHintOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import type { RecordedOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { getMarkCandidates } from "@crosscheck/connector-core/http/pilot.ts";
-import type { MarkCandidates } from "@crosscheck/connector-core/http/pilot.ts";
-import { answerAfterSendingHeld } from "@crosscheck/connector-core/spool/held-deliveries.ts";
+import {
+  answerAfterSendingHeld,
+  heldDeliveryIdOf,
+  withHeldCandidates,
+} from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import type { HeldWhy } from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import { MAX_HINT_OUTCOME_REASON_CHARS, SAFE_ID_PATTERN, reasonLength } from "@crosscheck/schema";
@@ -155,13 +158,20 @@ const record = async (
   reason: string | undefined,
 ): Promise<CliResult> => {
   const { ctx, identity } = target;
+  // HELD FIRST (07 §13.12, review H-A): today's delivery still held here is named by its own id,
+  // so the word never lands on an older delivery of the same ref the hub already has.
+  const posted = (await heldDeliveryIdOf(ctx, identity, ref)) ?? ref;
   // The PERSON's route (07 §13.12): a word said at a terminal is never overturned by an agent's.
   // An agent that shells out to this command writes as the person — attributed to the key, not prevented.
   const call = (): Promise<HubResult<RecordedOutcome>> =>
-    postHintOutcome(ctx, { repo: identity.repoId, ref, outcome, ...(reason === undefined ? {} : { reason }) }, "person");
+    postHintOutcome(
+      ctx,
+      { repo: identity.repoId, ref: posted, outcome, ...(reason === undefined ? {} : { reason }) },
+      "person",
+    );
   // POST FIRST (07 §13.11): held records are sent only when the hub does not know a ref held here.
   const answer = await answerAfterSendingHeld(
-    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },
+    { hub: ctx, identity, ref: posted, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },
     await call(),
   );
   if (answer.kind === "held") {
@@ -172,9 +182,10 @@ const record = async (
     : failed(answer.result);
 };
 
-const noCandidates = (result: HubResult<MarkCandidates>): boolean => result.ok && result.data.candidates.length === 0;
-
-/** No id: the one recent delivery to a session live on this machine, as `noise` finds it. */
+/**
+ * No id: the one recent delivery to a session live on this machine, as `noise` finds it — the hub's
+ * and those still held in those sessions' own spools, one per pointer (07 §13.12, review H-A).
+ */
 const recordRecent = async (target: Target, command: OutcomeCommand, reason: string | undefined): Promise<CliResult> => {
   const { ctx, identity } = target;
   const live = await readLiveSessionStates(ctx.home, ctx.hubUrl, identity.repoId, ctx.now());
@@ -182,19 +193,15 @@ const recordRecent = async (target: Target, command: OutcomeCommand, reason: str
   if (sessions.length === 0) {
     return { stdout: noLiveSessionLine(command), exitCode: EXIT_OK };
   }
-  const call = (): Promise<HubResult<MarkCandidates>> =>
-    getMarkCandidates(ctx, { repo: identity.repoId, sessions, withinMinutes: NOISE_MARK_WINDOW_MINUTES });
-  const answer = await answerAfterSendingHeld(
-    { hub: ctx, identity, ref: null, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: noCandidates },
-    await call(),
-  );
-  if (answer.kind === "held") {
-    return held(answer.why);
+  const listed = await getMarkCandidates(ctx, {
+    repo: identity.repoId,
+    sessions,
+    withinMinutes: NOISE_MARK_WINDOW_MINUTES,
+  });
+  if (!listed.ok) {
+    return failed(listed);
   }
-  if (!answer.result.ok) {
-    return failed(answer.result);
-  }
-  const { candidates, more } = answer.result.data;
+  const { candidates, more } = await withHeldCandidates(ctx, live.states, listed.data, NOISE_MARK_WINDOW_MINUTES);
   const [only] = candidates;
   if (only === undefined) {
     return { stdout: nothingRecentLine(NOISE_MARK_WINDOW_MINUTES, command), exitCode: EXIT_OK };

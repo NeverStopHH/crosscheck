@@ -21,6 +21,7 @@ import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import { hintDeliveryId } from "@crosscheck/connector-core/capture/records.ts";
+import { deliveryIdFor } from "@crosscheck/schema";
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import { EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -521,6 +522,102 @@ describe("07 §13.12: a word said at a terminal is the person's", () => {
       replaced: "followed",
       stands: "followed",
     });
+  });
+});
+
+describe("review H-A: a pointer still on this machine is never passed over for an older one", () => {
+  /** A Nick session the hub knows, live in a fresh home of its own. */
+  const freshLiveSession = async (session: string): Promise<string> => {
+    await send("POST", "/api/sessions", nick.apiKey, {
+      id: session,
+      agentKind: "claude-code",
+      repo: REPO_ID,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "implementing",
+    });
+    return homeWithLive(session);
+  };
+
+  const tripwireRecord = (sessionId: string, refId: string): unknown =>
+    envelope(nick.id, sessionId, "hint_delivery", {
+      id: deliveryIdFor(sessionId, refId, "tripwire"),
+      sessionId,
+      refKind: "work_context",
+      refId,
+      channel: "tripwire",
+      deliveredAt: new Date().toISOString(),
+    });
+
+  test("crosscheck followed <ref> records on today's held delivery, and last week's override stands", async () => {
+    // Arrange — SOLO's delivery of the ref is on the hub with an override; LIVE's is still in its spool
+    const ref = "wc_ken_ha_followed";
+    const reason = "H-A: kept the old filter row";
+    await send("POST", "/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Ken's context",
+          status: "implementing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    await deliver(SOLO, ref);
+    const overrode = await send("POST", "/api/hint-outcomes", nick.apiKey, {
+      repo: REPO_ID,
+      ref,
+      outcome: "overrode",
+      reason,
+      session: SOLO,
+    });
+    expect(overrode.status).toBe(201);
+    const home = await homeWithLive(LIVE);
+    await spoolDelivery(home, hubUrl, LIVE, ref);
+
+    // Act
+    const result = await cli(home, ["followed", ref]);
+    const mine = (await (
+      await fetch(`${hubUrl}/api/hint-outcomes/mine?repo=${encodeURIComponent(REPO_ID)}`, {
+        headers: { Authorization: `Bearer ${nick.apiKey}` },
+      })
+    ).json()) as { data: { reasons: readonly { reason: string }[] } };
+
+    // Assert — not "superseding the earlier overrode": that was another session's pointer
+    expect(result.stdout).toStartWith(`recorded: ${ref} — followed. `);
+    expect(mine.data.reasons.map((each) => each.reason)).toContain(reason);
+  });
+
+  test("crosscheck followed with no id offers a pointer still held here beside an older one, newest first", async () => {
+    // Arrange — an older pointer the hub has, and a newer one still in this session's spool
+    const session = "cc_88888888-2222-4333-8444-555555555555";
+    const home = await freshLiveSession(session);
+    const older = await deliver(session, "wc_ken_ha_older");
+    const held = hintDeliveryId(session, "wc_ken_ha_newer");
+    await spoolDelivery(home, hubUrl, session, "wc_ken_ha_newer");
+
+    // Act
+    const result = await cli(home, ["followed"]);
+
+    // Assert — listed, never recorded on the older one
+    expect(result.stdout).toContain("name the one you mean");
+    expect(result.stdout.indexOf(held)).toBeGreaterThan(-1);
+    expect(result.stdout.indexOf(held)).toBeLessThan(result.stdout.indexOf(older));
+  });
+
+  test("crosscheck followed with no id takes a pointer's prompt hint and its tripwire ask as one, and records it", async () => {
+    // Arrange — one pointer, two deliveries on the hub
+    const session = "cc_99999999-2222-4333-8444-555555555555";
+    const home = await freshLiveSession(session);
+    await deliver(session, "wc_ken_ha_twins");
+    await send("POST", "/api/records", nick.apiKey, { records: [tripwireRecord(session, "wc_ken_ha_twins")] });
+
+    // Act
+    const result = await cli(home, ["followed"]);
+
+    // Assert — not "2 interventions … name the one you mean"
+    expect(result.stdout).toStartWith(`recorded: ${deliveryIdFor(session, "wc_ken_ha_twins", "tripwire")} — followed`);
   });
 });
 

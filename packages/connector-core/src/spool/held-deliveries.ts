@@ -16,15 +16,19 @@
  * never a session that went silent (no reviving a reaped one). When nothing
  * can be sent, the answer says why — never "it never reached you".
  */
+import { PULLED_DELIVERY_CHANNEL } from "@crosscheck/schema";
+
 import { realpathBestEffort, sessionSlug } from "../config/paths.ts";
 import type { RepoIdentity } from "../git/repo-identity.ts";
 import type { HubContext, HubResult } from "../http/client.ts";
+import type { MarkCandidate, MarkCandidates } from "../http/pilot.ts";
 import { readLiveSessionStates } from "../state/session-state.ts";
 import { flushSpool } from "./flush.ts";
 import type { FlushInput } from "./flush.ts";
-import { readSpoolLines } from "./files.ts";
+import { readSessionSpool, readSpoolLines } from "./files.ts";
 
 const HINT_DELIVERY_KIND = "hint_delivery";
+const MS_PER_MINUTE = 60_000;
 
 /** Who may send the held records: the one live session of this checkout, or why nobody may. */
 export type SenderLookup =
@@ -34,16 +38,23 @@ export type SenderLookup =
   /** No live session of this repo here: a silent one is not revived to send. */
   | { readonly kind: "no_live_session" };
 
+type LiveState = Awaited<ReturnType<typeof readLiveSessionStates>>["states"][number];
+
+/** The live sessions of this repo that could be sending for this checkout: those on its root, or all when none is. */
+const sendingSessions = async (hub: HubContext, identity: RepoIdentity): Promise<readonly LiveState[]> => {
+  const scan = await readLiveSessionStates(hub.home, hub.hubUrl, identity.repoId, hub.now());
+  const here = await realpathBestEffort(identity.root);
+  const roots = await Promise.all(scan.states.map((state) => realpathBestEffort(state.repoRoot)));
+  const onThisRoot = scan.states.filter((_state, index) => roots[index] === here);
+  return onThisRoot.length > 0 ? onThisRoot : scan.states;
+};
+
 /**
  * THE SENDER, NEVER GUESSED: among the live sessions of this repo, the one
  * on this checkout's root — or the only one, when none is on it.
  */
 export const findSender = async (hub: HubContext, identity: RepoIdentity): Promise<SenderLookup> => {
-  const scan = await readLiveSessionStates(hub.home, hub.hubUrl, identity.repoId, hub.now());
-  const here = await realpathBestEffort(identity.root);
-  const roots = await Promise.all(scan.states.map((state) => realpathBestEffort(state.repoRoot)));
-  const onThisRoot = scan.states.filter((_state, index) => roots[index] === here);
-  const candidates = onThisRoot.length > 0 ? onThisRoot : scan.states;
+  const candidates = await sendingSessions(hub, identity);
   const [only] = candidates;
   if (only === undefined) {
     return { kind: "no_live_session" };
@@ -75,14 +86,95 @@ const deliveryRefs = (line: string): readonly string[] => {
 
 /**
  * Whether this machine's spool still holds an unsent delivery of `ref` — the
- * id the hint printed or the delivery's own id — or, with `ref` null, any
- * unsent delivery at all.
+ * id the hint printed or the delivery's own id. Always a named ref: "any
+ * recent one" is answered from the live sessions' own spools, as candidates
+ * (`withHeldCandidates`), never by a scan of every session's (review LOW).
  */
-export const holdsUnsentDelivery = async (hub: HubContext, ref: string | null): Promise<boolean> =>
-  (await readSpoolLines(hub.home, hub.repoKey)).some((line) => {
-    const refs = deliveryRefs(line);
-    return ref === null ? refs.length > 0 : refs.includes(ref);
-  });
+export const holdsUnsentDelivery = async (hub: HubContext, ref: string): Promise<boolean> =>
+  (await readSpoolLines(hub.home, hub.repoKey)).some((line) => deliveryRefs(line).includes(ref));
+
+const isString = (value: unknown): value is string => typeof value === "string";
+
+/** A held line as the candidate the hub would list for it — unasked deliveries only, as the hub lists them. */
+const heldCandidateOf = (line: string): MarkCandidate | null => {
+  try {
+    const parsed = JSON.parse(line) as { kind?: unknown; body?: Record<string, unknown> };
+    const { id, sessionId, channel, refKind, refId, deliveredAt } = parsed.body ?? {};
+    if (
+      parsed.kind !== HINT_DELIVERY_KIND ||
+      !isString(id) ||
+      !isString(sessionId) ||
+      !isString(channel) ||
+      !isString(refKind) ||
+      !isString(refId) ||
+      !isString(deliveredAt) ||
+      channel === PULLED_DELIVERY_CHANNEL
+    ) {
+      return null;
+    }
+    return { id, sessionId, channel, refKind, refId, deliveredAt };
+  } catch {
+    return null;
+  }
+};
+
+/** Newest delivery first, then id — the hub's own order for candidates. */
+const newestFirst = (a: MarkCandidate, b: MarkCandidate): number =>
+  Date.parse(b.deliveredAt) - Date.parse(a.deliveredAt) || a.id.localeCompare(b.id);
+
+/** The unasked deliveries still held in these live sessions' OWN spools, newest first. */
+const heldCandidates = async (hub: HubContext, sessions: readonly LiveState[]): Promise<readonly MarkCandidate[]> => {
+  const spools = await Promise.all(
+    sessions.map((state) => readSessionSpool(hub.home, hub.repoKey, sessionSlug(state.hostSessionKey))),
+  );
+  return spools
+    .flatMap((spool) => spool.lines)
+    .map(heldCandidateOf)
+    .filter((candidate): candidate is MarkCandidate => candidate !== null)
+    .sort(newestFirst);
+};
+
+/**
+ * ONE CANDIDATE PER POINTER (07 §13.10, M4): a prompt hint and a tripwire ask
+ * about one ref in one session are one intervention, so they are offered
+ * once — as the pointer's newest delivery — and newest pointer first.
+ */
+export const onePerPointer = (candidates: readonly MarkCandidate[]): readonly MarkCandidate[] =>
+  [...candidates]
+    .sort(newestFirst)
+    .filter(
+      (candidate, index, sorted) =>
+        sorted.findIndex((other) => other.sessionId === candidate.sessionId && other.refId === candidate.refId) === index,
+    );
+
+/**
+ * HELD FIRST (07 §13.12, review H-A): the newest unasked delivery of `ref`
+ * still held in the sending session's own spool — today's — or null. Posting
+ * a word against that delivery's own id makes the hub's "unknown" send it
+ * first; posting the ref would land the word on whatever older delivery of
+ * it the hub already has (last week's), superseding a word said there.
+ */
+export const heldDeliveryIdOf = async (hub: HubContext, identity: RepoIdentity, ref: string): Promise<string | null> => {
+  const held = await heldCandidates(hub, await sendingSessions(hub, identity));
+  return held.find((candidate) => candidate.refId === ref || candidate.id === ref)?.id ?? null;
+};
+
+/**
+ * NO ID: WHAT REACHED A LIVE SESSION HERE (07 §13.12, review H-A). The hub's
+ * recent candidates and the deliveries those sessions still hold, one per
+ * pointer, newest first — so a pointer still on this machine is never passed
+ * over for an older one the hub already has, and a pointer's twins are one.
+ */
+export const withHeldCandidates = async (
+  hub: HubContext,
+  sessions: readonly LiveState[],
+  fromHub: MarkCandidates,
+  windowMinutes: number,
+): Promise<MarkCandidates> => {
+  const since = hub.now().getTime() - windowMinutes * MS_PER_MINUTE;
+  const held = (await heldCandidates(hub, sessions)).filter((candidate) => Date.parse(candidate.deliveredAt) >= since);
+  return { candidates: [...onePerPointer([...held, ...fromHub.candidates])], more: fromHub.more };
+};
 
 /** Why a held delivery could not be counted on: not sent in time, or nobody may send it. */
 export type HeldWhy = "unsent" | "ambiguous" | "no_live_session";
@@ -94,8 +186,8 @@ export type HeldAnswer<T> =
 export interface HeldRetry<T> {
   readonly hub: HubContext;
   readonly identity: RepoIdentity;
-  /** The hint's ref, or null for "any recent one". */
-  readonly ref: string | null;
+  /** The ref or delivery id that was posted — "any recent one" is chosen before, from candidates. */
+  readonly ref: string;
   readonly budgetMs: number;
   readonly call: () => Promise<HubResult<T>>;
   /** True when the hub's answer is "I know no such delivery of yours". */
@@ -119,6 +211,10 @@ export const answerAfterSendingHeld = async <T>(retry: HeldRetry<T>, first: HubR
   if (lookup.kind !== "live") {
     return { kind: "held", why: lookup.kind };
   }
+  // THE ONE DRAIN PATH, ON PURPOSE: the public flushSpool with `onlySlug`, never a
+  // second sender of its own. fix/resumed-session-rejected rewrites flush.ts (held
+  // and unregistered lives); going through flushSpool is what makes that branch's
+  // hold rule apply to this outcome-triggered send too once the two are merged.
   await flushSpool(retry.hub, lookup.sender, retry.budgetMs);
   const again = await retry.call();
   return (await stillHeld(retry, again)) ? { kind: "held", why: "unsent" } : { kind: "answered", result: again };

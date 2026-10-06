@@ -415,6 +415,66 @@ describe("POST /api/hint-outcomes", () => {
     expect(await errorOf(response)).toMatchObject({ code: "while_paused" });
   });
 
+  test("review H-A: a pointer's twin older than every window records on its twin inside it", async () => {
+    // Arrange — one long session: the prompt hint 91 days ago, its tripwire twin today
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(91 * 86_400);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire", world.harness.clock.now().toISOString())],
+    });
+
+    // Act — the old twin's own id
+    const response = await recordOutcome(world, world.nick, { ref: world.delivered.kenContext, outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect(await bodyOf(response)).toMatchObject({ deliveryId: deliveryIdFor(NICK_SESSION, KEN_CONTEXT, "tripwire") });
+  });
+
+  test("review H-A: a pointer's twin delivered while the pilot was paused records on its countable twin", async () => {
+    // Arrange — the pointer's prompt hint arrived enrolled; its tripwire twin during a pause
+    const world = await createOutcomeWorld();
+    const put = async (pilotEnrolled: boolean): Promise<Response> =>
+      await world.harness.app.request("/api/team-settings", jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled }));
+    world.harness.clock.advanceSeconds(60);
+    await put(false);
+    world.harness.clock.advanceSeconds(60);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire", world.harness.clock.now().toISOString())],
+    });
+    world.harness.clock.advanceSeconds(60);
+    await put(true);
+
+    // Act — the newest twin, as a candidate list collapses the pointer to it
+    const response = await recordOutcome(world, world.nick, {
+      ref: deliveryIdFor(NICK_SESSION, KEN_CONTEXT, "tripwire"),
+      outcome: "followed",
+    });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect(await bodyOf(response)).toMatchObject({ deliveryId: world.delivered.kenContext });
+  });
+
+  test("review H-A: a pointer's twin from before outcomes were recordable records on its countable twin", async () => {
+    // Arrange — an older tripwire twin, delivered an hour before enrolment
+    const world = await createOutcomeWorld();
+    const earlier = new Date(world.harness.clock.now().getTime() - 3_600_000).toISOString();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire", earlier)],
+    });
+
+    // Act
+    const response = await recordOutcome(world, world.nick, {
+      ref: deliveryIdFor(NICK_SESSION, KEN_CONTEXT, "tripwire"),
+      outcome: "followed",
+    });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect(await bodyOf(response)).toMatchObject({ deliveryId: world.delivered.kenContext });
+  });
+
   test("a teammate's delivery answers exactly like an id that does not exist", async () => {
     // Arrange — Ken never received a pointer at Mike's context; Nick did. A
     // distinct refusal would tell Ken what Nick was shown (§8.4, §11.9).

@@ -43,7 +43,7 @@ import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { safeId } from "../render.ts";
 import { resolveOwnWorkContext } from "../session.ts";
-import { answerAfterSendingHeld } from "../../spool/held-deliveries.ts";
+import { answerAfterSendingHeld, heldDeliveryIdOf } from "../../spool/held-deliveries.ts";
 import type { HeldWhy } from "../../spool/held-deliveries.ts";
 import { hubFailure, idArg, parseArgs } from "./shared.ts";
 
@@ -215,13 +215,16 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   }
   const own = await resolveOwnWorkContext(ctx.config.home, ctx.identity, ctx.config.hubUrl);
   const session = own === null || own.sessionAmbiguous ? undefined : own.crosscheckSessionId;
+  // HELD FIRST (07 §13.12, review H-A): today's delivery still held here is named by its own id,
+  // so the word never lands on an older delivery of the same ref the hub already has.
+  const posted = (await heldDeliveryIdOf(ctx.hub, ctx.identity, ref)) ?? ref;
   // The AGENT's route (07 §13.12): what an agent says never overturns the person's own word.
   const call = (): Promise<HubResult<RecordedOutcome>> =>
     postHintOutcome(
       ctx.hub,
       {
         repo: ctx.identity.repoId,
-        ref,
+        ref: posted,
         outcome,
         ...(reason === undefined ? {} : { reason }),
         ...(session === undefined ? {} : { session }),
@@ -230,7 +233,14 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     );
   // POST FIRST (07 §13.11): held records are sent only when the hub does not know a ref held here.
   const answer = await answerAfterSendingHeld(
-    { hub: ctx.hub, identity: ctx.identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },
+    {
+      hub: ctx.hub,
+      identity: ctx.identity,
+      ref: posted,
+      budgetMs: OUTCOME_FLUSH_BUDGET_MS,
+      call,
+      isUnknown: isUnknownRef,
+    },
     await call(),
   );
   return answer.kind === "held" ? toolFailure(HELD_SENTENCE[answer.why]) : answerText(ctx, ref, answer.result);
