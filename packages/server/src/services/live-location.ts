@@ -93,11 +93,16 @@ export const locationHiddenFrom = async (
  *   expiresAt        a question's createdAt plus its fixed term
  *   touchingCommits  default-branch commits that touched a claim's files:
  *                    published history, not her branch (visibility.ts)
+ *   refCommit,       a claim's revalidation reading is its REPORTER's, not
+ *   lastRevalidatedAt  its author's: withheld by the reporter when the
+ *                    reading is loaded (services/claim-validity.ts
+ *                    loadRevalidations), so a teammate's own reading of her
+ *                    claim reaches him whole
  *
  * A row of no listed kind shows NONE of its instants.
  */
 const SHOWN_FOR_HIDDEN = {
-  claim: ["createdAt", "touchingCommits"],
+  claim: ["createdAt", "touchingCommits", "refCommit", "lastRevalidatedAt"],
   work_context: ["createdAt", "solvedAt"],
   edge: ["createdAt"],
   question: ["createdAt", "expiresAt"],

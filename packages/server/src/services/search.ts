@@ -769,6 +769,8 @@ const floorEligibleIds = async (
     db,
     now,
     [...causes.values()].map((cause) => cause.claimId),
+    // State only: the floor reads `state`, and none of these readings ship.
+    null,
   );
   return new Set(
     [...causes]

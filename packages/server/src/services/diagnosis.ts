@@ -666,7 +666,7 @@ export const getDiagnosis = async (
       .map((edge) => [edge.toClaimId, edge.fromClaimId] as const),
   );
   const [revalidations, surfaces, axes] = await Promise.all([
-    loadRevalidations(db, now, [...localClaimIds]),
+    loadRevalidations(db, now, [...localClaimIds], viewerDeveloperId),
     loadClaimSurfaces(db, [...localClaimIds]),
     // ONE read for the whole page, not one per claim: the ladder resolves a
     // batch of pointers set-wise and only descends per-claim where a ci_test

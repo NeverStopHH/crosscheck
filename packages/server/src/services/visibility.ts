@@ -105,6 +105,12 @@
  *                                   does not age the registry's
  *                                   oldestVerifiedAt; her work's `landedAt`,
  *                                   to the day (review round 4, H3 and M3)
+ *   - her revalidation readings   — a reading is its REPORTER's, on anyone's
+ *                                   claim: what it found (state, basis, the
+ *                                   default-branch commits that touched the
+ *                                   files) stays, its ref goes (null) and
+ *                                   its instant reads LOCATION_WITHHELD
+ *                                   (services/claim-validity.ts)
  *   - activity as a FILTER or an  — every read that windows or ranks by
  *     ORDER                         activity counts a hidden owner's work
  *                                   from creation alone (activitySeenBy):

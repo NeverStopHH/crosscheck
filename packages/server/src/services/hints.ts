@@ -238,6 +238,7 @@ const listClaimsForContext = async (
     db,
     now,
     rows.map((row) => row.claim.id),
+    readerDeveloperId,
   );
   // WAS ANYTHING ACTUALLY RUN behind each of these (1.0 spec 08 §3.1), in
   // ONE read for the context rather than one per claim. A hint is unsolicited

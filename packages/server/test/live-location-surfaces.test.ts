@@ -12,6 +12,7 @@ import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
 import {
   createTestDeveloper,
+  jsonRequest,
   postRecords,
   recordEnvelope,
   registerTestSession,
@@ -29,7 +30,9 @@ import {
   LOCAL_REPO,
   ROBIN_NEW_FILE,
   ROBIN_PIN,
+  NICK_CONTEXT,
   NICK_SESSION,
+  REVALIDATED_AT,
   REPO,
   ROBIN_CONTEXT,
   ROBIN_DETACHED_CONTEXT,
@@ -427,6 +430,51 @@ describe("her activity after the opt-out (review round 4, H3 and M3)", () => {
     expect(secretsIn(own.body)).toEqual(expect.arrayContaining(["sha 40", "pin verified"]));
   });
 });
+
+describe("a revalidation is its REPORTER's reading (review round 4, H3)", () => {
+  const validityIn = (body: string, claimId: string): Record<string, unknown> | undefined =>
+    ((JSON.parse(body) as { data: { claims: readonly { id: string; validity: Record<string, unknown> }[] } }).data.claims.find(
+      (row) => row.id === claimId,
+    ))?.validity;
+
+  test("her reading of a teammate's claim says what it found, not when or at which commit", async () => {
+    const world = await seedOptedOutWorld();
+
+    const nick = await getAs(world, "nick", `/api/work-contexts/${NICK_CONTEXT}/diagnosis`);
+    const own = await getAs(world, "robin", `/api/work-contexts/${NICK_CONTEXT}/diagnosis`);
+
+    expect(secretsIn(nick.body)).toEqual([]);
+    expect(validityIn(nick.body, "clm_nick")).toMatchObject({
+      state: "current",
+      basis: "context_targets",
+      refCommit: null,
+      lastRevalidatedAt: LOCATION_WITHHELD,
+    });
+    expect(validityIn(own.body, "clm_nick")).toMatchObject({ refCommit: SECRET_SHA, lastRevalidatedAt: REVALIDATED_AT });
+  });
+
+  test("a teammate's reading of HER claim is the teammate's, shown whole", async () => {
+    const world = await seedOptedOutWorld();
+    const reading = await world.harness.app.request("/api/claim-revalidations", jsonRequest("POST", world.nick.apiKey, {
+      repo: REPO,
+      revalidated: 1,
+      total: 1,
+      entries: [{ claimId: "clm_robin", result: "unchanged", basis: "context_targets", refCommit: NICK_REF, touchingCommits: [], touchingTotal: 0 }],
+    }));
+    expect(reading.status).toBe(200);
+
+    const nick = await getAs(world, "nick", `/api/work-contexts/${ROBIN_CONTEXT}/diagnosis`);
+
+    expect(validityIn(nick.body, "clm_robin")).toMatchObject({
+      refCommit: NICK_REF,
+      lastRevalidatedAt: world.harness.clock.now().toISOString(),
+      observedAtCommit: null,
+    });
+  });
+});
+
+/** A default-branch commit Nick's clone resolves — his, and nothing of hers. */
+const NICK_REF = "abcdef1234567";
 
 const landedAtOf = (body: string, id: string): string | null | undefined =>
   (listed(body).find((row) => row.id === id) as { landedAt?: string | null } | undefined)?.landedAt;

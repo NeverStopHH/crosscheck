@@ -85,6 +85,7 @@ const DEDUP_OFFSET_S = 4357;
 const TARGET_OFFSET_S = 4363;
 const LANDED_OFFSET_S = 4369;
 const PIN_OFFSET_S = 4375;
+const REVALIDATED_OFFSET_S = 4381;
 const READ_OFFSET_S = 4401;
 const STALE_HOURS = 30;
 const SECONDS_PER_HOUR = 3600;
@@ -120,6 +121,8 @@ export const LANDED_AT = at(LANDED_OFFSET_S);
 /** She pinned a surface: verifiedAt (and verifiedAtCommit is her HEAD). */
 export const PIN_AT = at(PIN_OFFSET_S);
 export const ROBIN_PIN = "pin_robin_refresh";
+/** Her pull re-checked Nick's claim against HER clone: refCommit is SECRET_SHA. */
+export const REVALIDATED_AT = at(REVALIDATED_OFFSET_S);
 export const ROBIN_NEW_FILE = "src/auth/cache.ts";
 /** A failure her agent observed after the opt-out: its target's createdAt is TARGET_AT. */
 export const ROBIN_FINGERPRINT = "sha256:0badc0de0badc0de";
@@ -161,6 +164,7 @@ export const SECRETS: readonly (readonly [label: string, value: string])[] = [
   ...instantForms(TARGET_AT).map((value) => ["file touched", value] as const),
   ...instantForms(LANDED_AT).map((value) => ["landed report", value] as const),
   ...instantForms(PIN_AT).map((value) => ["pin verified", value] as const),
+  ...instantForms(REVALIDATED_AT).map((value) => ["revalidation", value] as const),
 ];
 
 /** The labels of every secret `body` carries — empty when it carries none. */
@@ -430,6 +434,16 @@ const robinActsAfterOptOut = async (harness: TestHarness, robin: TestDeveloper):
     })),
     "Robin's pin",
   );
+  harness.clock.advanceSeconds(REVALIDATED_OFFSET_S - PIN_OFFSET_S);
+  await assertOk(
+    await harness.app.request("/api/claim-revalidations", jsonRequest("POST", robin.apiKey, {
+      repo: REPO,
+      revalidated: 1,
+      total: 1,
+      entries: [{ claimId: "clm_nick", result: "unchanged", basis: "context_targets", refCommit: SECRET_SHA, touchingCommits: [], touchingTotal: 0 }],
+    })),
+    "Robin's revalidation",
+  );
 };
 
 export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
@@ -455,7 +469,7 @@ export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
   await setPresenceOptOutViaApi(harness, robin.apiKey, true);
   await robinGoesOnWorking(harness, robin);
   await robinActsAfterOptOut(harness, robin);
-  harness.clock.advanceSeconds(READ_OFFSET_S - PIN_OFFSET_S);
+  harness.clock.advanceSeconds(READ_OFFSET_S - REVALIDATED_OFFSET_S);
   return {
     harness,
     nick,

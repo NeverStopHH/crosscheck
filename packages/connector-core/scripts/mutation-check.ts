@@ -18557,6 +18557,43 @@ export const MUTATIONS: readonly Mutation[
       "crosscheck conference reads her ruled-out approach at standup with the " +
       "instant her agent saw the failure it cites",
   },
+  // ── Review round 4, A2: a revalidation is its REPORTER's (H3) ─────────
+  {
+    label: "a teammate's claim carries the ref an opted-out reporter re-checked it at",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "        refCommit: told ? row.refCommit : null,",
+    to: "        refCommit: row.refCommit,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "her pull re-checks Nick's claim against her clone, and the ref it read " +
+      "says which commit her checkout sat on",
+  },
+  {
+    label: "a teammate's claim carries the ref an opted-out reporter re-checked it at (guard)",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "        refCommit: told ? row.refCommit : null,",
+    to: "        refCommit: row.refCommit,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the referee brief prints Nick's position with the reading her pull took",
+  },
+  {
+    label: "a teammate's claim says when an opted-out reporter re-checked it",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "        revalidatedAt: told ? row.revalidatedAt : null,",
+    to: "        revalidatedAt: row.revalidatedAt,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "lastRevalidatedAt is the second her agent pulled the tree",
+  },
+  {
+    label: "a teammate's own reading of her claim is withheld as if it were hers",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  claim: [\"createdAt\", \"touchingCommits\", \"refCommit\", \"lastRevalidatedAt\"],",
+    to: "  claim: [\"createdAt\", \"touchingCommits\"],",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Nick re-checks Robin's claim against his own clone and is then told " +
+      "his own reading is withheld (presence opt-out)",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18889,9 +18926,9 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/live-location-privacy.test.ts 19
+ * PRINTS: packages/server/test/live-location-privacy.test.ts 20
  * PRINTS: packages/server/test/live-location-projection.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 31
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 34
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

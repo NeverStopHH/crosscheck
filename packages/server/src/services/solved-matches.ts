@@ -500,6 +500,7 @@ const toMatchViews = async (
     db,
     now,
     [...rootCauses.values()].map((cause) => cause.claimId),
+    viewerDeveloperId,
   );
   // WAS ANYTHING RUN behind each root cause (08 §3.1) — and derived PER REPO,
   // which is the only correct way to do it here.

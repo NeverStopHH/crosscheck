@@ -423,6 +423,7 @@ const buildPosition = async (
   otherClaimId: string,
   workContextTitles: ReadonlyMap<string, string>,
   hidden: HiddenLocations,
+  viewerDeveloperId: string,
 ): Promise<RefereePositionView | undefined> => {
   const [loaded] = await loadClaims(db, [side.id]);
   if (loaded === undefined) {
@@ -433,7 +434,7 @@ const buildPosition = async (
       walkEvidence(db, loaded, [otherClaimId]),
       listRuledOut(db, loaded.view.workContextId, loaded.view.authorDeveloperId),
       findSupersededBy(db, side.id),
-      loadRevalidations(db, now, [side.id]),
+      loadRevalidations(db, now, [side.id], viewerDeveloperId),
     ]);
   // Every claim in the case file by its OWN author — the evidence may be a
   // teammate's — so the age of her evidence is withheld wherever it rides
@@ -511,8 +512,8 @@ export const getRefereeBrief = async (
     hidden,
   );
   const [positionA, positionB, shared] = await Promise.all([
-    buildPosition(db, now, pair.claimA, pair.claimB.id, titles, hidden),
-    buildPosition(db, now, pair.claimB, pair.claimA.id, titles, hidden),
+    buildPosition(db, now, pair.claimA, pair.claimB.id, titles, hidden, viewerDeveloperId),
+    buildPosition(db, now, pair.claimB, pair.claimA.id, titles, hidden, viewerDeveloperId),
     listSharedTargets(db, pair.claimA.workContextId, pair.claimB.workContextId),
   ]);
   if (positionA === undefined || positionB === undefined) {

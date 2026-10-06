@@ -357,6 +357,9 @@ export const ingestClaimRevalidations = async (
         tx,
         now,
         report.entries.map((entry) => entry.claimId),
+        // As the REPORTER reads them: a refused report hands back the
+        // standing reading, which may be an opted-out teammate's.
+        developerId,
       ),
     };
   });

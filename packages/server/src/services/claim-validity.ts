@@ -59,6 +59,7 @@
  * PRINTS: packages/server/src/services/claim-validity.ts
  */
 import { and, asc, count, desc, eq, gt, gte, inArray, or, sql } from "drizzle-orm";
+import { LOCATION_WITHHELD } from "@crosscheck/schema";
 import type {
   ClaimCommitBinding,
   ClaimRevalidationBasis,
@@ -80,6 +81,7 @@ import {
   claims,
 } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
+import { visiblePresenceCondition } from "./visibility.ts";
 
 /** The one edge kind that retires a claim; the same literal four services read. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
@@ -105,7 +107,12 @@ export interface ClaimRevalidationReading {
   readonly refCommit: string | null;
   /** Was this reading taken by the claim's own author? See the column. */
   readonly selfReported: boolean;
-  readonly revalidatedAt: Date;
+  /**
+   * When the reading was taken, or null where it is WITHHELD from this
+   * viewer: a reading is its REPORTER's, and an opted-out reporter's instant
+   * and ref are her location (review round 4, H3). What she found stays.
+   */
+  readonly revalidatedAt: Date | null;
 }
 
 /** The author-declared status that means "this turned out to be wrong". */
@@ -170,7 +177,10 @@ export const claimValidity = (
     selfReported: revalidation?.selfReported ?? false,
     touchingCommits: [...(revalidation?.touchingCommits ?? [])],
     touchingTotal: revalidation?.touchingTotal ?? null,
-    lastRevalidatedAt: revalidation?.revalidatedAt.toISOString() ?? null,
+    lastRevalidatedAt:
+      revalidation === undefined
+        ? null
+        : (revalidation.revalidatedAt?.toISOString() ?? LOCATION_WITHHELD),
     supersededByClaimId,
   };
   return { ...base, state: resolveState(claim, revalidation, supersededByClaimId) };
@@ -258,6 +268,13 @@ export const loadRevalidations = async (
   db: DbExecutor,
   now: Date,
   claimIds: readonly string[],
+  /**
+   * Who will read the result, or null for a read whose instants reach nobody
+   * (a state-only decision). A reading by a reporter whose location this
+   * viewer may not be told keeps what it found and loses its instant and its
+   * ref (services/visibility.ts).
+   */
+  viewerDeveloperId: string | null,
 ): Promise<ReadonlyMap<string, ClaimRevalidationReading>> => {
   const unique = [...new Set(claimIds)];
   if (unique.length === 0) {
@@ -284,7 +301,13 @@ export const loadRevalidations = async (
     now.getTime() - CLAIM_REVALIDATION_RETENTION_DAYS * MS_PER_DAY,
   );
   const rows = await db
-    .select()
+    .select({
+      reading: claimRevalidations,
+      told:
+        viewerDeveloperId === null
+          ? sql<boolean>`true`
+          : sql<boolean>`${visiblePresenceCondition(viewerDeveloperId, claimRevalidations.reportedBy)}`,
+    })
     .from(claimRevalidations)
     .where(
       and(
@@ -296,16 +319,16 @@ export const loadRevalidations = async (
       ),
     );
   return new Map(
-    rows.map((row) => [
+    rows.map(({ reading: row, told }) => [
       row.claimId,
       {
         result: row.result,
         basis: row.basis,
         touchingCommits: row.touchingCommits,
         touchingTotal: row.touchingTotal,
-        refCommit: row.refCommit,
+        refCommit: told ? row.refCommit : null,
         selfReported: row.selfReported,
-        revalidatedAt: row.revalidatedAt,
+        revalidatedAt: told ? row.revalidatedAt : null,
       },
     ]),
   );
@@ -363,6 +386,8 @@ export const loadClaimValidities = async (
   db: DbExecutor,
   now: Date,
   claimIds: readonly string[],
+  /** Who reads the result — see loadRevalidations; null when nobody does. */
+  viewerDeveloperId: string | null,
 ): Promise<ReadonlyMap<string, ClaimValidity>> => {
   const unique = [...new Set(claimIds)];
   if (unique.length === 0) {
@@ -379,7 +404,7 @@ export const loadClaimValidities = async (
       })
       .from(claims)
       .where(inArray(claims.id, unique)),
-    loadRevalidations(db, now, unique),
+    loadRevalidations(db, now, unique, viewerDeveloperId),
     loadSupersededBy(db, unique),
   ]);
   return new Map(
@@ -505,6 +530,7 @@ export const summariseClaimValidity = async (
   db: DbExecutor,
   now: Date,
   repo: string,
+  viewerDeveloperId: string | null,
 ): Promise<ClaimValiditySummary> => {
   // The repo a claim belongs to is its AUTHOR SESSION'S repo — the same join
   // every other per-repo claim query in this hub makes, and the reason
@@ -526,6 +552,7 @@ export const summariseClaimValidity = async (
     db,
     now,
     rows.map((row) => row.id),
+    viewerDeveloperId,
   );
   const states = emptyStates();
   let unbound = 0;
