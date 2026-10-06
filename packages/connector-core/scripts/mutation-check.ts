@@ -18773,6 +18773,18 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-differential.test.ts`,
     because: "the rung's observedAt moves to the second her report was collected, which no residual names",
   },
+  // ── Review round 4: nobody else is ever shown withheld ────────────────
+  {
+    label: "every row is projected as if its owner had opted out",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  const reportedBranches = hidden.get(owner.developerId);",
+    to: "  const reportedBranches = hidden.size > 0 ? [...hidden.values()][0] : undefined;",
+    test: `${SERVER}/test/live-location-told.test.ts`,
+    because:
+      "Nick's and Ken's own rows read «untitled work» and «withheld (presence " +
+      "opt-out)» the moment one teammate opts out, and a guard that looks only " +
+      "for her location has nothing to say about it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19109,6 +19121,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 3
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 40
+ * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
