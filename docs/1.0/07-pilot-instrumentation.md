@@ -1476,3 +1476,9 @@ by an agent's" — a word nobody can prove the person said never outranks one th
 it as the agent's (`IS DISTINCT FROM 'person'`), never as the person's, and the view's `COALESCE(…, false)`
 keeps it from sorting above the person's word (a bare comparison is NULL, which sorts first under DESC). Three
 tests pin each half (survivors Q1–Q3).
+
+*MEDIUM-2 — two survivors.* Q4: the person's exact repeat at a terminal — `crosscheck followed X` said twice —
+answers "already recorded" and writes nothing; it is now pinned on the person's route. Q14: the twin fallback
+(§13.12 H-A) searches the SAME session's deliveries of the ref only; an uncountable delivery in one session never
+borrows a countable delivery of the same ref in another — that is another pointer, and the word is refused for
+what it is.

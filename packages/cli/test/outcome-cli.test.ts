@@ -552,6 +552,33 @@ describe("07 §13.12: a word said at a terminal is the person's", () => {
   });
 });
 
+describe("round-5 MEDIUM-2 (Q4): the person's own repeat", () => {
+  test("crosscheck followed X said twice at a terminal is 'already recorded', and writes nothing the second time", async () => {
+    // Arrange — a fresh pointer, followed once
+    const ref = "wc_ken_said_twice";
+    await send("POST", "/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Ken's context",
+          status: "implementing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    await deliver(LIVE, ref);
+    const home = await homeWithLive(LIVE);
+    await cli(home, ["followed", ref]);
+
+    // Act
+    const again = await cli(home, ["followed", ref]);
+
+    // Assert
+    expect(again.stdout).toBe(`already recorded: ${ref} stands at followed — nothing was written a second time\n`);
+  });
+});
+
 describe("07 §13.13 HIGH-1: with no terminal, the word is the agent's", () => {
   test("crosscheck followed from an agent's Bash tool lands on the agent's route, and says how to make it the person's", async () => {
     // Arrange — a fresh pointer

@@ -459,6 +459,36 @@ describe("POST /api/hint-outcomes", () => {
     expect(intervals.rows).toEqual([{ e: null }]);
   });
 
+  test("round-5 MEDIUM-2 (Q14): an uncountable delivery never borrows another session's delivery of the same ref", async () => {
+    // Arrange — session A got the ref during a pause; session B got it after, countably — two pointers
+    const world = await createOutcomeWorld();
+    await registerTestSession(world.harness, world.nick.apiKey, { id: NICK_SECOND_SESSION, repo: REPO });
+    const put = async (pilotEnrolled: boolean): Promise<Response> =>
+      await world.harness.app.request("/api/team-settings", jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled }));
+    world.harness.clock.advanceSeconds(60);
+    await put(false);
+    world.harness.clock.advanceSeconds(60);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", "wc_two_sessions", "prompt_hint", world.harness.clock.now().toISOString())],
+    });
+    world.harness.clock.advanceSeconds(60);
+    await put(true);
+    world.harness.clock.advanceSeconds(60);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SECOND_SESSION, "work_context", "wc_two_sessions", "prompt_hint", world.harness.clock.now().toISOString())],
+    });
+
+    // Act — named by session A's own delivery id
+    const response = await recordOutcome(world, world.nick, {
+      ref: hintDeliveryId(NICK_SESSION, "wc_two_sessions"),
+      outcome: "followed",
+    });
+
+    // Assert — refused for what it is; a twin is the SAME pointer, never another session's
+    expect(response.status).toBe(422);
+    expect(await errorOf(response)).toMatchObject({ code: "while_paused" });
+  });
+
   test("review H-A: a pointer's twin older than every window records on its twin inside it", async () => {
     // Arrange — one long session: the prompt hint 91 days ago, its tripwire twin today
     const world = await createOutcomeWorld();

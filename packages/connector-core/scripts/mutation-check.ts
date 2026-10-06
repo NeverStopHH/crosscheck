@@ -19112,6 +19112,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "NULL sorts first under DESC, so an old agent word overturns the person's own in every figure",
   },
+  // ── 07 §13.13, MEDIUM-2: the person's repeat (Q4), and twins stay in their session (Q14) ──
+  {
+    label: "the person's exact repeat writes a second row (Q4)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '  return input.recordedVia === "agent" || standingOf(words.person, newestLabel(words)) === input.outcome;',
+    to: '  return input.recordedVia === "agent";',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person typing crosscheck followed twice is told it was recorded twice, and the history doubles",
+  },
+  {
+    label: "the twin search crosses sessions (Q14)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "    .where(and(eq(hintDeliveries.sessionId, named.sessionId), eq(hintDeliveries.refId, named.refId)))",
+    to: "    .where(eq(hintDeliveries.refId, named.refId))",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a word about one session's hint lands on another session's pointer of the same ref",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19197,7 +19214,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 21
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 22
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
@@ -19436,7 +19453,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 22
- * PRINTS: packages/server/test/hint-outcomes.test.ts 48
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 49
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
