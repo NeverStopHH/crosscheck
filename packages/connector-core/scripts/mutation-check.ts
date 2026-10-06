@@ -18068,7 +18068,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "leaving the pilot never closes its interval",
     file: `${SERVER}/src/services/team-settings.ts`,
-    from: "      .set({ endedAt: now })",
+    from: "      .set({ endedAt: sql`GREATEST(${now.toISOString()}::timestamptz, ${pilotEnrolments.startedAt})` })",
     to: "      .set({ endedAt: null })",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "a hint delivered while the pilot was paused is counted as if the team had been measured",
