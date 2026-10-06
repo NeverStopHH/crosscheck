@@ -73,6 +73,8 @@ let developerId: string;
 let refuseRegisters = false;
 let registerDelayMs = 0;
 let registerCalls = 0;
+/** Record deliveries the proxy forwarded. */
+let recordPosts = 0;
 const cleanups: string[] = [];
 
 /**
@@ -201,6 +203,9 @@ beforeAll(async () => {
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);
+      if (request.method === "POST" && pathname === "/api/records") {
+        recordPosts += 1;
+      }
       if (request.method === "POST" && pathname === "/api/sessions") {
         registerCalls += 1;
         if (refuseRegisters) {
@@ -536,9 +541,11 @@ describe("a successor flush beside a live life the hub has not registered", () =
     // Act
     await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
 
-    // Assert: nothing left behind, nothing silent
+    // Assert: nothing left behind, nothing silent, and named for what it is
     expect((await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines.length).toBe(0);
-    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ rejected: 2 });
+    const drops = await readDropDetail(fx.home, fx.key);
+    expect(drops.byReason).toEqual({ rejected: 2 });
+    expect(drops.rejectedCauses).toEqual({ author_unknown: 2 });
   });
 
   test("holds them only until they age out, and then counts them expired", async () => {
@@ -599,6 +606,34 @@ describe("the bounds", () => {
     expect(inside).toBe(1);
     expect(registerCalls - before).toBe(2);
     expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+  });
+
+  test("a hook inside a failed walk's cooldown sends nothing the hub would refuse again (review-2 LOW-5)", async () => {
+    // Arrange: a life whose register and SessionStart walk the hub refused
+    const fx = await fixture("cooldown-silent", proxyUrl);
+    const clock = { ms: Date.now() };
+    const now = () => new Date(clock.ms);
+    refuseRegisters = true;
+    const life = await register(fx);
+    await flushAsHook(fx, GENEROUS_BUDGET_MS, now);
+    refuseRegisters = false;
+    const before = recordPosts;
+
+    // Act: three hooks inside the cooldown, then one after it
+    for (const file of ["src/a.ts", "src/b.ts", "src/c.ts"]) {
+      await appendTo(fx, fx.hostSessionKey, [
+        targetRecord(life.workContextId, "file", file, producerOf(life.crosscheckSessionId), new Date()),
+      ]);
+      await flushAsHook(fx, GENEROUS_BUDGET_MS, now);
+    }
+    const inside = recordPosts - before;
+    clock.ms += HEAL_COOLDOWN_MS + 1;
+    await flushAsHook(fx, GENEROUS_BUDGET_MS, now);
+
+    // Assert: no batch pinned and re-sent per hook; everything lands after
+    expect(inside).toBe(0);
+    expect(await targetsOf(life.workContextId)).toEqual(["src/a.ts", "src/b.ts", "src/c.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
   });
 
   test("the walk stays inside the flush's budget against a slow hub", async () => {

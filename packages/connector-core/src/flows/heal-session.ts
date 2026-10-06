@@ -97,6 +97,8 @@ interface HealStamp {
   readonly atMs: number;
   readonly walking: boolean;
   readonly untilMs: number;
+  /** The life a finished walk registered nothing for, or null. */
+  readonly failedFor: string | null;
 }
 
 const healPath = (input: SessionHealerInput): string =>
@@ -107,6 +109,7 @@ const readStamp = async (input: SessionHealerInput): Promise<HealStamp | null> =
     at?: unknown;
     phase?: unknown;
     until?: unknown;
+    failed?: unknown;
   } | null;
   const atMs = typeof stamp?.at === "string" ? Date.parse(stamp.at) : Number.NaN;
   return Number.isNaN(atMs)
@@ -115,6 +118,7 @@ const readStamp = async (input: SessionHealerInput): Promise<HealStamp | null> =
         atMs,
         walking: stamp?.phase === "walking",
         untilMs: typeof stamp?.until === "number" ? stamp.until : 0,
+        failedFor: typeof stamp?.failed === "string" ? stamp.failed : null,
       };
 };
 
@@ -123,9 +127,14 @@ const writeStamp = async (
   now: Date,
   phase: "walking" | "done",
   untilMs: number,
+  failedFor: string | null = null,
 ): Promise<boolean> => {
   try {
-    await writePrivateFile(healPath(input), `${JSON.stringify({ at: now.toISOString(), phase, until: untilMs })}\n`);
+    const failed = failedFor === null ? {} : { failed: failedFor };
+    await writePrivateFile(
+      healPath(input),
+      `${JSON.stringify({ at: now.toISOString(), phase, until: untilMs, ...failed })}\n`,
+    );
     return true;
   } catch {
     // A stamp that cannot be written is a cooldown that cannot be kept: no walk.
@@ -322,9 +331,27 @@ const walk = async (
   return healedTo(refusal.sessionId, ladder.sessionId, workContext);
 };
 
-export const sessionHealer =
-  (input: SessionHealerInput): SessionHealer =>
-  async (refusal, deadlineMs, beforeWalk) => {
+/**
+ * Whether a send under `sessionId` would only be refused again: the last
+ * walk for that very life finished with nothing registered, and its cooldown
+ * runs (review-2 LOW-5). A flush pinned on its own head batch used to re-send
+ * it on every hook for the whole five minutes.
+ */
+const refusedFor =
+  (input: SessionHealerInput) =>
+  async (sessionId: string): Promise<boolean> => {
+    const stamp = await readStamp(input);
+    return (
+      stamp !== null &&
+      !stamp.walking &&
+      stamp.failedFor === sessionId &&
+      input.now().getTime() - stamp.atMs < HEAL_COOLDOWN_MS
+    );
+  };
+
+const heal =
+  (input: SessionHealerInput) =>
+  async (refusal: SessionRefusal, deadlineMs: number, beforeWalk?: () => Promise<void>): Promise<HealResult> => {
     const state = await readSessionState(input.home, input.hostSessionKey);
     if (state === null) {
       return FAILED;
@@ -346,6 +373,9 @@ export const sessionHealer =
     }
     await beforeWalk?.();
     const result = await walk(boundToSession(input, state), state, refusal, deadlineMs, now);
-    await writeStamp(input, now, "done", deadlineMs);
+    await writeStamp(input, now, "done", deadlineMs, result.outcome === "healed" ? null : refusal.sessionId);
     return result;
   };
+
+export const sessionHealer = (input: SessionHealerInput): SessionHealer =>
+  Object.assign(heal(input), { refusedFor: refusedFor(input) });

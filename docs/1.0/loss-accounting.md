@@ -277,7 +277,8 @@ flushing session; the drop is filed under the writer's ledger) — the likely so
 four `rejected` records each, which the new `causes` field will name from now on.
 
 A `rejected` line now carries `causes`, the hub's refusal as a word from a closed list
-(`spool/reject-cause.ts`: `session_ended`, `session_unknown`, `session_foreign`, `developer_mismatch`, `other`),
+(`spool/reject-cause.ts`: `session_ended`, `session_unknown`, `session_foreign`, `developer_mismatch`,
+`author_unknown`, `other`),
 matched against the hub's own sentence and never storing it; the archive folds it as `rejectedCauses`. Readers
 from before the field parse the line unchanged (their schema is a loose object), and doctor's `hub rejected
 records` line and `status`'s `losses:` say why — counting the lines that carry no cause as "cause not recorded".
@@ -368,6 +369,14 @@ successor flush leaves that life's records where they are while it is live (`spo
 goes on past it, its heal clears the flag, its end lifts the hold, and a held record past `MAX_SPOOL_AGE_DAYS` is
 counted `expired`; a heal sends the life's work context AHEAD of the batch it re-sends (`flush-heal.ts`), the
 spooled copy a duplicate at worst; and every heal clears the seen-set, the same id's too.
+
+**The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
+session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
+`authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and
+those were `other`, "a reason this connector does not name", for exactly the pilot's failure class. They are
+`author_unknown` now; an older reader folds the word into `other`. And a flush whose own life's last walk
+registered nothing sends nothing until that walk's cooldown is over (the stamp records the life it failed for):
+a batch pinned on disk was re-sent, and refused again, by every hook for five minutes.
 
 ### 4.4 The hub — six columns, derived on read
 

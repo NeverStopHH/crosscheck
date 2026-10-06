@@ -73,11 +73,16 @@ export type HealResult =
  * moment a caller writes down what it has already lost, so the register
  * carries it (flows/heal-session.ts).
  */
-export type SessionHealer = (
-  refusal: SessionRefusal,
-  deadlineMs: number,
-  beforeWalk?: () => Promise<void>,
-) => Promise<HealResult>;
+export interface SessionHealer {
+  (refusal: SessionRefusal, deadlineMs: number, beforeWalk?: () => Promise<void>): Promise<HealResult>;
+  /**
+   * True while this host session's last walk, for `sessionId`, registered
+   * nothing and its cooldown runs: every record sent under that life is
+   * refused again, so a flush sends none until the next walk may run
+   * (review-2 LOW-5).
+   */
+  readonly refusedFor?: (sessionId: string) => Promise<boolean>;
+}
 
 /** The causes that say the PRODUCER is dead to the hub — the flusher, after the stamp. */
 const OWN_SESSION_CAUSES: ReadonlySet<RejectCause> = new Set(["session_ended", "session_unknown"]);

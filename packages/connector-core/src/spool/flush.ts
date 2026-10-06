@@ -364,6 +364,13 @@ const drain = async (
   input: FlushInput,
   deadlineMs: number,
 ): Promise<FlushOutcome> => {
+  // A walk for this very life registered nothing and its cooldown runs:
+  // every record sent under it would be refused again, so none is sent — a
+  // batch pinned on disk was re-sent by every hook for five minutes
+  // (review-2 LOW-5). The next flush after the cooldown walks again.
+  if ((await input.heal?.refusedFor?.(input.sessionId)) === true) {
+    return { outcome: "failed", remaining: pendingTotal(await pendingSpools(ctx)) };
+  }
   let sent = 0;
   let producer = input;
   let refusedLives = await readRefusedLives(ctx.home, ctx.repoKey, ctx.now());

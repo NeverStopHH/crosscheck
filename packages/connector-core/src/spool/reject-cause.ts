@@ -27,6 +27,12 @@ export const REJECT_CAUSES = [
   "session_foreign",
   /** The envelope named another developer than the key that sent it. */
   "developer_mismatch",
+  /**
+   * The session or work context the record's BODY belongs to is not on the
+   * hub: its own life had not registered when another session delivered it
+   * (review-2 LOW-5) — the pilot's own failure class.
+   */
+  "author_unknown",
   /** Any refusal this connector has no word for. */
   "other",
 ] as const;
@@ -39,6 +45,8 @@ const CAUSE_PATTERNS: readonly (readonly [RegExp, RejectCause])[] = [
   [/^producer\.sessionId: session ".*" not found$/, "session_unknown"],
   [/^producer\.sessionId: session belongs to another developer/, "session_foreign"],
   [/^producer\.developerId: does not match authenticated developer/, "developer_mismatch"],
+  [/^(sessionId|authorSessionId): session ".*" not found$/, "author_unknown"],
+  [/^workContextId: work context ".*" not found$/, "author_unknown"],
 ];
 
 export const rejectCauseOf = (issues: readonly string[] | undefined): RejectCause => {
@@ -77,6 +85,10 @@ export const REJECT_CAUSE_SENTENCES: Readonly<Record<RejectCause, string>> = {
     "not landed; this connector now registers it when the hub says so",
   session_foreign: "because the session delivering them belongs to another developer on this hub",
   developer_mismatch: "because the developer they were delivered as is not this machine's login",
+  author_unknown:
+    "because the session or work context they belong to was not on the hub — their own session's " +
+    "register had not landed when another session delivered them; this connector now leaves such " +
+    "records on disk for their own session while it lives",
   other: "for a reason this connector does not name — the hub's response carries the sentence",
 };
 

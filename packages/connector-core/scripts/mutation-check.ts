@@ -17839,6 +17839,38 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 LOW-4: a parallel capture lands ahead of the work context and is refused, and a SessionEnd in the window ends the life the heal is about to re-send under",
   },
+  {
+    label: "a record whose work context the hub never saw is refused for no named reason",
+    file: `${CORE}/src/spool/reject-cause.ts`,
+    from: '  [/^workContextId: work context ".*" not found$/, "author_unknown"],\n',
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "review-2 LOW-5: doctor calls the pilot's own failure class \"a reason this connector does not name\"",
+  },
+  {
+    label: "a record whose own session the hub never saw is refused for no named reason",
+    file: `${CORE}/src/spool/reject-cause.ts`,
+    from: '  [/^(sessionId|authorSessionId): session ".*" not found$/, "author_unknown"],\n',
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "review-2 LOW-5: a work context delivered before its own session registered is counted as other",
+  },
+  {
+    label: "a hook inside a failed walk's cooldown re-sends its pinned batch",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  if ((await input.heal?.refusedFor?.(input.sessionId)) === true) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-5: every hook for five minutes posts the same batch for the hub to refuse again",
+  },
+  {
+    label: "a failed walk leaves no mark of the life it failed for",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: 'result.outcome === "healed" ? null : refusal.sessionId',
+    to: "null",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-5: the cooldown cannot say a send would be refused, and the pinned batch is re-sent on every hook",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18089,14 +18121,14 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
- * PRINTS: packages/connector-core/test/reject-cause.test.ts 3
+ * PRINTS: packages/connector-core/test/reject-cause.test.ts 5
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 20
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 22
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 21
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4

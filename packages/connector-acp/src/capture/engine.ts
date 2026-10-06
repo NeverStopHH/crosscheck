@@ -888,7 +888,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
       now,
     });
-    return async (refusal, deadlineMs, beforeWalk) => {
+    const twin: SessionHealer = async (refusal, deadlineMs, beforeWalk) => {
       const healed = await heal(refusal, deadlineMs, beforeWalk);
       if (healed.outcome === "healed") {
         session.crosscheckSessionId = healed.sessionId;
@@ -900,6 +900,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       }
       return healed;
     };
+    // The cooldown's verdict travels with it: a capture inside a failed
+    // walk's cooldown sends nothing the hub would refuse again (core
+    // spool/flush.ts, review-2 LOW-5).
+    return heal.refusedFor === undefined ? twin : Object.assign(twin, { refusedFor: heal.refusedFor });
   };
 
   const heartbeat = async (

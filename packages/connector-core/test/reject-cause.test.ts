@@ -20,7 +20,7 @@ import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declar
 import { appendRecords } from "../src/spool/append.ts";
 import { archiveLedger, readDropDetail, recordDrop } from "../src/spool/drops.ts";
 import { flushSpool } from "../src/spool/flush.ts";
-import { rejectCauseOf, screenCauses } from "../src/spool/reject-cause.ts";
+import { REJECT_CAUSE_SENTENCES, rejectCauseOf, screenCauses } from "../src/spool/reject-cause.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
 const ADMIN_TOKEN = "reject-cause-admin";
@@ -62,6 +62,13 @@ describe("the cause a refusal is kept under", () => {
     expect(rejectCauseOf(["producer.developerId: does not match authenticated developer"])).toBe(
       "developer_mismatch",
     );
+  });
+
+  test("the hub's author-side sentences name a record whose own session or work context it never saw (review-2 LOW-5)", () => {
+    expect(rejectCauseOf(['sessionId: session "cc_x" not found'])).toBe("author_unknown");
+    expect(rejectCauseOf(['authorSessionId: session "cc_x" not found'])).toBe("author_unknown");
+    expect(rejectCauseOf(['workContextId: work context "wc_cc_x" not found'])).toBe("author_unknown");
+    expect(REJECT_CAUSE_SENTENCES.author_unknown).not.toBe(REJECT_CAUSE_SENTENCES.other);
   });
 
   test("anything else is `other`, and no hub sentence is ever kept", () => {
