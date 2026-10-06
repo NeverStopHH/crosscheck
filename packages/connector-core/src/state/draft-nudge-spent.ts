@@ -36,7 +36,13 @@ export type NudgeOutcome = "delivered" | "nothing_due";
 
 const EntrySchema = z.object({
   outcome: z.enum(["delivered", "nothing_due"]),
-  at: z.string().min(1),
+  // AN INSTANT A CLOCK CAN ORDER: the newest DRAFT_NUDGE_SPENT_MAX_SESSIONS
+  // are kept by sorting on it, and an empty or garbled one compares as NaN —
+  // which sorted it anywhere and evicted a fresh record (review round 3).
+  at: z
+    .string()
+    .min(1)
+    .refine((value) => !Number.isNaN(Date.parse(value))),
 });
 
 type Entry = z.infer<typeof EntrySchema>;

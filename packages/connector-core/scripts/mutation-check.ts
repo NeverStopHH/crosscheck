@@ -18615,6 +18615,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/sharing.test.ts`,
     because: "a session past DERIVE_FIRES_KEPT fires undercounts its silent runs by every one the ring let go",
   },
+  {
+    label: "a spent-ledger entry with an empty instant is kept",
+    file: `${CORE}/src/state/draft-nudge-spent.ts`,
+    from: "    .min(1)\n    .refine((value) => !Number.isNaN(Date.parse(value))),",
+    to: "    .refine((value) => value === \"\" || !Number.isNaN(Date.parse(value))),",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "an entry no clock can order sorts anywhere and evicts a fresh conversation's record",
+  },
+  {
+    label: "a spent-ledger entry whose instant is not a date is kept",
+    file: `${CORE}/src/state/draft-nudge-spent.ts`,
+    from: "    .refine((value) => !Number.isNaN(Date.parse(value))),",
+    to: "    .refine(() => true),",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "a garbled instant compares as NaN in the newest-first sort and evicts a fresh conversation's record",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18822,7 +18838,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 48
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 50
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

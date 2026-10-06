@@ -900,6 +900,31 @@ describe("the nudge slot survives the session that spent it", () => {
     expect(await readNudgeSpent(home, "bound-0")).toBeNull();
   });
 
+  test("an entry whose instant is empty or not a date is dropped, never sorted against fresh ones (review round 3, O13)", async () => {
+    // Arrange: a full ledger of old records, plus two whose `at` no clock can
+    // order — sorted by Date.parse they compare as NaN
+    const home = await makeHome("nudge-spent-bad-at");
+    cleanups.push(home);
+    for (let i = 0; i < DRAFT_NUDGE_SPENT_MAX_SESSIONS; i += 1) {
+      await recordNudgeSpent(home, `old-${String(i)}`, "delivered", new Date(Date.parse("2026-09-01T00:00:00.000Z") + i * 1000));
+    }
+    const ledger = (await Bun.file(draftNudgeSpentPath(home)).json()) as { sessions: Record<string, unknown> };
+    await Bun.write(
+      draftNudgeSpentPath(home),
+      JSON.stringify({
+        sessions: { ...ledger.sessions, "bad-empty": { outcome: "nothing_due", at: "" }, "bad-garbage": { outcome: "nothing_due", at: "not a date" } },
+      }),
+    );
+
+    // Act
+    await recordNudgeSpent(home, "fresh-session", "delivered", new Date("2026-10-05T00:00:00.000Z"));
+
+    // Assert: the fresh record kept, neither bad one readable
+    expect(await readNudgeSpent(home, "fresh-session")).toBe("delivered");
+    expect(await readNudgeSpent(home, "bad-empty")).toBeNull();
+    expect(await readNudgeSpent(home, "bad-garbage")).toBeNull();
+  });
+
   test("one malformed entry costs only itself, never every other session's record (review round 2, L3)", async () => {
     // Arrange: a good record beside one a crash or an older writer mangled
     const home = await makeHome("nudge-spent-entry");
