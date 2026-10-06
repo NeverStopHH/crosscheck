@@ -344,6 +344,28 @@ describe("pilot enrolment", () => {
     ]);
   });
 
+  test("round-5 LOW-10: an enrolment that lost a race to another gets a sentence, not a 500", async () => {
+    // Arrange — the state the losing writer meets: no settings row yet (nothing to lock), and
+    // the winning writer's open interval already committed
+    const harness = await createTestHarness();
+    await harness.db.execute(sql`INSERT INTO pilot_enrolments (id, repo, started_at, ended_at)
+      VALUES ('pe_winner', ${REPO}, ${harness.clock.now().toISOString()}, NULL)`);
+
+    // Act
+    const response = await harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled: true }),
+    );
+    const body = (await response.json()) as { error: { code: string; message: string } };
+
+    // Assert — said, and nothing half-written: still exactly one open interval
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("concurrent_enrolment");
+    expect(body.error.message).toContain("at the same moment");
+    const open = await harness.db.execute(sql`SELECT count(*)::int AS n FROM pilot_enrolments WHERE ended_at IS NULL`);
+    expect(open.rows).toEqual([{ n: 1 }]);
+  });
+
   test("review LOW (P4): two writes at once — the one naming no enrolment keeps when labels became available", async () => {
     // Arrange
     const harness = await createTestHarness();

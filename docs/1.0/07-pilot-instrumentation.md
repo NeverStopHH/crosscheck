@@ -1431,3 +1431,9 @@ the row was read before the transaction, so of two writes at once, the one namin
 `pilot_labels_since` (null) over the toggle beside it. Every settings write now reads the WHOLE row under its
 lock inside its own transaction, and takes `now` after the lock. And an interval never ends before it starts:
 `CHECK (ended_at IS NULL OR ended_at >= started_at)`, added once to a table that predates it.
+
+*LOW-10 — a concurrent first enrolment was a 500.* Two first enrolments of a repo with no settings row yet have
+no row to lock, so both open an interval and the one-open-interval index refuses the second. That outcome is
+right — the repo is enrolled once — and the loser now gets `409 concurrent_enrolment`: "another enrolment of
+this repo landed at the same moment, so this write changed nothing — the repo is enrolled; read the settings
+again". (PGlite serializes transactions, so the test stages the loser's view directly.)

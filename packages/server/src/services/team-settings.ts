@@ -219,6 +219,31 @@ const recordEnrolmentChange = async (
   }
 };
 
+/**
+ * ANOTHER ENROLMENT WON THE RACE (round-5 LOW-10). Two first enrolments of a
+ * repo with no settings row yet have no row to lock, so both open an interval;
+ * the partial unique index refuses the second. That is the right outcome — the
+ * repo is enrolled once — and the loser is told so in a sentence, not a 500.
+ */
+export class ConcurrentEnrolmentError extends Error {
+  constructor() {
+    super("another enrolment of this repo landed at the same moment");
+    this.name = "ConcurrentEnrolmentError";
+  }
+}
+
+const ONE_OPEN_INDEX = "pilot_enrolments_one_open_idx";
+const UNIQUE_VIOLATION = "23505";
+
+/** Whether an error, or one it wraps, is the one-open-interval index refusing a second open interval. */
+const isSecondOpenInterval = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const fields = error as { code?: unknown; constraint?: unknown; cause?: unknown };
+  return (fields.code === UNIQUE_VIOLATION && fields.constraint === ONE_OPEN_INDEX) || isSecondOpenInterval(fields.cause);
+};
+
 export interface WriteTeamSettingsInput {
   readonly repo: string;
   readonly pinPolicy?: TeamPinPolicy;
@@ -235,6 +260,14 @@ export const writeTeamSettings = async (
   deps: Deps,
   input: WriteTeamSettingsInput,
 ): Promise<TeamSettingsView> => {
+  try {
+    return await writeSettingsOnce(deps, input);
+  } catch (error) {
+    throw isSecondOpenInterval(error) ? new ConcurrentEnrolmentError() : error;
+  }
+};
+
+const writeSettingsOnce = async (deps: Deps, input: WriteTeamSettingsInput): Promise<TeamSettingsView> => {
   const next = await deps.db.transaction(async (tx) => {
     // reviews LOW, round-5 LOW-1: the whole row this write starts from is read under its lock,
     // here, and `now` is taken after the lock, so no instant predates the write it is part of

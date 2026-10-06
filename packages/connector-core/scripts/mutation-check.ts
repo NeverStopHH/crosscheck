@@ -19003,6 +19003,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "a backwards interval is stored, and whileEnrolled reads it as no time at all",
   },
+  // ── 07 §13.13, round-5 LOW-10: a lost enrolment race is a sentence ──
+  {
+    label: "a lost enrolment race surfaces as a raw database error",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    throw isSecondOpenInterval(error) ? new ConcurrentEnrolmentError() : error;",
+    to: "    throw error;",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "the admin who enrolled a repo at the same moment as a colleague reads a 500",
+  },
+  {
+    label: "the settings route answers a lost enrolment race with a 500",
+    file: `${SERVER}/src/routes/team-settings.ts`,
+    from: "      if (error instanceof ConcurrentEnrolmentError) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "the race's loser is never told that the repo is enrolled after all",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19377,7 +19394,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
- * PRINTS: packages/server/test/team-settings.test.ts 4
+ * PRINTS: packages/server/test/team-settings.test.ts 6
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1
