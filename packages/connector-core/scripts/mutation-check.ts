@@ -18599,6 +18599,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "the nudge waits for a first finished turn the session had long ago, and doctor reads a compacted session as a short one",
   },
+  {
+    label: "the oldest-first exact count is not clamped to the rows the totals leave room for",
+    file: `${CORE}/src/briefing/draft-backlog.ts`,
+    from: "    return { count: Math.min(matched, unlisted), floor: false };",
+    to: "    return { count: matched, floor: false };",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "a hub whose two pages disagree is believed past its own totals, and the nudge counts more due drafts than exist",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18806,7 +18814,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 47
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 48
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

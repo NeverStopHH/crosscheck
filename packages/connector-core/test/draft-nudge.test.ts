@@ -10,7 +10,7 @@ import { rm } from "node:fs/promises";
 
 import { MAX_HINT_TEXT_LENGTH } from "@crosscheck/schema";
 
-import { backlogOf } from "../src/briefing/draft-backlog.ts";
+import { backlogOf, countAtLeastAged, DRAFT_DUE_AGE_MS } from "../src/briefing/draft-backlog.ts";
 import type { DraftBacklog } from "../src/briefing/draft-backlog.ts";
 import { renderDraftNudge } from "../src/briefing/draft-nudge.ts";
 import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE, renderBriefing } from "../src/briefing/render.ts";
@@ -212,6 +212,28 @@ describe("renderDraftNudge", () => {
     expect(text).toContain("15 of your own auto-captured draft claims have waited over 24h for review (15 observation)");
     expect(pointerLines(text)[0]).toContain("review_draft clm_old0");
     expect(text).toContain(`15 are older than ${String(DRAFT_RETENTION_HORIZON_DAYS)} days`);
+  });
+
+  test("a hub whose two pages contradict each other is never counted past what it said it holds (review round 3, LOW-7)", () => {
+    // Arrange: 25 in all, the newest 20 fresh — so at most 5 are due — but
+    // the oldest-first page answers 8 due rows (drafts captured between the
+    // two GETs, or a hub clock that moved): the count must not exceed the 5
+    // the totals leave room for
+    const fresh = Array.from({ length: DRAFT_LISTING_CAP }, (_, i) =>
+      draft({ id: `clm_y${String(i)}`, createdAt: new Date(NOW.getTime() - YOUNG_MS).toISOString() }),
+    );
+    const oldestFirst = [
+      ...Array.from({ length: 8 }, (_, i) => draft({ id: `clm_o${String(i)}`, createdAt: daysAgo(10 - i / 10) })),
+      ...fresh.slice(0, DRAFT_LISTING_CAP - 8),
+    ];
+    const backlog = backlogOf({ drafts: fresh, total: 25, oldestCreatedAt: daysAgo(10) }, { drafts: oldestFirst });
+
+    // Act
+    const due = countAtLeastAged(backlog, DRAFT_DUE_AGE_MS, NOW);
+
+    // Assert
+    expect(due).toEqual({ count: 25 - DRAFT_LISTING_CAP, floor: false });
+    expect(renderDraftNudge({ backlog, now: NOW })).toContain(`${String(25 - DRAFT_LISTING_CAP)} of your own auto-captured draft claims have waited`);
   });
 
   test("without the oldest-first page, due drafts it cannot name produce no text", () => {
