@@ -38,6 +38,7 @@ import {
   DELIVERY_HELD_NO_LIVE_SESSION_LINE,
   DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
+  PERSON_DOOR_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
   outcomeRecordedLine,
@@ -59,6 +60,8 @@ const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
 
 let server: ReturnType<typeof Bun.serve>;
 let oldHub: ReturnType<typeof Bun.serve>;
+/** A round-4 hub: it records outcomes, but has no person's door yet (07 §13.13 LOW-7). */
+let personlessHub: ReturnType<typeof Bun.serve>;
 /** A hub that cannot take records yet and knows no delivery — a spooled hint's view of the world. */
 let stuckHub: ReturnType<typeof Bun.serve>;
 let hubUrl: string;
@@ -164,6 +167,13 @@ beforeAll(async () => {
     port: 0,
     fetch: () => Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
   });
+  personlessHub = Bun.serve({
+    port: 0,
+    fetch: (request) =>
+      new URL(request.url).pathname === "/api/hint-outcomes/mine"
+        ? Response.json({ ok: false, error: { code: "not_enrolled", message: "not in the pilot" } }, { status: 422 })
+        : Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
+  });
   stuckHub = Bun.serve({
     port: 0,
     fetch: (request) => {
@@ -218,6 +228,7 @@ beforeAll(async () => {
 afterAll(async () => {
   server.stop(true);
   oldHub.stop(true);
+  personlessHub.stop(true);
   stuckHub.stop(true);
   await Promise.all([repo, ...homes].map((path) => rm(path, { recursive: true, force: true })));
 });
@@ -433,6 +444,19 @@ describe("crosscheck followed / overrode", () => {
 
     // Assert
     expect(result.stdout).toBe(OUTCOMES_NOT_SERVED_LINE);
+  });
+
+  test("07 §13.13 LOW-7: a hub that records outcomes but predates the person's door says so, and records nothing", async () => {
+    // Arrange — fail closed: never fall back to the agent's door with the person's word
+    const personless = `http://127.0.0.1:${String(personlessHub.port)}`;
+    const home = await homeWithLive(LIVE, personless);
+
+    // Act
+    const result = await cli(home, ["followed", KEN_CONTEXT], { hub: personless });
+
+    // Assert
+    expect(result.stdout).toBe(PERSON_DOOR_NOT_SERVED_LINE);
+    expect(result.exitCode).not.toBe(EXIT_OK);
   });
 });
 

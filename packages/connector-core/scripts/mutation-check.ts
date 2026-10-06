@@ -19045,6 +19045,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person at a terminal is judged by the process's own probe and filed as the agent",
   },
+  // ── 07 §13.13, LOW-7: a hub without the person's door fails closed, and says so ──
+  {
+    label: "a hub without the person's door is called a hub without outcomes",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  return !isOutcomesNotServed(await getMyHintOutcomes(target.ctx, { repo: target.identity.repoId }));",
+    to: "  return false;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person on a round-4 hub is told outcomes are not recorded at all, instead of to upgrade the hub",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19130,7 +19139,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 20
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 21
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11

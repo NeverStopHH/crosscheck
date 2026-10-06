@@ -97,6 +97,13 @@ export const DELIVERY_STILL_ON_THIS_MACHINE_LINE =
 export const OUTCOMES_NOT_SERVED_LINE =
   "this hub does not record hint outcomes — it predates them, so nothing was recorded; upgrade the hub to use crosscheck followed / overrode\n";
 
+/**
+ * 07 §13.13 (LOW-7): a hub that records outcomes but has no person's door yet. FAIL CLOSED — the
+ * person's word is never sent through the agent's door instead, where every agent word overturns it.
+ */
+export const PERSON_DOOR_NOT_SERVED_LINE =
+  "this hub predates person-recorded outcomes — upgrade the hub; nothing was recorded\n";
+
 export const REASON_REQUIRED_LINE =
   'an override needs its reason: crosscheck overrode wc_… --reason "why your way was better" — nothing was recorded\n';
 

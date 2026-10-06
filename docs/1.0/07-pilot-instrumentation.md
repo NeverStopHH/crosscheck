@@ -1408,6 +1408,14 @@ and the answer carries `reasonRevised` and says "the reason revised (the earlier
 never "superseding the earlier overrode" about the same word said better. Only the same word with the same
 reason is a repeat.
 
+*Release notes — mixed versions of the two doors.* A **round-3 CLI against this hub**: its `crosscheck followed /
+overrode` post to `POST /api/hint-outcomes`, the agent's door, so a person's word typed with an old CLI is
+recorded as their agent's — counted, but overturned by the person's own later word and never standing over an
+agent's; upgrading the CLI makes terminal words the person's. A **new CLI against a hub without `/person`**
+(round 4 and before, but with outcomes): the person's word fails closed — "this hub predates person-recorded
+outcomes — upgrade the hub; nothing was recorded" — and is never re-sent through the agent's door (§13.13 LOW-7).
+A hub with no outcomes at all still says it predates them.
+
 **13.13 — Corrections from the fourth adversarial review (2026-10-08).** Two HIGHs, two MEDIUMs and ten LOWs;
 every probe (P1–P5) is a regression test.
 
@@ -1447,3 +1455,7 @@ person's word. They now take the person's route only at a terminal (`isInteracti
 `pin` use) and otherwise the agent's, printing "recorded as your agent's word — run it in a terminal for it to
 stand as yours"; the usage says the same. §13.12's limit sentence is corrected: a rule backed by a TTY check,
 not a wall — a deliberate pty, or the key posted with curl, still reaches the person's door, the bar noise has.
+
+*LOW-7 — the wire between versions.* A 404 from `/person` on a hub that otherwise records outcomes (its
+`/mine` answers) now fails closed with its own sentence, never falling back to the agent's door; both
+mixed-version cases are in §13.12's release notes.

@@ -44,7 +44,11 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
-import { isOutcomesNotServed, postHintOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
+import {
+  getMyHintOutcomes,
+  isOutcomesNotServed,
+  postHintOutcome,
+} from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import type { RecordedOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { getMarkCandidates } from "@crosscheck/connector-core/http/pilot.ts";
 import {
@@ -60,6 +64,7 @@ import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 import {
   AGENT_WORD_LINE,
   OUTCOMES_NOT_SERVED_LINE,
+  PERSON_DOOR_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
   heldLine,
@@ -159,6 +164,19 @@ interface Target {
 
 const isUnknownRef = (result: HubResult<RecordedOutcome>): boolean => !result.ok && result.code === UNKNOWN_REF;
 
+/**
+ * A 404 FROM THE PERSON'S DOOR, ON A HUB THAT RECORDS OUTCOMES (07 §13.13 LOW-7): a hub
+ * from before `/person`. Told apart from a hub with no outcomes at all by asking for the
+ * caller's own view — a read — and never by posting the word through the agent's door:
+ * FAIL CLOSED, nothing is recorded.
+ */
+const isPersonDoorMissing = async (target: Target, result: HubResult<RecordedOutcome>): Promise<boolean> => {
+  if (target.via !== "person" || !isOutcomesNotServed(result)) {
+    return false;
+  }
+  return !isOutcomesNotServed(await getMyHintOutcomes(target.ctx, { repo: target.identity.repoId }));
+};
+
 const held = (why: HeldWhy): CliResult => ({ stdout: heldLine(why), exitCode: EXIT_FAIL });
 
 const record = async (
@@ -188,7 +206,9 @@ const record = async (
     return held(answer.why);
   }
   if (!answer.result.ok) {
-    return failed(answer.result);
+    return (await isPersonDoorMissing(target, answer.result))
+      ? { stdout: PERSON_DOOR_NOT_SERVED_LINE, exitCode: EXIT_FAIL }
+      : failed(answer.result);
   }
   const agentsWord = via === "agent" ? AGENT_WORD_LINE : "";
   return { stdout: `${outcomeRecordedLine(ref, answer.result.data)}${agentsWord}`, exitCode: EXIT_OK };
