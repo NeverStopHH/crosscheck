@@ -18957,6 +18957,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "a count over part of a month reads as the whole month's",
   },
+  // ── 07 §13.13, review MEDIUM-1: a round-3 hub's enrolments get their id ──
+  {
+    label: "a hub on the round-3 enrolment shape is never migrated (P1)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  IF NOT EXISTS (\n    SELECT 1 FROM information_schema.columns\n    WHERE table_schema = current_schema() AND table_name = 'pilot_enrolments' AND column_name = 'id'",
+    to: "  IF false AND NOT EXISTS (\n    SELECT 1 FROM information_schema.columns\n    WHERE table_schema = current_schema() AND table_name = 'pilot_enrolments' AND column_name = 'id'",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a hub that ran the round-3 bootstrap no longer starts: column id does not exist",
+  },
+  {
+    label: "the migrated enrolments keep no key",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    ALTER TABLE pilot_enrolments ADD PRIMARY KEY (id);",
+    to: "    PERFORM 1;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the old key is dropped and nothing replaces it, so two rows can share an id",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19268,7 +19285,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 11
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 13
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11

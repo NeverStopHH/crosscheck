@@ -1404,3 +1404,12 @@ of the word: said again with a different reason it is a new row, the revised sen
 and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —
 never "superseding the earlier overrode" about the same word said better. Only the same word with the same
 reason is a repeat.
+
+**13.13 — Corrections from the fourth adversarial review (2026-10-08).** Two HIGHs, two MEDIUMs and ten LOWs;
+every probe (P1–P5) is a regression test.
+
+*MEDIUM-1 — a hub that ran the round-3 bootstrap no longer started (P1).* §13.12 re-keyed `pilot_enrolments`
+in place, assuming the table unreleased; a hub that had run the round-3 bootstrap failed at start with "column
+id does not exist". A guarded, idempotent migration now gives every row of the old shape an id of its own
+(`'pe_' || gen_random_uuid()`) and makes it the primary key; its rows are kept, and a hub already on the new
+shape skips it.

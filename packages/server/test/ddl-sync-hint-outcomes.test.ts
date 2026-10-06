@@ -120,6 +120,39 @@ describe("hint_outcomes DDL sync", () => {
     await expect(second).rejects.toThrow();
   });
 
+  test("review MEDIUM-1 (P1): a hub that ran the round-3 bootstrap starts, and keeps its intervals", async () => {
+    // Arrange — the round-3 shape: keyed by (repo, started_at), no id, no reconstructed flag
+    const harness = await createTestHarness();
+    for (const statement of [
+      sql`DROP TABLE pilot_enrolments`,
+      sql`CREATE TABLE pilot_enrolments (repo text NOT NULL, started_at timestamptz NOT NULL, ended_at timestamptz,
+            PRIMARY KEY (repo, started_at))`,
+      sql`INSERT INTO pilot_enrolments VALUES ('github.com/acme/api', '2026-07-01T09:00:00Z', '2026-07-10T09:00:00Z'),
+                                              ('github.com/acme/api', '2026-07-24T09:00:00Z', NULL)`,
+    ]) {
+      await harness.db.execute(statement);
+    }
+    const client = (harness.db as unknown as { $client: { exec: (text: string) => Promise<unknown> } }).$client;
+
+    // Act — twice: the migration must be a no-op the second time
+    await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
+    await client.exec(await Bun.file(BOOTSTRAP_SQL_URL).text());
+
+    // Assert — both rows kept, each with an id of its own, which is now the key
+    const rows = await harness.db.execute(
+      sql`SELECT id LIKE 'pe_%' AS i, started_at::text AS s, ended_at::text AS e, reconstructed AS x
+          FROM pilot_enrolments ORDER BY started_at`,
+    );
+    expect(rows.rows).toEqual([
+      { i: true, s: "2026-07-01 09:00:00+00", e: "2026-07-10 09:00:00+00", x: false },
+      { i: true, s: "2026-07-24 09:00:00+00", e: null, x: false },
+    ]);
+    const key = await harness.db.execute(sql`SELECT a.attname AS c FROM pg_index i
+      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+      WHERE i.indrelid = 'pilot_enrolments'::regclass AND i.indisprimary`);
+    expect(key.rows).toEqual([{ c: "id" }]);
+  });
+
   test("review M3: an upgraded hub keeps the enrolment it already had as its first interval", async () => {
     // Arrange — the shape before the history: one repo enrolled, one that left, one never enrolled
     const harness = await createTestHarness();

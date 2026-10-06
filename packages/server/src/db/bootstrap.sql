@@ -1163,6 +1163,21 @@ CREATE TABLE IF NOT EXISTS pilot_enrolments (
   -- review M-3: bounds an upgrade inferred from what was recorded, not a toggle's instant
   reconstructed boolean NOT NULL DEFAULT false
 );
+-- A hub that ran the round-3 bootstrap has this table keyed by (repo, started_at), with no id
+-- (review MEDIUM-1): give every row an id of its own and make it the key. Guarded, so a hub
+-- already on this shape skips it, and idempotent, so a second start changes nothing.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'pilot_enrolments' AND column_name = 'id'
+  ) THEN
+    ALTER TABLE pilot_enrolments ADD COLUMN id text;
+    UPDATE pilot_enrolments SET id = 'pe_' || gen_random_uuid()::text WHERE id IS NULL;
+    ALTER TABLE pilot_enrolments DROP CONSTRAINT IF EXISTS pilot_enrolments_pkey;
+    ALTER TABLE pilot_enrolments ADD PRIMARY KEY (id);
+  END IF;
+END $$;
 ALTER TABLE pilot_enrolments ADD COLUMN IF NOT EXISTS reconstructed boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS pilot_enrolments_repo_started_idx ON pilot_enrolments (repo, started_at);
 -- At most one open interval per repo: a second "on" fails loudly, never doubles.
