@@ -1511,3 +1511,15 @@ others said the same. Unlike the credit it stays as it is: its minimums already 
 out (three other people's words, about three people's work, ten or more of them), so a team of three never
 prints at all, and in a team big enough to print, a homogeneous month says something about the team, not about
 one colleague a viewer could subtract. The owner accepted this residue (round 5); it is the line's known limit.
+
+**13.14 — Corrections from the fifth adversarial review (2026-10-09).** One HIGH (caused by §13.13 LOW-4), two
+MEDIUMs and six LOWs; every probe is a regression test.
+
+*HIGH-1 — a helpful label wiped outcome figures (supersedes §13.13 LOW-4's rule).* LOW-4 made helpful compete
+with the person's own outcome as "the person's newest word" and map to unmarked, so a helpful said after the
+person's own override deleted the override and its reason, a helpful over an agent's follow shrank `followed`,
+and the credit and the team line fell below their minimums. **Helpful lives on the LABEL axis.** On the outcome
+axis it may only (a) cancel an older noise of the person's — noise stands only while it is their newest label —
+and (b) veto an AGENT's `not_relevant_now` to unmarked, the answer saying the person's helpful label stands
+(the P3 case). The person's own outcome stands regardless of order, an agent's followed or overrode stays the
+outcome under a helpful label, and the write path's answer follows the same rule.
