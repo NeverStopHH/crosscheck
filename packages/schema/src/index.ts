@@ -318,6 +318,7 @@ export type { HarnessShape } from "./harness-turn.ts";
 export { SLASH_COMMAND_SHAPES, commandArguments } from "./slash-command.ts";
 export type { SlashCommandShape } from "./slash-command.ts";
 export {
+  CLOSED_CLASS_WORDS,
   exactClassOf,
   foldWord,
   isContinuationTrigger,

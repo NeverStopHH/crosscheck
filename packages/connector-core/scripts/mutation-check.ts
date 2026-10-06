@@ -18964,7 +18964,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub counts every term as topical",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      topical: all.filter((term) => terms.topical.includes(term)),",
+    // RETARGETED (round 3, L1): the topical terms pass the closed-stem check first.
+    from: "      topical: await withoutClosedStems(deps.db, all.filter((term) => terms.topical.includes(term))),",
     to: "      topical: all,",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "the topical-word rule reads meta words as topics and floors nothing (C1)",
@@ -19232,6 +19233,22 @@ export const MUTATIONS: readonly Mutation[
     to: "    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"every\" and \"instead\" are topics, and a long status report matches a root cause on them (M7)",
+  },
+  {
+    label: "the hub reads an inflected closed-class word as a topic",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      topical: await withoutClosedStems(deps.db, all.filter((term) => terms.topical.includes(term))),",
+    to: "      topical: all.filter((term) => terms.topical.includes(term)),",
+    test: `${SERVER}/test/hint-closed-stems.test.ts`,
+    because: "\"weekly limit reset, pick up where you stopped\" reaches the rate-limit tree on the lexeme of \"stop\" (round 3, L1)",
+  },
+  {
+    label: "the closed-stem check compares words as written",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      WHERE plainto_tsquery('english', closed.word)::text = plainto_tsquery('english', term.word)::text",
+    to: "      WHERE closed.word = term.word",
+    test: `${SERVER}/test/hint-closed-stems.test.ts`,
+    because: "\"shows\" is never \"show\", and the dashboard tree is pointed at for a limit report (L1)",
   },
   {
     label: "the connector asks a hub about a content-free prompt",
@@ -19612,6 +19629,7 @@ interface Outcome {
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 8
+ * PRINTS: packages/server/test/hint-closed-stems.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 10

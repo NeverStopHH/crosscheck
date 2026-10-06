@@ -58,6 +58,8 @@ import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
+  CLOSED_CLASS_WORDS,
+  foldWord,
   humanPromptText,
   isStrongSubstanceMatch,
   promptTerms,
@@ -941,7 +943,7 @@ export const listHintCandidates = async (
     text: humanText,
     terms: {
       all,
-      topical: all.filter((term) => terms.topical.includes(term)),
+      topical: await withoutClosedStems(deps.db, all.filter((term) => terms.topical.includes(term))),
       minTopical: known.length > HINT_LONG_PROMPT_KNOWN_TERMS ? HINT_LONG_PROMPT_MIN_TOPICAL : 1,
     },
     repo: input.repo,
@@ -982,6 +984,35 @@ const listKnownTerms = async (db: Db, repo: string, ranked: readonly string[]): 
       )
     ORDER BY term.position`);
   return result.rows.map((row) => row.word);
+};
+
+/** Letters a term and a closed-class word must share before their lexemes are compared. */
+const CLOSED_STEM_PREFIX_CHARS = 3;
+
+/**
+ * THE TOPICAL TERMS, LESS A CLOSED-CLASS WORD'S INFLECTION (round 3, L1). The
+ * schema classes a word as written; this hub MATCHES in lexemes, so
+ * "stopped" — no class word as written — matched "stops" as the lexeme of
+ * the conversation word "stop" and carried a limit report to the rate-limit
+ * tree. A term whose english lexeme is a closed-class word's lexeme is not
+ * topical here. One query over the few class words that share a term's
+ * first letters — a stem never changes them.
+ */
+const withoutClosedStems = async (db: Db, topical: readonly string[]): Promise<readonly string[]> => {
+  const prefixes = new Set(topical.map((term) => foldWord(term).slice(0, CLOSED_STEM_PREFIX_CHARS)));
+  const closed = CLOSED_CLASS_WORDS.filter((word) => prefixes.has(word.slice(0, CLOSED_STEM_PREFIX_CHARS)));
+  if (topical.length === 0 || closed.length === 0) {
+    return topical;
+  }
+  const result = await db.execute<{ word: string }>(sql`
+    SELECT term.word AS word
+    FROM unnest(ARRAY[${sql.join(topical.map((word) => sql`${word}`), sql`, `)}]::text[]) AS term(word)
+    WHERE EXISTS (
+      SELECT 1 FROM unnest(ARRAY[${sql.join(closed.map((word) => sql`${word}`), sql`, `)}]::text[]) AS closed(word)
+      WHERE plainto_tsquery('english', closed.word)::text = plainto_tsquery('english', term.word)::text
+    )`);
+  const inflected = new Set(result.rows.map((row) => row.word));
+  return topical.filter((term) => !inflected.has(term));
 };
 
 export interface TargetSessionView {

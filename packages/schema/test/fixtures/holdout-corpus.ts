@@ -122,7 +122,8 @@ export const HOLDOUT_TASKS: readonly CorpusPrompt[] = [
   task("lint step fails before build", "en", "wc_ci"), task("worker OOM bei großen batches", "mixed", "wc_oom"),
   task("import worker runs out of memory", "en", "wc_oom"), task("pre-push hook blockiert commit", "mixed", "wc_prepush"),
   task("diff zeigt umbenannte Dateien nicht", "de"), task("renamed files missing in diff view", "en", "wc_diff"),
-  task("who reviews my PR before merge?", "en", "wc_review"), task("StatsBomb rate limit", "en", "wc_ratelimit"),
+  // Round 3, L1: "reviews" is the operation "review" to a hub that stems — no topic left to share
+  task("who reviews my PR before merge?", "en"), task("StatsBomb rate limit", "en", "wc_ratelimit"),
   task("StatsBomb API usage limit reset", "en", "wc_ratelimit"), task("retry after StatsBomb reset", "en", "wc_ratelimit"),
   // Round 3, C1: session, expires and minutes are all machinery — a task, but no tree's topic
   task("session expires after 15 minutes", "en"), task("login session läuft zu früh ab", "mixed", "wc_session"),

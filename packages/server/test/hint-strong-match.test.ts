@@ -93,8 +93,9 @@ describe("every relevance count is topical (H3 + M6)", () => {
     // Arrange + Act
     const byTree = await candidates();
 
-    // Assert — refresh, fails, key, rotation; never token
-    expect(byTree.get(JWT_TREE)?.workContext.matchedTerms).toBe(4);
+    // Assert — fails, key, rotation; never token, nor refresh, which shares
+    // its lexeme with the meta word "refreshed" (round 3, L1)
+    expect(byTree.get(JWT_TREE)?.workContext.matchedTerms).toBe(3);
     expect(byTree.get(RATE_TREE)?.workContext.matchedTerms).toBe(1);
   });
 
@@ -103,7 +104,7 @@ describe("every relevance count is topical (H3 + M6)", () => {
     const byTree = await candidates();
 
     // Assert
-    expect(byTree.get(JWT_TREE)?.topicalTerms).toBe(4);
+    expect(byTree.get(JWT_TREE)?.topicalTerms).toBe(3);
     expect(byTree.get(RATE_TREE)?.topicalTerms).toBe(1);
   });
 
@@ -111,9 +112,9 @@ describe("every relevance count is topical (H3 + M6)", () => {
     // Arrange + Act
     const byTree = await candidates();
 
-    // Assert — "Investigation notes" shares nothing; its claim shares refresh, fails, key, rotation
+    // Assert — "Investigation notes" shares nothing; its claim shares fails, key, rotation
     expect(byTree.get(NOTES_TREE)?.workContext.matchedTerms).toBe(0);
-    expect(byTree.get(NOTES_TREE)?.topicalTerms).toBe(4);
+    expect(byTree.get(NOTES_TREE)?.topicalTerms).toBe(3);
   });
 });
 

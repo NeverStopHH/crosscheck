@@ -49,6 +49,12 @@ const EXACT_CLASSES: ReadonlyMap<string, WordClass> = new Map([
   ...classed(CONTINUATION_TRIGGERS, "trigger"),
 ]);
 
+/**
+ * Every closed-class word, folded — what a hub that stems compares a term's
+ * lexeme against (round 3, L1: "stopped" is "stop" to the english stemmer).
+ */
+export const CLOSED_CLASS_WORDS: readonly string[] = [...EXACT_CLASSES.keys()];
+
 interface SlipTarget {
   readonly word: string;
   readonly wordClass: WordClass;
