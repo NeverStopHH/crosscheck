@@ -7,6 +7,7 @@ import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
 import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
 import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
+import { isDetachedBranch } from "@crosscheck/connector-core/git/detached-branch.ts";
 import {
   collectCommitEvidence,
   commitEvidenceRecord,
@@ -80,7 +81,7 @@ export const isOnDefaultBranch = (
   branch: string,
   defaultBranchRef: string | null,
 ): boolean => {
-  if (branch.startsWith("detached@") || branch === "HEAD") {
+  if (isDetachedBranch(branch)) {
     return true;
   }
   if (defaultBranchRef === null) {

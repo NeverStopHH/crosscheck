@@ -17576,7 +17576,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "detached sessions are one topic per sha again",
     file: `${CORE}/src/git/detached-branch.ts`,
-    from: "  branch === UNNAMED_HEAD_BRANCH || branch.startsWith(DETACHED_BRANCH_PREFIX);",
+    from: "  branch === UNNAMED_HEAD_BRANCH || DETACHED_REF_PATTERN.test(branch);",
     to: "  false;",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
@@ -17586,7 +17586,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a detached title is keyed by its sha",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  return isDetachedBranch(head)",
+    from: "  return isDetachedTitleHead(head)",
     to: "  return false",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
@@ -17900,6 +17900,47 @@ export const MUTATIONS: readonly Mutation[
       "the solved pointer's root-cause validity carries the commit the " +
       "opted-out teammate's session was on when they found it",
   },
+  {
+    // Review L3: `detached@<hex sha>` exactly, never a prefix.
+    label: "a branch named detached@release folds into the detached-HEAD topic",
+    file: `${CORE}/src/git/detached-branch.ts`,
+    from: "  branch === UNNAMED_HEAD_BRANCH || DETACHED_REF_PATTERN.test(branch);",
+    to: "  branch === UNNAMED_HEAD_BRANCH || branch.startsWith(DETACHED_BRANCH_PREFIX);",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "somebody's real `detached@release` branch prints as `<detached HEAD>`, " +
+      "merged with every worktree session on the repo",
+  },
+  {
+    label: "a detached title with a commit subject splits from the detached-HEAD topic",
+    file: `${CORE}/src/git/detached-branch.ts`,
+    from: "  isDetachedBranch(head.split(DETACHED_SUBJECT_SEPARATOR, 1)[0] ?? head);",
+    to: "  isDetachedBranch(head);",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "an older hub's detached row titled `detached@<sha> · <subject>` becomes " +
+      "a topic of its own once the ref is matched exactly",
+  },
+  {
+    label: "a branch can print the renderer's detached-HEAD label",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "export const DETACHED_TOPIC = \"<detached HEAD>\";",
+    to: "export const DETACHED_TOPIC = \"detached HEAD\";",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "a connector that reports the branch `detached HEAD` prints exactly what " +
+      "the renderer prints for a detached worktree",
+  },
+  {
+    label: "session-start reads detached@release as a detached HEAD on the default branch",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  if (isDetachedBranch(branch)) {",
+    to: "  if (branch.startsWith(\"detached@\") || branch === \"HEAD\") {",
+    test: `${CONNECTOR}/test/solved-hook.test.ts`,
+    because:
+      "a session on a branch named `detached@release` is treated as sitting " +
+      "on the default branch, and its landed changes go unmarked",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18066,6 +18107,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
+ * PRINTS: packages/connector-claude/test/solved-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
@@ -18078,10 +18120,10 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
- * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 20
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 22
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
- * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 4
+ * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7

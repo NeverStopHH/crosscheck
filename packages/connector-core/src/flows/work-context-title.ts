@@ -30,11 +30,15 @@ import { sanitizeUntrusted } from "../briefing/sanitize.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
 import { runGit } from "../git/git.ts";
 import { DETACHED_BRANCH_PREFIX } from "../git/repo-identity.ts";
+import { DETACHED_SUBJECT_SEPARATOR } from "../git/detached-branch.ts";
 import type { RepoIdentity } from "../git/repo-identity.ts";
 import { fallbackWorkContextTitle } from "./register-session.ts";
 
-/** U+00B7 — the separator the briefing and MCP lines already use. */
-const SUBJECT_SEPARATOR = " · ";
+/**
+ * U+00B7 — the separator the briefing and MCP lines already use. Shared with
+ * isDetachedTitleHead, which reads the ref back out of the composed title.
+ */
+const SUBJECT_SEPARATOR = DETACHED_SUBJECT_SEPARATOR;
 
 /**
  * The commit subject as a title may carry it: dropped whole when the secret

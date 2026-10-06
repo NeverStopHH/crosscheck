@@ -70,7 +70,30 @@ describe("a teammate's live sessions, grouped by topic", () => {
     ]);
 
     expect(lines).toEqual([
-      "- Nick · branch detached HEAD · status analyzing · heartbeat 10s ago",
+      "- Nick · branch <detached HEAD> · status analyzing · heartbeat 10s ago",
+    ]);
+  });
+
+  test("a live branch that calls itself the detached label cannot print it", () => {
+    // The `<` `>` are the renderer's: the sanitizer strips them from every
+    // branch a connector reports, so the forgery prints without them.
+    const ken = { sessionId: "cc_ken_0", developerId: "dev_ken", developerName: "Ken" };
+    const lines = presenceLines([
+      live(0, "detached@abc1234"),
+      live(1, "<detached HEAD>", ken),
+    ]);
+
+    expect(lines).toEqual([
+      "- Nick · branch <detached HEAD> · status analyzing · heartbeat 10s ago",
+      "- Ken · branch detached HEAD · status analyzing · heartbeat 11s ago",
+    ]);
+  });
+
+  test("a live branch named detached@<word> is a branch", () => {
+    const lines = presenceLines([live(0, "detached@release")]);
+
+    expect(lines).toEqual([
+      "- Nick · branch detached@release · status analyzing · heartbeat 10s ago",
     ]);
   });
 

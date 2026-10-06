@@ -27,7 +27,7 @@ import {
 } from "../constants.ts";
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
-import { isDetachedBranch } from "../git/detached-branch.ts";
+import { isDetachedBranch, isDetachedTitleHead } from "../git/detached-branch.ts";
 import { repoLabel } from "../git/repo-label.ts";
 import {
   NO_AXES_FROM_HUB,
@@ -168,12 +168,13 @@ const branchKey = (rawBranchOrTitle: string): string => `branch:${rawBranchOrTit
  * teammate listing. Keyed by its sha, each worktree session would be a topic
  * of its own — exactly the shape the topic grouping exists to fold. The key
  * lacks the `branch:` prefix, so no branch or title can equal it — a branch
- * literally named `detached` is its own topic — and the label carries a
- * space, which git does not allow in a branch name, so no real branch can
- * print the same either.
+ * literally named `detached` is its own topic. The LABEL is framed in `<` `>`,
+ * characters the renderer owns: cleanUntrusted strips them from every branch
+ * and title a connector reports, so no branch — git's rules aside, since a
+ * connector need not obey them — can print what this prints.
  */
 const DETACHED_KEY = "detached-head";
-export const DETACHED_TOPIC = "detached HEAD";
+export const DETACHED_TOPIC = "<detached HEAD>";
 
 /** A live session as the topic grouping reads it (briefing/topic-group.ts). */
 export interface PresenceTopicRow extends TopicRow {
@@ -520,7 +521,7 @@ const contextTopic = (context: WorkContextEntry, repoId: string): TopicIdentity 
     return { key: branchKey(context.branch), label: sanitizeUntrusted(context.branch) };
   }
   const head = titleHead(context.title, repoId);
-  return isDetachedBranch(head)
+  return isDetachedTitleHead(head)
     ? { key: DETACHED_KEY, label: DETACHED_TOPIC }
     : { key: branchKey(head), label: sanitizeUntrusted(head) };
 };

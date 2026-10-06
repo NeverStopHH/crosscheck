@@ -243,7 +243,7 @@ describe("the topic is the session's own branch when the hub sends it", () => {
     ]);
 
     expect(sectionLines(rendered)).toEqual([
-      "- Ken, 4 sessions, 2m ago, status analyzing: «detached HEAD»",
+      "- Ken, 4 sessions, 2m ago, status analyzing: «<detached HEAD>»",
     ]);
   });
 
@@ -315,7 +315,40 @@ describe("topics are keyed by the RAW branch, sanitized only for display", () =>
     expect(sectionLines(rendered)).toEqual([
       "- Ken, 2 topics, 4 sessions:",
       "  - 2 sessions, 1m ago, status analyzing: «detached»",
-      "  - 2 sessions, 3m ago, status analyzing: «detached HEAD»",
+      "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
+    ]);
+  });
+
+  test("a branch named detached@<word> is a branch, not the detached-HEAD topic", () => {
+    // `detached@release` is a legal git branch; only `detached@<hex sha>` is
+    // what resolveBranch writes for a detached HEAD (git/detached-branch.ts).
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached@release", title: "detached@release @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached@abc1234", title: "detached@abc1234 · Fix it @ api", createdAt: minutesAgo(3) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "detached@def5678", title: "detached@def5678 · Try again @ api", createdAt: minutesAgo(4) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 topics, 3 sessions:",
+      "  - 1 session, 1m ago, status analyzing: «detached@release»",
+      "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
+    ]);
+  });
+
+  test("a branch that calls itself the detached label cannot print it", () => {
+    // git forbids the space, but a branch arrives from a connector. The label
+    // carries `<` `>`, which the sanitizer strips from every branch and title,
+    // so neither spelling of the forgery can print what the renderer prints.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached HEAD", title: "detached HEAD @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "<detached HEAD>", title: "<detached HEAD> @ api", createdAt: minutesAgo(2) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "detached@abc1234", title: "detached@abc1234 · Fix it @ api", createdAt: minutesAgo(3) }),
+      context({ id: "wc_4", sessionId: "cc_4", branch: "detached@def5678", title: "detached@def5678 · Try again @ api", createdAt: minutesAgo(4) }),
+    ]);
+
+    const lines = sectionLines(rendered);
+    expect(lines.filter((line) => line.includes("<detached HEAD>"))).toEqual([
+      "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
     ]);
   });
 });
