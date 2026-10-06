@@ -18534,8 +18534,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed / overrode post as the agent",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '    via: isInteractive() ? "person" : "agent",',
-    to: '    via: "agent",',
+    from: '  return isInteractive() ? { via: "person", agentLine: "" } : { via: "agent", agentLine: AGENT_WORD_LINE };',
+    to: '  return { via: "agent", agentLine: AGENT_WORD_LINE };',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person's terminal word is the agent's, and the agent's next word overturns it",
   },
@@ -19024,16 +19024,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed from an agent's Bash tool posts as the person",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '    via: isInteractive() ? "person" : "agent",',
-    to: '    via: "person",',
+    from: '  return isInteractive() ? { via: "person", agentLine: "" } : { via: "agent", agentLine: AGENT_WORD_LINE };',
+    to: '  return { via: "person", agentLine: "" };',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "an agent overturns its own person's word by running the person's command",
   },
   {
     label: "an outcome recorded as the agent's never says so",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '  const agentsWord = via === "agent" ? AGENT_WORD_LINE : "";',
-    to: '  const agentsWord = "";',
+    from: ': { via: "agent", agentLine: AGENT_WORD_LINE };',
+    to: ': { via: "agent", agentLine: "" };',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person reads their word as standing when it was filed as their agent's",
   },
@@ -19331,6 +19331,63 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "the repo reads as enrolled only from the later 'on', and the time between is lost",
   },
+  // ── 07 §13.14, round-6 MEDIUM-2: deny-only agent-host markers ──
+  {
+    label: "Claude Code's marker is not an agent host's",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: '  "CLAUDECODE",\n',
+    to: "\n",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "an agent in a pty under Claude Code records its word as the person's",
+  },
+  {
+    label: "Cursor's agent-terminal marker is not an agent host's",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: '  "CURSOR_AGENT",\n',
+    to: "\n",
+    test: `${CLI}/test/agent-host.test.ts`,
+    because: "Cursor's agent terminal is a pty, and its agent's word stands as the person's",
+  },
+  {
+    label: "an empty marker counts as a marker",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: '  AGENT_HOST_MARKERS.find((name) => (env[name] ?? "") !== "") ?? null;',
+    to: "  AGENT_HOST_MARKERS.find((name) => name in env) ?? null;",
+    test: `${CLI}/test/agent-host.test.ts`,
+    because: "a shell that cleared a variable to nothing loses the person's door",
+  },
+  {
+    label: "an agent host's marker promotes the word to the person's",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: '    return { via: "agent", agentLine: agentHostLine(marker) };',
+    to: '    return { via: "person", agentLine: "" };',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the environment, which any agent can write, opens the person's door",
+  },
+  {
+    label: "an agent host's marker is never read",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  const marker = agentHostMarkerIn(env);",
+    to: "  const marker = null;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a pty an agent host gave its tool passes as the person",
+  },
+  {
+    label: "a word demoted by a host's marker says it had no terminal",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "agentLine: agentHostLine(marker) };",
+    to: "agentLine: AGENT_WORD_LINE };",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person at a terminal is told there was none, and cannot see why their word is the agent's",
+  },
+  {
+    label: "the host line never names the marker it found",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "this command ran inside an agent's tool (${marker} is set);",
+    to: "this command ran inside an agent's tool;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person cannot tell which variable to look for in the terminal they typed it in",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19376,6 +19433,7 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/absence-cli.test.ts 11
+ * PRINTS: packages/cli/test/agent-host.test.ts 2
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
@@ -19416,7 +19474,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 24
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 29
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11

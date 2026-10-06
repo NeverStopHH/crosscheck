@@ -67,10 +67,12 @@ import {
   PERSON_DOOR_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
+  agentHostLine,
   heldLine,
   outcomeRecordedLine,
   reasonTooLongLine,
 } from "./outcome-render.ts";
+import { agentHostMarkerIn } from "./agent-host.ts";
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { candidateListLines, markFailureLine, noLiveSessionLine, nothingRecentLine } from "./pilot-mark.ts";
@@ -158,8 +160,10 @@ const failed = (result: Extract<HubResult<unknown>, { ok: false }>): CliResult =
 interface Target {
   readonly ctx: HubContext;
   readonly identity: RepoIdentity;
-  /** The person's route at a terminal, the agent's without one (07 §13.13 HIGH-1). */
+  /** The person's route at a terminal, the agent's without one (07 §13.13 HIGH-1) or under an agent host (§13.14). */
   readonly via: HintOutcomeChannel;
+  /** Said after an agent's word — why it is the agent's; empty after the person's. */
+  readonly agentLine: string;
   /** The caller's developer key, whose held deliveries alone are theirs (LOW-9); null when the config predates it. */
   readonly developerId: string | null;
 }
@@ -212,8 +216,7 @@ const record = async (
       ? { stdout: PERSON_DOOR_NOT_SERVED_LINE, exitCode: EXIT_FAIL }
       : failed(answer.result);
   }
-  const agentsWord = via === "agent" ? AGENT_WORD_LINE : "";
-  return { stdout: `${outcomeRecordedLine(ref, answer.result.data)}${agentsWord}`, exitCode: EXIT_OK };
+  return { stdout: `${outcomeRecordedLine(ref, answer.result.data)}${target.agentLine}`, exitCode: EXIT_OK };
 };
 
 /**
@@ -255,6 +258,19 @@ const recordRecent = async (target: Target, command: OutcomeCommand, reason: str
   return record(target, only.id, COMMAND_OUTCOME[command], reason);
 };
 
+/**
+ * WHOSE WORD THIS IS. An agent host's marker comes first and can only DEMOTE (07 §13.14 MEDIUM-2):
+ * a pty its tool was given passes the TTY probe, and the environment, which any agent can write,
+ * never opens the person's door — it can only take it away. Then the probe (§13.13 HIGH-1).
+ */
+const channelOf = (env: Env, isInteractive: InteractiveProbe): Pick<Target, "via" | "agentLine"> => {
+  const marker = agentHostMarkerIn(env);
+  if (marker !== null) {
+    return { via: "agent", agentLine: agentHostLine(marker) };
+  }
+  return isInteractive() ? { via: "person", agentLine: "" } : { via: "agent", agentLine: AGENT_WORD_LINE };
+};
+
 const runOutcome = async (
   command: OutcomeCommand,
   usage: string,
@@ -293,7 +309,7 @@ const runOutcome = async (
   const target: Target = {
     ctx,
     identity,
-    via: isInteractive() ? "person" : "agent",
+    ...channelOf(env, isInteractive),
     developerId: config.developerId,
   };
   return args.id === undefined

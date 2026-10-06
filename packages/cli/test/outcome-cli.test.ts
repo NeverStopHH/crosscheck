@@ -41,6 +41,7 @@ import {
   PERSON_DOOR_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
+  agentHostLine,
   outcomeRecordedLine,
 } from "../src/cli/outcome-render.ts";
 import { MINE_NOT_SERVED_LINE } from "../src/cli/pilot-mine-render.ts";
@@ -143,11 +144,17 @@ const spoolDelivery = async (home: string, hub: string, sessionId: string, refId
 const cli = (
   home: string,
   argv: readonly string[],
-  options: { readonly as?: { apiKey: string }; readonly hub?: string; readonly interactive?: boolean } = {},
+  options: {
+    readonly as?: { apiKey: string };
+    readonly hub?: string;
+    readonly interactive?: boolean;
+    readonly env?: Readonly<Record<string, string>>;
+  } = {},
 ): Promise<{ stdout: string; exitCode: number }> =>
   runCli(
     argv,
     {
+      ...options.env,
       CROSSCHECK_HOME: home,
       HOME: home,
       CROSSCHECK_HUB_URL: options.hub ?? hubUrl,
@@ -627,6 +634,91 @@ describe("07 §13.13 HIGH-1: with no terminal, the word is the agent's", () => {
       replaced: "followed",
       stands: "overrode",
     });
+  });
+});
+
+describe("07 §13.14 MEDIUM-2: inside an agent host's terminal, the word is the agent's even with a pty", () => {
+  const freshPointer = async (ref: string): Promise<string> => {
+    await send("POST", "/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Ken's context",
+          status: "implementing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    await deliver(LIVE, ref);
+    return homeWithLive(LIVE);
+  };
+
+  test.each([
+    ["CLAUDECODE", "1"],
+    ["CURSOR_AGENT", "1"],
+  ] as const)("at a terminal under %s=%s, crosscheck followed lands on the agent's route and names the marker", async (name, value) => {
+    // Arrange
+    const ref = `wc_ken_host_${name.toLowerCase()}`;
+    const home = await freshPointer(ref);
+
+    // Act — a pty (the TTY probe says yes) inside the host; then the agent's own route speaks
+    const result = await cli(home, ["followed", ref], { interactive: true, env: { [name]: value } });
+    const agent = await send("POST", "/api/hint-outcomes", nick.apiKey, {
+      repo: REPO_ID,
+      ref,
+      outcome: "overrode",
+      reason: "the agent went its own way",
+    });
+
+    // Assert — the agent's later word overturned it: both were the agent's
+    expect(result.stdout).toStartWith(`recorded: ${ref} — followed`);
+    expect(result.stdout).toContain(agentHostLine(name));
+    expect(result.stdout).toContain(`recorded as your agent's word — this command ran inside an agent's tool (${name} is set)`);
+    expect(result.stdout).not.toContain(AGENT_WORD_LINE);
+    expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({
+      replaced: "followed",
+      stands: "overrode",
+    });
+  });
+
+  test("a marker never promotes: with no terminal under a host, the word is still the agent's", async () => {
+    // Arrange
+    const ref = "wc_ken_host_no_tty";
+    const home = await freshPointer(ref);
+
+    // Act
+    const result = await cli(home, ["overrode", ref, "--reason", "kept my parser"], {
+      interactive: false,
+      env: { CLAUDECODE: "1" },
+    });
+    const agent = await send("POST", "/api/hint-outcomes", nick.apiKey, { repo: REPO_ID, ref, outcome: "followed" });
+
+    // Assert
+    expect(result.stdout).toContain(agentHostLine("CLAUDECODE"));
+    expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({
+      replaced: "overrode",
+      stands: "followed",
+    });
+  });
+
+  test("at a terminal with no marker, the word is still the person's", async () => {
+    // Arrange
+    const ref = "wc_ken_host_none";
+    const home = await freshPointer(ref);
+
+    // Act — a host's variable that is set in the person's own terminal too is no marker
+    const result = await cli(home, ["followed", ref], { interactive: true, env: { TERM_PROGRAM: "vscode" } });
+    const agent = await send("POST", "/api/hint-outcomes", nick.apiKey, {
+      repo: REPO_ID,
+      ref,
+      outcome: "overrode",
+      reason: "the agent went its own way",
+    });
+
+    // Assert — the person's word stands over the agent's
+    expect(result.stdout).not.toContain("recorded as your agent's word");
+    expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({ stands: "followed" });
   });
 });
 

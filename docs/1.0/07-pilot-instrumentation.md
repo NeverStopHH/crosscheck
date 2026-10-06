@@ -1326,8 +1326,12 @@ nothing twice. **The person's door is behind the TTY gate** (corrected in §13.1
 `crosscheck followed` always took it, so an agent's Bash tool wrote as the person). `crosscheck followed /
 overrode` take the person's route only with a terminal — the evidence `crosscheck noise` and `pin` use; with
 none they take the AGENT's route and say "recorded as your agent's word — run it in a terminal for it to stand
-as yours". That is a rule backed by a TTY check, not a wall: a deliberate pty wrapper, or the key posted with
-curl, still reaches the person's door — the same bar as the label's gate (§12.9). §13.4's "nothing at the hub
+as yours". That is a rule backed by a TTY check — and, since §13.14 MEDIUM-2, by deny-only agent-host markers —
+not a wall. It catches a command whose input is not a terminal, and one run at a pty inside a host that marks
+its agent's commands (§13.14 lists them). It does not catch keystrokes typed into the person's own terminal
+(tmux send-keys), a pty in a host with no documented marker (VS Code's agent mode among them), an agent that
+unsets its host's marker, or the key posted with curl: those still reach the person's door — the same bar as
+the label's gate (§12.9). §13.4's "nothing at the hub
 tells a person's outcome from their agent's" is superseded to that extent: the route tells, by which door a
 word came through, and that is still not a proof of who typed it.
 
@@ -1455,7 +1459,9 @@ the person's route with the same key and no terminal check, so an agent shelling
 person's word. They now take the person's route only at a terminal (`isInteractive`, the probe `noise` and
 `pin` use) and otherwise the agent's, printing "recorded as your agent's word — run it in a terminal for it to
 stand as yours"; the usage says the same. §13.12's limit sentence is corrected: a rule backed by a TTY check,
-not a wall — a deliberate pty, or the key posted with curl, still reaches the person's door, the bar noise has.
+not a wall. (It was not "only a deliberate pty or curl" that still reached the person's door: any host that
+gives its agent a pty did — corrected again in §13.14 MEDIUM-2, which says exactly what is caught and what is
+not.)
 
 *LOW-7 — the wire between versions.* A 404 from `/person` on a hub that otherwise records outcomes (its
 `/mine` answers) now fails closed with its own sentence, never falling back to the agent's door; both
@@ -1540,3 +1546,30 @@ own start; then the CHECK is added `NOT VALID` and validated, once, guarded by `
 intervals the earliest stays open and each later one is closed at its own start — before the index is built,
 and a no-op once it exists. Every repaired row is marked `reconstructed`: its bound was inferred by the upgrade,
 not a toggle's instant. The repair keeps the time the repo was enrolled; a second start changes nothing.
+
+*MEDIUM-2 — an agent host's pty passed as the person.* The TTY gate reads whether stdin is a terminal, and a
+host that runs its agent's commands in a pty — Cursor's agent terminal, Gemini CLI's interactive shell — says
+yes. `crosscheck followed / overrode` now also read **deny-only agent-host markers**: a variable a host sets on
+the commands ITS AGENT runs demotes the word to the agent's route, and the line says which ("recorded as your
+agent's word — this command ran inside an agent's tool (CURSOR_AGENT is set); type it in your own shell for it
+to stand as yours"). Nothing in the environment ever promotes a word — any agent can write one — so a marker
+can take the person's door away and never open it. The probe stays on stdin (stdout would misfire on
+`| tee`). Only markers a host's own docs or source name are used:
+
+- `CLAUDECODE` — Claude Code, CLI and IDE extensions: every command its tools and `!` run (measured,
+  connector-core `model/runner.ts`, and seen in the agent shells that built this).
+- `CURSOR_AGENT` — Cursor's agent terminal, IDE and CLI (cursor.com/docs/agent/tools/terminal; the CLI's
+  `CURSOR_AGENT=1` confirmed by Cursor staff on their forum).
+- `GEMINI_CLI` — Gemini CLI's `run_shell_command`, its node-pty mode included (its docs/tools/shell.md).
+- `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED` — a command Codex spawns under its sandbox, or for a shell
+  tool call with the network restricted (codex-rs/core/src/spawn.rs). Not set under `danger-full-access`.
+
+A variable a host also sets in the person's own terminal (`TERM_PROGRAM`, `ZED_TERM`, `CURSOR_TRACE_ID`) is no
+marker: it would take the door away from every person typing inside that editor. **Residual, unconfirmed and
+not guessed:** VS Code's agent mode (Copilot Chat), Copilot CLI (its docs name only the variables that
+configure it), Goose, a terminal Zed or a JetBrains IDE opens for an ACP agent (`terminal/create`), Claude
+Code through Zed's ACP adapter when the client runs the terminal, and Codex under `danger-full-access` — each
+passes as the person at a pty until its host documents a marker. Beyond any marker: keystrokes typed into the
+person's own terminal (tmux send-keys), an agent that unsets its host's marker, and the key posted with curl.
+If a host ever sets its marker in the person's own terminal too, that person's word is recorded as the agent's
+and the line names the variable: the gate fails closed.
