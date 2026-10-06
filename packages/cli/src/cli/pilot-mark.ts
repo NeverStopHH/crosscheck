@@ -20,6 +20,7 @@ import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import {
   bareUntrusted,
   safeId,
+  sanitizeUntrusted,
 } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import type { MarkCandidate } from "@crosscheck/connector-core/http/pilot.ts";
@@ -116,9 +117,17 @@ export const refNeverReachedLine = (ref: string): string =>
 export const markFailureLine = (
   kind: "network" | "http" | "malformed",
   message: string,
-): string => {
-  const said = bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);
-  return kind === "network"
-    ? `hub unreachable: ${said} — nothing was recorded\n`
-    : `${said}\n`;
-};
+): string =>
+  kind === "network"
+    ? `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — nothing was recorded\n`
+    : `${hubSentence(message)}\n`;
+
+/**
+ * A HUB'S SENTENCE, PRINTED AS THE WHOLE LINE (round-6 LOW-5): the prose class — invisibles,
+ * renderer-owned characters and instruction-shaped text go, bounded — and its ordinary punctuation
+ * stays. The bare class strips "—", ":" and "·" because a FIELD inside a line must not mint another
+ * field; a sentence that is the whole line has none to mint, and the strip ran its clauses together
+ * ("nothing was recorded say it again"). An unreachable hub's error sits inside this CLI's own line,
+ * so it stays bare.
+ */
+const hubSentence = (message: string): string => sanitizeUntrusted(message, MAX_HUB_MESSAGE_CHARS);

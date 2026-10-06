@@ -1598,3 +1598,11 @@ repo nobody had configured has no row, so on real Postgres two first writes each
 (PGlite, one connection, never shows it). The write now inserts the defaults row `ON CONFLICT (repo) DO
 NOTHING` before the `FOR UPDATE`: the second writer waits on that insert, then locks the row the first
 committed. The write's own upsert overwrites the defaults, its instant included; the SQL is pinned in a test.
+
+*LOW-5 — a hub's sentence ran its clauses together (pre-existing).* A refusal the hub words — "so nothing was
+recorded — say it again without it" — was printed through the bare class, which strips "—", ":" and "·" so a
+field inside a line cannot mint another; the sentence read "nothing was recorded say it again". A hub's
+sentence is the whole line and has no field to mint, so it is now printed through the prose class: invisibles,
+renderer-owned characters and instruction-shaped text still go, bounded by `MAX_HUB_MESSAGE_CHARS`, and its
+ordinary punctuation stays. An unreachable hub's error sits inside the CLI's own line ("hub unreachable: … —
+nothing was recorded") and stays bare.

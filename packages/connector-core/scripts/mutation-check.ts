@@ -19480,6 +19480,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/team-settings.test.ts`,
     because: "every write resets the pin policy it did not name",
   },
+  // ── 07 §13.14, round-6 LOW-5: a hub's sentence keeps its punctuation ──
+  {
+    label: "a hub's sentence loses its dash and its colon",
+    file: `${CLI}/src/cli/pilot-mark.ts`,
+    from: "    : `${hubSentence(message)}\\n`;",
+    to: "    : `${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)}\\n`;",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "'nothing was recorded — say it again' prints as 'nothing was recorded say it again'",
+  },
+  {
+    label: "an unreachable hub's error may mint a dash in the CLI's own line",
+    file: `${CLI}/src/cli/pilot-mark.ts`,
+    from: "    ? `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — nothing was recorded\\n`",
+    to: "    ? `hub unreachable: ${hubSentence(message)} — nothing was recorded\\n`",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "an error text forges a second clause inside the line that says nothing was recorded",
+  },
+  {
+    label: "a hub's sentence is unbounded",
+    file: `${CLI}/src/cli/pilot-mark.ts`,
+    from: "sanitizeUntrusted(message, MAX_HUB_MESSAGE_CHARS);",
+    to: "sanitizeUntrusted(message, Number.MAX_SAFE_INTEGER);",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "a hub floods the terminal with as much text as it likes",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19570,7 +19595,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
- * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 15
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 11
  * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
