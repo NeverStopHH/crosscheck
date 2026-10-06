@@ -46,7 +46,14 @@ import { recordDrop } from "./drops.ts";
 import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
 import { healAndResend, isRefusedLifeRecord } from "./flush-heal.ts";
-import { deliverOwed, isOwedFor, readOwedWorkContext, settleOwedWorkContext } from "./owed-work-context.ts";
+import {
+  deliverOwed,
+  isOwedFor,
+  owedRecordNow,
+  readOwedWorkContext,
+  settleOwedWorkContext,
+  workContextIdOf,
+} from "./owed-work-context.ts";
 import type { OwedWorkContext } from "./owed-work-context.ts";
 import type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 import { lineTimestampMs } from "./lines.ts";
@@ -162,14 +169,24 @@ const send = async (
   if (owed === null) {
     return deliver(ctx, records);
   }
-  const delivery = await deliverOwed(ctx, owed, input.developerId, input.sessionId, records);
+  const delivery = await deliverOwed(ctx, spool.slug, owed, input.developerId, input.sessionId, records);
   if (delivery === null) {
     return null;
   }
   if (delivery.owedTaken) {
-    await settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, owed.record);
+    await settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, workContextIdOf(owed.record));
   }
   return delivery.summary;
+};
+
+/** The work context this spool owes `sessionId`, built as it goes now — or null when it owes that life none. */
+const owedNowFor = async (
+  ctx: HubContext,
+  spool: SessionSpool,
+  sessionId: string,
+): Promise<Record<string, unknown> | null> => {
+  const owed = await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug);
+  return owed === null || owed.sessionId !== sessionId ? null : owedRecordNow(ctx.home, spool.slug, owed, ctx.now());
 };
 
 /** Whether the life's own records were refused `author_unknown` while its work context is still owed. */
@@ -308,7 +325,8 @@ const flushOneBatch = async (
     healer: input.heal,
     deadlineMs,
     beforeWalk: losses.write,
-    settleOwed: (record) => settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, record),
+    owedFor: (sessionId) => owedNowFor(ctx, spool, sessionId),
+    settleOwed: (record) => settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, workContextIdOf(record)),
   });
   if (healed === null) {
     return null;

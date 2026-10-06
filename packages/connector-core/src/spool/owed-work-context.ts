@@ -20,11 +20,24 @@
  * debt is settled only when the hub's answer for that record is accepted or a
  * duplicate. Beside the spool, not in the state file: SessionEnd deletes the
  * state while the records the debt is owed for may still wait on disk.
+ *
+ * WHAT IS PAID IS BUILT WHEN IT GOES (review-2 round 7, M1): the title and
+ * status the life's state holds at the send, not the heal's snapshot — and
+ * set_intent's own post for the work context settles the debt, so no copy is
+ * ever sent over the status it set.
  */
 import { z } from "zod";
 
-import { readJsonOrNull, removeFile, spoolOwedWorkContextPath, writePrivateFile } from "../config/paths.ts";
-import { withProducer } from "../capture/records.ts";
+import {
+  readJsonOrNull,
+  removeFile,
+  sessionSlug,
+  sessionStatePathForSlug,
+  spoolOwedWorkContextPath,
+  writePrivateFile,
+} from "../config/paths.ts";
+import { withProducer, workContextRecord } from "../capture/records.ts";
+import type { Producer } from "../capture/records.ts";
 import type { HubContext } from "../http/client.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
@@ -65,17 +78,21 @@ const hostSessionKeyOf = (slug: string): string | null => {
   }
 };
 
+/** The work context a work_context envelope is for — its body's id. */
+export const workContextIdOf = (record: Record<string, unknown>): unknown =>
+  (record["body"] as { id?: unknown } | undefined)?.id;
+
 /**
- * Settled once the hub took the record — compare-and-delete under the host
- * session's state lock, so a heal that owes a newer work context in between
- * keeps its debt. A lock that stays busy leaves the debt: paying it twice
- * costs the hub a duplicate.
+ * Settled once the hub has the work context — compare-and-delete by its id
+ * under the host session's state lock, so a heal that owes ANOTHER work
+ * context in between keeps its debt. A lock that stays busy leaves the debt:
+ * paying it twice costs the hub a duplicate.
  */
 export const settleOwedWorkContext = async (
   home: string,
   key: string,
   slug: string,
-  record: Record<string, unknown>,
+  workContextId: unknown,
 ): Promise<void> => {
   const hostSessionKey = hostSessionKeyOf(slug);
   if (hostSessionKey === null) {
@@ -83,11 +100,62 @@ export const settleOwedWorkContext = async (
   }
   await underSessionStateLock(home, hostSessionKey, undefined, async () => {
     const owed = await readOwedWorkContext(home, key, slug);
-    if (owed !== null && owed.record["id"] === record["id"]) {
+    if (owed !== null && workContextIdOf(owed.record) === workContextId) {
       await removeFile(spoolOwedWorkContextPath(home, key, slug));
     }
     return undefined;
   });
+};
+
+/**
+ * set_intent's post for the life's work context is a payment too (review-2
+ * round 7, M1): once the hub took it — accepted or a duplicate — the debt for
+ * that work context is settled, and no later flush sends an older copy over it.
+ */
+export const settleOwedOnIntent = (
+  home: string,
+  key: string,
+  hostSessionKey: string,
+  workContextId: string,
+): Promise<void> => settleOwedWorkContext(home, key, sessionSlug(hostSessionKey), workContextId);
+
+interface StateNaming {
+  readonly crosscheckSessionId?: unknown;
+  readonly workContextTitle?: unknown;
+  readonly workContextStatus?: unknown;
+}
+
+const textOr = (value: unknown, fallback: unknown): string =>
+  typeof value === "string" ? value : typeof fallback === "string" ? fallback : "";
+
+/**
+ * THE OWED WORK CONTEXT AS IT GOES NOW (review-2 round 7, M1): built when it
+ * is sent, from the title and status the life's state holds then — never the
+ * snapshot the heal took. A status `set_intent` set since the heal is the
+ * hub's to keep; paying the snapshot reverted it. A fresh envelope every
+ * send, so the hub never answers a stale copy `duplicate` over a newer
+ * status. A state that no longer names the life — SessionEnd ran — leaves the
+ * heal's own copy, the last the life said.
+ */
+export const owedRecordNow = async (
+  home: string,
+  slug: string,
+  owed: OwedWorkContext,
+  now: Date,
+): Promise<Record<string, unknown>> => {
+  const state = (await readJsonOrNull(sessionStatePathForSlug(home, slug))) as StateNaming | null;
+  const named = state !== null && state.crosscheckSessionId === owed.sessionId ? state : null;
+  const body = (owed.record["body"] ?? {}) as Record<string, unknown>;
+  return workContextRecord(
+    {
+      workContextId: textOr(body["id"], ""),
+      sessionId: textOr(body["sessionId"], owed.sessionId),
+      title: textOr(named?.workContextTitle, body["title"]),
+      status: textOr(named?.workContextStatus, body["status"]),
+    },
+    owed.record["producer"] as Producer,
+    now,
+  );
 };
 
 /** Whether a spooled record was written by the life a debt is for. */
@@ -128,17 +196,20 @@ export interface OwedDelivery {
 }
 
 /**
- * Sends the batch with the owed work context at its head. Null when the hub
- * did not take the request at all; the debt and the batch both wait.
+ * Sends the batch with the owed work context at its head, built now
+ * (`owedRecordNow`). Null when the hub did not take the request at all; the
+ * debt and the batch both wait.
  */
 export const deliverOwed = async (
   ctx: HubContext,
+  slug: string,
   owed: OwedWorkContext,
   developerId: string | null,
   flusherSessionId: string,
   records: readonly Record<string, unknown>[],
 ): Promise<OwedDelivery | null> => {
-  const result = await postRecords(ctx, [withProducer(owed.record, developerId, flusherSessionId), ...records]);
+  const ahead = withProducer(await owedRecordNow(ctx.home, slug, owed, ctx.now()), developerId, flusherSessionId);
+  const result = await postRecords(ctx, [ahead, ...records]);
   if (!result.ok) {
     return null;
   }

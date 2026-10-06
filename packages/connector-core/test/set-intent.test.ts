@@ -21,6 +21,8 @@ import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import { NO_SESSION } from "../src/mcp/tools/publish-claim.ts";
 import { INTENT_ECHO_REFUSAL, INTENT_SECRET_REFUSAL, NO_TITLE } from "../src/mcp/tools/set-intent.ts";
+import { repoKey, sessionSlug } from "../src/config/paths.ts";
+import { oweWorkContext, readOwedWorkContext } from "../src/spool/owed-work-context.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -325,6 +327,27 @@ describe("set_intent", () => {
     });
     const body = (await response.json()) as { data: { workContext: { status: string } } };
     expect(body.data.workContext.status).toBe("implementing");
+  });
+
+  test("settles the work context a heal still owes for that life, and only that one (review-2 round 7, M1)", async () => {
+    // Arrange: a debt for Alice's work context, as a heal leaves it
+    const key = repoKey(hubUrl, REPO_ID);
+    const slug = sessionSlug(alice.hostSessionKey);
+    const owed = (workContextId: string) => ({
+      sessionId: alice.sessionId,
+      record: workContextRecordFor({ ...alice, workContextId }),
+    });
+    await oweWorkContext(alice.home, key, slug, owed(alice.workContextId));
+
+    // Act
+    await call(alice, { summary: "Settle the owed work context", status: "blocked" });
+    const afterOwn = await readOwedWorkContext(alice.home, key, slug);
+    await oweWorkContext(alice.home, key, slug, owed(`${alice.workContextId}~other`));
+    await call(alice, { summary: "Leave another debt alone", status: "blocked" });
+
+    // Assert
+    expect(afterOwn).toBeNull();
+    expect((await readOwedWorkContext(alice.home, key, slug))?.sessionId).toBe(alice.sessionId);
   });
 
   test("another developer's context is unreachable: Bob's declaration never touches Alice's", async () => {

@@ -232,15 +232,10 @@ const nextWorkContext = (
     now,
   );
 
-const healedTo = (
-  refusedSessionId: string,
-  sessionId: string,
-  workContext?: Record<string, unknown>,
-): HealResult => ({
+const healedTo = (refusedSessionId: string, sessionId: string): HealResult => ({
   outcome: "healed",
   refusedSessionId,
   sessionId,
-  ...(workContext === undefined ? {} : { workContext }),
 });
 
 /**
@@ -334,8 +329,8 @@ const walk = async (
   // and every later record of the life names it. The debt is written with
   // the switch, under the state lock (swapLife), and paid at the head of the
   // next batch that carries the life's records, however many flushes that
-  // takes (review-2 round 6, HIGH-1). It also goes back to the caller, whose
-  // re-send pays it first.
+  // takes (review-2 round 6, HIGH-1) — the caller's re-send first, built
+  // from the state as it is when it goes (review-2 round 7, M1).
   const workContext = nextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
   const swap = await swapLife(input, refusal.sessionId, ladder.sessionId, ladder.developerId, workContext);
   if (swap === "lock_busy") {
@@ -360,7 +355,7 @@ const walk = async (
     }
     return moved === null ? FAILED : healedTo(refusal.sessionId, moved);
   }
-  return healedTo(refusal.sessionId, ladder.sessionId, workContext);
+  return healedTo(refusal.sessionId, ladder.sessionId);
 };
 
 /**

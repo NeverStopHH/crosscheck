@@ -47,6 +47,7 @@ import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { getGhostChecks, postRecords } from "../../http/hub.ts";
+import { settleOwedOnIntent } from "../../spool/owed-work-context.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -339,6 +340,10 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     ...withRecordedIntent(fresh, parsed.value.summary),
     workContextStatus: parsed.value.status === undefined ? fresh.workContextStatus : status,
   }));
+  // The hub holds this work context now, as set_intent just wrote it: a debt a
+  // heal left for it is paid (spool/owed-work-context.ts), and no later flush
+  // sends a copy over this status (review-2 round 7, M1).
+  await settleOwedOnIntent(ctx.config.home, ctx.repoKey, own.hostSessionKey, own.workContextId);
   const ghost = await deliverGhostNotice(ctx, own);
   // Audit row M14, the author's half. An intent is LABEL class — every surface
   // that shows it blanks it WHOLE when the phrase filter matches — so without

@@ -21,10 +21,10 @@ import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { repoKey, sessionSlug, spoolOwedWorkContextPath } from "../src/config/paths.ts";
-import { targetRecord, workContextRecord } from "../src/capture/records.ts";
+import { targetRecord, withProducer, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
 import type { HubContext } from "../src/http/client.ts";
-import { endSession, registerSession } from "../src/http/hub.ts";
+import { endSession, postRecords, registerSession } from "../src/http/hub.ts";
 import { endSessionFlow } from "../src/flows/end-session.ts";
 import { sessionHealer } from "../src/flows/heal-session.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/register-session.ts";
@@ -34,9 +34,9 @@ import { writeCursorOffset } from "../src/spool/cursor.ts";
 import { readDropDetail } from "../src/spool/drops.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import { flushSpool } from "../src/spool/flush.ts";
-import { oweWorkContext } from "../src/spool/owed-work-context.ts";
+import { oweWorkContext, settleOwedOnIntent } from "../src/spool/owed-work-context.ts";
 import { reapSpool } from "../src/spool/reap.ts";
-import { readSessionState } from "../src/state/session-state.ts";
+import { readSessionState, updateSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
 const ADMIN_TOKEN = "owed-admin";
@@ -63,6 +63,8 @@ let flapRecordPostAt = -1;
 let holdRecordPostAt = -1;
 /** Each record POST the proxy saw: `kind:workContextId` per record, in order. */
 const posts: (readonly string[])[] = [];
+/** Work contexts, by id, the hub is made to refuse. */
+const refusedWorkContextsOf = new Set<string>();
 const cleanups: string[] = [];
 
 const raw = async <T>(text: string, params: readonly unknown[] = []): Promise<readonly T[]> =>
@@ -187,6 +189,17 @@ beforeAll(async () => {
           await Bun.sleep(HOLD_PAST_TIMEOUT_MS);
           return Response.json({ ok: false, error: { code: "unavailable", message: "late" } }, { status: 503 });
         }
+        // A work context the hub's schema refuses: a blank title.
+        const records = sent.records.map((record) =>
+          record.kind === "work_context" && refusedWorkContextsOf.has(record.body.id ?? "")
+            ? { ...record, body: { ...record.body, title: "" } }
+            : record,
+        );
+        return fetch(`${hubUrl}${pathname}${search}`, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify({ ...sent, records }),
+        });
       }
       if (request.method === "POST" && pathname === "/api/sessions" && refuseRegisters) {
         return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
@@ -307,7 +320,7 @@ describe("the work context a heal owes", () => {
 
   test("stays owed while the hub refuses it, and the life's own records wait with it", async () => {
     // Arrange: a registered life whose spooled work context was spent, and a
-    // debt the hub's schema refuses (an empty title)
+    // debt the hub's schema refuses (a blank title, at the proxy)
     const fx = await fixture("refused-debt");
     const life = await register(fx);
     const spool = await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey));
@@ -315,15 +328,17 @@ describe("the work context a heal owes", () => {
     await oweWorkContext(fx.home, fx.key, sessionSlug(fx.hostSessionKey), {
       sessionId: life.crosscheckSessionId,
       record: workContextRecord(
-        { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "", status: "analyzing" },
+        { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "Owed", status: "analyzing" },
         producerOf(life.crosscheckSessionId),
         new Date(),
       ),
     });
     await appendRecords(fx.home, fx.key, fx.hostSessionKey, targets(life, 1, "pinned"), new Date());
+    refusedWorkContextsOf.add(life.workContextId);
 
     // Act
     await flushAsHook(fx);
+    refusedWorkContextsOf.delete(life.workContextId);
 
     // Assert: refused for the work context it is owed, so kept, not spent
     expect((await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines.length).toBe(1);
@@ -349,6 +364,72 @@ describe("the work context a heal owes", () => {
 
     // Assert
     expect(await Bun.file(spoolOwedWorkContextPath(fx.home, fx.key, slug)).exists()).toBe(false);
+  });
+});
+
+/** A life the hub ended mid-life, which the hook's flush heals onto `~r1`; the debt's first payment flaps. */
+const healedWithOpenDebt = async (fx: Fixture) => {
+  const first = await register(fx);
+  await flushAsHook(fx);
+  await endSessionOnHub(fx, first.crosscheckSessionId);
+  await appendRecords(fx.home, fx.key, fx.hostSessionKey, targets(first, 1, "first"), new Date());
+  flapRecordPostAt = recordPosts + 2;
+  await flushAsHook(fx);
+  flapRecordPostAt = -1;
+  const next = await readSessionState(fx.home, fx.hostSessionKey);
+  if (next === null) throw new Error("no state");
+  return next;
+};
+
+const statusOf = async (workContextId: string): Promise<string | undefined> =>
+  (await raw<{ status: string }>("select status from work_contexts where id = $1", [workContextId]))[0]?.status;
+
+describe("the owed work context, built when it is sent (review-2 round 7, M1, P2)", () => {
+  test("carries the status the life's state holds now, not the one the heal saw", async () => {
+    // Arrange: a debt the heal built while the status was `analyzing`, still open
+    const fx = await fixture("send-time");
+    const next = await healedWithOpenDebt(fx);
+    const owedAfterHeal = await isOwed(fx);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: "blocked" }));
+
+    // Act: the life's next record, and the flush that pays the debt ahead of it
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, targets(next, 1, "next"), new Date());
+    await flushAsHook(fx);
+
+    // Assert
+    expect(owedAfterHeal).toBe(true);
+    expect(await statusOf(next.workContextId)).toBe("blocked");
+    expect(await isOwed(fx)).toBe(false);
+    expect(await targetsOf(next.workContextId)).toBe(1);
+  });
+
+  test("is settled by set_intent's post for the same work context, and never sent after it", async () => {
+    // Arrange: a debt still open when set_intent posts `blocked`
+    const fx = await fixture("intent-settles");
+    const next = await healedWithOpenDebt(fx);
+    const intent = withProducer(
+      workContextRecord(
+        { workContextId: next.workContextId, sessionId: next.crosscheckSessionId, title: "Mine", status: "blocked" },
+        producerOf(next.crosscheckSessionId),
+        new Date(),
+      ),
+      developerId,
+      next.crosscheckSessionId,
+    );
+    const posted = await postRecords(fx.hub, [intent]);
+
+    // Act: set_intent settles; then the life's next record goes
+    await settleOwedOnIntent(fx.home, fx.key, fx.hostSessionKey, next.workContextId);
+    const owedAfterIntent = await isOwed(fx);
+    const postsBefore = posts.length;
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, targets(next, 1, "after"), new Date());
+    await flushAsHook(fx);
+
+    // Assert
+    expect(posted.ok && posted.data.results?.[0]?.status).toBe("accepted");
+    expect(owedAfterIntent).toBe(false);
+    expect(posts.slice(postsBefore).flat().some((record) => record.startsWith("work_context:"))).toBe(false);
+    expect(await statusOf(next.workContextId)).toBe("blocked");
   });
 });
 

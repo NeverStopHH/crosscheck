@@ -416,6 +416,15 @@ owes a work context and holds no record to carry it, including after a heal that
 was the refused life's own, is drained like any other: the debt goes alone in the same drain. A payment that does
 not land waits for the next drain, never the next batch.
 
+**The owed work context is built when it is sent, and set_intent settles it** (review-2 round 7, M1). The heal wrote
+the work context it owed with the status the state held then, and a debt still open when `set_intent` set a new
+status was paid later with the old one, which reverted it (P2, p4b revert: `blocked` back to `analyzing`). The
+payment is now built at each send from the title and status the life's state holds then, in a fresh envelope so the
+hub never answers a stale copy `duplicate`, and settled by the work context's id. `set_intent`'s own post, once the
+hub took it, settles the debt for that work context. The one window left is a payment already in flight when
+`set_intent` posts (the hub keeps whichever lands last); both run in the same conversation, and the hosts run a
+tool's hooks after the tool.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

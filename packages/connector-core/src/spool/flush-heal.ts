@@ -60,11 +60,7 @@ export interface SessionRefusal {
  * cooldown; the refusal stands.
  */
 export type HealResult =
-  | ({
-      readonly outcome: "healed";
-      /** The life's work context, when the walk registered it: sent ahead of a re-send. */
-      readonly workContext?: Record<string, unknown>;
-    } & SessionHeal)
+  | ({ readonly outcome: "healed" } & SessionHeal)
   | { readonly outcome: "pending" }
   | { readonly outcome: "failed" };
 
@@ -185,7 +181,12 @@ export interface HealInput {
    * (spool/batch-losses.ts).
    */
   readonly beforeWalk?: (sealed: readonly number[]) => Promise<void>;
-  /** Settles the work context a heal owes once the hub took it (spool/owed-work-context.ts). */
+  /**
+   * The work context the batch's spool owes the healed life, built as it
+   * goes now (spool/owed-work-context.ts owedRecordNow), or null.
+   */
+  readonly owedFor?: (sessionId: string) => Promise<Record<string, unknown> | null>;
+  /** Settles that work context once the hub took it. */
   readonly settleOwed?: (record: Record<string, unknown>) => Promise<void>;
 }
 
@@ -306,9 +307,8 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   // waits for the next batch that carries the life's records (review-2 round
   // 6, HIGH-1), and so does this batch. A batch is one short of the hub's
   // limit (spool/flush.ts), so the two always fit.
-  const ahead = result.workContext === undefined
-    ? []
-    : [withProducer(result.workContext, input.developerId, heal.sessionId)];
+  const owed = (await input.owedFor?.(heal.sessionId)) ?? null;
+  const ahead = owed === null ? [] : [withProducer(owed, input.developerId, heal.sessionId)];
   const again = await postRecords(
     { ...input.ctx, timeoutMs: Math.min(input.ctx.timeoutMs, roomMs) },
     [
@@ -319,8 +319,8 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   if (!again.ok) {
     return null;
   }
-  if (result.workContext !== undefined && isTaken(again.data.results?.find((answer) => answer.index === 0))) {
-    await input.settleOwed?.(result.workContext);
+  if (owed !== null && isTaken(again.data.results?.find((answer) => answer.index === 0))) {
+    await input.settleOwed?.(owed);
   }
   return { summary: merged(input.first, resent, again.data, ahead.length), heal, asked: true, counted };
 };

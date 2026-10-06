@@ -17906,7 +17906,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a work context the hub took stays owed",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "  if (delivery.owedTaken) {\n    await settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, owed.record);\n  }\n",
+    from: "  if (delivery.owedTaken) {\n    await settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, workContextIdOf(owed.record));\n  }\n",
     to: "",
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "every later batch of the life pays it again, one record short of the limit, for good",
@@ -18134,6 +18134,30 @@ export const MUTATIONS: readonly Mutation[
     to: "spool.lines.length > 0",
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 7: the lone debt is left for a batch that never comes",
+  },
+  {
+    label: "the owed work context goes with the status the heal saw",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '      status: textOr(named?.workContextStatus, body["status"]),',
+    to: '      status: textOr(body["status"], body["status"]),',
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7 (M1, P2, p4b revert): paying the debt reverts the status set_intent set since the heal",
+  },
+  {
+    label: "set_intent leaves the debt its post paid open",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "  await settleOwedOnIntent(ctx.config.home, ctx.repoKey, own.hostSessionKey, own.workContextId);\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7 (M1): the next flush pays the debt over the status set_intent just set",
+  },
+  {
+    label: "a settle deletes the debt of another work context (O1)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "    if (owed !== null && workContextIdOf(owed.record) === workContextId) {",
+    to: "    if (owed !== null) {",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 6 survivor O1: a payment for one life settles the debt a later heal wrote for the next, and that life's records are refused author_unknown",
   },
 ];
 
@@ -18376,7 +18400,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/owed-work-context.test.ts 8
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 9
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
@@ -18399,7 +18423,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 3
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 5
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2

@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1630
+    # PRINTS: 1633
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -323,7 +323,7 @@ jobs:
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
-    # PRINTS: mcp/tools/set-intent.ts 4
+    # PRINTS: mcp/tools/set-intent.ts 5
     # PRINTS: mcp/tools/shared.ts 2
     # PRINTS: model/gates.ts 1
     # PRINTS: model/parse.ts 2
@@ -339,6 +339,7 @@ jobs:
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 17
+    # PRINTS: spool/owed-work-context.ts 2
     # PRINTS: spool/ownership.ts 5
     # PRINTS: spool/reap.ts 7
     # PRINTS: spool/refused-lives.ts 1
@@ -602,6 +603,7 @@ jobs:
     # PRINTS: noise.ts 7
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
+    # PRINTS: owed-work-context.ts 2
     # PRINTS: ownership.ts 5
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
@@ -680,7 +682,7 @@ jobs:
     # PRINTS: session-state.ts 22
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 15
-    # PRINTS: set-intent.ts 4
+    # PRINTS: set-intent.ts 5
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
     # PRINTS: skeleton-identity.ts 8
