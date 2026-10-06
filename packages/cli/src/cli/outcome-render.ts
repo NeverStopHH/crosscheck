@@ -32,6 +32,12 @@ export const monthOf = (iso: string): string => {
     : new Date(ms).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 };
 
+/**
+ * 07 §13.13 (HIGH-1): said with no terminal — an agent's Bash tool — the word is the agent's,
+ * and the person is told how to make it theirs.
+ */
+export const AGENT_WORD_LINE = "recorded as your agent's word — run it in a terminal for it to stand as yours\n";
+
 /** 07 §13.11 (M3), §13.12 (LOW): a month the pilot paused in counted only its enrolled time — every line says so. */
 export const COUNTED_WHILE_ENROLLED = "counted only while the pilot was enrolled here";
 

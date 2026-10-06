@@ -8,8 +8,9 @@
  *     delivery to a live session is answered — several are LISTED, never
  *     guessed, exactly as `crosscheck noise` does;
  *   · an override carries its reason, a secret-shaped reason never leaves the
- *     machine, and no terminal is needed: an outcome is the record an agent
- *     may write too (only a LABEL is a person's, behind the TTY gate);
+ *     machine; at a terminal the word is the PERSON's, and without one (an
+ *     agent's Bash tool) it is recorded as the agent's and says so (07 §13.13
+ *     HIGH-1) — the TTY gate `crosscheck noise` keeps, with its stated limit;
  *   · `--mine` is the caller's own view — by source teammate, reasons quoted —
  *     and a teammate's view of the same history is one count about their own
  *     work, never the recipient's name or reason;
@@ -32,6 +33,7 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
 import {
+  AGENT_WORD_LINE,
   DELIVERY_HELD_AMBIGUOUS_LINE,
   DELIVERY_HELD_NO_LIVE_SESSION_LINE,
   DELIVERY_STILL_ON_THIS_MACHINE_LINE,
@@ -136,7 +138,7 @@ const spoolDelivery = async (home: string, hub: string, sessionId: string, refId
 const cli = (
   home: string,
   argv: readonly string[],
-  options: { readonly as?: { apiKey: string }; readonly hub?: string } = {},
+  options: { readonly as?: { apiKey: string }; readonly hub?: string; readonly interactive?: boolean } = {},
 ): Promise<{ stdout: string; exitCode: number }> =>
   runCli(
     argv,
@@ -149,8 +151,9 @@ const cli = (
     },
     repo,
     undefined,
-    // NO TERMINAL, on purpose: an outcome is what an agent may record too.
-    { isInteractive: () => false },
+    // A PERSON AT A TERMINAL unless a test says otherwise (07 §13.13 HIGH-1): without one,
+    // the word is recorded as the agent's.
+    { isInteractive: () => options.interactive ?? true },
   );
 
 beforeAll(async () => {
@@ -521,6 +524,43 @@ describe("07 §13.12: a word said at a terminal is the person's", () => {
       outcome: "overrode",
       replaced: "followed",
       stands: "followed",
+    });
+  });
+});
+
+describe("07 §13.13 HIGH-1: with no terminal, the word is the agent's", () => {
+  test("crosscheck followed from an agent's Bash tool lands on the agent's route, and says how to make it the person's", async () => {
+    // Arrange — a fresh pointer
+    const ref = "wc_ken_no_tty";
+    await send("POST", "/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Ken's context",
+          status: "implementing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    await deliver(LIVE, ref);
+    const home = await homeWithLive(LIVE);
+
+    // Act — no terminal; then the agent's own route says something else
+    const result = await cli(home, ["followed", ref], { interactive: false });
+    const agent = await send("POST", "/api/hint-outcomes", nick.apiKey, {
+      repo: REPO_ID,
+      ref,
+      outcome: "overrode",
+      reason: "the agent went its own way",
+    });
+
+    // Assert — the agent's second word overturned the first: both were the agent's
+    expect(result.stdout).toStartWith(`recorded: ${ref} — followed`);
+    expect(result.stdout).toContain(AGENT_WORD_LINE);
+    expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({
+      replaced: "followed",
+      stands: "overrode",
     });
   });
 });

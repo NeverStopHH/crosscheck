@@ -18534,8 +18534,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed / overrode post as the agent",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '      "person",\n    );',
-    to: '      "agent",\n    );',
+    from: '  const target: Target = { ctx, identity, via: isInteractive() ? "person" : "agent" };',
+    to: '  const target: Target = { ctx, identity, via: "agent" };',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person's terminal word is the agent's, and the agent's next word overturns it",
   },
@@ -19020,6 +19020,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/team-settings.test.ts`,
     because: "the race's loser is never told that the repo is enrolled after all",
   },
+  // ── 07 §13.13, review HIGH-1: the person's door is behind the TTY gate ──
+  {
+    label: "crosscheck followed from an agent's Bash tool posts as the person",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: '  const target: Target = { ctx, identity, via: isInteractive() ? "person" : "agent" };',
+    to: '  const target: Target = { ctx, identity, via: "person" };',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "an agent overturns its own person's word by running the person's command",
+  },
+  {
+    label: "an outcome recorded as the agent's never says so",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: '  const agentsWord = via === "agent" ? AGENT_WORD_LINE : "";',
+    to: '  const agentsWord = "";',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person reads their word as standing when it was filed as their agent's",
+  },
+  {
+    label: "the CLI's terminal probe never reaches crosscheck followed",
+    file: `${CLI}/src/cli/index.ts`,
+    from: "        : runFollowed(rest, env, cwd, options.isInteractive);",
+    to: "        : runFollowed(rest, env, cwd);",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person at a terminal is judged by the process's own probe and filed as the agent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19105,7 +19130,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 17
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 20
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11

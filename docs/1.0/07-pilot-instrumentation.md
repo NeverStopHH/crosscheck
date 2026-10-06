@@ -1321,11 +1321,14 @@ never from a claim**: `POST /api/hint-outcomes` is the agent's door, `POST /api/
 person's (`crosscheck followed / overrode`), and the route stamps `hint_outcomes.recorded_via` (`agent` |
 `person`, additive; a row from before the column is an agent's). A field in the body naming a channel is
 ignored. A repeat is judged against the same channel's newest word, so an agent re-reading the clause writes
-nothing twice. What this does not do: an agent that shells out to `crosscheck followed` writes as the person —
-the key is the person's, the row is attributed to it, and nothing on one machine can tell the two apart. That
-is attributable, not prevented, exactly as the label's terminal gate is a rule and not a wall (§12.9). §13.4's
-"nothing at the hub tells a person's outcome from their agent's" is superseded to that extent: the route
-tells, by which door a word came through, and that is still not a proof of who typed it.
+nothing twice. **The person's door is behind the TTY gate** (corrected in §13.13 HIGH-1: as first shipped,
+`crosscheck followed` always took it, so an agent's Bash tool wrote as the person). `crosscheck followed /
+overrode` take the person's route only with a terminal — the evidence `crosscheck noise` and `pin` use; with
+none they take the AGENT's route and say "recorded as your agent's word — run it in a terminal for it to stand
+as yours". That is a rule backed by a TTY check, not a wall: a deliberate pty wrapper, or the key posted with
+curl, still reaches the person's door — the same bar as the label's gate (§12.9). §13.4's "nothing at the hub
+tells a person's outcome from their agent's" is superseded to that extent: the route tells, by which door a
+word came through, and that is still not a proof of who typed it.
 
 *H-A — a word landed on a stale delivery while today's delivery of the same ref was held (probe G).* "Post
 first" asked the hub about the ref the hint printed; the hub knew last week's delivery of it and recorded
@@ -1437,3 +1440,10 @@ no row to lock, so both open an interval and the one-open-interval index refuses
 right — the repo is enrolled once — and the loser now gets `409 concurrent_enrolment`: "another enrolment of
 this repo landed at the same moment, so this write changed nothing — the repo is enrolled; read the settings
 again". (PGlite serializes transactions, so the test stages the loser's view directly.)
+
+*HIGH-1 — "person beats agent" fell to the agent's Bash tool.* `crosscheck followed / overrode` always posted to
+the person's route with the same key and no terminal check, so an agent shelling out to them overturned its own
+person's word. They now take the person's route only at a terminal (`isInteractive`, the probe `noise` and
+`pin` use) and otherwise the agent's, printing "recorded as your agent's word — run it in a terminal for it to
+stand as yours"; the usage says the same. §13.12's limit sentence is corrected: a rule backed by a TTY check,
+not a wall — a deliberate pty, or the key posted with curl, still reaches the person's door, the bar noise has.

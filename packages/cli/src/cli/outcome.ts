@@ -20,11 +20,14 @@
  * that id reached you" is never repeated for a delivery the spool still holds;
  * the line says why it is still here.
  *
- * NO TERMINAL GATE, and that is a decision rather than an omission. The gate
- * on `noise` keeps an agent from grading the product by default (07 D3); an
- * outcome is the record an agent is ASKED to write, so a person typing it
- * and an agent running it are the same gesture with the same key — and the
- * hub attributes both to that key, nothing more.
+ * A PERSON AT A TERMINAL, OR THE AGENT (07 §13.13 HIGH-1). A person's word is
+ * never overturned by their agent's (§13.12), so which one said it matters,
+ * and the agent's Bash tool runs this same command with the same key. At a
+ * terminal — the TTY evidence `crosscheck noise` and `pin` use — the word goes
+ * to the person's route; with none it goes to the AGENT's, and the line says
+ * so and how to make it the person's. Like the label's gate, this is a rule
+ * backed by a TTY check, not a wall: a deliberate pty wrapper, or the key
+ * posted with curl, still passes it — the same bar as noise (07 §12.9).
  */
 import {
   EXIT_FAIL,
@@ -52,9 +55,10 @@ import {
 import type { HeldWhy } from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import { MAX_HINT_OUTCOME_REASON_CHARS, SAFE_ID_PATTERN, reasonLength } from "@crosscheck/schema";
-import type { HintOutcome } from "@crosscheck/schema";
+import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import {
+  AGENT_WORD_LINE,
   OUTCOMES_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
@@ -62,6 +66,8 @@ import {
   outcomeRecordedLine,
   reasonTooLongLine,
 } from "./outcome-render.ts";
+import { defaultInteractiveProbe } from "./pin.ts";
+import type { InteractiveProbe } from "./pin.ts";
 import { candidateListLines, markFailureLine, noLiveSessionLine, nothingRecentLine } from "./pilot-mark.ts";
 import type { CliResult } from "./login.ts";
 
@@ -79,6 +85,8 @@ const usageFor = (command: OutcomeCommand, reason: string, meaning: string): str
     `usage: crosscheck ${command} [<id>] ${reason}`,
     "",
     `  ${meaning}`,
+    "  Typed at a terminal it is your word, which your agent's never",
+    "  overturns; run with no terminal (by an agent) it is your agent's.",
     "  Recorded once per hint; a later word supersedes an earlier one and",
     "  nothing is deleted. It shows in full only in your own crosscheck pilot",
     "  --mine. Others see it only inside totals for a whole past month: the",
@@ -145,6 +153,8 @@ const failed = (result: Extract<HubResult<unknown>, { ok: false }>): CliResult =
 interface Target {
   readonly ctx: HubContext;
   readonly identity: RepoIdentity;
+  /** The person's route at a terminal, the agent's without one (07 §13.13 HIGH-1). */
+  readonly via: HintOutcomeChannel;
 }
 
 const isUnknownRef = (result: HubResult<RecordedOutcome>): boolean => !result.ok && result.code === UNKNOWN_REF;
@@ -157,17 +167,17 @@ const record = async (
   outcome: HintOutcome,
   reason: string | undefined,
 ): Promise<CliResult> => {
-  const { ctx, identity } = target;
+  const { ctx, identity, via } = target;
   // HELD FIRST (07 §13.12, review H-A): today's delivery still held here is named by its own id,
   // so the word never lands on an older delivery of the same ref the hub already has.
   const posted = (await heldDeliveryIdOf(ctx, identity, ref)) ?? ref;
-  // The PERSON's route (07 §13.12): a word said at a terminal is never overturned by an agent's.
-  // An agent that shells out to this command writes as the person — attributed to the key, not prevented.
+  // At a terminal, the PERSON's route — never overturned by an agent's word; without one, the
+  // AGENT's (07 §13.13 HIGH-1): the agent's Bash tool runs this very command with the same key.
   const call = (): Promise<HubResult<RecordedOutcome>> =>
     postHintOutcome(
       ctx,
       { repo: identity.repoId, ref: posted, outcome, ...(reason === undefined ? {} : { reason }) },
-      "person",
+      via,
     );
   // POST FIRST (07 §13.11): held records are sent only when the hub does not know a ref held here.
   const answer = await answerAfterSendingHeld(
@@ -177,9 +187,11 @@ const record = async (
   if (answer.kind === "held") {
     return held(answer.why);
   }
-  return answer.result.ok
-    ? { stdout: outcomeRecordedLine(ref, answer.result.data), exitCode: EXIT_OK }
-    : failed(answer.result);
+  if (!answer.result.ok) {
+    return failed(answer.result);
+  }
+  const agentsWord = via === "agent" ? AGENT_WORD_LINE : "";
+  return { stdout: `${outcomeRecordedLine(ref, answer.result.data)}${agentsWord}`, exitCode: EXIT_OK };
 };
 
 /**
@@ -221,6 +233,7 @@ const runOutcome = async (
   argv: readonly string[],
   env: Env,
   cwd: string,
+  isInteractive: InteractiveProbe,
 ): Promise<CliResult> => {
   const args = parseOutcomeArgs(argv);
   if (args === null) {
@@ -249,14 +262,22 @@ const runOutcome = async (
     repoKey: repoKey(config.hubUrl, identity.repoId),
     now: () => new Date(),
   };
-  const target = { ctx, identity };
+  const target: Target = { ctx, identity, via: isInteractive() ? "person" : "agent" };
   return args.id === undefined
     ? recordRecent(target, command, args.reason)
     : record(target, args.id, COMMAND_OUTCOME[command], args.reason);
 };
 
-export const runFollowed = (argv: readonly string[], env: Env, cwd: string): Promise<CliResult> =>
-  runOutcome("followed", FOLLOWED_USAGE, argv, env, cwd);
+export const runFollowed = (
+  argv: readonly string[],
+  env: Env,
+  cwd: string,
+  isInteractive: InteractiveProbe = defaultInteractiveProbe,
+): Promise<CliResult> => runOutcome("followed", FOLLOWED_USAGE, argv, env, cwd, isInteractive);
 
-export const runOverrode = (argv: readonly string[], env: Env, cwd: string): Promise<CliResult> =>
-  runOutcome("overrode", OVERRODE_USAGE, argv, env, cwd);
+export const runOverrode = (
+  argv: readonly string[],
+  env: Env,
+  cwd: string,
+  isInteractive: InteractiveProbe = defaultInteractiveProbe,
+): Promise<CliResult> => runOutcome("overrode", OVERRODE_USAGE, argv, env, cwd, isInteractive);

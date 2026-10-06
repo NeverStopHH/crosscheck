@@ -6,8 +6,10 @@
  * beside the point for the task at hand. So this is the one pilot record an
  * agent may write — through `mark_hint_outcome` — and a person may write the
  * same thing with `crosscheck followed` / `crosscheck overrode`. Both are
- * attributed to the developer's key; nothing at the hub tells the two apart,
- * and nothing here claims to.
+ * attributed to the developer's key; the hub tells the two apart by the route
+ * a word arrived on (07 §13.12), and the CLI takes the person's route only at
+ * a terminal (§13.13 HIGH-1) — a rule backed by a TTY check, not a proof of
+ * who typed it.
  *
  * IT IS NOT A LABEL, and it never reaches `pilot_marks`. A label is a
  * person's verdict on whether an intervention was worth it, counted into
