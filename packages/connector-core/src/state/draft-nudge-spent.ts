@@ -30,15 +30,32 @@ const EntrySchema = z.object({
   at: z.string().min(1),
 });
 
-const LedgerSchema = z.object({
-  sessions: z.record(z.string(), EntrySchema).catch({}),
+type Entry = z.infer<typeof EntrySchema>;
+
+/** The file's shape only; each entry is judged on its own (readLedger). */
+const LedgerFileSchema = z.object({
+  sessions: z.record(z.string(), z.unknown()).catch({}),
 });
 
-type Ledger = z.infer<typeof LedgerSchema>;
+interface Ledger {
+  readonly sessions: Readonly<Record<string, Entry>>;
+}
 
+/**
+ * ENTRY BY ENTRY: one record a crash or an older writer mangled used to fail
+ * the whole map and take every other conversation's spent slot with it —
+ * each of them nudged again, and the next write made the loss permanent.
+ */
 const readLedger = async (home: string): Promise<Ledger> => {
-  const parsed = LedgerSchema.safeParse(await readJsonOrNull(draftNudgeSpentPath(home)));
-  return parsed.success ? parsed.data : { sessions: {} };
+  const parsed = LedgerFileSchema.safeParse(await readJsonOrNull(draftNudgeSpentPath(home)));
+  if (!parsed.success) {
+    return { sessions: {} };
+  }
+  const kept = Object.entries(parsed.data.sessions).flatMap(([key, value]) => {
+    const entry = EntrySchema.safeParse(value);
+    return entry.success ? [[key, entry.data] as const] : [];
+  });
+  return { sessions: Object.fromEntries(kept) };
 };
 
 /** The outcome this conversation's slot was spent on, or null. */

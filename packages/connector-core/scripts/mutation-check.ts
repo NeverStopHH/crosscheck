@@ -18359,6 +18359,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/sharing.test.ts`,
     because: "the line says the model is reachable because a kind that never ran answered 0 times",
   },
+  {
+    label: "one malformed spent-ledger entry erases every conversation's record",
+    file: `${CORE}/src/state/draft-nudge-spent.ts`,
+    from: "  return { sessions: Object.fromEntries(kept) };",
+    to: "  return { sessions: kept.length === Object.keys(parsed.data.sessions).length ? Object.fromEntries(kept) : {} };",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "every resumed conversation is nudged a second time, and the next write makes the loss permanent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18566,7 +18574,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 40
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 41
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

@@ -14,7 +14,7 @@ import { backlogOf } from "../src/briefing/draft-backlog.ts";
 import type { DraftBacklog } from "../src/briefing/draft-backlog.ts";
 import { renderDraftNudge } from "../src/briefing/draft-nudge.ts";
 import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE, renderBriefing } from "../src/briefing/render.ts";
-import { repoKey } from "../src/config/paths.ts";
+import { draftNudgeSpentPath, repoKey } from "../src/config/paths.ts";
 import {
   DRAFT_LISTING_CAP,
   DRAFT_NUDGE_MIN_AGE_HOURS,
@@ -756,6 +756,26 @@ describe("the nudge slot survives the session that spent it", () => {
 
     expect(await readNudgeSpent(home, `bound-${String(total - 1)}`)).toBe("delivered");
     expect(await readNudgeSpent(home, "bound-0")).toBeNull();
+  });
+
+  test("one malformed entry costs only itself, never every other session's record (review round 2, L3)", async () => {
+    // Arrange: a good record beside one a crash or an older writer mangled
+    const home = await makeHome("nudge-spent-entry");
+    cleanups.push(home);
+    await recordNudgeSpent(home, "kept-session", "delivered", new Date("2026-10-01T00:00:00.000Z"));
+    const ledger = (await Bun.file(draftNudgeSpentPath(home)).json()) as { sessions: Record<string, unknown> };
+    await Bun.write(
+      draftNudgeSpentPath(home),
+      JSON.stringify({ sessions: { ...ledger.sessions, broken: { outcome: "exploded", at: 7 } } }),
+    );
+
+    // Act
+    await recordNudgeSpent(home, "next-session", "nothing_due", new Date("2026-10-02T00:00:00.000Z"));
+
+    // Assert: the good entry is read, and survives the next write
+    expect(await readNudgeSpent(home, "kept-session")).toBe("delivered");
+    expect(await readNudgeSpent(home, "next-session")).toBe("nothing_due");
+    expect(await readNudgeSpent(home, "broken")).toBeNull();
   });
 });
 
