@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1778
+    # PRINTS: 1781
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -188,13 +188,13 @@ jobs:
     # PRINTS: packages/cli/src/cli/init.ts 5
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 11
-    # PRINTS: packages/cli/src/cli/outcome-render.ts 5
-    # PRINTS: packages/cli/src/cli/outcome.ts 15
+    # PRINTS: packages/cli/src/cli/outcome-render.ts 6
+    # PRINTS: packages/cli/src/cli/outcome.ts 16
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
     # PRINTS: packages/cli/src/cli/pilot-mark.ts 1
-    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 11
+    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 12
     # PRINTS: packages/cli/src/cli/pilot-mine.ts 1
     # PRINTS: packages/cli/src/cli/pilot-render.ts 35
     # PRINTS: packages/cli/src/cli/pilot.ts 3
@@ -617,8 +617,8 @@ jobs:
     # PRINTS: normalized-doc.ts 2
     # PRINTS: outcome-clause.ts 2
     # PRINTS: outcome-population.ts 40
-    # PRINTS: outcome-render.ts 5
-    # PRINTS: outcome.ts 15
+    # PRINTS: outcome-render.ts 6
+    # PRINTS: outcome.ts 16
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
@@ -632,7 +632,7 @@ jobs:
     # PRINTS: pilot-label.ts 8
     # PRINTS: pilot-mark.ts 6
     # PRINTS: pilot-marks.ts 2
-    # PRINTS: pilot-mine-render.ts 11
+    # PRINTS: pilot-mine-render.ts 12
     # PRINTS: pilot-mine.ts 1
     # PRINTS: pilot-outcome-figures.ts 5
     # PRINTS: pilot-render.ts 35

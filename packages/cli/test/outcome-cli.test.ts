@@ -44,6 +44,7 @@ import {
   agentHostLine,
   outcomeRecordedLine,
 } from "../src/cli/outcome-render.ts";
+import { FOLLOWED_USAGE, OVERRODE_USAGE } from "../src/cli/outcome.ts";
 import { MINE_NOT_SERVED_LINE } from "../src/cli/pilot-mine-render.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -634,6 +635,29 @@ describe("07 §13.13 HIGH-1: with no terminal, the word is the agent's", () => {
       replaced: "followed",
       stands: "overrode",
     });
+  });
+});
+
+describe("07 §13.14 LOW-1: the agent's-word line says what 'not a terminal' was", () => {
+  test("the line names the three ways input is not a terminal, and where to type it instead", () => {
+    // Assert — Claude Code's `!` looks like a terminal to the person and is not one to this command
+    expect(AGENT_WORD_LINE).toBe(
+      "recorded as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's `!`); type it in your own shell for it to stand as yours\n",
+    );
+  });
+
+  test("the usage says the same of both commands", () => {
+    // Arrange
+    const said = [
+      "  Typed in your own shell it is your word, which your agent's never",
+      "  overturns. Where its input is not a terminal (an agent's tool, a pipe,",
+      "  or Claude Code's `!`), or inside an agent's tool that marks its own",
+      "  commands, it is your agent's.",
+    ].join("\n");
+
+    // Assert
+    expect(FOLLOWED_USAGE).toContain(said);
+    expect(OVERRODE_USAGE).toContain(said);
   });
 });
 

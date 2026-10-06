@@ -38,7 +38,9 @@ export const monthOf = (iso: string): string => {
  * 07 §13.13 (HIGH-1): said with no terminal — an agent's Bash tool — the word is the agent's,
  * and the person is told how to make it theirs.
  */
-export const AGENT_WORD_LINE = "recorded as your agent's word — run it in a terminal for it to stand as yours\n";
+export const AGENT_WORD_LINE =
+  // §13.14 LOW-1: "run it in a terminal" misled — Claude Code's `!` looks like one and is not one to this command
+  "recorded as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's `!`); type it in your own shell for it to stand as yours\n";
 
 /**
  * 07 §13.14 (MEDIUM-2): said at a terminal that an agent host's marker says is its agent's — a pty the

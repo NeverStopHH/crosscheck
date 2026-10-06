@@ -19388,6 +19388,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person cannot tell which variable to look for in the terminal they typed it in",
   },
+  // ── 07 §13.14, round-6 LOW-1: what "not a terminal" was ──
+  {
+    label: "the agent's-word line tells the person to run it in a terminal again",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's `!`); type it in your own shell for it to stand as yours",
+    to: "run it in a terminal for it to stand as yours",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "a person who used Claude Code's `!` did run it in what looked like a terminal, and cannot tell why it is the agent's",
+  },
+  {
+    label: "the usage never says what 'not a terminal' was",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: '    "  overturns. Where its input is not a terminal (an agent\'s tool, a pipe,",\n    "  or Claude Code\'s `!`), or inside an agent\'s tool that marks its own",\n    "  commands, it is your agent\'s.",',
+    to: '    "  overturns; run with no terminal (by an agent) it is your agent\'s.",',
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the usage promises the person's word to anything that looks like a terminal",
+  },
+  {
+    label: "the --mine footer credits the commands to the person wherever they ran",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's `!`)",
+    to: "by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode)",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the person reads a word their agent's tool typed as their own",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19474,12 +19499,12 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 29
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 31
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 10
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 11
  * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1

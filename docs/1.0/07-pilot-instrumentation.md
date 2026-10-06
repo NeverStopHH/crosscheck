@@ -1326,7 +1326,7 @@ nothing twice. **The person's door is behind the TTY gate** (corrected in §13.1
 `crosscheck followed` always took it, so an agent's Bash tool wrote as the person). `crosscheck followed /
 overrode` take the person's route only with a terminal — the evidence `crosscheck noise` and `pin` use; with
 none they take the AGENT's route and say "recorded as your agent's word — run it in a terminal for it to stand
-as yours". That is a rule backed by a TTY check — and, since §13.14 MEDIUM-2, by deny-only agent-host markers —
+as yours" (reworded in §13.14 LOW-1). That is a rule backed by a TTY check — and, since §13.14 MEDIUM-2, by deny-only agent-host markers —
 not a wall. It catches a command whose input is not a terminal, and one run at a pty inside a host that marks
 its agent's commands (§13.14 lists them). It does not catch keystrokes typed into the person's own terminal
 (tmux send-keys), a pty in a host with no documented marker (VS Code's agent mode among them), an agent that
@@ -1573,3 +1573,11 @@ passes as the person at a pty until its host documents a marker. Beyond any mark
 person's own terminal (tmux send-keys), an agent that unsets its host's marker, and the key posted with curl.
 If a host ever sets its marker in the person's own terminal too, that person's word is recorded as the agent's
 and the line names the variable: the gate fails closed.
+
+*LOW-1 — "run it in a terminal" misled.* A person who typed `!crosscheck followed` in Claude Code did run it
+in what looks like a terminal, and was told to run it in one. The line now says what was missing: "recorded
+as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's
+`!`); type it in your own shell for it to stand as yours". The usage says the same, and `--mine`'s footer
+says the commands are the person's only when typed in their own shell: "recorded with your key — by you
+(crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those
+commands run by an agent's tool, a pipe or Claude Code's `!`)".

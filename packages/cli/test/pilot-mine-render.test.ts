@@ -132,6 +132,16 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     );
   });
 
+  test("round-6 LOW-1: the footer says which of the commands are yours — typed in your own shell", () => {
+    // Act
+    const out = renderMyOutcomes(viewSince("2026-08-10T12:00:00.000Z"));
+
+    // Assert
+    expect(out).toContain(
+      "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's `!`); noise is your own label (crosscheck noise)\n",
+    );
+  });
+
   test("the footer's promise names both shared totals, their viewer-independent minimums, and the team of three (H1)", () => {
     // Act
     const out = renderMyOutcomes(viewSince("2026-08-10T12:00:00.000Z"));
