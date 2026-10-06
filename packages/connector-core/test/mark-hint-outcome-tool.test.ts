@@ -725,4 +725,26 @@ describe("the source credit on the wire (review #10)", () => {
     expect(older.data?.yourWork).toEqual({ unreadable: true });
     expect(older.data?.repo).toBe(REPO_ID);
   });
+
+  test("round-6 HIGH-1: a source's helpful count is optional, and when a hub sends one it is a count", () => {
+    // Arrange
+    const ken = { source: "Ken", received: 2, followed: 1, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 0 };
+    const withSource = (source: Record<string, unknown>): Record<string, unknown> => ({
+      ...view({ followed: null, withheld: "below_minimums" }),
+      received: 2,
+      followed: 1,
+      overrode: 1,
+      bySource: [source],
+    });
+
+    // Act
+    const older = MyHintOutcomesSchema.safeParse(withSource(ken));
+    const counted = MyHintOutcomesSchema.safeParse(withSource({ ...ken, helpful: 1 }));
+    const word = MyHintOutcomesSchema.safeParse(withSource({ ...ken, helpful: "one" }));
+
+    // Assert — an older hub sends none; a non-count would print as the person's label
+    expect(older.success && older.data.bySource[0]?.helpful).toBeUndefined();
+    expect(counted.success && counted.data.bySource[0]?.helpful).toBe(1);
+    expect(word.success).toBe(false);
+  });
 });

@@ -86,8 +86,8 @@ describe("GET /api/hint-outcomes/mine", () => {
     // Assert
     expect(view).toMatchObject(tally({ received: 3, followed: 1, overrode: 1, noise: 1 }));
     expect(view["bySource"]).toEqual([
-      { source: "Ken", ...tally({ received: 2, followed: 1, overrode: 1 }) },
-      { source: "Mike", ...tally({ received: 1, noise: 1 }) },
+      { source: "Ken", helpful: 0, ...tally({ received: 2, followed: 1, overrode: 1 }) },
+      { source: "Mike", helpful: 0, ...tally({ received: 1, noise: 1 }) },
     ]);
     expect(view["reasons"]).toEqual([{ outcome: "overrode", reason: OVERRIDE_REASON, source: "Ken" }]);
   });
@@ -303,7 +303,7 @@ describe("GET /api/hint-outcomes/mine", () => {
 
     // Assert — Ken's context and claim: two hints from Ken, the context followed, nothing left unmarked of it
     const fromKen = (view["bySource"] as Record<string, unknown>[]).find((source) => source["source"] === "Ken");
-    expect(fromKen).toEqual({ source: "Ken", ...tally({ received: 2, followed: 1, unmarked: 1 }) });
+    expect(fromKen).toEqual({ source: "Ken", helpful: 0, ...tally({ received: 2, followed: 1, unmarked: 1 }) });
     expect(view).toMatchObject(tally({ received: 3, followed: 1, unmarked: 2 }));
   });
 

@@ -19233,6 +19233,55 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "--mine --days 7 counts every intervention since the pilot began",
   },
+  // ── 07 §13.14, round-6 HIGH-1: the helpful line — the person's own label, beside the buckets ──
+  {
+    label: "the helpful line counts a helpful the person later took back with noise",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      COALESCE(label_word = 'helpful', false) AS helpful_label",
+    to: "      COALESCE(has_helpful, false) AS helpful_label",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a label the person replaced still reads as their verdict",
+  },
+  {
+    label: "--mine counts every delivery as helpful",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      count(*) FILTER (WHERE st.helpful_label)::int AS helpful",
+    to: "      count(*)::int AS helpful",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person is shown helpful labels they never gave",
+  },
+  {
+    label: "a source's helpful count is never summed",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      helpful: current.helpful + Number(row.helpful),",
+    to: "      helpful: current.helpful,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "every teammate's line says the person called none of their hints helpful",
+  },
+  {
+    label: "the total helpful count is never summed",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  const helpful = rows.reduce((sum, row) => sum + Number(row.helpful), 0);",
+    to: "  const helpful = 0;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's own total of helpful labels reads 0",
+  },
+  {
+    label: "--mine never prints the helpful line",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "          ...(source.helpful === undefined ? [] : [`${INDENT}${INDENT}helpful (your label) ${String(source.helpful)}`]),\n",
+    to: "\n",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the helpful label the person gave is recorded and never shown back to them",
+  },
+  {
+    label: "a hub's helpful that is not a count is accepted",
+    file: `${CORE}/src/http/hint-outcomes.ts`,
+    from: "  helpful: CountSchema.optional(),",
+    to: "  helpful: z.unknown().optional(),",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "any text a hub sends prints as the person's own label count",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19323,7 +19372,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 9
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 10
  * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
@@ -19468,7 +19517,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 18
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 19
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -19557,7 +19606,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
- * PRINTS: packages/server/test/hint-outcomes.test.ts 55
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 59
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

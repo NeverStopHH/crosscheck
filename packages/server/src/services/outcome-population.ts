@@ -236,7 +236,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       ORDER BY l.at DESC, l.id DESC LIMIT 1
     ) lab ON true
   ), stated AS (
-    SELECT la.id, la.recipient, la.source_id, la.has_helpful,
+    SELECT la.id, la.recipient, la.source_id, la.has_helpful, la.label_word,
            said.word, said.reason, said.at AS outcome_at, said.reasserted, said.by_person
     FROM labelled la
     LEFT JOIN LATERAL (
@@ -264,7 +264,10 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     SELECT id, recipient, source_id, outcome_at,
       CASE WHEN vetoed THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state,
       CASE WHEN vetoed THEN NULL ELSE reason END AS reason,
-      COALESCE(reasserted, false) AS reasserted
+      COALESCE(reasserted, false) AS reasserted,
+      -- the person's newest label is helpful: read by the person's own view alone, beside the
+      -- buckets — the team line and the credit never select it (round-6 HIGH-1, the helpful line)
+      COALESCE(label_word = 'helpful', false) AS helpful_label
     FROM (
       SELECT st.*, (NOT COALESCE(st.by_person, false) AND st.word = 'not_relevant_now' AND st.has_helpful) AS vetoed
       FROM stated st

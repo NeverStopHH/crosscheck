@@ -656,6 +656,33 @@ describe("round-6 HIGH-1: a helpful label lives on the label axis, never deletin
     expect(ken["yourWork"]).toMatchObject({ followed: 5, withheld: null });
     expect(team).toMatchObject({ withheld: null, figures: { followed: 9, overrode: 4, unmarked: 8 } });
   });
+
+  test("the helpful line: the person's own labels, per source, and nothing new reaches the credit or the team line", async () => {
+    // Arrange — the same July
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    crowd.harness.clock.advanceSeconds(60);
+    await helpful(crowd, crowd.nick, hintDeliveryId(NICK_SESSION, KEN_CONTEXT));
+    await helpful(crowd, crowd.mike, hintDeliveryId(MIKE_SESSION, KEN_CLAIM));
+    await recordPersonOutcome(crowd, crowd.nick, { ref: LENA_CONTEXT, outcome: "overrode", reason: "kept my own header parser" });
+    crowd.harness.clock.advanceSeconds(60);
+    await helpful(crowd, crowd.nick, hintDeliveryId(NICK_SESSION, LENA_CONTEXT));
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const nick = ((await (await readMine(crowd, crowd.nick)).json()) as { data: Record<string, unknown> }).data;
+    const ken = ((await (await readMine(crowd, crowd.ken)).json()) as { data: Record<string, unknown> }).data;
+    const team = await outcomesOf(crowd);
+
+    // Assert — Nick's two labels on his own line; Mike's label is Mike's alone; neither the
+    // credit nor the team line carries a helpful count
+    const sources = nick["bySource"] as readonly { readonly source: string; readonly helpful: number }[];
+    expect(nick["helpful"]).toBe(2);
+    expect(sources.map((row) => [row.source, row.helpful])).toEqual([["Anna", 0], ["Ken", 1], ["Lena", 1], ["Mike", 0]]);
+    expect(ken["helpful"]).toBe(0);
+    expect(JSON.stringify(ken["yourWork"])).not.toContain("helpful");
+    expect(JSON.stringify(team)).not.toContain("helpful");
+  });
 });
 
 describe("labels are append-only (review H-B)", () => {

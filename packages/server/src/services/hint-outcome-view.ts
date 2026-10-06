@@ -54,6 +54,8 @@ const MS_PER_DAY = 86_400_000;
 export interface SourceTally extends HintOutcomeTally {
   /** The teammate whose work the hints pointed at; null when it is not this repo's or not found. */
   readonly source: string | null;
+  /** Of `received`, those whose newest label of the caller's own is helpful — beside the buckets, never in them (07 §13.14). */
+  readonly helpful: number;
 }
 
 export interface OutcomeReason {
@@ -66,6 +68,8 @@ export interface OutcomeReason {
 }
 
 export interface MyHintOutcomes extends HintOutcomeTally {
+  /** The caller's own helpful labels, beside the buckets (07 §13.14). */
+  readonly helpful: number;
   readonly repo: string;
   readonly days: number;
   readonly sinceIso: string;
@@ -106,6 +110,7 @@ type TallyRow = {
   readonly source: string | null;
   readonly state: DeliveryState;
   readonly n: number;
+  readonly helpful: number;
 };
 
 type ReasonRow = {
@@ -121,15 +126,20 @@ const bySourceName = (left: SourceTally, right: SourceTally): number =>
 
 const foldTallies = (
   rows: readonly TallyRow[],
-): { readonly total: HintOutcomeTally; readonly sources: readonly SourceTally[] } => {
+): { readonly total: HintOutcomeTally & { readonly helpful: number }; readonly sources: readonly SourceTally[] } => {
   const sources = new Map<string, SourceTally>();
   for (const row of rows) {
     const key = row.source_id ?? "";
-    const current = sources.get(key) ?? { source: row.source, ...EMPTY_TALLY };
-    sources.set(key, { ...addToTally(current, row.state, row.n), source: current.source });
+    const current = sources.get(key) ?? { source: row.source, helpful: 0, ...EMPTY_TALLY };
+    sources.set(key, {
+      ...addToTally(current, row.state, row.n),
+      source: current.source,
+      helpful: current.helpful + Number(row.helpful),
+    });
   }
-  const total = rows.reduce((sum, row) => addToTally(sum, row.state, row.n), EMPTY_TALLY);
-  return { total, sources: [...sources.values()].sort(bySourceName) };
+  const tally = rows.reduce((sum, row) => addToTally(sum, row.state, row.n), EMPTY_TALLY);
+  const helpful = rows.reduce((sum, row) => sum + Number(row.helpful), 0);
+  return { total: { ...tally, helpful }, sources: [...sources.values()].sort(bySourceName) };
 };
 
 const readTallies = async (
@@ -139,7 +149,8 @@ const readTallies = async (
 ): Promise<readonly TallyRow[]> => {
   const rows = await deps.db.execute<TallyRow>(sql`
     ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
-    SELECT st.source_id, d.name AS source, st.state, count(*)::int AS n
+    SELECT st.source_id, d.name AS source, st.state, count(*)::int AS n,
+      count(*) FILTER (WHERE st.helpful_label)::int AS helpful
     FROM states st LEFT JOIN developers d ON d.id = st.source_id
     GROUP BY st.source_id, d.name, st.state`);
   return rows.rows;

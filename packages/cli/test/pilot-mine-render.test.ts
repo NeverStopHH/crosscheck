@@ -156,6 +156,26 @@ describe("renderMyOutcomes' window under a paused pilot (review M3)", () => {
   });
 });
 
+describe("renderMyOutcomes' helpful line (round-6 HIGH-1)", () => {
+  const ken = { source: "Ken", received: 2, followed: 1, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 0 };
+
+  test("the person's own helpful labels print on their own line under the source, never as a bucket", () => {
+    // Act
+    const out = renderMyOutcomes({ ...viewSince("2026-08-10T12:00:00.000Z"), received: 2, followed: 1, overrode: 1, bySource: [{ ...ken, helpful: 1 }] });
+
+    // Assert
+    expect(out).toContain("  from Ken: 2 — followed 1 · overrode 1 · not relevant now 0 · noise 0 · unmarked 0\n    helpful (your label) 1\n");
+  });
+
+  test("an older hub's source with no helpful count prints no helpful line", () => {
+    // Act
+    const out = renderMyOutcomes({ ...viewSince("2026-08-10T12:00:00.000Z"), received: 2, followed: 1, overrode: 1, bySource: [ken] });
+
+    // Assert
+    expect(out).not.toContain("helpful (your label)");
+  });
+});
+
 describe("renderMyOutcomes' reasons (round-5 LOW-6)", () => {
   test("the sentence of a noise said again is listed as said again", () => {
     // Act

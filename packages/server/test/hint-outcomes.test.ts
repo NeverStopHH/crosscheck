@@ -1078,6 +1078,58 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     expect(await mineOf(world)).toMatchObject({ noise: 0, followed: 1 });
   });
 
+  test("round-6 HIGH-1: --mine counts the person's own helpful labels on their own line, beside the buckets", async () => {
+    // Arrange — the agent followed Ken's context; the person called it helpful
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+
+    // Act
+    const view = await mineOf(world);
+    const ken = ((await (await readMine(world, world.ken)).json()) as { data: Record<string, unknown> }).data;
+
+    // Assert — in the person's own view only, and never one of the buckets
+    expect(view).toMatchObject({ received: 3, followed: 1, unmarked: 2, helpful: 1 });
+    expect(view["bySource"]).toContainEqual(expect.objectContaining({ source: "Ken", followed: 1, helpful: 1 }));
+    expect(ken).toMatchObject({ helpful: 0 });
+  });
+
+  test("round-6 HIGH-1: a helpful the person later took back with noise is no longer on their helpful line", async () => {
+    // Arrange — helpful on the prompt hint; later, noise on its tripwire twin (one label per delivery)
+    const world = await createOutcomeWorld();
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", KEN_CONTEXT, "tripwire")],
+    });
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, deliveryIdFor(NICK_SESSION, KEN_CONTEXT, "tripwire"));
+
+    // Act
+    const view = await mineOf(world);
+
+    // Assert — the newest label is the one the person stands by
+    expect(view).toMatchObject({ noise: 1, helpful: 0 });
+  });
+
   test("round-6 HIGH-1: the person's own not_relevant_now is never vetoed by their own helpful", async () => {
     // Arrange — the person said not relevant now, then labelled the hint helpful
     const world = await createOutcomeWorld();

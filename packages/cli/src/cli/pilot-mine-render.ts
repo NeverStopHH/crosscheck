@@ -79,9 +79,11 @@ const receivedLines = (view: MyHintOutcomes): readonly string[] =>
     ? ["nothing reached you unasked on this repo in this window"]
     : [
         `hints that reached you unasked: ${String(view.received)} — ${tallyWords(view)}`,
-        ...view.bySource.map(
-          (source) => `${INDENT}from ${sourceName(source.source)}: ${String(source.received)} — ${tallyWords(source)}`,
-        ),
+        ...view.bySource.flatMap((source) => [
+          `${INDENT}from ${sourceName(source.source)}: ${String(source.received)} — ${tallyWords(source)}`,
+          // 07 §13.14 (round-6 HIGH-1): the person's own verdict, on its own line — never one of the buckets
+          ...(source.helpful === undefined ? [] : [`${INDENT}${INDENT}helpful (your label) ${String(source.helpful)}`]),
+        ]),
         ...(view.bySourceBeyondList > 0
           ? [`${INDENT}(+${plural(view.bySourceBeyondList, "more teammate")}, counted above, not listed)`]
           : []),

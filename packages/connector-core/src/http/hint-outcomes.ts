@@ -104,6 +104,8 @@ const SourceTallySchema = z.looseObject({
   /** The teammate's display name — their own text — or null when unknown. */
   source: z.string().nullable(),
   ...TallyShape,
+  /** 07 §13.14 (round-6 HIGH-1): the caller's own helpful labels, beside the buckets. Absent from an older hub. */
+  helpful: CountSchema.optional(),
 });
 
 export type SourceTally = z.infer<typeof SourceTallySchema>;

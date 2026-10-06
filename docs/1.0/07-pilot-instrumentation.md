@@ -1523,3 +1523,11 @@ axis it may only (a) cancel an older noise of the person's — noise stands only
 and (b) veto an AGENT's `not_relevant_now` to unmarked, the answer saying the person's helpful label stands
 (the P3 case). The person's own outcome stands regardless of order, an agent's followed or overrode stays the
 outcome under a helpful label, and the write path's answer follows the same rule.
+
+*The helpful line.* What the person called helpful is now shown back to them: `--mine` prints, under each
+source, `helpful (your label) N` — the deliveries from that teammate whose newest label of the person's own is
+helpful (a helpful later taken back with noise is not counted). It sits beside the buckets, never in them: the
+buckets still add up to `received`. The wire carries `helpful` per source and in total, optional in the
+connector's schema (absent from an older hub, which prints no such line; a value that is not a count rejects
+the view like any other count). It leaks nothing new: it is counted from the caller's own deliveries only, and
+the team line and the source credit never select it.
