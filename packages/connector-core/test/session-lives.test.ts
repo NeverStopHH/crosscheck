@@ -561,9 +561,11 @@ describe("a heal asked from a hook in another repo (review finding 7)", () => {
 
     // Act
     const healed = await healer({ sessionId: life.crosscheckSessionId, cause: "session_ended" }, Date.now() + BUDGET_MS);
+    await captureTarget(fx, "src/after-heal.ts");
     await flushAsHook(fx);
 
-    // Assert: the hub binds the next life to the session's repo, where its work context landed
+    // Assert: the hub binds the next life to the session's repo, where its
+    // owed work context was paid ahead of the next edit
     const next = `${life.crosscheckSessionId}~r1`;
     expect(healed).toMatchObject({ outcome: "healed", refusedSessionId: life.crosscheckSessionId, sessionId: next });
     const rows = await raw<{ repo: string }>("select repo from agent_sessions where id = $1", [next]);
@@ -730,6 +732,9 @@ describe("a heal that moves the state while SessionEnd runs", () => {
     const resumed = await register(fx);
     await captureTarget(fx, "src/after-resume.ts");
     await flushAsHook(fx);
+    // ...and SessionStart's reap: the healed life's end waited for the work
+    // context it was owed (spool/owed-work-context.ts), deferred to its marker
+    await reapAsSessionStart(fx);
 
     // Assert: the healed life closed, the resume a fresh one, both orders whole
     const healedLife = `${k.crosscheckSessionId}~r1`;
@@ -745,52 +750,54 @@ describe("a heal that moves the state while SessionEnd runs", () => {
 });
 
 /**
- * THE WORK CONTEXT BEFORE THE SWAP (review-2 LOW-4). The heal switched the
- * state to the next life and only then spooled its work context. In between,
- * a parallel hook could capture a target of the new life ahead of it — the
- * hub refuses a target whose work context it has not seen — and a SessionEnd
- * could compare the state, find the new life, count an empty backlog and end
- * it while the heal's re-send was still to go under it. With the work context
- * on disk before the state can name the life, the target lands behind it and
- * SessionEnd counts it and defers.
+ * A SessionEnd BETWEEN A HEAL'S SWITCH AND ITS RE-SEND (review-2 LOW-4,
+ * round 6). The heal switches the state to the next life and owes its work
+ * context in one locked step (flows/heal-session.ts); the flush that asked
+ * for the heal then re-sends its refused batch under that life. A SessionEnd
+ * landing in between found the new life, counted an empty backlog and ended
+ * it — and the re-send under an ended life was refused as a late write,
+ * another conversation's backlog with it. The owed work context counts as
+ * undelivered, so that SessionEnd defers, and the re-send lands.
  */
-describe("a heal that lands the next life", () => {
-  test("has its work context on disk before the state can name it", async () => {
-    // Arrange: a life the hub ended; the state's lock held, so the walk's
-    // switch to the next life has to wait for it
-    const fx = await fixture("wc-before-swap");
+describe("a SessionEnd between a heal's switch and its re-send", () => {
+  test("defers the healed life's end, and the re-send under it lands", async () => {
+    // Arrange: life K delivered, then another conversation's backlog on disk,
+    // both conversations' lives ended by the hub
+    const fx = await fixture("end-before-resend");
     const k = await register(fx);
     await flushAsHook(fx);
-    await endSession(fx.hub, k.crosscheckSessionId);
-    const next = `${k.crosscheckSessionId}~r1`;
-    const isSpooled = async (): Promise<boolean> =>
-      (await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines.some(
-        (line) => line.includes('"work_context"') && line.includes(`"wc_${next}"`),
-      );
-    let healing: Promise<unknown> = Promise.resolve();
-
-    // Act: start the heal while the lock is held; watch the spool until the
-    // walk can only be waiting on the switch, then let it go
-    const spooledBeforeSwap = await withLock(
-      sessionStateLockPath(fx.home, fx.hostSessionKey),
-      false,
-      async () => {
-        healing = healerFor(fx)({ sessionId: k.crosscheckSessionId, cause: "session_ended" }, Date.now() + BUDGET_MS);
-        for (let waited = 0; waited < SWAP_WAIT_MS; waited += SWAP_POLL_MS) {
-          if (await isSpooled()) {
-            return true;
-          }
-          await Bun.sleep(SWAP_POLL_MS);
-        }
-        return false;
-      },
+    const otherHost = `${fx.hostSessionKey}-other`;
+    const other = await register(fx, fx.hub, otherHost);
+    await appendRecords(
+      fx.home,
+      fx.key,
+      otherHost,
+      [targetRecord(other.workContextId, "file", "src/other.ts", producerOf(other.crosscheckSessionId), new Date())],
+      new Date(),
     );
-    const healed = await healing;
+    await endSession(fx.hub, k.crosscheckSessionId);
+    await endSession(fx.hub, other.crosscheckSessionId);
+    const healed = await healerFor(fx)({ sessionId: k.crosscheckSessionId, cause: "session_ended" }, Date.now() + BUDGET_MS);
+    const healedLife = `${k.crosscheckSessionId}~r1`;
 
-    // Assert
-    expect(spooledBeforeSwap).toBe(true);
-    expect(healed).toMatchObject({ outcome: "healed", sessionId: next });
-    expect((await stateOf(fx))?.crosscheckSessionId).toBe(next);
+    // Act: SessionEnd of the life it read, then the heal's re-send under the healed life
+    const ended = await endSessionFlow({
+      home: fx.home,
+      repoKey: fx.key,
+      hub: fx.hub,
+      hostSessionKey: fx.hostSessionKey,
+      crosscheckSessionId: k.crosscheckSessionId,
+      developerId,
+      flushBudgetMs: 0,
+      now: () => new Date(),
+    });
+    await flushSpool(fx.hub, { sessionId: healedLife, developerId }, BUDGET_MS);
+
+    // Assert: the end waited, and the backlog went under a life still open
+    expect(healed).toMatchObject({ outcome: "healed", sessionId: healedLife });
+    expect(ended.ended).toBe(false);
+    expect(await targetsOf(other.workContextId)).toEqual(["src/other.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
   });
 });
 

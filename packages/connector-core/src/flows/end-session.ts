@@ -30,6 +30,7 @@ import {
 import { endSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { readSessionSpool } from "../spool/files.ts";
+import { readOwedWorkContext } from "../spool/owed-work-context.ts";
 import { flushSpool } from "../spool/flush.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { seqAt } from "../capture/seq.ts";
@@ -166,11 +167,15 @@ export const endSessionFlow = async (
 
   // Per SESSION, not per repo: another session's backlog says nothing about
   // whether this one's work has arrived. Counted once the state is gone, so
-  // a record a sibling spooled in between — a healed life's work context —
-  // holds the end back too.
-  const undelivered = (
-    await readSessionSpool(input.home, input.repoKey, slug)
-  ).lines.length;
+  // a record a sibling spooled in between holds the end back too — and so
+  // does a work context still OWED for the life this end closes or the one a
+  // heal moved it to (spool/owed-work-context.ts): ended now, the heal's
+  // re-send under that life would be refused as a late write.
+  const owed = await readOwedWorkContext(input.home, input.repoKey, slug);
+  const owesEnding =
+    owed !== null && (owed.sessionId === input.crosscheckSessionId || owed.sessionId === healed?.sessionId);
+  const undelivered =
+    (await readSessionSpool(input.home, input.repoKey, slug)).lines.length + (owesEnding ? 1 : 0);
   if (undelivered > 0) {
     // Telling the hub "done" now would publish a finished session while
     // records it produced are still on disk. The marker hands the end to

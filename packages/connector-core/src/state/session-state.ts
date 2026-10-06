@@ -914,6 +914,19 @@ export const allocateSeq = async (
     },
   );
 
+/**
+ * A step that must not interleave with the state's own writers — a heal's
+ * switch, a debt it settles — under the state file's lock, with the same
+ * patience as every acquisition here. `fallback` is the answer when the lock
+ * stays busy.
+ */
+export const underSessionStateLock = <T>(
+  home: string,
+  hostSessionKey: string,
+  fallback: T,
+  action: () => Promise<T>,
+): Promise<T> => withSessionStateLock(sessionStateLockPath(home, hostSessionKey), fallback, action);
+
 /** A life SessionEnd found the state on that is not the one it ends, and that life's end position. */
 export interface MovedLife {
   readonly crosscheckSessionId: string;

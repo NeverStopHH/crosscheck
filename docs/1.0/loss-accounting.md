@@ -370,6 +370,19 @@ goes on past it, its heal clears the flag, its end lifts the hold, and a held re
 counted `expired`; a heal sends the life's work context AHEAD of the batch it re-sends (`flush-heal.ts`), the
 spooled copy a duplicate at worst; and every heal clears the seen-set, the same id's too.
 
+**The work context a heal owes is a persisted debt** (review-2 round 6, HIGH-1). That ahead copy rode only the
+healing flush's one re-send: any failure of that POST — a 503, a timeout, no room left, or a full batch plus the
+work context past `MAX_INGEST_BATCH` (100 + 1, refused whole) — left the backlog to a flush with no work context
+ahead of it, and every record was refused `author_unknown` and spent: 100 of 100, 150 of 150, 3 of 3 with one
+503. The heal now writes the debt — `<slug>.owed-wc` beside the spool, in the same locked step that switches the
+state (`spool/owed-work-context.ts`) — and every drain that sends a batch carrying the life's records sends the
+owed work context at its head, the batch sized one short of the limit, until the hub's answer for it is accepted
+or a duplicate. The tail copy is gone (it could also revert a status `set_intent` set since). Beside the spool,
+not in the state: SessionEnd deletes the state while the records the debt is owed for may still wait on disk, and
+SessionEnd counts an open debt for the life it ends — or the one a heal moved it to — as undelivered and defers.
+The life's own records refused `author_unknown` while its debt is open are kept, never spent. Reap removes a debt
+with its spool, or once no live session and no spool can ever pay it.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

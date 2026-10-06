@@ -26,6 +26,7 @@
  * never registered and the healer registered AS ITSELF re-sends everything
  * unchanged: same producer, same session, same epoch.
  */
+import { MAX_INGEST_BATCH } from "../constants.ts";
 import { bodyNamesItsSession, withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
@@ -33,6 +34,7 @@ import type { HubContext } from "../http/client.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
 import { conversationOf } from "../state/session-lineage.ts";
+import { isTaken } from "./owed-work-context.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
 
@@ -184,6 +186,8 @@ export interface HealInput {
    * (spool/batch-losses.ts).
    */
   readonly beforeWalk?: (sealed: readonly number[]) => Promise<void>;
+  /** Settles the work context a heal owes once the hub took it (spool/owed-work-context.ts). */
+  readonly settleOwed?: (record: Record<string, unknown>) => Promise<void>;
 }
 
 /**
@@ -293,14 +297,17 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   if (roomMs <= 0) {
     return null;
   }
-  // THE LIFE'S WORK CONTEXT GOES FIRST (review-2 MEDIUM-1). Every record
-  // re-sent here names it, and the copy the heal spooled sits at the TAIL,
-  // behind them: a life whose work context was spent before the heal —
-  // refused while the hub did not know the life — had every re-sent edit
-  // refused again. Ahead of them it is a duplicate at worst.
+  // THE LIFE'S WORK CONTEXT GOES FIRST (review-2 MEDIUM-1): every record
+  // re-sent here names it. It is the debt the heal wrote down; this re-send
+  // pays it when it lands, and when it does not — the hub's batch limit, a
+  // 503, a timeout — the debt waits for the next batch that carries the
+  // life's records (review-2 round 6, HIGH-1), and so does this batch.
   const ahead = result.workContext === undefined
     ? []
     : [withProducer(result.workContext, input.developerId, heal.sessionId)];
+  if (ahead.length + resent.length > MAX_INGEST_BATCH) {
+    return null;
+  }
   const again = await postRecords(
     { ...input.ctx, timeoutMs: Math.min(input.ctx.timeoutMs, roomMs) },
     [
@@ -308,7 +315,11 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
       ...resent.map((index) => withProducer(input.spooled[index] ?? {}, input.developerId, heal.sessionId)),
     ],
   );
-  return again.ok
-    ? { summary: merged(input.first, resent, again.data, ahead.length), heal, asked: true, counted }
-    : null;
+  if (!again.ok) {
+    return null;
+  }
+  if (result.workContext !== undefined && isTaken(again.data.results?.find((answer) => answer.index === 0))) {
+    await input.settleOwed?.(result.workContext);
+  }
+  return { summary: merged(input.first, resent, again.data, ahead.length), heal, asked: true, counted };
 };

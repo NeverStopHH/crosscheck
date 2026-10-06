@@ -71,6 +71,7 @@ import {
   spoolDataPath,
   spoolDir,
   spoolFlushLockPath,
+  spoolOwedWorkContextPath,
   PENDING_LIFE_SUFFIX,
 } from "../config/paths.ts";
 import {
@@ -250,6 +251,9 @@ const removeSessionData = async (
   // could be read against, and skipping records is the unrecoverable direction.
   await removeFile(spool.cursorPath);
   await removeFile(spool.dataPath);
+  // ...and any work context still owed for the spool's lives: the records it
+  // was owed for are gone with the file (spool/owed-work-context.ts).
+  await removeFile(spoolOwedWorkContextPath(home, key, spool.slug));
   await rescueTail(home, key, spool, handle, now);
 };
 
@@ -582,17 +586,34 @@ const total = (results: readonly ReapResult[]): ReapResult =>
     NOTHING_REAPED,
   );
 
-const dropSlugs = async (
+const slugsWithSuffix = async (
   home: string,
   key: string,
+  suffix: string,
 ): Promise<readonly string[]> => {
   try {
     return (await readdir(spoolDir(home, key)))
-      .filter((name) => name.endsWith(DROPS_SUFFIX))
-      .map((name) => name.slice(0, -DROPS_SUFFIX.length));
+      .filter((name) => name.endsWith(suffix))
+      .map((name) => name.slice(0, -suffix.length));
   } catch {
     return [];
   }
+};
+
+const dropSlugs = (home: string, key: string): Promise<readonly string[]> =>
+  slugsWithSuffix(home, key, DROPS_SUFFIX);
+
+const OWED_SUFFIX = ".owed-wc";
+
+/**
+ * A work context owed for a host session that is over and whose spool is
+ * gone: no batch will ever carry its life's records, so nothing will pay it.
+ */
+const reapOrphanDebt = async (home: string, key: string, slug: string): Promise<void> => {
+  if ((await isSessionLive(home, slug)) || (await Bun.file(spoolDataPath(home, key, slug)).exists())) {
+    return;
+  }
+  await removeFile(spoolOwedWorkContextPath(home, key, slug));
 };
 
 /**
@@ -635,6 +656,9 @@ export const reapSpool = async (
       }
       for (const slug of await dropSlugs(home, key)) {
         await reapOrphanDrops(home, key, slug, now);
+      }
+      for (const slug of await slugsWithSuffix(home, key, OWED_SUFFIX)) {
+        await reapOrphanDebt(home, key, slug);
       }
       return reaped;
     },

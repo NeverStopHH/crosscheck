@@ -178,6 +178,18 @@ export const spoolPendingEndPath = (
   rung = 0,
 ): string => join(spoolDir(home, key), pendingEndName(slug, rung));
 
+/**
+ * The work context a heal owes the hub for one life of this host session,
+ * until the hub takes it (spool/owed-work-context.ts). Beside the spool, not
+ * in the state file: SessionEnd deletes the state while the records it is
+ * owed for may still wait here.
+ */
+export const spoolOwedWorkContextPath = (
+  home: string,
+  key: string,
+  slug: string,
+): string => join(spoolDir(home, key), `${slug}.owed-wc`);
+
 /** Append-only ledger of dropped batches: the source of truth for `spoolDropped`. */
 export const spoolDropsPath = (
   home: string,

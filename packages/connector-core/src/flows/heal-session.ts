@@ -46,15 +46,16 @@ import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import { ALLOCATION_FAILED } from "../capture/seq.ts";
 import type { HubContext } from "../http/client.ts";
 import { endSession } from "../http/hub.ts";
-import { appendRecords } from "../spool/append.ts";
+import { oweWorkContext } from "../spool/owed-work-context.ts";
 import type { HealResult, SessionHealer, SessionRefusal } from "../spool/flush-heal.ts";
 import { recordRefusedLife } from "../spool/refused-lives.ts";
 import { lifeRungOf, readEndedLifeRung, recordEndedLife } from "../state/session-lineage.ts";
 import {
   crosscheckSessionIdFor,
   readSessionState,
-  updateSessionState,
+  underSessionStateLock,
   workContextIdFor,
+  writeSessionState,
 } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
 import { fallbackWorkContextTitle, registerSessionLadder } from "./register-session.ts";
@@ -162,34 +163,51 @@ const mayWalk = async (
   return deadlineMs - Date.now() < HEAL_MIN_ROOM_MS ? PENDING : "walk";
 };
 
+/** What the state's switch did: the life is the state's now, a sibling moved it first, or the lock stayed busy. */
+type Swap = "swapped" | "cas_lost" | "lock_busy";
+
 /**
  * The state's switch to the life the walk registered, compare-and-swap on the
  * refused id. The capture counters, the epoch and its counter stay — one host
  * session, one counter — and the life is registered now.
+ *
+ * THE LIFE'S WORK CONTEXT IS OWED IN THE SAME LOCKED STEP (review-2 round 6,
+ * HIGH-1): the state never names a life without the debt that its records'
+ * flushes pay first (spool/owed-work-context.ts). A parallel capture for the
+ * life finds the debt; a SessionEnd that finds the life counts it as
+ * undelivered and defers.
  *
  * THE SEEN-SET STARTS EMPTY ON EVERY HEAL, the same id's too (review-2
  * MEDIUM-1). It deduplicates targets per work context the HUB holds, and a
  * refused life's records may never have reached it: a file in the set would
  * never be captured again, with no further loss counted.
  */
-const switchState = (
+const swapLife = (
   input: SessionHealerInput,
   refusedSessionId: string,
   sessionId: string,
   developerId: string | null,
-): Promise<boolean> =>
-  updateSessionState(input.home, input.hostSessionKey, (fresh) =>
-    fresh.crosscheckSessionId !== refusedSessionId
-      ? null
-      : {
-          ...fresh,
-          crosscheckSessionId: sessionId,
-          workContextId: workContextIdFor(sessionId),
-          developerId: developerId ?? fresh.developerId,
-          seenTargets: [],
-          unregistered: false,
-        },
-  );
+  workContext: Record<string, unknown>,
+): Promise<Swap> =>
+  underSessionStateLock<Swap>(input.home, input.hostSessionKey, "lock_busy", async () => {
+    const fresh = await readSessionState(input.home, input.hostSessionKey);
+    if (fresh === null || fresh.crosscheckSessionId !== refusedSessionId) {
+      return "cas_lost";
+    }
+    await oweWorkContext(input.home, input.repoKey, sessionSlug(input.hostSessionKey), {
+      sessionId,
+      record: workContext,
+    });
+    await writeSessionState(input.home, {
+      ...fresh,
+      crosscheckSessionId: sessionId,
+      workContextId: workContextIdFor(sessionId),
+      developerId: developerId ?? fresh.developerId,
+      seenTargets: [],
+      unregistered: false,
+    });
+    return "swapped";
+  });
 
 /** The work context of the life the walk registered — the record every later one of it names. */
 const nextWorkContext = (
@@ -298,24 +316,16 @@ const walk = async (
     // this repo (spool/refused-lives.ts).
     await recordRefusedLife(input.home, input.repoKey, refusal.sessionId, now);
   }
-  // Then the life's work context — a heal onto the SAME id too (review-2
-  // finding 1): the one it spooled when the hub had not registered it may
-  // have been spent by then, by an older connector's flush, and every later
-  // record of the life names it. A second copy costs the hub a duplicate. It
-  // also goes back to the caller, which sends it AHEAD of the batch it
-  // re-sends: spooled, it lands behind the very edit that names it.
-  //
-  // BEFORE THE SWAP (review-2 LOW-4). The moment the state names the life,
-  // its work context is on disk: a parallel hook that captures for it lands
-  // behind it, never ahead — the hub refuses a target whose work context it
-  // has not seen — and a SessionEnd that compares the state and finds this
-  // life counts it as undelivered and defers both ends, so the re-send below
-  // never goes under a life SessionEnd already ended. A swap that is lost
-  // leaves the work context of a life no state names; the orphan's retirement
-  // ends that life, and the record costs the hub an unpositioned row.
+  // Then the life's work context, OWED — a heal onto the SAME id too (review-2
+  // finding 1): the one registration spooled may have been spent by then,
+  // and every later record of the life names it. The debt is written with
+  // the switch, under the state lock (swapLife), and paid at the head of the
+  // next batch that carries the life's records, however many flushes that
+  // takes (review-2 round 6, HIGH-1). It also goes back to the caller, whose
+  // re-send pays it first.
   const workContext = nextWorkContext(input, state, ladder.sessionId, ladder.developerId, now);
-  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);
-  if (!(await switchState(input, refusal.sessionId, ladder.sessionId, ladder.developerId))) {
+  const swap = await swapLife(input, refusal.sessionId, ladder.sessionId, ladder.developerId, workContext);
+  if (swap !== "swapped") {
     // Lost the compare-and-swap: a sibling moved the state first. Its life is
     // the answer — usually the very one this walk just registered (review P4).
     const moved = await movedLife(input, refusal.sessionId);

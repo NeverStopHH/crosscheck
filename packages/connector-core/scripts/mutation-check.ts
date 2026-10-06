@@ -17418,7 +17418,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heal registers the next life and spools no work context for it",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n",
+    from: "    await oweWorkContext(input.home, input.repoKey, sessionSlug(input.hostSessionKey), {\n      sessionId,\n      record: workContext,\n    });\n",
     to: "",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "every target of the healed life names a work context the hub never heard of and is rejected",
@@ -17426,8 +17426,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the healed life keeps the refused life's seen-set",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "          seenTargets: [],\n          unregistered: false,",
-    to: "          seenTargets: fresh.seenTargets,\n          unregistered: false,",
+    from: "      seenTargets: [],\n      unregistered: false,",
+    to: "      seenTargets: fresh.seenTargets,\n      unregistered: false,",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "a file the ended life had captured is never captured into the next life's work context",
   },
@@ -17682,8 +17682,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a heal onto the same id spools no work context",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  if (!(await switchState(",
-    to: "  if (ladder.sessionId !== refusal.sessionId) {\n    await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  }\n  if (!(await switchState(",
+    from: "    await oweWorkContext(input.home, input.repoKey, sessionSlug(input.hostSessionKey), {\n      sessionId,\n      record: workContext,\n    });\n",
+    to: "    if (sessionId !== refusedSessionId) {\n      await oweWorkContext(input.home, input.repoKey, sessionSlug(input.hostSessionKey), {\n        sessionId,\n        record: workContext,\n      });\n    }\n",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 finding 1: a work context another conversation's flush spent is never sent again, and the life's edits are refused for good",
   },
@@ -17786,8 +17786,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a heal onto the same id keeps the seen-set",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "          seenTargets: [],\n          unregistered: false,",
-    to: "          seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],\n          unregistered: false,",
+    from: "      seenTargets: [],\n      unregistered: false,",
+    to: "      seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],\n      unregistered: false,",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 MEDIUM-1 (M18): a file whose records the refused life lost is never captured again, and no further loss is counted",
   },
@@ -17832,12 +17832,12 @@ export const MUTATIONS: readonly Mutation[
     because: "a resumed life's deferred end is never delivered and never ages into doctor's unclosed count",
   },
   {
-    label: "a heal swaps the state before the next life's work context is on disk",
-    file: `${CORE}/src/flows/heal-session.ts`,
-    from: "  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  if (!(await switchState(input, refusal.sessionId, ladder.sessionId, ladder.developerId))) {\n    // Lost the compare-and-swap: a sibling moved the state first. Its life is\n    // the answer \u2014 usually the very one this walk just registered (review P4).\n    const moved = await movedLife(input, refusal.sessionId);\n    if (moved !== ladder.sessionId) {\n      // ...and when it is not \u2014 SessionEnd deleted the state mid-walk, or a\n      // sibling landed elsewhere \u2014 the life this walk registered belongs to\n      // nobody. Left open, the next resume would land on it under a fresh\n      // epoch and split its order (review finding 6).\n      await retireOrphan(input, ladder.sessionId, now);\n    }\n    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  return healedTo(refusal.sessionId, ladder.sessionId, workContext);",
-    to: "  if (!(await switchState(input, refusal.sessionId, ladder.sessionId, ladder.developerId))) {\n    // Lost the compare-and-swap: a sibling moved the state first. Its life is\n    // the answer \u2014 usually the very one this walk just registered (review P4).\n    const moved = await movedLife(input, refusal.sessionId);\n    if (moved !== ladder.sessionId) {\n      // ...and when it is not \u2014 SessionEnd deleted the state mid-walk, or a\n      // sibling landed elsewhere \u2014 the life this walk registered belongs to\n      // nobody. Left open, the next resume would land on it under a fresh\n      // epoch and split its order (review finding 6).\n      await retireOrphan(input, ladder.sessionId, now);\n    }\n    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [workContext], now);\n  return healedTo(refusal.sessionId, ladder.sessionId, workContext);",
+    label: "a SessionEnd between a heal's switch and its re-send ends the healed life",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    (await readSessionSpool(input.home, input.repoKey, slug)).lines.length + (owesEnding ? 1 : 0);",
+    to: "    (await readSessionSpool(input.home, input.repoKey, slug)).lines.length;",
     test: `${CORE}/test/session-lives.test.ts`,
-    because: "review-2 LOW-4: a parallel capture lands ahead of the work context and is refused, and a SessionEnd in the window ends the life the heal is about to re-send under",
+    because: "review-2 LOW-4: the heal's re-send goes under a life SessionEnd already ended, and another conversation's backlog is refused as a late write",
   },
   {
     label: "a record whose work context the hub never saw is refused for no named reason",
@@ -17926,6 +17926,46 @@ export const MUTATIONS: readonly Mutation[
     to: "  return closed === null ? null : closed.moved;",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 LOW-6: a state file outlives its session and pins its spool against reap",
+  },
+  {
+    label: "a batch carrying an owed life's records goes without its work context ahead",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const paying = owed !== null && sendable.some((line) => isOwedFor(owed, line.record)) ? owed : null;",
+    to: "  const paying = null;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 6 HIGH-1: a heal's re-send that fails once leaves the backlog to a flush with no work context ahead, and every record is refused author_unknown and spent",
+  },
+  {
+    label: "a batch is not sized one short while a work context is owed",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "Math.min(owed === null ? MAX_INGEST_BATCH : MAX_INGEST_BATCH - 1, limit)",
+    to: "Math.min(MAX_INGEST_BATCH, limit)",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 6 HIGH-1: a full backlog plus the work context is past the hub's batch limit and refused whole, every flush",
+  },
+  {
+    label: "a work context the hub took stays owed",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  if (delivery.owedTaken) {\n    await settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, owed.record);\n  }\n",
+    to: "",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "every later batch of the life pays it again, one record short of the limit, for good",
+  },
+  {
+    label: "a life's own records refused for the work context it is owed are spent",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  if (await isPinnedByDebt(ctx, spool, summary, sendable, healed.heal?.sessionId ?? input.sessionId)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 6 HIGH-1: author_unknown on the flusher's own life while its work context is owed is needed later, and spending it loses the edit",
+  },
+  {
+    label: "a debt nothing will ever pay is kept for good",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  await removeFile(spoolOwedWorkContextPath(home, key, slug));\n};",
+    to: "};",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "the side file of every heal whose life ended with no records piles up in the spool directory",
   },
 ];
 
@@ -18168,6 +18208,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 5
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
