@@ -199,6 +199,7 @@ describe("never across authors", () => {
     expect(await countClaims(harness)).toBe(2);
 
     // And the auto edge carries the ingesting session as author, with the note
+    // — and the gate as its STRUCTURAL origin, which no wire edge can carry
     const edges = await harness.db.select().from(claimEdges);
     expect(edges.length).toBe(1);
     expect(edges[0]?.kind).toBe("relates_to");
@@ -206,6 +207,7 @@ describe("never across authors", () => {
     expect(edges[0]?.toClaimId).toBe("clm_01");
     expect(edges[0]?.authorSessionId).toBe(SECOND_SESSION_ID);
     expect(edges[0]?.note).toBe("auto: similarity");
+    expect(edges[0]?.origin).toBe("similarity_gate");
   });
 });
 

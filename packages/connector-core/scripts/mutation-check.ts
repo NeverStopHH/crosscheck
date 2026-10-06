@@ -18522,15 +18522,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up cleanup keeps the old gate's links into teammates' trees",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "        or(ne(fromClaim.provenance, DECLARED_PROVENANCE), ne(toClaim.provenance, DECLARED_PROVENANCE)),\n",
-    to: "        eq(claimEdges.id, \"no-edge-has-this-id\"),\n",
+    from: "    AND (fc.provenance <> ${DECLARED_PROVENANCE} OR tc.provenance <> ${DECLARED_PROVENANCE})`;",
+    to: "    AND false`;",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "an upgraded hub keeps listing a teammate's machine guess as related in every tree the old gate linked it into",
   },
   {
     label: "the start-up cleanup deletes a developer's links between their own claims",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "        ne(fromSession.developerId, toSession.developerId),\n",
+    from: "    AND fs.developer_id <> ts.developer_id\n",
     to: "",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a developer's own draft loses the pull-only link the gate still makes for it",
@@ -18538,7 +18538,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up cleanup deletes a person's own relates_to edge",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "        eq(claimEdges.note, AUTO_SIMILARITY_NOTE),\n",
+    from: "      AND e.note = ${AUTO_SIMILARITY_NOTE}\n",
     to: "",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a link a human drew between two trees is erased as if the gate had guessed it",
@@ -18546,8 +18546,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up cleanup deletes links between two vouched claims",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "        or(ne(fromClaim.provenance, DECLARED_PROVENANCE), ne(toClaim.provenance, DECLARED_PROVENANCE)),\n",
-    to: "",
+    from: "    AND (fc.provenance <> ${DECLARED_PROVENANCE} OR tc.provenance <> ${DECLARED_PROVENANCE})`;",
+    to: "`;",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "the similarity links teammates' vouched findings earned are erased on every start",
   },
@@ -18694,6 +18694,118 @@ export const MUTATIONS: readonly Mutation[
     to: "  const page = await embedContextDocs(deps.db, deps.embedder, ids);\n",
     test: `${SERVER}/test/doc-upgrade-load.test.ts`,
     because: "the hub answers no request while every vector of a keyless hub's contexts is re-minted",
+  },
+  {
+    label: "the start-up cleanup counts a link between two sessions of one developer as a teammate's",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "fs.developer_id <> ts.developer_id",
+    to: "fc.author_session_id <> tc.author_session_id",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a developer's own draft loses its link to their own claim from yesterday's session",
+  },
+  {
+    label: "the start-up cleanup removes gate-noted edges of any kind",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "    e.kind = ${RELATES_TO}\n    AND ${WRITTEN_BY_GATE}\n",
+    to: "    ${WRITTEN_BY_GATE}\n",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a supports or contradicts edge that happens to carry the gate's note is erased with the gate's links",
+  },
+  {
+    label: "the start-up cleanup takes a noted edge for the gate's whoever authored it",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "      AND e.author_session_id = fc.author_session_id\n",
+    to: "",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "an edge a teammate authored from someone else's claim is erased though the gate never writes one",
+  },
+  {
+    label: "the start-up cleanup takes a wire-posted edge with the gate's note for the gate's",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "ev.payload->>'edgeId' = e.id",
+    to: "false",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a link a person drew by hand and noted like the gate is erased on the next start",
+  },
+  {
+    label: "the start-up cleanup ignores the gate's structural origin",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "    e.origin = ${SIMILARITY_GATE_ORIGIN}\n    OR (e.origin IS NULL",
+    to: "    false\n    OR (e.origin IS NULL",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a link the current gate marks as its own is matched only if its free-text note survives",
+  },
+  {
+    label: "the start-up cleanup deletes links without archiving them",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "      FROM gone\n      RETURNING id`),",
+    to: "      FROM gone WHERE false\n      RETURNING id`),",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "every link the cleanup removes is gone for good, with nothing to restore it from",
+  },
+  {
+    label: "the archive does not name the pass that removed a link",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "created_at, now(), ${passId}\n",
+    to: "created_at, now(), 'some pass'\n",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "the pass id the start-up log names restores nothing",
+  },
+  {
+    label: "the start-up cleanup drops a confirmed draft's link instead of moving it",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "    const repointed = await repointConfirmedDrafts(tx);",
+    to: "    const repointed: readonly string[] = [];",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a teammate's tree loses its reference to a finding that is now vouched for",
+  },
+  {
+    label: "the start-up cleanup moves a link to a superseded revision",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "          AND NOT EXISTS (SELECT 1 FROM claim_edges s WHERE s.to_claim_id = c.id AND s.kind = ${SUPERSEDES})\n",
+    to: "",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a teammate's tree points at the words the author has since corrected",
+  },
+  {
+    label: "the start-up cleanup moves a discarded draft's link onto its rejected copy",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "        WHERE c.provenance = ${DECLARED_PROVENANCE}\n",
+    to: "        WHERE true\n",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a teammate's tree keeps a link into a guess its author threw away",
+  },
+  {
+    label: "the start-up cleanup re-points a link onto a pair the gate already linked",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "        WHERE m.new_from IS NOT NULL AND m.new_to IS NOT NULL\n          AND NOT EXISTS (",
+    to: "        WHERE m.new_from IS NOT NULL AND m.new_to IS NOT NULL\n          AND true OR NOT EXISTS (",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "the move collides with the revision's own link and the whole start-up cleanup fails",
+  },
+  {
+    label: "the start-up cleanup keeps the draft's session as author of a moved link",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "CASE WHEN o.from_vouched THEN o.author_session_id ELSE hf.head_author END AS new_author",
+    to: "o.author_session_id AS new_author",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a moved link names an author who never wrote its from end, unlike every link the gate writes",
+  },
+  {
+    label: "the start-up cleanup moves a link without marking it the gate's",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "      SET from_claim_id = f.new_from, to_claim_id = f.new_to, author_session_id = f.new_author,\n          origin = ${SIMILARITY_GATE_ORIGIN}\n",
+    to: "      SET from_claim_id = f.new_from, to_claim_id = f.new_to, author_session_id = f.new_author\n",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a moved link loses the structural mark that tells it from a person's",
+  },
+  {
+    label: "the gate writes its edges without a structural origin",
+    file: `${SERVER}/src/services/similarity-gate.ts`,
+    from: "      origin: SIMILARITY_GATE_ORIGIN,\n",
+    to: "",
+    test: `${SERVER}/test/similarity-gate.test.ts`,
+    because: "a gate link can be told from a person's only by a note anyone can type",
   },
 ];
 
@@ -19021,7 +19133,7 @@ interface Outcome {
  * PRINTS: packages/server/test/doc-upgrade-race.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 4
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
- * PRINTS: packages/server/test/draft-link-cleanup.test.ts 4
+ * PRINTS: packages/server/test/draft-link-cleanup.test.ts 17
  * PRINTS: packages/server/test/draft-visibility.test.ts 8
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
@@ -19066,7 +19178,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
- * PRINTS: packages/server/test/similarity-gate.test.ts 4
+ * PRINTS: packages/server/test/similarity-gate.test.ts 5
  * PRINTS: packages/server/test/skeleton-identity.test.ts 17
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1

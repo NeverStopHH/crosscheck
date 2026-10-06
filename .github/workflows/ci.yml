@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1699
+    # PRINTS: 1713
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -430,7 +430,7 @@ jobs:
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 7
     # PRINTS: packages/server/src/services/doc-upgrade.ts 7
-    # PRINTS: packages/server/src/services/draft-link-cleanup.ts 4
+    # PRINTS: packages/server/src/services/draft-link-cleanup.ts 17
     # PRINTS: packages/server/src/services/drafts.ts 3
     # PRINTS: packages/server/src/services/embedding-backfill.ts 5
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
@@ -460,7 +460,7 @@ jobs:
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
     # PRINTS: packages/server/src/services/sessions.ts 13
-    # PRINTS: packages/server/src/services/similarity-gate.ts 3
+    # PRINTS: packages/server/src/services/similarity-gate.ts 4
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
@@ -544,7 +544,7 @@ jobs:
     # PRINTS: doctor-sharing.ts 3
     # PRINTS: doctor.ts 72
     # PRINTS: draft-backlog.ts 8
-    # PRINTS: draft-link-cleanup.ts 4
+    # PRINTS: draft-link-cleanup.ts 17
     # PRINTS: draft-nudge-spent.ts 5
     # PRINTS: draft-nudge.ts 23
     # PRINTS: drafts.ts 4
@@ -695,7 +695,7 @@ jobs:
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
     # PRINTS: sharing.ts 30
-    # PRINTS: similarity-gate.ts 3
+    # PRINTS: similarity-gate.ts 4
     # PRINTS: skeleton-identity.ts 8
     # PRINTS: slice.ts 2
     # PRINTS: solved-counts.ts 1

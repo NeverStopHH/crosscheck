@@ -478,6 +478,11 @@ export const claimEdges = pgTable(
       .references(() => agentSessions.id),
     note: text("note"),
     createdAt: timestamptz("created_at").notNull(),
+    // Who made the edge when it was not a person: 'similarity_gate' on every
+    // edge the ingest gate writes (similarity-gate.ts), null on an edge that
+    // came over the wire. Structural, so no note a person types can pass for
+    // the gate's (services/draft-link-cleanup.ts; review round 4, H3).
+    origin: text("origin"),
   },
   (table) => [
     uniqueIndex("claim_edges_from_to_kind_idx").on(
@@ -491,6 +496,30 @@ export const claimEdges = pgTable(
     // The claim-edge root's probe, once per candidate session (01a §3.3g).
     index("claim_edges_author_session_idx").on(table.authorSessionId),
   ],
+);
+
+/**
+ * Every claim edge a start-up pass removed, as it was, with the pass that
+ * removed it (services/draft-link-cleanup.ts; review round 4, H3) — so a
+ * removal is never a loss: docs/OPERATIONS.md restores a pass with one
+ * INSERT … SELECT. No foreign keys: an archive must keep its rows whatever
+ * happens to the claims and sessions they name.
+ */
+export const claimEdgesRemoved = pgTable(
+  "claim_edges_removed",
+  {
+    id: text("id").notNull(),
+    fromClaimId: text("from_claim_id").notNull(),
+    toClaimId: text("to_claim_id").notNull(),
+    kind: text("kind").notNull(),
+    authorSessionId: text("author_session_id").notNull(),
+    note: text("note"),
+    origin: text("origin"),
+    createdAt: timestamptz("created_at").notNull(),
+    removedAt: timestamptz("removed_at").notNull(),
+    removedByPass: text("removed_by_pass").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.id, table.removedByPass] })],
 );
 
 export const artifacts = pgTable("artifacts", {

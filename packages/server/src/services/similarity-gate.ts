@@ -32,6 +32,13 @@ export const SIMILARITY_DEDUP_THRESHOLD = 0.93;
 /** Note on every gate-authored edge, so a reader can tell it from a declared one. */
 export const AUTO_SIMILARITY_NOTE = "auto: similarity";
 
+/**
+ * `claim_edges.origin` of every gate-authored edge: the structural mark the
+ * note is not — a person can type the note on the wire, never the origin
+ * (review round 4, H3).
+ */
+export const SIMILARITY_GATE_ORIGIN = "similarity_gate";
+
 /** Statuses that keep a theory in play; "rejected" is their opposite. */
 export const OPEN_THEORY_STATUSES = [
   "proposed",
@@ -238,6 +245,7 @@ export const applyCrossSimilarity = async (
       kind: "relates_to",
       authorSessionId: body.authorSessionId,
       note: AUTO_SIMILARITY_NOTE,
+      origin: SIMILARITY_GATE_ORIGIN,
       createdAt: now(),
     })
     .onConflictDoNothing();
