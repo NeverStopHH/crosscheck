@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1623
+    # PRINTS: 1628
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -371,7 +371,7 @@ jobs:
     # PRINTS: packages/schema/src/enums.ts 2
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
-    # PRINTS: packages/schema/src/fallback-title.ts 3
+    # PRINTS: packages/schema/src/fallback-title.ts 4
     # PRINTS: packages/schema/src/file-ref.ts 5
     # PRINTS: packages/schema/src/landed-context.ts 3
     # PRINTS: packages/schema/src/landed-notice.ts 5
@@ -390,7 +390,7 @@ jobs:
     # PRINTS: packages/server/src/routes/events.ts 1
     # PRINTS: packages/server/src/routes/fence-waivers.ts 1
     # PRINTS: packages/server/src/routes/hints.ts 2
-    # PRINTS: packages/server/src/routes/landed.ts 3
+    # PRINTS: packages/server/src/routes/landed.ts 4
     # PRINTS: packages/server/src/routes/passkeys.ts 1
     # PRINTS: packages/server/src/routes/pilot-marks.ts 2
     # PRINTS: packages/server/src/routes/pins.ts 3
@@ -399,7 +399,7 @@ jobs:
     # PRINTS: packages/server/src/routes/suspect.ts 5
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
-    # PRINTS: packages/server/src/routes/work-contexts.ts 2
+    # PRINTS: packages/server/src/routes/work-contexts.ts 3
     # PRINTS: packages/server/src/services/absences.ts 10
     # PRINTS: packages/server/src/services/calibration.ts 1
     # PRINTS: packages/server/src/services/causal-guarantees.ts 11
@@ -409,14 +409,14 @@ jobs:
     # PRINTS: packages/server/src/services/claim-validity.ts 6
     # PRINTS: packages/server/src/services/cloud-agent-identity.ts 1
     # PRINTS: packages/server/src/services/commit-evidence.ts 2
-    # PRINTS: packages/server/src/services/conference.ts 6
+    # PRINTS: packages/server/src/services/conference.ts 7
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
     # PRINTS: packages/server/src/services/coverage.ts 32
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developer-settings.ts 1
     # PRINTS: packages/server/src/services/developers.ts 13
-    # PRINTS: packages/server/src/services/diagnosis.ts 12
+    # PRINTS: packages/server/src/services/diagnosis.ts 13
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
@@ -498,7 +498,7 @@ jobs:
     # PRINTS: cloud-agent-identity.ts 1
     # PRINTS: commit-evidence.ts 5
     # PRINTS: conference-cost.ts 1
-    # PRINTS: conference.ts 21
+    # PRINTS: conference.ts 22
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
     # PRINTS: constants.ts 10
@@ -517,7 +517,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developer-settings.ts 1
     # PRINTS: developers.ts 13
-    # PRINTS: diagnosis.ts 12
+    # PRINTS: diagnosis.ts 13
     # PRINTS: doctor-global.ts 4
     # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
@@ -536,7 +536,7 @@ jobs:
     # PRINTS: evidence-axes.ts 3
     # PRINTS: exec.ts 1
     # PRINTS: exempt-surfaces.ts 2
-    # PRINTS: fallback-title.ts 3
+    # PRINTS: fallback-title.ts 4
     # PRINTS: fd-io.ts 1
     # PRINTS: feed.tsx 1
     # PRINTS: fence-waivers.ts 1
@@ -583,7 +583,7 @@ jobs:
     # PRINTS: landed-notice.ts 5
     # PRINTS: landed-notices.ts 33
     # PRINTS: landed-why.ts 2
-    # PRINTS: landed.ts 4
+    # PRINTS: landed.ts 5
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
@@ -715,7 +715,7 @@ jobs:
     # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 2
-    # PRINTS: work-contexts.ts 2
+    # PRINTS: work-contexts.ts 3
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 8
     # PRINTS: working-days.ts 3

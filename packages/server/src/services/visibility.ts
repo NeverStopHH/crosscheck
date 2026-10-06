@@ -104,10 +104,15 @@
  *                                   touched it says what the withheld
  *                                   updatedAt no longer does
  *
- * Pinned route by route in test/live-location-privacy.test.ts, which calls
- * EVERY GET route the app registers as a colleague of an opted-out developer
- * and fails on their branch or HEAD anywhere in a response — so a route added
- * later is covered without anybody remembering to list it here.
+ * Pinned route by route in test/live-location-privacy.test.ts, which walks
+ * EVERY route the app registers — GET and POST, each with its own variants
+ * from test/live-location-routes.ts — as a colleague of an opted-out
+ * developer, and fails on any spelling of her location anywhere in an
+ * answer: branch, HEAD and HEAD prefixes, and her session start, heartbeats
+ * and last update in ISO and epoch form. A route the table does not name
+ * fails it too, so a route added later cannot pass by being unknown; the
+ * same walk as her checks, route by route, that her own view is never
+ * withheld.
  *
  * WRITES THAT WOULD READ IT BACK. `landedAt` is stamped when a reported
  * commit is a session's base commit, and every colleague sees the stamp — so

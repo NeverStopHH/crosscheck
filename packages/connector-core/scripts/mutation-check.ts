@@ -18307,6 +18307,70 @@ export const MUTATIONS: readonly Mutation[
       "every worktree session on a SHA-256 repo whose ref git prints in full " +
       "becomes a topic of its own instead of the one detached-HEAD topic",
   },
+  // Review round 3, M4: the guard's own survivors. Each is a defect the old
+  // guard walked past; the new one (GET+POST, per-route variants, every
+  // spelling of her location, the route table) must fail on each.
+  {
+    label: "survivor A: the conference titles a question by an opted-out teammate's branch (guard)",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "      : projectRow(hidden, {\n          developerId: row.contextOwnerId,\n          titleFacts: { repo, branch: row.contextBranch,",
+    to: "      : projectRow(new Set<string>(), {\n          developerId: row.contextOwnerId,\n          titleFacts: { repo, branch: row.contextBranch,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the guard never seeded a question on her context, so no route it walked " +
+      "carried the conference's question titles",
+  },
+  {
+    label: "survivor I: an unmarked detached title reaches colleagues (guard)",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    DETACHED_TITLE_HEAD.test(facts.title)",
+    to: "    false",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the guard seeded no local repo and no detached title, so a rule that " +
+      "skipped them could not be seen",
+  },
+  {
+    label: "survivor K: a new GET route leaks raw titles only when asked with ?ref= (guard)",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "  router.get(\"/:id\", async (c) => {",
+    to:
+      "  router.get(\"/by-ref\", async (c) => {\n" +
+      "    if (c.req.query(\"ref\") === undefined) return ok(c, { titles: [] });\n" +
+      "    const { workContexts: table } = await import(\"../db/schema.ts\");\n" +
+      "    return ok(c, { titles: await deps.db.select({ title: table.title }).from(table) });\n" +
+      "  });\n" +
+      "  router.get(\"/:id\", async (c) => {",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "one shared query string never sets ?ref=, so a route that leaks only " +
+      "with it passed; the route table now names every route or fails",
+  },
+  {
+    label: "survivor L: a new POST route leaks raw titles (guard)",
+    file: `${SERVER}/src/routes/landed.ts`,
+    from: "  router.post(\"/authors\", async (c) => {",
+    to:
+      "  router.post(\"/peek\", async (c) => {\n" +
+      "    const { workContexts: table } = await import(\"../db/schema.ts\");\n" +
+      "    return ok(c, { titles: await deps.db.select({ title: table.title }).from(table) });\n" +
+      "  });\n" +
+      "  router.post(\"/authors\", async (c) => {",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the guard walked GET routes only, so any write that answered with " +
+      "rows was never read",
+  },
+  {
+    label: "survivor N: the listing adds a raw last-touch field under a new name (guard)",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "      branch: row.branch,\n    }),\n  );",
+    to: "      branch: row.branch,\n      seenAt: row.workContext.updatedAt?.toISOString() ?? null,\n    }),\n  );",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the guard's secrets were branch and HEAD only, so an instant of hers " +
+      "under a name the projection does not know passed",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18639,7 +18703,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/live-location-privacy.test.ts 10
+ * PRINTS: packages/server/test/live-location-privacy.test.ts 15
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 20
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
