@@ -18919,6 +18919,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-search-rebuild.test.ts`,
     because: "every doctor run on a healthy hub ends in a warning about a rebuild that finished long ago",
   },
+  {
+    label: "the ops page's recovery after a downgrade marks nothing for a rebuild",
+    file: "docs/OPERATIONS.md",
+    from: "-- after-a-downgrade\nUPDATE work_contexts SET doc_version = 0;\n",
+    to: "-- after-a-downgrade\nUPDATE work_contexts SET doc_version = 1;\n",
+    test: `${SERVER}/test/doc-upgrade-downgrade.test.ts`,
+    because: "an operator who followed the page still has the older version's drafts in the search docs",
+  },
+  {
+    label: "the ops page's restore leaves a restored link for the next start to remove again",
+    file: "docs/OPERATIONS.md",
+    from: "SELECT id, from_claim_id, to_claim_id, kind, author_session_id, note, created_at, 'restored'\n",
+    to: "SELECT id, from_claim_id, to_claim_id, kind, author_session_id, note, created_at, origin\n",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a link an operator put back disappears again on the next restart",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19242,12 +19258,13 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
+ * PRINTS: packages/server/test/doc-upgrade-downgrade.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-load.test.ts 2
  * PRINTS: packages/server/test/doc-upgrade-race.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 4
  * PRINTS: packages/server/test/doc-upgrade-window.test.ts 6
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
- * PRINTS: packages/server/test/draft-link-cleanup.test.ts 17
+ * PRINTS: packages/server/test/draft-link-cleanup.test.ts 18
  * PRINTS: packages/server/test/draft-visibility.test.ts 8
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2

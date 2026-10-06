@@ -22,6 +22,7 @@ import { getDiagnosis } from "../src/services/diagnosis.ts";
 import { describeDraftLinkCleanup, removeCrossDeveloperDraftLinks } from "../src/services/draft-link-cleanup.ts";
 import { AUTO_SIMILARITY_NOTE } from "../src/services/similarity-gate.ts";
 import { createFakeEmbedder } from "./fixtures/fake-embedder.ts";
+import { documentedSql } from "./fixtures/operations-doc.ts";
 import {
   addTestDeveloperWithSession,
   createTestDeveloper,
@@ -264,7 +265,7 @@ describe("what the cleanup removes is archived, not lost", () => {
     const { passId } = await removeCrossDeveloperDraftLinks(harness.db);
 
     // Act: the operator runs the documented snippet for that pass
-    await harness.db.execute(sql.raw((await documentedRestore()).replace("<pass id>", passId)));
+    await harness.db.execute(sql.raw((await documentedSql("restore-archived-links")).replace("<pass id>", passId)));
     const nextStart = await removeCrossDeveloperDraftLinks(harness.db);
 
     // Assert
@@ -392,15 +393,3 @@ describe("a link whose draft was since confirmed moves to the confirmed claim", 
     expect(edges.rows).toEqual([{ from_claim_id: "clm_nick_rev", to_claim_id: "clm_robin", note: AUTO_SIMILARITY_NOTE }]);
   });
 });
-
-const OPERATIONS_DOC_URL = new URL("../../../docs/OPERATIONS.md", import.meta.url);
-const RESTORE_BLOCK = /```sql\n(-- restore-archived-links\n[\s\S]*?)```/;
-
-/** The restore snippet exactly as docs/OPERATIONS.md gives it. */
-const documentedRestore = async (): Promise<string> => {
-  const match = (await Bun.file(OPERATIONS_DOC_URL).text()).match(RESTORE_BLOCK);
-  if (match?.[1] === undefined) {
-    throw new Error("docs/OPERATIONS.md has no ```sql block starting with -- restore-archived-links");
-  }
-  return match[1];
-};
