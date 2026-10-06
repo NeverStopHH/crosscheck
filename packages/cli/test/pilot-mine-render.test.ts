@@ -138,7 +138,7 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
 
     // Assert
     expect(out).toContain(
-      "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's `!`); noise is your own label (crosscheck noise)\n",
+      "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's ! prefix); noise is your own label (crosscheck noise)\n",
     );
   });
 

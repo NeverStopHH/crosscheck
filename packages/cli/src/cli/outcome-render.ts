@@ -39,8 +39,9 @@ export const monthOf = (iso: string): string => {
  * and the person is told how to make it theirs.
  */
 export const AGENT_WORD_LINE =
-  // §13.14 LOW-1: "run it in a terminal" misled — Claude Code's `!` looks like one and is not one to this command
-  "recorded as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's `!`); type it in your own shell for it to stand as yours\n";
+  // §13.14 LOW-1: "run it in a terminal" misled — Claude Code's ! prefix looks like one and is not one to this
+  // command. (No backtick: no renderer here ever emits one — the untrusted-text invariants.)
+  "recorded as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's ! prefix); type it in your own shell for it to stand as yours\n";
 
 /**
  * 07 §13.14 (MEDIUM-2): said at a terminal that an agent host's marker says is its agent's — a pty the

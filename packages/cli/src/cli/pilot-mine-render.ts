@@ -136,7 +136,7 @@ const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
 const footerLines = (view: MyHintOutcomes): readonly string[] => [
   creditLine(view.yourWork),
   // §13.14 LOW-1: the commands are the person's only when typed in their own shell
-  "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's `!`); noise is your own label (crosscheck noise)",
+  "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's ! prefix); noise is your own label (crosscheck noise)",
   "only you see this view in full; others see your words only inside totals for a whole past month: the team report's, and a teammate's count of how often their work was followed",
   `each is shown only if, leaving out any one person's words, words from at least ${PEOPLE_MINIMUM} people remain — the team report's also about at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work, ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} or more — so a team of three never gets either`,
 ];

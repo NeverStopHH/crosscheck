@@ -1577,10 +1577,11 @@ and the line names the variable: the gate fails closed.
 *LOW-1 — "run it in a terminal" misled.* A person who typed `!crosscheck followed` in Claude Code did run it
 in what looks like a terminal, and was told to run it in one. The line now says what was missing: "recorded
 as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's
-`!`); type it in your own shell for it to stand as yours". The usage says the same, and `--mine`'s footer
+! prefix); type it in your own shell for it to stand as yours". The usage says the same, and `--mine`'s footer
 says the commands are the person's only when typed in their own shell: "recorded with your key — by you
 (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those
-commands run by an agent's tool, a pipe or Claude Code's `!`)".
+commands run by an agent's tool, a pipe or Claude Code's ! prefix)". The `!` is named without backticks: no
+renderer here ever emits one (the untrusted-text invariants every surface is held to).
 
 *LOW-2 — a clock that stepped back made leaving the pilot a 500 (D4).* The CHECK that an interval never ends
 before it starts is a database fact since round 5, and the toggle closed the open interval at the hub's wall

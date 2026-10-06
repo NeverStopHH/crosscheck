@@ -707,10 +707,16 @@ describe("07 §13.14 LOW-3: the gate holds for overrode, and reads stdin", () =>
 
 describe("07 §13.14 LOW-1: the agent's-word line says what 'not a terminal' was", () => {
   test("the line names the three ways input is not a terminal, and where to type it instead", () => {
-    // Assert — Claude Code's `!` looks like a terminal to the person and is not one to this command
+    // Assert — Claude Code's ! prefix looks like a terminal to the person and is not one to this command
     expect(AGENT_WORD_LINE).toBe(
-      "recorded as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's `!`); type it in your own shell for it to stand as yours\n",
+      "recorded as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's ! prefix); type it in your own shell for it to stand as yours\n",
     );
+  });
+
+  test("the line holds the untrusted-text invariants: no renderer here ever emits a backtick", () => {
+    // Assert — the same line every outcome surface prints after an agent's word
+    expect(AGENT_WORD_LINE.includes("`")).toBe(false);
+    expect(agentHostLine("CLAUDECODE").includes("`")).toBe(false);
   });
 
   test("the usage says the same of both commands", () => {
@@ -718,8 +724,8 @@ describe("07 §13.14 LOW-1: the agent's-word line says what 'not a terminal' was
     const said = [
       "  Typed in your own shell it is your word, which your agent's never",
       "  overturns. Where its input is not a terminal (an agent's tool, a pipe,",
-      "  or Claude Code's `!`), or inside an agent's tool that marks its own",
-      "  commands, it is your agent's.",
+      "  or Claude Code's ! prefix), or inside an agent's tool that marks its",
+      "  own commands, it is your agent's.",
     ].join("\n");
 
     // Assert
