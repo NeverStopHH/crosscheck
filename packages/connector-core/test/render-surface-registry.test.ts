@@ -263,6 +263,11 @@ interface PackageRegistration {
  */
 const KNOWN_EXEMPT: Readonly<Record<string, readonly string[]>> = {
   "connector-core": [...RENDER_LAYER_MODULES, ...RENDER_BARREL_MODULES],
+  // The untrusted-text primitives moved into the schema package so the hub
+  // scores a claim on exactly the text a reader is shown (review 1006b, M4):
+  // untrusted-text.ts IS the render layer's sanitizer core, and the barrel
+  // re-exports it. Both render nothing themselves.
+  schema: ["src/render-surfaces.ts", "src/untrusted-text.ts", "src/index.ts"],
 };
 const DEFAULT_EXEMPT: readonly string[] = ["src/render-surfaces.ts"];
 

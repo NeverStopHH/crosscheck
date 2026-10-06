@@ -54,11 +54,10 @@ import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
-  SUBSTANCE_MAX_CHARS,
   humanPromptText,
   isHarnessTurn,
   promptTerms,
-  substanceSentence,
+  shownSubstance,
 } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
@@ -208,10 +207,9 @@ export interface HintClaimCandidate {
    * shares (in lexemes, HINT_MIN_SHARED_TERMS's unit) — what lets the
    * connector tell a finding the prompt is about from one that merely sits in
    * a tree the prompt brushed (DESIGN.md §4: substance needs a strong match).
-   * Counted on the sentence a hint would show (@crosscheck/schema
-   * substanceSentence, at most SUBSTANCE_MAX_CHARS of it), never on the rest
-   * of the body, and against the query the candidate was matched on — the
-   * session's intent when that stood in for the prompt.
+   * Counted on exactly the text a hint would show (@crosscheck/schema
+   * shownSubstance: the sentence, NFKC, redaction and the cut), never on the
+   * rest of the body, and against the prompt's content terms.
    */
   readonly matchedTerms: number;
   readonly createdAt: string;
@@ -384,18 +382,19 @@ const listClaimsForContext = async (
     repo,
     claims: rows.map((row) => row.claim),
   });
-  // THE SENTENCE A HINT WOULD SHOW is what relevance is scored on — the
-  // shared cut, the very one the connector frames — so a keyword-stuffed
-  // tail can never make a claim a strong match for prompts its shown
-  // sentence says nothing about (review of batch 1006, finding 6). A body
-  // that never crosses the wire scores nothing.
+  // THE TEXT A HINT WOULD SHOW is what relevance is scored on — the shared
+  // shown text, the very one the connector frames: NFKC, redaction and cut
+  // included (review 1006b, M4) — so a keyword-stuffed tail, a redacted span
+  // or a word past the ellipsis can never make a claim a strong match for a
+  // prompt its shown sentence says nothing about (review of batch 1006,
+  // finding 6). A body that never crosses the wire scores nothing.
   const shownTerms = await listShownSentenceTerms(
     db,
     rows.map((row) => ({
       id: row.claim.id,
       sentence:
         row.claim.provenance === DECLARED_PROVENANCE
-          ? substanceSentence(row.claim.body).slice(0, SUBSTANCE_MAX_CHARS)
+          ? shownSubstance(row.claim.body)
           : "",
     })),
     scope.tokens,

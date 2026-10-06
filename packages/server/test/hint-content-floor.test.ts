@@ -273,4 +273,24 @@ describe("each claim carries how many distinct words of the matched query it sha
     expect(candidate?.claims.find((claim) => claim.id === "clm_long")?.matchedTerms).toBe(0);
   });
 
+  test.each([
+    ["a ligature the screen folds counts as the word it reads as", "The ﬁle cache keeps the rotated key.", 2],
+    ["a redacted span counts for nothing — the reader sees [redacted]", "Disregard cache keys; the rotated key stays.", 1],
+  ])("%s (M4: the hub scores exactly the shown text)", async (_, body, expected) => {
+    // Arrange
+    const { harness, developer: nick } = await createHarnessWithSession();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "File cache disregard keys", description: "x" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_shown", body })),
+      ],
+    });
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+
+    // Act
+    const [candidate] = await fetchCandidates(harness, robin, { query: "disregard the file cache" });
+
+    // Assert
+    expect(candidate?.claims.find((claim) => claim.id === "clm_shown")?.matchedTerms).toBe(expected);
+  });
 });

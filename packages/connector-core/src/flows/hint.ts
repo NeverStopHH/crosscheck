@@ -45,7 +45,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { humanPromptText, isContentFreePrompt, isHarnessTurn, substanceSentence } from "@crosscheck/schema";
+import { humanPromptText, isContentFreePrompt, isHarnessTurn, shownSubstance } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
   renderAnswerHint,
@@ -184,7 +184,7 @@ const deliveryOf = (
       channel: scope.substanceChannel,
       // The echo mark covers what was SHOWN — the first sentence — so that
       // sentence coming back as the reader's own observation is caught.
-      bodyHash: hintBodyHash(substanceSentence(selection.claim.body)),
+      bodyHash: hintBodyHash(shownSubstance(selection.claim.body)),
       text,
     };
   }

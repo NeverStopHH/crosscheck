@@ -325,7 +325,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the sanitizer stops stripping zero-width and format characters",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: '    .replace(ZERO_WIDTH_PATTERN, "")\n',
     to: "",
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -342,7 +342,7 @@ export const MUTATIONS: readonly Mutation[
     // arrangement honest: narrow the implementation's class and the corpus must
     // notice.
     label: "the sanitizer narrows to control characters only",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: String.raw`\\p{Cc}\\p{Cf}`,
     to: String.raw`\\p{Cc}`,
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -353,7 +353,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the sanitizer spaces zero-width characters instead of removing them",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: '    .replace(ZERO_WIDTH_PATTERN, "")',
     to: '    .replace(ZERO_WIDTH_PATTERN, " ")',
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -373,7 +373,7 @@ export const MUTATIONS: readonly Mutation[
     // (`tag-characters-unassigned`), and this mutation is what keeps that
     // payload from being deleted along with the range it guards.
     label: "the sanitizer stops covering the unassigned tag code points",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: String.raw`\\u{E0000}-\\u{E007F}`,
     to: "",
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -386,7 +386,7 @@ export const MUTATIONS: readonly Mutation[
     // guessing at ranges — scripts/default-ignorable-sweep.ts. Each of these
     // four reproduced the U+034F phrase-filter bypass on its own.
     label: "the sanitizer stops covering the Mongolian free variation selectors",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: String.raw`\\u180B-\\u180D\\u180F`,
     to: "",
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -3587,7 +3587,7 @@ export const MUTATIONS: readonly Mutation[
     // that does the removing, so the widened path could have stopped
     // redacting anything while all of them stayed green.
     label: "the span redaction removes nothing at all",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: "  const redacted = cleaned.replace(INJECTION_SPAN_PATTERN, REDACTED_SPAN);",
     to: "  const redacted = cleaned;",
     test: `${CORE}/test/body-redaction.test.ts`,
@@ -17490,7 +17490,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a substance hint carries the whole body instead of one sentence",
     file: `${CORE}/src/hints/render.ts`,
-    from: "quotedBody(sentence, HINT_SUBSTANCE_MAX_CHARS)",
+    from: "quotedBody(shown, HINT_SUBSTANCE_MAX_CHARS)",
     to: "quotedBody(claim.body, HINT_SUBSTANCE_MAX_CHARS)",
     test: `${CORE}/test/hint-substance-render.test.ts`,
     because: "a forged second line rides into the unsolicited hint up to the cap",
@@ -17498,7 +17498,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the echo mark misses the sentence the hint showed",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "      bodyHash: hintBodyHash(substanceSentence(selection.claim.body)),",
+    from: "      bodyHash: hintBodyHash(shownSubstance(selection.claim.body)),",
     to: "      bodyHash: hintBodyHash(selection.claim.body),",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "the one sentence an agent was shown comes back as its own observation and is published under the reader's name",
@@ -17623,7 +17623,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a substance hint frames an empty sentence",
     file: `${CORE}/src/hints/render.ts`,
-    from: "  if (sentence.length === 0) {\n    return \"\";\n  }\n  const factsLine",
+    from: "  if (shown.length === 0) {\n    return \"\";\n  }\n  const factsLine",
     to: "  const factsLine",
     test: `${CORE}/test/hint-substance-render.test.ts`,
     because: "the reader is handed «» under a teammate's name — a finding that reads as \"they looked and found nothing\"",
@@ -17655,16 +17655,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a claim's relevance is scored on its whole body again",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "          ? substanceSentence(row.claim.body).slice(0, SUBSTANCE_MAX_CHARS)",
+    from: "          ? shownSubstance(row.claim.body)",
     to: "          ? row.claim.body",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "a keyword-stuffed second sentence makes one claim strong substance for every prompt it never speaks to",
   },
   {
     label: "words past the shown length count toward a claim's relevance",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "substanceSentence(row.claim.body).slice(0, SUBSTANCE_MAX_CHARS)",
-    to: "substanceSentence(row.claim.body)",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  return sentence.length === 0 ? \"\" : spanRedacted(sentence, SUBSTANCE_MAX_CHARS);",
+    to: "  return sentence.length === 0 ? \"\" : spanRedacted(sentence, Number.MAX_SAFE_INTEGER);",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "the words that made a claim relevant sit behind the ellipsis the reader is shown",
   },
@@ -18110,6 +18110,14 @@ export const MUTATIONS: readonly Mutation[
     because: "the dead end a teammate already ruled out — negative knowledge, rejected by definition — is never mentioned again",
   },
   {
+    label: "the shown text skips the BODY class the reader sees through",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  return sentence.length === 0 ? \"\" : spanRedacted(sentence, SUBSTANCE_MAX_CHARS);",
+    to: "  return sentence.length === 0 ? \"\" : sentence.slice(0, SUBSTANCE_MAX_CHARS);",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "the hub counts a redacted word and misses a ligature's — scoring a text the reader never sees (M4)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18477,7 +18485,7 @@ interface Outcome {
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 5
- * PRINTS: packages/server/test/hint-content-floor.test.ts 6
+ * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 1
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2

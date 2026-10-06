@@ -40,7 +40,7 @@ import {
   SUBSTANCE_MATCH_KIND,
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
-import { substanceSentence } from "@crosscheck/schema";
+import { shownSubstance } from "@crosscheck/schema";
 import type { LandedChanges, LandedCommit } from "../landed-changes/probe.ts";
 import { namedLandedCommits } from "../landed-changes/named-commits.ts";
 import { renderIntent } from "../briefing/intent.ts";
@@ -365,15 +365,16 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     ...validityWordFact(claim),
   ];
   // ONE SENTENCE OF IT, bounded (§4, revised): the hint says what the finding
-  // IS and points at the rest. Cut first, then framed — the BODY class runs
-  // on exactly what is shown (@crosscheck/schema substance-sentence.ts says
-  // why that order is safe). No sentence with content is no substance: "",
-  // never a frame around nothing.
-  const sentence = substanceSentence(claim.body);
-  if (sentence.length === 0) {
+  // IS and points at the rest — the SHOWN TEXT, the one function the hub
+  // scores relevance on too (@crosscheck/schema shownSubstance: the cut, then
+  // the BODY class; review 1006b, M4). Framed through quotedBody, which runs
+  // the same class again and changes nothing in text it already produced. No
+  // sentence with content is no substance: "", never a frame around nothing.
+  const shown = shownSubstance(claim.body);
+  if (shown.length === 0) {
     return "";
   }
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(sentence, HINT_SUBSTANCE_MAX_CHARS)}`;
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(shown, HINT_SUBSTANCE_MAX_CHARS)}`;
   const header = claimHeader(input.matchedOn, input.intentProvenance);
   // ROOM FOR WHAT FOLLOWS, and the finding is not what pays for it: the
   // sentence shown is the one the hub scored, so it is never cut shorter.

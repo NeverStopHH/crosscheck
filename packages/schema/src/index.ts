@@ -302,6 +302,7 @@ export { containsSecret } from "./secret-scan.ts";
 export {
   SUBSTANCE_MAX_CHARS,
   SUBSTANCE_MIN_WORDS,
+  shownSubstance,
   substanceSentence,
 } from "./substance-sentence.ts";
 export {
@@ -319,6 +320,15 @@ export {
   steeringWordOf,
 } from "./session-control.ts";
 export { ENGLISH_STOP_WORDS, GERMAN_STOP_WORDS } from "./stop-words.ts";
+export {
+  ELLIPSIS,
+  INJECTION_BRANCHES,
+  INJECTION_SPAN_PATTERN,
+  REDACTED_SPAN,
+  cleanUntrusted,
+  cutWellFormed,
+  spanRedacted,
+} from "./untrusted-text.ts";
 export {
   PROMPT_MIN_TOKEN_CHARS,
   isContentFreePrompt,

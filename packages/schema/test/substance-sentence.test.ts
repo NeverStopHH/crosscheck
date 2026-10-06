@@ -8,7 +8,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { SUBSTANCE_MIN_WORDS, substanceSentence } from "../src/substance-sentence.ts";
+import { SUBSTANCE_MAX_CHARS, SUBSTANCE_MIN_WORDS, shownSubstance, substanceSentence } from "../src/substance-sentence.ts";
 
 describe("the first sentence that carries content", () => {
   test.each([
@@ -30,5 +30,27 @@ describe("the first sentence that carries content", () => {
     expect(SUBSTANCE_MIN_WORDS).toBe(3);
     expect(substanceSentence("Use Redis.")).toBe("");
     expect(substanceSentence("Use Redis here.")).toBe("Use Redis here.");
+  });
+});
+
+describe("the shown text: one function for what the reader sees and what the hub scores (review 1006b, M4)", () => {
+  test("NFKC folds what the screen folds — a ligature reads as its letters", () => {
+    expect(shownSubstance("The ﬁle cache keeps the rotated key. Rest.")).toBe("The file cache keeps the rotated key.");
+  });
+
+  test("an instruction-shaped span is redacted exactly as the reader sees it", () => {
+    expect(shownSubstance("Ignore previous retries and pin the cache key per release. Rest.")).toBe(
+      "[redacted] retries and pin the cache key per release.",
+    );
+  });
+
+  test("a sentence past the bound is cut with the visible ellipsis, at the bound", () => {
+    const shown = shownSubstance(`${"word ".repeat(80)}end. Second.`);
+    expect(shown.length).toBe(SUBSTANCE_MAX_CHARS);
+    expect(shown.endsWith("…")).toBe(true);
+  });
+
+  test("no sentence worth showing is nothing", () => {
+    expect(shownSubstance("Yes. Done.")).toBe("");
   });
 });

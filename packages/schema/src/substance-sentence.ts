@@ -31,6 +31,8 @@
  * dropped cannot open a frame or mint a field the sanitizer would have
  * stopped.
  */
+import { spanRedacted } from "./untrusted-text.ts";
+
 const SENTENCES = new Intl.Segmenter("und", { granularity: "sentence" });
 
 /** Words a shown sentence needs, each of at least two letters. */
@@ -106,3 +108,17 @@ const contentWords = (sentence: string): number =>
 
 export const substanceSentence = (body: string): string =>
   sentencesOf(body).find((sentence) => contentWords(sentence) >= SUBSTANCE_MIN_WORDS) ?? "";
+
+/**
+ * EXACTLY WHAT A READER IS SHOWN of a claim (review 1006b, M4): the sentence
+ * above, through the BODY class — NFKC, the invisibles and the renderer's
+ * characters stripped, instruction-shaped spans redacted, cut at
+ * SUBSTANCE_MAX_CHARS with the visible ellipsis. The connector frames this
+ * text; the hub scores a claim's relevance on this text. A ligature counts as
+ * the word it reads as, a redacted span counts for nothing, and a word past
+ * the ellipsis is not there.
+ */
+export const shownSubstance = (body: string): string => {
+  const sentence = substanceSentence(body);
+  return sentence.length === 0 ? "" : spanRedacted(sentence, SUBSTANCE_MAX_CHARS);
+};
