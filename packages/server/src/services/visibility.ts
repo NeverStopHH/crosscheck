@@ -117,6 +117,15 @@
  * The cost, stated: teammates' SessionStart no longer marks her work
  * landed; only her own sessions do, so it reads unlanded longer than it is.
  *
+ * ACCEPTED: A HIDDEN AUTHOR'S CLAIMS REVALIDATE LESS. With observedAtCommit
+ * withheld, a colleague cannot re-check her claim against their own clone,
+ * so her claims collect fewer revalidations and stay `unknown` or `stale`
+ * longer. The touching commits a validity keeps — default-branch commits
+ * that touched the claim's files since — still bound roughly where her base
+ * sat. Both are accepted because both only WEAKEN: a claim nobody could
+ * re-check is never promoted, and the default branch is published history,
+ * not her live branch.
+ *
  * ACCEPTED: FREE TEXT IS NOT SCANNED FOR LOCATION. The projection withholds
  * FIELDS. A branch name or a sha a person, a host or an agent wrote INTO
  * text — a host's session title, a context's description, a claim or a
