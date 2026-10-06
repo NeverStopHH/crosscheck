@@ -15,6 +15,11 @@
  */
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+
+import type { DbExecutor } from "../src/db/client.ts";
+import { lockPointer } from "../src/services/pointer-standing.ts";
 import { PIN_PRESENCE_TERMINAL, deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
 
 import { hintOutcomes, pilotMarks } from "../src/db/schema.ts";
@@ -656,6 +661,44 @@ describe("POST /api/hint-outcomes", () => {
     // Assert
     expect(response.status).toBe(400);
     expect(await world.harness.db.select().from(pilotMarks)).toHaveLength(0);
+  });
+});
+
+describe("survivors R10, R11: the order of words on one pointer", () => {
+  test("R10: noise said again in the same millisecond as an outcome that was stamped past it still stands", async () => {
+    // Arrange — the clock never moves: the label at t, the person's overrode bumped to t+1ms
+    const world = await createOutcomeWorld();
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+
+    // Act — the person says noise again, still at t
+    const again = await markNoise(world, world.delivered.kenContext);
+    const view = await mineOf(world);
+
+    // Assert — stamped past the overrode's bumped instant, not at the clock's
+    expect(await bodyOf(again)).toMatchObject({ repeated: false, stands: "noise", replaced: "overrode" });
+    expect(view).toMatchObject({ overrode: 0, noise: 1 });
+  });
+
+  test("R11: the pointer's deliveries are locked FOR UPDATE, in id order", async () => {
+    // Arrange — PGlite has one connection, so a second writer cannot be staged to wait on the
+    // lock; what is pinned is the SQL that takes it: FOR UPDATE, in one order, so two writers
+    // on the same pointer queue rather than deadlock (review LOW)
+    const issued: SQL[] = [];
+    const executor = {
+      execute: async (query: SQL) => {
+        issued.push(query);
+        return await Promise.resolve({ rows: [] });
+      },
+    } as unknown as DbExecutor;
+
+    // Act
+    await lockPointer(executor, { sessionId: NICK_SESSION, refId: KEN_CONTEXT });
+
+    // Assert
+    expect(issued.map((query) => new PgDialect().sqlToQuery(query).sql)).toEqual([
+      "SELECT d.id FROM hint_deliveries d WHERE d.session_id = $1 AND d.ref_id = $2 ORDER BY d.id FOR UPDATE",
+    ]);
   });
 });
 

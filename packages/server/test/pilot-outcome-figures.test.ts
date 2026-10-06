@@ -142,6 +142,24 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     expect(outcomes["figures"]).toMatchObject({ interventions: 24, followed: 9 });
   });
 
+  test("survivor R5: a month the team left part-way through, never to return, says only its enrolled time was counted", async () => {
+    // Arrange — July's words, then the team leaves on 28 July: one interval, ending inside the month
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    crowd.harness.clock.advanceSeconds(4 * 86_400);
+    await crowd.harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled: false }),
+    );
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const outcomes = await outcomesOf(crowd);
+
+    // Assert
+    expect(outcomes).toMatchObject({ ...JULY, pausedInPeriod: true });
+  });
+
   test("review M-3: a month counted over an enrolment an upgrade reconstructed says so — the team line and the credit", async () => {
     // Arrange — the same July, its interval inferred by an upgrade from what was recorded
     const crowd = await createCrowd();

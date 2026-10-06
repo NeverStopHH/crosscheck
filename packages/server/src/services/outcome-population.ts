@@ -149,10 +149,13 @@ export const enrolledSpan = (start: Date, end: Date, enrolments: readonly Enrolm
     return null;
   }
   const from = first.start.getTime() > start.getTime() ? first.start : start;
+  // A pause is the first overlapping interval ending inside the window. A second interval
+  // can only start after the first ended, so "two intervals" is never true without it —
+  // the redundant disjunct was survivor R4, an equivalent mutant, and is gone.
   const endsEarly = first.end !== null && first.end.getTime() < end.getTime();
   return {
     from,
-    paused: overlapping.length > 1 || endsEarly,
+    paused: endsEarly,
     reconstructed: overlapping.some((enrolment) => enrolment.reconstructed),
   };
 };

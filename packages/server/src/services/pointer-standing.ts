@@ -49,9 +49,14 @@ export interface LatestNoise {
 const ofPointer = (alias: string, pointer: Pointer): SQL =>
   sql`${sql.raw(alias)}.session_id = ${pointer.sessionId} AND ${sql.raw(alias)}.ref_id = ${pointer.refId}`;
 
-/** Locks every delivery row of the pointer until the transaction ends. */
+/**
+ * Locks every delivery row of the pointer until the transaction ends — in id
+ * order, so two writers on one pointer queue instead of deadlocking (review
+ * LOW). PGlite has one connection, so no second writer can be staged to wait
+ * on it: the lock is pinned by the SQL it issues (survivor R11), not by a race.
+ */
 export const lockPointer = async (tx: DbExecutor, pointer: Pointer): Promise<void> => {
-  await tx.execute(sql`SELECT d.id FROM hint_deliveries d WHERE ${ofPointer("d", pointer)} FOR UPDATE`);
+  await tx.execute(sql`SELECT d.id FROM hint_deliveries d WHERE ${ofPointer("d", pointer)} ORDER BY d.id FOR UPDATE`);
 };
 
 /** The session and ref of a delivery, or undefined when there is none. */

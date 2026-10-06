@@ -18866,6 +18866,63 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "every month counts every intervention since the pilot began",
   },
+  // ── 07 §13.12, review M-4: the round-3 survivors, killed ──
+  {
+    label: "server: --mine never reports a pause in its window (survivor R1)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    pausedInWindow: enrolledSpan(since, now, enrolments)?.paused ?? false,",
+    to: "    pausedInWindow: false,",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the person's view during a pause reads as if the pilot had run throughout",
+  },
+  {
+    label: "a delivery at the instant the pilot paused counts as enrolled (survivor R2)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    AND (pe.ended_at IS NULL OR ${instant} < pe.ended_at))`;",
+    to: "    AND (pe.ended_at IS NULL OR ${instant} <= pe.ended_at))`;",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "a hint delivered as the pilot paused is counted, though no outcome of it can ever be recorded",
+  },
+  {
+    label: "a delivery at the instant the pilot paused is recordable (survivor R3)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: "  (enrolment.end === null || instant.getTime() < enrolment.end.getTime());",
+    to: "  (enrolment.end === null || instant.getTime() <= enrolment.end.getTime());",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "an outcome is answered 'recorded' for a hint no figure counts",
+  },
+  {
+    label: "an interval ending inside the period is not called a pause (survivor R5)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    paused: endsEarly,",
+    to: "    paused: false,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a month the team left part-way through reads as counted throughout",
+  },
+  {
+    label: "re-asserted noise is stamped at the clock, under an outcome stamped past it (survivor R10)",
+    file: `${SERVER}/src/services/noise-label.ts`,
+    from: "  const at = instantAfter(deps.now(), newestInstant(words));",
+    to: "  const at = deps.now();",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person says noise again and the hub answers 'noise stands' while every figure reads overrode",
+  },
+  {
+    label: "the pointer lock is gone (survivor R11)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "WHERE ${ofPointer(\"d\", pointer)} ORDER BY d.id FOR UPDATE`);",
+    to: "WHERE ${ofPointer(\"d\", pointer)} ORDER BY d.id`);",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "a label landing mid-write decides 'what stood' from a state that changed under it",
+  },
+  {
+    label: "the pointer lock is taken in no order",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "WHERE ${ofPointer(\"d\", pointer)} ORDER BY d.id FOR UPDATE`);",
+    to: "WHERE ${ofPointer(\"d\", pointer)} FOR UPDATE`);",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "two writers locking a pointer's twins in different orders can deadlock",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19189,8 +19246,8 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 18
- * PRINTS: packages/server/test/hint-outcomes.test.ts 36
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 21
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 39
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
@@ -19209,7 +19266,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 29
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 30
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

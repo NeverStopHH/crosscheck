@@ -1383,6 +1383,16 @@ July, and its tripwire twin on the first of August, made August's figures count 
 with July's word. A pointer now counts in the window of its FIRST countable delivery (`HAVING
 min(delivered_at) >= since`), and nowhere else.
 
+*M-4 — the round-3 survivors, killed.* R1 (`--mine` reporting a pause) is pinned by the person's view during a
+pause; R2 and R3 by a hint delivered at the very instant the pilot paused, which is neither counted nor
+recordable — an interval is [start, end). R4 was an equivalent mutant: a second interval in the window can only
+start after the first ended, so "two intervals" never held without "the first ends early"; the redundant
+disjunct is gone, and R5 is pinned by a month the team left part-way through and never returned to. R6 is
+pinned by a repeated enrolment (the toggle paragraph above), R7 by the principle and H-B, R10 by noise said
+again in the same millisecond as an outcome that was stamped past it, and R19 below. R11: the pointer lock is
+`ORDER BY d.id FOR UPDATE` — one order, so two writers on a pointer's twins queue instead of deadlocking — and,
+since PGlite has one connection and no second writer can be staged, it is pinned by the SQL it issues.
+
 *R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
 of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
 and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —

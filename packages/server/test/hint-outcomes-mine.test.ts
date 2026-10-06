@@ -371,6 +371,27 @@ describe("review M-2: the person's own view outlives a pause and leaving, read-o
     expect(write.status).toBe(422);
   });
 
+  test("survivors R2/R3: a hint delivered at the very instant the pilot paused is outside — not counted, not recordable", async () => {
+    // Arrange — the pause and a delivery share one instant
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(60);
+    const pausedAt = world.harness.clock.now().toISOString();
+    await put(world, false);
+    await postRecords(world.harness, world.nick, {
+      records: [deliveryRecord(NICK_SESSION, "work_context", "wc_at_the_pause", "prompt_hint", pausedAt)],
+    });
+    world.harness.clock.advanceSeconds(60);
+    await put(world, true);
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick));
+    const write = await recordOutcome(world, world.nick, { ref: "wc_at_the_pause", outcome: "followed" });
+
+    // Assert — an interval is [start, end): its end is the first instant it no longer holds
+    expect(view).toMatchObject({ received: 3 });
+    expect(write.status).toBe(422);
+  });
+
   test("a repo never enrolled still has no view", async () => {
     // Arrange — the world's repo is enrolled; this one never was
     const world = await createOutcomeWorld();
