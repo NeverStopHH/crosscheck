@@ -18610,6 +18610,14 @@ export const MUTATIONS: readonly Mutation[
     because: "a prompt with one word of no class beside commands passes as content-free, and a hold-out task like \"CI ist rot wegen lint\" is floored (H2)",
   },
   {
+    label: "the intent worker models a parked turn that carries no task",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "  if (intentPromptOf(prompt) === null) {\n    await bookFailure(home, args.claudeSessionId, DROPPED_CONTENT_FREE);\n    return;\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "a turn parked before the rule knew better becomes the session's derived intent, and the floors meet \"mach weiter\" as the session's purpose (H3)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18804,7 +18812,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 3
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6

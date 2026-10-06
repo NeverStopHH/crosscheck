@@ -421,6 +421,28 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(await fileExists(fix.promptFile)).toBe(false);
   });
 
+  test.each([
+    ["mach weiter, das usage limit ist wieder da, bitte alles wiederaufnehmen"],
+    ["ok, commit and push, then open the PR and run the tests again please"],
+  ])("a parked turn the rule now calls content-free never becomes an intent: %p (hold-out review, H3)", async (parked) => {
+    // Arrange — parked before the rule knew better, by a connector that gated differently
+    const fix = await fixture({}, parked);
+    const dir = await tempDir();
+    const stdinDump = join(dir, "stdin.txt");
+    const fake = await makeFakeModel({ output: SENTENCE, stdinDump });
+
+    // Act
+    await run(fix, fake);
+
+    // Assert — no model call, no intent, the reason booked, the file gone
+    expect(await fileExists(stdinDump)).toBe(false);
+    expect(await spooledIntents(fix)).toHaveLength(0);
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.workContextIntent ?? null).toBeNull();
+    expect(state?.intentLastFailure).toContain("carries no task");
+    expect(await fileExists(fix.promptFile)).toBe(false);
+  });
+
   test("an empty prompt file is booked as a drop and removed", async () => {
     const fix = await fixture({}, "   ");
     await run(fix, await makeFakeModel({ output: SENTENCE }));

@@ -50,7 +50,7 @@ import {
   withRecordedIntent,
 } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
-import { withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
+import { intentPromptOf, withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
 import { resolveIntentArgv } from "./prompt.ts";
 import { readModelSentence } from "../../model/parse.ts";
 import {
@@ -84,6 +84,7 @@ export const parseIntentWorkerArgs = (
 /** Booked drops, named so status/doctor can say why a fire landed nothing. */
 const DROPPED_NO_TITLE = "dropped: session state predates intent support (no title)";
 const DROPPED_EMPTY_PROMPT = "dropped: empty prompt";
+const DROPPED_CONTENT_FREE = "dropped: the turn carries no task";
 const DROPPED_EMPTY_ANSWER = "dropped: empty answer";
 const DROPPED_NOT_SENTENCE = "dropped: the answer was not a sentence";
 // A cut answer is not a malformed one. See gate.ts UNREADABLE_TRUNCATED:
@@ -110,6 +111,15 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
   }
   if (prompt.trim().length === 0) {
     await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_PROMPT);
+    return;
+  }
+  // A TURN THAT CARRIES NO TASK IS NEVER AN INTENT (hold-out review, H3). The
+  // hook gates the fire on the same rule; this re-reads what was parked, so a
+  // turn parked before the rule knew better — or by a connector that gated
+  // differently — dies here, before any model call, and the floors and
+  // intent-only pointers never meet a derived intent born of "mach weiter".
+  if (intentPromptOf(prompt) === null) {
+    await bookFailure(home, args.claudeSessionId, DROPPED_CONTENT_FREE);
     return;
   }
   if (state.workContextTitle === null || state.workContextStatus === null) {

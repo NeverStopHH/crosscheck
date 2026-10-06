@@ -231,6 +231,24 @@ describe("a turn that carries no task never spends the session's one intent fire
     expect(afterTurn).toBe(0);
     expect(afterTask).toBe(1);
   });
+
+  test.each([
+    ["okay so the usage limit was reset a few minutes ago, please just continue with whatever you were doing"],
+    ["mach weiter, das usage limit ist wieder da, bitte alles wiederaufnehmen"],
+    ["the weekly usage limit expired a moment ago, please keep going with everything"],
+    ["ok, commit and push, then open the PR and run the tests again please"],
+  ])("the hold-out review's long session commands spend no fire either: %p (H3)", async (turn) => {
+    // Arrange — each is long enough to state a task, and states none
+    const f = await fixture("cf-intent-holdout");
+
+    // Act
+    await runHook("user-prompt-submit", promptPayload(f, turn), f.env);
+
+    // Assert — floored, counted, and the fire still unspent
+    const state = await readSessionState(f.home, f.sessionId);
+    expect(state?.intentFireCount).toBe(0);
+    expect(state?.flooredPromptCount).toBe(1);
+  });
 });
 
 describe("the prompt stays on this machine, and nothing travels in its place", () => {
