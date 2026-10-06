@@ -1591,3 +1591,9 @@ is now `GREATEST(now, started_at)` — a zero-length interval at worst, never a 
 stdin, never stdout (T1 — `crosscheck followed | tee log` typed by the person stays theirs); `crosscheck
 overrode` with no terminal takes the agent's route (T2) and says so (T4), like `followed`; and an enrolled
 repo whose interval the upgrade backdated before its stamp is marked reconstructed (B1).
+
+*LOW-4 — a repo's first two writes had no row to lock.* Round 5 read the settings row `FOR UPDATE`, but a
+repo nobody had configured has no row, so on real Postgres two first writes each went on from the defaults
+(PGlite, one connection, never shows it). The write now inserts the defaults row `ON CONFLICT (repo) DO
+NOTHING` before the `FOR UPDATE`: the second writer waits on that insert, then locks the row the first
+committed. The write's own upsert overwrites the defaults, its instant included; the SQL is pinned in a test.

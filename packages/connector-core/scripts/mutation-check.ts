@@ -19455,6 +19455,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "an interval the upgrade backdated from recorded outcomes is printed as the toggle's instant",
   },
+  // ── 07 §13.14, round-6 LOW-4: a repo's first writes have a row to lock ──
+  {
+    label: "a repo's first write has no row to lock",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  await tx.execute(sql`INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at)\n    VALUES (${repo}, ${DEFAULT_TEAM_SETTINGS.pinPolicy}, ${DEFAULT_TEAM_SETTINGS.suspectAttribution}, ${DEFAULT_TEAM_SETTINGS.pilotEnrolled}, now())\n    ON CONFLICT (repo) DO NOTHING`);\n",
+    to: "\n",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "on real Postgres a repo's first two writes both go on from the defaults, and one's change is lost",
+  },
+  {
+    label: "the defaults row overwrites the stored settings",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    ON CONFLICT (repo) DO NOTHING`);",
+    to: "    ON CONFLICT (repo) DO UPDATE SET pin_policy = EXCLUDED.pin_policy`);",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "every write resets the pin policy it did not name",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19830,7 +19847,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
- * PRINTS: packages/server/test/team-settings.test.ts 7
+ * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1

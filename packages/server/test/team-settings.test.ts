@@ -339,9 +339,26 @@ describe("pilot enrolment", () => {
 
     // Assert
     expect(current).toMatchObject({ pilotEnrolled: true, pilotLabelsSince: "2026-07-24T09:00:00.000Z" });
-    expect(issued.map((query) => new PgDialect().sqlToQuery(query).sql)).toEqual([
+    // round-6 LOW-4: on real Postgres a repo's first two writes found no row to lock; the defaults row
+    // goes in first, so the second writer waits on it and then locks what the first committed
+    expect(issued.map((query) => new PgDialect().sqlToQuery(query).sql.replace(/\s+/g, " "))).toEqual([
+      "INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at) VALUES ($1, $2, $3, $4, now()) ON CONFLICT (repo) DO NOTHING",
       "SELECT pin_policy, suspect_attribution, pilot_enrolled, pilot_labels_since, pilot_outcomes_since, updated_at FROM team_settings WHERE repo = $1 FOR UPDATE",
     ]);
+  });
+
+  test("round-6 LOW-4: a repo's first write leaves exactly the row it wrote, its defaults overwritten", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+
+    // Act
+    await writeSettings(harness, TEST_ADMIN_TOKEN, { pinPolicy: "touched_files" });
+    const rows = await harness.db.execute(
+      sql`SELECT pin_policy AS p, suspect_attribution AS s, pilot_enrolled AS e, updated_at = ${harness.clock.now().toISOString()}::timestamptz AS u FROM team_settings WHERE repo = ${REPO}`,
+    );
+
+    // Assert — one row, the write's own instant, not the database's
+    expect(rows.rows).toEqual([{ p: "touched_files", s: "sessions", e: false, u: true }]);
   });
 
   test("round-5 LOW-10: an enrolment that lost a race to another gets a sentence, not a 500", async () => {

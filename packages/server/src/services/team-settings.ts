@@ -167,6 +167,12 @@ const isoOrNull = (value: string | Date | null): string | null => (value === nul
  * connection, so the lock is pinned by the SQL this issues, not by a race.
  */
 export const readSettingsForUpdate = async (tx: DbExecutor, repo: string): Promise<TeamSettingsView> => {
+  // round-6 LOW-4: a repo's first two writes found no row to lock, and on real Postgres both went on
+  // from the defaults. The defaults row goes in first: the second writer waits on it, then locks the
+  // row the first committed. (The write's upsert overwrites it, its instant included.)
+  await tx.execute(sql`INSERT INTO team_settings (repo, pin_policy, suspect_attribution, pilot_enrolled, updated_at)
+    VALUES (${repo}, ${DEFAULT_TEAM_SETTINGS.pinPolicy}, ${DEFAULT_TEAM_SETTINGS.suspectAttribution}, ${DEFAULT_TEAM_SETTINGS.pilotEnrolled}, now())
+    ON CONFLICT (repo) DO NOTHING`);
   const rows = await tx.execute<SettingsLockRow>(
     sql`SELECT pin_policy, suspect_attribution, pilot_enrolled, pilot_labels_since, pilot_outcomes_since, updated_at FROM team_settings WHERE repo = ${repo} FOR UPDATE`,
   );
