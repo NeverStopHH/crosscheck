@@ -791,6 +791,28 @@ describe("a batch a walk leaves on disk", () => {
     // Assert
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ unparsable: 1 });
   });
+
+  test("a torn line ahead of a life's records rides in that life's batch: counted, and the records go (review-2 round 7)", async () => {
+    // Arrange: an ended conversation's spool that starts with a torn line
+    const fx = await fixture("torn-first", proxyUrl);
+    await register(fx);
+    await flushAsHook(fx);
+    const otherHost = `${fx.hostSessionKey}-other`;
+    const other = await register(fx, otherHost);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+    await appendFile(spoolDataPath(fx.home, fx.key, sessionSlug(otherHost)), "{torn\n");
+    await appendTo(fx, otherHost, [
+      targetRecord(other.workContextId, "file", "src/behind-torn.ts", producerOf(other.crosscheckSessionId), new Date()),
+    ]);
+    await rm(sessionStatePath(fx.home, otherHost), { force: true });
+
+    // Act
+    await flushAsHook(fx);
+
+    // Assert
+    expect(await targetsOf(other.workContextId)).toEqual(["src/behind-torn.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ unparsable: 1 });
+  });
 });
 
 /** THE EDGES OF A HEAL'S RE-SEND (review-2 round 6, MEDIUM-2). */

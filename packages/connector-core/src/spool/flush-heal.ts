@@ -26,7 +26,6 @@
  * never registered and the healer registered AS ITSELF re-sends everything
  * unchanged: same producer, same session, same epoch.
  */
-import { MAX_INGEST_BATCH } from "../constants.ts";
 import { bodyNamesItsSession, withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
@@ -287,6 +286,10 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
       const record = input.spooled[index];
       return record !== undefined && mayResend(record, heal);
     });
+  // NOTHING TO RE-SEND: the batch was the refused life's own records. The
+  // life the heal registered still owes its work context, and the drain pays
+  // it next — alone, when no record of that life is left to carry it
+  // (spool/flush.ts, review-2 round 7).
   if (resent.length === 0) {
     return { summary: input.first, heal, asked: true, counted };
   }
@@ -299,15 +302,13 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   }
   // THE LIFE'S WORK CONTEXT GOES FIRST (review-2 MEDIUM-1): every record
   // re-sent here names it. It is the debt the heal wrote down; this re-send
-  // pays it when it lands, and when it does not — the hub's batch limit, a
-  // 503, a timeout — the debt waits for the next batch that carries the
-  // life's records (review-2 round 6, HIGH-1), and so does this batch.
+  // pays it when it lands, and when it does not — a 503, a timeout — the debt
+  // waits for the next batch that carries the life's records (review-2 round
+  // 6, HIGH-1), and so does this batch. A batch is one short of the hub's
+  // limit (spool/flush.ts), so the two always fit.
   const ahead = result.workContext === undefined
     ? []
     : [withProducer(result.workContext, input.developerId, heal.sessionId)];
-  if (ahead.length + resent.length > MAX_INGEST_BATCH) {
-    return null;
-  }
   const again = await postRecords(
     { ...input.ctx, timeoutMs: Math.min(input.ctx.timeoutMs, roomMs) },
     [

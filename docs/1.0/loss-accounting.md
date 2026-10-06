@@ -407,6 +407,15 @@ its own life and pays its own work context. Doctor says `N records wait for thei
 session)` while any do. Cursor's sessionStart and the ACP proxy's shutdown reap stale session states as Claude's
 SessionStart does, each sparing its own.
 
+**One life per batch, and a debt with nothing to ride on is paid alone** (review-2 round 7). A batch is the head of
+the spool up to the first line another life wrote, so at most one owed work context goes ahead of it, the debt of
+the life it carries, settled under the spool that owes it; a heal inside it re-sends one life's records. Every
+batch keeps the work context's slot (`MAX_INGEST_BATCH - 1` lines, debt or not), so a batch is the same lines on
+every flush that meets it, and a walk's cursor note always lies inside the batch that settles it (L1). A spool that
+owes a work context and holds no record to carry it, including after a heal that re-sent nothing because the batch
+was the refused life's own, is drained like any other: the debt goes alone in the same drain. A payment that does
+not land waits for the next drain, never the next batch.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

@@ -32,12 +32,12 @@ import {
   MAX_FLUSH_BATCHES_PER_HOOK,
   MAX_INGEST_BATCH,
 } from "../constants.ts";
-import { spoolFlushLockPath } from "../config/paths.ts";
+import { spoolFlushLockPath, spoolOwedWorkContextPath } from "../config/paths.ts";
 import { withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
-import { bytesOfLines, lineEnds, readCountedLines, writeCountedLines, writeCursorOffset } from "./cursor.ts";
+import { bytesOfLines, lineEnds, readCountedLines, writeCursorOffset } from "./cursor.ts";
 import { batchLosses } from "./batch-losses.ts";
 import type { BatchLine, SpooledLine } from "./batch-losses.ts";
 import { addCount } from "./counts.ts";
@@ -95,6 +95,36 @@ const parseLine = (line: string): Record<string, unknown> | null => {
 const pendingTotal = (spools: readonly SessionSpool[]): number =>
   spools.reduce((total, spool) => total + spool.lines.length, 0);
 
+/**
+ * ONE SLOT OF EVERY BATCH IS KEPT for an owed work context (spool/owed-work-
+ * context.ts), whether a debt is open or not (review-2 round 7, L1): a batch
+ * is then the same lines on every flush that meets it, so what a walk noted
+ * on the cursor for it always lies inside the batch that settles it.
+ */
+const BATCH_LINES = MAX_INGEST_BATCH - 1;
+
+/** The session that wrote a spooled line, as its envelope says. */
+const writerOf = (line: string): string | undefined => {
+  const producer = parseLine(line)?.["producer"];
+  const sessionId =
+    typeof producer === "object" && producer !== null ? (producer as { sessionId?: unknown }).sessionId : undefined;
+  return typeof sessionId === "string" ? sessionId : undefined;
+};
+
+/**
+ * ONE LIFE PER BATCH (review-2 round 7): the head lines up to the first one
+ * another life wrote. At most one owed work context goes ahead of a batch —
+ * the debt of the life it carries, settled under the spool that owes it —
+ * and a heal inside it re-sends one life's records. A line whose writer
+ * cannot be read (torn) rides with the run it is in.
+ */
+const oneLife = (lines: readonly string[]): readonly string[] => {
+  const writers = lines.map(writerOf);
+  const life = writers.find((writer) => writer !== undefined);
+  const other = writers.findIndex((writer) => writer !== undefined && writer !== life);
+  return other === -1 ? lines : lines.slice(0, other);
+};
+
 const NOTHING_SENT: IngestSummary = {
   accepted: 0,
   duplicates: 0,
@@ -129,7 +159,7 @@ const send = async (
   owed: OwedWorkContext | null,
   records: readonly Record<string, unknown>[],
 ): Promise<IngestSummary | null> => {
-  if (owed === null || records.length === 0) {
+  if (owed === null) {
     return deliver(ctx, records);
   }
   const delivery = await deliverOwed(ctx, owed, input.developerId, input.sessionId, records);
@@ -201,7 +231,11 @@ interface BatchOutcome {
   readonly heal: SessionHeal | null;
   /** The healer was asked — the flush's one walk is spent, whatever it answered. */
   readonly healAsked: boolean;
+  /** The spool sends nothing more this drain: its debt is still open and its next batch would only meet it again. */
+  readonly isPinned: boolean;
 }
+
+const PINNED: BatchOutcome = { sent: 0, heal: null, healAsked: false, isPinned: true };
 
 /**
  * Sends one batch and moves that spool's cursor past it. Returns how many
@@ -224,10 +258,11 @@ const flushOneBatch = async (
   deadlineMs: number,
   refusedLives: ReadonlySet<string>,
 ): Promise<BatchOutcome | null> => {
-  // ONE SHORT OF THE LIMIT while a work context is owed for this spool: the
-  // debt goes at the head of the batch (spool/owed-work-context.ts).
+  // The owed work context goes at the head of the batch that carries its
+  // life's records (spool/owed-work-context.ts) — or alone, when the spool
+  // holds nothing more for any life to carry it.
   const owed = await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug);
-  const batch = spool.lines.slice(0, owed === null ? MAX_INGEST_BATCH : MAX_INGEST_BATCH - 1);
+  const batch = oneLife(spool.lines.slice(0, BATCH_LINES));
   const consumed = spool.offset + bytesOfLines(spool.pending, batch.length);
   const ends = lineEnds(spool.pending, batch.length, spool.offset);
   // A line an earlier walk already counted is settled: never sent, or
@@ -242,11 +277,21 @@ const flushOneBatch = async (
     (line): line is SpooledLine => line.record !== null && !isWithheld(line.record),
   );
   const records = sendable.map((line) => withProducer(line.record, input.developerId, input.sessionId));
-  const paying = owed !== null && sendable.some((line) => isOwedFor(owed, line.record)) ? owed : null;
+  const isLoneDebt = owed !== null && batch.length === 0;
+  const paying = owed !== null && (isLoneDebt || sendable.some((line) => isOwedFor(owed, line.record))) ? owed : null;
 
   const first = await send(ctx, input, spool, paying, records);
   if (first === null) {
     return null;
+  }
+  if (isLoneDebt) {
+    // A DEBT WITH NO RECORDS LEFT TO CARRY IT is paid alone (review-2 round
+    // 7): a life that writes nothing after its heal never pays it otherwise,
+    // and SessionEnd defers its end on it for good. One that stays open
+    // waits for the next drain, not the next batch.
+    return (await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug)) === null
+      ? { sent: 0, heal: null, healAsked: false, isPinned: false }
+      : PINNED;
   }
   // WHAT THIS BATCH HAS LOST WHATEVER COMES NEXT — torn lines, withheld
   // stragglers, refusals no heal can carry — written once: before a heal's
@@ -329,22 +374,8 @@ const flushOneBatch = async (
   // this batch came from. A spool reaped and recreated mid-flush is a different
   // file — same name, and on ext4 the same inode number too — and its records
   // start at offset 0.
-  await moveCursor(spool, consumed, earlier);
-  return { sent: records.length, heal: healed.heal, healAsked: healed.asked };
-};
-
-/**
- * The cursor at `offset`, keeping the note on lines past it that an earlier
- * walk counted — a batch is not always the same size twice (a debt takes a
- * slot) — and a plain cursor when there are none (spool/cursor.ts).
- */
-const moveCursor = async (spool: SessionSpool, offset: number, counted: ReadonlySet<number>): Promise<void> => {
-  const beyond = new Set([...counted].filter((end) => end > offset));
-  if (beyond.size === 0) {
-    await writeCursorOffset(spool.dataPath, spool.cursorPath, offset, spool);
-    return;
-  }
-  await writeCountedLines(spool.dataPath, spool.cursorPath, offset, beyond, spool);
+  await writeCursorOffset(spool.dataPath, spool.cursorPath, consumed, spool);
+  return { sent: records.length, heal: healed.heal, healAsked: healed.asked, isPinned: false };
 };
 
 /**
@@ -384,12 +415,18 @@ const oldestFirst = (
 ): number =>
   backlogAgeMs(left) - backlogAgeMs(right) || left.slug.localeCompare(right.slug);
 
+/** Whether a spool with nothing left to send still owes its life's work context. */
+const owesAlone = (ctx: HubContext, spool: SessionSpool): Promise<boolean> =>
+  Bun.file(spoolOwedWorkContextPath(ctx.home, ctx.repoKey, spool.slug)).exists();
+
+/** Every spool with a record to send — or a work context it still owes with none (flushOneBatch). */
 const pendingSpools = async (
   ctx: HubContext,
-): Promise<readonly SessionSpool[]> =>
-  (await readAllSessionSpools(ctx.home, ctx.repoKey))
-    .filter((spool) => spool.lines.length > 0)
-    .sort(oldestFirst);
+): Promise<readonly SessionSpool[]> => {
+  const spools = await readAllSessionSpools(ctx.home, ctx.repoKey);
+  const owing = await Promise.all(spools.map((spool) => (spool.lines.length > 0 ? true : owesAlone(ctx, spool))));
+  return spools.filter((_, index) => owing[index] === true).sort(oldestFirst);
+};
 
 /**
  * A batch may not outlive the drain's deadline, so the request timeout is
@@ -413,9 +450,10 @@ const nextOwnedSpool = async (
   ctx: HubContext,
   spools: readonly SessionSpool[],
   flusherSessionId: string,
+  pinned: ReadonlySet<string>,
 ): Promise<SessionSpool | null> => {
   for (const spool of spools) {
-    if (await mayFlusherSend(ctx.home, spool, flusherSessionId, ctx.now())) {
+    if (!pinned.has(spool.slug) && (await mayFlusherSend(ctx.home, spool, flusherSessionId, ctx.now()))) {
       return spool;
     }
   }
@@ -443,6 +481,10 @@ const drain = async (
   let sent = 0;
   let producer = input;
   let refusedLives = await readRefusedLives(ctx.home, ctx.repoKey, ctx.now());
+  // A PINNED SPOOL IS PASSED OVER for the rest of this drain, never failing it
+  // (review-2 round 7, M3): its debt waits for the next one, and every other
+  // spool this flusher may send still goes.
+  let pinned: ReadonlySet<string> = new Set();
   for (let batch = 0; batch < MAX_FLUSH_BATCHES_PER_HOOK; batch += 1) {
     // Checked BEFORE every batch, the first included: the budget belongs to the
     // hosting hook, and a round trip started without room left is exactly what
@@ -462,7 +504,7 @@ const drain = async (
     // The oldest backlog this flusher may send: another live conversation's
     // waits for that conversation (spool/ownership.ts), and the drain goes on
     // past it.
-    const target = await nextOwnedSpool(ctx, spools, producer.sessionId);
+    const target = await nextOwnedSpool(ctx, spools, producer.sessionId, pinned);
     if (target === null) {
       return { outcome: "flushed", sent, remaining: pendingTotal(spools) };
     }
@@ -470,6 +512,7 @@ const drain = async (
     if (delivered === null) {
       return { outcome: "failed", remaining: pendingTotal(spools) };
     }
+    pinned = delivered.isPinned ? new Set([...pinned, target.slug]) : pinned;
     sent += delivered.sent;
     producer = afterBatch(producer, delivered);
     refusedLives = withRefused(refusedLives, delivered.heal);

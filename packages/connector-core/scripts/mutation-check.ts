@@ -17890,16 +17890,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a batch carrying an owed life's records goes without its work context ahead",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "  const paying = owed !== null && sendable.some((line) => isOwedFor(owed, line.record)) ? owed : null;",
-    to: "  const paying = null;",
+    from: "  const paying = owed !== null && (isLoneDebt || sendable.some((line) => isOwedFor(owed, line.record))) ? owed : null;",
+    to: "  const paying = owed !== null && isLoneDebt ? owed : null;",
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 6 HIGH-1: a heal's re-send that fails once leaves the backlog to a flush with no work context ahead, and every record is refused author_unknown and spent",
   },
   {
     label: "a batch is not sized one short while a work context is owed",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "spool.lines.slice(0, owed === null ? MAX_INGEST_BATCH : MAX_INGEST_BATCH - 1)",
-    to: "spool.lines.slice(0, MAX_INGEST_BATCH)",
+    from: "const BATCH_LINES = MAX_INGEST_BATCH - 1;",
+    to: "const BATCH_LINES = MAX_INGEST_BATCH;",
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 6 HIGH-1: a full backlog plus the work context is past the hub's batch limit and refused whole, every flush",
   },
@@ -18082,8 +18082,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the drain ignores whose spool it is sending",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "    if (await mayFlusherSend(ctx.home, spool, flusherSessionId, ctx.now())) {",
-    to: "    if (true) {",
+    from: "    if (!pinned.has(spool.slug) && (await mayFlusherSend(ctx.home, spool, flusherSessionId, ctx.now()))) {",
+    to: "    if (!pinned.has(spool.slug)) {",
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 7 (H1, P4, p4b): a healing flusher re-sends another conversation's owed life's records without its work context, and they are spent as author_unknown",
   },
@@ -18102,6 +18102,38 @@ export const MUTATIONS: readonly Mutation[
     to: '    if ((await ownerOf(home, spool.slug, "", now)) === "own") {',
     test: `${CLI}/test/doctor.test.ts`,
     because: "review-2 round 7: records that wait for their own conversation show nowhere",
+  },
+  {
+    label: "a batch carries two lives' records",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const batch = oneLife(spool.lines.slice(0, BATCH_LINES));",
+    to: "  const batch = spool.lines.slice(0, BATCH_LINES);",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7: two owed lives in one batch, and a heal inside it re-sends another life's records under the wrong debt",
+  },
+  {
+    label: "a torn line ends its life's batch",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const other = writers.findIndex((writer) => writer !== undefined && writer !== life);",
+    to: "  const other = writers.findIndex((writer) => writer !== life);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 7: a batch that starts at a torn line is empty, and the drain spins on it without counting it",
+  },
+  {
+    label: "a debt with no record left to carry it is never paid",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const isLoneDebt = owed !== null && batch.length === 0;",
+    to: "  const isLoneDebt = false;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7: a life that writes nothing after its heal never pays its work context, and SessionEnd defers on it for good",
+  },
+  {
+    label: "a spool that only owes a work context is never drained",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "(spool.lines.length > 0 ? true : owesAlone(ctx, spool))",
+    to: "spool.lines.length > 0",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7: the lone debt is left for a batch that never comes",
   },
 ];
 
@@ -18344,7 +18376,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/owed-work-context.test.ts 5
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 8
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
@@ -18361,7 +18393,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 27
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 28
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 28
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4

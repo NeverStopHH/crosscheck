@@ -24,6 +24,7 @@ import { repoKey, sessionSlug, spoolOwedWorkContextPath } from "../src/config/pa
 import { targetRecord, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
 import type { HubContext } from "../src/http/client.ts";
+import { endSession, registerSession } from "../src/http/hub.ts";
 import { endSessionFlow } from "../src/flows/end-session.ts";
 import { sessionHealer } from "../src/flows/heal-session.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/register-session.ts";
@@ -60,6 +61,8 @@ let refuseRegisters = false;
 let recordPosts = 0;
 let flapRecordPostAt = -1;
 let holdRecordPostAt = -1;
+/** Each record POST the proxy saw: `kind:workContextId` per record, in order. */
+const posts: (readonly string[])[] = [];
 const cleanups: string[] = [];
 
 const raw = async <T>(text: string, params: readonly unknown[] = []): Promise<readonly T[]> =>
@@ -146,6 +149,11 @@ const targetsOf = async (workContextId: string): Promise<number> =>
   (await raw<{ n: number }>("select count(*)::int as n from work_context_targets where work_context_id = $1", [workContextId]))[0]
     ?.n ?? 0;
 
+/** A sibling's SessionEnd reached the hub: the life the state still names is over there. */
+const endSessionOnHub = async (fx: Fixture, sessionId: string): Promise<void> => {
+  await endSession(fx.hub, sessionId);
+};
+
 const isOwed = async (fx: Fixture): Promise<boolean> =>
   Bun.file(spoolOwedWorkContextPath(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).exists();
 
@@ -169,6 +177,8 @@ beforeAll(async () => {
       const { pathname, search } = new URL(request.url);
       if (request.method === "POST" && pathname === "/api/records") {
         recordPosts += 1;
+        const sent = (await request.clone().json()) as { records: { kind: string; body: { id?: string; workContextId?: string } }[] };
+        posts.push(sent.records.map((record) => `${record.kind}:${record.kind === "work_context" ? record.body.id : record.body.workContextId}`));
         if (recordPosts === flapRecordPostAt) {
           return Response.json({ ok: false, error: { code: "unavailable", message: "flap" } }, { status: 503 });
         }
@@ -339,5 +349,83 @@ describe("the work context a heal owes", () => {
 
     // Assert
     expect(await Bun.file(spoolOwedWorkContextPath(fx.home, fx.key, slug)).exists()).toBe(false);
+  });
+});
+
+describe("one life per batch (review-2 round 7)", () => {
+  test("a batch never mixes two lives, and the debt goes only ahead of its own life's records", async () => {
+    // Arrange: two registered lives of one host session, an edit of each in its spool, the later one owed
+    const fx = await fixture("per-life");
+    const first = await register(fx);
+    await flushAsHook(fx);
+    const later = `${first.crosscheckSessionId}~r1`;
+    const registered = await registerSession(fx.hub, {
+      id: later,
+      agentKind: "acp:test",
+      repo: REPO_ID,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      status: "analyzing",
+    });
+    await oweWorkContext(fx.home, fx.key, sessionSlug(fx.hostSessionKey), {
+      sessionId: later,
+      record: workContextRecord({ workContextId: `wc_${later}`, sessionId: later, title: "Later", status: "analyzing" }, producerOf(later), new Date()),
+    });
+    await appendRecords(
+      fx.home,
+      fx.key,
+      fx.hostSessionKey,
+      [...targets(first, 1, "first"), ...targets({ workContextId: `wc_${later}`, crosscheckSessionId: later }, 1, "later")],
+      new Date(),
+    );
+    const postsBefore = posts.length;
+
+    // Act
+    await flushAsHook(fx);
+
+    // Assert: two posts, one life each; the work context only ahead of the later life's
+    expect(registered.ok).toBe(true);
+    expect(posts.slice(postsBefore)).toEqual([[`target:${first.workContextId}`], [`work_context:wc_${later}`, `target:wc_${later}`]]);
+    expect(await isOwed(fx)).toBe(false);
+  });
+
+  test("a heal that re-sends nothing pays the next life's work context at once, alone", async () => {
+    // Arrange: the ended life's own edit is all the batch holds — never re-sent under the next life
+    const fx = await fixture("pays-alone");
+    const first = await register(fx);
+    await flushAsHook(fx);
+    await endSessionOnHub(fx, first.crosscheckSessionId);
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, targets(first, 1, "ended"), new Date());
+
+    // Act: the one flush that heals
+    await flushAsHook(fx);
+
+    // Assert: the next life's work context is on the hub, and nothing is owed
+    const next = await readSessionState(fx.home, fx.hostSessionKey);
+    const rows = await raw<{ id: string }>("select id from work_contexts where id = $1", [next?.workContextId ?? ""]);
+    expect(next?.crosscheckSessionId).toBe(`${first.crosscheckSessionId}~r1`);
+    expect(rows).toHaveLength(1);
+    expect(await isOwed(fx)).toBe(false);
+  });
+
+  test("a debt with no record left to carry it is paid alone by the next drain", async () => {
+    // Arrange: everything delivered, the life's work context still owed
+    const fx = await fixture("lone-debt");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await oweWorkContext(fx.home, fx.key, sessionSlug(fx.hostSessionKey), {
+      sessionId: life.crosscheckSessionId,
+      record: workContextRecord(
+        { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "Lone", status: "analyzing" },
+        producerOf(life.crosscheckSessionId),
+        new Date(),
+      ),
+    });
+
+    // Act
+    await flushAsHook(fx);
+
+    // Assert
+    expect(await isOwed(fx)).toBe(false);
   });
 });
