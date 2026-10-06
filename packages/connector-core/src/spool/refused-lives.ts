@@ -87,6 +87,11 @@ export const recordRefusedLife = async (
     const life = parse(line);
     return life !== null && isYoung(life, cutoffMs);
   });
+  // Recorded already: every refusal of a life that stays ended says so again,
+  // and a second line would only push an older life out of the window.
+  if (kept.some((line) => parse(line)?.sessionId === sessionId)) {
+    return;
+  }
   if (kept.length === lines.length && kept.length < REFUSED_LIVES_MAX) {
     await appendOnce(path, `${lineOf(sessionId, now)}\n`);
     return;

@@ -109,6 +109,16 @@ export const sessionLineagePathForSlug = (home: string, slug: string): string =>
 export const sessionHealPathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.heal`);
 
+/**
+ * The epoch a SessionStart's register carried before its state file was
+ * written (flows/register-session.ts): a hook killed between the two left the
+ * hub holding `session.started` under an epoch nothing on disk named, and the
+ * next SessionStart minted another — split for good. Swept with the lineage
+ * notes (state/session-lineage.ts).
+ */
+export const sessionEpochPathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.epoch`);
+
 export const sessionStatePath = (
   home: string,
   hostSessionKey: string,

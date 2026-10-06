@@ -15,11 +15,21 @@
  */
 import type { CausalGuaranteeTriple, SeqField } from "@crosscheck/schema";
 
-import { removeFile, sessionHealPathForSlug, sessionSlug } from "../config/paths.ts";
+import { z } from "zod";
+
+import {
+  readJsonOrNull,
+  removeFile,
+  sessionEpochPathForSlug,
+  sessionHealPathForSlug,
+  sessionSlug,
+  writePrivateFile,
+} from "../config/paths.ts";
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
+import { recordRefusedLife } from "../spool/refused-lives.ts";
 import {
   UNKNOWN_DEVELOPER_ID,
   workContextRecord,
@@ -255,8 +265,34 @@ export const registerSessionLadder = async (
     if (input.recovery === true && result.code === REPO_MISMATCH_CODE) {
       return { outcome: "repo_mismatch" };
     }
+    if (sessionId === input.liveSessionId && result.code !== REPO_MISMATCH_CODE) {
+      // THE LIFE THE STATE IS ON IS ENDED, and the walk climbs past it: its
+      // records still on disk are the refused life's stragglers, withheld from
+      // every later flush exactly as a heal withholds them (spool/refused-
+      // lives.ts) — delivered by the next life, the hub would file them into
+      // the ended one past its end (review-2 round 7, found by the spool
+      // simulation).
+      await recordRefusedLife(input.home, input.repoKey, sessionId, new Date());
+    }
   }
   return { outcome: "unregistered", sessionId: lifeSessionId(baseId, (rungs.at(-1) ?? start) + 1) };
+};
+
+const ReservedEpochSchema = z.looseObject({ epoch: z.string().min(1) });
+
+/** The epoch a register reserved and never named in a state file, or null. */
+const readReservedEpoch = async (input: RegisterSessionFlowInput): Promise<string | null> => {
+  const parsed = ReservedEpochSchema.safeParse(
+    await readJsonOrNull(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey))),
+  );
+  return parsed.success ? parsed.data.epoch : null;
+};
+
+const reserveEpoch = async (input: RegisterSessionFlowInput, epoch: string): Promise<void> => {
+  await writePrivateFile(
+    sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)),
+    `${JSON.stringify({ epoch, at: input.now.toISOString() })}\n`,
+  );
 };
 
 /** The session-start recipe: register → state BEFORE append → work context. */
@@ -281,7 +317,17 @@ export const registerSessionFlow = async (
   // every pair in that session, permanently. Read here, before the POST,
   // because the POST is what carries it (carriedSeqEpoch's header).
   const previous = await readSessionState(input.home, input.hostSessionKey);
-  const seqEpoch = carriedSeqEpoch(previous, input, mintedEpoch);
+  // ...AND A REGISTER KILLED BEFORE ITS STATE WAS WRITTEN LEFT ITS EPOCH ON THE
+  // HUB (review-2 round 7, found by the spool simulation): `session.started`
+  // under it, nothing on disk naming it, and the next SessionStart's fresh
+  // mint split the session for good. The epoch is reserved before the POST,
+  // and a state-less register takes the reservation it finds — nothing was
+  // ever positioned under it but `session.started` at 0.
+  const fresh = (previous === null ? await readReservedEpoch(input) : null) ?? mintedEpoch;
+  const seqEpoch = carriedSeqEpoch(previous, input, fresh);
+  if (seqEpoch === fresh) {
+    await reserveEpoch(input, fresh);
+  }
   const ladder = await registerSessionLadder({
     ...input,
     // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the only
@@ -316,6 +362,14 @@ export const registerSessionFlow = async (
   const crosscheckSessionId = ladder.sessionId;
   const developerId = registration?.developerId ?? input.fallbackDeveloperId;
   const workContextId = workContextIdFor(crosscheckSessionId);
+  // A RE-FIRE ON THE LIFE IT IS IN KEEPS THAT LIFE'S STATUS (review-2 round 7,
+  // found by the spool simulation): set_intent may have moved it since the
+  // first SessionStart, and the work context this register spools would put
+  // the host's starting status back over it.
+  const status =
+    previous !== null && previous.crosscheckSessionId === crosscheckSessionId
+      ? (previous.workContextStatus ?? input.status)
+      : input.status;
   if (registration !== null) {
     // A register that landed answers the last failed walk's verdict: the hub
     // knows the life now, and a stamp that still said `failed` kept every
@@ -347,7 +401,7 @@ export const registerSessionFlow = async (
     // title and status on their update record — kept here so they never
     // fabricate one (trial finding #16).
     workContextTitle: input.title,
-    workContextStatus: input.status,
+    workContextStatus: status,
     // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
     // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
     // verbatim, with no carry at all — "the counters lose rather than the
@@ -366,7 +420,7 @@ export const registerSessionFlow = async (
     // handed out — the one thing the order may never do (withCarriedCapture's
     // header: the pair moves together or not at all). The fallback keeps
     // costing comparability, and never correctness.
-    seqEpoch: mintedEpoch,
+    seqEpoch: fresh,
     eventSeq: 0,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
@@ -392,6 +446,8 @@ export const registerSessionFlow = async (
     // which is what withBriefingSolvedRefs' header specifies.
     await publishSessionState(input.home, stateInput);
   }
+  // The state names the epoch now; the reservation has done its job.
+  await removeFile(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)));
   await appendRecords(
     input.home,
     input.repoKey,
@@ -402,7 +458,7 @@ export const registerSessionFlow = async (
           workContextId,
           sessionId: crosscheckSessionId,
           title: input.title,
-          status: input.status,
+          status,
         },
         {
           developerId: developerId ?? UNKNOWN_DEVELOPER_ID,

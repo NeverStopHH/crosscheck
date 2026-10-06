@@ -35,7 +35,7 @@ import { flushSpool } from "../spool/flush.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { seqAt } from "../capture/seq.ts";
 import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
-import { allocateSeq, closeSessionState, crosscheckSessionIdFor } from "../state/session-state.ts";
+import { allocateSeq, closeSessionState, crosscheckSessionIdFor, readSessionState } from "../state/session-state.ts";
 import type { SeqField } from "@crosscheck/schema";
 
 export interface EndSessionFlowInput {
@@ -86,8 +86,14 @@ const lifeEnd = (input: EndSessionFlowInput, sessionId: string, seq: SeqField): 
   markerPath: pendingEndPathOf(input, sessionId),
 });
 
+/** What the state says the life's work context is, kept on its marker once the state is gone. */
+interface WorkContextStanding {
+  readonly workContextTitle: string | null;
+  readonly workContextStatus: string | null;
+}
+
 /** The marker, then the lineage — both before the state goes. */
-const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd): Promise<void> => {
+const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd, standing: WorkContextStanding): Promise<void> => {
   await writePrivateFile(
     end.markerPath,
     `${JSON.stringify({
@@ -97,6 +103,12 @@ const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd): Promise<v
       // later process with no state file to consult — so a deferred end
       // without this is permanently unsequenced, and nothing would say why.
       seq: end.seq,
+      // ...and the last title and status the life's state held: a work
+      // context still on disk for it goes with these, not the ones it was
+      // spooled with (spool/owed-work-context.ts readLifeState, review-2 round
+      // 7, found by the spool simulation).
+      ...(standing.workContextTitle === null ? {} : { workContextTitle: standing.workContextTitle }),
+      ...(standing.workContextStatus === null ? {} : { workContextStatus: standing.workContextStatus }),
     })}\n`,
   );
   // The life this end closes, written down BEFORE its state goes: the state
@@ -147,7 +159,12 @@ export const endSessionFlow = async (
     input.crosscheckSessionId,
     seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0),
   );
-  await writeDownEnd(input, own);
+  const state = await readSessionState(input.home, input.hostSessionKey);
+  const standing: WorkContextStanding = {
+    workContextTitle: state?.workContextTitle ?? null,
+    workContextStatus: state?.workContextStatus ?? null,
+  };
+  await writeDownEnd(input, own, standing);
   // COMPARED, NOT BLIND (review-2 finding 2): a heal that moved the state
   // after this SessionEnd read it registered a life that ends with this host
   // session too. Left open with no state naming it, the next resume would
@@ -155,7 +172,7 @@ export const endSessionFlow = async (
   const moved = await closeSessionState(input.home, input.hostSessionKey, input.crosscheckSessionId);
   const healed = moved === null ? null : lifeEnd(input, moved.crosscheckSessionId, seqAt(moved.seq, 0));
   if (healed !== null) {
-    await writeDownEnd(input, healed);
+    await writeDownEnd(input, healed, standing);
   }
   // A first prompt parked for the derived-intent worker that never ran (a
   // spawn that failed, a session ending inside the worker's deadline) must

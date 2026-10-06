@@ -15,7 +15,14 @@ import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, OWED_WORK_CONTEXT_MAX_REFUSALS } from "../src/constants.ts";
-import { repoKey, sessionSlug, sessionStatePath, spoolOwedWorkContextPath } from "../src/config/paths.ts";
+import {
+  readTextOrNull,
+  repoKey,
+  sessionSlug,
+  sessionStatePath,
+  spoolOwedWorkContextPath,
+  spoolRefusedLivesPath,
+} from "../src/config/paths.ts";
 import { targetRecord, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
 import type { HubContext } from "../src/http/client.ts";
@@ -31,6 +38,8 @@ import { readSessionSpool } from "../src/spool/files.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { oweWorkContext, readOwedWorkContext, settleOwedWorkContext } from "../src/spool/owed-work-context.ts";
 import { reapSpool } from "../src/spool/reap.ts";
+import { recordRefusedLife } from "../src/spool/refused-lives.ts";
+import { toLines } from "../src/spool/lines.ts";
 import { readSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -316,6 +325,68 @@ describe("what a refusal of the debt is", () => {
 
     // Assert: one refusal, the debt still open
     expect((await owedOf(fx))?.refusals).toBe(1);
+  });
+});
+
+describe("a debt of a life the hub ended (review-2 round 7, found by the spool simulation)", () => {
+  test("is settled as moot, never paid into the ended session", async () => {
+    // Arrange: a debt for a life this connector knows the hub ended; the conversation is gone
+    const fx = await fixture("moot");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await owe(fx, life.crosscheckSessionId, "Moot", "blocked");
+    await recordRefusedLife(fx.home, fx.key, life.crosscheckSessionId, new Date());
+    await rm(sessionStatePath(fx.home, fx.hostSessionKey), { force: true });
+
+    // Act: another conversation's flush
+    const other = await register(fx, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert: the debt is gone and the hub never got the copy
+    const rows = await raw<{ title: string }>("select title from work_contexts where id = $1", [life.workContextId]);
+    expect(await owedOf(fx)).toBeNull();
+    expect(rows[0]?.title).not.toBe("Moot");
+  });
+
+  test("keeps its life open: the deferred end waits for the debt as it waits for records", async () => {
+    // Arrange: everything delivered, the work context owed, SessionEnd deferred on it
+    const fx = await fixture("end-waits");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await owe(fx, life.crosscheckSessionId);
+    await endSessionFlow({
+      home: fx.home,
+      repoKey: fx.key,
+      hub: fx.hub,
+      hostSessionKey: fx.hostSessionKey,
+      crosscheckSessionId: life.crosscheckSessionId,
+      developerId,
+      flushBudgetMs: 0,
+      now: () => new Date(),
+    });
+
+    // Act: SessionStart's reap with an ender
+    await reapSpool(fx.home, fx.key, new Date(), async (sessionId, seq) =>
+      (await endSession(fx.hub, sessionId, seq)).ok ? "ended" : "retry",
+    );
+
+    // Assert: the life is still open on the hub
+    const rows = await raw<{ ended: boolean }>("select ended_at is not null as ended from agent_sessions where id = $1", [
+      life.crosscheckSessionId,
+    ]);
+    expect(rows).toEqual([{ ended: false }]);
+  });
+
+  test("is written down once, however many refusals say the life ended", async () => {
+    // Arrange
+    const fx = await fixture("refused-once");
+
+    // Act
+    await recordRefusedLife(fx.home, fx.key, "cc_once", new Date());
+    await recordRefusedLife(fx.home, fx.key, "cc_once", new Date());
+
+    // Assert
+    expect(toLines(await readTextOrNull(spoolRefusedLivesPath(fx.home, fx.key)))).toHaveLength(1);
   });
 });
 

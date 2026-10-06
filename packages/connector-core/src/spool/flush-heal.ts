@@ -33,6 +33,7 @@ import type { HubContext } from "../http/client.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
 import { conversationOf } from "../state/session-lineage.ts";
+import { recordRefusedLife } from "./refused-lives.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
 
@@ -256,6 +257,13 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
     return { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };
   }
   const cause = refusalCauseOf(refusals[0] ?? { index: 0, status: "rejected" });
+  if (cause === "session_ended") {
+    // THE HUB SAID THIS LIFE IS OVER, and that holds whatever the heal does
+    // next (review-2 round 7, found by the spool simulation): its stragglers
+    // are withheld from every later flush — a successor's too, once this
+    // conversation is gone — even when no walk lands a life past it.
+    await recordRefusedLife(input.ctx.home, input.ctx.repoKey, input.flusherSessionId, input.ctx.now());
+  }
   const neededLater =
     spendsAnotherConversation(input, refusals) || spendsOwnWorkContext(input, refusals, cause);
   if (input.healer === undefined) {

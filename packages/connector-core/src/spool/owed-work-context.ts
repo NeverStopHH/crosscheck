@@ -35,6 +35,7 @@ import {
   sessionSlug,
   sessionStatePathForSlug,
   spoolOwedWorkContextPath,
+  spoolPendingEndPath,
   writePrivateFile,
 } from "../config/paths.ts";
 import { withProducer, workContextRecord } from "../capture/records.ts";
@@ -42,7 +43,8 @@ import type { Producer } from "../capture/records.ts";
 import type { HubContext } from "../http/client.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
-import { underSessionStateLock } from "../state/session-state.ts";
+import { lifeRungOf } from "../state/session-lineage.ts";
+import { crosscheckSessionIdFor, underSessionStateLock } from "../state/session-state.ts";
 import { recordDrop } from "./drops.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 
@@ -233,14 +235,64 @@ export const answerOwed = async (
   return isRecordRefused ? recordRefusal(home, key, slug, workContextId, now) : "open";
 };
 
-interface StateNaming {
+/** What a host session's state says about the life it names: the work context's title and status. */
+export interface LifeState {
   readonly crosscheckSessionId?: unknown;
   readonly workContextTitle?: unknown;
   readonly workContextStatus?: unknown;
 }
 
+/**
+ * What the life `sessionId` last said about its work context: the host
+ * session's state while it names the life, else — SessionEnd ran — the
+ * life's deferred-end marker, which keeps the state's last title and status
+ * (flows/end-session.ts). Null when neither speaks for it.
+ */
+export const readLifeState = async (
+  home: string,
+  key: string,
+  slug: string,
+  sessionId: string,
+): Promise<LifeState | null> => {
+  const state = (await readJsonOrNull(sessionStatePathForSlug(home, slug))) as LifeState | null;
+  if (state?.crosscheckSessionId === sessionId) {
+    return state;
+  }
+  const hostSessionKey = hostSessionKeyOf(slug);
+  const rung = hostSessionKey === null ? null : lifeRungOf(crosscheckSessionIdFor(hostSessionKey), sessionId);
+  if (rung === null) {
+    return null;
+  }
+  const marker = (await readJsonOrNull(spoolPendingEndPath(home, key, slug, rung))) as LifeState | null;
+  return marker?.crosscheckSessionId === sessionId ? marker : null;
+};
+
 const textOr = (value: unknown, fallback: unknown): string =>
   typeof value === "string" ? value : typeof fallback === "string" ? fallback : "";
+
+/**
+ * A SPOOLED WORK CONTEXT AS IT GOES NOW (review-2 round 7, found by the spool
+ * simulation): the one a register spooled carries its SessionStart's status,
+ * and set_intent can reach the hub first — the spool's copy, delivered later,
+ * put the old status back. It goes with the title and status the state of
+ * the life it names holds when it is sent; its envelope stays its own.
+ */
+export const withLifeState = (record: Record<string, unknown>, state: LifeState | null): Record<string, unknown> => {
+  const body = record["body"] as Record<string, unknown> | undefined;
+  if (record["kind"] !== "work_context" || body === undefined || state === null) {
+    return record;
+  }
+  return body["sessionId"] !== state.crosscheckSessionId
+    ? record
+    : {
+        ...record,
+        body: {
+          ...body,
+          title: textOr(state.workContextTitle, body["title"]),
+          status: textOr(state.workContextStatus, body["status"]),
+        },
+      };
+};
 
 /**
  * THE OWED WORK CONTEXT AS IT GOES NOW (review-2 round 7, M1): built when it
@@ -253,12 +305,12 @@ const textOr = (value: unknown, fallback: unknown): string =>
  */
 export const owedRecordNow = async (
   home: string,
+  key: string,
   slug: string,
   owed: OwedWorkContext,
   now: Date,
 ): Promise<Record<string, unknown>> => {
-  const state = (await readJsonOrNull(sessionStatePathForSlug(home, slug))) as StateNaming | null;
-  const named = state !== null && state.crosscheckSessionId === owed.sessionId ? state : null;
+  const named = await readLifeState(home, key, slug, owed.sessionId);
   const body = (owed.record["body"] ?? {}) as Record<string, unknown>;
   return workContextRecord(
     {
@@ -322,7 +374,11 @@ export const deliverOwed = async (
   flusherSessionId: string,
   records: readonly Record<string, unknown>[],
 ): Promise<OwedDelivery | null> => {
-  const ahead = withProducer(await owedRecordNow(ctx.home, slug, owed, ctx.now()), developerId, flusherSessionId);
+  const ahead = withProducer(
+    await owedRecordNow(ctx.home, ctx.repoKey, slug, owed, ctx.now()),
+    developerId,
+    flusherSessionId,
+  );
   const result = await postRecords(ctx, [ahead, ...records]);
   if (!result.ok) {
     return null;

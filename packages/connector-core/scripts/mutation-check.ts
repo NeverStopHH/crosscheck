@@ -5194,8 +5194,8 @@ export const MUTATIONS: readonly Mutation[
     // uses.
     label: "a re-fire registers under an epoch the session does not use",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "  const seqEpoch = carriedSeqEpoch(previous, input, mintedEpoch);",
-    to: "  const seqEpoch = mintedEpoch;",
+    from: "  const seqEpoch = carriedSeqEpoch(previous, input, fresh);",
+    to: "  const seqEpoch = fresh;",
     test: `${CORE}/test/register-seq.test.ts`,
     because:
       "UNSAFE: a session whose FIRST register never landed has " +
@@ -5591,8 +5591,8 @@ export const MUTATIONS: readonly Mutation[
     // deleted, and reap's DeferredEnder runs in a later process.
     label: "a deferred end is silently unsequenced",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "      seq: end.seq,\n    })}\\n`,",
-    to: "    })}\\n`,",
+    from: "      seq: end.seq,\n",
+    to: "",
     test: `${CORE}/test/end-session-seq.test.ts`,
     because:
       "every session that ended with a backlog on disk — an offline " +
@@ -17400,14 +17400,6 @@ export const MUTATIONS: readonly Mutation[
     because: "a parallel hook's edit of the refused life is filed into the ended session on the next flush",
   },
   {
-    label: "a heal that moves lives does not write the refused life down",
-    file: `${CORE}/src/flows/heal-session.ts`,
-    from: "    await recordRefusedLife(input.home, input.repoKey, refusal.sessionId, now);\n",
-    to: "",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "the next hook's flush has no way to know the life was refused and delivers its stragglers into it",
-  },
-  {
     label: "the heal ignores its cooldown",
     file: `${CORE}/src/flows/heal-session.ts`,
     from: "  if (stamp !== null && now.getTime() - stamp.atMs < HEAL_COOLDOWN_MS) {",
@@ -17874,7 +17866,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a deferred SessionEnd never writes down the healed life's end (M8)",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "    await writeDownEnd(input, healed);\n",
+    from: "    await writeDownEnd(input, healed, standing);\n",
     to: "",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 LOW-6: the healed life is never ended from its marker, and the next resume lands on it under a fresh epoch",
@@ -18304,6 +18296,150 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 6 survivor O11b: the life is ended on the hub with its work context still owed, and the payment is refused as a late write",
   },
   {
+    label: "a SessionStart re-fire puts the host's starting status back",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      ? (previous.workContextStatus ?? input.status)",
+    to: "      ? input.status",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 7, simulation seed 10 (I4): compact, resume or clear reverts the status set_intent set",
+  },
+  {
+    label: "a ladder that climbs past an ended life leaves its records deliverable into it",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      await recordRefusedLife(input.home, input.repoKey, sessionId, new Date());\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 7, simulation seed 8 (I2): the next life files the ended life's edits into it past its end",
+  },
+  {
+    label: "a state-less register ignores the epoch it reserved",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const fresh = (previous === null ? await readReservedEpoch(input) : null) ?? mintedEpoch;",
+    to: "  const fresh = mintedEpoch;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 7, simulation seed 113 (I3): a SessionStart killed after its register splits the session's epoch for good",
+  },
+  {
+    label: "a register reserves no epoch before its POST",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    await reserveEpoch(input, fresh);\n",
+    to: "",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 7, simulation seed 113 (I3): nothing on disk names the epoch the hub filed session.started under",
+  },
+  {
+    label: "the state takes a fresh mint beside the reserved epoch on the wire",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    seqEpoch: fresh,\n    eventSeq: 0,",
+    to: "    seqEpoch: mintedEpoch,\n    eventSeq: 0,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 7 (I3): session.started under one epoch, every later event under another",
+  },
+  {
+    label: "set_intent writes its status into the state only after the hub took it",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "  if (isNewStatus) {\n    await writeStatus(ctx, own, status);\n  }\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7, simulation seed 10 (I4): killed between the post and the state write, the next re-fire or debt puts the old status back",
+  },
+  {
+    label: "set_intent leaves a status the hub surely never took in the state",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "    if (!mayHaveLanded(posted)) {\n      await keepOldStatus();\n    }\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7: a refused post's status goes to the hub later, under the one tool result that said it failed",
+  },
+  {
+    label: "set_intent puts the old status back over a post that may have landed",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "    if (!mayHaveLanded(posted)) {",
+    to: "    if (true) {",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7, simulation seed 1020 (I4): the hub holds the new status, and the next sender reverts it",
+  },
+  {
+    label: "set_intent refused as ended tells no flusher",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "      await recordRefusedLife(ctx.config.home, ctx.repoKey, own.crosscheckSessionId, ctx.now());\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7, simulation seed 1033 (I2): a successor files the ended life's records into it",
+  },
+  {
+    label: "a spooled work context goes with the status it was spooled with",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const spooled = sendable.map((line) => withLifeState(line.record, lifeState));",
+    to: "  const spooled = sendable.map((line) => line.record);",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7, simulation seed 349 (I4): the registration's copy reverts the status set_intent reached the hub with first",
+  },
+  {
+    label: "an ended life's work context forgets the status its end left on the marker",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "  return marker?.crosscheckSessionId === sessionId ? marker : null;",
+    to: "  return null;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7, simulation seeds 3062/3098 (I4): after SessionEnd, the spooled copy reverts the status",
+  },
+  {
+    label: "SessionEnd's marker keeps no status",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "      ...(standing.workContextStatus === null ? {} : { workContextStatus: standing.workContextStatus }),\n",
+    to: "",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7 (I4): nothing past the state remembers the status set_intent set",
+  },
+  {
+    label: "a refusal as ended tells no later flush when no heal moved past it",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    await recordRefusedLife(input.ctx.home, input.ctx.repoKey, input.flusherSessionId, input.ctx.now());\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 7, simulation seed 500 (I2): SessionEnd's flush has no healer to say so, and a successor files the ended life's stragglers into it",
+  },
+  {
+    label: "a heartbeat refused as ended tells no later flush",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      await recordRefusedLife(input.home, boundToSession(input, state).repoKey, refusal.sessionId, input.now());\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 7 (I2): a successor files the ended life's records into it after the walk lands nothing",
+  },
+  {
+    label: "a debt of a life the hub ended is paid into it",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  if (owed === null || owed.sessionId === flusherSessionId || !refusedLives.has(owed.sessionId)) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7, simulation seed 772 (I2): the work context is filed into an ended session past its end",
+  },
+  {
+    label: "a lone debt refused as ended tells no later flush",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "      await recordRefusedLife(ctx.home, ctx.repoKey, input.sessionId, ctx.now());\n",
+    to: "",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 7, simulation seed 772 (I2): the janitor pays the debt into the life SessionEnd was just told ended",
+  },
+  {
+    label: "the deferred end ends a life whose work context is still owed",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  if ((await readOwedWorkContext(home, key, slug))?.sessionId === parsed.data.crosscheckSessionId) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7, simulation seed 7019 (I2): the payment that follows is filed into the session past its end",
+  },
+  {
+    label: "a life refused again is written down again",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "  if (kept.some((line) => parse(line)?.sessionId === sessionId)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7: one life refused on every hook pushes older refused lives out of the window, and their stragglers are delivered",
+  },
+  {
     label: "doctor says nothing of an owed work context (L4)",
     file: `${CLI}/src/cli/doctor.ts`,
     from: "    ...(await debtChecks(home, key)),\n",
@@ -18568,8 +18704,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 18
- * PRINTS: packages/connector-core/test/owed-work-context.test.ts 9
+ * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 21
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 12
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
@@ -18586,18 +18722,19 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 28
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 29
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 28
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 32
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 5
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 9
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ownership.test.ts 6
+ * PRINTS: packages/connector-core/test/spool-simulation.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6

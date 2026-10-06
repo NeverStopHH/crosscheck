@@ -319,11 +319,9 @@ const walk = async (
   if (ladder.outcome !== "registered") {
     return FAILED;
   }
-  if (ladder.sessionId !== refusal.sessionId) {
-    // The refused life's stragglers are withheld from every later flush on
-    // this repo (spool/refused-lives.ts).
-    await recordRefusedLife(input.home, input.repoKey, refusal.sessionId, now);
-  }
+  // A life the walk climbed past is written down as refused already — by the
+  // heal, for a refusal as ended, and by the ladder, for a 409 on it — so its
+  // stragglers are withheld from every later flush (spool/refused-lives.ts).
   // Then the life's work context, OWED — a heal onto the SAME id too (review-2
   // finding 1): the one registration spooled may have been spent by then,
   // and every later record of the life names it. The debt is written with
@@ -382,6 +380,13 @@ const heal =
     const state = await readSessionState(input.home, input.hostSessionKey);
     if (state === null) {
       return FAILED;
+    }
+    if (refusal.cause === "session_ended") {
+      // THE HUB SAID THE LIFE IS OVER — a heartbeat's 409 as much as a
+      // flush's refusal — and that holds whether or not a walk lands past it
+      // (review-2 round 7, found by the spool simulation): its stragglers are
+      // withheld from every later flush (spool/refused-lives.ts).
+      await recordRefusedLife(input.home, boundToSession(input, state).repoKey, refusal.sessionId, input.now());
     }
     // Healed already — by a sibling hook, or a SessionStart that re-registered.
     // Its life is the answer, and costs no walk.

@@ -433,6 +433,66 @@ describe("the owed work context, built when it is sent (review-2 round 7, M1, P2
   });
 });
 
+describe("a work context spooled at registration (review-2 round 7, found by the spool simulation)", () => {
+  test("goes with the status the life's state holds when it is sent, not the one it was spooled with", async () => {
+    // Arrange: SessionStart spooled the work context as `analyzing`; set_intent
+    // reached the hub first with `blocked`, and the state says so
+    const fx = await fixture("spooled-wc");
+    const life = await register(fx);
+    const intent = withProducer(
+      workContextRecord(
+        { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "Mine", status: "blocked" },
+        producerOf(life.crosscheckSessionId),
+        new Date(),
+      ),
+      developerId,
+      life.crosscheckSessionId,
+    );
+    await postRecords(fx.hub, [intent]);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: "blocked" }));
+
+    // Act: the spooled registration goes
+    await flushAsHook(fx);
+
+    // Assert
+    expect(await statusOf(life.workContextId)).toBe("blocked");
+  });
+
+  test("goes with the status the life's end left on its marker once the state is gone", async () => {
+    // Arrange: the same race, and a SessionEnd with no room to drain
+    const fx = await fixture("spooled-wc-ended");
+    const life = await register(fx);
+    const intent = withProducer(
+      workContextRecord(
+        { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "Mine", status: "blocked" },
+        producerOf(life.crosscheckSessionId),
+        new Date(),
+      ),
+      developerId,
+      life.crosscheckSessionId,
+    );
+    await postRecords(fx.hub, [intent]);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: "blocked" }));
+    await endSessionFlow({
+      home: fx.home,
+      repoKey: fx.key,
+      hub: fx.hub,
+      hostSessionKey: fx.hostSessionKey,
+      crosscheckSessionId: life.crosscheckSessionId,
+      developerId,
+      flushBudgetMs: 0,
+      now: () => new Date(),
+    });
+
+    // Act: another conversation drains the ended one's spool
+    const other = await register(fx, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert
+    expect(await statusOf(life.workContextId)).toBe("blocked");
+  });
+});
+
 describe("one life per batch (review-2 round 7)", () => {
   test("a batch never mixes two lives, and the debt goes only ahead of its own life's records", async () => {
     // Arrange: two registered lives of one host session, an edit of each in its spool, the later one owed

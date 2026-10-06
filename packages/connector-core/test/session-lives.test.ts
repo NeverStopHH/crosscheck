@@ -8,20 +8,20 @@
  * front of the hub turns those dials; everything else is the shipped flows.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
-import { repoKey, sessionSlug, sessionStatePath, spoolDir } from "../src/config/paths.ts";
+import { repoKey, sessionEpochPathForSlug, sessionSlug, sessionStatePath, spoolDir } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
-import { targetRecord } from "../src/capture/records.ts";
+import { targetRecord, withProducer, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
 import { seqAt, withSeq } from "../src/capture/seq.ts";
 import type { HubContext } from "../src/http/client.ts";
-import { endSession } from "../src/http/hub.ts";
+import { endSession, postRecords, registerSession } from "../src/http/hub.ts";
 import { endSessionFlow } from "../src/flows/end-session.ts";
 import { sessionHealer } from "../src/flows/heal-session.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/register-session.ts";
@@ -31,7 +31,7 @@ import { readDropDetail } from "../src/spool/drops.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { reapSpool } from "../src/spool/reap.ts";
 import { readUnclosedSummary } from "../src/spool/unclosed.ts";
-import { allocateSeq, readSessionState, sessionStateLockPath } from "../src/state/session-state.ts";
+import { allocateSeq, readSessionState, sessionStateLockPath, updateSessionState } from "../src/state/session-state.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import { withLock } from "../src/spool/lock.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -993,5 +993,91 @@ describe("a heal whose state switch meets a busy lock", () => {
     expect((await stateOf(fx))?.crosscheckSessionId).toBe(life.crosscheckSessionId);
     expect(await targetsOf(life.workContextId)).toEqual(["src/w1.ts", "src/w2.ts", "src/w3.ts"]);
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
+  });
+});
+
+/**
+ * TWO SHAPES THE SPOOL SIMULATION FOUND (test/spool-simulation.test.ts,
+ * review-2 round 7): a SessionStart re-fire put back the status set_intent had
+ * set (seed 10, I4), and a SessionStart whose ladder climbed past a life the
+ * hub had ended let that life's records be filed into it after its end (seed
+ * 8, I2) — the heal withholds such records, the ladder did not.
+ */
+describe("a SessionStart killed between its register and its state (review-2 round 7, found by the spool simulation)", () => {
+  test("is followed by one that keeps the epoch the hub filed session.started under", async () => {
+    // Arrange: the hub holds the life's session.started under epoch E; only the reservation names E
+    const fx = await fixture("reserved-epoch");
+    const epoch = crypto.randomUUID();
+    const lifeId = `cc_${fx.hostSessionKey}`;
+    await registerSession(fx.hub, {
+      id: lifeId,
+      agentKind: "acp:test",
+      repo: REPO_ID,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      status: "analyzing",
+      seq: { epoch, n: 0 },
+    });
+    const reservation = sessionEpochPathForSlug(fx.home, sessionSlug(fx.hostSessionKey));
+    await mkdir(dirname(reservation), { recursive: true });
+    await writeFile(reservation, `${JSON.stringify({ epoch })}\n`);
+
+    // Act: the next SessionStart, and an edit
+    const life = await register(fx);
+    await captureTarget(fx, "src/after-reservation.ts");
+    await flushAsHook(fx);
+
+    // Assert: one epoch on the hub, and the reservation spent
+    expect(life.crosscheckSessionId).toBe(lifeId);
+    expect((await stateOf(fx))?.seqEpoch).toBe(epoch);
+    expect(await readSessionCausalOrder(db, lifeId)).toMatchObject({ state: "usable", epochs: 1 });
+    expect(await Bun.file(sessionEpochPathForSlug(fx.home, sessionSlug(fx.hostSessionKey))).exists()).toBe(false);
+  });
+});
+
+describe("a SessionStart that re-fires inside a live conversation", () => {
+  test("keeps the status set_intent set since, on the hub and in the state", async () => {
+    // Arrange: a live life whose status set_intent moved to `blocked`
+    const fx = await fixture("refire-status");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    const intent = withProducer(
+      workContextRecord(
+        { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "Mine", status: "blocked" },
+        producerOf(life.crosscheckSessionId),
+        new Date(),
+      ),
+      developerId,
+      life.crosscheckSessionId,
+    );
+    await postRecords(fx.hub, [intent]);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: "blocked" }));
+
+    // Act: compact, resume or clear fires SessionStart again; its hook flushes
+    await register(fx);
+    await flushAsHook(fx);
+
+    // Assert
+    const rows = await raw<{ status: string }>("select status from work_contexts where id = $1", [life.workContextId]);
+    expect(rows).toEqual([{ status: "blocked" }]);
+    expect((await stateOf(fx))?.workContextStatus).toBe("blocked");
+  });
+
+  test("withholds the records of a life the hub ended, never filing them into it past its end", async () => {
+    // Arrange: the hub ends the life; one of its edits is still on disk
+    const fx = await fixture("refire-ended");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    await captureTarget(fx, "src/after-end.ts");
+
+    // Act: SessionStart re-fires, its ladder climbs past the ended life, and the hook flushes
+    const next = await register(fx);
+    await flushAsHook(fx);
+
+    // Assert: on the next life; the ended one holds no record of it, and the edit is counted withheld
+    expect(next.crosscheckSessionId).toBe(`${life.crosscheckSessionId}~r1`);
+    expect(await targetsOf(life.workContextId)).toEqual([]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
   });
 });

@@ -325,6 +325,96 @@ describe("a flush whose own session the hub ended", () => {
     expect((await readDropDetail(fx.home, fx.key)).rejectedCauses).toEqual({ session_ended: 1 });
   });
 
+  test("a life the hub said ended is withheld from a successor even when no heal moved past it (review-2 round 7)", async () => {
+    // Arrange: the hub ends the life and refuses every register, so the walk lands nothing
+    const fx = await fixture("ended-no-heal", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+    refuseRegisters = true;
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/refused.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await flushAsHook(fx);
+    refuseRegisters = false;
+    // ...one more edit of the life lands on disk, and the conversation is gone
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/straggler.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await rm(sessionStatePath(fx.home, fx.hostSessionKey), { force: true });
+
+    // Act: another conversation's flush
+    const other = await register(fx, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+
+    // Assert: never filed into the ended life; counted for what it is
+    expect(await targetsOf(life.workContextId)).toEqual([]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ rejected: 1, withheld: 1 });
+  });
+
+  test("a SessionEnd whose flush the hub refuses as ended withholds the life's stragglers from a successor (review-2 round 7, seed 500)", async () => {
+    // Arrange: a sibling ended the life on the hub; an edit of it waits on disk
+    const fx = await fixture("end-refused-ended", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/refused.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+
+    // Act: SessionEnd — its flush has no healer — then a racing hook's edit, then another conversation's flush
+    await endSessionFlow({
+      home: fx.home,
+      repoKey: fx.key,
+      hub: fx.hub,
+      hostSessionKey: fx.hostSessionKey,
+      crosscheckSessionId: life.crosscheckSessionId,
+      developerId,
+      flushBudgetMs: GENEROUS_BUDGET_MS,
+      now: () => new Date(),
+    });
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/straggler.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    const other = await register(fx, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+
+    // Assert: never filed into the ended life; counted for what it is
+    expect(await targetsOf(life.workContextId)).toEqual([]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ rejected: 1, withheld: 1 });
+  });
+
+  test("a heartbeat the hub refuses as ended marks the life refused too, a failed walk or not (review-2 round 7)", async () => {
+    // Arrange: the hub ends the life and refuses every register
+    const fx = await fixture("beat-ended", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+    refuseRegisters = true;
+
+    // Act: the beat's 409 asks the healer, whose walk lands nothing; then the
+    // conversation is gone with an edit of the life on disk, and another flushes
+    await heartbeatMaybe({
+      hub: fx.hub,
+      crosscheckSessionId: life.crosscheckSessionId,
+      lastHeartbeatAt: null,
+      now: new Date(),
+      onRefused: (cause) =>
+        healerFor(fx)({ sessionId: life.crosscheckSessionId, cause }, Date.now() + GENEROUS_BUDGET_MS),
+    });
+    refuseRegisters = false;
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/after-beat.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await rm(sessionStatePath(fx.home, fx.hostSessionKey), { force: true });
+    const other = await register(fx, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+
+    // Assert
+    expect(await targetsOf(life.workContextId)).toEqual([]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+
   test("a straggler of the refused life flushed later is withheld too", async () => {
     // Arrange: healed once; a parallel hook's record of the refused life lands afterwards
     const fx = await fixture("heal-straggler");

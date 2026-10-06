@@ -85,6 +85,7 @@ import type { SessionSpool } from "./files.ts";
 import { isSameFile, readHandleFacts } from "./identity.ts";
 import { byteLength, completeLines, toLines } from "./lines.ts";
 import { withLock } from "./lock.ts";
+import { readOwedWorkContext } from "./owed-work-context.ts";
 import { recordUnclosedSession } from "./unclosed.ts";
 import { appendOnce } from "./write.ts";
 
@@ -521,6 +522,12 @@ const endDeferredSession = async (
   }
   const spool = await readSessionSpool(home, key, slug);
   if (spool.lines.length > 0) {
+    return;
+  }
+  // ...nor while the life's work context is still owed (review-2 round 7,
+  // found by the spool simulation): ended now, the payment that follows would
+  // be filed into the session past its end — SessionEnd defers on it too.
+  if ((await readOwedWorkContext(home, key, slug))?.sessionId === parsed.data.crosscheckSessionId) {
     return;
   }
   const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);

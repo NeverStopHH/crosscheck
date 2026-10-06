@@ -434,8 +434,56 @@ spool the flusher may send still goes. After `OWED_WORK_CONTEXT_MAX_REFUSALS` (3
 after the first, the debt is released: it is counted as one drop with its own cause, `owed_wc_refused`, and so are
 the life's records the hub refused for want of it, and the life's records then go like any others.
 
+**The spool, simulated** (review-2 round 7). `connector-core/test/spool-simulation.test.ts` is a seeded,
+deterministic, model-based test that runs the real register, flush, heal and SessionEnd code against the real hub (in-memory
+PGlite) behind a fault-injecting proxy. Each seed is a scenario of one to three conversations on one repo spool. The
+events are SessionStart (resumes climb the life ladder), edits, `set_intent`, SessionEnd, a sibling ending a live
+life on the hub, an hour of idleness, a host that dies silently for good, an older connector's flush, 503s, answers
+lost after the hub committed, refused registers, a work context the hub refuses for good, and a crash before or after
+any hooked write (state, cursor, debt, stamps, markers, spool appends, ledger appends). After the scenario drains, six
+invariants must hold, all checked against what the proxy and the write hooks logged:
+
+- (I1) every captured record is delivered or counted once;
+- (I2) no record goes under the wrong life, nor into a session the connector had been told was ended;
+- (I3) no session's order breaks;
+- (I4) no work context ends older than the newest status `set_intent` wrote;
+- (I5) every drain keeps its deadline and the scenario settles;
+- (I6) no flusher moves another live conversation's cursor or ledger.
+
+A failing seed is shrunk to a minimal trace. CI runs 300 seeds, about 20 s; `SIM_SEEDS` widens the sweep, and 10,000
+seeds ran clean before this round shipped. Every reviewer probe (P1–P5, p4b) is a fixed scenario, and so is every seed that failed
+while the test was written. The sweep found these, and each is fixed:
+
+- a SessionStart re-fire put the host's starting status back over `set_intent`'s, and so did the work context the
+  register had spooled when `set_intent` reached the hub first. A spooled work context now goes with its life's state,
+  or, once SessionEnd ran, with the title and status its end left on the deferred-end marker;
+- a SessionStart whose ladder climbed past an ended life, a heartbeat or `set_intent` refused as ended, a flush
+  refused as ended with no heal past it, and a lone debt refused as ended each left that life's records deliverable
+  into it. Each now writes the life down as refused (once per life), and a debt of a refused life is settled as moot;
+- a SessionStart killed between its register and its state write split the session's epoch. The register now
+  reserves its epoch before the POST (`sessions/<slug>.epoch`, swept with the lineage notes);
+- `set_intent` killed between a post the hub took and its state write let the next sender revert the status. It now
+  writes the status into the state first, puts it back only when the hub surely did not take it, and keeps it when
+  the post may have landed;
+- the deferred end ended a life whose work context was still owed, and the payment was then filed past the end.
+
+Residuals the invariants allow for, each counted, never silent:
+
+- a record the hub took while the connector never learned it (the answer was lost, or the hook died before the cursor
+  write) is counted as lost when a re-send is refused or the record is withheld, because the hub answers the producer
+  before the duplicate;
+- the ledger may over-count after a crash between a ledger append and the cursor write past it, the honest direction
+  §4.3 already accepts;
+- a record delivered into a session whose end only a sibling saw is filed past that end, because no flusher here was
+  told;
+- an older connector's flush neither honours ownership nor reads the refused-lives note. It spends a live
+  conversation's records (author_unknown, counted; the P5 scenario shows it) and can send a spooled work context as it
+  was spooled (L5).
+
 **The edges the round-6 review left** (review-2 round 7):
 
+- The walk no longer writes the refused life down itself: the heal does for a refusal as ended, the ladder does
+  for a 409 on the state's life, and a flush with no healer (SessionEnd's) does for its own refusal.
 - Doctor reports what is owed: `WARN owed work contexts: N owed, waiting for their lives' next batch; M refused by the
   hub (k of 3 refusals before they are released); P debt files that will not parse`. A corrupt debt file is counted
   as the problem it is, never read as "nothing owed" (L4).

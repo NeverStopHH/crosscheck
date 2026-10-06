@@ -23,6 +23,7 @@ import { NO_SESSION } from "../src/mcp/tools/publish-claim.ts";
 import { INTENT_ECHO_REFUSAL, INTENT_SECRET_REFUSAL, NO_TITLE } from "../src/mcp/tools/set-intent.ts";
 import { repoKey, sessionSlug } from "../src/config/paths.ts";
 import { oweWorkContext, readOwedWorkContext } from "../src/spool/owed-work-context.ts";
+import { readRefusedLives } from "../src/spool/refused-lives.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -86,8 +87,11 @@ const workContextRecordFor = (
   },
 });
 
-/** A developer with a hub session, a work context and the state SessionStart writes (title included). */
-const setUpDeveloper = async (label: string, name: string, email: string): Promise<Developer> => {
+/**
+ * A developer with a hub session, a work context and the state SessionStart
+ * writes (title included), bound to `url` — the hub, or a gateway in front of it.
+ */
+const setUpDeveloper = async (label: string, name: string, email: string, url: string = hubUrl): Promise<Developer> => {
   const account = await createDeveloper(name, email);
   const home = await makeHome(label);
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
@@ -107,7 +111,7 @@ const setUpDeveloper = async (label: string, name: string, email: string): Promi
     workContextId,
     repoId: REPO_ID,
     repoRoot: repo,
-    hubUrl,
+    hubUrl: url,
     developerId: account.developerId,
     startedAt,
     lastHeartbeatAt: startedAt,
@@ -126,9 +130,33 @@ const setUpDeveloper = async (label: string, name: string, email: string): Promi
     home,
     repo,
     hostSessionKey,
-    env: { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hubUrl, CROSSCHECK_API_KEY: account.apiKey },
+    env: { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: url, CROSSCHECK_API_KEY: account.apiKey },
   };
 };
+
+/**
+ * A gateway in front of the hub that answers every record post with `status` instead, or forwards it —
+ * running `onRecords` first, while the post is in flight.
+ */
+const gatewayAnswering = (status: () => number | null, onRecords: () => Promise<void> = async () => undefined) =>
+  Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const { pathname, search } = new URL(request.url);
+      if (pathname === "/api/records") {
+        await onRecords();
+      }
+      const answer = pathname === "/api/records" ? status() : null;
+      if (answer !== null) {
+        return Response.json({ ok: false, error: { code: "gateway", message: "gateway" } }, { status: answer });
+      }
+      return fetch(`${hubUrl}${pathname}${search}`, {
+        method: request.method,
+        headers: request.headers,
+        body: request.method === "GET" ? undefined : await request.arrayBuffer(),
+      });
+    },
+  });
 
 const contextFor = async (developer: Developer): Promise<McpContext> => {
   const setup = await prepareMcp(developer.env, developer.repo);
@@ -348,6 +376,60 @@ describe("set_intent", () => {
     // Assert
     expect(afterOwn).toBeNull();
     expect((await readOwedWorkContext(alice.home, key, slug))?.sessionId).toBe(alice.sessionId);
+  });
+
+  test("a status the hub surely never took is not left in the state, and one it may have taken stays (review-2 round 7)", async () => {
+    // Arrange: a developer behind a gateway that refuses every record post with 400, then answers 504
+    let answer = 400;
+    const gateway = gatewayAnswering(() => answer);
+    const erin = await setUpDeveloper("si-gateway", "Erin", "erin-intent@example.com", `http://127.0.0.1:${String(gateway.port)}`);
+    const statusOf = async () => (await readSessionState(erin.home, erin.hostSessionKey))?.workContextStatus;
+
+    // Act: refused for sure; then lost on the way back
+    const refused = await call(erin, { summary: "Refused at the door", status: "testing" });
+    const afterRefused = await statusOf();
+    answer = 504;
+    const lost = await call(erin, { summary: "Maybe taken", status: "blocked" });
+    gateway.stop(true);
+
+    // Assert: both failed at the hub, not at the argument check
+    expect(refused).toMatchObject({ isError: true, text: expect.stringContaining("HTTP 400") });
+    expect(lost).toMatchObject({ isError: true, text: expect.stringContaining("HTTP 504") });
+    expect(afterRefused).toBe("analyzing");
+    expect(await statusOf()).toBe("blocked");
+  });
+
+  test("the new status is in the state before its post leaves, for a hook killed after it (review-2 round 7, seed 10)", async () => {
+    // Arrange: a gateway that reads the state while the post is in flight
+    const statuses: unknown[] = [];
+    const gateway = gatewayAnswering(
+      () => null,
+      async () => {
+        statuses.push((await readSessionState(frank.home, frank.hostSessionKey))?.workContextStatus);
+      },
+    );
+    const frank = await setUpDeveloper("si-in-flight", "Frank", "frank-intent@example.com", `http://127.0.0.1:${String(gateway.port)}`);
+
+    // Act
+    const result = await call(frank, { summary: "Read while in flight", status: "testing" });
+    gateway.stop(true);
+
+    // Assert: what a re-fire or a debt's payment would build from, had the hook died with the post
+    expect(result).toMatchObject({ isError: false });
+    expect(statuses[0]).toBe("testing");
+  });
+
+  test("a life the hub refuses as ended is written down as refused (review-2 round 7)", async () => {
+    // Arrange: a developer whose session the hub has ended
+    const ended = await setUpDeveloper("si-ended", "Ended", "ended-intent@example.com");
+    await post(`/api/sessions/${encodeURIComponent(ended.sessionId)}/end`, ended.apiKey, { status: "done" });
+
+    // Act
+    const result = await call(ended, { summary: "Too late for this life" });
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect(await readRefusedLives(ended.home, repoKey(hubUrl, REPO_ID), new Date())).toContain(ended.sessionId);
   });
 
   test("another developer's context is unreachable: Bob's declaration never touches Alice's", async () => {

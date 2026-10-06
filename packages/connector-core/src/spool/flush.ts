@@ -51,7 +51,10 @@ import {
   deliverOwed,
   isOwedFor,
   owedRecordNow,
+  readLifeState,
   readOwedWorkContext,
+  settleOwedWorkContext,
+  withLifeState,
   workContextIdOf,
 } from "./owed-work-context.ts";
 import type { OwedOutcome, OwedWorkContext } from "./owed-work-context.ts";
@@ -59,7 +62,7 @@ import type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 import { lineTimestampMs } from "./lines.ts";
 import { withLock } from "./lock.ts";
 import { mayFlusherSend } from "./ownership.ts";
-import { readRefusedLives } from "./refused-lives.ts";
+import { readRefusedLives, recordRefusedLife } from "./refused-lives.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
 
@@ -160,6 +163,8 @@ const deliver = async (
 interface Sent {
   readonly summary: IngestSummary;
   readonly debt: OwedOutcome | null;
+  /** The hub's own answer for the debt, when one went. */
+  readonly owedAnswer: RecordResult | undefined;
 }
 
 /**
@@ -176,7 +181,7 @@ const send = async (
 ): Promise<Sent | null> => {
   if (owed === null) {
     const summary = await deliver(ctx, records);
-    return summary === null ? null : { summary, debt: null };
+    return summary === null ? null : { summary, debt: null, owedAnswer: undefined };
   }
   const delivery = await deliverOwed(ctx, spool.slug, owed, input.developerId, input.sessionId, records);
   if (delivery === null) {
@@ -190,7 +195,27 @@ const send = async (
     delivery.owedAnswer,
     ctx.now(),
   );
-  return { summary: delivery.summary, debt };
+  return { summary: delivery.summary, debt, owedAnswer: delivery.owedAnswer };
+};
+
+/**
+ * The spool's debt — settled as moot, never paid, when its life is one the hub
+ * has ended (review-2 round 7, found by the spool simulation): paid then, its
+ * work context would be filed into that ended session past its end, where the
+ * life's own records are withheld from (spool/refused-lives.ts).
+ */
+const liveDebt = async (
+  ctx: HubContext,
+  spool: SessionSpool,
+  refusedLives: ReadonlySet<string>,
+  flusherSessionId: string,
+): Promise<OwedWorkContext | null> => {
+  const owed = await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug);
+  if (owed === null || owed.sessionId === flusherSessionId || !refusedLives.has(owed.sessionId)) {
+    return owed;
+  }
+  await settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, workContextIdOf(owed.record));
+  return null;
 };
 
 /** The work context this spool owes `sessionId`, built as it goes now — or null when it owes that life none. */
@@ -200,7 +225,9 @@ const owedNowFor = async (
   sessionId: string,
 ): Promise<Record<string, unknown> | null> => {
   const owed = await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug);
-  return owed === null || owed.sessionId !== sessionId ? null : owedRecordNow(ctx.home, spool.slug, owed, ctx.now());
+  return owed === null || owed.sessionId !== sessionId
+    ? null
+    : owedRecordNow(ctx.home, ctx.repoKey, spool.slug, owed, ctx.now());
 };
 
 /** Whether the life's own records were refused `author_unknown` while its work context is still owed. */
@@ -308,7 +335,7 @@ const flushOneBatch = async (
   // The owed work context goes at the head of the batch that carries its
   // life's records (spool/owed-work-context.ts) — or alone, when the spool
   // holds nothing more for any life to carry it.
-  const owed = await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug);
+  const owed = await liveDebt(ctx, spool, refusedLives, input.sessionId);
   const batch = oneLife(spool.lines.slice(0, BATCH_LINES));
   const consumed = spool.offset + bytesOfLines(spool.pending, batch.length);
   const ends = lineEnds(spool.pending, batch.length, spool.offset);
@@ -323,7 +350,12 @@ const flushOneBatch = async (
   const sendable = lines.filter(
     (line): line is SpooledLine => line.record !== null && !isWithheld(line.record),
   );
-  const records = sendable.map((line) => withProducer(line.record, input.developerId, input.sessionId));
+  // A spooled work context goes with its life's title and status as they
+  // are NOW (spool/owed-work-context.ts withLifeState); the batch is one life.
+  const life = batch.map(writerOf).find((writer) => writer !== undefined);
+  const lifeState = life === undefined ? null : await readLifeState(ctx.home, ctx.repoKey, spool.slug, life);
+  const spooled = sendable.map((line) => withLifeState(line.record, lifeState));
+  const records = spooled.map((record) => withProducer(record, input.developerId, input.sessionId));
   const isLoneDebt = owed !== null && batch.length === 0;
   const paying = owed !== null && (isLoneDebt || sendable.some((line) => isOwedFor(owed, line.record))) ? owed : null;
 
@@ -335,7 +367,12 @@ const flushOneBatch = async (
     // A DEBT WITH NO RECORDS LEFT TO CARRY IT is paid alone (review-2 round
     // 7): a life that writes nothing after its heal never pays it otherwise,
     // and SessionEnd defers its end on it for good. One that stays open
-    // waits for the next drain, not the next batch.
+    // waits for the next drain, not the next batch — and one refused because
+    // the hub ended the flusher's life says so for every later flush, as a
+    // batch's refusal does (spool/flush-heal.ts).
+    if (first.owedAnswer?.status === "rejected" && rejectCauseOf(first.owedAnswer.issues) === "session_ended") {
+      await recordRefusedLife(ctx.home, ctx.repoKey, input.sessionId, ctx.now());
+    }
     return (await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug)) === null
       ? { sent: 0, heal: null, healAsked: false, isPinned: false }
       : PINNED;
@@ -357,7 +394,7 @@ const flushOneBatch = async (
     ctx,
     developerId: input.developerId,
     flusherSessionId: input.sessionId,
-    spooled: sendable.map((line) => line.record),
+    spooled,
     first: first.summary,
     healer: input.heal,
     deadlineMs,

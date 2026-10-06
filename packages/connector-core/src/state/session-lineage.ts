@@ -47,7 +47,9 @@ const LIFE_SUFFIX = "~r";
 const LINEAGE_SUFFIX = ".lineage";
 /** The mid-life heal's cooldown stamp (flows/heal-session.ts), swept the same way. */
 const HEAL_SUFFIX = ".heal";
-const SIDE_FILE_SUFFIXES = [LINEAGE_SUFFIX, HEAL_SUFFIX] as const;
+/** A register's reserved epoch (flows/register-session.ts), swept the same way. */
+const EPOCH_SUFFIX = ".epoch";
+const SIDE_FILE_SUFFIXES = [LINEAGE_SUFFIX, HEAL_SUFFIX, EPOCH_SUFFIX] as const;
 /** A rung as the ladder spells it: no sign, no leading zero, nine digits at most. */
 const RUNG_PATTERN = /^[1-9][0-9]{0,8}$/;
 
