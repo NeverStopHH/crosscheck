@@ -84,7 +84,7 @@ describe("intent telemetry surfaces", () => {
 
   test("formatIntentCost is the one spelling; no live sessions reads as exactly that", () => {
     expect(
-      formatIntentCost({ sessions: 2, fires: 2, nones: 1, sets: 1, fails: 0, lastFailure: null }),
+      formatIntentCost({ sessions: 2, fires: 2, nones: 1, sets: 1, refused: 0, skipped: 0, fails: 0, lastFailure: null, lastDrop: null }),
     ).toBe("2 fires (1 NONE, 1 set) across 2 live sessions");
     expect(
       formatIntentCost({
@@ -92,13 +92,37 @@ describe("intent telemetry surfaces", () => {
         fires: 1,
         nones: 0,
         sets: 0,
+        refused: 0,
+        skipped: 0,
         fails: 1,
         lastFailure: "timed out after 60 s",
+        lastDrop: null,
       }),
     ).toBe('1 fire (0 NONE, 0 set, 1 failed: last "timed out after 60 s") across 1 live session');
     expect(
-      formatIntentCost({ sessions: 0, fires: 0, nones: 0, sets: 0, fails: 0, lastFailure: null }),
+      formatIntentCost({ sessions: 0, fires: 0, nones: 0, sets: 0, refused: 0, skipped: 0, fails: 0, lastFailure: null, lastDrop: null }),
     ).toBe("no live sessions");
+  });
+
+  test("a refused answer and a skipped run are said apart from a runner failure", () => {
+    const cost = {
+      sessions: 1,
+      fires: 3,
+      nones: 0,
+      sets: 0,
+      refused: 2,
+      skipped: 1,
+      fails: 0,
+      lastFailure: null,
+      lastDrop: "dropped: the answer was not a sentence",
+    };
+
+    expect(formatIntentCost(cost)).toBe(
+      '3 fires (0 NONE, 0 set, 2 refused, 1 skipped: last "dropped: the answer was not a sentence") across 1 live session',
+    );
+    // A skip is no fault of the model; a refusal is still worth a look.
+    expect(isIntentSilentlyDead({ ...cost, refused: 0, fires: 1 })).toBe(false);
+    expect(isIntentSilentlyDead(cost)).toBe(true);
   });
 
   test("status prints the intent line beside the summarizer line", async () => {
@@ -160,16 +184,16 @@ describe("intent telemetry surfaces", () => {
   // Boundary pin, green on main by design: the WARN does not over-reach.
   test("boundary pin: one silent fire is noise, not news; at the threshold one answer is enough", async () => {
     expect(
-      isIntentSilentlyDead({ sessions: 1, fires: 1, nones: 0, sets: 0, fails: 0, lastFailure: null }),
+      isIntentSilentlyDead({ sessions: 1, fires: 1, nones: 0, sets: 0, refused: 0, skipped: 0, fails: 0, lastFailure: null, lastDrop: null }),
     ).toBe(false);
     expect(
-      isIntentSilentlyDead({ sessions: 2, fires: 2, nones: 1, sets: 0, fails: 0, lastFailure: null }),
+      isIntentSilentlyDead({ sessions: 2, fires: 2, nones: 1, sets: 0, refused: 0, skipped: 0, fails: 0, lastFailure: null, lastDrop: null }),
     ).toBe(false);
     expect(
-      isIntentSilentlyDead({ sessions: 2, fires: 2, nones: 0, sets: 0, fails: 0, lastFailure: null }),
+      isIntentSilentlyDead({ sessions: 2, fires: 2, nones: 0, sets: 0, refused: 0, skipped: 0, fails: 0, lastFailure: null, lastDrop: null }),
     ).toBe(true);
     expect(
-      isIntentSilentlyDead({ sessions: 1, fires: 1, nones: 0, sets: 0, fails: 1, lastFailure: "x" }),
+      isIntentSilentlyDead({ sessions: 1, fires: 1, nones: 0, sets: 0, refused: 0, skipped: 0, fails: 1, lastFailure: "x", lastDrop: null }),
     ).toBe(true);
   });
 });

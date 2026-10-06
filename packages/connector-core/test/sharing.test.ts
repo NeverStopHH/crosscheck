@@ -201,6 +201,39 @@ describe("sharingFindings — what the workers booked", () => {
     );
   });
 
+  test("intent answers the worker refused are answers: never 'every intent run failed' (review round 2)", () => {
+    // The probe: one intent run timed out, two answered and were refused (not
+    // a sentence) — booked as failures, the line said every intent run failed.
+    const value = input({
+      live: [
+        session({
+          summarizerFireCount: 5,
+          summarizerNoneCount: 5,
+          intentFireCount: 3,
+          intentFailCount: 1,
+          intentLastFailure: "timed out after 60 s",
+          intentRefusedCount: 2,
+          intentLastDrop: "dropped: the answer was not a sentence",
+        }),
+      ],
+    });
+
+    expect(causes(value)).not.toContain("runner_failing");
+  });
+
+  test("refused and skipped intent runs reported back: they are never a silent worker", () => {
+    const value = input({
+      ended: [
+        session(
+          { intentFireCount: 2, intentRefusedCount: 1, intentSkippedCount: 1, lastDeriveFireAt: ago(60 * MINUTE_MS) },
+          new Date(NOW.getTime() - 30 * MINUTE_MS),
+        ),
+      ],
+    });
+
+    expect(causes(value)).not.toContain("workers_silent");
+  });
+
   test("a runner that answered even once is not 'failing on every run'", () => {
     const value = input({
       live: [

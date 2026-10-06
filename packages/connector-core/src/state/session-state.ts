@@ -390,16 +390,30 @@ const SessionStateObjectSchema = z.looseObject({
    * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
    * fire that lands nothing must be a number somebody can explain): fires
    * booked by the UserPromptSubmit hook under the lock BEFORE the worker
-   * spawns, and the worker's outcome — NONE, an intent set on the spool, or
-   * a failure with its reason (runner loss, or a drop: secret, echo, empty —
-   * bounded by the writer to SUMMARIZER_FAILURE_MAX_CHARS). Defaults keep
-   * every pre-intent state file parsing.
+   * spawns, and the worker's outcome — NONE, an intent set on the spool, a
+   * runner failure with its reason (bounded by the writer to
+   * SUMMARIZER_FAILURE_MAX_CHARS), or one of the two drops below. Defaults
+   * keep every pre-intent state file parsing.
    */
   intentFireCount: z.number().int().min(0).default(0),
   intentNoneCount: z.number().int().min(0).default(0),
   intentSetCount: z.number().int().min(0).default(0),
   intentFailCount: z.number().int().min(0).default(0),
   intentLastFailure: z.string().nullable().default(null),
+  /**
+   * The model ANSWERED and the worker kept nothing of it (cut at the output
+   * cap, empty, not a sentence, an echo of a delivered hint, secret-like, off
+   * the wire contract): an answer, so doctor never reads it as a runner that
+   * fails (derive/sharing.ts).
+   */
+  intentRefusedCount: z.number().int().min(0).default(0),
+  /**
+   * The worker dropped the run before asking the model (an empty prompt file,
+   * a state file predating intent support): no answer and no model failure.
+   */
+  intentSkippedCount: z.number().int().min(0).default(0),
+  /** The newest refusal's or skip's reason, bounded like intentLastFailure. */
+  intentLastDrop: z.string().nullable().default(null),
   /**
    * The intent sentence this session last put on the hub (VISION.md §3), and
    * the reason it is stored rather than re-read: the ghost check compares
@@ -1504,6 +1518,9 @@ export const deriveSessionState = (
     intentSetCount: 0,
     intentFailCount: 0,
     intentLastFailure: null,
+    intentRefusedCount: 0,
+    intentSkippedCount: 0,
+    intentLastDrop: null,
     workContextIntent: null,
     ghostPending: false,
     gitTouchCount: 0,

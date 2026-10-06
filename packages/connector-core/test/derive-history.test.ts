@@ -51,7 +51,13 @@ describe("foldDeriveHistory", () => {
   test("keeps each ended session's counters, newest first", async () => {
     // Arrange
     const at = await home("history-two");
-    await seed(at, "first-uuid", { stopTurnCount: 3, intentFireCount: 1, intentFailCount: 1 });
+    await seed(at, "first-uuid", {
+      stopTurnCount: 3,
+      intentFireCount: 3,
+      intentFailCount: 1,
+      intentRefusedCount: 1,
+      intentSkippedCount: 1,
+    });
     await seed(at, "second-uuid", {
       summarizerFireCount: 1,
       summarizerFailCount: 1,
@@ -69,6 +75,10 @@ describe("foldDeriveHistory", () => {
     expect(history.sessions[0]?.summarizerLastFailure).toBe("could not start: Executable not found");
     expect(history.sessions[1]?.stopTurnCount).toBe(3);
     expect(history.sessions[1]?.intentFailCount).toBe(1);
+    // A refusal and a skip outlive the session too: without them the ended
+    // session's answers would read as runs that never reported back.
+    expect(history.sessions[1]?.intentRefusedCount).toBe(1);
+    expect(history.sessions[1]?.intentSkippedCount).toBe(1);
   });
 
   test("is bounded to the newest DERIVE_HISTORY_MAX_SESSIONS and counts every fold", async () => {

@@ -268,6 +268,26 @@ describe("the ACP derive section says every rung and every refusal", () => {
     expect(named(checks, "conference (acp)")?.level).toBe("PASS");
   });
 
+  test("a refused intent answer WARNs the intent rung; a skipped run does not", async () => {
+    // Arrange — the worker books a refusal (the model answered, nothing kept)
+    // and a skip (never asked) apart from a runner failure.
+    const refusedDir = await home("acp-doctor-refused");
+    await withProxyLog(refusedDir);
+    await seed(refusedDir, ACP_KEY, { intentRefusedCount: 1, intentLastDrop: "dropped: secret-like text" });
+    const skippedDir = await home("acp-doctor-skipped");
+    await withProxyLog(skippedDir);
+    await seed(skippedDir, ACP_KEY, { intentSkippedCount: 1, intentLastDrop: "dropped: empty prompt" });
+
+    // Act
+    const refused = await acpDoctorChecks({ home: refusedDir, liveStates: await states(refusedDir) });
+    const skipped = await acpDoctorChecks({ home: skippedDir, liveStates: await states(skippedDir) });
+
+    // Assert
+    expect(named(refused, "intent (acp)")?.level).toBe("WARN");
+    expect(named(refused, "intent (acp)")?.detail).toContain("dropped secret-like text");
+    expect(named(skipped, "intent (acp)")?.level).toBe("PASS");
+  });
+
   test("a CLAUDE session's failure never lights up an ACP rung", async () => {
     // Arrange — the same home, one ACP session and one Claude session; only
     // the Claude one ever failed.

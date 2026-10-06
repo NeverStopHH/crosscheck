@@ -18135,6 +18135,70 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "an older hub or a thin budget costs every prompt (or every Cursor tool call) two more GETs that cannot name a draft either",
   },
+  {
+    label: "the intent worker books a refused answer as a runner failure",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "  updateSessionState(home, sessionId, (fresh) => withIntentRefusal(fresh, detail));",
+    to: "  updateSessionState(home, sessionId, (fresh) => withIntentFailure(fresh, detail));",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "a model that answered reads as one that failed, and doctor says every intent run failed",
+  },
+  {
+    label: "the intent worker books a run it never asked the model as a failure",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "  updateSessionState(home, sessionId, (fresh) => withIntentSkip(fresh, detail));",
+    to: "  updateSessionState(home, sessionId, (fresh) => withIntentFailure(fresh, detail));",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "an empty prompt or an old state file is blamed on a model nobody called",
+  },
+  {
+    label: "doctor reads refused intent answers as failed runs",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "    answered: sumOf(digests, (d) => d.intentNoneCount + d.intentSetCount + d.intentRefusedCount),",
+    to: "    answered: sumOf(digests, (d) => d.intentNoneCount + d.intentSetCount),",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the line says every intent run failed beside two the model answered",
+  },
+  {
+    label: "doctor counts refused and skipped intent runs as never reported back",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  d.summarizerUnreadableCount +\n  d.intentRefusedCount +\n  d.intentSkippedCount;",
+    to: "  d.summarizerUnreadableCount;",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "runs the worker reported on are blamed on a host that kills its children",
+  },
+  {
+    label: "the derive history forgets refused and skipped intent runs",
+    file: `${CORE}/src/state/derive-history.ts`,
+    from: "  intentRefusedCount: count,\n  intentSkippedCount: count,\n",
+    to: "",
+    test: `${CORE}/test/derive-history.test.ts`,
+    because: "after SessionEnd the session's answered runs read as silent ones",
+  },
+  {
+    label: "the intent cost line stops warning on a refused answer",
+    file: `${CORE}/src/derive/intent/cost.ts`,
+    from: "  cost.refused > 0 ||\n",
+    to: "",
+    test: `${CLI}/test/intent-cost.test.ts`,
+    because: "every derived intent refused by a gate passes doctor as healthy",
+  },
+  {
+    label: "the ACP intent rung ignores refused answers",
+    file: `${ACP}/src/doctor.ts`,
+    from: "      count: sum((state) => state.intentFailCount + state.intentRefusedCount),",
+    to: "      count: sum((state) => state.intentFailCount),",
+    test: `${ACP}/test/derive-doctor.test.ts`,
+    because: "a capability whose every answer was refused reads PASS",
+  },
+  {
+    label: "the Cursor intent rung ignores refused answers",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "    (total, state) => total + state.intentFailCount + state.intentRefusedCount,",
+    to: "    (total, state) => total + state.intentFailCount,",
+    test: `${CURSOR}/test/derive-doctor.test.ts`,
+    because: "a capability whose every answer was refused reads PASS",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18217,6 +18281,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 11
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
+ * PRINTS: packages/cli/test/intent-cost.test.ts 1
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
@@ -18246,7 +18311,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-engine.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
- * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 3
+ * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 4
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
  * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 4
@@ -18292,7 +18357,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
@@ -18339,7 +18404,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
- * PRINTS: packages/connector-core/test/derive-history.test.ts 4
+ * PRINTS: packages/connector-core/test/derive-history.test.ts 5
  * PRINTS: packages/connector-core/test/draft-nudge.test.ts 39
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
@@ -18403,7 +18468,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 19
+ * PRINTS: packages/connector-core/test/sharing.test.ts 21
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
@@ -18416,7 +18481,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
- * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
+ * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 3
  * PRINTS: packages/connector-cursor/test/draft-nudge.test.ts 3

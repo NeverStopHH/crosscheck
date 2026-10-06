@@ -70,6 +70,8 @@ export type DeriveDigest = Pick<
   | "intentSetCount"
   | "intentFailCount"
   | "intentLastFailure"
+  | "intentRefusedCount"
+  | "intentSkippedCount"
   | "lastDeriveFireAt"
 > & {
   /** When the session ended; null while it is live. */
@@ -92,6 +94,8 @@ export const digestOf = (state: SessionState, endedAt: Date | null = null): Deri
   intentSetCount: state.intentSetCount,
   intentFailCount: state.intentFailCount,
   intentLastFailure: state.intentLastFailure,
+  intentRefusedCount: state.intentRefusedCount,
+  intentSkippedCount: state.intentSkippedCount,
   lastDeriveFireAt: state.lastDeriveFireAt,
   endedAt: endedAt === null ? null : endedAt.toISOString(),
 });
@@ -203,7 +207,9 @@ const outcomesOf = (d: DeriveDigest): number =>
   d.summarizerFailCount +
   d.intentFailCount +
   d.summarizerRejectCount +
-  d.summarizerUnreadableCount;
+  d.summarizerUnreadableCount +
+  d.intentRefusedCount +
+  d.intentSkippedCount;
 
 const firesOf = (d: DeriveDigest): number => d.summarizerFireCount + d.intentFireCount;
 
@@ -244,7 +250,8 @@ const kindRunsOf = (digests: readonly DeriveDigest[]): readonly KindRuns[] => [
   },
   {
     kind: "intent",
-    answered: sumOf(digests, (d) => d.intentNoneCount + d.intentSetCount),
+    // A refused answer is an answer; a skipped run is neither (never asked).
+    answered: sumOf(digests, (d) => d.intentNoneCount + d.intentSetCount + d.intentRefusedCount),
     failed: sumOf(digests, (d) => d.intentFailCount),
     lastFailure: firstOf(digests.map((d) => d.intentLastFailure)),
   },

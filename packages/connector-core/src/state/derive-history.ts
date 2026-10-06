@@ -51,6 +51,8 @@ const DigestSchema = z.object({
   intentSetCount: count,
   intentFailCount: count,
   intentLastFailure: said,
+  intentRefusedCount: count,
+  intentSkippedCount: count,
   lastDeriveFireAt: said,
   endedAt: said,
 });

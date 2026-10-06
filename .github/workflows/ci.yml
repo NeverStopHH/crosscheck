@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1629
+    # PRINTS: 1637
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -208,7 +208,7 @@ jobs:
     # PRINTS: packages/connector-acp/src/capabilities.ts 4
     # PRINTS: packages/connector-acp/src/capture/engine.ts 18
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
-    # PRINTS: packages/connector-acp/src/doctor.ts 2
+    # PRINTS: packages/connector-acp/src/doctor.ts 3
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
     # PRINTS: packages/connector-acp/src/inject/injector.ts 8
     # PRINTS: packages/connector-acp/src/proxy.ts 1
@@ -269,10 +269,11 @@ jobs:
     # PRINTS: derive/conference/prompt.ts 1
     # PRINTS: derive/ghost/cost.ts 1
     # PRINTS: derive/ghost/worker.ts 5
+    # PRINTS: derive/intent/cost.ts 1
     # PRINTS: derive/intent/gate.ts 1
     # PRINTS: derive/intent/prompt.ts 1
-    # PRINTS: derive/intent/worker.ts 2
-    # PRINTS: derive/sharing.ts 19
+    # PRINTS: derive/intent/worker.ts 4
+    # PRINTS: derive/sharing.ts 21
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 2
@@ -346,7 +347,7 @@ jobs:
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
-    # PRINTS: state/derive-history.ts 3
+    # PRINTS: state/derive-history.ts 4
     # PRINTS: state/draft-nudge-spent.ts 1
     # PRINTS: state/git-lane-cost.ts 2
     # PRINTS: state/loss-ledger.ts 10
@@ -360,7 +361,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/capabilities.ts 3
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
-    # PRINTS: packages/connector-cursor/src/doctor.ts 10
+    # PRINTS: packages/connector-cursor/src/doctor.ts 11
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
     # PRINTS: packages/connector-cursor/src/handlers/post-tool-use.ts 1
@@ -513,7 +514,7 @@ jobs:
     # PRINTS: constants.ts 11
     # PRINTS: context-group.ts 1
     # PRINTS: contradictions.ts 1
-    # PRINTS: cost.ts 2
+    # PRINTS: cost.ts 3
     # PRINTS: counts.ts 1
     # PRINTS: coverage-order.ts 5
     # PRINTS: coverage.ts 35
@@ -521,7 +522,7 @@ jobs:
     # PRINTS: declarations.ts 5
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
-    # PRINTS: derive-history.ts 3
+    # PRINTS: derive-history.ts 4
     # PRINTS: derive.ts 2
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
@@ -535,7 +536,7 @@ jobs:
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor-sharing.ts 3
-    # PRINTS: doctor.ts 70
+    # PRINTS: doctor.ts 72
     # PRINTS: draft-backlog.ts 7
     # PRINTS: draft-nudge-spent.ts 1
     # PRINTS: draft-nudge.ts 22
@@ -685,7 +686,7 @@ jobs:
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
-    # PRINTS: sharing.ts 19
+    # PRINTS: sharing.ts 21
     # PRINTS: similarity-gate.ts 1
     # PRINTS: skeleton-identity.ts 8
     # PRINTS: slice.ts 2
@@ -731,7 +732,7 @@ jobs:
     # PRINTS: wiring-scope.ts 2
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
-    # PRINTS: worker.ts 7
+    # PRINTS: worker.ts 9
     # PRINTS: working-days.ts 3
     name: Mutation proof
     runs-on: ubuntu-latest
