@@ -12,10 +12,11 @@
  * No outbox events are appended here on purpose: broadcasting "X just opted
  * out" would itself be a presence signal about X.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, notInArray, or, sql } from "drizzle-orm";
 
-import { developerEmails, developerMutes, developers } from "../db/schema.ts";
+import { agentSessions, developerEmails, developerMutes, developers, workContexts } from "../db/schema.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
+import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import { listDeveloperEmails } from "./developers.ts";
 import type { DeveloperEmailView } from "./developers.ts";
 import type { Db } from "../db/client.ts";
@@ -81,6 +82,36 @@ export const setPresenceOptOut = async (
     .update(developers)
     .set({ presenceOptOut: optOut })
     .where(eq(developers.id, developerId));
+  await reindexLocationTitles(db, developerId);
+};
+
+/** Titles a person or a host wrote: never a location, so never re-indexed. */
+const AUTHORED_TITLE_SOURCES = ["host", "person"] as const;
+
+/**
+ * THE SEARCH INDEX FOLLOWS THE SETTING, both ways (review round 4, H4): an
+ * opted-out owner's location title is kept out of the normalized doc
+ * (services/live-location.ts isTitleWithheldFromIndex), and her docs were
+ * built before she opted out. Only contexts whose title CAN be her location
+ * are rebuilt — a `host` or `person` title never is — once per toggle, which
+ * is rare by nature. A rebuild drops the context's embedding until its next
+ * ingest re-embeds it (normalized-doc.ts), so the vector tier misses it for
+ * that while: the safe direction.
+ */
+const reindexLocationTitles = async (db: Db, developerId: string): Promise<void> => {
+  const rows = await db
+    .select({ id: workContexts.id })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(agentSessions.developerId, developerId),
+        or(isNull(workContexts.titleSource), notInArray(workContexts.titleSource, [...AUTHORED_TITLE_SOURCES])),
+      ),
+    );
+  for (const row of rows) {
+    await refreshNormalizedDoc(db, row.id);
+  }
 };
 
 /**

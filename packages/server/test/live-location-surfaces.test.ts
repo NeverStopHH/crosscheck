@@ -473,6 +473,53 @@ describe("a revalidation is its REPORTER's reading (review round 4, H3)", () => 
   });
 });
 
+describe("a withheld title is not in the search index (review round 4, H4)", () => {
+  // probe-search-guess.ts: a colleague confirmed a GUESSED branch by
+  // searching it, because the fallback title the page withholds was still
+  // the text the index matched.
+  const GUESSES: readonly (readonly [repo: string, query: string])[] = [
+    [REPO, SECRET_BRANCH],
+    [REPO, "relocates zurich"],
+    [REPO, "feat/robin-relocates-to-geneva"],
+    [LOCAL_REPO, SECRET_BRANCH],
+    [LOCAL_REPO, SECRET_LOCAL_BRANCH],
+    [LOCAL_REPO, "geneva hideout"],
+    [LOCAL_REPO, SECRET_SHA2.slice(0, 9)],
+  ];
+  const robinIds = (body: string): readonly string[] => [...new Set(body.match(/wc_robin[a-z_]*/g) ?? [])];
+
+  test("a guessed branch or sha finds none of her work, in search or in hints", async () => {
+    const world = await seedOptedOutWorld();
+
+    const found = await Promise.all(
+      GUESSES.flatMap(([repo, query]) => [
+        getAs(world, "nick", url("/api/search", { repo, query })).then((answer) => [`search ${repo} «${query}»`, robinIds(answer.body)] as const),
+        getAs(world, "nick", url("/api/hints/candidates", { repo, query })).then((answer) => [`hints ${repo} «${query}»`, robinIds(answer.body)] as const),
+      ]),
+    );
+
+    expect(found.filter(([, ids]) => ids.length > 0)).toEqual([]);
+  });
+
+  test("her work is still found by what it is about", async () => {
+    const world = await seedOptedOutWorld();
+
+    const search = await getAs(world, "nick", url("/api/search", { repo: REPO, query: "rotation window" }));
+
+    expect(robinIds(search.body)).toContain(ROBIN_CONTEXT);
+  });
+
+  test("opting back in puts her titles back in the index", async () => {
+    const world = await seedOptedOutWorld();
+    const back = await world.harness.app.request("/api/settings/presence", jsonRequest("PUT", world.robin.apiKey, { optOut: false }));
+    expect(back.status).toBe(200);
+
+    const search = await getAs(world, "nick", url("/api/search", { repo: REPO, query: SECRET_BRANCH }));
+
+    expect(robinIds(search.body)).toContain(ROBIN_CONTEXT);
+  });
+});
+
 /** A default-branch commit Nick's clone resolves — his, and nothing of hers. */
 const NICK_REF = "abcdef1234567";
 

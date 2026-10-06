@@ -18594,6 +18594,37 @@ export const MUTATIONS: readonly Mutation[
       "Nick re-checks Robin's claim against his own clone and is then told " +
       "his own reading is withheld (presence opt-out)",
   },
+  // ── Review round 4, H4: a withheld title is not in the search index ───
+  {
+    label: "the search index keeps an opted-out teammate's fallback title",
+    file: `${SERVER}/src/services/normalized-doc.ts`,
+    from: "    title: (await isTitleWithheldFromIndex(db, workContextId)) ? \"\" : context.title,",
+    to: "    title: context.title,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a colleague searches a guessed branch and is shown her work, the page " +
+      "withholding the very title the index matched (probe-search-guess.ts)",
+  },
+  {
+    label: "opting out leaves the docs built before it in the index",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    .where(eq(developers.id, developerId));\n  await reindexLocationTitles(db, developerId);",
+    to: "    .where(eq(developers.id, developerId));",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "every context she wrote before the toggle stays searchable by its " +
+      "branch, which is all of them on the day she opts out",
+  },
+  {
+    label: "the search index forgets a developer opted back in",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (row === undefined || !row.optedOut) {",
+    to: "  if (row === undefined) {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "every fallback title is kept out of search whoever wrote it, and an " +
+      "opt-in never brings hers back",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18928,7 +18959,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 20
  * PRINTS: packages/server/test/live-location-projection.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 34
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 37
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

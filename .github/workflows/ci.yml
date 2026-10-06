@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1651
+    # PRINTS: 1654
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -414,7 +414,7 @@ jobs:
     # PRINTS: packages/server/src/services/coverage-order.ts 5
     # PRINTS: packages/server/src/services/coverage.ts 32
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
-    # PRINTS: packages/server/src/services/developer-settings.ts 1
+    # PRINTS: packages/server/src/services/developer-settings.ts 2
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 15
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
@@ -425,8 +425,8 @@ jobs:
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/landed.ts 1
-    # PRINTS: packages/server/src/services/live-location.ts 18
-    # PRINTS: packages/server/src/services/normalized-doc.ts 2
+    # PRINTS: packages/server/src/services/live-location.ts 19
+    # PRINTS: packages/server/src/services/normalized-doc.ts 3
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 16
     # PRINTS: packages/server/src/services/pilot-label-figures.ts 12
@@ -515,7 +515,7 @@ jobs:
     # PRINTS: detached-branch.ts 4
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
-    # PRINTS: developer-settings.ts 1
+    # PRINTS: developer-settings.ts 2
     # PRINTS: developers.ts 13
     # PRINTS: diagnosis.ts 15
     # PRINTS: doctor-global.ts 4
@@ -587,14 +587,14 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
-    # PRINTS: live-location.ts 18
+    # PRINTS: live-location.ts 19
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
     # PRINTS: loss-report.ts 14
     # PRINTS: manifest-doc.ts 2
     # PRINTS: noise.ts 7
-    # PRINTS: normalized-doc.ts 2
+    # PRINTS: normalized-doc.ts 3
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4

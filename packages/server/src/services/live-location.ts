@@ -39,8 +39,8 @@ import {
 } from "@crosscheck/schema";
 import type { TitleFacts, WorkContextTitleSource } from "@crosscheck/schema";
 
-import { developers } from "../db/schema.ts";
-import type { Db } from "../db/client.ts";
+import { agentSessions, developers, workContexts } from "../db/schema.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
 
 /**
@@ -68,7 +68,14 @@ export const locationHiddenFrom = async (
   if (rows.length === 0) {
     return new Map();
   }
-  const ids = rows.map((row) => row.id);
+  return reportedBranchesOf(db, rows.map((row) => row.id));
+};
+
+/** Every branch each of these developers' sessions ever reported (HiddenLocations). */
+const reportedBranchesOf = async (
+  db: DbExecutor,
+  ids: readonly string[],
+): Promise<HiddenLocations> => {
   const branches = await db.execute<{ developer_id: string; branch: string }>(sql`
     SELECT developer_id, branch FROM agent_sessions WHERE developer_id IN ${ids}
     UNION
@@ -78,6 +85,49 @@ export const locationHiddenFrom = async (
   return new Map(
     ids.map((id) => [id, branches.rows.filter((row) => row.developer_id === id).map((row) => row.branch)]),
   );
+};
+
+/**
+ * IS THIS CONTEXT'S TITLE KEPT OUT OF THE SEARCH INDEX (review round 4, H4)?
+ *
+ * The normalized doc is ONE copy every viewer searches, so it cannot be
+ * projected per viewer: a colleague who searched a guessed branch was shown
+ * her work, the page withholding the title the index had matched. So an
+ * opted-out owner's location title — the same title projectRow withholds —
+ * stays out of the doc for everyone, herself included: her own search by
+ * branch name misses it, which is the cost, and stated. Opting back in
+ * rebuilds her docs with the titles (services/developer-settings.ts).
+ */
+export const isTitleWithheldFromIndex = async (
+  db: DbExecutor,
+  workContextId: string,
+): Promise<boolean> => {
+  const rows = await db
+    .select({
+      title: workContexts.title,
+      titleSource: workContexts.titleSource,
+      branch: agentSessions.branch,
+      repo: agentSessions.repo,
+      developerId: agentSessions.developerId,
+      optedOut: developers.presenceOptOut,
+    })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .innerJoin(developers, eq(agentSessions.developerId, developers.id))
+    .where(eq(workContexts.id, workContextId))
+    .limit(1);
+  const row = rows[0];
+  if (row === undefined || !row.optedOut) {
+    return false;
+  }
+  const branches = await reportedBranchesOf(db, [row.developerId]);
+  return isLocationTitle({
+    title: row.title,
+    titleSource: titleSourceOf(row.titleSource),
+    branch: row.branch,
+    branches: branches.get(row.developerId) ?? [],
+    repo: row.repo,
+  });
 };
 
 /**
