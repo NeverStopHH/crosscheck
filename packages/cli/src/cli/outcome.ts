@@ -72,7 +72,7 @@ import {
   outcomeRecordedLine,
   reasonTooLongLine,
 } from "./outcome-render.ts";
-import { agentHostMarkerIn } from "./agent-host.ts";
+import { personGate } from "./agent-host.ts";
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { candidateListLines, markFailureLine, noLiveSessionLine, nothingRecentLine } from "./pilot-mark.ts";
@@ -263,14 +263,15 @@ const recordRecent = async (target: Target, command: OutcomeCommand, reason: str
 /**
  * WHOSE WORD THIS IS. An agent host's marker comes first and can only DEMOTE (07 §13.14 MEDIUM-2):
  * a pty its tool was given passes the TTY probe, and the environment, which any agent can write,
- * never opens the person's door — it can only take it away. Then the probe (§13.13 HIGH-1).
+ * never opens the person's door — it can only take it away. Then the probe (§13.13 HIGH-1). Asked
+ * through the one person gate every person-only gesture takes (`personGate`).
  */
 const channelOf = (env: Env, isInteractive: InteractiveProbe): Pick<Target, "via" | "agentLine"> => {
-  const marker = agentHostMarkerIn(env);
-  if (marker !== null) {
-    return { via: "agent", agentLine: agentHostLine(marker) };
+  const gate = personGate(env, isInteractive);
+  if (gate.isPerson) {
+    return { via: "person", agentLine: "" };
   }
-  return isInteractive() ? { via: "person", agentLine: "" } : { via: "agent", agentLine: AGENT_WORD_LINE };
+  return { via: "agent", agentLine: gate.marker === null ? AGENT_WORD_LINE : agentHostLine(gate.marker) };
 };
 
 const runOutcome = async (

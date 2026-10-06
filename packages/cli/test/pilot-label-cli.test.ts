@@ -493,6 +493,26 @@ describe("crosscheck pilot label — who may walk, and what is said", () => {
     expect(await reportOf(s)).toMatchObject({ helpful: 0, noise: 0, unclear: 0 });
   });
 
+  test("round-6 follow-up: the walk at a pty inside an agent host is refused as with no terminal, naming the marker", async () => {
+    // Arrange
+    const s = await scenario("agent-host");
+    await deliver(s, "wc_agent_host_a", 4);
+    const script = scripted(["h"]);
+
+    // Act — the TTY probe says yes; Claude Code set its marker
+    const result = await runCli(["pilot", "label"], { ...env(s), CLAUDECODE: "1" }, s.repoRoot, undefined, {
+      isInteractive: () => true,
+      terminal: script.terminal,
+    });
+
+    // Assert — refused before anything is listed or recorded
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stdout).toStartWith("this command ran inside an agent's tool (CLAUDECODE is set)");
+    expect(result.stdout).toContain("needs a person at a terminal");
+    expect(script.transcript()).toBe("");
+    expect(await reportOf(s)).toMatchObject({ helpful: 0, noise: 0, unclear: 0 });
+  });
+
   test("an intervention older than a day is not offered — a label is a memory, not a guess", async () => {
     // Arrange — twenty-five hours ago, one hour past the walk's window
     const s = await scenario("stale");
@@ -643,6 +663,23 @@ describe("crosscheck helpful — the one-word shortcut for the h key", () => {
 
     // Assert
     expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stdout).toContain("needs a person at a terminal");
+    expect(await reportOf(s)).toMatchObject({ helpful: 0 });
+  });
+
+  test("round-6 follow-up: at a pty inside an agent host, helpful is refused as with no terminal, naming the marker", async () => {
+    // Arrange
+    const s = await scenario("helpful-agent-host");
+    const id = await deliver(s, "wc_agent_host_h", 4);
+
+    // Act — the TTY probe says yes; Gemini CLI's interactive shell set its marker
+    const result = await runCli(["helpful", id], { ...env(s), GEMINI_CLI: "1" }, s.repoRoot, undefined, {
+      isInteractive: () => true,
+    });
+
+    // Assert
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stdout).toStartWith("this command ran inside an agent's tool (GEMINI_CLI is set)");
     expect(result.stdout).toContain("needs a person at a terminal");
     expect(await reportOf(s)).toMatchObject({ helpful: 0 });
   });

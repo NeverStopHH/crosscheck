@@ -68,6 +68,7 @@ import { SAFE_ID_PATTERN } from "@crosscheck/schema";
 import type { PilotInterventionLabel } from "@crosscheck/schema";
 
 import { heldLine } from "./outcome-render.ts";
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import {
@@ -270,8 +271,9 @@ const runShortcut = async (
   if (extra.length > 0 || (id !== undefined && !SAFE_ID_PATTERN.test(id))) {
     return { stdout: shortcut.usage, exitCode: EXIT_USAGE };
   }
-  if (!isInteractive()) {
-    return { stdout: agentRefusal(shortcut.command), exitCode: EXIT_USAGE };
+  const gate = personGate(env, isInteractive);
+  if (!gate.isPerson) {
+    return { stdout: `${agentHostRefusalLine(gate)}${agentRefusal(shortcut.command)}`, exitCode: EXIT_USAGE };
   }
   const identity = await resolveRepoIdentity(cwd);
   const config = await loadConfig({ env, repoRoot: identity?.root });

@@ -379,6 +379,34 @@ describe("crosscheck noise", () => {
     expect(human.stdout).toContain("recorded:");
   });
 
+  test("round-6 follow-up: at a pty inside an agent host, noise is refused as with no terminal, naming the marker", async () => {
+    // Arrange — the TTY probe says yes; Cursor's agent terminal set its marker
+    const id = await deliver(LIVE, "wc_agent_host_noise", 1);
+    const home = await homeWithLive(LIVE);
+
+    // Act
+    const result = await runCli(
+      ["noise", id],
+      {
+        CROSSCHECK_HOME: home,
+        HOME: home,
+        CROSSCHECK_HUB_URL: hubUrl,
+        CROSSCHECK_API_KEY: nick.apiKey,
+        CROSSCHECK_TIMEOUT_MS: "4000",
+        CURSOR_AGENT: "1",
+      },
+      repo,
+      undefined,
+      { isInteractive: () => true },
+    );
+
+    // Assert — refused, and nothing recorded: the person's own noise afterwards is no repeat
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stdout).toStartWith("this command ran inside an agent's tool (CURSOR_AGENT is set)");
+    expect(result.stdout).toContain("needs a person at a terminal");
+    expect((await noise(home, [id])).stdout).toContain("recorded:");
+  });
+
   test("review H2: noise over a word recorded since says it now stands over that word", async () => {
     // Arrange — a fresh session, a hint after enrolment, and Nick's agent said followed
     const session = "cc_55555555-2222-4333-8444-555555555555";
@@ -569,6 +597,34 @@ describe("crosscheck pin --ok", () => {
     // Assert
     expect(result.exitCode).toBe(EXIT_USAGE);
     expect(result.stdout).toContain("needs a person at a terminal");
+  });
+
+  test("round-6 follow-up: pin --ok at a pty inside an agent host is refused as with no terminal, naming the marker", async () => {
+    // Arrange
+    await kenPins("pin_ok_agent_host");
+    const home = await homeWithLive(null);
+
+    // Act
+    const result = await runCli(
+      ["pin", "--ok", "pin_ok_agent_host"],
+      {
+        CROSSCHECK_HOME: home,
+        HOME: home,
+        CROSSCHECK_HUB_URL: hubUrl,
+        CROSSCHECK_API_KEY: nick.apiKey,
+        CROSSCHECK_TIMEOUT_MS: "4000",
+        CLAUDECODE: "1",
+      },
+      repo,
+      undefined,
+      { isInteractive: () => true },
+    );
+
+    // Assert — and the person's own --ok afterwards is no repeat
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stdout).toStartWith("this command ran inside an agent's tool (CLAUDECODE is set)");
+    expect(result.stdout).toContain("needs a person at a terminal");
+    expect((await pinOk(home, "pin_ok_agent_host")).stdout).toContain("recorded: you ran pin_ok_agent_host's check");
   });
 
   test("a pin recorded broken is not marked ok — the fix is a re-pin", async () => {

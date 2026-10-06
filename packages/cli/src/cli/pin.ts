@@ -57,6 +57,8 @@ import { deniedPinPaths, pinDenylistRefusal, sweepDenylistLines } from "./pin-ob
 import type { DeniedMove } from "./pin-observability.ts";
 import type { PinPathOutcome } from "@crosscheck/connector-core/git/pin-sweep.ts";
 import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
+import type { PersonGate } from "./agent-host.ts";
 import type { CliResult } from "./login.ts";
 
 export const PIN_FLAG_FILES = "--files";
@@ -561,13 +563,15 @@ const create = async (
  * register says, it records that a notice was right — and it takes the same
  * human gate, because "the check passed" is a human's word or nothing.
  */
-const confirmPin = async (
-  resolved: Resolved,
-  pinId: string,
-  isInteractive: InteractiveProbe,
-): Promise<CliResult> => {
-  if (!isInteractive()) {
-    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+/** A person-only pin gesture refused: which marker took the door away, if one did, then why (round-6 follow-up). */
+const agentRefused = (gate: PersonGate): CliResult => ({
+  stdout: `${agentHostRefusalLine(gate)}${AGENT_REFUSAL}`,
+  exitCode: EXIT_USAGE,
+});
+
+const confirmPin = async (resolved: Resolved, pinId: string, gate: PersonGate): Promise<CliResult> => {
+  if (!gate.isPerson) {
+    return agentRefused(gate);
   }
   const result = await postPilotMark(resolved.ctx, {
     repo: resolved.repoId,
@@ -610,8 +614,9 @@ export const runPin = async (
     // The retraction takes the human gate too: it is the falsifier
     // `crosscheck suspect` reads before it names any session, so an agent
     // recording "the check failed" would unlock attribution on its own word.
-    if (!isInteractive()) {
-      return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+    const gate = personGate(env, isInteractive);
+    if (!gate.isPerson) {
+      return agentRefused(gate);
     }
     // THE COMMIT IS SENT when git named one: proof 3's fix range starts at
     // the break, not at the last commit the surface worked on (07 §3.4).
@@ -637,13 +642,14 @@ export const runPin = async (
     };
   }
   if (args.ok !== null) {
-    return confirmPin(resolved, args.ok, isInteractive);
+    return confirmPin(resolved, args.ok, personGate(env, isInteractive));
   }
   if (args.surface === null || args.files.length === 0) {
     return { stdout: PIN_USAGE, exitCode: EXIT_USAGE };
   }
-  if (!isInteractive()) {
-    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+  const gate = personGate(env, isInteractive);
+  if (!gate.isPerson) {
+    return agentRefused(gate);
   }
   return create(resolved, args, args.surface, cwd);
 };

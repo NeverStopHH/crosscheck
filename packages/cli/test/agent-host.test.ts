@@ -8,7 +8,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { AGENT_HOST_MARKERS, agentHostMarkerIn } from "../src/cli/agent-host.ts";
+import { AGENT_HOST_MARKERS, agentHostMarkerIn, agentHostRefusalLine, personGate } from "../src/cli/agent-host.ts";
 
 describe("agentHostMarkerIn", () => {
   test.each([
@@ -52,11 +52,51 @@ describe("agentHostMarkerIn", () => {
     expect(marker).toBeNull();
   });
 
+  test("variables a host sets in the person's own terminal too are never markers (gate)", () => {
+    // Act
+    const gate = personGate({ TERM_PROGRAM: "vscode" }, () => true);
+
+    // Assert
+    expect(gate).toEqual({ isPerson: true, marker: null });
+  });
+
   test("variables a host sets in the person's own terminal too are never markers", () => {
     // Act — VS Code's, Zed's and Cursor's integrated terminals carry these for the person as well
     const marker = agentHostMarkerIn({ TERM_PROGRAM: "vscode", ZED_TERM: "true", CURSOR_TRACE_ID: "abc" });
 
     // Assert
     expect(marker).toBeNull();
+  });
+});
+
+describe("personGate — the one gate every person-only gesture takes (round-6 follow-up)", () => {
+  test("a pty inside an agent host is no person: the marker demotes, whatever the probe says", () => {
+    // Act
+    const gate = personGate({ CURSOR_AGENT: "1" }, () => true);
+
+    // Assert
+    expect(gate).toEqual({ isPerson: false, marker: "CURSOR_AGENT" });
+  });
+
+  test("with no marker, the terminal probe decides — a marker can never open the door", () => {
+    // Act
+    const atTerminal = personGate({}, () => true);
+    const noTerminal = personGate({}, () => false);
+    const noTerminalUnderHost = personGate({ CLAUDECODE: "1" }, () => false);
+
+    // Assert
+    expect(atTerminal).toEqual({ isPerson: true, marker: null });
+    expect(noTerminal).toEqual({ isPerson: false, marker: null });
+    expect(noTerminalUnderHost).toEqual({ isPerson: false, marker: "CLAUDECODE" });
+  });
+
+  test("the refusal's first line names the marker, and there is none without one", () => {
+    // Act
+    const named = agentHostRefusalLine({ isPerson: false, marker: "GEMINI_CLI" });
+    const none = agentHostRefusalLine({ isPerson: false, marker: null });
+
+    // Assert
+    expect(named).toBe("this command ran inside an agent's tool (GEMINI_CLI is set), so its terminal is the agent's, not yours\n");
+    expect(none).toBe("");
   });
 });

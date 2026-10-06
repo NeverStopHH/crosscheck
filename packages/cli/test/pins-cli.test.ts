@@ -223,6 +223,31 @@ describe("crosscheck pin", () => {
     expect(listed.stdout).toContain("nothing in this repo is watched");
   });
 
+  test("round-6 follow-up: at a pty inside an agent host, pin is refused as with no terminal, naming the marker", async () => {
+    // Arrange / Act — the TTY probe says yes; Codex's sandbox set its marker
+    const result = await runCli(
+      ["pin", "Play button plays/pauses", "--files", PINNED, "--check", "open /workbench, press Play"],
+      {
+        CROSSCHECK_HOME: home,
+        HOME: home,
+        CROSSCHECK_HUB_URL: hubUrl,
+        CROSSCHECK_API_KEY: nickKey,
+        CROSSCHECK_TIMEOUT_MS: "4000",
+        CODEX_SANDBOX: "seatbelt",
+      },
+      repo,
+      undefined,
+      { isInteractive: () => true },
+    );
+
+    // Assert: refused exactly as with no terminal, and nothing pinned
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stdout).toStartWith("this command ran inside an agent's tool (CODEX_SANDBOX is set)");
+    expect(result.stdout).toContain("needs a person at a terminal");
+    const listed = await runFor(nickKey, ["pin", "list"]);
+    expect(listed.stdout).toContain("nothing in this repo is watched");
+  });
+
   test("refuses a speaking-sized pin with no check recipe", async () => {
     // Arrange / Act
     const result = await runFor(nickKey, [

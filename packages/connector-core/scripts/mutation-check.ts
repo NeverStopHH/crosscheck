@@ -8842,8 +8842,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2, D3. An agent marking the product's interventions is the product grading itself.
     label: "an agent can mark noise",
     file: `${CLI}/src/cli/noise.ts`,
-    from: "  if (!isInteractive()) {",
-    to: "  if (!isInteractive() && id === \"never\") {",
+    from: "  if (!gate.isPerson) {",
+    to: "  if (!gate.isPerson && id === \"never\") {",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "the pilot's only human signal can be written by the model it measures, so " +
@@ -8864,8 +8864,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.2, D5. "The check passed" is a human's word or nothing.
     label: "an agent can say a pin's check passed",
     file: `${CLI}/src/cli/pin.ts`,
-    from: "  if (!isInteractive()) {\n    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };\n  }\n  const result = await postPilotMark(",
-    to: "  if (!isInteractive() && pinId === \"never\") {\n    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };\n  }\n  const result = await postPilotMark(",
+    from: "  if (!gate.isPerson) {\n    return agentRefused(gate);\n  }\n  const result = await postPilotMark(",
+    to: "  if (!gate.isPerson && pinId === \"never\") {\n    return agentRefused(gate);\n  }\n  const result = await postPilotMark(",
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because:
       "an agent vouches that a surface works on a human's behalf, the exact hole " +
@@ -10423,8 +10423,8 @@ export const MUTATIONS: readonly Mutation[
     // Key rotation. A person at a terminal, never an agent.
     label: "an agent can rotate the key and read the new one",
     file: `${CLI}/src/cli/key.ts`,
-    from: "  if (!isInteractive()) {",
-    to: "  if (!isInteractive() && rest.length < 0) {",
+    from: "  if (!gate.isPerson) {",
+    to: "  if (!gate.isPerson && rest.length < 0) {",
     test: `${CLI}/test/key-rotate.test.ts`,
     because:
       "an agent's Bash call rotates the developer's key and prints a live key into its own transcript",
@@ -14343,8 +14343,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §12, PIL-6, D3. The same gate as `pin` and `noise`.
     label: "an agent can label the product's own interventions",
     file: `${CLI}/src/cli/pilot-label.ts`,
-    from: "  if (!isInteractive()) {",
-    to: "  if (!isInteractive() && cwd === \"\") {",
+    from: "  if (!gate.isPerson) {",
+    to: "  if (!gate.isPerson && cwd === \"\") {",
     test: `${CLI}/test/pilot-label-cli.test.ts`,
     because:
       "the model a precision figure measures can write the verdicts it is " +
@@ -18534,8 +18534,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed / overrode post as the agent",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '  return isInteractive() ? { via: "person", agentLine: "" } : { via: "agent", agentLine: AGENT_WORD_LINE };',
-    to: '  return { via: "agent", agentLine: AGENT_WORD_LINE };',
+    from: '  if (gate.isPerson) {\n    return { via: "person", agentLine: "" };',
+    to: '  if (gate.isPerson) {\n    return { via: "agent", agentLine: AGENT_WORD_LINE };',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person's terminal word is the agent's, and the agent's next word overturns it",
   },
@@ -19024,16 +19024,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed from an agent's Bash tool posts as the person",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '  return isInteractive() ? { via: "person", agentLine: "" } : { via: "agent", agentLine: AGENT_WORD_LINE };',
-    to: '  return { via: "person", agentLine: "" };',
+    from: "  if (gate.isPerson) {",
+    to: "  if (true) {",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "an agent overturns its own person's word by running the person's command",
   },
   {
     label: "an outcome recorded as the agent's never says so",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: ': { via: "agent", agentLine: AGENT_WORD_LINE };',
-    to: ': { via: "agent", agentLine: "" };',
+    from: "gate.marker === null ? AGENT_WORD_LINE : agentHostLine(gate.marker)",
+    to: 'gate.marker === null ? "" : agentHostLine(gate.marker)',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person reads their word as standing when it was filed as their agent's",
   },
@@ -19358,15 +19358,15 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "an agent host's marker promotes the word to the person's",
-    file: `${CLI}/src/cli/outcome.ts`,
-    from: '    return { via: "agent", agentLine: agentHostLine(marker) };',
-    to: '    return { via: "person", agentLine: "" };',
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: "{ isPerson: false, marker };",
+    to: "{ isPerson: isInteractive(), marker };",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the environment, which any agent can write, opens the person's door",
   },
   {
     label: "an agent host's marker is never read",
-    file: `${CLI}/src/cli/outcome.ts`,
+    file: `${CLI}/src/cli/agent-host.ts`,
     from: "  const marker = agentHostMarkerIn(env);",
     to: "  const marker = null;",
     test: `${CLI}/test/outcome-cli.test.ts`,
@@ -19375,8 +19375,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a word demoted by a host's marker says it had no terminal",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "agentLine: agentHostLine(marker) };",
-    to: "agentLine: AGENT_WORD_LINE };",
+    from: ": agentHostLine(gate.marker) };",
+    to: ": AGENT_WORD_LINE };",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person at a terminal is told there was none, and cannot see why their word is the agent's",
   },
@@ -19546,6 +19546,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "the person cannot tell their own label's sentence from their agent's word",
   },
+  // ── 07 §13.14, round-6 follow-up: one person gate for every person-only gesture ──
+  {
+    label: "the one person gate lets a marked pty through to every person-only gesture",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: "{ isPerson: false, marker };",
+    to: "{ isPerson: isInteractive(), marker };",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "an agent in Cursor's or Gemini CLI's pty labels noise and vouches for a pin as the person",
+  },
+  {
+    label: "a person-only gesture's refusal never names the marker that demoted it",
+    file: `${CLI}/src/cli/agent-host.ts`,
+    from: "(${gate.marker} is set), so its terminal is the agent's, not yours",
+    to: ", so its terminal is the agent's, not yours",
+    test: `${CLI}/test/pilot-mark-cli.test.ts`,
+    because: "the person at a terminal is refused and cannot see which variable made their terminal the agent's",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19636,7 +19653,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
- * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 15
+ * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 17
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 12
  * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16

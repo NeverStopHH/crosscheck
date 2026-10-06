@@ -1614,3 +1614,12 @@ row, "helpful (your label), from Ken: «saved me an hour»", beside the outcome'
 "helpful"` on the wire, additive: an older client prints the word as it is). Only the caller's own labels:
 a label is read only where `marked_by` is the delivery's recipient, `--mine` reads only the caller's
 deliveries, and the team line and the credit select no sentence at all.
+
+*Follow-up — one person gate for every person-only gesture.* MEDIUM-2's markers first guarded only
+`crosscheck followed / overrode`; the same pty let an agent label noise or helpful, walk `crosscheck pilot
+label`, pin, say `pin --ok` or `pin --broke`, and rotate the key as the person. Every person-only gesture now
+asks one gate, `personGate` (cli `agent-host.ts`), never the TTY probe alone, so a new gesture cannot forget
+the markers. With a marker present each behaves exactly as with no terminal — the labels, the walk, the pin
+gestures and the rotation are refused, `followed / overrode` take the agent's route — and the refusal's first
+line names the marker: "this command ran inside an agent's tool (CURSOR_AGENT is set), so its terminal is the
+agent's, not yours". The gate still answers "person" only when the probe does.

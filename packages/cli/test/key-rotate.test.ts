@@ -207,4 +207,21 @@ describe("crosscheck key rotate", () => {
     expect((await readStoredConfig(dir))?.apiKey).toBe(oldKey);
     expect(await works(oldKey)).toBe(true);
   });
+
+  test("round-6 follow-up: at a pty inside an agent host, rotation is refused as with no terminal, naming the marker", async () => {
+    // Arrange
+    const oldKey = await newDeveloper();
+    const dir = await home("key-rotate-agent-host");
+    await saveConfig(dir, { version: 1, hubUrl, apiKey: oldKey });
+
+    // Act — the TTY probe says yes; Claude Code set its marker
+    const out = await rotate({ CROSSCHECK_HOME: dir, HOME: dir, CLAUDECODE: "1" }, [], true);
+
+    // Assert
+    expect(out.exitCode).toBe(EXIT_USAGE);
+    expect(out.stdout).toStartWith("this command ran inside an agent's tool (CLAUDECODE is set)");
+    expect(out.stdout).toContain("needs a person at a terminal");
+    expect((await readStoredConfig(dir))?.apiKey).toBe(oldKey);
+    expect(await works(oldKey)).toBe(true);
+  });
 });

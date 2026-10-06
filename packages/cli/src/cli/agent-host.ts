@@ -37,3 +37,28 @@ export type AgentHostMarker = (typeof AGENT_HOST_MARKERS)[number];
 /** The first agent-host marker this environment carries, or null: a person's own shell has none. */
 export const agentHostMarkerIn = (env: Env): AgentHostMarker | null =>
   AGENT_HOST_MARKERS.find((name) => (env[name] ?? "") !== "") ?? null;
+
+/** Whose hands are on a person-only gesture, and — when a marker took the door away — which. */
+export interface PersonGate {
+  /** A person at a terminal with no agent-host marker: the only answer that opens a person-only door. */
+  readonly isPerson: boolean;
+  /** The marker that demoted this command, or null (no marker; then the terminal probe decided). */
+  readonly marker: AgentHostMarker | null;
+}
+
+/**
+ * THE ONE PERSON GATE (07 §13.14, round-6 follow-up). Every person-only gesture — followed / overrode,
+ * noise, helpful, the label walk, pin, pin --ok, pin --broke, key rotate — asks this, never the probe
+ * alone, so a new gesture cannot forget the markers. A marker answers "no person" whatever the probe
+ * says; with none, the probe decides. Nothing here can answer "person" that the probe did not.
+ */
+export const personGate = (env: Env, isInteractive: () => boolean): PersonGate => {
+  const marker = agentHostMarkerIn(env);
+  return marker === null ? { isPerson: isInteractive(), marker } : { isPerson: false, marker };
+};
+
+/** Said first when a marker refused a person-only gesture; nothing when no marker did. */
+export const agentHostRefusalLine = (gate: PersonGate): string =>
+  gate.marker === null
+    ? ""
+    : `this command ran inside an agent's tool (${gate.marker} is set), so its terminal is the agent's, not yours\n`;
