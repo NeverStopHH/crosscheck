@@ -258,13 +258,26 @@ const movedLife = async (input: SessionHealerInput, refusedSessionId: string): P
  * NEVER A LIFE THE STATE NAMES (review-2 round 6, MEDIUM-1), checked under
  * the state lock, the end sent inside it so no switch can name the life in
  * between. A lock that stays busy retires nothing: the state may name it.
+ *
+ * INSIDE THE WALK'S DEADLINE (review-2 round 7, L3): the end call gets what is
+ * left of it, and none is made with nothing left — the hook's budget is the
+ * developer's; the hub's reaper ends a life nobody names, and the lineage
+ * keeps the resume off it all the same.
  */
-const retireOrphan = async (input: SessionHealerInput, sessionId: string, now: Date): Promise<void> => {
+const retireOrphan = async (
+  input: SessionHealerInput,
+  sessionId: string,
+  now: Date,
+  deadlineMs: number,
+): Promise<void> => {
   const retired = await underSessionStateLock(input.home, input.hostSessionKey, false, async () => {
     if ((await readSessionState(input.home, input.hostSessionKey))?.crosscheckSessionId === sessionId) {
       return false;
     }
-    await endSession(input.hub, sessionId, ALLOCATION_FAILED);
+    const roomMs = deadlineMs - Date.now();
+    if (roomMs > 0) {
+      await endSession({ ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) }, sessionId, ALLOCATION_FAILED);
+    }
     return true;
   });
   if (!retired) {
@@ -334,23 +347,24 @@ const walk = async (
   if (swap === "lock_busy") {
     // NOT A LOST RACE (review-2 round 6, MEDIUM-1): nothing is known about the
     // state, only that the switch could not take the lock. The heal is
-    // pending — the caller keeps its batch, and the next one walks again. A
-    // life this walk registered that the state does not name is retired; one
-    // it does name — the same id, registered as itself — never is.
-    await retireOrphan(input, ladder.sessionId, now);
+    // pending — the caller keeps its batch, and the next one walks again,
+    // onto the very life this one registered: the ladder lands on the same
+    // rung, and the hub answers a live life's re-register. Nothing is retired
+    // here (review-2 round 7, O27): a retire needs the lock that just stayed
+    // busy, and the life may be the one the state names.
     return PENDING;
   }
   if (swap === "cas_lost") {
     // Lost the compare-and-swap: a sibling moved the state first. Its life is
     // the answer — usually the very one this walk just registered (review P4).
+    // When it is not — SessionEnd deleted the state mid-walk, or a sibling
+    // landed elsewhere — the life this walk registered belongs to nobody.
+    // Left open, the next resume would land on it under a fresh epoch and
+    // split its order (review finding 6). Which of the two it is, the retire
+    // reads under the state lock (review-2 round 7): read before it, the state
+    // could move onto this very life in between.
+    await retireOrphan(input, ladder.sessionId, now, deadlineMs);
     const moved = await movedLife(input, refusal.sessionId);
-    if (moved !== ladder.sessionId) {
-      // ...and when it is not — SessionEnd deleted the state mid-walk, or a
-      // sibling landed elsewhere — the life this walk registered belongs to
-      // nobody. Left open, the next resume would land on it under a fresh
-      // epoch and split its order (review finding 6).
-      await retireOrphan(input, ladder.sessionId, now);
-    }
     return moved === null ? FAILED : healedTo(refusal.sessionId, moved);
   }
   return healedTo(refusal.sessionId, ladder.sessionId);

@@ -11,7 +11,7 @@
  * ended conversation's and an abandoned one's — never another live one's.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm, utimes } from "node:fs/promises";
+import { rm, utimes, writeFile } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
@@ -232,6 +232,26 @@ describe("another live conversation's records", () => {
     // Assert: the successor spent nothing; the life's own heal delivers all three
     expect(spent).toEqual({});
     expect(await landed(life.workContextId)).toBe(3);
+  });
+
+  test("of a conversation whose state will not parse wait until the file itself is silent past the bound (U19)", async () => {
+    // Arrange: two edits on disk, the state file overwritten with what no reader parses
+    const fx = await fixture("unreadable");
+    const life = await register(fx);
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, edits(life, "unreadable", 2), new Date());
+    const statePath = sessionStatePath(fx.home, fx.hostSessionKey);
+    await writeFile(statePath, "{ not json");
+
+    // Act: a successor's flush while the file is fresh, then once it has been silent past the bound
+    await successorFlush(fx);
+    const landedWhileFresh = await landed(life.workContextId);
+    const since = new Date(Date.now() - ABANDONED_MS);
+    await utimes(statePath, since, since);
+    await successorFlush(fx);
+
+    // Assert: refusing to read the state handed nothing over; the silent file did
+    expect(landedWhileFresh).toBe(0);
+    expect(await landed(life.workContextId)).toBe(2);
   });
 
   test("are never re-sent by a healing flusher, the owed life's work context with them (P4, p4b)", async () => {

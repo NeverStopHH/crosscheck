@@ -29,6 +29,7 @@ import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declar
 import { appendRecords } from "../src/spool/append.ts";
 import { readDropDetail } from "../src/spool/drops.ts";
 import { flushSpool } from "../src/spool/flush.ts";
+import type { SessionRefusal } from "../src/spool/flush-heal.ts";
 import { reapSpool } from "../src/spool/reap.ts";
 import { readUnclosedSummary } from "../src/spool/unclosed.ts";
 import { allocateSeq, readSessionState, sessionStateLockPath, updateSessionState } from "../src/state/session-state.ts";
@@ -495,6 +496,31 @@ describe("the heal never throws away what it should re-send (review P4, P5, P6)"
       expect(result.outcome === "pending" || (result.outcome === "healed" && result.sessionId === next)).toBe(true);
     }
   });
+
+  test("a heal that loses the switch to a SessionStart on the very life it registered leaves it open (review-2 round 7)", async () => {
+    // Arrange: an ended life; a heal's walk in flight against a slow hub
+    const fx = await fixture("lost-to-refire");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    registerDelayMs = WALK_DELAY_MS;
+    const walking = healerFor(fx, fx.proxied)(
+      { sessionId: life.crosscheckSessionId, cause: "session_ended" },
+      Date.now() + BUDGET_MS,
+    );
+    await Bun.sleep(WALK_HEAD_START_MS);
+
+    // Act: a SessionStart re-fire climbs to the same next life and switches the state first
+    await register(fx);
+    const walked = await walking;
+    registerDelayMs = 0;
+
+    // Assert: both answers are the one next life, and it is open
+    const next = `${life.crosscheckSessionId}~r1`;
+    expect((await stateOf(fx))?.crosscheckSessionId).toBe(next);
+    expect(walked).toMatchObject({ outcome: "healed", sessionId: next });
+    expect(await isEnded(next)).toBe(false);
+  });
 });
 
 describe("coverage right after a heal never reads a loss as observed (review P3)", () => {
@@ -933,29 +959,41 @@ describe("a heal whose state switch meets a busy lock", () => {
     fx: Fixture,
     sessionId: string,
     holdMs: number = LOCK_PAST_PATIENCE_MS,
+    cause: SessionRefusal["cause"] = "session_unknown",
   ): Promise<unknown> => {
     let healing: Promise<unknown> = Promise.resolve();
     await withLock(sessionStateLockPath(fx.home, fx.hostSessionKey), false, async () => {
-      healing = healerFor(fx, fx.proxied)({ sessionId, cause: "session_unknown" }, Date.now() + BUDGET_MS);
+      healing = healerFor(fx, fx.proxied)({ sessionId, cause }, Date.now() + BUDGET_MS);
       await Bun.sleep(holdMs);
       return true;
     });
     return healing;
   };
 
-  test("a retirement that gets the lock checks the state first, and keeps the life it names", async () => {
-    // Arrange: the lock frees after the switch gave up and before the
-    // retirement's own patience runs out
+  test("retires nothing, and the next walk lands on the life it registered (review-2 round 7, O27)", async () => {
+    // Arrange: a life the hub ended; the lock frees after the switch gave up,
+    // in time for anything that would still want it
     const fx = await fixture("busy-then-free");
-    refuseRegisters = true;
-    const life = await register(fx, fx.proxied);
-    refuseRegisters = false;
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    const refusal = { sessionId: life.crosscheckSessionId, cause: "session_ended" } as const;
 
-    // Act
-    await healUnderBusyLock(fx, life.crosscheckSessionId, LOCK_FREES_FOR_RETIREMENT_MS);
+    // Act: the walk the busy lock defers, then the next one
+    const deferred = await healUnderBusyLock(fx, life.crosscheckSessionId, LOCK_FREES_FOR_RETIREMENT_MS, refusal.cause);
+    const next = `${life.crosscheckSessionId}~r1`;
+    const endedAfterBusy = await isEnded(next);
+    const healed = await healerFor(fx, fx.proxied)(refusal, Date.now() + BUDGET_MS);
 
-    // Assert
-    expect(await isEnded(life.crosscheckSessionId)).toBe(false);
+    // Assert: the life the busy walk registered stayed open and is the one the next walk lands on; no third life
+    const lives = await raw<{ id: string }>("select id from agent_sessions where id like $1 order by id", [
+      `${life.crosscheckSessionId}%`,
+    ]);
+    expect(deferred).toEqual({ outcome: "pending" });
+    expect(endedAfterBusy).toBe(false);
+    expect(healed).toMatchObject({ outcome: "healed", sessionId: next });
+    expect(lives.map((row) => row.id)).toEqual([life.crosscheckSessionId, next]);
+    expect(await isEnded(next)).toBe(false);
   });
 
   test("answers pending and leaves the life the state names open (RS5-B)", async () => {

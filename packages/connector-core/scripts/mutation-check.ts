@@ -17610,15 +17610,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a heal that loses its life to a SessionEnd leaves it open",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "      await retireOrphan(input, ladder.sessionId, now);\n",
-    to: "",
+    from: "    await retireOrphan(input, ladder.sessionId, now, deadlineMs);\n    const moved",
+    to: "    const moved",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review finding 6: the orphan life stays open, the next resume lands on it under a fresh epoch, and its order splits",
   },
   {
     label: "an orphaned life is written down but never ended",
     file: `${CORE}/src/flows/heal-session.ts`,
-    from: "  await endSession(input.hub, sessionId, ALLOCATION_FAILED);\n",
+    from: "      await endSession({ ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) }, sessionId, ALLOCATION_FAILED);\n",
     to: "",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "the life a raced heal registered stays open on the hub until the reaper guesses it dead",
@@ -17957,7 +17957,7 @@ export const MUTATIONS: readonly Mutation[
     from: "    if ((await readSessionState(input.home, input.hostSessionKey))?.crosscheckSessionId === sessionId) {\n      return false;\n    }\n",
     to: "",
     test: `${CORE}/test/session-lives.test.ts`,
-    because: "review-2 round 6 MEDIUM-1: a same-id heal whose switch met a busy lock ends the live life on the hub, and its first window is refused as late writes",
+    because: "review-2 round 6 MEDIUM-1, round 7: a heal that lost the switch to a SessionStart on the very life it registered ends that live life on the hub",
   },
   {
     label: "a heal whose switch met a busy lock spends a cooldown",
@@ -18440,6 +18440,46 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 7: one life refused on every hook pushes older refused lives out of the window, and their stragglers are delivered",
   },
   {
+    label: "retiring an orphan holds the walk past its deadline (L3)",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      await endSession({ ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) }, sessionId, ALLOCATION_FAILED);",
+    to: "      await endSession(input.hub, sessionId, ALLOCATION_FAILED);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 7 L3: a slow hub's end call spends the hook's budget the developer is waiting on",
+  },
+  {
+    label: "a register that failed removes the failed walk's verdict (O29)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  if (registration !== null) {\n    // A register that landed answers",
+    to: "  if (true) {\n    // A register that landed answers",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 survivor O29: a re-fire the hub refused re-opens the cooldown, and every hook walks again",
+  },
+  {
+    label: "a switch that met a busy lock retires the life it registered (O27)",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '    return PENDING;\n  }\n  if (swap === "cas_lost") {',
+    to: '    await retireOrphan(input, ladder.sessionId, now, deadlineMs);\n    return PENDING;\n  }\n  if (swap === "cas_lost") {',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 survivor O27: the next walk lands on the very life this one registered, and finds it ended — a third life for one refusal",
+  },
+  {
+    label: "an unreadable state file hands its records to the next flusher (U19)",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return "own";\n  }\n',
+    to: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return "own";\n  }\n  if (state === null) {\n    return "ended";\n  }\n',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 6 survivor U19: a state file a reader could not parse gives a live conversation's records to another, refused for want of their own life",
+  },
+  {
+    label: "an unreadable state file is never read as abandoned (U19)",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: "  return isPastReapBound(stamps, wroteAtMs, now.getTime()) ?",
+    to: "  return isPastReapBound(stamps, state === null ? null : wroteAtMs, now.getTime()) ?",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 6 survivor U19: a conversation that died with an undatable state leaves its records to expire unsent",
+  },
+  {
     label: "doctor says nothing of an owed work context (L4)",
     file: `${CLI}/src/cli/doctor.ts`,
     from: "    ...(await debtChecks(home, key)),\n",
@@ -18722,9 +18762,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 29
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 31
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 32
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 33
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
@@ -18733,7 +18773,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
- * PRINTS: packages/connector-core/test/spool-ownership.test.ts 6
+ * PRINTS: packages/connector-core/test/spool-ownership.test.ts 8
  * PRINTS: packages/connector-core/test/spool-simulation.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1

@@ -26,7 +26,7 @@ import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/serv
 import type { Db } from "@crosscheck/server";
 
 import { HEAL_COOLDOWN_MS, MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
-import { repoKey, sessionSlug, sessionStatePath, spoolDataPath } from "../src/config/paths.ts";
+import { repoKey, sessionHealPathForSlug, sessionSlug, sessionStatePath, spoolDataPath } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
@@ -59,6 +59,9 @@ const TIGHT_BUDGET_MS = 300;
 const BUDGET_SLACK_MS = 250;
 /** A register slower than any budget above. */
 const SLOW_REGISTER_MS = 2000;
+/** A register slow enough to delete the state under, and the deadline the walk it is in must keep. */
+const RETIRE_REGISTER_MS = 400;
+const RETIRE_BUDGET_MS = 1200;
 /** Apart enough that the oldest-backlog-first drain orders the two spools. */
 const SPOOL_ORDER_GAP_MS = 5;
 
@@ -72,6 +75,8 @@ let developerId: string;
 /** The proxy's dials: refuse every register, or hold it this long. */
 let refuseRegisters = false;
 let registerDelayMs = 0;
+/** ...and hold every end call this long. */
+let endDelayMs = 0;
 let registerCalls = 0;
 /** Record deliveries the proxy forwarded. */
 let recordPosts = 0;
@@ -214,6 +219,9 @@ beforeAll(async () => {
         if (registerDelayMs > 0) {
           await Bun.sleep(registerDelayMs);
         }
+      }
+      if (request.method === "POST" && pathname.endsWith("/end") && endDelayMs > 0) {
+        await Bun.sleep(endDelayMs);
       }
       return fetch(`${hubUrl}${pathname}${search}`, {
         method: request.method,
@@ -794,6 +802,45 @@ describe("the bounds", () => {
     expect(elapsed).toBeLessThan(TIGHT_BUDGET_MS + BUDGET_SLACK_MS);
     expect((await readDropDetail(fx.home, fx.key)).rejectedCauses).toEqual({ session_ended: 1 });
     expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+  });
+
+  test("retiring a life nobody names stays inside the walk's deadline against a slow end (review-2 round 7, L3)", async () => {
+    // Arrange: a walk whose register is slow enough for SessionEnd to delete the state under it, and a slow end
+    const fx = await fixture("retire-budget", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+    registerDelayMs = RETIRE_REGISTER_MS;
+    endDelayMs = SLOW_REGISTER_MS;
+    setTimeout(() => void rm(sessionStatePath(fx.home, fx.hostSessionKey), { force: true }), RETIRE_REGISTER_MS / 2);
+
+    // Act: the heal, asked by a flush with a tight budget
+    const started = Date.now();
+    const healed = await healerFor(fx)({ sessionId: life.crosscheckSessionId, cause: "session_ended" }, started + RETIRE_BUDGET_MS);
+    const elapsed = Date.now() - started;
+    registerDelayMs = 0;
+    endDelayMs = 0;
+
+    // Assert: the orphan's end did not hold the walk past its deadline
+    expect(healed.outcome).toBe("failed");
+    expect(elapsed).toBeLessThan(RETIRE_BUDGET_MS + BUDGET_SLACK_MS);
+  });
+
+  test("a SessionStart re-fire whose register fails keeps the failed walk's verdict (O29)", async () => {
+    // Arrange: a life the hub never registered, and a walk that failed for it
+    const fx = await fixture("refire-keeps-verdict", proxyUrl);
+    refuseRegisters = true;
+    await register(fx);
+    await flushAsHook(fx);
+    const stampAfterWalk = await Bun.file(sessionHealPathForSlug(fx.home, sessionSlug(fx.hostSessionKey))).exists();
+
+    // Act: SessionStart fires again, the hub still refusing
+    await register(fx);
+    refuseRegisters = false;
+
+    // Assert: the cooldown's verdict stands
+    expect(stampAfterWalk).toBe(true);
+    expect(await Bun.file(sessionHealPathForSlug(fx.home, sessionSlug(fx.hostSessionKey))).exists()).toBe(true);
   });
 });
 

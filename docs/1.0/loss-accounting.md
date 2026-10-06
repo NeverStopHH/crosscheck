@@ -482,6 +482,15 @@ Residuals the invariants allow for, each counted, never silent:
 
 **The edges the round-6 review left** (review-2 round 7):
 
+- A heal that retires a life nobody names now ends it inside the walk's deadline, and makes no end call once nothing
+  is left; the lineage still keeps a resume off that life (L3).
+- A switch that meets a busy state lock no longer tries to retire anything. The retire needs the same lock, and the
+  next walk lands on the very life this one registered (O27). A switch that loses its compare-and-swap decides
+  under the state lock whether the life it registered is an orphan, so a SessionStart that moved the state onto that
+  very life in between keeps it open.
+- A SessionStart re-fire whose register fails keeps the failed walk's cooldown verdict (O29).
+- A state file that will not parse still speaks for a live conversation until the file itself has been silent past
+  the reap bound; then its records go as an abandoned conversation's (U19).
 - The walk no longer writes the refused life down itself: the heal does for a refusal as ended, the ladder does
   for a 409 on the state's life, and a flush with no healer (SessionEnd's) does for its own refusal.
 - Doctor reports what is owed: `WARN owed work contexts: N owed, waiting for their lives' next batch; M refused by the
