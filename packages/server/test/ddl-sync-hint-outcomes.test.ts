@@ -11,7 +11,7 @@ import { sql } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { MAX_HINT_OUTCOME_REASON_CHARS } from "@crosscheck/schema";
 
-import { hintDeliveries, hintOutcomes, pilotEnrolments, teamSettings } from "../src/db/schema.ts";
+import { hintDeliveries, hintOutcomes, noiseReassertions, pilotEnrolments, teamSettings } from "../src/db/schema.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
 import { createTestHarness } from "./helpers.ts";
 
@@ -68,6 +68,22 @@ describe("hint_outcomes DDL sync", () => {
     expect(columns.rows).toHaveLength(1);
     expect(bootstrapSql).toContain("  ingested_at timestamptz\n);");
     expect(bootstrapSql).toContain("ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS ingested_at timestamptz;");
+  });
+
+  test("review H-B: the person's re-asserted noise is a table with drizzle's columns on a real bootstrap", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const drizzleColumns = getTableConfig(noiseReassertions)
+      .columns.map((column) => column.name)
+      .sort();
+
+    // Act
+    const columns = await harness.db.execute(
+      sql`SELECT column_name AS c FROM information_schema.columns WHERE table_name = 'noise_reassertions' ORDER BY column_name`,
+    );
+
+    // Assert
+    expect(columns.rows.map((row) => String(row["c"]))).toEqual(drizzleColumns);
   });
 
   test("review M3: the enrolment history is a table with drizzle's columns on a real bootstrap", async () => {

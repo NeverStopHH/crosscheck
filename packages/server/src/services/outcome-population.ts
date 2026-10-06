@@ -187,11 +187,19 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       ORDER BY o.created_at DESC, o.id DESC LIMIT 1
     ) latest ON true
     LEFT JOIN LATERAL (
-      SELECT m.created_at FROM pilot_marks m
-      JOIN hint_deliveries md ON md.id = m.ref_id
-      WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
-        AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
-      ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+      SELECT noise.created_at FROM (
+        SELECT m.id, m.created_at FROM pilot_marks m
+        JOIN hint_deliveries md ON md.id = m.ref_id
+        WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
+          AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
+        UNION ALL
+        -- review H-B: the person saying noise again is a row of its own, read before the month's end too
+        SELECT r.id, r.created_at FROM noise_reassertions r
+        JOIN hint_deliveries rd ON rd.id = r.delivery_id
+        WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
+          AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}
+      ) noise
+      ORDER BY noise.created_at DESC, noise.id DESC LIMIT 1
     ) m ON true
   ), states AS (
     SELECT id, recipient, source_id, outcome_at,

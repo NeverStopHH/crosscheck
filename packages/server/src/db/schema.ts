@@ -1278,6 +1278,40 @@ export const hintOutcomes = pgTable(
 );
 
 /**
+ * THE PERSON SAYING NOISE AGAIN (07 §13.11, review H-B). `pilot_marks` keeps
+ * one label per person and delivery, and the first one is what precision
+ * counts; a later "noise" over a word recorded since is a NEW ROW here, never
+ * a restamped label — an instant that moves would move every closed month
+ * that read it. Precision never reads this table; the outcome figures read
+ * the newest of the label and these rows, before each month's end.
+ */
+export const noiseReassertions = pgTable(
+  "noise_reassertions",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => hintDeliveries.id),
+    markedBy: text("marked_by")
+      .notNull()
+      .references(() => developers.id),
+    /** The sentence said with it, kept; null is the ordinary case. */
+    reason: text("reason"),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "noise_reassertions_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
+    ),
+    index("noise_reassertions_delivery_created_idx").on(table.deliveryId, table.createdAt.desc()),
+    // Aged out with the outcomes it stands beside (D-O6), an index range.
+    index("noise_reassertions_created_idx").on(table.createdAt),
+  ],
+);
+
+/**
  * THE SUSPECT ANSWER, AS IT WAS GIVEN (1.0 spec 07 §3.3).
  *
  * `services/suspect.ts` persists nothing and its window ends NOW, so an

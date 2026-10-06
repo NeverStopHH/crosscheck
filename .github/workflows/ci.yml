@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1661
+    # PRINTS: 1666
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -435,18 +435,18 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
-    # PRINTS: packages/server/src/services/noise-label.ts 1
+    # PRINTS: packages/server/src/services/noise-label.ts 2
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
-    # PRINTS: packages/server/src/services/outcome-population.ts 21
+    # PRINTS: packages/server/src/services/outcome-population.ts 23
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
     # PRINTS: packages/server/src/services/pilot-label-figures.ts 12
     # PRINTS: packages/server/src/services/pilot-outcome-figures.ts 4
     # PRINTS: packages/server/src/services/pilot-report.ts 20
     # PRINTS: packages/server/src/services/pilot-session-set.ts 9
-    # PRINTS: packages/server/src/services/pilot.ts 29
+    # PRINTS: packages/server/src/services/pilot.ts 30
     # PRINTS: packages/server/src/services/pins.ts 9
-    # PRINTS: packages/server/src/services/pointer-standing.ts 2
+    # PRINTS: packages/server/src/services/pointer-standing.ts 3
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
     # PRINTS: packages/server/src/services/record-handlers.ts 22
@@ -608,11 +608,11 @@ jobs:
     # PRINTS: loss-report.ts 14
     # PRINTS: manifest-doc.ts 2
     # PRINTS: mark-hint-outcome.ts 9
-    # PRINTS: noise-label.ts 1
+    # PRINTS: noise-label.ts 2
     # PRINTS: noise.ts 10
     # PRINTS: normalized-doc.ts 2
     # PRINTS: outcome-clause.ts 2
-    # PRINTS: outcome-population.ts 21
+    # PRINTS: outcome-population.ts 23
     # PRINTS: outcome-render.ts 3
     # PRINTS: outcome.ts 6
     # PRINTS: output.ts 1
@@ -634,14 +634,14 @@ jobs:
     # PRINTS: pilot-render.ts 33
     # PRINTS: pilot-report.ts 20
     # PRINTS: pilot-session-set.ts 9
-    # PRINTS: pilot.ts 40
+    # PRINTS: pilot.ts 41
     # PRINTS: pin-observability.ts 14
     # PRINTS: pin-paths.ts 8
     # PRINTS: pin-render.ts 7
     # PRINTS: pin-sweep.ts 2
     # PRINTS: pin.ts 11
     # PRINTS: pins.ts 12
-    # PRINTS: pointer-standing.ts 2
+    # PRINTS: pointer-standing.ts 3
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 9
     # PRINTS: post.ts 1

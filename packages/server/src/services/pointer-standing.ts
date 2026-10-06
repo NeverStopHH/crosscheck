@@ -75,18 +75,28 @@ export const readPointerOutcome = async (
 
 type NoiseRow = { readonly id: string; readonly at: string | Date };
 
-/** The recipient's newest noise label on the pointer — the one noise concept (07 §13.2). */
+/**
+ * The recipient's newest noise on the pointer — the one noise concept (07
+ * §13.2): their label, or a later re-assertion of it (review H-B), which is a
+ * row of its own because a label's instant never moves.
+ */
 export const readPointerNoise = async (
   tx: DbExecutor,
   pointer: Pointer,
   recipient: string,
 ): Promise<LatestNoise | undefined> => {
   const rows = await tx.execute<NoiseRow>(sql`
-    SELECT m.id, m.created_at AS at FROM pilot_marks m
-    JOIN hint_deliveries d ON d.id = m.ref_id
-    WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", pointer)}
-      AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}
-    ORDER BY m.created_at DESC, m.id DESC LIMIT 1`);
+    SELECT id, at FROM (
+      SELECT m.id, m.created_at AS at FROM pilot_marks m
+      JOIN hint_deliveries d ON d.id = m.ref_id
+      WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", pointer)}
+        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}
+      UNION ALL
+      SELECT r.id, r.created_at AS at FROM noise_reassertions r
+      JOIN hint_deliveries rd ON rd.id = r.delivery_id
+      WHERE ${ofPointer("rd", pointer)} AND r.marked_by = ${recipient}
+    ) noise
+    ORDER BY at DESC, id DESC LIMIT 1`);
   const row = rows.rows[0];
   return row === undefined ? undefined : { id: row.id, createdAt: new Date(row.at) };
 };

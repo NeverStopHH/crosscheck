@@ -1295,3 +1295,16 @@ hub (M5); a label and an outcome at the same instant leave the label standing, i
 write path (M7); an enrolment that starts exactly at the month's end makes nothing of that month recordable
 (M11). M15 (any held delivery taken for any ref), M18 (the CLI's sender) and M20 (an ambiguous session) are
 killed with the POST-first fix above — M20's "no flush when ambiguous" is now the intended rule.
+
+**13.12 — Corrections from the third adversarial review (2026-10-07).** Two HIGHs, four MEDIUMs and several
+LOWs; every probe (A–G) is a regression test.
+
+*H-B — re-asserting noise restamped the label, so closed months moved (probe A).* H2's re-assertion set
+`pilot_marks.created_at` to now; Mike's July noise label, said again in August over an August word, left July
+reading noise 0 instead of 1. **Labels are append-only**: the first label per person and delivery stays exactly
+as written — it is what precision counts, and precision keeps reading it — and saying noise again is a new row in
+`noise_reassertions` (both DDL authorities; in the retention registry beside `hint_outcomes`, aged out at
+`PILOT_RETENTION_DAYS`), with the sentence said with it. No instant is ever updated. The standing noise is the
+newest of the label and its re-assertions before each month's end, so July reads the label and August the
+re-assertion. Said again while noise already stands, it is a repeat. A person's own later "noise" after their
+own `helpful` makes noise stand in the outcome figures while precision keeps `helpful` (survivor R7).

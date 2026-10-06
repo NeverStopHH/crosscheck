@@ -23,7 +23,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
-import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, deliveryIdFor } from "@crosscheck/schema";
+import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
 
 import { lastWholeMonth, readPeriodAggregate } from "../src/services/outcome-population.ts";
 
@@ -520,5 +520,45 @@ describe("the closed month's edges (review M5: surviving mutations)", () => {
 
     // Assert
     expect(outcomes).toMatchObject({ periodStartIso: "2026-07-01T00:00:00.000Z", withheld: "not_recordable", countedFromIso: null });
+  });
+});
+
+describe("labels are append-only (review H-B)", () => {
+  test("probe A: Mike's July noise label, said again in August over an August word, never moves July", async () => {
+    // Arrange — a printed July that holds Mike's July noise label on his pointer at Nick's work
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    const before = await outcomesOf(crowd);
+
+    // Act — in August a word lands on that pointer, and Mike says noise again
+    await recordOutcome(crowd, crowd.mike, { ref: NICK_CONTEXT, outcome: "followed" });
+    crowd.harness.clock.advanceSeconds(60);
+    await labelNoise(crowd, crowd.mike, hintDeliveryId(MIKE_SESSION, NICK_CONTEXT));
+    crowd.harness.clock.advanceSeconds(60);
+    const after = await outcomesOf(crowd);
+
+    // Assert — the restamp moved July (noise 1 → 0); a new row never does
+    expect(before["figures"]).toMatchObject({ noise: 1 });
+    expect(after).toEqual(before);
+  });
+
+  test("a re-assertion made in August is read from August on — July keeps the word that stood at its end", async () => {
+    // Arrange — in July, after Mike's noise label, a newer word on that pointer stood: followed
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    crowd.harness.clock.advanceSeconds(60);
+    await recordOutcome(crowd, crowd.mike, { ref: NICK_CONTEXT, outcome: "followed" });
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    const before = await outcomesOf(crowd);
+
+    // Act — in August Mike says noise again
+    await labelNoise(crowd, crowd.mike, hintDeliveryId(MIKE_SESSION, NICK_CONTEXT));
+    crowd.harness.clock.advanceSeconds(60);
+    const after = await outcomesOf(crowd);
+
+    // Assert
+    expect(before["figures"]).toMatchObject({ noise: 0 });
+    expect(after).toEqual(before);
   });
 });

@@ -14,6 +14,7 @@
  *     hit drops the whole outcome rather than a redacted derivative.
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
 import { PIN_PRESENCE_TERMINAL, deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
 
 import { hintOutcomes, pilotMarks } from "../src/db/schema.ts";
@@ -189,6 +190,68 @@ describe("POST /api/hint-outcomes", () => {
     expect(again.status).toBe(201);
     expect(await bodyOf(again)).toMatchObject({ repeated: false, stands: "noise", replaced: "overrode" });
     expect(view).toMatchObject({ overrode: 0, noise: 1 });
+  });
+
+  test("review H-B: noise said again is a new row — the first label's instant never moves, and the new reason is kept", async () => {
+    // Arrange — the same history as above: followed, the person's noise, the agent's overrode
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    world.harness.clock.advanceSeconds(60);
+    await labelNoise(world, world.nick, world.delivered.kenContext);
+    const labelledAt = world.harness.clock.now().toISOString();
+    world.harness.clock.advanceSeconds(60);
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — the person says noise again, with a sentence this time
+    const again = await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "noise",
+        reason: "still off target",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+
+    // Assert — the label row is untouched; the re-assertion is its own row, with its reason
+    expect(await bodyOf(again)).toMatchObject({ repeated: false, stands: "noise", replaced: "overrode" });
+    const labels = await world.harness.db.select().from(pilotMarks);
+    expect(labels.map((label) => label.createdAt.toISOString())).toEqual([labelledAt]);
+    const reasserted = await world.harness.db.execute(sql`SELECT reason FROM noise_reassertions`);
+    expect(reasserted.rows).toEqual([{ reason: "still off target" }]);
+    // and said a third time, while the re-assertion stands, it is a repeat that writes nothing
+    world.harness.clock.advanceSeconds(60);
+    const third = await markNoise(world, world.delivered.kenContext);
+    expect(await bodyOf(third)).toMatchObject({ repeated: true, stands: "noise" });
+  });
+
+  test("review H-B (R7): a person's helpful label, then their noise, makes noise stand; the first label stays", async () => {
+    // Arrange — the person said helpful first
+    const world = await createOutcomeWorld();
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    world.harness.clock.advanceSeconds(60);
+
+    // Act — their own later word: noise
+    const noise = await markNoise(world, world.delivered.kenContext);
+    const view = await mineOf(world);
+
+    // Assert — the outcome figures follow the person's newest word; precision's label stays helpful
+    expect(await bodyOf(noise)).toMatchObject({ repeated: false, stands: "noise" });
+    expect(view).toMatchObject({ noise: 1 });
+    const labels = await world.harness.db.select().from(pilotMarks);
+    expect(labels.map((label) => label.mark)).toEqual(["helpful"]);
   });
 
   test("review H2: a label that already stands, said again, is a repeat that says it stands", async () => {

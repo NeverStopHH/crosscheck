@@ -29,6 +29,7 @@ import {
   agentSessions,
   hintDeliveries,
   hintOutcomes,
+  noiseReassertions,
   pilotAttributions,
   pilotCounters,
   pilotMarks,
@@ -733,4 +734,6 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
   // outcome is never older than its delivery, so no figure — whose widest
   // window is this same number — loses a row it could read.
   await deps.db.delete(hintOutcomes).where(lt(hintOutcomes.createdAt, cutoff));
+  // 07 §13.11 (H-B): the person's re-asserted noise stands beside those outcomes, under the same rule.
+  await deps.db.delete(noiseReassertions).where(lt(noiseReassertions.createdAt, cutoff));
 };

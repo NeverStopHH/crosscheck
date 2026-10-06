@@ -1257,6 +1257,26 @@ CREATE INDEX IF NOT EXISTS hint_outcomes_delivery_created_idx
 CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx
   ON hint_outcomes (created_at);
 
+-- THE PERSON SAYING NOISE AGAIN (07 13.11, review H-B). pilot_marks keeps one
+-- label per person and delivery, the first being what precision counts; a later
+-- "noise" over a word recorded since is a new row here, never a restamped label,
+-- so no closed month that read the label ever moves. Precision never reads it.
+CREATE TABLE IF NOT EXISTS noise_reassertions (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  delivery_id text NOT NULL REFERENCES hint_deliveries(id),
+  marked_by text NOT NULL REFERENCES developers(id),
+  -- keep in sync with MAX_PILOT_LABEL_REASON_CHARS in @crosscheck/schema
+  reason text,
+  created_at timestamptz NOT NULL,
+  CONSTRAINT noise_reassertions_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200)
+);
+CREATE INDEX IF NOT EXISTS noise_reassertions_delivery_created_idx
+  ON noise_reassertions (delivery_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS noise_reassertions_created_idx
+  ON noise_reassertions (created_at);
+
 -- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
 -- nothing and its window ends NOW, so an answer cannot be reconstructed later
 -- and proof 3 would be unanswerable in principle. Append-only: rewriting an

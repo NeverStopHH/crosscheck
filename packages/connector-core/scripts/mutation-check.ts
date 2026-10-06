@@ -17734,8 +17734,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the registry's declared outcome lifetime drifts from the prune's",
     file: `${SERVER}/src/services/retention-registry.ts`,
-    from: "    ownRetentionDays: PILOT_RETENTION_DAYS,",
-    to: "    ownRetentionDays: PILOT_RETENTION_DAYS * 2,",
+    from: "    // an outcome, so deleting one at this bound strands nothing (01a, principle 6).\n    ownRetentionDays: PILOT_RETENTION_DAYS,",
+    to: "    // an outcome, so deleting one at this bound strands nothing (01a, principle 6).\n    ownRetentionDays: PILOT_RETENTION_DAYS * 2,",
     test: `${SERVER}/test/hint-outcome-retention.test.ts`,
     because: "the registry says one bound and the reaper deletes at another — no positive proof either way",
   },
@@ -18205,7 +18205,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the person's noise, said again over a later word, is swallowed as a repeat",
     file: `${SERVER}/src/services/noise-label.ts`,
-    from: "    if (own === undefined || !NOISE_LABELS.includes(own.mark) || before === \"noise\") {",
+    from: "    if (before === \"noise\") {",
     to: "    if (true) {",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "once an agent's word stands over the label, the person can never say noise again",
@@ -18414,6 +18414,47 @@ export const MUTATIONS: readonly Mutation[
     to: "      enrolment.start.getTime() <= end.getTime() && (enrolment.end === null || enrolment.end.getTime() > start.getTime()),",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "a month with no enrolled instant reads as one below the minimums instead of one never recordable",
+  },
+  // ── 07 §13.11, review H-B: labels are append-only ─────────────────────────
+  {
+    label: "a re-assertion made after the month is read into the closed month",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "          AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}",
+    to: "          AND r.marked_by = so.recipient",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the person saying noise in August turns a July that already printed followed into noise",
+  },
+  {
+    label: "the figures never read the person's re-asserted noise",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id",
+    to: "        WHERE false AND rd.session_id = so.session_id AND rd.ref_id = so.ref_id",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person says noise again and --mine still shows the agent's word",
+  },
+  {
+    label: "the write path never reads the person's re-asserted noise",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "      WHERE ${ofPointer(\"rd\", pointer)} AND r.marked_by = ${recipient}",
+    to: "      WHERE false AND ${ofPointer(\"rd\", pointer)} AND r.marked_by = ${recipient}",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "noise re-asserted once is re-asserted again on every call, never answered as already standing",
+  },
+  {
+    label: "a re-asserted noise loses the sentence said with it",
+    file: `${SERVER}/src/services/noise-label.ts`,
+    from: "      reason: label.reason ?? null,",
+    to: "      reason: null,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's 'still off target' is dropped without a word",
+  },
+  {
+    label: "re-asserted noise outlives the pilot's retention",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  await deps.db.delete(noiseReassertions).where(lt(noiseReassertions.createdAt, cutoff));",
+    to: "  await Promise.resolve(cutoff);",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "a person's sentences stay on the hub for ever while every outcome beside them ages out",
   },
 ];
 
@@ -18736,9 +18777,9 @@ interface Outcome {
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
- * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
+ * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 12
- * PRINTS: packages/server/test/hint-outcomes.test.ts 18
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 21
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
@@ -18757,7 +18798,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 23
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 24
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

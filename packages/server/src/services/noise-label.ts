@@ -1,29 +1,30 @@
 /**
- * THE PERSON'S NOISE LABEL ON A POINTER (1.0 spec 07 §13.11, review H2).
+ * THE PERSON'S NOISE LABEL ON A POINTER (1.0 spec 07 §13.11, reviews H2, H-B).
  *
  * The label is the person's verdict, and an outcome is somebody's word about
- * what the hint led to; per pointer the later of the two stands. Since an
- * agent's NEW word may stand over the label, the person must always be able to
- * say noise again — and `pilot_marks` keeps one row per person and delivery,
- * so saying it again over a later word RESTAMPS the label rather than being
- * swallowed as a repeat. Said again while it already stands, it is a repeat.
+ * what the hint led to. The person must always be able to say noise again —
+ * and `pilot_marks` keeps one label per person and delivery, the first being
+ * what precision counts. So saying noise again over a word recorded since is
+ * a NEW ROW in `noise_reassertions`, with its own sentence: APPEND-ONLY, never
+ * a restamped label, because an instant that moves would move every closed
+ * month that already read it (review H-B). Said while noise already stands,
+ * it is a repeat and writes nothing.
  *
- * Decided under the pointer's lock, like the outcome write, and the answer
- * says what stands now and what stood before.
+ * Decided under the pointer's lock, like the outcome write, stamped strictly
+ * after the pointer's newest word of any kind, and the answer says what
+ * stands now and what stood before.
  */
-import { and, eq } from "drizzle-orm";
-import { PILOT_LEGACY_NOISE_MARK } from "@crosscheck/schema";
-
-import { pilotMarks } from "../db/schema.ts";
+import { pilotMarks, noiseReassertions } from "../db/schema.ts";
 import {
+  instantAfter,
   lockPointer,
   pointerOfDelivery,
   readPointerNoise,
   readPointerOutcome,
   standingOf,
 } from "./pointer-standing.ts";
-import type { LatestOutcome, StandingWord } from "./pointer-standing.ts";
-import type { Db, DbExecutor } from "../db/client.ts";
+import type { StandingWord } from "./pointer-standing.ts";
+import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
@@ -42,25 +43,11 @@ export interface NoiseLabelOutcome {
   readonly replaced: StandingWord | null;
 }
 
-const NOISE_LABELS: readonly string[] = ["noise", PILOT_LEGACY_NOISE_MARK];
-
-/** A label wins a tie (D-O7): now, or the newest word's own instant when that is later, stands. */
-const labelInstant = (now: Date, latest: LatestOutcome | undefined): Date =>
-  latest !== undefined && latest.createdAt.getTime() > now.getTime() ? latest.createdAt : now;
-
-const readOwnMark = async (
-  tx: DbExecutor,
-  deliveryId: string,
-  markedBy: string,
-): Promise<{ readonly id: string; readonly mark: string } | undefined> => {
-  const rows = await tx
-    .select({ id: pilotMarks.id, mark: pilotMarks.mark })
-    .from(pilotMarks)
-    .where(
-      and(eq(pilotMarks.refKind, "hint_delivery"), eq(pilotMarks.refId, deliveryId), eq(pilotMarks.markedBy, markedBy)),
-    )
-    .limit(1);
-  return rows[0];
+const newestOf = (left: Date | undefined, right: Date | undefined): Date | undefined => {
+  if (left === undefined || right === undefined) {
+    return left ?? right;
+  }
+  return left.getTime() >= right.getTime() ? left : right;
 };
 
 export const writeNoiseOnPointer = (
@@ -77,19 +64,24 @@ export const writeNoiseOnPointer = (
     const latest = pointer === undefined ? undefined : await readPointerOutcome(tx, pointer, markedBy);
     const noise = pointer === undefined ? undefined : await readPointerNoise(tx, pointer, markedBy);
     const before = standingOf(latest, noise);
-    const at = labelInstant(deps.now(), latest);
-    const inserted = await tx
-      .insert(pilotMarks)
-      .values(row(`pm_${crypto.randomUUID()}`, at))
-      .onConflictDoNothing()
-      .returning({ id: pilotMarks.id });
+    const at = instantAfter(deps.now(), newestOf(latest?.createdAt, noise?.createdAt));
+    const label = row(`pm_${crypto.randomUUID()}`, at);
+    const inserted = await tx.insert(pilotMarks).values(label).onConflictDoNothing().returning({ id: pilotMarks.id });
     if (inserted[0] !== undefined) {
       return { id: inserted[0].id, repeated: false, stands: "noise", replaced: before };
     }
-    const own = await readOwnMark(tx, deliveryId, markedBy);
-    if (own === undefined || !NOISE_LABELS.includes(own.mark) || before === "noise") {
+    if (before === "noise") {
       return { id: deliveryId, repeated: true, stands: before, replaced: null };
     }
-    await tx.update(pilotMarks).set({ createdAt: at }).where(eq(pilotMarks.id, own.id));
-    return { id: own.id, repeated: false, stands: "noise", replaced: before };
+    // The person's own later word — a new row beside the label, with its sentence.
+    const id = `nr_${crypto.randomUUID()}`;
+    await tx.insert(noiseReassertions).values({
+      id,
+      repo: label.repo,
+      deliveryId,
+      markedBy,
+      reason: label.reason ?? null,
+      createdAt: at,
+    });
+    return { id, repeated: false, stands: "noise", replaced: before };
   });
