@@ -128,6 +128,8 @@ const CreditSchema = z
     periodEndIso: z.string().min(1),
     followed: CountSchema.nullable(),
     withheld: z.string().min(1).nullable(),
+    /** 07 §13.12 (review M-3): counted over an enrolment an upgrade reconstructed. Absent from an older hub. */
+    reconstructed: z.boolean().optional(),
   })
   .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {
     message: "a source credit is either withheld or counted",

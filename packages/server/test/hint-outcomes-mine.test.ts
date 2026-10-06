@@ -34,7 +34,8 @@ import type { TestDeveloper } from "./helpers.ts";
 
 const SECONDS_PER_DAY = 86_400;
 const KEN_SECOND_SESSION = "cc_bbbbbbbb-2222-4222-8222-222222222222";
-const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z" };
+/** A July credit's period — counted over toggled, not reconstructed, intervals (review M-3). */
+const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z", reconstructed: false };
 const OVERRIDE_REASON = "kept the developer key; the repo key mixes two people's caches";
 
 const viewOf = async (response: Response): Promise<Record<string, unknown>> =>
@@ -261,6 +262,7 @@ describe("GET /api/hint-outcomes/mine", () => {
       periodEndIso: "2026-07-01T00:00:00.000Z",
       followed: null,
       withheld: "not_recordable",
+      reconstructed: false,
     });
   });
 

@@ -50,7 +50,7 @@ import type {
   UnreadableBlock,
 } from "@crosscheck/connector-core/http/pilot.ts";
 
-import { monthOf } from "./outcome-render.ts";
+import { RECONSTRUCTED_ENROLMENT, monthOf } from "./outcome-render.ts";
 
 export interface ScoredFix {
   readonly repair: PilotRepair;
@@ -368,7 +368,7 @@ const NEVER_A_TEAM_OF_THREE = "; a team of three never meets them";
  * recordable; a later start is a re-enrolment; a pause anywhere in the month
  * means only enrolled time was counted.
  */
-const clippedFrom = (block: OutcomeBlock): string => {
+const countedWhen = (block: OutcomeBlock): string => {
   if (block.pausedInPeriod === true) {
     return ", counted only while the pilot was enrolled here";
   }
@@ -381,6 +381,10 @@ const clippedFrom = (block: OutcomeBlock): string => {
       : "when the pilot was enrolled here again";
   return `, counted from ${isoDay(block.countedFromIso)}, ${why}`;
 };
+
+/** …and, 07 §13.12 (review M-3), whether those bounds were reconstructed by an upgrade. */
+const clippedFrom = (block: OutcomeBlock): string =>
+  `${countedWhen(block)}${block.reconstructed === true ? `, ${RECONSTRUCTED_ENROLMENT}` : ""}`;
 
 /** Why nothing in the month could be recorded: never enrolled, enrolled after it, or paused through it. */
 const notRecordableWhy = (block: OutcomeBlock): string => {

@@ -103,6 +103,8 @@ const OutcomeBlockSchema = z
     countedFromIso: z.string().nullable(),
     /** 07 §13.11 (review M3): the pilot paused inside the counted part. Absent from an older hub, which never paused. */
     pausedInPeriod: z.boolean().optional(),
+    /** 07 §13.12 (review M-3): counted over an enrolment an upgrade reconstructed. Absent from an older hub. */
+    reconstructed: z.boolean().optional(),
     withheld: z.string().min(1).nullable(),
     // 07 §13.11 (review M1): every count, the interventions too, rides only inside the figures.
     figures: z

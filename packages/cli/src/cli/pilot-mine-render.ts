@@ -23,7 +23,7 @@ import type { Credit, MyHintOutcomes, SourceTally } from "@crosscheck/connector-
 import { quoted } from "@crosscheck/connector-core/mcp/render.ts";
 import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
 
-import { monthOf, outcomeWord } from "./outcome-render.ts";
+import { RECONSTRUCTED_ENROLMENT, monthOf, outcomeWord } from "./outcome-render.ts";
 
 const INDENT = "  ";
 /** A source the hub could not name — work that is not this repo's, or is gone. */
@@ -127,7 +127,8 @@ const UNREADABLE_CREDIT_LINE =
 const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
   "unreadable" in credit
     ? UNREADABLE_CREDIT_LINE
-    : `your own work, in teammates' hints, ${monthOf(credit.periodStartIso)}: ${creditWords(credit)}`;
+    : `your own work, in teammates' hints, ${monthOf(credit.periodStartIso)}: ${creditWords(credit)}` +
+      (credit.reconstructed === true ? `; ${RECONSTRUCTED_ENROLMENT}` : "");
 
 const footerLines = (view: MyHintOutcomes): readonly string[] => [
   creditLine(view.yourWork),

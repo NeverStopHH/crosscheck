@@ -84,6 +84,8 @@ export interface YourWork {
   readonly periodEndIso: string;
   readonly followed: number | null;
   readonly withheld: HintOutcomeWithholding | null;
+  /** The month is counted over an enrolment an upgrade reconstructed from what was recorded (review M-3). */
+  readonly reconstructed: boolean;
 }
 
 export interface ReadMyHintOutcomesInput {
@@ -169,7 +171,7 @@ const readYourWork = async (
   const stamps = { periodStartIso: period.start.toISOString(), periodEndIso: period.end.toISOString() };
   const span = enrolledSpan(period.start, period.end, enrolments);
   if (span === null) {
-    return { ...stamps, followed: null, withheld: "not_recordable" };
+    return { ...stamps, followed: null, withheld: "not_recordable", reconstructed: false };
   }
   const aggregate = await readPeriodAggregate(deps.db, {
     repo: input.repo,
@@ -180,7 +182,12 @@ const readYourWork = async (
   });
   // review M-1: a count only once, with any one person left out, three people FOLLOWED — never "followed 0"
   const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });
-  return { ...stamps, followed: withheld === null ? aggregate.followed : null, withheld };
+  return {
+    ...stamps,
+    followed: withheld === null ? aggregate.followed : null,
+    withheld,
+    reconstructed: span.reconstructed,
+  };
 };
 
 export const readMyHintOutcomes = async (

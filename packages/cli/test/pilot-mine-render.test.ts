@@ -78,6 +78,16 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     );
   });
 
+  test("review M-3: a credit counted over an enrolment an upgrade reconstructed says so", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 4, withheld: null, reconstructed: true });
+
+    // Assert
+    expect(line).toBe(
+      "your own work, in teammates' hints, July 2026: followed 4 times — shown once, leaving out any one person, at least 3 people followed it; its enrolment reconstructed from recorded outcomes",
+    );
+  });
+
   test("review M-1: a hub's count of 0 is never printed — the same generic sentence", () => {
     // Act
     const line = creditLine({ ...JULY, followed: 0, withheld: null });

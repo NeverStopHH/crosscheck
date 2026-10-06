@@ -32,6 +32,9 @@ export const monthOf = (iso: string): string => {
     : new Date(ms).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 };
 
+/** 07 §13.12 (review M-3): a month counted over bounds an upgrade inferred says they were inferred. */
+export const RECONSTRUCTED_ENROLMENT = "its enrolment reconstructed from recorded outcomes";
+
 /** What a delivery stood or stands at, as a person reads it: the noise label is theirs. */
 const standingWord = (word: string): string => (word === "noise" ? "your noise label" : outcomeWord(word));
 

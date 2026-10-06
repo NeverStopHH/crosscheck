@@ -105,17 +105,24 @@ export interface Enrolment {
   readonly start: Date;
   /** Null while the repo is enrolled now. */
   readonly end: Date | null;
+  /** Bounds an upgrade inferred from what was recorded (review M-3), not a toggle's instant. */
+  readonly reconstructed: boolean;
 }
 
-type EnrolmentRow = { readonly started_at: string | Date; readonly ended_at: string | Date | null };
+type EnrolmentRow = {
+  readonly started_at: string | Date;
+  readonly ended_at: string | Date | null;
+  readonly reconstructed: boolean;
+};
 
 /** The repo's enrolled intervals, oldest first. */
 export const readEnrolments = async (db: Db, repo: string): Promise<readonly Enrolment[]> => {
   const rows = await db.execute<EnrolmentRow>(sql`
-    SELECT started_at, ended_at FROM pilot_enrolments WHERE repo = ${repo} ORDER BY started_at`);
+    SELECT started_at, ended_at, reconstructed FROM pilot_enrolments WHERE repo = ${repo} ORDER BY started_at`);
   return rows.rows.map((row) => ({
     start: new Date(row.started_at),
     end: row.ended_at === null ? null : new Date(row.ended_at),
+    reconstructed: row.reconstructed,
   }));
 };
 
@@ -123,6 +130,8 @@ export const readEnrolments = async (db: Db, repo: string): Promise<readonly Enr
 export interface EnrolledSpan {
   readonly from: Date;
   readonly paused: boolean;
+  /** Some of it is an interval an upgrade reconstructed — every line counted over it says so (M-3). */
+  readonly reconstructed: boolean;
 }
 
 /**
@@ -141,7 +150,11 @@ export const enrolledSpan = (start: Date, end: Date, enrolments: readonly Enrolm
   }
   const from = first.start.getTime() > start.getTime() ? first.start : start;
   const endsEarly = first.end !== null && first.end.getTime() < end.getTime();
-  return { from, paused: overlapping.length > 1 || endsEarly };
+  return {
+    from,
+    paused: overlapping.length > 1 || endsEarly,
+    reconstructed: overlapping.some((enrolment) => enrolment.reconstructed),
+  };
 };
 
 /** Only what existed before `until` — a frozen period's state at its end; null is now. */

@@ -1160,6 +1160,11 @@ export const pilotEnrolments = pgTable(
     startedAt: timestamptz("started_at").notNull(),
     /** Null while the interval is open — the repo is enrolled now. */
     endedAt: timestamptz("ended_at"),
+    /**
+     * Bounds an upgrade inferred from what was recorded (review M-3), not a
+     * toggle's instant — every line that counts over it says so.
+     */
+    reconstructed: boolean("reconstructed").notNull().default(false),
   },
   (table) => [
     index("pilot_enrolments_repo_started_idx").on(table.repo, table.startedAt),

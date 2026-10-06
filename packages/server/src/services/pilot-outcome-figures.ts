@@ -57,6 +57,8 @@ export interface OutcomeFigures {
   readonly countedFromIso: string | null;
   /** The pilot paused inside the counted part of the period: only its enrolled time is counted (review M3). */
   readonly pausedInPeriod: boolean;
+  /** The period is counted over an enrolment an upgrade reconstructed from what was recorded (review M-3). */
+  readonly reconstructed: boolean;
   /** Why no figure is shown, or null when it is — and then no count rides anywhere (review M1). */
   readonly withheld: HintOutcomeWithholding | null;
   readonly figures: OutcomeCounts | null;
@@ -71,6 +73,7 @@ const notRecordable = (
   recordableSinceIso,
   countedFromIso: null,
   pausedInPeriod: false,
+  reconstructed: false,
   withheld: "not_recordable",
   figures: null,
 });
@@ -101,6 +104,7 @@ export const readOutcomeFigures = async (
     recordableSinceIso: input.outcomesSinceIso,
     countedFromIso: span.from.toISOString(),
     pausedInPeriod: span.paused,
+    reconstructed: span.reconstructed,
     withheld,
     figures:
       withheld === null

@@ -694,6 +694,28 @@ describe("renderPilot", () => {
     ]);
   });
 
+  test("review M-3: a month counted over an enrolment an upgrade reconstructed says so on the line", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      pausedInPeriod: false,
+      reconstructed: true,
+      withheld: "below_minimums",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, July 2026: withheld — below the disclosure minimums, its enrolment reconstructed from recorded outcomes; a team of three never meets them",
+    ]);
+  });
+
   test("review M3: a month counted from a re-enrolment never calls it when outcomes became recordable", () => {
     // Arrange — first enrolled in June, paused, enrolled again on 2026-07-20
     const outcomes = {

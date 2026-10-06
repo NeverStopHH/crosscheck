@@ -1159,20 +1159,15 @@ CREATE TABLE IF NOT EXISTS pilot_enrolments (
   id text PRIMARY KEY,
   repo text NOT NULL,
   started_at timestamptz NOT NULL,
-  ended_at timestamptz
+  ended_at timestamptz,
+  -- review M-3: bounds an upgrade inferred from what was recorded, not a toggle's instant
+  reconstructed boolean NOT NULL DEFAULT false
 );
+ALTER TABLE pilot_enrolments ADD COLUMN IF NOT EXISTS reconstructed boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS pilot_enrolments_repo_started_idx ON pilot_enrolments (repo, started_at);
 -- At most one open interval per repo: a second "on" fails loudly, never doubles.
 CREATE UNIQUE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;
--- An upgraded hub keeps the enrolment it already had as the first interval:
--- open while the repo is enrolled; for one that left, closed at its last
--- settings write — the best instant the old shape kept. Once per repo.
-INSERT INTO pilot_enrolments (id, repo, started_at, ended_at)
-  SELECT 'pe_' || gen_random_uuid()::text, ts.repo, ts.pilot_outcomes_since,
-         CASE WHEN ts.pilot_enrolled THEN NULL ELSE ts.updated_at END
-  FROM team_settings ts
-  WHERE ts.pilot_outcomes_since IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo);
+-- (The upgrade backfill of this table runs below, once hint_outcomes exists: it reads the words.)
 
 -- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
 
@@ -1290,6 +1285,29 @@ CREATE INDEX IF NOT EXISTS noise_reassertions_delivery_created_idx
   ON noise_reassertions (delivery_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS noise_reassertions_created_idx
   ON noise_reassertions (created_at);
+
+-- An upgraded hub keeps the enrolment it already had as the first interval,
+-- RECONSTRUCTED from what it recorded (07 §13.12, review M-3): from the
+-- earliest proven instant — the first-recordable stamp, the first outcome or
+-- the first label, whichever is earliest (an older hub restamped that stamp at
+-- a re-enrolment) — open while the repo is enrolled; for one that left, closed
+-- at its last PROVEN enrolled instant, its newest outcome or label — never its
+-- last settings write, which is when it left at the latest. Once per repo.
+INSERT INTO pilot_enrolments (id, repo, started_at, ended_at, reconstructed)
+  SELECT 'pe_' || gen_random_uuid()::text, b.repo, b.started_at,
+         CASE WHEN b.enrolled THEN NULL ELSE GREATEST(b.started_at, b.last_word) END,
+         true
+  FROM (
+    SELECT ts.repo, ts.pilot_enrolled AS enrolled,
+           LEAST(ts.pilot_outcomes_since,
+                 (SELECT min(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
+                 (SELECT min(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS started_at,
+           GREATEST((SELECT max(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
+                    (SELECT max(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS last_word
+    FROM team_settings ts
+    WHERE ts.pilot_outcomes_since IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo)
+  ) b;
 
 -- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
 -- nothing and its window ends NOW, so an answer cannot be reconstructed later

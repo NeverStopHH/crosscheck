@@ -17459,8 +17459,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a source's credit counts an override as a follow",
     file: `${SERVER}/src/services/hint-outcome-view.ts`,
-    from: "  return { ...stamps, followed: withheld === null ? aggregate.followed : null, withheld };",
-    to: "  return { ...stamps, followed: withheld === null ? aggregate.followed + aggregate.overrode : null, withheld };",
+    from: "    followed: withheld === null ? aggregate.followed : null,\n",
+    to: "    followed: withheld === null ? aggregate.followed + aggregate.overrode : null,\n",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "Ken is told his work was followed when a teammate deliberately went another way",
   },
@@ -18098,8 +18098,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an upgraded hub forgets the enrolment it already had",
     file: `${SERVER}/src/db/bootstrap.sql`,
-    from: "  WHERE ts.pilot_outcomes_since IS NOT NULL\n    AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo);",
-    to: "  WHERE false;",
+    from: "    WHERE ts.pilot_outcomes_since IS NOT NULL\n      AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo)\n",
+    to: "    WHERE false\n",
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "the monorepo, enrolled before the history existed, would have no enrolled time and no figure",
   },
@@ -18172,8 +18172,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a withheld team block carries the intervention count",
     file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
-    from: "    pausedInPeriod: span.paused,\n    withheld,",
-    to: "    pausedInPeriod: span.paused,\n    interventions: aggregate.interventions,\n    withheld,",
+    from: "    reconstructed: span.reconstructed,\n    withheld,",
+    to: "    reconstructed: span.reconstructed,\n    interventions: aggregate.interventions,\n    withheld,",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the count beside 'withheld' tells a viewer how much the others recorded, as P2 did",
   },
@@ -18725,6 +18725,95 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "a doubled 'on' leaves two open intervals and every enrolled delivery is counted twice",
   },
+  // ── 07 §13.12, review M-3: the upgrade backfill from what was recorded ──
+  {
+    label: "the backfill starts at the restamped instant, past the first outcome (probe F)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "                 (SELECT min(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),\n",
+    to: "",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "outcomes recorded before an old hub's re-enrolment fall outside every figure for good",
+  },
+  {
+    label: "the backfill starts past the first label",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "                 (SELECT min(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS started_at,",
+    to: "                 NULL) AS started_at,",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a label made before the first outcome proves an enrolled instant the interval then leaves out",
+  },
+  {
+    label: "a left repo's reconstructed interval ends before its newest outcome",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "           GREATEST((SELECT max(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),\n",
+    to: "           GREATEST(NULL,\n",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the last proven enrolled instant is dropped, and the repo's last outcome falls outside",
+  },
+  {
+    label: "a left repo's reconstructed interval ends before its newest label",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "                    (SELECT max(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS last_word",
+    to: "                    NULL) AS last_word",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the last proven enrolled instant is dropped, and the repo's last label falls outside",
+  },
+  {
+    label: "a left repo's reconstructed interval is left open",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "         CASE WHEN b.enrolled THEN NULL ELSE GREATEST(b.started_at, b.last_word) END,",
+    to: "         NULL,",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a repo that left reads as enrolled for ever, and every later delivery counts",
+  },
+  {
+    label: "backfilled intervals are not marked reconstructed",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "         true\n  FROM (",
+    to: "         false\n  FROM (",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "inferred bounds are printed as if a toggle had recorded them",
+  },
+  {
+    label: "the span never says it was reconstructed",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    reconstructed: overlapping.some((enrolment) => enrolment.reconstructed),",
+    to: "    reconstructed: false,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a month counted over inferred bounds reads as measured",
+  },
+  {
+    label: "the team block drops that its month was reconstructed",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    reconstructed: span.reconstructed,\n    withheld,",
+    to: "    reconstructed: false,\n    withheld,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the team line counts over inferred bounds without saying so",
+  },
+  {
+    label: "the credit drops that its month was reconstructed",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    reconstructed: span.reconstructed,\n  };",
+    to: "    reconstructed: false,\n  };",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the author's credit counts over inferred bounds without saying so",
+  },
+  {
+    label: "the team line never says its enrolment was reconstructed",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  `${countedWhen(block)}${block.reconstructed === true ? `, ${RECONSTRUCTED_ENROLMENT}` : \"\"}`;",
+    to: "  countedWhen(block);",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the person reads inferred bounds as measured ones",
+  },
+  {
+    label: "the credit line never says its enrolment was reconstructed",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "      (credit.reconstructed === true ? `; ${RECONSTRUCTED_ENROLMENT}` : \"\");",
+    to: "      \"\";",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the author reads inferred bounds as measured ones",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18815,8 +18904,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 6
- * PRINTS: packages/cli/test/pilot-render.test.ts 30
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 7
+ * PRINTS: packages/cli/test/pilot-render.test.ts 31
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -19036,7 +19125,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 5
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 11
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -19068,7 +19157,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 24
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 27
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

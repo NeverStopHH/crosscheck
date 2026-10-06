@@ -51,6 +51,7 @@ import {
   createOutcomeWorld,
   deliveryRecord,
   enrol,
+  readMine,
   recordOutcome,
   recordPersonOutcome,
 } from "./fixtures/hint-outcome-world.ts";
@@ -117,9 +118,26 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
       recordableSinceIso: ENROLLED_ISO,
       countedFromIso: ENROLLED_ISO,
       pausedInPeriod: false,
+      reconstructed: false,
       withheld: null,
       figures: { interventions: 24, followed: 9, overrode: 3, notRelevantNow: 2, noise: 1, unmarked: 9 },
     });
+  });
+
+  test("review M-3: a month counted over an enrolment an upgrade reconstructed says so — the team line and the credit", async () => {
+    // Arrange — the same July, its interval inferred by an upgrade from what was recorded
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    await crowd.harness.db.execute(sql`UPDATE pilot_enrolments SET reconstructed = true`);
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const outcomes = await outcomesOf(crowd);
+    const ken = ((await (await readMine(crowd, crowd.ken)).json()) as { data: { yourWork: Record<string, unknown> } }).data;
+
+    // Assert
+    expect(outcomes).toMatchObject({ reconstructed: true, withheld: null });
+    expect(ken.yourWork).toMatchObject({ followed: 5, reconstructed: true });
   });
 
   test("the month is frozen at its end: a word said after it never moves the figures", async () => {
@@ -228,6 +246,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
       "pausedInPeriod",
       "periodEndIso",
       "periodStartIso",
+      "reconstructed",
       "recordableSinceIso",
       "withheld",
     ]);

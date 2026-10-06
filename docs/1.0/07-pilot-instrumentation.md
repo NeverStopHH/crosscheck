@@ -1360,6 +1360,16 @@ one open interval per repo** as a database fact; nothing swallows a conflict, so
 an error rather than a duplicate (survivor R6 is pinned by a write that repeats the enrolment). The table is new
 this round and unreleased, so its key changed in place.
 
+*M-3 — the upgrade backfill began at a restamped instant and ended a left repo at its last settings write
+(probe F).* An older hub restamped the first-recordable instant at a re-enrolment, so outcomes and labels
+recorded before it fell outside the reconstructed interval; and a repo that left was closed at `updated_at`,
+which is when it left at the latest — any later settings write moved it. The first interval now starts at
+`LEAST(pilot_outcomes_since, first outcome, first label)` and, for a repo that left, ends at its last PROVEN
+enrolled instant — its newest outcome or label (none: the interval is empty, not guessed). Backfilled rows are
+marked `reconstructed`, and the team line and the credit counted over one say so: "its enrolment
+reconstructed from recorded outcomes". (A delivery older than the first outcome recorded about it is still
+outside: only the outcome's instant, not its delivery's, is taken as proof.)
+
 *R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
 of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
 and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —
