@@ -79,12 +79,16 @@ const OPENING = new RegExp(`<(${ELEMENT_TAGS.map(escapeRegExp).join("|")})(?=[\\
 /** The rest of an opening tag at a position: bounded attributes, then `>`. */
 const TAG_END = new RegExp(`[^>]{0,${String(MAX_WRAPPER_ATTRIBUTE_CHARS)}}>`, "y");
 
-/** A head marker at the start of the text or of a line, after blanks or a byte-order mark. */
+/**
+ * A head marker at the start of the text or of a line, after blanks of any
+ * kind — a no-break, em or ideographic space included (hold-out review, L1) —
+ * or a byte-order mark.
+ */
 const HEAD = new RegExp(
-  `(?:^|\\n)[ \\t\\uFEFF]*(?:${HARNESS_SHAPES.filter((shape) => shape.kind === "head")
+  `(?:^|\\n)[\\p{Zs}\\t\\uFEFF]*(?:${HARNESS_SHAPES.filter((shape) => shape.kind === "head")
     .map((shape) => escapeRegExp(shape.name))
     .join("|")})`,
-  "i",
+  "iu",
 );
 
 /** ASCII-only lower case: same length, so its indices are the text's. */
@@ -109,14 +113,38 @@ const nextOpening = (text: string, from: number): Opening | null => {
   return null;
 };
 
+/** The next opening of the same element after this one, or -1. */
+const nextSameOpening = (text: string, opening: Opening): number => {
+  for (let next = nextOpening(text, opening.end); next !== null; next = nextOpening(text, next.end)) {
+    if (next.tag === opening.tag) {
+      return next.start;
+    }
+  }
+  return -1;
+};
+
+/**
+ * A leading wrapper's close: the last one BEFORE the next opening of the
+ * same element (hold-out review, L1) — two hand-backs with the human's words
+ * between them keep those words — else its last close at all, so a quoted
+ * close inside one wrapper never ends it early (M1).
+ */
+const leadingClose = (text: string, lower: string, opening: Opening, close: string): number => {
+  const nextSame = nextSameOpening(text, opening);
+  const beforeNext = nextSame === -1 ? -1 : lower.lastIndexOf(close, nextSame);
+  return beforeNext >= opening.end ? beforeNext : lower.lastIndexOf(close);
+};
+
 /**
  * Where a wrapper opened at `opening` ends: its LAST close when it starts the
- * text (M1), its first close otherwise, the end of the text when it never
- * closes.
+ * text (M1, `leadingClose`), its FIRST close otherwise — pinned on purpose: a
+ * wrapper after the human text cannot tell its own quoted close from a human
+ * sentence that names the tag, and the human's words win — the end of the
+ * text when it never closes.
  */
-const wrapperEnd = (lower: string, opening: Opening, isLeading: boolean): number => {
+const wrapperEnd = (text: string, lower: string, opening: Opening, isLeading: boolean): number => {
   const close = `</${opening.tag}>`;
-  const at = isLeading ? lower.lastIndexOf(close) : lower.indexOf(close, opening.end);
+  const at = isLeading ? leadingClose(text, lower, opening, close) : lower.indexOf(close, opening.end);
   return at < opening.end ? lower.length : at + close.length;
 };
 
@@ -130,7 +158,7 @@ const withoutElements = (text: string): string => {
     const before = text.slice(position, opening.start);
     kept.push(before);
     isLeading = isLeading && before.trim().length === 0;
-    position = wrapperEnd(lower, opening, isLeading);
+    position = wrapperEnd(text, lower, opening, isLeading);
   }
   kept.push(text.slice(position));
   return kept.join(" ");

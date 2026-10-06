@@ -17871,7 +17871,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a quoted close ends a leading wrapper early",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "  const at = isLeading ? lower.lastIndexOf(close) : lower.indexOf(close, opening.end);",
+    from: "  const at = isLeading ? leadingClose(text, lower, opening, close) : lower.indexOf(close, opening.end);",
     to: "  const at = lower.indexOf(close, opening.end);",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "a hand-back quoting </agent-message> leaks the rest of its report as the reader's prompt (M1)",
@@ -17879,7 +17879,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a head marker after leading blanks or a byte-order mark reads as human text",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: String.raw`(?:^|\\n)[ \\t\\uFEFF]*(?:`,
+    from: String.raw`(?:^|\\n)[\\p{Zs}\\t\\uFEFF]*(?:`,
     to: String.raw`(?:^|\\n)(?:`,
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "a notification turn the IDE or a terminal prefixed with a blank or a BOM is scored whole",
@@ -17895,8 +17895,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the head marker is matched in one casing only",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "    .join(\"|\")})`,\n  \"i\",\n);",
-    to: "    .join(\"|\")})`,\n  \"\",\n);",
+    from: "    .join(\"|\")})`,\n  \"iu\",\n);",
+    to: "    .join(\"|\")})`,\n  \"u\",\n);",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "[System Notification - Not User Input] passes as the reader's own words",
   },
@@ -18866,6 +18866,30 @@ export const MUTATIONS: readonly Mutation[
     because: "\"please continue\" beside one task word clears an old hub's floor again (H4, H1)",
   },
   {
+    label: "a no-break space before a head marker hides it",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: String.raw`[\\p{Zs}\\t\\uFEFF]*`,
+    to: String.raw`[ \\t\\uFEFF]*`,
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a notification queued after an NBSP or a fullwidth space is scored as the reader's words (L1)",
+  },
+  {
+    label: "two same-tag wrappers are read as one",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  return beforeNext >= opening.end ? beforeNext : lower.lastIndexOf(close);",
+    to: "  return lower.lastIndexOf(close);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "the human's sentence between two hand-backs is swallowed with them, and the prompt reads as all harness (L1)",
+  },
+  {
+    label: "every wrapper is matched to its LAST close, not only the leading one",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const at = isLeading ? leadingClose(text, lower, opening, close) : lower.indexOf(close, opening.end);",
+    to: "  const at = isLeading ? leadingClose(text, lower, opening, close) : lower.lastIndexOf(close);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a human sentence naming the tag after a notification is swallowed up to it (L1, the review's survivor)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -19201,7 +19225,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 2
  * PRINTS: packages/schema/test/file-ref.test.ts 5
- * PRINTS: packages/schema/test/harness-turn.test.ts 13
+ * PRINTS: packages/schema/test/harness-turn.test.ts 16
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1

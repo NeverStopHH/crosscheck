@@ -95,6 +95,37 @@ describe("a turn that STARTS with a wrapper is wrapped to that element's LAST cl
   });
 });
 
+describe("two wrappers, and a wrapper after the human text (hold-out review, L1)", () => {
+  test("two same-tag wrappers keep the human text between them", () => {
+    // Arrange — the leading one is wrapped to its last close BEFORE the second opens
+    const turn = '<agent-message from="a">report A</agent-message>\nplease compare with the JWT refresh race\n<agent-message from="b">report B</agent-message>';
+
+    // Act + Assert
+    expect(humanPromptText(turn)).toBe("please compare with the JWT refresh race");
+  });
+
+  test("a leading wrapper that quotes its own close still swallows the quote", () => {
+    const turn = '<agent-message from="a">it strips up to </agent-message>, then CI checks pass</agent-message>\nplease compare with the JWT refresh race\n<agent-message from="b">report B</agent-message>';
+    expect(humanPromptText(turn)).toBe("please compare with the JWT refresh race");
+  });
+
+  test("a wrapper after the human text ends at its FIRST close — what follows is the human's again", () => {
+    // Pinned on purpose: a non-leading wrapper cannot tell its own quoted close
+    // from a human sentence that names the tag, so the human's words win
+    const turn = "fix the checkout test <task-notification>CI checks pass</task-notification> then why does the matcher keep </task-notification>";
+    expect(humanPromptText(turn)).toBe("fix the checkout test then why does the matcher keep </task-notification>");
+  });
+
+  test.each([
+    ["a no-break space", " "],
+    ["an ideographic space", "　"],
+    ["an em space", " "],
+  ])("a head marker after %s at a line start still ends the human text", (_, space) => {
+    const turn = `fix it\n${space}${SYSTEM_NOTIFICATION_MARKER}\nMonitor event: CI checks pass on deploy`;
+    expect(humanPromptText(turn)).toBe("fix it");
+  });
+});
+
 describe("the human text around a wrapper is kept, and only it", () => {
   test("text before and after a notification survives; the notification does not", () => {
     const turn = `${HUMAN} ${TASK_NOTIFICATION} after the retry`;
