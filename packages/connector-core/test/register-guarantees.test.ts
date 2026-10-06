@@ -75,7 +75,7 @@ describe("registerSessionFlow sends the connector's declaration", () => {
       baseCommit: "abc1234",
       status: "implementing",
       fallbackDeveloperId: "dev_self",
-      title: "register guarantees",
+      title: "register guarantees", titleSource: "host",
       now: new Date(),
       guarantees: declaration,
     });

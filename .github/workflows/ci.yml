@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1610
+    # PRINTS: 1621
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -232,10 +232,10 @@ jobs:
     # PRINTS: doctor.ts 1
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
-    # PRINTS: hooks/post-tool-use.ts 9
+    # PRINTS: hooks/post-tool-use.ts 10
     # PRINTS: hooks/pre-tool-use.ts 18
     # PRINTS: hooks/runner.ts 7
-    # PRINTS: hooks/session-start.ts 5
+    # PRINTS: hooks/session-start.ts 6
     # PRINTS: hooks/stop.ts 2
     # PRINTS: hooks/user-prompt-submit.ts 4
     # PRINTS: summarizer/probe.ts 1
@@ -249,7 +249,7 @@ jobs:
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: briefing/topic-group.ts 11
     # PRINTS: capture/commit-evidence.ts 1
-    # PRINTS: capture/records.ts 1
+    # PRINTS: capture/records.ts 2
     # PRINTS: capture/target-paths.ts 1
     # PRINTS: capture/touched-root.ts 5
     # PRINTS: claim-validity.ts 2
@@ -266,7 +266,7 @@ jobs:
     # PRINTS: derive/ghost/cost.ts 1
     # PRINTS: derive/ghost/worker.ts 5
     # PRINTS: derive/intent/prompt.ts 1
-    # PRINTS: derive/intent/worker.ts 2
+    # PRINTS: derive/intent/worker.ts 3
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 2
@@ -323,7 +323,7 @@ jobs:
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
-    # PRINTS: mcp/tools/set-intent.ts 4
+    # PRINTS: mcp/tools/set-intent.ts 5
     # PRINTS: mcp/tools/shared.ts 2
     # PRINTS: model/gates.ts 1
     # PRINTS: model/parse.ts 2
@@ -371,6 +371,7 @@ jobs:
     # PRINTS: packages/schema/src/enums.ts 2
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
+    # PRINTS: packages/schema/src/fallback-title.ts 3
     # PRINTS: packages/schema/src/file-ref.ts 5
     # PRINTS: packages/schema/src/landed-context.ts 3
     # PRINTS: packages/schema/src/landed-notice.ts 5
@@ -423,7 +424,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 21
     # PRINTS: packages/server/src/services/landed-notices.ts 28
-    # PRINTS: packages/server/src/services/live-location.ts 8
+    # PRINTS: packages/server/src/services/live-location.ts 9
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 16
@@ -434,7 +435,7 @@ jobs:
     # PRINTS: packages/server/src/services/pins.ts 9
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 9
-    # PRINTS: packages/server/src/services/record-handlers.ts 22
+    # PRINTS: packages/server/src/services/record-handlers.ts 24
     # PRINTS: packages/server/src/services/records.ts 2
     # PRINTS: packages/server/src/services/referee.ts 2
     # PRINTS: packages/server/src/services/refusal.ts 3
@@ -534,6 +535,7 @@ jobs:
     # PRINTS: evidence-axes.ts 3
     # PRINTS: exec.ts 1
     # PRINTS: exempt-surfaces.ts 2
+    # PRINTS: fallback-title.ts 3
     # PRINTS: fd-io.ts 1
     # PRINTS: feed.tsx 1
     # PRINTS: fence-waivers.ts 1
@@ -584,7 +586,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
-    # PRINTS: live-location.ts 8
+    # PRINTS: live-location.ts 9
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
@@ -616,7 +618,7 @@ jobs:
     # PRINTS: pin.ts 11
     # PRINTS: pins.ts 12
     # PRINTS: post-tool-use-failure.ts 5
-    # PRINTS: post-tool-use.ts 9
+    # PRINTS: post-tool-use.ts 10
     # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 18
     # PRINTS: precision.ts 2
@@ -631,8 +633,8 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 11
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 22
-    # PRINTS: records.ts 3
+    # PRINTS: record-handlers.ts 24
+    # PRINTS: records.ts 4
     # PRINTS: recover.ts 4
     # PRINTS: referee.ts 2
     # PRINTS: refusal.ts 3
@@ -663,11 +665,11 @@ jobs:
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
-    # PRINTS: session-start.ts 7
+    # PRINTS: session-start.ts 8
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 16
-    # PRINTS: set-intent.ts 4
+    # PRINTS: set-intent.ts 5
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
     # PRINTS: skeleton-identity.ts 8
@@ -714,7 +716,7 @@ jobs:
     # PRINTS: wiring-scope.ts 2
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
-    # PRINTS: worker.ts 7
+    # PRINTS: worker.ts 8
     # PRINTS: working-days.ts 3
     name: Mutation proof
     runs-on: ubuntu-latest

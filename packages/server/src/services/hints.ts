@@ -416,12 +416,16 @@ export const listHintCandidates = async (
     locationHiddenFrom(deps.db, callerDeveloperId),
   ]);
   return eligible.map((row) => ({
-    workContext: projectRow(
+    workContext: {
+      title: row.title,
+      ...projectRow(
       hidden,
-      { developerId: row.developerId, repo: input.repo },
+      // No title facts: the title above is the search row's, which the
+      // search already projected for this viewer by its marker and branch;
+      // judged again without them, a host title would be withheld too.
+      { developerId: row.developerId },
       {
         id: row.id,
-        title: row.title,
         status: row.status,
         intent: row.intent,
         tier: row.tier,
@@ -437,14 +441,11 @@ export const listHintCandidates = async (
       // drift label skips it), so a hidden owner's HEAD reads exactly as a
       // context whose base commit the hub never knew.
       { baseCommit: "empty" },
-    ),
+      ),
+    },
     claims: (claimsByContext.get(row.id) ?? []).map((claim) => ({
       ...claim,
-      validity: projectRow(
-        hidden,
-        { developerId: claim.authorDeveloperId, repo: input.repo },
-        claim.validity,
-      ),
+      validity: projectRow(hidden, { developerId: claim.authorDeveloperId }, claim.validity),
     })),
     matchedTargets: matchedTargets.get(row.id) ?? [],
   }));

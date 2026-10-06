@@ -213,6 +213,12 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS landed_at timestamptz;
 -- first update. ALTER so an existing hub gets it too.
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text REFERENCES agent_sessions(id);
 
+-- How the title was written, by the connector's own word ('fallback' is the
+-- session's branch, withheld from colleagues of an opted-out developer;
+-- 'host', 'person'). Null for a row an older connector wrote, which the hub
+-- judges by the title's shape. ALTER so an existing hub gets it too.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS title_source text;
+
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
 -- configured, and recomputing pairwise cosine at read time would be O(n²) over

@@ -19,6 +19,7 @@ import {
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
 import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { RowOwner } from "./live-location.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
@@ -279,6 +280,17 @@ export interface Diagnosis {
   readonly truncated: boolean;
 }
 
+/** A context's owner and the facts its title is judged by (services/live-location.ts). */
+const ownerOf = (
+  developerId: string,
+  repo: string,
+  branch: string,
+  row: WorkContextRow,
+): RowOwner => ({
+  developerId,
+  titleFacts: { repo, branch, titleSource: row.titleSource },
+});
+
 const toWorkContextView = (
   row: WorkContextRow,
   baseCommit: string,
@@ -476,7 +488,7 @@ export const listWorkContextsByRepo = async (
     .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))
     .limit(limit);
   return rows.map((row) =>
-    projectRow(hidden, { developerId: row.developerId, repo }, {
+    projectRow(hidden, ownerOf(row.developerId, repo, row.branch, row.workContext), {
       ...toWorkContextView(row.workContext, row.baseCommit),
       developerId: row.developerId,
       developerName: row.developerName,
@@ -571,6 +583,7 @@ export const getDiagnosis = async (
       workContext: workContexts,
       baseCommit: agentSessions.baseCommit,
       repo: agentSessions.repo,
+      branch: agentSessions.branch,
       ownerDeveloperId: agentSessions.developerId,
     })
     .from(workContexts)
@@ -581,7 +594,12 @@ export const getDiagnosis = async (
   if (contextRow === undefined) {
     return undefined;
   }
-  const owner = { developerId: contextRow.ownerDeveloperId, repo: contextRow.repo };
+  const owner = ownerOf(
+    contextRow.ownerDeveloperId,
+    contextRow.repo,
+    contextRow.branch,
+    contextRow.workContext,
+  );
 
   // innerJoin, not leftJoin: every claim row reaches the table through
   // `checkOwnedSession`, which resolves the author session before the INSERT
@@ -657,11 +675,7 @@ export const getDiagnosis = async (
       );
       return {
         ...view,
-        validity: projectRow(
-          hidden,
-          { developerId: row.authorDeveloperId, repo: contextRow.repo },
-          view.validity,
-        ),
+        validity: projectRow(hidden, { developerId: row.authorDeveloperId }, view.validity),
       };
     }),
     edges: edgeRows.map(toClaimEdgeView),

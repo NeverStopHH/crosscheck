@@ -113,6 +113,8 @@ const matchFor = async (
       startedAt: agentSessions.startedAt,
       workContextId: workContexts.id,
       title: workContexts.title,
+      titleSource: workContexts.titleSource,
+      branch: agentSessions.branch,
       developerId: agentSessions.developerId,
       developerName: developers.name,
       intent: workContexts.intent,
@@ -157,7 +159,10 @@ const matchFor = async (
   // (services/live-location.ts). The live one is not matched at all, above.
   return found === undefined
     ? null
-    : projectRow(hidden, { developerId: found.developerId, repo: request.repo }, {
+    : projectRow(hidden, {
+        developerId: found.developerId,
+        titleFacts: { repo: request.repo, branch: found.branch, titleSource: found.titleSource },
+      }, {
         sha: commit.sha,
         workContextId: found.workContextId,
         title: found.title,

@@ -680,6 +680,8 @@ const hydrate = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       repo: agentSessions.repo,
+      branch: agentSessions.branch,
+      titleSource: workContexts.titleSource,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -693,7 +695,10 @@ const hydrate = async (
     }
     const solvedAt = solvedInfo.get(row.id);
     return [
-      projectRow(hidden, { developerId: row.developerId, repo: row.repo }, {
+      projectRow(hidden, {
+        developerId: row.developerId,
+        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
+      }, {
         id: row.id,
         developerId: row.developerId,
         developerName: row.developerName,

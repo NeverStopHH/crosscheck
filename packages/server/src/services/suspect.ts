@@ -53,7 +53,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
 import { readPin } from "./pins.ts";
 import { explanationTimingOf } from "./intent-ledger.ts";
 import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
@@ -253,6 +253,8 @@ export const resolveSuspectScope = async (
 interface CandidateRow {
   readonly workContextId: string;
   readonly workContextTitle: string;
+  /** Raw `title_source` — judged through titleSourceOf (services/live-location.ts). */
+  readonly titleSource: string | null;
   readonly intent: Record<string, unknown> | null;
   readonly sessionId: string;
   readonly agentKind: string;
@@ -324,6 +326,7 @@ const readCandidates = async (
         // to "id" ambiguous — a runtime error, not a type error.
         workContextId: sql<string>`${workContexts.id}`.as("work_context_id"),
         workContextTitle: sql<string>`${workContexts.title}`.as("work_context_title"),
+        titleSource: sql<string | null>`${workContexts.titleSource}`.as("title_source"),
         intent: sql<Record<string, unknown> | null>`${workContexts.intent}`.as("intent"),
         sessionId: sql<string>`${agentSessions.id}`.as("session_id"),
         agentKind: sql<string>`${agentSessions.agentKind}`.as("agent_kind"),
@@ -350,6 +353,7 @@ const readCandidates = async (
       .groupBy(
         workContexts.id,
         workContexts.title,
+        workContexts.titleSource,
         workContexts.intent,
         agentSessions.id,
         agentSessions.agentKind,
@@ -390,6 +394,7 @@ const readCandidates = async (
     .select({
       workContextId: touching.workContextId,
       workContextTitle: touching.workContextTitle,
+      titleSource: touching.titleSource,
       intent: touching.intent,
       sessionId: touching.sessionId,
       agentKind: touching.agentKind,
@@ -417,6 +422,7 @@ const readCandidates = async (
     rows: rows.map((row) => ({
       workContextId: row.workContextId,
       workContextTitle: row.workContextTitle,
+      titleSource: row.titleSource,
       intent: row.intent ?? null,
       sessionId: row.sessionId,
       agentKind: row.agentKind,
@@ -615,7 +621,10 @@ export const suspectSessions = async (
       // is a required non-empty string on this wire, so it takes the marker.
       return projectRow(
         hidden,
-        { developerId: row.developerId, repo: input.repo },
+        {
+          developerId: row.developerId,
+          titleFacts: { repo: input.repo, branch: row.branch, titleSource: titleSourceOf(row.titleSource) },
+        },
         {
           sessionId: row.sessionId,
           agentKind: row.agentKind,

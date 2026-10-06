@@ -67,7 +67,15 @@
  *                                   pages. A question's or a delivery's
  *                                   title is judged by its CONTEXT's owner,
  *                                   never by who asked or who received it.
- *                                   A title a person or host wrote stays
+ *                                   WHICH titles: the connector says how it
+ *                                   wrote one (`titleSource`: fallback,
+ *                                   host, person) and only `fallback` goes;
+ *                                   an unmarked row (an older connector's)
+ *                                   goes when it is the session's branch,
+ *                                   `<branch> @ <label>`, or opens with
+ *                                   `detached@<hex>` (@crosscheck/schema
+ *                                   isLocationTitle). A title a person or
+ *                                   host wrote stays, ` @ api` ending or not
  *   - base commit                 — omitted from the work-context listing
  *                                   and every diagnosis; "" (unknown) on
  *                                   hint candidates

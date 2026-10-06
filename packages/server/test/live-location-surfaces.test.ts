@@ -10,16 +10,24 @@
 import { describe, expect, test } from "bun:test";
 import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
+import { postRecords, recordEnvelope, validWorkContextBody } from "./helpers.ts";
 import {
   CREATED_AT,
+  DETACHED_TITLE,
   FILE,
   HOST_CREATED_AT,
+  HOST_TITLE,
+  LOCAL_REPO,
   REPO,
   ROBIN_CONTEXT,
+  ROBIN_DETACHED_CONTEXT,
   ROBIN_HOST_CONTEXT,
+  ROBIN_LIVE,
+  ROBIN_LOCAL_CONTEXT,
   ROBIN_OLD_CONTEXT,
   ROBIN_SOLVED,
   SECRET_BRANCH,
+  SECRET_LOCAL_BRANCH,
   UPDATED_AT,
   getAs,
   postAs,
@@ -226,6 +234,72 @@ describe("when Robin last touched her work (review round 3, M1)", () => {
 
     expect(robinsRows(world, listed(asNick.body))[0]?.id).toBe(ROBIN_HOST_CONTEXT);
     expect(robinsRows(world, listed(asRobin.body))[0]?.id).toBe(ROBIN_CONTEXT);
+  });
+});
+
+const titleOf = (body: string, id: string): string | undefined =>
+  listed(body).find((row) => row.id === id)?.["title" as keyof ListedContext] as string | undefined;
+
+describe("the title marker (review round 3, H4 and L1)", () => {
+  test("a host-written title that merely ends in ` @ api` stays", async () => {
+    const world = await seedOptedOutWorld();
+
+    const listing = await getAs(world, "nick", url("/api/work-contexts", { repo: REPO }));
+
+    expect(titleOf(listing.body, ROBIN_HOST_CONTEXT)).toBe(HOST_TITLE);
+  });
+
+  test("on a local: repo, her bare-branch and detached titles are withheld on every surface", async () => {
+    // No remote, so no ` @ <label>` to spot: an unmarked row is caught by
+    // being her session's branch, or by opening with a detached ref.
+    const world = await seedOptedOutWorld();
+    const reads = [
+      url("/api/work-contexts", { repo: LOCAL_REPO }),
+      `/api/work-contexts/${ROBIN_LOCAL_CONTEXT}`,
+      `/api/work-contexts/${ROBIN_DETACHED_CONTEXT}/diagnosis`,
+      `/ui/work-contexts/${ROBIN_LOCAL_CONTEXT}`,
+      `/ui/work-contexts/${ROBIN_DETACHED_CONTEXT}`,
+      url("/api/search", { q: "rotation window refresh", repo: LOCAL_REPO }),
+      url("/api/conference", { repo: LOCAL_REPO }),
+      url("/api/hints/candidates", { repo: LOCAL_REPO, query: "rotation window refresh scratch detached" }),
+    ];
+
+    const answers = await Promise.all(reads.map((read) => getAs(world, "nick", read)));
+    const listing = answers[0]?.body ?? "";
+    const own = await getAs(world, "robin", url("/api/work-contexts", { repo: LOCAL_REPO }));
+
+    expect(answers.flatMap((answer, index) => secretsIn(answer.body).map((secret) => `${reads[index] ?? ""}: ${secret}`)))
+      .toEqual([]);
+    expect(titleOf(listing, ROBIN_LOCAL_CONTEXT)).toBe(WITHHELD_TITLE);
+    expect(titleOf(listing, ROBIN_DETACHED_CONTEXT)).toBe(WITHHELD_TITLE);
+    expect(titleOf(own.body, ROBIN_LOCAL_CONTEXT)).toBe(SECRET_LOCAL_BRANCH);
+    expect(titleOf(own.body, ROBIN_DETACHED_CONTEXT)).toBe(DETACHED_TITLE);
+  });
+
+  test("an unmarked update keeps the marker of an unchanged title, and a changed title is judged by its shape", async () => {
+    const world = await seedOptedOutWorld();
+    const update = async (title: string): Promise<void> => {
+      const posted = await postRecords(world.harness, world.robin, {
+        records: [
+          recordEnvelope(
+            "work_context",
+            validWorkContextBody({ id: ROBIN_HOST_CONTEXT, sessionId: ROBIN_LIVE, title, status: "testing", createdAt: HOST_CREATED_AT }),
+            { sessionId: ROBIN_LIVE },
+          ),
+        ],
+      });
+      expect(posted.data?.rejected).toBe(0);
+    };
+
+    // An older connector re-sends the host title without the marker.
+    await update(HOST_TITLE);
+    const kept = await getAs(world, "nick", url("/api/work-contexts", { repo: REPO }));
+    // …then renames it to something fallback-shaped, still unmarked.
+    await update(`${SECRET_BRANCH} @ api`);
+    const renamed = await getAs(world, "nick", url("/api/work-contexts", { repo: REPO }));
+
+    expect(titleOf(kept.body, ROBIN_HOST_CONTEXT)).toBe(HOST_TITLE);
+    expect(titleOf(renamed.body, ROBIN_HOST_CONTEXT)).toBe(WITHHELD_TITLE);
   });
 });
 

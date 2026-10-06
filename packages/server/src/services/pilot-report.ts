@@ -93,7 +93,7 @@ import {
 } from "./pilot-label-figures.ts";
 import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import type { PilotAnswerSurface } from "./pilot.ts";
 import type { Db } from "../db/client.ts";
@@ -348,12 +348,14 @@ const readDuplicateWork = async (
   const named = await deps.db.execute<{
     work_context_id: string;
     title: string;
+    title_source: string | null;
     owner_developer_id: string;
+    owner_branch: string;
     opened_by: number;
     total: number;
   }>(sql`
-    SELECT wc.id AS work_context_id, wc.title AS title,
-           owner.developer_id AS owner_developer_id,
+    SELECT wc.id AS work_context_id, wc.title AS title, wc.title_source AS title_source,
+           owner.developer_id AS owner_developer_id, owner.branch AS owner_branch,
            count(DISTINCT d.session_id)::int AS opened_by,
            count(*) OVER ()::int AS total
     FROM (
@@ -364,7 +366,7 @@ const readDuplicateWork = async (
     ) d
     JOIN work_contexts wc ON wc.id = d.pointed
     JOIN agent_sessions owner ON owner.id = wc.session_id AND owner.repo = ${repo}
-    GROUP BY wc.id, wc.title, owner.developer_id
+    GROUP BY wc.id, wc.title, wc.title_source, owner.developer_id, owner.branch
     ORDER BY opened_by DESC, wc.id ASC
     LIMIT ${PILOT_REPORT_MAX_PRIOR_WORK}`);
 
@@ -381,7 +383,10 @@ const readDuplicateWork = async (
     opened += row.opened;
   }
   const priorWork = named.rows.map((row) =>
-    projectRow(hidden, { developerId: row.owner_developer_id, repo }, {
+    projectRow(hidden, {
+      developerId: row.owner_developer_id,
+      titleFacts: { repo, branch: row.owner_branch, titleSource: titleSourceOf(row.title_source) },
+    }, {
       workContextId: row.work_context_id,
       title: row.title,
       openedBySessions: row.opened_by,

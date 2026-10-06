@@ -542,6 +542,9 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       // Detached-aware (trial finding #15): a worktree session is labelled by
       // its branch tip or commit subject — two bounded git calls at most, once.
       title: await resolveFallbackWorkContextTitle(identity),
+      // The proxy's only title is its own fallback — the branch, which the
+      // hub withholds from colleagues of a developer who opted out.
+      titleSource: "fallback",
       status: INITIAL_STATUS,
       now: at,
       guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),

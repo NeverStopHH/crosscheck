@@ -296,6 +296,9 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     id: own.workContextId,
     sessionId: own.crosscheckSessionId,
     title: own.workContextTitle,
+    // The marker the title registered with: an update without it would leave
+    // the hub keeping a stored one only by luck (record-handlers.ts).
+    ...(own.workContextTitleSource === null ? {} : { titleSource: own.workContextTitleSource }),
     status,
     intent,
     createdAt: own.startedAt,

@@ -117,6 +117,9 @@ export const handleCursorSessionStart = async (
     // builder labels a detached worktree by its branch tip or commit
     // subject (trial finding #15), two bounded git calls at most.
     title: await resolveFallbackWorkContextTitle(ctx.identity),
+    // Always the connector's own: the hub withholds it, the branch it names,
+    // from colleagues of a developer who opted out of presence.
+    titleSource: "fallback",
     status: INITIAL_STATUS,
     now,
     guarantees: guaranteeDeclarationFor("cursor-ide"),

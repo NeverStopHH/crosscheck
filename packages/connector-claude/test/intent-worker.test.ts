@@ -131,6 +131,7 @@ interface SpooledWorkContext {
   readonly body: {
     readonly id: string;
     readonly title: string;
+    readonly titleSource?: string;
     readonly status: string;
     readonly intent?: {
       readonly summary: string;
@@ -220,6 +221,18 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(state?.intentSetCount).toBe(1);
     expect(state?.intentNoneCount).toBe(0);
     expect(state?.intentFailCount).toBe(0);
+  });
+
+  test("the update re-sends the title's marker from state, so the hub's marker never lapses", async () => {
+    // Arrange: SessionStart stored how the title was written beside it.
+    const fix = await fixture({ workContextTitleSource: "host" });
+    const fake = await makeFakeModel({ output: `${SENTENCE}\n` });
+
+    // Act
+    await run(fix, fake);
+
+    // Assert
+    expect((await spooledIntents(fix))[0]?.body.titleSource).toBe("host");
   });
 
   test("the raw prompt reaches the model on stdin and NEVER the spool; the prompt file is gone", async () => {

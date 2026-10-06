@@ -153,10 +153,31 @@ export const IntentSchema = z
     }
   });
 
+/**
+ * HOW A WORK CONTEXT'S TITLE WAS WRITTEN, said by the connector that wrote
+ * it. `fallback` is the connector's own `<branch> @ <label>` (or the bare
+ * branch, or a detached ref) — the session's live location, which the hub
+ * withholds from colleagues of a developer who opted out of presence;
+ * `host` came from the host's session title, `person` from a person. Without
+ * it the hub has to guess from the title's shape, and a host title that
+ * merely ends in ` @ api` read as a branch (fallback-title.ts).
+ */
+export const WORK_CONTEXT_TITLE_SOURCES = ["fallback", "host", "person"] as const;
+
+export const WorkContextTitleSourceSchema = z.enum(WORK_CONTEXT_TITLE_SOURCES);
+
+export type WorkContextTitleSource = z.infer<typeof WorkContextTitleSourceSchema>;
+
 export const WorkContextSchema = z.looseObject({
   id: nonEmptyId,
   sessionId: nonEmptyId,
   title: z.string().min(1),
+  /**
+   * Additive and optional: every connector shipped before it sends none, and
+   * the hub then judges the title by its shape. On an UPDATE, absent keeps
+   * the stored marker only while the title is unchanged.
+   */
+  titleSource: WorkContextTitleSourceSchema.optional(),
   description: z.string().optional(),
   /**
    * Optional and NOT nullable on the wire: a work_context record without the

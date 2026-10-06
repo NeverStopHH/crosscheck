@@ -750,6 +750,8 @@ const listInbox = async (
         // that owner is (services/live-location.ts).
         contextOwnerId: agentSessions.developerId,
         contextRepo: agentSessions.repo,
+        contextBranch: agentSessions.branch,
+        contextTitleSource: workContexts.titleSource,
       })
       .from(questions)
       .innerJoin(developers, eq(questions.authorDeveloperId, developers.id))
@@ -773,7 +775,14 @@ const listInbox = async (
     };
     return row.contextOwnerId === null
       ? view
-      : projectRow(hidden, { developerId: row.contextOwnerId, repo: row.contextRepo ?? repo }, view);
+      : projectRow(hidden, {
+          developerId: row.contextOwnerId,
+          titleFacts: {
+            repo: row.contextRepo ?? repo,
+            branch: row.contextBranch,
+            titleSource: row.contextTitleSource,
+          },
+        }, view);
   });
 };
 

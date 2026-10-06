@@ -206,6 +206,8 @@ const listRecentContexts = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       lastActiveAt: sql<string>`${activityExpression}`,
+      branch: agentSessions.branch,
+      titleSource: workContexts.titleSource,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -214,7 +216,7 @@ const listRecentContexts = async (
     .orderBy(desc(activitySeenByReader(viewerDeveloperId)), asc(workContexts.id))
     .limit(CONFERENCE_MAX_CONTEXTS);
   return rows.map((row) =>
-    projectRow(hidden, { developerId: row.developerId, repo }, {
+    projectRow(hidden, { developerId: row.developerId, titleFacts: { repo, branch: row.branch, titleSource: row.titleSource } }, {
       id: row.id,
       title: row.title,
       status: row.status,
@@ -525,6 +527,8 @@ const listOpenQuestions = async (
       workContextId: questions.workContextId,
       workContextTitle: workContexts.title,
       contextOwnerId: contextSessions.developerId,
+      contextBranch: contextSessions.branch,
+      contextTitleSource: workContexts.titleSource,
       createdAt: questions.createdAt,
     })
     .from(questions)
@@ -556,7 +560,10 @@ const listOpenQuestions = async (
     // The CONTEXT's owner, not the asker: the title names where they are.
     return row.contextOwnerId === null
       ? view
-      : projectRow(hidden, { developerId: row.contextOwnerId, repo }, view);
+      : projectRow(hidden, {
+          developerId: row.contextOwnerId,
+          titleFacts: { repo, branch: row.contextBranch, titleSource: row.contextTitleSource },
+        }, view);
   });
 };
 

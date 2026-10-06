@@ -59,6 +59,7 @@ import {
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
   SESSION_STATUSES,
+  WORK_CONTEXT_TITLE_SOURCES,
   CAUSAL_GUARANTEES,
   GUARANTEE_KINDS,
   STORED_GUARANTEE_REASONS,
@@ -271,6 +272,14 @@ export const workContexts = pgTable("work_contexts", {
    * reads it beside `session_id` (services/coverage.ts touchedScope).
    */
   updatedBySessionId: text("updated_by_session_id").references(() => agentSessions.id),
+  /**
+   * How the title was written, by the connector's own word (@crosscheck/schema
+   * WORK_CONTEXT_TITLE_SOURCES): `fallback` is the session's branch, which the
+   * hub withholds from colleagues of a developer who opted out of presence.
+   * Null for a row an older connector wrote — judged by the title's shape
+   * (services/live-location.ts).
+   */
+  titleSource: text("title_source", { enum: WORK_CONTEXT_TITLE_SOURCES }),
 }, (table) => [
   // `session_id` is a foreign key, which Postgres does NOT index on its own.
   // services/presence.ts reads the newest context of every live session to

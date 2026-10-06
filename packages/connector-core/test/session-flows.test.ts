@@ -120,6 +120,7 @@ const registerInput = (
   hubUrl,
   fallbackDeveloperId: null,
   title: fallbackWorkContextTitle("main", REPO_ID),
+  titleSource: "fallback" as const,
   status: "analyzing",
   now: new Date(),
   guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),

@@ -17729,7 +17729,7 @@ export const MUTATIONS: readonly Mutation[
     // branch an opted-out developer's teammates are not told.
     label: "an opted-out teammate's fallback title reaches other viewers",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "      (owner.repo === undefined || isFallbackTitle(value, owner.repo));",
+    from: "      (owner.titleFacts === undefined || isLocationTitle({ title: value, ...owner.titleFacts }));",
     to: "      false;",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
@@ -17771,8 +17771,8 @@ export const MUTATIONS: readonly Mutation[
     // Review M3: suspect keeps the colliding row and drops its live fields.
     label: "suspect names an opted-out teammate's live branch and last activity",
     file: `${SERVER}/src/services/suspect.ts`,
-    from: "      return projectRow(\n        hidden,\n        { developerId: row.developerId, repo: input.repo },",
-    to: "      return projectRow(\n        new Set<string>(),\n        { developerId: row.developerId, repo: input.repo },",
+    from: "      return projectRow(\n        hidden,\n        {\n          developerId: row.developerId,",
+    to: "      return projectRow(\n        new Set<string>(),\n        {\n          developerId: row.developerId,",
     test: `${SERVER}/test/presence-optout.test.ts`,
     because:
       "GET /api/suspect with the path-only falsifier hands any colleague the " +
@@ -17805,8 +17805,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "search names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/search.ts`,
-    from: "      projectRow(hidden, { developerId: row.developerId, repo: row.repo }, {\n        id: row.id,",
-    to: "      projectRow(new Set<string>(), { developerId: row.developerId, repo: row.repo }, {\n        id: row.id,",
+    from: "      projectRow(hidden, {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    to: "      projectRow(new Set<string>(), {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "search_related_work hands a colleague `feat/robin-relocates-to-zurich " +
@@ -17815,8 +17815,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the conference names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "    projectRow(hidden, { developerId: row.developerId, repo }, {",
-    to: "    projectRow(new Set<string>(), { developerId: row.developerId, repo }, {",
+    from: "    projectRow(hidden, { developerId: row.developerId, titleFacts:",
+    to: "    projectRow(new Set<string>(), { developerId: row.developerId, titleFacts:",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "crosscheck conference prints every recent context's title, so an " +
@@ -17835,8 +17835,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a referee brief names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/referee.ts`,
-    from: "      projectRow(hidden, { developerId: row.ownerDeveloperId, repo: row.repo }, { title: row.title })",
-    to: "      projectRow(new Set<string>(), { developerId: row.ownerDeveloperId, repo: row.repo }, { title: row.title })",
+    from: "      projectRow(hidden, {\n        developerId: row.ownerDeveloperId,",
+    to: "      projectRow(new Set<string>(), {\n        developerId: row.ownerDeveloperId,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "get_referee_brief titles each side of a contradiction with its work " +
@@ -17845,8 +17845,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "suspect names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/suspect.ts`,
-    from: "      return projectRow(\n        hidden,\n        { developerId: row.developerId, repo: input.repo },",
-    to: "      return projectRow(\n        new Set<string>(),\n        { developerId: row.developerId, repo: input.repo },",
+    from: "      return projectRow(\n        hidden,\n        {\n          developerId: row.developerId,",
+    to: "      return projectRow(\n        new Set<string>(),\n        {\n          developerId: row.developerId,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the suspect row withholds `branch` and then prints the same branch as " +
@@ -17855,8 +17855,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "hint candidates carry an opted-out teammate's HEAD as base commit",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "    workContext: projectRow(\n      hidden,\n      { developerId: row.developerId, repo: input.repo },",
-    to: "    workContext: projectRow(\n      new Set<string>(),\n      { developerId: row.developerId, repo: input.repo },",
+    from: "      ...projectRow(\n      hidden,",
+    to: "      ...projectRow(\n      new Set<string>(),",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "every prompt hint about an opted-out teammate's work names the commit " +
@@ -17865,8 +17865,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "solved matches name an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/solved-matches.ts`,
-    from: "      projectRow(hidden, { developerId: row.developerId, repo: row.repo }, {\n        title: row.title,",
-    to: "      projectRow(new Set<string>(), { developerId: row.developerId, repo: row.repo }, {\n        title: row.title,",
+    from: "      projectRow(hidden, {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    to: "      projectRow(new Set<string>(), {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the briefing's solved pointer titles an opted-out teammate's solved " +
@@ -17885,8 +17885,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "hint candidates carry an opted-out author's HEAD as a claim's commit",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      validity: projectRow(\n        hidden,\n        { developerId: claim.authorDeveloperId, repo: input.repo },",
-    to: "      validity: projectRow(\n        new Set<string>(),\n        { developerId: claim.authorDeveloperId, repo: input.repo },",
+    from: "      validity: projectRow(hidden, { developerId: claim.authorDeveloperId }, claim.validity),",
+    to: "      validity: claim.validity,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the hint the reader's prompt is shown about an opted-out teammate's " +
@@ -18022,8 +18022,8 @@ export const MUTATIONS: readonly Mutation[
     // Review round 3, H1: the inbox titles a question with its CONTEXT.
     label: "the questions inbox titles an opted-out teammate's context with her branch",
     file: `${SERVER}/src/services/questions.ts`,
-    from: "      : projectRow(hidden, { developerId: row.contextOwnerId, repo: row.contextRepo ?? repo }, view);",
-    to: "      : view;",
+    from: "      : projectRow(hidden, {\n          developerId: row.contextOwnerId,\n          titleFacts: {\n",
+    to: "      : projectRow(new Set<string>(), {\n          developerId: row.contextOwnerId,\n          titleFacts: {\n",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "a teammate asks Nick about Robin's context and the briefing's " +
@@ -18033,8 +18033,8 @@ export const MUTATIONS: readonly Mutation[
     // Review round 3, survivor A: no test seeded a question on her context.
     label: "the conference titles a question with an opted-out teammate's branch",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "      : projectRow(hidden, { developerId: row.contextOwnerId, repo }, view);",
-    to: "      : view;",
+    from: "      : projectRow(hidden, {\n          developerId: row.contextOwnerId,\n          titleFacts: { repo, branch: row.contextBranch,",
+    to: "      : projectRow(new Set<string>(), {\n          developerId: row.contextOwnerId,\n          titleFacts: { repo, branch: row.contextBranch,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "crosscheck conference lists open questions under the title of the " +
@@ -18045,8 +18045,8 @@ export const MUTATIONS: readonly Mutation[
     // author's whereabouts are not.
     label: "the landed stop names an opted-out teammate's branch and when she started",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "    : projectRow(hidden, { developerId: found.developerId, repo: request.repo }, {",
-    to: "    : projectRow(new Set<string>(), { developerId: found.developerId, repo: request.repo }, {",
+    from: "    : projectRow(hidden, {\n        developerId: found.developerId,",
+    to: "    : projectRow(new Set<string>(), {\n        developerId: found.developerId,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the PreToolUse stop at Robin's landed change prints her fallback title " +
@@ -18086,8 +18086,8 @@ export const MUTATIONS: readonly Mutation[
     // Review round 3, H3: the pilot surfaces title what was delivered.
     label: "crosscheck pilot label names an opted-out teammate's context by its branch",
     file: `${SERVER}/src/services/pilot-candidates.ts`,
-    from: "        : projectRow(hidden, { developerId: row.owner_developer_id, repo: input.repo }, candidate);",
-    to: "        : candidate;",
+    from: "        : projectRow(hidden, {\n            developerId: row.owner_developer_id,",
+    to: "        : projectRow(new Set<string>(), {\n            developerId: row.owner_developer_id,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the label walk shows Nick the hint he was given under Robin's " +
@@ -18096,8 +18096,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the pilot report's prior work names an opted-out teammate's context by its branch",
     file: `${SERVER}/src/services/pilot-report.ts`,
-    from: "    projectRow(hidden, { developerId: row.owner_developer_id, repo }, {",
-    to: "    projectRow(new Set<string>(), { developerId: row.owner_developer_id, repo }, {",
+    from: "    projectRow(hidden, {\n      developerId: row.owner_developer_id,",
+    to: "    projectRow(new Set<string>(), {\n      developerId: row.owner_developer_id,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the report carries no person by design, then titles the work its " +
@@ -18172,6 +18172,118 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the report's first context of hers is the one she is on now",
+  },
+  {
+    // Review round 3, H4 + L1: the connector SAYS how it wrote the title.
+    label: "a host-marked title is withheld as if it were the branch",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    return facts.titleSource === \"fallback\";",
+    to: "    return true;",
+    test: `${SCHEMA}/test/fallback-title.test.ts`,
+    because:
+      "a host title that merely ends in ` @ api` — «Fix the 500 on POST /login " +
+      "@ api» — reads «untitled work» to every colleague",
+  },
+  {
+    label: "an unmarked bare-branch title on a local repo reaches colleagues",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    (facts.branch !== null && facts.title === facts.branch) ||",
+    to: "    false ||",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a no-remote repo's fallback is the bare branch, with no ` @ <label>` " +
+      "for the shape rule to spot",
+  },
+  {
+    // Review round 3, survivor I.
+    label: "an unmarked detached title reaches colleagues",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    DETACHED_TITLE_HEAD.test(facts.title)",
+    to: "    false",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "`detached@<sha> · <subject>` on a local repo names her HEAD, and no " +
+      "label marks it as a fallback",
+  },
+  {
+    label: "the hub drops the connector's title marker on ingest",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        titleSource: body.titleSource ?? null,",
+    to: "        titleSource: null,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "every marked host title is stored unmarked and judged by its shape " +
+      "again, so ` @ api` endings are withheld after all",
+  },
+  {
+    label: "an unmarked rename keeps a stale host marker",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      body.titleSource ?? (body.title === current.title ? current.titleSource : null),",
+    to: "      body.titleSource ?? current.titleSource,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "an older connector renames a host-titled context to its branch, and " +
+      "the old `host` vouches for a title nobody marked",
+  },
+  {
+    label: "the projection ignores the title marker",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "isLocationTitle({ title: value, ...owner.titleFacts })",
+    to: "isLocationTitle({ title: value, ...owner.titleFacts, titleSource: null })",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the marker is stored and never read, so a host title is judged by its " +
+      "shape on every surface",
+  },
+  {
+    label: "a Claude session title uploads marked as the connector's fallback",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  sanitizeSessionTitle(sessionTitle) === null ? \"fallback\" : \"host\";",
+    to: "  sanitizeSessionTitle(sessionTitle) === null ? \"fallback\" : \"fallback\";",
+    test: `${CONNECTOR}/test/detached-title.test.ts`,
+    because:
+      "the host's own title is withheld from colleagues as if it were the " +
+      "branch, the over-withholding the marker exists to end",
+  },
+  {
+    label: "the connector's work-context records drop the title marker",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "      ...(input.titleSource === undefined ? {} : { titleSource: input.titleSource }),",
+    to: "",
+    test: `${CONNECTOR}/test/detached-title.test.ts`,
+    because:
+      "no connector ever tells the hub how a title was written, and every " +
+      "row is judged by its shape",
+  },
+  {
+    label: "PostToolUse recovery uploads its fallback title unmarked",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "          titleSource: \"fallback\",",
+    to: "",
+    test: `${CONNECTOR}/test/detached-title.test.ts`,
+    because:
+      "a session whose hooks were installed mid-way uploads its branch as " +
+      "a title the hub can only guess at",
+  },
+  {
+    label: "the derived-intent update drops the title's marker",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "      titleSource: fresh.workContextTitleSource ?? undefined,\n",
+    to: "",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because:
+      "every intent update re-sends the title without saying how it was " +
+      "written, and the hub's marker rides on the title staying unchanged",
+  },
+  {
+    label: "set_intent drops the title's marker",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "    ...(own.workContextTitleSource === null ? {} : { titleSource: own.workContextTitleSource }),",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "a declared intent lands on a context whose host title the hub then " +
+      "judges by its shape",
   },
 ];
 
@@ -18314,6 +18426,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
+ * PRINTS: packages/connector-claude/test/detached-title.test.ts 3
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
@@ -18329,7 +18442,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 3
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
@@ -18439,7 +18552,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 3
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 4
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
@@ -18461,6 +18574,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/fallback-title.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
@@ -18503,7 +18617,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 10
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 14
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 19
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

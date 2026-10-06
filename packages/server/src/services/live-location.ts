@@ -31,8 +31,10 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   LOCATION_WITHHELD,
   WITHHELD_TITLE,
-  isFallbackTitle,
+  WorkContextTitleSourceSchema,
+  isLocationTitle,
 } from "@crosscheck/schema";
+import type { TitleFacts, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { developers } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
@@ -61,12 +63,24 @@ export const locationHiddenFrom = async (
 export interface RowOwner {
   readonly developerId: string;
   /**
-   * The repo of the owning session — a fallback title ends in its label.
-   * Absent on a row that carries no title (a claim's validity); a title on
-   * such a row is withheld whole, because nothing says it is not the branch.
+   * What the row's work-context title is judged against (@crosscheck/schema
+   * isLocationTitle): the connector's own marker, and for an unmarked row
+   * the owning session's repo and branch. Absent on a row that carries no
+   * title (a claim's validity); a title on such a row is withheld whole,
+   * because nothing says it is not the branch.
    */
-  readonly repo?: string;
+  readonly titleFacts?: Omit<TitleFacts, "title">;
 }
+
+/**
+ * A `title_source` read by raw SQL, as the marker it is or null. A value
+ * this build does not know is no marker at all, so the title is judged by
+ * its shape — never trusted as `host`.
+ */
+export const titleSourceOf = (raw: unknown): WorkContextTitleSource | null => {
+  const parsed = WorkContextTitleSourceSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+};
 
 /**
  * How a withheld field is written, chosen by what every SHIPPED reader of
@@ -133,7 +147,7 @@ const projectEntry = (
   if (TITLE_FIELDS.has(key)) {
     const isBranch =
       typeof value === "string" &&
-      (owner.repo === undefined || isFallbackTitle(value, owner.repo));
+      (owner.titleFacts === undefined || isLocationTitle({ title: value, ...owner.titleFacts }));
     return [[key, isBranch ? WITHHELD_TITLE : value]];
   }
   if (!isLocationField(key)) {

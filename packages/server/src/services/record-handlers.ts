@@ -319,6 +319,13 @@ const workContextChanges = (
 ): Partial<WorkContextRow> | null => {
   const next = {
     title: body.title,
+    // THE MARKER FOLLOWS ITS TITLE. A record that says how it wrote the
+    // title replaces the marker; one that says nothing (an older connector,
+    // or a writer that re-sends the title it was given) keeps it only while
+    // the title is the one it described — a new title nobody vouched for is
+    // judged by its shape (services/live-location.ts).
+    titleSource:
+      body.titleSource ?? (body.title === current.title ? current.titleSource : null),
     description: body.description ?? null,
     intent: mergeIntent(current.intent ?? null, body.intent),
     status: body.status,
@@ -328,6 +335,7 @@ const workContextChanges = (
   // a change and triggers a harmless no-op-ish update.
   const hasChange =
     next.title !== current.title ||
+    next.titleSource !== current.titleSource ||
     next.description !== current.description ||
     JSON.stringify(next.intent) !== JSON.stringify(current.intent) ||
     next.status !== current.status;
@@ -481,6 +489,7 @@ export const ingestWorkContext = async (
         id: body.id,
         sessionId: body.sessionId,
         title: body.title,
+        titleSource: body.titleSource ?? null,
         description: body.description ?? null,
         intent: body.intent ?? null,
         status: body.status,

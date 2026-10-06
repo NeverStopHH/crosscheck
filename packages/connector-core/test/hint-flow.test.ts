@@ -109,6 +109,7 @@ const freshState = (
   summarizerUnreadableCount: 0,
   summarizerLastUnreadable: null,
   workContextTitle: null,
+  workContextTitleSource: null,
   workContextStatus: null,
   intentFireCount: 0,
   intentNoneCount: 0,

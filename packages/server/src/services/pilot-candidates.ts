@@ -25,7 +25,7 @@ import {
 } from "../constants.ts";
 import { agentSessions, hintDeliveries } from "../db/schema.ts";
 import { readTeamSettings } from "./team-settings.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -145,6 +145,8 @@ type UnlabeledRow = {
   readonly title: string | null;
   /** Whose context the delivery pointed at — the title names where they are. */
   readonly owner_developer_id: string | null;
+  readonly owner_branch: string | null;
+  readonly title_source: string | null;
 };
 
 /**
@@ -182,7 +184,8 @@ export const readUnlabeledInterventions = async (
   const since = new Date(deps.now().getTime() - input.withinMinutes * MS_PER_MINUTE);
   const rows = await deps.db.execute<UnlabeledRow>(sql`
     SELECT hd.id, hd.session_id, hd.channel, hd.ref_kind, hd.ref_id, hd.delivered_at,
-           wc.title AS title, pointed_owner.developer_id AS owner_developer_id
+           wc.title AS title, wc.title_source AS title_source,
+           pointed_owner.developer_id AS owner_developer_id, pointed_owner.branch AS owner_branch
     FROM hint_deliveries hd
     JOIN agent_sessions s ON s.id = hd.session_id
     LEFT JOIN work_contexts wc ON wc.id = (${POINTED_WORK_CONTEXT})
@@ -218,7 +221,10 @@ export const readUnlabeledInterventions = async (
       // context's, and judged by its owner (services/live-location.ts).
       return row.owner_developer_id === null
         ? candidate
-        : projectRow(hidden, { developerId: row.owner_developer_id, repo: input.repo }, candidate);
+        : projectRow(hidden, {
+            developerId: row.owner_developer_id,
+            titleFacts: { repo: input.repo, branch: row.owner_branch, titleSource: titleSourceOf(row.title_source) },
+          }, candidate);
     }),
     more: rows.rows.length > PILOT_LABEL_MAX_CANDIDATES,
   };

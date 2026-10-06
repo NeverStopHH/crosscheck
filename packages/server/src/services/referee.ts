@@ -462,8 +462,10 @@ const loadWorkContextTitles = async (
     .select({
       id: workContexts.id,
       title: workContexts.title,
+      titleSource: workContexts.titleSource,
       ownerDeveloperId: agentSessions.developerId,
       repo: agentSessions.repo,
+      branch: agentSessions.branch,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -472,8 +474,10 @@ const loadWorkContextTitles = async (
   return new Map(
     rows.map((row) => [
       row.id,
-      projectRow(hidden, { developerId: row.ownerDeveloperId, repo: row.repo }, { title: row.title })
-        .title,
+      projectRow(hidden, {
+        developerId: row.ownerDeveloperId,
+        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
+      }, { title: row.title }).title,
     ]),
   );
 };

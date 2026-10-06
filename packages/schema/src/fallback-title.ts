@@ -9,6 +9,8 @@
  * developer's location is hidden from (server services/live-location.ts),
  * and both sides spell the shape with these two functions.
  */
+import type { WorkContextTitleSource } from "./session.ts";
+
 const LOCAL_REPO_PREFIX = "local:";
 
 /**
@@ -33,6 +35,38 @@ export const repoLabel = (repoId: string): string | null => {
 export const isFallbackTitle = (title: string, repoId: string): boolean => {
   const label = repoLabel(repoId);
   return label !== null && title.endsWith(` @ ${label}`);
+};
+
+/** A detached ref, whole or opening a `detached@<sha> · <subject>` title. */
+const DETACHED_TITLE_HEAD = /^detached@[0-9a-f]{4,}/;
+
+/** What a work-context title is judged against. */
+export interface TitleFacts {
+  readonly title: string;
+  /** The connector's own word for how it wrote the title; null when it gave none. */
+  readonly titleSource: WorkContextTitleSource | null;
+  /** The owning session's branch; null where the row has none. */
+  readonly branch: string | null;
+  readonly repo: string;
+}
+
+/**
+ * True when the title IS its owner's location. A title marked `fallback`
+ * always is; one marked `host` or `person` never is, whatever it looks like.
+ * An UNMARKED title (an older connector's) is judged by every shape a
+ * fallback can take: the session's branch itself (a `local:` repo has no
+ * label to append), `<branch> @ <label>`, or a detached ref with or without
+ * its commit subject.
+ */
+export const isLocationTitle = (facts: TitleFacts): boolean => {
+  if (facts.titleSource !== null) {
+    return facts.titleSource === "fallback";
+  }
+  return (
+    (facts.branch !== null && facts.title === facts.branch) ||
+    isFallbackTitle(facts.title, facts.repo) ||
+    DETACHED_TITLE_HEAD.test(facts.title)
+  );
 };
 
 /**

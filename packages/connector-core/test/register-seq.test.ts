@@ -96,7 +96,7 @@ describe("registerSessionFlow positions the session it opens", () => {
       baseCommit: "abc1234",
       status: "implementing",
       fallbackDeveloperId: "dev_self",
-      title: "register seq",
+      title: "register seq", titleSource: "host",
       now: new Date(),
       guarantees: [],
     });
@@ -172,7 +172,7 @@ describe("a SessionStart re-fire registers under the epoch the session uses", ()
         baseCommit: "abc1234",
         status: "implementing",
         fallbackDeveloperId: "dev_self",
-        title: "register seq",
+        title: "register seq", titleSource: "host",
         now: new Date(),
         guarantees: [],
       });
@@ -261,7 +261,7 @@ describe("a re-fire over a foreign binding carries nothing", () => {
       baseCommit: "abc1234",
       status: "implementing",
       fallbackDeveloperId: "dev_self",
-      title: "register seq",
+      title: "register seq", titleSource: "host",
       now: new Date(),
       guarantees: [],
     });

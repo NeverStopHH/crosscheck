@@ -425,6 +425,8 @@ const hydrateMatches = async (
       developerName: developers.name,
       developerId: agentSessions.developerId,
       repo: agentSessions.repo,
+      branch: agentSessions.branch,
+      titleSource: workContexts.titleSource,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -433,7 +435,10 @@ const hydrateMatches = async (
   return new Map(
     rows.map((row) => [
       row.id,
-      projectRow(hidden, { developerId: row.developerId, repo: row.repo }, {
+      projectRow(hidden, {
+        developerId: row.developerId,
+        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
+      }, {
         title: row.title,
         developerName: row.developerName,
         repo: row.repo,

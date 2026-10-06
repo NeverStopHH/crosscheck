@@ -1,4 +1,4 @@
-import type { SeqField } from "@crosscheck/schema";
+import type { SeqField, WorkContextTitleSource } from "@crosscheck/schema";
 import {
   HTTP_NOT_FOUND,
   MAX_WORK_CONTEXT_TITLE_CHARS,
@@ -129,6 +129,18 @@ export const resolveWorkContextTitle = (
   sanitizeSessionTitle(sessionTitle) ?? fallbackWorkContextTitle(branch, repoId);
 
 /**
+ * How the chosen title was written, for the hub's marker: `host` when Claude
+ * Code's own `session_title` survived sanitizing, else `fallback` — the
+ * branch-derived title the hub withholds from colleagues of a developer who
+ * opted out of presence. The same test `resolveWorkContextTitle` makes, so
+ * the marker can never describe a different title from the one uploaded.
+ */
+export const workContextTitleSourceOf = (
+  sessionTitle: string | undefined,
+): WorkContextTitleSource =>
+  sanitizeSessionTitle(sessionTitle) === null ? "fallback" : "host";
+
+/**
  * The same choice for a LIVE session: `session_title` when supplied, else the
  * detached-aware core builder (flows/work-context-title.ts) — which asks git
  * (bounded, twice at most) only when the identity is a detached HEAD, so a
@@ -248,6 +260,7 @@ export const handleSessionStart = async (
       hubUrl: ctx.config.hubUrl,
       fallbackDeveloperId: ctx.config.developerId,
       title,
+      titleSource: workContextTitleSourceOf(ctx.payload.session_title),
       status: INITIAL_STATUS,
       now,
       guarantees: guaranteeDeclarationFor("claude-code"),

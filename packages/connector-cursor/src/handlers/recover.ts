@@ -132,6 +132,7 @@ export const requireSessionState = async (
     // §2.4 privacy posture): the honest fallback, detached-aware (once per
     // conversation — recovery happens once).
     title: await resolveFallbackWorkContextTitle(ctx.identity),
+    titleSource: "fallback",
     status: IMPLEMENTING_STATUS,
     guarantees: guaranteeDeclarationFor("cursor-ide"),
     // State-less reconstruction: stop the ladder on repo_mismatch, CLAIM the
