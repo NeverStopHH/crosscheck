@@ -28,17 +28,20 @@ import {
   inArray,
   isNotNull,
   ne,
+  notExists,
   or,
   sql,
 } from "drizzle-orm";
 
 import {
   agentSessions,
+  claimEdges,
   claims,
   developers,
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
@@ -206,6 +209,11 @@ export interface SearchResultView {
   readonly resultKind: SearchResultKind;
   /** When the solving claim was recorded; null for open results. */
   readonly solvedAt: string | null;
+  /**
+   * The context matched ONLY through an unreviewed draft's words — a pull
+   * the searcher asked for, which every surface rendering it must label.
+   */
+  readonly derivedOnly: boolean;
 }
 
 export interface SearchResponse {
@@ -341,6 +349,11 @@ interface TierRow {
   readonly id: string;
   readonly createdAt: Date;
   readonly updatedAt: Date | null;
+  /**
+   * The row matched ONLY through unreviewed derived claim bodies (the fts
+   * tier's claim pass). Every other tier and pass leaves it unset.
+   */
+  readonly derivedOnly?: boolean;
 }
 
 /**
@@ -423,6 +436,11 @@ interface RankedRow extends TierRow {
   readonly rank: number;
 }
 
+/** A claim retired by a revision carries an edge of this kind pointing at it. */
+const SUPERSEDES_KIND = "supersedes";
+/** A discard's status, and a refuted theory's. */
+const REJECTED_STATUS = "rejected";
+
 const listFtsTier = async (
   db: Db,
   tokens: readonly string[],
@@ -452,17 +470,36 @@ const listFtsTier = async (
 
   // Claim bodies get their own pass: the doc caps out at
   // NORMALIZED_DOC_MAX_CLAIMS summaries, and a match in claim 51 still counts.
-  const claimRows: readonly RankedRow[] = await db
+  //
+  // RETIRED CLAIMS NEVER MATCH: a rejected row (a discard, or a theory its
+  // author refuted) and any row a revision superseded (the draft a discard
+  // or a confirmation retired) are history, not something a searcher should
+  // be led to. An unreviewed DERIVED draft still matches — the searcher
+  // asked — but the row says so (`derivedOnly`) when no vouched claim did.
+  const claimRows: readonly (RankedRow & { readonly declared: boolean })[] = await db
     .select({
       id: claims.workContextId,
       createdAt: workContexts.createdAt,
       updatedAt: workContexts.updatedAt,
       rank: sql<number>`max(ts_rank(${claims.tsv}, ${tsquery}))`,
+      declared: sql<boolean>`bool_or(${claims.provenance} = ${DECLARED_PROVENANCE})`,
     })
     .from(claims)
     .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(scopeCondition(scope), sql`${claims.tsv} @@ ${tsquery}`))
+    .where(
+      and(
+        scopeCondition(scope),
+        sql`${claims.tsv} @@ ${tsquery}`,
+        ne(claims.status, REJECTED_STATUS),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(claimEdges)
+            .where(and(eq(claimEdges.toClaimId, claims.id), eq(claimEdges.kind, SUPERSEDES_KIND))),
+        ),
+      ),
+    )
     .groupBy(
       claims.workContextId,
       workContexts.createdAt,
@@ -471,12 +508,14 @@ const listFtsTier = async (
     .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
     .limit(TIER_CANDIDATES);
 
+  const claimMatches = claimRows.map((row) => ({ ...row, derivedOnly: !row.declared }));
   const bestRank = new Map<string, RankedRow>();
-  for (const row of [...contextRows, ...claimRows]) {
+  for (const row of [...contextRows, ...claimMatches]) {
     const known = bestRank.get(row.id);
-    if (known === undefined || row.rank > known.rank) {
-      bestRank.set(row.id, row);
-    }
+    // Draft-only survives only if EVERY match of this context was a draft's.
+    const derivedOnly = (known?.derivedOnly ?? true) && row.derivedOnly === true;
+    const best = known === undefined || row.rank > known.rank ? row : known;
+    bestRank.set(row.id, { ...best, derivedOnly });
   }
   return [...bestRank.values()]
     .sort((left, right) => right.rank - left.rank)
@@ -569,6 +608,8 @@ interface FusedEntry {
   readonly row: TierRow;
   readonly score: number;
   readonly tiers: ReadonlySet<SearchTier>;
+  /** Every tier row that brought this context in was a draft-only match. */
+  readonly derivedOnly: boolean;
 }
 
 interface TierList {
@@ -602,6 +643,7 @@ const fuseTiers = (
         row: known?.row ?? row,
         score: (known?.score ?? 0) + contribution,
         tiers: new Set([...(known?.tiers ?? []), tier]),
+        derivedOnly: (known?.derivedOnly ?? true) && row.derivedOnly === true,
       });
     });
   }
@@ -672,6 +714,7 @@ const hydrate = async (
           ? "open"
           : "solved") as SearchResultKind,
         solvedAt: solvedAt === undefined ? null : solvedAt.toISOString(),
+        derivedOnly: entry.derivedOnly,
       },
     ];
   });

@@ -1360,6 +1360,11 @@ export const SearchResultEntrySchema = z.looseObject({
   /** Solved-tree marker (VISION.md §1); optional — older hubs send neither. */
   resultKind: z.string().min(1).optional(),
   solvedAt: z.string().nullable().optional(),
+  /**
+   * The tree matched ONLY through an unreviewed derived draft's words; the
+   * line says so. Absent from an older hub, which marks nothing.
+   */
+  derivedOnly: z.boolean().optional().catch(undefined),
 });
 
 export type SearchResultEntry = z.infer<typeof SearchResultEntrySchema>;

@@ -1032,6 +1032,16 @@ describe("renderDiagnosis", () => {
 });
 
 describe("renderSearchResults", () => {
+  test("a tree found only through an unreviewed draft's words says so", () => {
+    // The hub marks a result whose only match was a derived draft: a pull the
+    // searcher asked for, never presented as a vouched finding.
+    const drafted = renderSearchResults([hit(workContext({ derivedOnly: true } as Partial<WorkContextEntry>), 60_000)], "login");
+    const vouched = renderSearchResults([hit(workContext({ derivedOnly: false } as Partial<WorkContextEntry>), 60_000)], "login");
+
+    expect(drafted).toContain("matched only an unreviewed draft (provenance derived)");
+    expect(vouched).not.toContain("unreviewed draft");
+  });
+
   test("labels the results as quoted data too", () => {
     // Act
     const rendered = renderSearchResults([hit(workContext(), 60_000)], "login");

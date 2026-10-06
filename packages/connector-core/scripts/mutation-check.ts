@@ -18015,6 +18015,38 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/normalized-doc.test.ts`,
     because: "a machine guess nobody vouched for — or one somebody discarded — makes the tree turn up in a teammate's search and hints",
   },
+  {
+    label: "a discarded draft's words still find the tree in search",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "        ne(claims.status, REJECTED_STATUS),\n",
+    to: "",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because: "the rejected copy a discard appends keeps leading teammates to the tree",
+  },
+  {
+    label: "a superseded draft's words still find the tree in search",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "            .where(and(eq(claimEdges.toClaimId, claims.id), eq(claimEdges.kind, SUPERSEDES_KIND))),",
+    to: "            .where(sql`false`),",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because: "the draft a discard retired still matches, so \"discarded\" changes nothing a searcher sees",
+  },
+  {
+    label: "search never marks a draft-only match",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "  const claimMatches = claimRows.map((row) => ({ ...row, derivedOnly: !row.declared }));",
+    to: "  const claimMatches = claimRows.map((row) => ({ ...row, derivedOnly: false }));",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because: "a tree found only through a machine guess is presented like one a teammate vouched for",
+  },
+  {
+    label: "search_related_work drops the draft-only marker",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "    ...(hit.entry.derivedOnly === true ? [DRAFT_ONLY_MATCH] : []),\n",
+    to: "",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because: "the agent reads a draft-only match as a teammate's finding on the topic",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18256,7 +18288,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
- * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 14
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
@@ -18335,6 +18367,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
+ * PRINTS: packages/server/test/draft-visibility.test.ts 3
  * PRINTS: packages/server/test/drafts.test.ts 3
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
