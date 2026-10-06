@@ -18303,6 +18303,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/owed-debt-rules.test.ts`,
     because: "review-2 round 6 survivor O11b: the life is ended on the hub with its work context still owed, and the payment is refused as a late write",
   },
+  {
+    label: "doctor says nothing of an owed work context (L4)",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(await debtChecks(home, key)),\n",
+    to: "",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7 L4: a debt that pins its life's records, or a refused one on its way to release, shows nowhere",
+  },
+  {
+    label: "doctor counts a refused debt as one still waiting (L4)",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const open = owed.filter((debt) => debt.refusals === 0).length;",
+    to: "  const open = owed.length;",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7 L4: a debt the hub refuses reads as an ordinary wait, and its release comes unannounced",
+  },
+  {
+    label: "an unreadable debt file reads as nothing owed (L4)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '    : { kind: "unreadable" };',
+    to: '    : { kind: "none" };',
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7 L4: a corrupt debt is silent — doctor says nothing is owed while a heal's work context is lost",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18373,7 +18397,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
- * PRINTS: packages/cli/test/doctor.test.ts 3
+ * PRINTS: packages/cli/test/doctor.test.ts 6
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 10

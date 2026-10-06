@@ -38,6 +38,7 @@ import {
   MCP_SERVER_KEY,
   MINUTES_PER_HOUR,
   MS_PER_SECOND,
+  OWED_WORK_CONTEXT_MAX_REFUSALS,
   PRIVATE_FILE_MODE,
   PROBE_REPO,
   REGISTERED_HOOK_EVENTS,
@@ -67,6 +68,7 @@ import {
   readJsonOrNull,
   readTextOrNull,
   repoKey,
+  spoolDir,
   spoolFlushLockPath,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -189,6 +191,8 @@ import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
 import { readAllSessionSpools } from "@crosscheck/connector-core/spool/files.ts";
 import { countRecordsAwaitingOwners } from "@crosscheck/connector-core/spool/ownership.ts";
+import { readDebtFile } from "@crosscheck/connector-core/spool/owed-work-context.ts";
+import type { DebtFile } from "@crosscheck/connector-core/spool/owed-work-context.ts";
 import {
   conferenceRemedies,
   formatConferenceCost,
@@ -1382,10 +1386,54 @@ const checkSpool = async (
     depthCheck,
     ageCheck,
     ...(await waitingChecks(home, key, now)),
+    ...(await debtChecks(home, key)),
     ...lossLines,
     unclosedCheck,
     await checkFlushLock(home, key),
   ];
+};
+
+const DEBT_SUFFIX = ".owed-wc";
+
+/** Every debt file in the repo's spool directory, as it reads (core spool/owed-work-context.ts). */
+const readDebtFiles = async (home: string, key: string): Promise<readonly DebtFile[]> => {
+  let names: readonly string[];
+  try {
+    names = (await readdir(spoolDir(home, key))).filter((name) => name.endsWith(DEBT_SUFFIX));
+  } catch {
+    return [];
+  }
+  return Promise.all(names.map((name) => readDebtFile(home, key, name.slice(0, -DEBT_SUFFIX.length))));
+};
+
+/**
+ * The work contexts heals still owe the hub (review-2 round 7, L4): open, ones
+ * the hub has refused — with how close each is to being released — and a debt
+ * file that will not parse, counted as the problem it is and never read as
+ * "nothing owed". Nothing while nothing is owed.
+ */
+const debtChecks = async (home: string, key: string): Promise<readonly Check[]> => {
+  const files = await readDebtFiles(home, key);
+  const owed = files.flatMap((file) => (file.kind === "owed" ? [file.owed] : []));
+  const open = owed.filter((debt) => debt.refusals === 0).length;
+  const refused = owed.filter((debt) => debt.refusals > 0);
+  const unreadable = files.filter((file) => file.kind === "unreadable").length;
+  if (owed.length === 0 && unreadable === 0) {
+    return [];
+  }
+  const mostRefusals = Math.max(0, ...refused.map((debt) => debt.refusals));
+  const parts = [
+    ...(open === 0 ? [] : [`${String(open)} owed, waiting for ${open === 1 ? "its life's" : "their lives'"} next batch`]),
+    ...(refused.length === 0
+      ? []
+      : [
+          `${String(refused.length)} refused by the hub (${String(mostRefusals)} of ${String(OWED_WORK_CONTEXT_MAX_REFUSALS)} refusals before ${refused.length === 1 ? "it is" : "they are"} released)`,
+        ]),
+    ...(unreadable === 0
+      ? []
+      : [`${String(unreadable)} debt file${unreadable === 1 ? "" : "s"} that will not parse`]),
+  ];
+  return [check("WARN", "owed work contexts", parts.join("; "))];
 };
 
 /**

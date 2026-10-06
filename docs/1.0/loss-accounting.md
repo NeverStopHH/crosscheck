@@ -434,6 +434,12 @@ spool the flusher may send still goes. After `OWED_WORK_CONTEXT_MAX_REFUSALS` (3
 after the first, the debt is released: it is counted as one drop with its own cause, `owed_wc_refused`, and so are
 the life's records the hub refused for want of it, and the life's records then go like any others.
 
+**The edges the round-6 review left** (review-2 round 7):
+
+- Doctor reports what is owed: `WARN owed work contexts: N owed, waiting for their lives' next batch; M refused by the
+  hub (k of 3 refusals before they are released); P debt files that will not parse`. A corrupt debt file is counted
+  as the problem it is, never read as "nothing owed" (L4).
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

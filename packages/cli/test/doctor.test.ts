@@ -17,8 +17,9 @@ import {
   spoolDir,
   spoolDropsPath,
   spoolFlushLockPath,
+  spoolOwedWorkContextPath,
 } from "@crosscheck/connector-core/config/paths.ts";
-import { targetRecord } from "@crosscheck/connector-core/capture/records.ts";
+import { targetRecord, workContextRecord } from "@crosscheck/connector-core/capture/records.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
@@ -454,6 +455,52 @@ describe("crosscheck doctor flush lock check", () => {
 
     // Assert
     expect(result.stdout).toContain("PASS  flush lock  free");
+  });
+});
+
+describe("crosscheck doctor owed work contexts check (review-2 round 7, L4)", () => {
+  const owedLine = (sessionId: string, extra: Record<string, unknown> = {}): string =>
+    `${JSON.stringify({
+      sessionId,
+      record: workContextRecord(
+        { workContextId: `wc_${sessionId}`, sessionId, title: "Owed", status: "analyzing" },
+        { developerId: "d", agentKind: "claude-code", sessionId },
+        new Date(),
+      ),
+      ...extra,
+    })}\n`;
+
+  test("names a debt still open, one the hub refused, and a debt file that will not parse", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+    const key = repoKey(HUB_URL, REPO_ID);
+    await mkdir(spoolDir(home, key), { recursive: true });
+    await writeFile(spoolOwedWorkContextPath(home, key, "open-life"), owedLine("cc_open"));
+    await writeFile(
+      spoolOwedWorkContextPath(home, key, "pinned-life"),
+      owedLine("cc_pinned", { refusals: 2, firstRefusedAt: new Date().toISOString() }),
+    );
+    await writeFile(spoolOwedWorkContextPath(home, key, "torn-life"), "{torn");
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  owed work contexts");
+    expect(result.stdout).toContain(
+      "1 owed, waiting for its life's next batch; 1 refused by the hub (2 of 3 refusals before it is released); 1 debt file that will not parse",
+    );
+  });
+
+  test("prints nothing while nothing is owed", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).not.toContain("owed work contexts");
   });
 });
 
