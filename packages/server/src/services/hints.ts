@@ -58,6 +58,7 @@ import {
   humanPromptText,
   isHarnessTurn,
   promptTerms,
+  qualifiesAsSubstance,
   shownSubstance,
 } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
@@ -410,7 +411,9 @@ const listClaimsForContext = async (
     confidence: row.claim.confidence,
     provenance: row.claim.provenance,
     captureMode: row.claim.captureMode,
-    evidenceRefCount: row.claim.evidenceRefs.length,
+    // THE RESOLVED COUNT, never the stored one (hold-out review, M1): an older
+    // connector's count gate then reads the same verdict as evidenceBacked.
+    evidenceRefCount: resolvedRefs.get(row.claim.id) ?? 0,
     evidenceBacked: (resolvedRefs.get(row.claim.id) ?? 0) > 0,
     authorDeveloperId: row.authorDeveloperId,
     authorDeveloperName: row.authorDeveloperName,
@@ -432,7 +435,18 @@ const listClaimsForContext = async (
     // applies, so the wire cannot drift into allowing what the renderer
     // refuses: an unknown provenance is one nobody vouched for, and it fails
     // closed.
-    body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",
+    //
+    // AND WITHHELD UNLESS IT CAN BE SUBSTANCE (hold-out review, M1): a body a
+    // hint may not show is a body a connector older than the substance rules
+    // can still inline — 0.10.0 pushed rejected approaches and proposed root
+    // causes — so only a claim that qualifies (`@crosscheck/schema`
+    // substance-trust.ts) carries its body; every other claim of the tree
+    // travels as a pointer's claim.
+    body:
+      row.claim.provenance === DECLARED_PROVENANCE &&
+      qualifiesAsSubstance({ ...row.claim, resolvedEvidenceRefs: resolvedRefs.get(row.claim.id) ?? 0 })
+        ? row.claim.body
+        : "",
     validity: claimValidity(row.claim, revalidations.get(row.claim.id), null),
     // A claim the derivation did not answer for is shipped at the WEAKEST
     // rung, never omitted: an absent field reads as "this hub does not report

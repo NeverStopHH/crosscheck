@@ -18738,6 +18738,46 @@ export const MUTATIONS: readonly Mutation[
     because: "a self-cite or a ref to nothing buys a pushed finding (H5)",
   },
   {
+    label: "the hub ships every declared body again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      row.claim.provenance === DECLARED_PROVENANCE &&\n      qualifiesAsSubstance({ ...row.claim, resolvedEvidenceRefs: resolvedRefs.get(row.claim.id) ?? 0 })\n        ? row.claim.body",
+    to: "      row.claim.provenance === DECLARED_PROVENANCE\n        ? row.claim.body",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "a 0.10.0 connector inlines a rejected approach and a proposed root cause the hub never meant to be shown (M1)",
+  },
+  {
+    label: "the wire's evidence count is the stored one",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    evidenceRefCount: resolvedRefs.get(row.claim.id) ?? 0,",
+    to: "    evidenceRefCount: row.claim.evidenceRefs.length,",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "an older connector's count gate reads a draft and a ref to nothing as evidence (M1)",
+  },
+  {
+    label: "a proposed root cause qualifies as substance",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "export const SUBSTANCE_ROOT_CAUSE_STATUSES: ReadonlySet<string> = new Set([\"likely_root_cause\", \"partially_confirmed\"]);",
+    to: "export const SUBSTANCE_ROOT_CAUSE_STATUSES: ReadonlySet<string> = new Set([\"likely_root_cause\", \"partially_confirmed\", \"proposed\"]);",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "a theory's body rides the wire under a teammate's name for any connector that inlines it (M1, principle 5)",
+  },
+  {
+    label: "an unbacked claim qualifies as substance",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  claim.resolvedEvidenceRefs >= SUBSTANCE_MIN_EVIDENCE_REFS &&\n",
+    to: "",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "a root cause whose evidence resolves to nothing carries its body to every connector (M1)",
+  },
+  {
+    label: "a body with no sentence worth showing qualifies as substance",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  substanceSentence(claim.body).length > 0;",
+    to: "  true;",
+    test: `${CORE}/test/hint-substance-trust-parity.test.ts`,
+    because: "the hub ships \"1.\" as a finding the selector refuses, and the two rules part ways (M1)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18997,6 +19037,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
  * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 16
+ * PRINTS: packages/connector-core/test/hint-substance-trust-parity.test.ts 1
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 6
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
@@ -19116,6 +19157,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 9
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
+ * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
