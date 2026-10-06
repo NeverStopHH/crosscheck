@@ -343,7 +343,9 @@ const SYNTHETIC_TASKS: readonly CorpusPrompt[] = [
   task("Gateway-Test für den Chunked Upload", "de", "synthetic", "wc_chunked_upload"),
   task("the usage limit reset should run per user, not globally", "en", "synthetic", "wc_usage_limit"),
   task("keep the retry limit separate from the restart budget", "en", "synthetic", "wc_usage_limit"),
-  task("try a fresh usage limit per tenant", "en", "synthetic", "wc_usage_limit"),
+  // Round 3: it shared "usage", "limit" and "per" with the limit tree — machinery
+  // and, since M7, a function word — so a task with no tree's topic (C1)
+  task("try a fresh usage limit per tenant", "en", "synthetic"),
   task(
     "ich habe mir das jetzt lange angesehen und verstehe immer noch nicht, warum der Chunked Upload beim Gateway-Test abbricht",
     "de",

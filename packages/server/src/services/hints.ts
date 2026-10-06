@@ -136,6 +136,39 @@ export const HINT_MIN_SHARED_TERMS = 2;
 /** What a candidate was matched on: the prompt, or the session's intent in its place. */
 export type HintMatchedOn = "prompt" | "intent";
 
+/**
+ * How many of a prompt's ranked terms the hub LOOKS AT before it counts on
+ * SEARCH_MAX_QUERY_TOKENS of them (hold-out review round 3, M7): the cap is
+ * raised where it is cheap. Each examined term costs one indexed existence
+ * probe — does any work context or claim of this repo say it at all — and
+ * only the words that pass take one of the sixteen counted slots, so a long
+ * prompt's chatter, which nobody on the team wrote, no longer fills them
+ * before the task. A 2000-character query (the route's cap) holds a few
+ * hundred words at most; this bounds the probes whatever it holds.
+ */
+export const HINT_MAX_EXAMINED_TERMS = 256;
+
+/**
+ * How many of the KNOWN terms the floor is counted on (M7): twice the
+ * search's own SEARCH_MAX_QUERY_TOKENS, since only words some statement of
+ * this repo says reach the count, and a long prompt's task — "the daily quota
+ * reset cron runs twice" after two thousand characters of office chatter —
+ * sat past the sixteenth of them. Bounded like every query on the hub.
+ */
+export const HINT_MAX_COUNTED_TERMS = 2 * SEARCH_MAX_QUERY_TOKENS;
+
+/**
+ * A LONG PROMPT'S FLOOR (M7): one that carries more known words than this is
+ * a long message, and among dozens of its words two agreeing with some tree
+ * is chance — the round-3 set's content-free status reports matched a tree on
+ * two or three of them, while every long task's tree shared three topical
+ * words or more. So a candidate of a long prompt needs
+ * HINT_LONG_PROMPT_MIN_TOPICAL topical words on its floor statement, where a
+ * short prompt needs one.
+ */
+export const HINT_LONG_PROMPT_KNOWN_TERMS = 16;
+export const HINT_LONG_PROMPT_MIN_TOPICAL = 3;
+
 /** Same-author revision edge (DESIGN.md §5); its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
@@ -174,8 +207,8 @@ const sharedTermsSql = (document: SQL, terms: readonly string[]): SQL<number> =>
  * statement as the second one: a title of meta words beside a claim that
  * shares one stray word is two weak statements, not one strong one.
  */
-const floorTermsSql = (document: SQL, terms: readonly string[], topical: readonly string[]): SQL<number> =>
-  sql<number>`(CASE WHEN ${sharedTermsSql(document, topical)} >= 1 THEN ${sharedTermsSql(document, terms)} ELSE 0 END)`;
+const floorTermsSql = (document: SQL, terms: QueryTerms): SQL<number> =>
+  sql<number>`(CASE WHEN ${sharedTermsSql(document, terms.topical)} >= ${terms.minTopical} THEN ${sharedTermsSql(document, terms.all)} ELSE 0 END)`;
 
 /**
  * The context's own statement — what its owner said the work is — as one
@@ -546,7 +579,7 @@ const listStatementTerms = async (
     .select({
       id: workContexts.id,
       all: sharedTermsSql(contextStatement, terms.all),
-      floor: floorTermsSql(contextStatement, terms.all, terms.topical),
+      floor: floorTermsSql(contextStatement, terms),
       topical: sharedTermsSql(contextStatement, terms.topical),
     })
     .from(workContexts)
@@ -656,7 +689,7 @@ const listClaimTermMaxima = async (
     .select({
       id: claims.workContextId,
       // The best FLOOR count of one claim: the topical-word rule per claim (C1).
-      terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,
+      terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, terms)})`,
       // And its most topical words — the tree's strength beside its own statement's (H3 + M6).
       topical: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, terms.topical)})`,
     })
@@ -750,6 +783,8 @@ interface QueryTerms {
   readonly all: readonly string[];
   /** Those of them that belong to no closed class (C1). */
   readonly topical: readonly string[];
+  /** Topical words a floor statement must share: one, or more for a long prompt (M7). */
+  readonly minTopical: number;
 }
 
 /** What one search is made of: the text, for its exact tier, and the content terms. */
@@ -900,13 +935,53 @@ export const listHintCandidates = async (
   if (terms.isContentFree) {
     return [];
   }
-  const all = terms.content.slice(0, SEARCH_MAX_QUERY_TOKENS);
+  const known = await listKnownTerms(deps.db, input.repo, terms.ranked);
+  const all = known.slice(0, HINT_MAX_COUNTED_TERMS);
   return matchCandidates(deps, callerDeveloperId, {
     text: humanText,
-    terms: { all, topical: all.filter((term) => terms.topical.includes(term)) },
+    terms: {
+      all,
+      topical: all.filter((term) => terms.topical.includes(term)),
+      minTopical: known.length > HINT_LONG_PROMPT_KNOWN_TERMS ? HINT_LONG_PROMPT_MIN_TOPICAL : 1,
+    },
     repo: input.repo,
     on: "prompt",
   });
+};
+
+/**
+ * THE TERMS WORTH COUNTING (round 3, M7): of the prompt's ranked terms — task
+ * clauses only, topical words first — those that some work context of this
+ * repo, or one of its claims, says at all, in the ranked order. A word nobody
+ * on the team wrote cannot match on any statement, so leaving it out changes
+ * no count; it only stops taking a slot. One query, one GIN probe per term,
+ * at most HINT_MAX_EXAMINED_TERMS of them.
+ */
+const listKnownTerms = async (db: Db, repo: string, ranked: readonly string[]): Promise<readonly string[]> => {
+  const examined = ranked.slice(0, HINT_MAX_EXAMINED_TERMS);
+  if (examined.length === 0) {
+    return [];
+  }
+  const result = await db.execute<{ word: string }>(sql`
+    SELECT term.word AS word
+    FROM unnest(ARRAY[${sql.join(examined.map((word) => sql`${word}`), sql`, `)}]::text[]) WITH ORDINALITY AS term(word, position)
+    CROSS JOIN LATERAL (SELECT plainto_tsquery('english', term.word) AS lexeme) AS query
+    WHERE numnode(query.lexeme) > 0
+      AND (
+        EXISTS (
+          SELECT 1 FROM work_contexts AS context
+          JOIN agent_sessions AS owner ON owner.id = context.session_id
+          WHERE owner.repo = ${repo} AND context.tsv @@ query.lexeme
+        )
+        OR EXISTS (
+          SELECT 1 FROM claims AS claim
+          JOIN work_contexts AS context ON context.id = claim.work_context_id
+          JOIN agent_sessions AS owner ON owner.id = context.session_id
+          WHERE owner.repo = ${repo} AND claim.tsv @@ query.lexeme
+        )
+      )
+    ORDER BY term.position`);
+  return result.rows.map((row) => row.word);
 };
 
 export interface TargetSessionView {

@@ -263,6 +263,29 @@ const selectNotice = (
     .find((notice) => notice.commits.length > 0);
 };
 
+/** What joins a long prompt's head to its tail on the wire. */
+const QUERY_WINDOW_JOIN = "\n";
+
+/** The head's share of the window, the tail taking the rest. */
+const QUERY_WINDOW_HEAD_CHARS = Math.floor((MAX_SEARCH_QUERY_CHARS - QUERY_WINDOW_JOIN.length) / 2);
+
+/**
+ * THE QUERY WINDOW (hold-out review round 3, M7): a prompt the hub's route
+ * cap cannot carry whole goes as its HEAD and its TAIL, each cut between
+ * words. A task is written first or last; a context dump in front of "… the
+ * daily quota reset cron runs twice. Please fix it." used to leave the task
+ * past the first MAX_SEARCH_QUERY_CHARS characters, unseen by the hub.
+ */
+const queryWindow = (text: string): string => {
+  if (text.length <= MAX_SEARCH_QUERY_CHARS) {
+    return text;
+  }
+  const tailChars = MAX_SEARCH_QUERY_CHARS - QUERY_WINDOW_JOIN.length - QUERY_WINDOW_HEAD_CHARS;
+  const head = text.slice(0, QUERY_WINDOW_HEAD_CHARS).replace(/\S*$/u, "").trimEnd();
+  const tail = text.slice(text.length - tailChars).replace(/^\S*/u, "").trimStart();
+  return `${head}${QUERY_WINDOW_JOIN}${tail}`;
+};
+
 /** The counters a turn the prompt path stood down on is booked under (M7). */
 type StoodDownCounter = "flooredPromptCount" | "harnessTurnCount";
 
@@ -302,7 +325,7 @@ export const selectAndRenderHint = async (
   // (@crosscheck/schema prompt-terms.ts), so a hub too old to know it is
   // never asked (review 1006b, L5). Whether a prompt WITH content matches a
   // teammate's work is the hub's call — only the hub holds their words.
-  const promptQuery = isContentFreePrompt(humanText) ? "" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);
+  const promptQuery = isContentFreePrompt(humanText) ? "" : queryWindow(humanText);
   // NOTHING STANDS IN for a prompt that said nothing — not the session's
   // intent either (owner decision, review 1006b M6): no call at all, and the
   // turn is counted as floored whatever the session's budget (M7).

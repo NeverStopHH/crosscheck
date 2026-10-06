@@ -17414,8 +17414,8 @@ export const MUTATIONS: readonly Mutation[
     label: "words from two different claims count as agreeing on one statement",
     // RETARGETED (round 3, C1): the per-claim count is the topical floor count now.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,",
-    to: "terms: sql<number>`sum(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,",
+    from: "terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, terms)})`,",
+    to: "terms: sql<number>`sum(${floorTermsSql(sql`${claims.tsv}`, terms)})`,",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"weiter\" in a German claim plus \"limit\" in another make a limit note look like a task",
   },
@@ -17430,8 +17430,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a prompt with no searchable word goes on the wire",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
-    to: "  const promptQuery = humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    // RETARGETED (round 3, M7): the query is the prompt's window now.
+    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : queryWindow(humanText);",
+    to: "  const promptQuery = queryWindow(humanText);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
   },
@@ -17552,8 +17553,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "German function words count as shared task words",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
-    to: "ENGLISH_STOP_WORDS.has(token) || false;",
+    // RETARGETED (round 3, M7): English function words are english.stop and its supplement.
+    from: "ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
+    to: "ENGLISH_FUNCTION_WORDS.has(token) || false;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"passt, das ist nicht so wichtig, mach weiter\" agrees with a German team's decision on das/ist/nicht and pushes it as substance",
   },
@@ -17952,8 +17954,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the connector sends the harness's words beside the human's",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
-    to: "  const promptQuery = isContentFreePrompt(input.prompt) ? \"\" : input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    // RETARGETED (round 3, M7): the query is the prompt's window now.
+    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : queryWindow(humanText);",
+    to: "  const promptQuery = isContentFreePrompt(input.prompt) ? \"\" : queryWindow(input.prompt);",
     test: `${CORE}/test/hint-harness-turn.test.ts`,
     because: "a notification's task ids and status words go on the wire and top up a human prompt's count",
   },
@@ -17988,16 +17991,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a steering word counts as a term beside a task word",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));",
-    to: "  const content = tokens.filter((token) => !isFunctionWord(token));",
+    // RETARGETED (round 3, M7): the whole prompt and each clause share one term filter.
+    from: "    words.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));",
+    to: "    words.filter((token) => !isFunctionWord(token));",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"mache bitte weiter mit dem Upload\" reaches the limit tree on mache and bitte beside one shared word (H1)",
   },
   {
     label: "session-meta words are steering in every prompt",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));",
-    to: "  const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token) && wordClassOf(token) !== \"meta\");",
+    // RETARGETED (round 3, M7): the whole prompt and each clause share one term filter.
+    from: "    words.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));",
+    to: "    words.filter((token) => !isFunctionWord(token) && !isSteeringWord(token) && wordClassOf(token) !== \"meta\");",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"why does the usage limit reset\" is floored as a session command and never finds the limit tree (M3)",
   },
@@ -18489,17 +18494,19 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a slash command's name is scored as task words",
+    // RETARGETED (round 3, M7): the scored text feeds the verdict and the clauses alike.
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const written = promptTokens(commandArguments(text));",
-    to: "  const written = promptTokens(text);",
+    from: "  const scored = commandArguments(text);",
+    to: "  const scored = text;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"/code-review\" reaches the review checklist on \"code\" and \"review\" (H1 d)",
   },
   {
     label: "the connector sends a bare slash command to the hub",
+    // RETARGETED (round 3, M7): the scored text feeds the verdict and the clauses alike.
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const written = promptTokens(commandArguments(text));",
-    to: "  const written = promptTokens(text);",
+    from: "  const scored = commandArguments(text);",
+    to: "  const scored = text;",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "every \"/compact\" and \"/loop 5m /babysit-prs\" spends a call a 0.10.0 hub answers on the command's own words (H1 d)",
   },
@@ -18925,15 +18932,15 @@ export const MUTATIONS: readonly Mutation[
     label: "the hub sends every content term to SQL, unbounded",
     // RETARGETED (round 3, C1): the bounded terms are named once, for both halves of the floor.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  const all = terms.content.slice(0, SEARCH_MAX_QUERY_TOKENS);",
-    to: "  const all = terms.content;",
+    from: "  const all = known.slice(0, HINT_MAX_COUNTED_TERMS);",
+    to: "  const all = known;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "a pasted wall of text becomes one OR-query of hundreds of terms on the embedded database (L2, the review's survivor)",
   },
   {
     label: "a statement of meta words only clears the floor",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  sql<number>`(CASE WHEN ${sharedTermsSql(document, topical)} >= 1 THEN",
+    from: "  sql<number>`(CASE WHEN ${sharedTermsSql(document, terms.topical)} >= ${terms.minTopical} THEN",
     to: "  sql<number>`(CASE WHEN 1 >= 1 THEN",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "\"session limit hit earlier, it's back now, continue\" points at the intent-only tree that says session and limit (round 3, C1)",
@@ -18941,7 +18948,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a tree's own statement clears the floor on meta words",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      floor: floorTermsSql(contextStatement, terms.all, terms.topical),",
+    from: "      floor: floorTermsSql(contextStatement, terms),",
     to: "      floor: sharedTermsSql(contextStatement, terms.all),",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "an intent made of the session's machinery became the round-3 magnet, taking six of ten content-free hints (C1)",
@@ -18949,16 +18956,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a claim clears the floor on meta words",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,",
-    to: "      terms: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, tokens)})`,",
+    from: "      terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, terms)})`,",
+    to: "      terms: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, terms.all)})`,",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "a claim that says usage, limit, reset and session qualifies its tree for every limit chatter (C1)",
   },
   {
     label: "the hub counts every term as topical",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "    terms: { all, topical: all.filter((term) => terms.topical.includes(term)) },",
-    to: "    terms: { all, topical: all },",
+    from: "      topical: all.filter((term) => terms.topical.includes(term)),",
+    to: "      topical: all,",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "the topical-word rule reads meta words as topics and floors nothing (C1)",
   },
@@ -19163,17 +19170,82 @@ export const MUTATIONS: readonly Mutation[
     because: "\"committe und pushe bitte\" and \"tests laufen lassen\" reach the hub as tasks (H1)",
   },
   {
+    label: "a command clause lends its terms to the search",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "        return isSessionCommand(words, terms, terms.map(classOf)) ? [] : terms;",
+    to: "        return terms;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"keep it short please\" spends a counted slot on \"short\" in a prompt about redis (round 3, M7)",
+  },
+  {
+    label: "the ranked terms keep the prompt's order",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  return [...kept.filter((term) => classOf(term) === null), ...kept.filter((term) => classOf(term) !== null)];",
+    to: "  return kept;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a long prompt's limit chatter takes the counted slots before its topic (M7)",
+  },
+  {
+    label: "the hub searches on the prompt's own order, command clauses included",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const known = await listKnownTerms(deps.db, input.repo, terms.ranked);",
+    to: "  const known = await listKnownTerms(deps.db, input.repo, terms.content);",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "\"keep it short please\" lends \"short\" to a tree titled \"Short redis keys\" (M7)",
+  },
+  {
+    label: "the hub counts words nobody on the team wrote",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const known = await listKnownTerms(deps.db, input.repo, terms.ranked);",
+    to: "  const known = terms.ranked;",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "a morning's chatter fills the counted slots and the redis task behind it finds nothing (t066, M7)",
+  },
+  {
+    label: "the hub examines every word of a long prompt",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const examined = ranked.slice(0, HINT_MAX_EXAMINED_TERMS);",
+    to: "  const examined = ranked;",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "the existence probes are no longer bounded by anything but the route's character cap (M7)",
+  },
+  {
+    label: "a long prompt's floor is a short one's",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      minTopical: known.length > HINT_LONG_PROMPT_KNOWN_TERMS ? HINT_LONG_PROMPT_MIN_TOPICAL : 1,",
+    to: "      minTopical: 1,",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "a long status report agrees with a teammate's root cause on two words from two sentences, and gets it as substance (cf172, M7)",
+  },
+  {
+    label: "the connector sends only a long prompt's head",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  return `${head}${QUERY_WINDOW_JOIN}${tail}`;",
+    to: "  return text.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "\"the daily quota reset cron runs twice\" after two thousand characters of chatter never reaches the hub (t072, M7)",
+  },
+  {
+    label: "the English supplement is not applied",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
+    to: "    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"every\" and \"instead\" are topics, and a long status report matches a root cause on them (M7)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
-    to: "  const promptQuery = humanText.length === 0 ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    // RETARGETED (round 3, M7): the query is the prompt's window now.
+    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : queryWindow(humanText);",
+    to: "  const promptQuery = humanText.length === 0 ? \"\" : queryWindow(humanText);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "a 0.10.0 hub, which knows no steering word, points \"mache weiter\" at the tree that says mache (L5)",
   },
   {
     label: "the session-command rule judges stop words too",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const isFunctionWord = (token: string): boolean =>\n    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
+    from: "  const isFunctionWord = (token: string): boolean =>\n    ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
     to: "  const isFunctionWord = (_token: string): boolean => false;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"weiter\" and \"alles\" are not session commands, so no real prompt of them is ever content-free",
@@ -19190,8 +19262,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the German stop list strips an English prompt",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
-    to: "ENGLISH_STOP_WORDS.has(token) || GERMAN_FUNCTION_WORDS.has(token);",
+    from: "ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
+    to: "ENGLISH_FUNCTION_WORDS.has(token) || GERMAN_FUNCTION_WORDS.has(token);",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"why does the worker die\" loses \"die\" and the worker tree it shares two words with (L1)",
   },
@@ -19420,6 +19492,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 9
+ * PRINTS: packages/connector-core/test/hint-query-window.test.ts 1
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
@@ -19504,7 +19577,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 19
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 22
  * PRINTS: packages/schema/test/session-control.test.ts 6
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4
@@ -19546,6 +19619,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 9
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
+ * PRINTS: packages/server/test/hint-long-prompt.test.ts 4
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
  * PRINTS: packages/server/test/hint-strong-match.test.ts 5
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4

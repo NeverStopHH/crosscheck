@@ -70,3 +70,26 @@ export const GERMAN_STOP_SUPPLEMENT: ReadonlySet<string> = new Set([
 
 /** What a German text drops: german.stop and its supplement. */
 export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS, ...GERMAN_STOP_SUPPLEMENT]);
+
+/**
+ * ENGLISH FUNCTION WORDS english.stop LACKS (hold-out review round 3, M7),
+ * for the reason German needed one: the snowball list holds the pronouns,
+ * auxiliaries and the commonest prepositions, but no modal past "can" and
+ * "will", no "every" or "instead", no indefinite pronoun and no connective.
+ * Once the hub counted a long message's known words, a status report of the
+ * usage limit agreed with a teammate's root cause on "every", "instead" and
+ * "row" — three words from three sentences, none of them a topic. A small
+ * closed supplement, applied like english.stop to every prompt; the
+ * database's own list stays the pinned mirror.
+ */
+export const ENGLISH_STOP_SUPPLEMENT: ReadonlySet<string> = new Set([
+  "would", "could", "might", "must", "shall", "may", "every", "many", "much", "several", "another",
+  "either", "neither", "also", "instead", "since", "though", "although", "even", "ever", "already",
+  "yet", "else", "anyway", "however", "therefore", "thus", "rather", "quite", "almost", "often",
+  "sometimes", "usually", "something", "nothing", "someone", "anyone", "everyone", "somebody",
+  "anybody", "nobody", "somewhere", "anywhere", "everywhere", "whether", "unless", "upon", "within",
+  "without", "via", "per", "etc",
+]);
+
+/** What every prompt drops: english.stop and its supplement. */
+export const ENGLISH_FUNCTION_WORDS: ReadonlySet<string> = new Set([...ENGLISH_STOP_WORDS, ...ENGLISH_STOP_SUPPLEMENT]);

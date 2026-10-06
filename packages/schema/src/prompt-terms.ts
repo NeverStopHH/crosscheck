@@ -22,7 +22,7 @@
 import { isContinuationTrigger, isRestartVerb, isSteeringWord, wordClassOf } from "./session-control.ts";
 import type { WordClass } from "./session-control.ts";
 import { commandArguments } from "./slash-command.ts";
-import { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
+import { ENGLISH_FUNCTION_WORDS, ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
 
 /** Shorter tokens are not words to search on — the hub's and the connector's floor. */
 export const PROMPT_MIN_TOKEN_CHARS = 3;
@@ -60,10 +60,22 @@ export interface PromptTerms {
    * ("session", "limit") are the session's machinery, never a topic.
    */
   readonly topical: readonly string[];
+  /**
+   * THE TERMS A SEARCH SPENDS ITS BOUND ON (hold-out review round 3, M7): the
+   * content words of every CLAUSE that is not itself a command to the session
+   * — "keep it short please", "carry on after that, thanks" lend nothing —
+   * topical words first, the closed-class ones after, each in order of first
+   * appearance. A long prompt's chatter used to fill the hub's sixteen terms
+   * before the task in its third sentence was reached.
+   */
+  readonly ranked: readonly string[];
   readonly isGerman: boolean;
   /** No task: what is left is a command to the session (`isSessionCommand`). */
   readonly isContentFree: boolean;
 }
+
+/** Clause boundaries (M7): sentence ends, commas, semicolons, colons, dashes and line breaks. */
+const CLAUSE_BOUNDARY = /[.!?;:,\n\r–—]+/u;
 
 /** Words that never name a task: steering, triggers and filler (round 3, H1). */
 const isSteeringClass = (wordClass: WordClass | null): boolean =>
@@ -109,17 +121,47 @@ const isSessionCommand = (
 export const promptTerms = (text: string): PromptTerms => {
   // A slash command's name is never a task word: only its arguments are
   // scored (slash-command.ts).
-  const written = promptTokens(commandArguments(text));
+  const scored = commandArguments(text);
+  const written = promptTokens(scored);
   const tokens = [...new Set(written)];
   const isGerman = isGermanPrompt(written);
   const isFunctionWord = (token: string): boolean =>
-    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));
+    ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));
   // STEERING WORDS ARE NEVER TERMS (review 1006b, H1): not as a shared word
   // beside a real one. As written: a slip moves the verdict, never the terms.
-  const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));
-  const classes = content.map(wordClassOf);
+  const termsOf = (words: readonly string[]): readonly string[] =>
+    words.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));
+  const content = termsOf(tokens);
+  // Every word looked up once: a clause's words are the prompt's words.
+  const classByWord: ReadonlyMap<string, WordClass | null> = new Map(content.map((term) => [term, wordClassOf(term)]));
+  const classOf = (term: string): WordClass | null => (classByWord.has(term) ? (classByWord.get(term) ?? null) : wordClassOf(term));
+  const classes = content.map(classOf);
   const topical = content.filter((_, index) => classes[index] === null);
-  return { content, topical, isGerman, isContentFree: isSessionCommand(tokens, content, classes) };
+  return {
+    content,
+    topical,
+    ranked: rankedTerms(scored, termsOf, classOf),
+    isGerman,
+    isContentFree: isSessionCommand(tokens, content, classes),
+  };
+};
+
+/** The ranked terms (M7): those of every clause that is no command, topical first. */
+const rankedTerms = (
+  text: string,
+  termsOf: (words: readonly string[]) => readonly string[],
+  classOf: (term: string) => WordClass | null,
+): readonly string[] => {
+  const kept = [
+    ...new Set(
+      text.split(CLAUSE_BOUNDARY).flatMap((clause) => {
+        const words = [...new Set(promptTokens(clause))];
+        const terms = termsOf(words);
+        return isSessionCommand(words, terms, terms.map(classOf)) ? [] : terms;
+      }),
+    ),
+  ];
+  return [...kept.filter((term) => classOf(term) === null), ...kept.filter((term) => classOf(term) !== null)];
 };
 
 /** Nothing task-bearing: what is left is a command to the session. */

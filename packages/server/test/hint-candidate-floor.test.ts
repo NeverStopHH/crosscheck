@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { SEARCH_MAX_QUERY_TOKENS } from "../src/services/search.ts";
+import { HINT_MAX_COUNTED_TERMS } from "../src/services/hints.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -364,17 +364,28 @@ describe("the hub's own bounds before any search (hold-out review, L2)", () => {
     expect(ids(await fetchCandidates(harness, robin, { query: "zebrafrobnicator quuxinator" }))).toEqual([WORK_CONTEXT_ID]);
   });
 
-  test(`only the first ${String(SEARCH_MAX_QUERY_TOKENS)} content terms reach the database — words past them are not searched`, async () => {
+  test(`only the first ${String(HINT_MAX_COUNTED_TERMS)} KNOWN terms are counted — words past them are not searched (M7)`, async () => {
     // Arrange — the bound keeps SQL and the PGlite heap bounded; the verdict
-    // still reads every word (prompt-terms.ts), the search does not
-    const { harness, robin } = await lateWordTree();
-    const fillers = Array.from({ length: SEARCH_MAX_QUERY_TOKENS }, (_, index) => `filler${String(index).padStart(4, "0")}`);
+    // still reads every word (prompt-terms.ts), the search does not. The
+    // fillers are words a teammate's tree says, so they are known and each
+    // takes a counted slot (round 3, M7: an unknown word takes none).
+    const fillers = Array.from({ length: HINT_MAX_COUNTED_TERMS }, (_, index) => `filler${String(index).padStart(4, "0")}`);
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Unrelated title words", description: "x" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_late", body: "The zebrafrobnicator cache poisons the quuxinator on every warm start" })),
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_fillers", title: "Filler words", description: fillers.join(" ") })),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(3);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
 
-    // Act
-    const candidates = await fetchCandidates(harness, robin, { query: `${fillers.join(" ")} zebrafrobnicator quuxinator` });
+    // Act — three late words the late tree says, enough for a long prompt's floor
+    const candidates = await fetchCandidates(harness, robin, { query: `${fillers.join(" ")} zebrafrobnicator quuxinator warm` });
 
     // Assert
-    expect(candidates).toEqual([]);
+    expect(ids(candidates)).not.toContain(WORK_CONTEXT_ID);
   });
 });
 

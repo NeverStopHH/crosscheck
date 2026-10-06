@@ -42,6 +42,10 @@ describe("content terms are the words left after the stop lists", () => {
     expect(promptTerms(prompt).content).toEqual(terms);
   });
 
+  test("English function words english.stop lacks are function words too: every, instead, would (round 3, M7)", () => {
+    expect(promptTerms("why would the worker fail every time instead of retrying").content).toEqual(["worker", "fail", "time"]);
+  });
+
   test("the supplement is German: an English prompt keeps the word", () => {
     expect(promptTerms("the gibt parser fails").content).toEqual(["gibt", "parser", "fails"]);
   });
@@ -168,6 +172,23 @@ describe("content terms are the words left after the stop lists", () => {
     // Assert
     expect(verdict).toBe(false);
     expect(elapsed).toBeLessThan(VERDICT_BUDGET_MS);
+  });
+
+  test("the RANKED terms put topical words first (round 3, M7)", () => {
+    expect(promptTerms("warum wird das Upload-Limit nicht erhöht").ranked).toEqual(["upload", "erhöht", "limit"]);
+  });
+
+  test("the ranked terms drop a clause that is itself a command to the session (M7)", () => {
+    // Arrange — "keep it short, thanks" and "carry on" are commands; the middle clause is the task
+    const prompt = "limit reset, keep it short please. the redis cache eviction drops feed entries. carry on after that, thanks";
+
+    // Act
+    const terms = promptTerms(prompt);
+
+    // Assert — the task clause's words lead, the machinery follows, the commands are gone
+    expect(terms.ranked).toEqual(["redis", "cache", "eviction", "drops", "feed", "entries", "limit", "reset"]);
+    expect(terms.ranked).not.toContain("short");
+    expect(terms.content).toContain("short");
   });
 
   test("every token is judged — a task word past the sixteenth is kept", () => {
