@@ -19413,6 +19413,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "the person reads a word their agent's tool typed as their own",
   },
+  // ── 07 §13.14, round-6 LOW-2: a clock that stepped back (D4) ──
+  {
+    label: "leaving the pilot closes the interval at a wall clock that stepped back (D4)",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "      .set({ endedAt: sql`GREATEST(${now.toISOString()}::timestamptz, ${pilotEnrolments.startedAt})` })",
+    to: "      .set({ endedAt: now })",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "the CHECK refuses an interval that ends before it starts, and leaving the pilot is a 500",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19788,7 +19797,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
- * PRINTS: packages/server/test/team-settings.test.ts 6
+ * PRINTS: packages/server/test/team-settings.test.ts 7
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1

@@ -383,6 +383,24 @@ describe("pilot enrolment", () => {
     // Assert
     expect(row.rows).toEqual([{ e: true, l: true }]);
   });
+
+  test("round-6 LOW-2 (D4): a toggle off whose wall clock stepped back past the open interval's start closes it at its start", async () => {
+    // Arrange — enrolled at .005; the host's clock then steps back (NTP) to .001
+    const harness = await createTestHarness();
+    let at = new Date("2026-09-02T09:00:00.005Z");
+    const deps = { db: harness.db, now: () => at };
+    await writeTeamSettings(deps, { repo: REPO, pilotEnrolled: true });
+    at = new Date("2026-09-02T09:00:00.001Z");
+
+    // Act — before: the CHECK refused the close, and leaving the pilot was a 500
+    await writeTeamSettings(deps, { repo: REPO, pilotEnrolled: false });
+
+    // Assert — a zero-length interval, never one that ends before it starts
+    const rows = await harness.db.execute(
+      sql`SELECT started_at::text AS s, ended_at::text AS e FROM pilot_enrolments`,
+    );
+    expect(rows.rows).toEqual([{ s: "2026-09-02 09:00:00.005+00", e: "2026-09-02 09:00:00.005+00" }]);
+  });
 });
 
 describe("the pin policy", () => {

@@ -212,9 +212,11 @@ const recordEnrolmentChange = async (
     await db.insert(pilotEnrolments).values({ id: `pe_${randomUUID()}`, repo, startedAt: now, endedAt: null });
   }
   if (!isEnrolled && wasEnrolled) {
+    // round-6 LOW-2: a wall clock that stepped back past the interval's start closes it at its start —
+    // zero length, never ending before it began (the CHECK refused that, and leaving was a 500)
     await db
       .update(pilotEnrolments)
-      .set({ endedAt: now })
+      .set({ endedAt: sql`GREATEST(${now.toISOString()}::timestamptz, ${pilotEnrolments.startedAt})` })
       .where(and(eq(pilotEnrolments.repo, repo), isNull(pilotEnrolments.endedAt)));
   }
 };

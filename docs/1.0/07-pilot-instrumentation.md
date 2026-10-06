@@ -1581,3 +1581,8 @@ as your agent's word — this command's input was not a terminal (an agent's too
 says the commands are the person's only when typed in their own shell: "recorded with your key — by you
 (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those
 commands run by an agent's tool, a pipe or Claude Code's `!`)".
+
+*LOW-2 — a clock that stepped back made leaving the pilot a 500 (D4).* The CHECK that an interval never ends
+before it starts is a database fact since round 5, and the toggle closed the open interval at the hub's wall
+clock: one that stepped back past the interval's start (an NTP correction) had its close refused. The close
+is now `GREATEST(now, started_at)` — a zero-length interval at worst, never a backwards one.
