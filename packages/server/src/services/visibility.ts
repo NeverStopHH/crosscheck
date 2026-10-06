@@ -117,6 +117,14 @@
  * The cost, stated: teammates' SessionStart no longer marks her work
  * landed; only her own sessions do, so it reads unlanded longer than it is.
  *
+ * ACCEPTED, AND NOT BUILT AROUND: the events feed's ids are ONE sequence
+ * every developer's rows share, and a hidden developer's rows are left out
+ * of a colleague's feed (surface 4 above) — so the ids a colleague does
+ * see have gaps where hers were. Sequence gaps reveal that some hidden
+ * activity happened around then, never what or where. Closing them would
+ * take per-viewer cursors, a second id space for every feed consumer to
+ * resume by; that is not worth the residual.
+ *
  * ACCEPTED: the withholding is itself visible. A colleague who sees a
  * teammate's work but never their presence line, or reads LOCATION_WITHHELD
  * and WITHHELD_TITLE, can tell that teammate opted out. That is the price of
