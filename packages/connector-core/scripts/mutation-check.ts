@@ -18047,6 +18047,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 round 6 LOW-1 (RS5-D): a life the hub now knows posts nothing for up to five minutes after its re-register",
   },
+  {
+    label: "a stray round-4 marker is read as a host session of its own",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    ? (name.slice(0, -PENDING_END_SUFFIX.length).split(STRAY_RUNG_SEPARATOR)[0] ?? null)",
+    to: "    ? name.slice(0, -PENDING_END_SUFFIX.length)",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 LOW-2: `<slug>@r1.pending-end` has no spool of its own, so the life is ended while its records are still on disk",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18307,7 +18315,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 28
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 26
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 27
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

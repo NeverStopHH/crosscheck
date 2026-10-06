@@ -393,10 +393,17 @@ interface PendingEndMarker {
 /** A later life's marker: the slug, then its rung — the last `.r<n>` before the suffix. */
 const LATER_LIFE_MARKER = new RegExp(`^(.+)\\.r\\d+${PENDING_LIFE_SUFFIX.replace(".", "\\.")}$`, "u");
 
+/**
+ * Where a stray marker from one build of this branch put the rung,
+ * `<slug>@r<n>.pending-end`: no slug holds `@` (`encodeURIComponent` escapes
+ * it), so what precedes it is the slug (review-2 round 6, LOW-2).
+ */
+const STRAY_RUNG_SEPARATOR = "@";
+
 /** The host session's slug a marker name belongs to, or null for any other file. */
 const slugOfMarker = (name: string): string | null =>
   name.endsWith(PENDING_END_SUFFIX)
-    ? name.slice(0, -PENDING_END_SUFFIX.length)
+    ? (name.slice(0, -PENDING_END_SUFFIX.length).split(STRAY_RUNG_SEPARATOR)[0] ?? null)
     : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);
 
 /**

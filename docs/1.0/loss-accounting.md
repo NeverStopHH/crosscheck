@@ -324,7 +324,9 @@ from before the last `.r<n>`, and each life's end waits for the conversation's b
 and is counted — on its own. The later-life name is deliberately no `.pending-end` name (review-2 MEDIUM-2): every
 reap before per-life markers lists those and reads the whole stem as a slug, and a proxy started before an upgrade
 read the first spelling, `<slug>@r1.pending-end`, as a session with no spool, saw nothing pending, and ended the
-life while `<slug>.jsonl` still held its records. An older reap never sees a `.pending-life` file at all.
+life while `<slug>.jsonl` still held its records. An older reap never sees a `.pending-life` file at all. A stray
+marker in that first spelling is still read right by this reap: `@` never occurs in a slug, so the part before it
+is the slug (round 6 LOW-2).
 
 **SessionEnd compares before it deletes** (review-2 finding 2). SessionEnd reads the life it ends at its start and
 deleted the state unconditionally at its end; a mid-life heal landing in between (`K → K~r1`) left the healed life

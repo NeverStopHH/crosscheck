@@ -8,13 +8,14 @@
  * front of the hub turns those dials; everything else is the shipped flows.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readdir, rm } from "node:fs/promises";
+import { readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
-import { repoKey, sessionSlug, spoolDir } from "../src/config/paths.ts";
+import { repoKey, sessionSlug, sessionStatePath, spoolDir } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
@@ -700,6 +701,32 @@ describe("a resumed life's end beside a deferred end before it", () => {
     // pending, and ended the life while `<slug>.jsonl` still held its edit
     expect(listed).toEqual([]);
     expect(await pendingEnds(fx)).toEqual([`${sessionSlug(fx.hostSessionKey)}.r1.pending-life`]);
+  });
+
+  test("a stray round-4 marker `<slug>@r1.pending-end` waits for its slug's backlog, then lands (review-2 round 6, LOW-2)", async () => {
+    // Arrange: life 0 ended; the resumed life's edit on disk, its deferred end
+    // in the spelling one build of this branch wrote
+    const fx = await fixture("stray-marker");
+    await register(fx);
+    await endViaFlow(fx);
+    const r1 = await register(fx);
+    await captureTarget(fx, "src/r1.ts");
+    const stray = join(spoolDir(fx.home, fx.key), `${sessionSlug(fx.hostSessionKey)}@r1.pending-end`);
+    await writeFile(stray, `${JSON.stringify({ crosscheckSessionId: r1.crosscheckSessionId, at: new Date().toISOString() })}\n`);
+    await rm(sessionStatePath(fx.home, fx.hostSessionKey), { force: true });
+
+    // Act: a reap while the edit waits, then a successor's flush and reap
+    await reapAsSessionStart(fx);
+    const whileOnDisk = await isEnded(r1.crosscheckSessionId);
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+    await reapAsSessionStart(fx);
+
+    // Assert
+    expect(whileOnDisk).toBe(false);
+    expect(await isEnded(r1.crosscheckSessionId)).toBe(true);
+    expect(await targetsOf(r1.workContextId)).toEqual(["src/r1.ts"]);
+    expect(await Bun.file(stray).exists()).toBe(false);
   });
 });
 
