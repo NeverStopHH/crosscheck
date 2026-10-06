@@ -1180,15 +1180,27 @@ BEGIN
 END $$;
 ALTER TABLE pilot_enrolments ADD COLUMN IF NOT EXISTS reconstructed boolean NOT NULL DEFAULT false;
 -- An interval never ends before it starts (round-5 LOW-1), a database fact; added once to a
--- table that predates it (ADD CONSTRAINT has no IF NOT EXISTS).
+-- table that predates it (ADD CONSTRAINT has no IF NOT EXISTS). Round-6 MEDIUM-1: an older hub
+-- can hold rows the old now-before-lock race closed before they opened, and the whole bootstrap
+-- is one statement, so one such row kept the hub from starting at all. Repair them first —
+-- closed at their own start, marked as rebuilt — then add the CHECK and validate it.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pilot_enrolments_ends_after_start') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pilot_enrolments_ends_after_start'
+                 AND conrelid = 'pilot_enrolments'::regclass) THEN
+    UPDATE pilot_enrolments SET ended_at = started_at, reconstructed = true WHERE ended_at < started_at;
     ALTER TABLE pilot_enrolments ADD CONSTRAINT pilot_enrolments_ends_after_start
-      CHECK (ended_at IS NULL OR ended_at >= started_at);
+      CHECK (ended_at IS NULL OR ended_at >= started_at) NOT VALID;
+    ALTER TABLE pilot_enrolments VALIDATE CONSTRAINT pilot_enrolments_ends_after_start;
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS pilot_enrolments_repo_started_idx ON pilot_enrolments (repo, started_at);
+-- Round-6 MEDIUM-1: a round-3 race (two "on"s that both read not-enrolled) could leave two open
+-- intervals, and the index below would refuse to build. Keep the earliest open; close each later
+-- one at its own start, marked as rebuilt. With the index in place this matches nothing.
+UPDATE pilot_enrolments pe SET ended_at = pe.started_at, reconstructed = true
+  WHERE pe.ended_at IS NULL AND EXISTS (
+    SELECT 1 FROM pilot_enrolments o WHERE o.repo = pe.repo AND o.ended_at IS NULL AND o.started_at < pe.started_at);
 -- At most one open interval per repo: a second "on" fails loudly, never doubles.
 CREATE UNIQUE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;
 -- (The upgrade backfill of this table runs below, once hint_outcomes exists: it reads the words.)

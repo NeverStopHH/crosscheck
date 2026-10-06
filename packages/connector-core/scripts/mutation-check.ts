@@ -18998,8 +18998,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an interval may end before it starts",
     file: `${SERVER}/src/db/bootstrap.sql`,
-    from: "      CHECK (ended_at IS NULL OR ended_at >= started_at);",
-    to: "      CHECK (true);",
+    from: "      CHECK (ended_at IS NULL OR ended_at >= started_at) NOT VALID;",
+    to: "      CHECK (true) NOT VALID;",
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "a backwards interval is stored, and whileEnrolled reads it as no time at all",
   },
@@ -19281,6 +19281,55 @@ export const MUTATIONS: readonly Mutation[
     to: "  helpful: z.unknown().optional(),",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "any text a hub sends prints as the person's own label count",
+  },
+  // ── 07 §13.14, round-6 MEDIUM-1: a populated older table still boots ──
+  {
+    label: "a backwards interval on an older hub is never repaired (D1/D2)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    UPDATE pilot_enrolments SET ended_at = started_at, reconstructed = true WHERE ended_at < started_at;\n",
+    to: "\n",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "one row the old race closed before it opened keeps the hub from starting",
+  },
+  {
+    label: "a repaired backwards interval is not marked as rebuilt",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    UPDATE pilot_enrolments SET ended_at = started_at, reconstructed = true WHERE ended_at < started_at;",
+    to: "    UPDATE pilot_enrolments SET ended_at = started_at WHERE ended_at < started_at;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a bound the upgrade invented reads as a toggle's instant",
+  },
+  {
+    label: "the interval CHECK is added and never validated",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    ALTER TABLE pilot_enrolments VALIDATE CONSTRAINT pilot_enrolments_ends_after_start;\n",
+    to: "\n",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the database never proves the rows it already held obey the CHECK",
+  },
+  {
+    label: "the interval CHECK is added again on every start",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pilot_enrolments_ends_after_start'\n                 AND conrelid = 'pilot_enrolments'::regclass) THEN",
+    to: "  IF true THEN",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the second start fails: the constraint already exists",
+  },
+  {
+    label: "two open intervals on a round-3 hub are never repaired (D3)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  WHERE pe.ended_at IS NULL AND EXISTS (\n    SELECT 1 FROM pilot_enrolments o WHERE o.repo = pe.repo AND o.ended_at IS NULL AND o.started_at < pe.started_at);",
+    to: "  WHERE false AND EXISTS (\n    SELECT 1 FROM pilot_enrolments o WHERE o.repo = pe.repo AND o.ended_at IS NULL AND o.started_at < pe.started_at);",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the one-open index refuses to build and the hub never starts",
+  },
+  {
+    label: "the open-interval repair closes the earliest enrolment",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "AND o.ended_at IS NULL AND o.started_at < pe.started_at);",
+    to: "AND o.ended_at IS NULL AND o.started_at > pe.started_at);",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the repo reads as enrolled only from the later 'on', and the time between is lost",
   },
 ];
 
@@ -19593,7 +19642,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 15
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 21
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11

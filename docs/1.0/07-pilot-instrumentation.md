@@ -1531,3 +1531,12 @@ buckets still add up to `received`. The wire carries `helpful` per source and in
 connector's schema (absent from an older hub, which prints no such line; a value that is not a count rejects
 the view like any other count). It leaks nothing new: it is counted from the caller's own deliveries only, and
 the team line and the source credit never select it.
+
+*MEDIUM-1 — a populated older table kept the hub from starting.* The bootstrap is one statement, so one row
+that breaks what the tip now enforces stops every start: a row the old now-before-lock race closed before it
+opened (round 3 or round 4) violates the interval CHECK, and two open intervals (a round-3 race of two "on"s)
+keep the one-open index from building. The upgrade now repairs both first. A backwards row is closed at its
+own start; then the CHECK is added `NOT VALID` and validated, once, guarded by `pg_constraint`. Of two open
+intervals the earliest stays open and each later one is closed at its own start — before the index is built,
+and a no-op once it exists. Every repaired row is marked `reconstructed`: its bound was inferred by the upgrade,
+not a toggle's instant. The repair keeps the time the repo was enrolled; a second start changes nothing.

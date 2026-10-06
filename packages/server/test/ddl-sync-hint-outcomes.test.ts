@@ -173,6 +173,103 @@ describe("hint_outcomes DDL sync", () => {
     expect(key.rows).toEqual([{ c: "id" }]);
   });
 
+  describe("round-6 MEDIUM-1: a populated older table whose rows break what the tip enforces still boots", () => {
+    const clientOf = (harness: Awaited<ReturnType<typeof createTestHarness>>) =>
+      (harness.db as unknown as { $client: { exec: (text: string) => Promise<unknown> } }).$client;
+
+    const bootTwice = async (harness: Awaited<ReturnType<typeof createTestHarness>>): Promise<void> => {
+      const text = await Bun.file(BOOTSTRAP_SQL_URL).text();
+      await clientOf(harness).exec(text);
+      await clientOf(harness).exec(text);
+    };
+
+    const intervals = async (harness: Awaited<ReturnType<typeof createTestHarness>>): Promise<readonly unknown[]> =>
+      (
+        await harness.db.execute(
+          sql`SELECT started_at::text AS s, ended_at::text AS e, reconstructed AS x FROM pilot_enrolments ORDER BY started_at`,
+        )
+      ).rows;
+
+    const checkIsValidated = async (harness: Awaited<ReturnType<typeof createTestHarness>>): Promise<unknown> =>
+      (
+        await harness.db.execute(sql`SELECT convalidated AS v FROM pg_constraint
+          WHERE conname = 'pilot_enrolments_ends_after_start' AND conrelid = 'pilot_enrolments'::regclass`)
+      ).rows;
+
+    const roundThreeTable = [
+      sql`DROP TABLE pilot_enrolments`,
+      sql`CREATE TABLE pilot_enrolments (repo text NOT NULL, started_at timestamptz NOT NULL, ended_at timestamptz,
+            PRIMARY KEY (repo, started_at))`,
+    ];
+
+    test("D1: a round-4 hub holding a row the old now-before-lock race closed before it opened", async () => {
+      // Arrange — the round-4 shape (keyed by id, no CHECK yet) and the race's row
+      const harness = await createTestHarness();
+      for (const statement of [
+        sql`ALTER TABLE pilot_enrolments DROP CONSTRAINT pilot_enrolments_ends_after_start`,
+        sql`INSERT INTO pilot_enrolments (id, repo, started_at, ended_at)
+            VALUES ('pe_race', 'github.com/acme/api', '2026-09-02T09:00:00.005Z', '2026-09-02T09:00:00.001Z')`,
+      ]) {
+        await harness.db.execute(statement);
+      }
+
+      // Act — twice: the repair must be a no-op the second time
+      await bootTwice(harness);
+
+      // Assert — closed at its own start, marked as rebuilt, and the CHECK added and validated
+      expect(await intervals(harness)).toEqual([
+        { s: "2026-09-02 09:00:00.005+00", e: "2026-09-02 09:00:00.005+00", x: true },
+      ]);
+      expect(await checkIsValidated(harness)).toEqual([{ v: true }]);
+    });
+
+    test("D2: a round-3 hub (no id) holding a row that ends before it starts", async () => {
+      // Arrange
+      const harness = await createTestHarness();
+      for (const statement of [
+        ...roundThreeTable,
+        sql`INSERT INTO pilot_enrolments VALUES ('github.com/acme/api', '2026-09-02T09:00:00.005Z', '2026-09-02T09:00:00.001Z')`,
+      ]) {
+        await harness.db.execute(statement);
+      }
+
+      // Act
+      await bootTwice(harness);
+
+      // Assert
+      expect(await intervals(harness)).toEqual([
+        { s: "2026-09-02 09:00:00.005+00", e: "2026-09-02 09:00:00.005+00", x: true },
+      ]);
+      expect(await checkIsValidated(harness)).toEqual([{ v: true }]);
+    });
+
+    test("D3: a round-3 hub holding two open intervals (two 'on's that both read not-enrolled)", async () => {
+      // Arrange
+      const harness = await createTestHarness();
+      for (const statement of [
+        ...roundThreeTable,
+        sql`INSERT INTO pilot_enrolments VALUES ('github.com/acme/api', '2026-09-02T09:00:00.001Z', NULL),
+                                                ('github.com/acme/api', '2026-09-02T09:00:00.004Z', NULL)`,
+      ]) {
+        await harness.db.execute(statement);
+      }
+
+      // Act
+      await bootTwice(harness);
+
+      // Assert — the earliest stays open; the later one closes at its own start, marked as rebuilt;
+      // the one-open index now exists
+      expect(await intervals(harness)).toEqual([
+        { s: "2026-09-02 09:00:00.001+00", e: null, x: false },
+        { s: "2026-09-02 09:00:00.004+00", e: "2026-09-02 09:00:00.004+00", x: true },
+      ]);
+      const index = await harness.db.execute(
+        sql`SELECT indexname AS n FROM pg_indexes WHERE indexname = 'pilot_enrolments_one_open_idx'`,
+      );
+      expect(index.rows).toHaveLength(1);
+    });
+  });
+
   test("review M3: an upgraded hub keeps the enrolment it already had as its first interval", async () => {
     // Arrange — the shape before the history: one repo enrolled, one that left, one never enrolled
     const harness = await createTestHarness();
