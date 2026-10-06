@@ -357,18 +357,40 @@ const WITHHELD_SENTENCE: Readonly<Record<string, string>> = {
   too_few_recorded: `fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} outcomes were recorded`,
 };
 
-/** ", counted from <day>, when outcomes became recordable here" — only when that instant clips the month. */
-const clippedFrom = (block: OutcomeBlock): string =>
-  block.countedFromIso === null || block.countedFromIso === block.periodStartIso
-    ? ""
-    : `, counted from ${isoDay(block.countedFromIso)}, when outcomes became recordable here`;
+/**
+ * WHERE COUNTING STARTS, AND WHETHER IT PAUSED (07 §13.11, review M3) — each
+ * date for its own reason: the first enrolment is when outcomes became
+ * recordable; a later start is a re-enrolment; a pause anywhere in the month
+ * means only enrolled time was counted.
+ */
+const clippedFrom = (block: OutcomeBlock): string => {
+  if (block.pausedInPeriod === true) {
+    return ", counted only while the pilot was enrolled here";
+  }
+  if (block.countedFromIso === null || block.countedFromIso === block.periodStartIso) {
+    return "";
+  }
+  const why =
+    block.countedFromIso === block.recordableSinceIso
+      ? "when outcomes became recordable here"
+      : "when the pilot was enrolled here again";
+  return `, counted from ${isoDay(block.countedFromIso)}, ${why}`;
+};
+
+/** Why nothing in the month could be recorded: never enrolled, enrolled after it, or paused through it. */
+const notRecordableWhy = (block: OutcomeBlock): string => {
+  const since = block.recordableSinceIso;
+  if (since === null) {
+    return "this repo does not record them";
+  }
+  return Date.parse(since) < Date.parse(block.periodEndIso)
+    ? "the pilot was paused here for the whole month"
+    : `outcomes became recordable here on ${isoDay(since)}`;
+};
 
 const withheldOutcomeLine = (block: OutcomeBlock, month: string, withheld: string): string => {
   if (withheld === "not_recordable") {
-    const since = block.recordableSinceIso;
-    return since === null
-      ? `${INDENT}hint outcomes, ${month}: none could be recorded — this repo does not record them`
-      : `${INDENT}hint outcomes, ${month}: none could be recorded — outcomes became recordable here on ${isoDay(since)}`;
+    return `${INDENT}hint outcomes, ${month}: none could be recorded — ${notRecordableWhy(block)}`;
   }
   if (withheld === "no_interventions") {
     return `${INDENT}hint outcomes, ${month}: no intervention reached anyone${clippedFrom(block)}`;

@@ -65,8 +65,12 @@ const windowWords = (view: MyHintOutcomes): string =>
     ? `since ${day(view.sinceIso)}, when outcomes became recordable here (..${day(view.untilIso)})`
     : `last ${plural(view.days, "day")} (${day(view.sinceIso)}..${day(view.untilIso)})`;
 
+/** 07 §13.11 (review M3): a pause inside the window is said, so the window is not read as unbroken. */
+const pausedWords = (view: MyHintOutcomes): string =>
+  view.pausedInWindow === true ? " — counted only while the pilot was enrolled here" : "";
+
 const headerLines = (view: MyHintOutcomes): readonly string[] => [
-  `your hint outcomes on ${bareUntrusted(view.repo)} · ${windowWords(view)}`,
+  `your hint outcomes on ${bareUntrusted(view.repo)} · ${windowWords(view)}${pausedWords(view)}`,
   QUOTED_DATA_NOTICE,
 ];
 

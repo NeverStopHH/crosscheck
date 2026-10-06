@@ -105,6 +105,8 @@ export const MyHintOutcomesSchema = z.looseObject({
   days: z.number().int().min(1),
   sinceIso: z.string().min(1),
   untilIso: z.string().min(1),
+  /** 07 §13.11 (review M3): the pilot paused inside the window. Absent from an older hub, which never paused. */
+  pausedInWindow: z.boolean().optional(),
   ...TallyShape,
   bySource: z.array(SourceTallySchema),
   bySourceBeyondList: CountSchema,

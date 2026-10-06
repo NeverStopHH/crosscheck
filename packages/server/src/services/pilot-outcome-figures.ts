@@ -23,7 +23,13 @@
 import { sql } from "drizzle-orm";
 import type { HintOutcomeWithholding } from "@crosscheck/schema";
 
-import { lastWholeMonth, readPeriodAggregate, recordableFrom, withholdingOf } from "./outcome-population.ts";
+import {
+  enrolledSpan,
+  lastWholeMonth,
+  readEnrolments,
+  readPeriodAggregate,
+  withholdingOf,
+} from "./outcome-population.ts";
 import type { Db } from "../db/client.ts";
 
 interface Deps {
@@ -42,10 +48,12 @@ export interface OutcomeFigures {
   /** The closed period the block covers: the last whole calendar month, UTC. */
   readonly periodStartIso: string;
   readonly periodEndIso: string;
-  /** When outcomes became recordable on this repo; null when never. */
+  /** When outcomes first became recordable on this repo; null when never. */
   readonly recordableSinceIso: string | null;
-  /** Where counting starts inside the period; null when no moment of it was recordable. */
+  /** Where counting starts inside the period; null when the repo was in the pilot for no moment of it. */
   readonly countedFromIso: string | null;
+  /** The pilot paused inside the counted part of the period: only its enrolled time is counted (review M3). */
+  readonly pausedInPeriod: boolean;
   /** Unasked deliveries that reached someone in the counted part of the period. */
   readonly interventions: number;
   /** Why no figure is shown, or null when it is. */
@@ -61,6 +69,7 @@ const notRecordable = (
   periodEndIso: period.end.toISOString(),
   recordableSinceIso,
   countedFromIso: null,
+  pausedInPeriod: false,
   interventions: 0,
   withheld: "not_recordable",
   figures: null,
@@ -74,13 +83,13 @@ export const readOutcomeFigures = async (
   input: { readonly repo: string; readonly now: Date; readonly outcomesSinceIso: string | null },
 ): Promise<OutcomeFigures> => {
   const period = lastWholeMonth(input.now);
-  const from = recordableFrom(period, input.outcomesSinceIso, input.now);
-  if (from === null) {
+  const span = enrolledSpan(period.start, period.end, await readEnrolments(deps.db, input.repo));
+  if (span === null) {
     return notRecordable(period, input.outcomesSinceIso);
   }
   const aggregate = await readPeriodAggregate(deps.db, {
     repo: input.repo,
-    from,
+    from: span.from,
     until: period.end,
     who: sql`true`,
     sourceIs: null,
@@ -90,7 +99,8 @@ export const readOutcomeFigures = async (
     periodStartIso: period.start.toISOString(),
     periodEndIso: period.end.toISOString(),
     recordableSinceIso: input.outcomesSinceIso,
-    countedFromIso: from.toISOString(),
+    countedFromIso: span.from.toISOString(),
+    pausedInPeriod: span.paused,
     interventions: aggregate.interventions,
     withheld,
     figures:

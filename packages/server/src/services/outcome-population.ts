@@ -89,14 +89,58 @@ export const lastWholeMonth = (now: Date): ClosedPeriod => {
 };
 
 /**
- * Where a closed period's counting starts, or null when no moment of it was
- * recordable — outcomes became recordable on the repo only after it ended,
- * or never.
+ * WHILE THE REPO WAS IN THE PILOT (07 §13.11, review M3): an instant inside
+ * one of its enrolled intervals. A delivery from before the first enrolment,
+ * or from a pause, could not have had an outcome, so it is outside every
+ * figure — and a pause never erases what was recorded before it.
  */
-export const recordableFrom = (period: ClosedPeriod, outcomesSinceIso: string | null, now: Date): Date | null =>
-  outcomesSinceIso === null || new Date(outcomesSinceIso).getTime() >= period.end.getTime()
-    ? null
-    : outcomePopulationStart(period.start, outcomesSinceIso, now);
+export const whileEnrolled = (repo: string, instant: SQL): SQL => sql`EXISTS (
+  SELECT 1 FROM pilot_enrolments pe
+  WHERE pe.repo = ${repo} AND ${instant} >= pe.started_at
+    AND (pe.ended_at IS NULL OR ${instant} < pe.ended_at))`;
+
+export interface Enrolment {
+  readonly start: Date;
+  /** Null while the repo is enrolled now. */
+  readonly end: Date | null;
+}
+
+type EnrolmentRow = { readonly started_at: string | Date; readonly ended_at: string | Date | null };
+
+/** The repo's enrolled intervals, oldest first. */
+export const readEnrolments = async (db: Db, repo: string): Promise<readonly Enrolment[]> => {
+  const rows = await db.execute<EnrolmentRow>(sql`
+    SELECT started_at, ended_at FROM pilot_enrolments WHERE repo = ${repo} ORDER BY started_at`);
+  return rows.rows.map((row) => ({
+    start: new Date(row.started_at),
+    end: row.ended_at === null ? null : new Date(row.ended_at),
+  }));
+};
+
+/** The enrolled part of a window: where counting starts, and whether the pilot paused after that. */
+export interface EnrolledSpan {
+  readonly from: Date;
+  readonly paused: boolean;
+}
+
+/**
+ * The part of [start, end) the repo was enrolled in, or null when none of it
+ * was. `paused` is true when counting does not run unbroken from `from` to
+ * `end` — a pause, or a second interval, falls inside.
+ */
+export const enrolledSpan = (start: Date, end: Date, enrolments: readonly Enrolment[]): EnrolledSpan | null => {
+  const overlapping = enrolments.filter(
+    (enrolment) =>
+      enrolment.start.getTime() < end.getTime() && (enrolment.end === null || enrolment.end.getTime() > start.getTime()),
+  );
+  const [first] = overlapping;
+  if (first === undefined) {
+    return null;
+  }
+  const from = first.start.getTime() > start.getTime() ? first.start : start;
+  const endsEarly = first.end !== null && first.end.getTime() < end.getTime();
+  return { from, paused: overlapping.length > 1 || endsEarly };
+};
 
 /** Only what existed before `until` — a frozen period's state at its end; null is now. */
 const before = (column: SQL, until: Date | null): SQL =>
@@ -118,6 +162,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     WHERE s.repo = ${repo}
       AND ${who}
       AND hd.channel <> ${PULLED_DELIVERY_CHANNEL}
+      AND ${whileEnrolled(repo, sql`hd.delivered_at`)}
       AND hd.delivered_at >= ${since.toISOString()}::timestamptz
       ${before(sql`hd.delivered_at`, until)}
       ${before(sql`COALESCE(hd.ingested_at, hd.delivered_at)`, until)}

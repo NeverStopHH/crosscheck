@@ -40,6 +40,8 @@ import type { HintOutcome } from "@crosscheck/schema";
 
 import { PILOT_RETENTION_DAYS } from "../constants.ts";
 import { agentSessions, hintDeliveries, hintOutcomes } from "../db/schema.ts";
+import { readEnrolments } from "./outcome-population.ts";
+import type { Enrolment } from "./outcome-population.ts";
 import { NOISE_WORDS } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { Db } from "../db/client.ts";
@@ -61,6 +63,7 @@ export type HintOutcomeRefusal =
   | "wrong_repo"
   | "not_unsolicited"
   | "before_outcomes"
+  | "while_paused"
   | "past_window"
   | "reason_secret";
 
@@ -111,11 +114,28 @@ const deliveryColumns = {
   deliveredAt: hintDeliveries.deliveredAt,
 };
 
-/** What bounds a countable delivery: the repo's recordable instant, and the widest window's start. */
+/** What bounds a countable delivery: the repo's enrolled intervals, and the widest window's start. */
 interface CountableSince {
-  readonly outcomesSince: Date | null;
+  readonly enrolments: readonly Enrolment[];
   readonly windowStart: Date;
 }
+
+const isInside = (instant: Date, enrolment: Enrolment): boolean =>
+  instant.getTime() >= enrolment.start.getTime() &&
+  (enrolment.end === null || instant.getTime() < enrolment.end.getTime());
+
+/**
+ * WHY A DELIVERY'S OUTCOME COULD NEVER BE COUNTED, or null when it could
+ * (review #12, M3): it reached the reader before the repo was first in the
+ * pilot, or while the pilot was paused — or before the widest window.
+ */
+const uncountable = (deliveredAt: Date, countable: CountableSince): HintOutcomeRefusal | null => {
+  if (!countable.enrolments.some((enrolment) => isInside(deliveredAt, enrolment))) {
+    const [first] = countable.enrolments;
+    return first === undefined || deliveredAt.getTime() < first.start.getTime() ? "before_outcomes" : "while_paused";
+  }
+  return deliveredAt.getTime() < countable.windowStart.getTime() ? "past_window" : null;
+};
 
 /** A delivery named by its own id, whoever it reached — the refusals decide. */
 const readDeliveryById = async (
@@ -179,15 +199,12 @@ const refuse = (
   if (delivery.channel === PULLED_DELIVERY_CHANNEL) {
     return "not_unsolicited";
   }
-  if (countable.outcomesSince === null || delivery.deliveredAt.getTime() < countable.outcomesSince.getTime()) {
-    return "before_outcomes";
-  }
-  return delivery.deliveredAt.getTime() < countable.windowStart.getTime() ? "past_window" : null;
+  return uncountable(delivery.deliveredAt, countable);
 };
 
-const countableSince = (outcomesSinceIso: string | null, now: Date): CountableSince => ({
-  outcomesSince: outcomesSinceIso === null ? null : new Date(outcomesSinceIso),
-  windowStart: new Date(now.getTime() - PILOT_RETENTION_DAYS * MS_PER_DAY),
+const countableSince = async (deps: Deps, repo: string): Promise<CountableSince> => ({
+  enrolments: await readEnrolments(deps.db, repo),
+  windowStart: new Date(deps.now().getTime() - PILOT_RETENTION_DAYS * MS_PER_DAY),
 });
 
 interface Standing {
@@ -283,7 +300,7 @@ export const writeHintOutcome = async (
   const delivery = input.ref.startsWith(DELIVERY_ID_PREFIX)
     ? await readDeliveryById(deps, input.ref)
     : await readDeliveryByRef(deps, input);
-  const refusal = refuse(delivery, input, countableSince(settings.pilotOutcomesSince, deps.now()));
+  const refusal = refuse(delivery, input, await countableSince(deps, input.repo));
   if (refusal !== null || delivery === undefined) {
     return { refusal: refusal ?? "unknown_ref" };
   }

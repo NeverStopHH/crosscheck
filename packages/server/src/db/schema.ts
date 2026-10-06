@@ -1127,16 +1127,34 @@ export const teamSettings = pgTable("team_settings", {
    */
   pilotLabelsSince: timestamptz("pilot_labels_since"),
   /**
-   * WHEN OUTCOMES BECAME RECORDABLE ON THIS REPO (07 §13.9): stamped exactly
-   * as `pilotLabelsSince` is, and backfilled for a repo already enrolled on the
-   * first start of a hub that records outcomes. Every outcome figure starts
-   * at the later of it and its window, so a delivery from before it is
-   * outside the population rather than "unmarked".
+   * WHEN OUTCOMES FIRST BECAME RECORDABLE ON THIS REPO (07 §13.9, §13.11):
+   * stamped at the first enrolment — and backfilled for a repo already
+   * enrolled on the first start of a hub that records outcomes — and never
+   * restamped (review M3): a re-enrolment is a new interval in
+   * `pilot_enrolments`, not a new beginning that erases the old one.
    */
   pilotOutcomesSince: timestamptz("pilot_outcomes_since"),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * WHEN EACH REPO WAS IN THE PILOT (07 §13.11, review M3): one row per
+ * enrolled interval, opened when enrolment turns on and closed when it turns
+ * off — additive, never rewritten. An outcome is recordable, and counted, iff
+ * its delivery falls inside one of them, so a pause and a re-enrolment keep
+ * the history before them instead of restamping it away.
+ */
+export const pilotEnrolments = pgTable(
+  "pilot_enrolments",
+  {
+    repo: text("repo").notNull(),
+    startedAt: timestamptz("started_at").notNull(),
+    /** Null while the interval is open — the repo is enrolled now. */
+    endedAt: timestamptz("ended_at"),
+  },
+  (table) => [primaryKey({ columns: [table.repo, table.startedAt] })],
+);
 
 /**
  * WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (1.0 spec 04 §3.6).

@@ -24,15 +24,15 @@
  * with the defaults, and `status` prints the effective values either way, so
  * "what is this team set to" never depends on knowing whether a row exists.
  */
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
   TEAM_PIN_POLICIES,
   TEAM_SUSPECT_ATTRIBUTIONS,
 } from "@crosscheck/schema";
 import type { TeamPinPolicy, TeamSuspectAttribution } from "@crosscheck/schema";
 
-import { teamSettings } from "../db/schema.ts";
-import type { Db } from "../db/client.ts";
+import { pilotEnrolments, teamSettings } from "../db/schema.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 /**
@@ -60,8 +60,9 @@ export interface TeamSettingsView {
    */
   readonly pilotLabelsSince: string | null;
   /**
-   * WHEN OUTCOMES BECAME RECORDABLE (07 §13.9), stamped exactly as
-   * `pilotLabelsSince` is. Every outcome figure starts at it. Null until first enrolled.
+   * WHEN OUTCOMES FIRST BECAME RECORDABLE (07 §13.9): the first enrolment,
+   * never restamped (§13.11, review M3) — when the repo was in the pilot since
+   * is `pilot_enrolments`. Null until first enrolled.
    */
   readonly pilotOutcomesSince: string | null;
   /** Null while the repo has never been configured — the defaults are in use. */
@@ -146,6 +147,37 @@ const sinceAfter = (
   return stored === null ? null : new Date(stored);
 };
 
+/**
+ * WHEN OUTCOMES FIRST BECAME RECORDABLE, after this write (07 §13.11, review
+ * M3): the first enrolment's instant, kept for ever. A re-enrolment opens a
+ * new interval instead — restamping here erased everything recorded before it.
+ */
+const firstEnrolledAt = (stored: string | null, nextEnrolled: boolean, now: Date): Date | null => {
+  if (stored !== null) {
+    return new Date(stored);
+  }
+  return nextEnrolled ? now : null;
+};
+
+/** Opens an interval when enrolment turns on, closes the open one when it turns off — never rewrites one. */
+const recordEnrolmentChange = async (
+  db: DbExecutor,
+  repo: string,
+  wasEnrolled: boolean,
+  isEnrolled: boolean,
+  now: Date,
+): Promise<void> => {
+  if (isEnrolled && !wasEnrolled) {
+    await db.insert(pilotEnrolments).values({ repo, startedAt: now, endedAt: null }).onConflictDoNothing();
+  }
+  if (!isEnrolled && wasEnrolled) {
+    await db
+      .update(pilotEnrolments)
+      .set({ endedAt: now })
+      .where(and(eq(pilotEnrolments.repo, repo), isNull(pilotEnrolments.endedAt)));
+  }
+};
+
 export interface WriteTeamSettingsInput {
   readonly repo: string;
   readonly pinPolicy?: TeamPinPolicy;
@@ -171,24 +203,27 @@ export const writeTeamSettings = async (
     suspectAttribution: input.suspectAttribution ?? current.suspectAttribution,
     pilotEnrolled,
     pilotLabelsSince: sinceAfter(current.pilotLabelsSince, current, pilotEnrolled, now),
-    // 07 §13.9: the same consent, the same instant — outcomes are measurement too.
-    pilotOutcomesSince: sinceAfter(current.pilotOutcomesSince, current, pilotEnrolled, now),
+    // 07 §13.9, §13.11: the first consent's instant, kept; a re-enrolment is a new interval.
+    pilotOutcomesSince: firstEnrolledAt(current.pilotOutcomesSince, pilotEnrolled, now),
     updatedAt: now,
   };
-  await deps.db
-    .insert(teamSettings)
-    .values(next)
-    .onConflictDoUpdate({
-      target: teamSettings.repo,
-      set: {
-        pinPolicy: next.pinPolicy,
-        suspectAttribution: next.suspectAttribution,
-        pilotEnrolled: next.pilotEnrolled,
-        pilotLabelsSince: next.pilotLabelsSince,
-        pilotOutcomesSince: next.pilotOutcomesSince,
-        updatedAt: next.updatedAt,
-      },
-    });
+  await deps.db.transaction(async (tx) => {
+    await tx
+      .insert(teamSettings)
+      .values(next)
+      .onConflictDoUpdate({
+        target: teamSettings.repo,
+        set: {
+          pinPolicy: next.pinPolicy,
+          suspectAttribution: next.suspectAttribution,
+          pilotEnrolled: next.pilotEnrolled,
+          pilotLabelsSince: next.pilotLabelsSince,
+          pilotOutcomesSince: next.pilotOutcomesSince,
+          updatedAt: next.updatedAt,
+        },
+      });
+    await recordEnrolmentChange(tx, input.repo, current.pilotEnrolled, pilotEnrolled, now);
+  });
   return {
     ...next,
     pilotLabelsSince: next.pilotLabelsSince?.toISOString() ?? null,

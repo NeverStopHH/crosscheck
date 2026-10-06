@@ -1179,3 +1179,18 @@ in August was read into July, so the closed July line moved. `hint_deliveries.in
 authorities; additive, NULL on older rows, which are read by `delivered_at`) is now stamped by the hub at
 ingest, and a closed month reads a delivery only if the hub received it before the month ended — besides it
 having been delivered in the month.
+
+*M3 — re-enrolment erased history and said false things (P4).* Leaving the pilot and rejoining restamped
+`pilot_outcomes_since`, so every outcome recorded before vanished from `--mine` and from the team month, and a
+July hint was refused as "before this repo began recording outcomes". The history is now kept:
+`pilot_enrolments` (both DDL authorities, additive) holds one row per enrolled interval — opened when enrolment
+turns on, closed when it turns off, never rewritten; an upgraded hub keeps the enrolment it already had as its
+first interval. `pilot_outcomes_since` is the **first** enrolment and is never restamped. An outcome is
+recordable, and counted, iff its delivery falls inside an enrolled interval, so `--mine`, the team line and the
+source credit count over the union of the intervals. Every sentence stays true: a hint from before the first
+enrolment is refused `before_outcomes`, one from a pause `while_paused` ("that hint reached you while this
+repo's pilot was paused, so no outcome figure could ever count it — nothing was recorded"); a month the pilot
+paused in says `counted only while the pilot was enrolled here` (`pausedInPeriod`, additive), a month counted
+from a re-enrolment says `counted from <day>, when the pilot was enrolled here again`, a month paused through
+says `none could be recorded — the pilot was paused here for the whole month`, and a `--mine` window with a
+pause says `— counted only while the pilot was enrolled here` (`pausedInWindow`, additive).

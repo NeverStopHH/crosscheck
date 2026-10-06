@@ -682,6 +682,70 @@ describe("renderPilot", () => {
     ]);
   });
 
+  test("review M3: a month the pilot paused in says only its enrolled time was counted", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      pausedInPeriod: true,
+      interventions: 0,
+      withheld: "no_interventions",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, July 2026: no intervention reached anyone, counted only while the pilot was enrolled here",
+    ]);
+  });
+
+  test("review M3: a month counted from a re-enrolment never calls it when outcomes became recordable", () => {
+    // Arrange — first enrolled in June, paused, enrolled again on 2026-07-20
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: "2026-07-20T09:00:00.000Z",
+      pausedInPeriod: false,
+      interventions: 0,
+      withheld: "no_interventions",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, July 2026: no intervention reached anyone, counted from 2026-07-20, when the pilot was enrolled here again",
+    ]);
+  });
+
+  test("review M3: a month the pilot was paused through says so, not that outcomes became recordable later", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: null,
+      pausedInPeriod: false,
+      interventions: 0,
+      withheld: "not_recordable",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual(["   hint outcomes, July 2026: none could be recorded — the pilot was paused here for the whole month"]);
+  });
+
   test("D-O5: a hub that predates outcomes says so instead of printing a figure", () => {
     // Arrange & Act — the builder carries no outcomes block, as an older hub's report does
     const out = renderPilot(view());

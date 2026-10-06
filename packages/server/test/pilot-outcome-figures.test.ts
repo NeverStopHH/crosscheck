@@ -87,6 +87,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
       ...JULY,
       recordableSinceIso: ENROLLED_ISO,
       countedFromIso: ENROLLED_ISO,
+      pausedInPeriod: false,
       interventions: 11,
       withheld: null,
       figures: { followed: 6, overrode: 2, notRelevantNow: 1, noise: 1, unmarked: 1 },
@@ -230,7 +231,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     });
   });
 
-  test("enrolment stamps when outcomes became recordable, and a re-enrolment restamps it", async () => {
+  test("review M3: enrolment stamps when outcomes first became recordable, and a re-enrolment never restamps it", async () => {
     // Arrange
     const world = await createOutcomeWorld();
     const first = world.harness.clock.now().toISOString();
@@ -257,7 +258,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     // Assert
     expect(atEnrolment).toBe(first);
     expect(afterLeaving).toBe(first);
-    expect(afterReturning).toBe(world.harness.clock.now().toISOString());
+    expect(afterReturning).toBe(first);
   });
 });
 
@@ -277,5 +278,52 @@ describe("a closed month is frozen against late ingest (review P5)", () => {
     // Assert — a closed month read twice reads the same
     expect(before).toBe(4);
     expect(after).toBe(before);
+  });
+});
+
+describe("enrolment history (review M3)", () => {
+  const put = async (world: OutcomeWorld, pilotEnrolled: boolean): Promise<Response> =>
+    await world.harness.app.request("/api/team-settings", jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled }));
+
+  test("a delivery from while the pilot was paused is outside the month, the rest of it inside", async () => {
+    // Arrange — four deliveries at enrolment; paused an hour later; one delivery in the pause; re-enrolled
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(SECONDS_PER_HOUR);
+    await put(world, false);
+    world.harness.clock.advanceSeconds(SECONDS_PER_HOUR);
+    await postRecords(world.harness, world.mike, {
+      records: [deliveryRecord(MIKE_SESSION, "work_context", NICK_CONTEXT, "prompt_hint", world.harness.clock.now().toISOString())],
+    });
+    world.harness.clock.advanceSeconds(SECONDS_PER_HOUR);
+    await put(world, true);
+    world.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const interventions = await julyInterventions(world);
+    const block = await outcomesOf(world);
+
+    // Assert — counted only while enrolled, and the block says the month had a pause
+    expect(interventions).toBe(4);
+    expect(block).toMatchObject({ recordableSinceIso: ENROLLED_ISO, countedFromIso: ENROLLED_ISO, pausedInPeriod: true });
+  });
+
+  test("a month the pilot was paused through is not recordable, and says when outcomes first became recordable", async () => {
+    // Arrange — enrolled 2026-07-24, paused the same day, re-enrolled in September
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(SECONDS_PER_HOUR);
+    await put(world, false);
+    world.harness.clock.advanceSeconds(40 * 86_400);
+    await put(world, true);
+
+    // Act — read in September: August is the closed month
+    const block = await outcomesOf(world);
+
+    // Assert
+    expect(block).toMatchObject({
+      periodStartIso: "2026-08-01T00:00:00.000Z",
+      recordableSinceIso: ENROLLED_ISO,
+      countedFromIso: null,
+      withheld: "not_recordable",
+    });
   });
 });

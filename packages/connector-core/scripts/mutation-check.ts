@@ -17669,7 +17669,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "enrolment does not stamp when outcomes became recordable",
     file: `${SERVER}/src/services/team-settings.ts`,
-    from: "    pilotOutcomesSince: sinceAfter(current.pilotOutcomesSince, current, pilotEnrolled, now),",
+    from: "    pilotOutcomesSince: firstEnrolledAt(current.pilotOutcomesSince, pilotEnrolled, now),",
     to: "    pilotOutcomesSince: current.pilotOutcomesSince === null ? null : new Date(current.pilotOutcomesSince),",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "a newly enrolled repo has no instant, so its outcome figures count nothing for ever",
@@ -17841,31 +17841,31 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the outcome line names the month's start as when outcomes became recordable",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: "  block.countedFromIso === null || block.countedFromIso === block.periodStartIso",
-    to: "  block.countedFromIso === null",
+    from: "  if (block.countedFromIso === null || block.countedFromIso === block.periodStartIso) {",
+    to: "  if (block.countedFromIso === null) {",
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "a repo enrolled in July reads as one that could record nothing before the first of September",
   },
   {
     label: "a clipped month names the wrong day as where counting starts",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: "    : `, counted from ${isoDay(block.countedFromIso)}, when outcomes became recordable here`;",
-    to: "    : `, counted from ${isoDay(block.periodStartIso)}, when outcomes became recordable here`;",
+    from: "  return `, counted from ${isoDay(block.countedFromIso)}, ${why}`;",
+    to: "  return `, counted from ${isoDay(block.periodStartIso)}, ${why}`;",
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "the enrolment instant is replaced by the month's first day, the review's window-start error",
   },
   {
     label: "a month before enrolment names its own start as the enrolment day",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: "none could be recorded — outcomes became recordable here on ${isoDay(since)}`;",
-    to: "none could be recorded — outcomes became recordable here on ${isoDay(block.periodStartIso)}`;",
+    from: "    : `outcomes became recordable here on ${isoDay(since)}`;",
+    to: "    : `outcomes became recordable here on ${isoDay(block.periodStartIso)}`;",
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "the line dates enrolment a month early, to a day nothing could be recorded on",
   },
   {
     label: "the hub reports the month's start as where outcome counting starts",
     file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
-    from: "    countedFromIso: from.toISOString(),",
+    from: "    countedFromIso: span.from.toISOString(),",
     to: "    countedFromIso: period.start.toISOString(),",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "every client prints the first of the month as when outcomes became recordable",
@@ -17907,7 +17907,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an outcome on a delivery from before outcomes were recordable is recorded",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "  if (countable.outcomesSince === null || delivery.deliveredAt.getTime() < countable.outcomesSince.getTime()) {",
+    from: "  if (!countable.enrolments.some((enrolment) => isInside(deliveredAt, enrolment))) {",
     to: "  if (false) {",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the answer says 'shows in your --mine' for a word every outcome figure starts after",
@@ -17915,7 +17915,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an outcome on a delivery older than every window is recorded",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return delivery.deliveredAt.getTime() < countable.windowStart.getTime() ? "past_window" : null;',
+    from: '  return deliveredAt.getTime() < countable.windowStart.getTime() ? "past_window" : null;',
     to: "  return null;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "a word about a hint from four months ago is answered 'recorded' and never shown anywhere",
@@ -18046,6 +18046,95 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the freeze is then the sender's word, and a late sender still moves a closed month",
   },
+  // ── 07 §13.11, review M3: enrolment history, never erased ────────────────
+  {
+    label: "a re-enrolment restamps when outcomes first became recordable",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  if (stored !== null) {\n    return new Date(stored);\n  }\n  return nextEnrolled ? now : null;",
+    to: "  return nextEnrolled ? now : stored === null ? null : new Date(stored);",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "leaving and rejoining the pilot erases every outcome recorded before, from --mine and the team month",
+  },
+  {
+    label: "enrolment opens no interval",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    await db.insert(pilotEnrolments).values({ repo, startedAt: now, endedAt: null }).onConflictDoNothing();",
+    to: "    await Promise.resolve(now);",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an enrolled repo has no enrolled time, so every hint is refused as from before the pilot",
+  },
+  {
+    label: "leaving the pilot never closes its interval",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "      .set({ endedAt: now })",
+    to: "      .set({ endedAt: null })",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a hint delivered while the pilot was paused is counted as if the team had been measured",
+  },
+  {
+    label: "a delivery from a pause in the pilot is counted",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      AND ${whileEnrolled(repo, sql`hd.delivered_at`)}\n",
+    to: "",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the month counts hints nobody could have recorded a word about, as unmarked",
+  },
+  {
+    label: "a hint from a pause is refused as from before the pilot began",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: '    return first === undefined || deliveredAt.getTime() < first.start.getTime() ? "before_outcomes" : "while_paused";',
+    to: '    return "before_outcomes";',
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the refusal tells a person the repo had not yet begun recording, about a hint from after it had",
+  },
+  {
+    label: "a month the pilot paused in reports itself counted unbroken",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    pausedInPeriod: span.paused,",
+    to: "    pausedInPeriod: false,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the line reads as a whole month of measurement over one with a gap in it",
+  },
+  {
+    label: "an upgraded hub forgets the enrolment it already had",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  WHERE ts.pilot_outcomes_since IS NOT NULL\n    AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo);",
+    to: "  WHERE false;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "the monorepo, enrolled before the history existed, would have no enrolled time and no figure",
+  },
+  {
+    label: "the outcome line calls a re-enrolment when outcomes became recordable",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: '      : "when the pilot was enrolled here again";',
+    to: '      : "when outcomes became recordable here";',
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the line dates the first enrolment to the day the team came back",
+  },
+  {
+    label: "the outcome line says a month paused through became recordable later",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: '    ? "the pilot was paused here for the whole month"',
+    to: "    ? `outcomes became recordable here on ${isoDay(since)}`",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a team that paused reads that its outcomes only became recordable before a month it had none in",
+  },
+  {
+    label: "the outcome line hides a pause inside its month",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (block.pausedInPeriod === true) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a month with a gap reads as measured throughout",
+  },
+  {
+    label: "--mine hides a pause inside its window",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: '  view.pausedInWindow === true ? " — counted only while the pilot was enrolled here" : "";',
+    to: '  "";',
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a person reads 56 days as measured when part of them was a pause",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18136,8 +18225,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 2
- * PRINTS: packages/cli/test/pilot-render.test.ts 25
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 3
+ * PRINTS: packages/cli/test/pilot-render.test.ts 28
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -18356,7 +18445,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 3
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 4
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -18369,7 +18458,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 9
- * PRINTS: packages/server/test/hint-outcomes.test.ts 12
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 14
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
@@ -18388,7 +18477,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 11
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 15
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

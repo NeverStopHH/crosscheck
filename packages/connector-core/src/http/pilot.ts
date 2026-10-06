@@ -187,6 +187,8 @@ export const PilotReportSchema = z.looseObject({
       periodEndIso: z.string().min(1),
       recordableSinceIso: z.string().nullable(),
       countedFromIso: z.string().nullable(),
+      /** 07 §13.11 (review M3): the pilot paused inside the counted part. Absent from an older hub, which never paused. */
+      pausedInPeriod: z.boolean().optional(),
       interventions: CountSchema,
       withheld: z.string().min(1).nullable(),
       figures: z

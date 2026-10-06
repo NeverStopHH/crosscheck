@@ -31,13 +31,14 @@ import {
   EMPTY_TALLY,
   addToTally,
   deliveryStates,
+  enrolledSpan,
   lastWholeMonth,
   outcomePopulationStart,
+  readEnrolments,
   readPeriodAggregate,
-  recordableFrom,
   withholdingOf,
 } from "./outcome-population.ts";
-import type { DeliveryState, HintOutcomeTally } from "./outcome-population.ts";
+import type { DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -67,6 +68,8 @@ export interface MyHintOutcomes extends HintOutcomeTally {
   readonly days: number;
   readonly sinceIso: string;
   readonly untilIso: string;
+  /** The pilot paused inside the window: only its enrolled time is counted (07 §13.11, review M3). */
+  readonly pausedInWindow: boolean;
   readonly bySource: readonly SourceTally[];
   readonly bySourceBeyondList: number;
   readonly reasons: readonly OutcomeReason[];
@@ -160,17 +163,17 @@ const readYourWork = async (
   deps: Deps,
   input: ReadMyHintOutcomesInput,
   now: Date,
-  outcomesSinceIso: string | null,
+  enrolments: readonly Enrolment[],
 ): Promise<YourWork> => {
   const period = lastWholeMonth(now);
   const stamps = { periodStartIso: period.start.toISOString(), periodEndIso: period.end.toISOString() };
-  const from = recordableFrom(period, outcomesSinceIso, now);
-  if (from === null) {
+  const span = enrolledSpan(period.start, period.end, enrolments);
+  if (span === null) {
     return { ...stamps, followed: null, withheld: "not_recordable" };
   }
   const aggregate = await readPeriodAggregate(deps.db, {
     repo: input.repo,
-    from,
+    from: span.from,
     until: period.end,
     who: sql`s.developer_id <> ${input.developerId}`,
     sourceIs: input.developerId,
@@ -193,10 +196,11 @@ export const readMyHintOutcomes = async (
     settings.pilotOutcomesSince,
     now,
   );
+  const enrolments = await readEnrolments(deps.db, input.repo);
   const [tallies, reasons, yourWork] = await Promise.all([
     readTallies(deps, input, since),
     readReasons(deps, input, since),
-    readYourWork(deps, input, now, settings.pilotOutcomesSince),
+    readYourWork(deps, input, now, enrolments),
   ]);
   const { total, sources } = foldTallies(tallies);
   const reasonsTotal = Number(reasons[0]?.total ?? 0);
@@ -205,6 +209,7 @@ export const readMyHintOutcomes = async (
     days: input.days,
     sinceIso: since.toISOString(),
     untilIso: now.toISOString(),
+    pausedInWindow: enrolledSpan(since, now, enrolments)?.paused ?? false,
     ...total,
     bySource: sources.slice(0, HINT_OUTCOME_MAX_SOURCES),
     bySourceBeyondList: Math.max(0, sources.length - HINT_OUTCOME_MAX_SOURCES),

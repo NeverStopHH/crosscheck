@@ -28,7 +28,7 @@ import {
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { SECONDS_TO_AUGUST, createCrowd, recordTenWords } from "./fixtures/hint-outcome-crowd.ts";
-import { jsonRequest, postRecords } from "./helpers.ts";
+import { TEST_ADMIN_TOKEN, jsonRequest, postRecords } from "./helpers.ts";
 import type { TestDeveloper } from "./helpers.ts";
 
 const SECONDS_PER_DAY = 86_400;
@@ -276,5 +276,29 @@ describe("GET /api/hint-outcomes/mine", () => {
     // Assert
     expect(response.status).toBe(422);
     expect(((await response.json()) as { error: { code: string } }).error.code).toBe("not_enrolled");
+  });
+});
+
+describe("enrolment history in the person's own view (review M3, P4)", () => {
+  const put = async (world: OutcomeWorld, pilotEnrolled: boolean): Promise<Response> =>
+    await world.harness.app.request("/api/team-settings", jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled }));
+
+  test("a pause and a re-enrolment never erase what was recorded before them", async () => {
+    // Arrange — Nick overrode Ken's claim in July; in August the repo leaves the pilot and comes back
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "overrode", reason: OVERRIDE_REASON });
+    world.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    await put(world, false);
+    world.harness.clock.advanceSeconds(60);
+    await put(world, true);
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick, `repo=${encodeURIComponent(REPO)}&days=90`));
+    const later = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert — the July word stands, its reason with it, and a July hint can still take one
+    expect(view).toMatchObject(tally({ received: 3, overrode: 1, followed: 0, unmarked: 2 }));
+    expect(JSON.stringify(view["reasons"])).toContain(OVERRIDE_REASON);
+    expect(later.status).toBe(201);
   });
 });

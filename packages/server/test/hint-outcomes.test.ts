@@ -21,6 +21,7 @@ import {
   KEN_CLAIM,
   KEN_CONTEXT,
   MIKE_CONTEXT,
+  MIKE_SESSION,
   NICK_SECOND_SESSION,
   NICK_SESSION,
   OTHER_REPO,
@@ -31,7 +32,7 @@ import {
   recordOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import { labelNoise } from "./fixtures/hint-outcome-crowd.ts";
-import { postRecords, registerTestSession } from "./helpers.ts";
+import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
 
 /** A synthetic AWS example key, the fixture every secret-scan test uses. */
 const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
@@ -253,6 +254,28 @@ describe("POST /api/hint-outcomes", () => {
 
     // Assert — what stood was the label, on the pointer
     expect(await bodyOf(response)).toMatchObject({ repeated: false, replaced: "noise", stands: "overrode" });
+  });
+
+  test("review M3: a hint delivered while the pilot was paused is refused, and says so", async () => {
+    // Arrange — enrolled; paused; a hint arrives; enrolled again
+    const world = await createOutcomeWorld();
+    const put = async (pilotEnrolled: boolean): Promise<Response> =>
+      await world.harness.app.request("/api/team-settings", jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled }));
+    world.harness.clock.advanceSeconds(60);
+    await put(false);
+    world.harness.clock.advanceSeconds(60);
+    await postRecords(world.harness, world.mike, {
+      records: [deliveryRecord(MIKE_SESSION, "claim", KEN_CLAIM, "prompt_hint", world.harness.clock.now().toISOString())],
+    });
+    world.harness.clock.advanceSeconds(60);
+    await put(true);
+
+    // Act
+    const response = await recordOutcome(world, world.mike, { ref: KEN_CLAIM, outcome: "followed" });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(await errorOf(response)).toMatchObject({ code: "while_paused" });
   });
 
   test("a teammate's delivery answers exactly like an id that does not exist", async () => {

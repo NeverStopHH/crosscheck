@@ -1149,6 +1149,26 @@ ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_outcomes_since timestam
 UPDATE team_settings SET pilot_outcomes_since = now()
   WHERE pilot_enrolled AND pilot_outcomes_since IS NULL;
 
+-- WHEN EACH REPO WAS IN THE PILOT (07 13.11, review M3): one row per enrolled
+-- interval, opened when enrolment turns on and closed when it turns off,
+-- never rewritten. An outcome is recordable and counted iff its delivery falls
+-- inside one, so a pause and a re-enrolment never erase the history before them.
+CREATE TABLE IF NOT EXISTS pilot_enrolments (
+  repo text NOT NULL,
+  started_at timestamptz NOT NULL,
+  ended_at timestamptz,
+  PRIMARY KEY (repo, started_at)
+);
+-- An upgraded hub keeps the enrolment it already had as the first interval:
+-- open while the repo is enrolled; for one that left, closed at its last
+-- settings write — the best instant the old shape kept. Once per repo.
+INSERT INTO pilot_enrolments (repo, started_at, ended_at)
+  SELECT ts.repo, ts.pilot_outcomes_since,
+         CASE WHEN ts.pilot_enrolled THEN NULL ELSE ts.updated_at END
+  FROM team_settings ts
+  WHERE ts.pilot_outcomes_since IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo);
+
 -- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
 
 -- WHICH BROKEN PIN THIS ONE REPAIRS (07 3.4), and at which version of that

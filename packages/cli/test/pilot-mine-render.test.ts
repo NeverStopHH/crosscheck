@@ -111,3 +111,15 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     );
   });
 });
+
+describe("renderMyOutcomes' window under a paused pilot (review M3)", () => {
+  test("a window the pilot paused in says only its enrolled time was counted", () => {
+    // Act
+    const header = renderMyOutcomes({ ...viewSince("2026-08-10T12:00:00.000Z"), pausedInWindow: true }).split("\n")[0];
+
+    // Assert
+    expect(header).toBe(
+      "your hint outcomes on github.com/acme/api · last 56 days (2026-08-10..2026-10-05) — counted only while the pilot was enrolled here",
+    );
+  });
+});
