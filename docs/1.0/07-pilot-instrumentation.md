@@ -1504,3 +1504,10 @@ A config from before login stored the id cannot tell the two apart, and filters 
 *LOW-6 — a re-assertion's sentence was kept and never read.* §13.12 H-B kept the sentence said with noise said
 again, but nothing read it. `--mine`'s reasons list now shows it beside the noise it stands at, marked as said
 again (`reasserted: true` on the wire, added only then; "noise, said again, from Ken: «…»" on the page).
+
+*LOW-8 — the team line's homogeneity: ACCEPTED, stated.* Like the credit before M-1, the team line can print a
+homogeneous figure — say, "followed 0" when every recorder overrode — which tells each of them that all the
+others said the same. Unlike the credit it stays as it is: its minimums already hold with any one recorder left
+out (three other people's words, about three people's work, ten or more of them), so a team of three never
+prints at all, and in a team big enough to print, a homogeneous month says something about the team, not about
+one colleague a viewer could subtract. The owner accepted this residue (round 5); it is the line's known limit.
