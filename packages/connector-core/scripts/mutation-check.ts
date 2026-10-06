@@ -18778,6 +18778,46 @@ export const MUTATIONS: readonly Mutation[
     because: "the hub ships \"1.\" as a finding the selector refuses, and the two rules part ways (M1)",
   },
   {
+    label: "the hint pool ranks on the normalized document again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),\n",
+    to: "",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "twelve trees flooded with drafts on the prompt's words fill the pool and the declared answer never reaches the floor (M3)",
+  },
+  {
+    label: "the search never asks the caller's ranker",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "    input.rankFtsTier === undefined\n      ? listFtsTier(deps.db, wordTokens, scope)\n      : listRankedFtsTier(input.rankFtsTier, wordTokens, scope),",
+    to: "    listFtsTier(deps.db, wordTokens, scope),",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "the hints endpoint passes its pushable ranking and the pool is ranked on drafts anyway (M3)",
+  },
+  {
+    label: "a draft or a refuted claim ranks a tree into the hint pool",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "            pushableClaimCondition(),\n            notSuperseded(db),\n            notMutedCondition(readerDeveloperId, claimAuthors.developerId),",
+    to: "            notSuperseded(db),\n            notMutedCondition(readerDeveloperId, claimAuthors.developerId),",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "a flood of drafts or refuted claims crowds the declared tree out of the pool (M3)",
+  },
+  {
+    label: "a revised-away claim ranks a tree into the hint pool",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "            notSuperseded(db),\n            notMutedCondition(readerDeveloperId, claimAuthors.developerId),",
+    to: "            notMutedCondition(readerDeveloperId, claimAuthors.developerId),",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "retracted claims still rank their trees above the one the hint is about (M3)",
+  },
+  {
+    label: "a muted author's claim ranks a tree into the hint pool",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "            notMutedCondition(readerDeveloperId, claimAuthors.developerId),\n          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)",
+    to: "          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "a muted teammate's words still fill the reader's pool and push the answer out (M3)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -19157,6 +19197,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 9
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
+ * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
  * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

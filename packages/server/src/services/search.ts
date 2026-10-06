@@ -31,6 +31,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -239,6 +240,16 @@ export interface SearchQuery {
    * tokens. The exact tier always reads `query`, where a path is one word.
    */
   readonly ftsTokens?: readonly string[] | undefined;
+  /**
+   * Ranks the FTS tier with the CALLER's query instead of the normalized
+   * document and every claim body (hold-out review, M3). The hints endpoint
+   * passes one that reads only what a hint may show — a context's own
+   * statement and its pushable claims (services/hints.ts) — so a flood of
+   * drafts or refuted claims cannot rank trees into its pool, whatever the
+   * document holds. Absent: the pull search's tier, which reads everything a
+   * reader may pull. The exact tier is unchanged either way.
+   */
+  readonly rankFtsTier?: FtsTierRanker | undefined;
   readonly repo?: string | undefined;
   /**
    * Excludes contexts owned by this developer INSIDE every tier query — see
@@ -344,7 +355,7 @@ export const exactTargetTokenConditions = (tokens: readonly string[]) =>
     sql`lower(${workContextTargets.value}) LIKE ${`%/${escapeLike(token)}`} ESCAPE '\\'`,
   ]);
 
-interface TierRow {
+export interface TierRow {
   readonly id: string;
   readonly createdAt: Date;
   readonly updatedAt: Date | null;
@@ -426,9 +437,25 @@ const listExactTier = async (
     .limit(TIER_CANDIDATES);
 };
 
-interface RankedRow extends TierRow {
+export interface RankedRow extends TierRow {
   readonly rank: number;
 }
+
+/**
+ * An FTS tier a caller ranks itself, over the same scope condition every tier
+ * puts in its own WHERE (`scope`) — see SearchQuery.rankFtsTier.
+ */
+export type FtsTierRanker = (tokens: readonly string[], scope: SQL | undefined) => Promise<readonly RankedRow[]>;
+
+/** A caller's ranker, held to the tier's own contract: no tokens, no rows; best first; bounded. */
+const listRankedFtsTier = async (
+  ranker: FtsTierRanker,
+  tokens: readonly string[],
+  scope: SearchScope,
+): Promise<readonly TierRow[]> =>
+  tokens.length === 0
+    ? []
+    : [...(await ranker(tokens, scopeCondition(scope)))].sort((left, right) => right.rank - left.rank).slice(0, TIER_CANDIDATES);
 
 const listFtsTier = async (
   db: Db,
@@ -785,7 +812,9 @@ export const searchWorkContexts = async (
 
   const [exactRows, ftsRows, vector] = await Promise.all([
     listExactTier(deps.db, pathTokens, scope),
-    listFtsTier(deps.db, wordTokens, scope),
+    input.rankFtsTier === undefined
+      ? listFtsTier(deps.db, wordTokens, scope)
+      : listRankedFtsTier(input.rankFtsTier, wordTokens, scope),
     tryVectorTier(deps, query, scope),
   ]);
 

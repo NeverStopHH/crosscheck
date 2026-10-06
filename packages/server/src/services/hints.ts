@@ -31,6 +31,7 @@
  * FTS) is the one the design names normative for the sync budget.
  */
 import { and, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 
 import {
@@ -47,10 +48,12 @@ import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
   SEARCH_MAX_QUERY_TOKENS,
+  TIER_CANDIDATES,
   exactTargetTokenConditions,
   exactTokens,
   searchWorkContexts,
 } from "./search.ts";
+import type { FtsTierRanker, RankedRow } from "./search.ts";
 import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
@@ -635,6 +638,68 @@ const listClaimTermMaxima = async (
   return new Map(rows.map((row) => [row.id, Number(row.terms)]));
 };
 
+/** The claim author's session, beside the context owner's the scope reads. */
+const claimAuthors = alias(agentSessions, "hint_claim_authors");
+
+/**
+ * THE POOL IS RANKED ON PUSHABLE TEXT ONLY (hold-out review, M3): a
+ * context's own statement — title, description, intent — and its pushable
+ * claims: declared, not refuted, not revised away, by an author the reader
+ * has not muted. Never the normalized document, which still summarises every
+ * claim, and never a claim body the hint would not show — so twelve trees
+ * flooded with drafts, refuted or retracted claims on the prompt's words no
+ * longer push the one tree whose declared claim answers it out of the
+ * ten-row pool. The search's own scope (repo, the reader excluded, mutes)
+ * rides in every WHERE.
+ */
+const rankOnPushableText =
+  (db: Db, readerDeveloperId: string): FtsTierRanker =>
+  async (tokens, scope): Promise<readonly RankedRow[]> => {
+    const tsquery = sql`websearch_to_tsquery('english', ${tokens.join(" or ")})`;
+    const [statements, pushable] = await Promise.all([
+      db
+        .select({
+          id: workContexts.id,
+          createdAt: workContexts.createdAt,
+          updatedAt: workContexts.updatedAt,
+          rank: sql<number>`ts_rank(${contextStatement}, ${tsquery})`,
+        })
+        .from(workContexts)
+        .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+        .where(and(scope, sql`${contextStatement} @@ ${tsquery}`))
+        .orderBy(sql`ts_rank(${contextStatement}, ${tsquery}) DESC`)
+        .limit(TIER_CANDIDATES),
+      db
+        .select({
+          id: claims.workContextId,
+          createdAt: workContexts.createdAt,
+          updatedAt: workContexts.updatedAt,
+          rank: sql<number>`max(ts_rank(${claims.tsv}, ${tsquery}))`,
+        })
+        .from(claims)
+        .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
+        .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+        .innerJoin(claimAuthors, eq(claims.authorSessionId, claimAuthors.id))
+        .where(
+          and(
+            scope,
+            sql`${claims.tsv} @@ ${tsquery}`,
+            pushableClaimCondition(),
+            notSuperseded(db),
+            notMutedCondition(readerDeveloperId, claimAuthors.developerId),
+          ),
+        )
+        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)
+        .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
+        .limit(TIER_CANDIDATES),
+    ]);
+    const best = [...statements, ...pushable].reduce<ReadonlyMap<string, RankedRow>>(
+      (byId, row) => ((byId.get(row.id)?.rank ?? -1) >= row.rank ? byId : new Map([...byId, [row.id, row]])),
+      new Map(),
+    );
+    return [...best.values()];
+  };
+
 /** What one search is made of: the text, for its exact tier, and the content terms. */
 interface CandidateQuery {
   readonly text: string;
@@ -660,6 +725,9 @@ const matchCandidates = async (
       // German prompt's "das ist nicht die" fill the pool with every tree
       // that says them, before the floor below ever ran.
       ftsTokens: query.terms,
+      // AND RANKED ON PUSHABLE TEXT ONLY (hold-out review, M3): what a hint
+      // would never show cannot rank a tree into the pool either.
+      rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),
       repo: query.repo,
       // In the search's own WHERE, before its bounds — a busy caller's own
       // contexts must not crowd teammates out of the pool (SEARCH_POOL_LIMIT).
