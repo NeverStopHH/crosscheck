@@ -13,10 +13,12 @@
  * is the one recent delivery to a session live on this machine (several are
  * listed, never guessed); an id is what the hint printed, or a delivery id.
  *
- * A DELIVERY STILL ON THIS MACHINE (07 §13.10, review #14) is sent first,
- * bounded, in a live session's name; and "no hint with that id reached you"
- * is never repeated for a delivery the spool still holds — it reached the
- * person, not yet the hub.
+ * A DELIVERY STILL ON THIS MACHINE (07 §13.10 #14, §13.11). The command asks
+ * the hub FIRST; only when the hub does not know a ref the spool holds does
+ * the one live session of this checkout send its own held records, bounded,
+ * before asking once more — never a guessed or silent session. "No hint with
+ * that id reached you" is never repeated for a delivery the spool still holds;
+ * the line says why it is still here.
  *
  * NO TERMINAL GATE, and that is a decision rather than an omission. The gate
  * on `noise` keeps an agent from grading the product by default (07 D3); an
@@ -37,22 +39,23 @@ import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
 import { isOutcomesNotServed, postHintOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
+import type { RecordedOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { getMarkCandidates } from "@crosscheck/connector-core/http/pilot.ts";
-import { holdsUnsentDelivery, sendHeldRecords } from "@crosscheck/connector-core/spool/held-deliveries.ts";
-import type { FlushInput } from "@crosscheck/connector-core/spool/flush.ts";
+import type { MarkCandidates } from "@crosscheck/connector-core/http/pilot.ts";
+import { answerAfterSendingHeld } from "@crosscheck/connector-core/spool/held-deliveries.ts";
+import type { HeldWhy } from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { MAX_HINT_OUTCOME_REASON_CHARS, SAFE_ID_PATTERN, reasonLength } from "@crosscheck/schema";
 import type { HintOutcome } from "@crosscheck/schema";
 
 import {
-  DELIVERY_HELD_NO_LIVE_SESSION_LINE,
-  DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
+  heldLine,
   outcomeRecordedLine,
   reasonTooLongLine,
 } from "./outcome-render.ts";
@@ -135,55 +138,64 @@ const failed = (result: Extract<HubResult<unknown>, { ok: false }>): CliResult =
     ? { stdout: OUTCOMES_NOT_SERVED_LINE, exitCode: EXIT_FAIL }
     : { stdout: markFailureLine(result.kind, result.message), exitCode: result.kind === "network" ? EXIT_UNREACHABLE : EXIT_FAIL };
 
-/** What is true of a held delivery: a live session sends it after its next tool call; with none, the next to start does. */
-const stillHere = (hasLiveSession: boolean): CliResult => ({
-  stdout: hasLiveSession ? DELIVERY_STILL_ON_THIS_MACHINE_LINE : DELIVERY_HELD_NO_LIVE_SESSION_LINE,
-  exitCode: EXIT_FAIL,
-});
+/** Where an outcome is recorded: the hub, and the checkout whose live session may send what is held. */
+interface Target {
+  readonly ctx: HubContext;
+  readonly identity: RepoIdentity;
+}
+
+const isUnknownRef = (result: HubResult<RecordedOutcome>): boolean => !result.ok && result.code === UNKNOWN_REF;
+
+const held = (why: HeldWhy): CliResult => ({ stdout: heldLine(why), exitCode: EXIT_FAIL });
 
 const record = async (
-  ctx: HubContext,
-  repo: string,
+  target: Target,
   ref: string,
   outcome: HintOutcome,
   reason: string | undefined,
-  hasLiveSession: boolean,
 ): Promise<CliResult> => {
-  const posted = await postHintOutcome(ctx, { repo, ref, outcome, ...(reason === undefined ? {} : { reason }) });
-  if (posted.ok) {
-    return { stdout: outcomeRecordedLine(ref, posted.data), exitCode: EXIT_OK };
+  const { ctx, identity } = target;
+  const call = (): Promise<HubResult<RecordedOutcome>> =>
+    postHintOutcome(ctx, { repo: identity.repoId, ref, outcome, ...(reason === undefined ? {} : { reason }) });
+  // POST FIRST (07 §13.11): held records are sent only when the hub does not know a ref held here.
+  const answer = await answerAfterSendingHeld(
+    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },
+    await call(),
+  );
+  if (answer.kind === "held") {
+    return held(answer.why);
   }
-  return posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx, ref)) ? stillHere(hasLiveSession) : failed(posted);
+  return answer.result.ok
+    ? { stdout: outcomeRecordedLine(ref, answer.result.data), exitCode: EXIT_OK }
+    : failed(answer.result);
 };
 
-/** The newest live session, in whose name held records are sent; null when none is live. */
-const senderOf = (states: readonly SessionState[]): FlushInput | null => {
-  const [newest] = [...states].sort((left, right) => right.startedAt.localeCompare(left.startedAt));
-  return newest === undefined ? null : { sessionId: newest.crosscheckSessionId, developerId: newest.developerId };
-};
+const noCandidates = (result: HubResult<MarkCandidates>): boolean => result.ok && result.data.candidates.length === 0;
 
 /** No id: the one recent delivery to a session live on this machine, as `noise` finds it. */
-const recordRecent = async (
-  ctx: HubContext,
-  repo: string,
-  states: readonly SessionState[],
-  command: OutcomeCommand,
-  reason: string | undefined,
-): Promise<CliResult> => {
-  const sessions = states.map((state) => state.crosscheckSessionId);
+const recordRecent = async (target: Target, command: OutcomeCommand, reason: string | undefined): Promise<CliResult> => {
+  const { ctx, identity } = target;
+  const live = await readLiveSessionStates(ctx.home, ctx.hubUrl, identity.repoId, ctx.now());
+  const sessions = live.states.map((state) => state.crosscheckSessionId);
   if (sessions.length === 0) {
     return { stdout: noLiveSessionLine(command), exitCode: EXIT_OK };
   }
-  const found = await getMarkCandidates(ctx, { repo, sessions, withinMinutes: NOISE_MARK_WINDOW_MINUTES });
-  if (!found.ok) {
-    return failed(found);
+  const call = (): Promise<HubResult<MarkCandidates>> =>
+    getMarkCandidates(ctx, { repo: identity.repoId, sessions, withinMinutes: NOISE_MARK_WINDOW_MINUTES });
+  const answer = await answerAfterSendingHeld(
+    { hub: ctx, identity, ref: null, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: noCandidates },
+    await call(),
+  );
+  if (answer.kind === "held") {
+    return held(answer.why);
   }
-  const { candidates, more } = found.data;
+  if (!answer.result.ok) {
+    return failed(answer.result);
+  }
+  const { candidates, more } = answer.result.data;
   const [only] = candidates;
   if (only === undefined) {
-    return (await holdsUnsentDelivery(ctx, null))
-      ? stillHere(true)
-      : { stdout: nothingRecentLine(NOISE_MARK_WINDOW_MINUTES, command), exitCode: EXIT_OK };
+    return { stdout: nothingRecentLine(NOISE_MARK_WINDOW_MINUTES, command), exitCode: EXIT_OK };
   }
   if (candidates.length > 1 || more) {
     return {
@@ -191,7 +203,7 @@ const recordRecent = async (
       exitCode: EXIT_OK,
     };
   }
-  return record(ctx, repo, only.id, COMMAND_OUTCOME[command], reason, true);
+  return record(target, only.id, COMMAND_OUTCOME[command], reason);
 };
 
 const runOutcome = async (
@@ -228,11 +240,10 @@ const runOutcome = async (
     repoKey: repoKey(config.hubUrl, identity.repoId),
     now: () => new Date(),
   };
-  const live = await readLiveSessionStates(ctx.home, ctx.hubUrl, identity.repoId, ctx.now());
-  await sendHeldRecords(ctx, senderOf(live.states), OUTCOME_FLUSH_BUDGET_MS);
+  const target = { ctx, identity };
   return args.id === undefined
-    ? recordRecent(ctx, identity.repoId, live.states, command, args.reason)
-    : record(ctx, identity.repoId, args.id, COMMAND_OUTCOME[command], args.reason, live.states.length > 0);
+    ? recordRecent(target, command, args.reason)
+    : record(target, args.id, COMMAND_OUTCOME[command], args.reason);
 };
 
 export const runFollowed = (argv: readonly string[], env: Env, cwd: string): Promise<CliResult> =>

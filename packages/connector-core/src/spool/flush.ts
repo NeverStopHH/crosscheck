@@ -49,6 +49,12 @@ import { withLock } from "./lock.ts";
 export interface FlushInput {
   readonly sessionId: string;
   readonly developerId: string | null;
+  /**
+   * Only this session's own spool (07 §13.11): a caller that is not a hook
+   * sends nothing in another session's name — no FOREIGN_SESSION_DELIVERY.
+   * Absent, every pending spool, as the hooks drain.
+   */
+  readonly onlySlug?: string;
 }
 
 export type FlushOutcome =
@@ -227,9 +233,10 @@ const oldestFirst = (
 
 const pendingSpools = async (
   ctx: HubContext,
+  onlySlug?: string,
 ): Promise<readonly SessionSpool[]> =>
   (await readAllSessionSpools(ctx.home, ctx.repoKey))
-    .filter((spool) => spool.lines.length > 0)
+    .filter((spool) => spool.lines.length > 0 && (onlySlug === undefined || spool.slug === onlySlug))
     .sort(oldestFirst);
 
 /**
@@ -267,7 +274,7 @@ const drain = async (
     }
     // Re-read every round: the cursor moved, and appends land lock-free while
     // this loop runs, so the oldest backlog may not be the one it started with.
-    const spools = await pendingSpools(ctx);
+    const spools = await pendingSpools(ctx, input.onlySlug);
     const target = spools[0];
     if (target === undefined) {
       return batch === 0
@@ -283,7 +290,7 @@ const drain = async (
   return {
     outcome: "flushed",
     sent,
-    remaining: pendingTotal(await pendingSpools(ctx)),
+    remaining: pendingTotal(await pendingSpools(ctx, input.onlySlug)),
   };
 };
 

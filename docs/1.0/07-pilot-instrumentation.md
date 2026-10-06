@@ -1250,3 +1250,17 @@ hint still in the spool said it "is sent after the session's next tool call" eve
 machine was live to make one. With none live it now says what is true: `that hint reached you, but its delivery
 is still on this machine and no crosscheck session is live here to send it; nothing was recorded — it is sent
 when a session on this repo next starts, so run this again then` (a starting session drains the spool).
+
+*LOW — the outcome tool flushed before asking, in a possibly guessed or silent session's name.*
+`mark_hint_outcome` (and `crosscheck followed / overrode`) drained the spool before every post, in the name of
+whatever session the state files named — a guess when several were live, and possibly one the hub had
+reaped. Now **the hub is asked first** (`spool/held-deliveries.ts`, `answerAfterSendingHeld`); only when it
+answers `unknown_ref` for a ref this machine still holds are held records sent, and the call made once more.
+They are sent only in the name of **the one live session of this checkout** (`findSender`: among the live
+sessions of the repo, the one on this checkout's root, or the only one) and only from **that session's own
+spool** (`FlushInput.onlySlug`), so no record is filed under another session (no FOREIGN_SESSION_DELIVERY)
+and no silent session is revived. When nothing may be sent, the answer says why: several sessions live in
+this checkout ("it was not sent in a guessed one's name"), none live ("it is sent when a session on this repo
+next starts"), or not sent in time ("after your next tool call"). A held delivery of another ref is not this
+one: the hub's own refusal stands (review M15). The CLI picks the session of this checkout, never just the
+newest (review M18).

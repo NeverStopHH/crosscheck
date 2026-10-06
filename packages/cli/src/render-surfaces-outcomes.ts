@@ -12,6 +12,7 @@ import type { RenderSurface } from "@crosscheck/connector-core/render-surfaces.t
 import type { MyHintOutcomes } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 
 import {
+  DELIVERY_HELD_AMBIGUOUS_LINE,
   DELIVERY_HELD_NO_LIVE_SESSION_LINE,
   DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
@@ -63,6 +64,7 @@ export const HINT_OUTCOME_SURFACES: readonly RenderSurface[] = [
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: true, replaced: null, stands: payload }),
         DELIVERY_STILL_ON_THIS_MACHINE_LINE,
         DELIVERY_HELD_NO_LIVE_SESSION_LINE,
+        DELIVERY_HELD_AMBIGUOUS_LINE,
         OUTCOMES_NOT_SERVED_LINE,
         REASON_REQUIRED_LINE,
         REASON_SECRET_LINE,

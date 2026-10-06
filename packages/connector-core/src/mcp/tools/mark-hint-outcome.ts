@@ -18,11 +18,13 @@
  * An ambiguous session sends none and the hub takes the newest — the same
  * rule `get_diagnosis` follows for the pulls it stamps.
  *
- * A DELIVERY STILL ON THIS MACHINE (review #14). A prompt hint's delivery
- * is spooled and sent after the next tool runs, so the tool sends what is
- * held first, bounded, and never repeats the hub's "no hint with that id
- * reached you" for a ref the spool still holds — it reached the reader, not
- * yet the hub.
+ * A DELIVERY STILL ON THIS MACHINE (review #14, round 3). A prompt hint's
+ * delivery is spooled and sent after the next tool runs. The tool posts
+ * FIRST; only when the hub does not know a ref the spool holds does the one
+ * live session of this checkout send its own held records, bounded, before
+ * the post is made once more — never a guessed or silent session. It never
+ * repeats the hub's "no hint with that id reached you" for a ref the spool
+ * still holds; it says why that delivery is still here.
  *
  * NOTHING WRITTEN BY ANYONE ELSE IS ECHOED. The answer carries the caller's
  * own ref through `safeId` and fixed words; a hub refusal goes through
@@ -41,9 +43,8 @@ import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { safeId } from "../render.ts";
 import { resolveOwnWorkContext } from "../session.ts";
-import type { OwnWorkContext } from "../session.ts";
-import type { FlushInput } from "../../spool/flush.ts";
-import { holdsUnsentDelivery, sendHeldRecords } from "../../spool/held-deliveries.ts";
+import { answerAfterSendingHeld } from "../../spool/held-deliveries.ts";
+import type { HeldWhy } from "../../spool/held-deliveries.ts";
 import { hubFailure, idArg, parseArgs } from "./shared.ts";
 
 /** The word an agent may NOT record — the person's label (crosscheck noise). */
@@ -106,6 +107,23 @@ export const DELIVERY_STILL_ON_THIS_MACHINE =
   "after your next tool call, and it could not be sent just now — nothing was recorded. Call " +
   "mark_hint_outcome again after your next tool call.";
 
+export const DELIVERY_HELD_AMBIGUOUS =
+  "That hint reached you, but its delivery is still on this machine, and several crosscheck sessions are " +
+  "live in this checkout, so it was not sent in a guessed one's name — nothing was recorded. The session " +
+  "holding it sends it after its next tool call; call mark_hint_outcome again then.";
+
+export const DELIVERY_HELD_NO_LIVE_SESSION =
+  "That hint reached you, but its delivery is still on this machine and no crosscheck session is live here " +
+  "to send it — nothing was recorded. It is sent when a session on this repo next starts; call " +
+  "mark_hint_outcome again then.";
+
+/** What is true of a held delivery, by why it is still held (07 §13.11). */
+const HELD_SENTENCE: Readonly<Record<HeldWhy, string>> = {
+  unsent: DELIVERY_STILL_ON_THIS_MACHINE,
+  ambiguous: DELIVERY_HELD_AMBIGUOUS,
+  no_live_session: DELIVERY_HELD_NO_LIVE_SESSION,
+};
+
 export const OUTCOMES_NOT_SERVED =
   "This hub does not record hint outcomes — it predates them, so nothing was recorded. " +
   "Whoever runs it can upgrade it; the hint itself is unaffected.";
@@ -158,19 +176,14 @@ const recordedText = (ref: string, recorded: RecordedOutcome): string => {
   );
 };
 
-/** The live session the held records are sent in the name of, or null when there is none. */
-const senderOf = (own: OwnWorkContext | null): FlushInput | null =>
-  own === null ? null : { sessionId: own.crosscheckSessionId, developerId: own.developerId };
+const isUnknownRef = (result: HubResult<RecordedOutcome>): boolean => !result.ok && result.code === UNKNOWN_REF;
 
-/** The hub's refusal — unless the hub does not know a ref this machine still holds (review #14). */
-const refusalText = async (
-  ctx: McpContext,
-  posted: Extract<HubResult<RecordedOutcome>, { ok: false }>,
-  ref: string,
-): Promise<ToolResult> =>
-  posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx.hub, ref))
-    ? toolFailure(DELIVERY_STILL_ON_THIS_MACHINE)
-    : hubFailure(ctx, posted);
+const answerText = (ctx: McpContext, ref: string, posted: HubResult<RecordedOutcome>): ToolResult => {
+  if (isOutcomesNotServed(posted)) {
+    return toolFailure(OUTCOMES_NOT_SERVED);
+  }
+  return posted.ok ? toolText(recordedText(ref, posted.data)) : hubFailure(ctx, posted);
+};
 
 const isNoise = (args: unknown): boolean =>
   typeof args === "object" && args !== null && (args as { outcome?: unknown }).outcome === NOISE_WORD;
@@ -191,17 +204,19 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     return toolFailure(REASON_SECRET_REFUSAL);
   }
   const own = await resolveOwnWorkContext(ctx.config.home, ctx.identity, ctx.config.hubUrl);
-  await sendHeldRecords(ctx.hub, senderOf(own), OUTCOME_FLUSH_BUDGET_MS);
   const session = own === null || own.sessionAmbiguous ? undefined : own.crosscheckSessionId;
-  const posted = await postHintOutcome(ctx.hub, {
-    repo: ctx.identity.repoId,
-    ref,
-    outcome,
-    ...(reason === undefined ? {} : { reason }),
-    ...(session === undefined ? {} : { session }),
-  });
-  if (isOutcomesNotServed(posted)) {
-    return toolFailure(OUTCOMES_NOT_SERVED);
-  }
-  return posted.ok ? toolText(recordedText(ref, posted.data)) : refusalText(ctx, posted, ref);
+  const call = (): Promise<HubResult<RecordedOutcome>> =>
+    postHintOutcome(ctx.hub, {
+      repo: ctx.identity.repoId,
+      ref,
+      outcome,
+      ...(reason === undefined ? {} : { reason }),
+      ...(session === undefined ? {} : { session }),
+    });
+  // POST FIRST (07 §13.11): held records are sent only when the hub does not know a ref held here.
+  const answer = await answerAfterSendingHeld(
+    { hub: ctx.hub, identity: ctx.identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },
+    await call(),
+  );
+  return answer.kind === "held" ? toolFailure(HELD_SENTENCE[answer.why]) : answerText(ctx, ref, answer.result);
 };

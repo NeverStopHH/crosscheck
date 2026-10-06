@@ -12,6 +12,7 @@
  */
 import { bareUntrusted, safeId } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import type { RecordedOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
+import type { HeldWhy } from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import { MAX_HINT_OUTCOME_REASON_CHARS } from "@crosscheck/schema";
 
 /** The stored word as a person reads it; a word this client does not know prints as itself. */
@@ -67,6 +68,9 @@ export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): str
   );
 };
 
+export const DELIVERY_HELD_AMBIGUOUS_LINE =
+  "that hint reached you, but its delivery is still on this machine and several crosscheck sessions are live in this checkout, so it was not sent in a guessed one's name; nothing was recorded — the session holding it sends it after its next tool call, so run this again then\n";
+
 /** With no live session here nothing can send it now; a session starting on the repo does (07 §13.11). */
 export const DELIVERY_HELD_NO_LIVE_SESSION_LINE =
   "that hint reached you, but its delivery is still on this machine and no crosscheck session is live here to send it; nothing was recorded — it is sent when a session on this repo next starts, so run this again then\n";
@@ -85,3 +89,11 @@ export const REASON_SECRET_LINE =
 
 export const reasonTooLongLine = (length: number): string =>
   `that reason is ${String(length)} characters; an outcome takes one sentence of at most ${String(MAX_HINT_OUTCOME_REASON_CHARS)} — nothing was sent\n`;
+
+/** What is true of a delivery still held here, by why (07 §13.11): never "it never reached you". */
+export const heldLine = (why: HeldWhy): string => {
+  if (why === "ambiguous") {
+    return DELIVERY_HELD_AMBIGUOUS_LINE;
+  }
+  return why === "no_live_session" ? DELIVERY_HELD_NO_LIVE_SESSION_LINE : DELIVERY_STILL_ON_THIS_MACHINE_LINE;
+};

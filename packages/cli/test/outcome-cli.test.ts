@@ -26,10 +26,12 @@ import { EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { RecordedOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import { holdsUnsentDelivery } from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
 import {
+  DELIVERY_HELD_AMBIGUOUS_LINE,
   DELIVERY_HELD_NO_LIVE_SESSION_LINE,
   DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
@@ -329,6 +331,77 @@ describe("crosscheck followed / overrode", () => {
     expect(recent.stdout).toBe(DELIVERY_STILL_ON_THIS_MACHINE_LINE);
   });
 
+  test("round 3 (M18): held records go out in the name of the live session on this checkout, not another", async () => {
+    // Arrange — LIVE is on this checkout and holds the delivery; SOLO, live too, runs elsewhere
+    const ref = "wc_ken_m18";
+    await send("POST", "/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Ken's other context",
+          status: "implementing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    const home = await homeWithLive(LIVE);
+    await writeSessionState(home, {
+      hostSessionKey: SOLO.replace("cc_", ""),
+      crosscheckSessionId: SOLO,
+      workContextId: `wc_${SOLO}`,
+      repoId: REPO_ID,
+      repoRoot: `${repo}-elsewhere`,
+      hubUrl,
+      startedAt: new Date(Date.now() + 1000).toISOString(),
+      lastHeartbeatAt: new Date().toISOString(),
+    });
+    await spoolDelivery(home, hubUrl, LIVE, ref);
+
+    // Act
+    const result = await cli(home, ["followed", ref]);
+
+    // Assert — LIVE's own spool was sent, so the hub knew the hint
+    expect(result.stdout).toStartWith(`recorded: ${ref} — followed`);
+  });
+
+  test("round 3: with several live sessions in this checkout, a held hint is not sent in a guessed one's name", async () => {
+    // Arrange
+    const stuck = `http://127.0.0.1:${String(stuckHub.port)}`;
+    const home = await homeWithLive(LIVE, stuck);
+    await writeSessionState(home, {
+      hostSessionKey: SOLO.replace("cc_", ""),
+      crosscheckSessionId: SOLO,
+      workContextId: `wc_${SOLO}`,
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl: stuck,
+      startedAt: new Date().toISOString(),
+      lastHeartbeatAt: new Date().toISOString(),
+    });
+    await spoolDelivery(home, stuck, LIVE, "wc_ken_twin");
+
+    // Act
+    const result = await cli(home, ["followed", "wc_ken_twin"], { hub: stuck });
+
+    // Assert
+    expect(result.stdout).toBe(DELIVERY_HELD_AMBIGUOUS_LINE);
+  });
+
+  test("round 3: POST first — a ref the hub knows is recorded without sending what is held", async () => {
+    // Arrange — an unrelated delivery is in LIVE's spool
+    const home = await homeWithLive(LIVE);
+    await spoolDelivery(home, hubUrl, LIVE, "wc_ken_unrelated");
+
+    // Act — Ken's context is a delivery the hub already has; the same word again changes nothing
+    const result = await cli(home, ["overrode", KEN_CONTEXT, "--reason", OVERRIDE_REASON]);
+
+    // Assert
+    expect(result.exitCode).toBe(EXIT_OK);
+    const hub = { hubUrl, apiKey: nick.apiKey, timeoutMs: 4000, home, repoKey: repoKey(hubUrl, REPO_ID), now: () => new Date() };
+    expect(await holdsUnsentDelivery(hub, "wc_ken_unrelated")).toBe(true);
+  });
+
   test("review LOW: with no live session here, a held hint is never promised to 'the session's next tool call'", async () => {
     // Arrange — the delivery is in the spool, but no session on this machine is live to send it
     const stuck = `http://127.0.0.1:${String(stuckHub.port)}`;
@@ -360,7 +433,7 @@ describe("crosscheck followed / overrode", () => {
 
 describe("crosscheck pilot --mine", () => {
   test("shows the caller's own outcomes by source teammate, the reason quoted as data", async () => {
-    // Arrange — after the cases above: Ken's context overrode, the third and the spooled one followed
+    // Arrange — after the cases above: Ken's context overrode; the third, the spooled one and M18's followed
     const home = await homeWithLive(LIVE);
 
     // Act
@@ -369,8 +442,8 @@ describe("crosscheck pilot --mine", () => {
     // Assert
     expect(result.exitCode).toBe(EXIT_OK);
     expect(result.stdout).toContain(QUOTED_DATA_NOTICE);
-    expect(result.stdout).toContain("hints that reached you unasked: 4 — followed 2 · overrode 1 · not relevant now 0 · noise 0 · unmarked 1");
-    expect(result.stdout).toContain("from Ken: 4 — followed 2 · overrode 1");
+    expect(result.stdout).toContain("hints that reached you unasked: 5 — followed 3 · overrode 1 · not relevant now 0 · noise 0 · unmarked 1");
+    expect(result.stdout).toContain("from Ken: 5 — followed 3 · overrode 1");
     expect(result.stdout).toContain(`overrode, from Ken: «${OVERRIDE_REASON}»`);
   });
 

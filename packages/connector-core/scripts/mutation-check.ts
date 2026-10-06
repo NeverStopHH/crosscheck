@@ -17924,16 +17924,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "mark_hint_outcome posts before the hint it names has been sent",
     file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
-    from: "  await sendHeldRecords(ctx.hub, senderOf(own), OUTCOME_FLUSH_BUDGET_MS);",
-    to: "  senderOf(own);",
+    from: "    { hub: ctx.hub, identity: ctx.identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
+    to: "    { hub: ctx.hub, identity: ctx.identity, ref, budgetMs: 0, call, isUnknown: isUnknownRef },",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "recording right after a prompt hint or a denied edit's tripwire fails until some later tool runs",
   },
   {
     label: "mark_hint_outcome says 'never reached you' for a hint this machine holds",
     file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
-    from: "  posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx.hub, ref))",
-    to: "  posted.code === UNKNOWN_REF && false",
+    from: "  return answer.kind === \"held\" ? toolFailure(HELD_SENTENCE[answer.why]) : answerText(ctx, ref, answer.result);",
+    to: "  return answer.kind === \"held\" ? answerText(ctx, ref, await call()) : answerText(ctx, ref, answer.result);",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "the agent is told the hint it just read never reached it, and gives up on recording it",
   },
@@ -17948,24 +17948,24 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed posts before the hint it names has been sent",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "  await sendHeldRecords(ctx, senderOf(live.states), OUTCOME_FLUSH_BUDGET_MS);",
-    to: "  senderOf(live.states);",
+    from: "    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
+    to: "    { hub: ctx, identity, ref, budgetMs: 0, call, isUnknown: isUnknownRef },",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "a person typing followed right after the hint is told it never reached them",
   },
   {
     label: "crosscheck followed <id> says 'never reached you' for a hint this machine holds",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "  return posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx, ref)) ? stillHere(hasLiveSession) : failed(posted);",
-    to: "  return failed(posted);",
+    from: "    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },",
+    to: "    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: () => false },",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the hub's honest sentence is false from where the person sits",
   },
   {
     label: "crosscheck followed with no id says nothing reached you while the spool holds a hint",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "    return (await holdsUnsentDelivery(ctx, null))",
-    to: "    return false",
+    from: "    { hub: ctx, identity, ref: null, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: noCandidates },",
+    to: "    { hub: ctx, identity, ref: null, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: () => false },",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
   },
@@ -18245,11 +18245,60 @@ export const MUTATIONS: readonly Mutation[
   // ── 07 §13.11, review LOW: a held hint with no live session here ─────────
   {
     label: "crosscheck followed promises a held hint to a session that is not there",
-    file: `${CLI}/src/cli/outcome.ts`,
-    from: "  stdout: hasLiveSession ? DELIVERY_STILL_ON_THIS_MACHINE_LINE : DELIVERY_HELD_NO_LIVE_SESSION_LINE,",
-    to: "  stdout: DELIVERY_STILL_ON_THIS_MACHINE_LINE,",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "  return why === \"no_live_session\" ? DELIVERY_HELD_NO_LIVE_SESSION_LINE : DELIVERY_STILL_ON_THIS_MACHINE_LINE;",
+    to: "  return DELIVERY_STILL_ON_THIS_MACHINE_LINE;",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person waits for 'the session's next tool call' that no live session will make",
+  },
+  // ── 07 §13.11, round 3: POST first; the one live session sends its own spool ─
+  {
+    label: "a held hint is sent before the hub was even asked",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  if (!(await stillHeld(retry, first))) {\n    return { kind: \"answered\", result: first };\n  }",
+    to: "  if (!(await stillHeld(retry, first))) {\n    const lookup = await findSender(retry.hub, retry.identity);\n    if (lookup.kind === \"live\") await flushSpool(retry.hub, lookup.sender, retry.budgetMs);\n    return { kind: \"answered\", result: first };\n  }",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "every outcome drains the spool ahead of the hooks, for a ref the hub already knew",
+  },
+  {
+    label: "held records are sent in a guessed session's name",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  if (candidates.length > 1) {\n    return { kind: \"ambiguous\" };\n  }",
+    to: "  if (false) {\n    return { kind: \"ambiguous\" };\n  }",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "with two live sessions, one session's records go out under the other's name and lose their position",
+  },
+  {
+    label: "held records are sent by a live session on another checkout",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  const candidates = onThisRoot.length > 0 ? onThisRoot : scan.states;",
+    to: "  const candidates = scan.states;",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the session of this checkout is passed over for whichever live session sorts first (review M18)",
+  },
+  {
+    label: "a session that went silent is revived to send held records",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  const scan = await readLiveSessionStates(hub.home, hub.hubUrl, identity.repoId, hub.now());",
+    to: "  const scan = await readLiveSessionStates(hub.home, hub.hubUrl, identity.repoId, new Date(0));",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "records go out in the name of a session the hub may have reaped",
+  },
+  {
+    label: "a held flush sends every session's spool in one session's name",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    .filter((spool) => spool.lines.length > 0 && (onlySlug === undefined || spool.slug === onlySlug))",
+    to: "    .filter((spool) => spool.lines.length > 0)",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "another session's records are delivered under the outcome's sender, as FOREIGN_SESSION_DELIVERY",
+  },
+  {
+    label: "any held delivery is taken for the ref the reader named",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "    return ref === null ? refs.length > 0 : refs.includes(ref);",
+    to: "    return refs.length > 0;",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "a mistyped ref is answered 'still on this machine' whenever anything at all is held (review M15)",
   },
 ];
 
@@ -18336,7 +18385,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 11
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 12
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
@@ -18485,7 +18534,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 10
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 15
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

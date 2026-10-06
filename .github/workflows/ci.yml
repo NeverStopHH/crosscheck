@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1641
+    # PRINTS: 1647
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -187,8 +187,8 @@ jobs:
     # PRINTS: packages/cli/src/cli/init.ts 5
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
-    # PRINTS: packages/cli/src/cli/outcome-render.ts 2
-    # PRINTS: packages/cli/src/cli/outcome.ts 7
+    # PRINTS: packages/cli/src/cli/outcome-render.ts 3
+    # PRINTS: packages/cli/src/cli/outcome.ts 6
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
@@ -339,8 +339,8 @@ jobs:
     # PRINTS: render-surfaces.ts 1
     # PRINTS: spool/counts.ts 1
     # PRINTS: spool/drops.ts 10
-    # PRINTS: spool/flush.ts 2
-    # PRINTS: spool/held-deliveries.ts 1
+    # PRINTS: spool/flush.ts 3
+    # PRINTS: spool/held-deliveries.ts 6
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 14
@@ -559,7 +559,7 @@ jobs:
     # PRINTS: file-ref.ts 5
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
-    # PRINTS: flush.ts 2
+    # PRINTS: flush.ts 3
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
@@ -569,7 +569,7 @@ jobs:
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
     # PRINTS: heartbeat.ts 1
-    # PRINTS: held-deliveries.ts 1
+    # PRINTS: held-deliveries.ts 6
     # PRINTS: hint-deliveries.ts 4
     # PRINTS: hint-outcome-view.ts 4
     # PRINTS: hint-outcome.ts 1
@@ -613,8 +613,8 @@ jobs:
     # PRINTS: normalized-doc.ts 2
     # PRINTS: outcome-clause.ts 2
     # PRINTS: outcome-population.ts 16
-    # PRINTS: outcome-render.ts 2
-    # PRINTS: outcome.ts 7
+    # PRINTS: outcome-render.ts 3
+    # PRINTS: outcome.ts 6
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4

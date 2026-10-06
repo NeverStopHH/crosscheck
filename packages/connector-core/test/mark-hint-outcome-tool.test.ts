@@ -15,7 +15,7 @@
  *   · a hub that predates outcomes says so instead of failing vaguely.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, utimes } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import { PIN_PRESENCE_TERMINAL, hintDeliveryId } from "@crosscheck/schema";
@@ -25,6 +25,8 @@ import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import {
+  DELIVERY_HELD_AMBIGUOUS,
+  DELIVERY_HELD_NO_LIVE_SESSION,
   DELIVERY_STILL_ON_THIS_MACHINE,
   NOISE_IS_THE_PERSONS_LABEL,
   OUTCOMES_NOT_SERVED,
@@ -34,7 +36,8 @@ import {
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
 import { appendRecords } from "../src/spool/append.ts";
-import { repoKey } from "../src/config/paths.ts";
+import { holdsUnsentDelivery } from "../src/spool/held-deliveries.ts";
+import { repoKey, sessionStatePath } from "../src/config/paths.ts";
 import type { Env } from "../src/index.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
 import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
@@ -60,7 +63,9 @@ let server: ReturnType<typeof Bun.serve>;
 let oldHub: ReturnType<typeof Bun.serve>;
 let hostileHub: ReturnType<typeof Bun.serve>;
 /** What the hostile hub answers next; rebound per payload. */
-let hostileAnswer: () => Response = () => Response.json({}, { status: 500 });
+let hostileAnswer: (request: Request) => Response = () => Response.json({}, { status: 500 });
+/** Every path the hostile hub was asked for — so a test can say nothing was sent. */
+const hostileCalls: string[] = [];
 let hubUrl: string;
 let nickEnv: Env;
 let nickApiKey: string;
@@ -123,6 +128,55 @@ const developerKey = async (name: string): Promise<{ id: string; apiKey: string 
   return known;
 };
 
+const unknownRef = (): Response =>
+  Response.json(
+    { ok: false, error: { code: "unknown_ref", message: "no hint with that id reached you on this repo" } },
+    { status: 422 },
+  );
+
+const envFor = (home: string, hub: string): Env => ({ ...nickEnv, CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hub });
+
+/** A fresh home with these session states on Nick's checkout — silent ones backdated, file and heartbeat. */
+const homeWith = async (
+  states: readonly { key: string; session: string; hub: string; silentHours?: number }[],
+): Promise<string> => {
+  const home = await makeHome("outcome-tool");
+  cleanups.push(home);
+  for (const state of states) {
+    const at = new Date(Date.now() - (state.silentHours ?? 0) * 3_600_000);
+    await writeSessionState(home, {
+      hostSessionKey: state.key,
+      crosscheckSessionId: state.session,
+      workContextId: `wc_${state.session}`,
+      repoId: REPO_ID,
+      repoRoot: nickRepo,
+      hubUrl: state.hub,
+      developerId: nickId,
+      startedAt: at.toISOString(),
+      lastHeartbeatAt: at.toISOString(),
+      seenTargets: [],
+      workContextTitle: "Rework the importer",
+      workContextStatus: "analyzing",
+    });
+    if (state.silentHours !== undefined) {
+      await utimes(sessionStatePath(home, state.key), at, at);
+    }
+  }
+  return home;
+};
+
+const spoolDeliveryIn = async (home: string, hub: string, hostSessionKey: string, ref: string): Promise<void> => {
+  const delivery = envelope(nickId, NICK_SESSION, "hint_delivery", {
+    id: hintDeliveryId(NICK_SESSION, ref),
+    sessionId: NICK_SESSION,
+    refKind: "work_context",
+    refId: ref,
+    channel: "prompt_hint",
+    deliveredAt: new Date().toISOString(),
+  });
+  await appendRecords(home, repoKey(hub, REPO_ID), hostSessionKey, [delivery], new Date());
+};
+
 /** A delivery booked into Nick's spool the way the prompt hook books one — not yet sent. */
 const spoolDelivery = async (hub: string, ref: string): Promise<void> => {
   const delivery = envelope(nickId, NICK_SESSION, "hint_delivery", {
@@ -176,7 +230,13 @@ beforeAll(async () => {
     fetch: () =>
       Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
   });
-  hostileHub = Bun.serve({ port: 0, fetch: () => hostileAnswer() });
+  hostileHub = Bun.serve({
+    port: 0,
+    fetch: (request) => {
+      hostileCalls.push(new URL(request.url).pathname);
+      return hostileAnswer(request);
+    },
+  });
   const nick = await developer("Nick", "nick-outcome-tool@example.com");
   const ken = await developer("Ken", "ken-outcome-tool@example.com");
   developerKeys.set("Ken", ken);
@@ -314,6 +374,19 @@ describe("mark_hint_outcome", () => {
     expect(tied.text).not.toContain("It supersedes");
   });
 
+  test("round 3: POST first — a ref the hub knows is recorded without sending what is held", async () => {
+    // Arrange — the spool holds an unrelated pointer
+    await spoolDelivery(hubUrl, "wc_ken_unrelated");
+    const ctx = await contextFor(nickEnv);
+
+    // Act — Ken's context is a delivery the hub has
+    const result = await callIn(ctx, { ref: KEN_CONTEXT, outcome: "followed" });
+
+    // Assert — answered by the hub; the unrelated delivery is still waiting for its own hook
+    expect(result.isError).toBe(false);
+    expect(await holdsUnsentDelivery(ctx.hub, "wc_ken_unrelated")).toBe(true);
+  });
+
   test("review #14: a hint still on this machine is sent before the outcome, which is then recorded", async () => {
     // Arrange — a prompt hint booked its delivery into the spool; no tool has run since
     const ref = "wc_ken_second";
@@ -338,23 +411,108 @@ describe("mark_hint_outcome", () => {
     expect(result.text).toContain(`Recorded: the hint at ${ref}`);
   });
 
+  test("round 3: the retry sends only the sender's own spool — another session's records keep their own name", async () => {
+    // Arrange — Ken's second context; Nick's live session holds its delivery; a session that is
+    // gone left a pointer of its own in a spool of its own
+    const ref = "wc_ken_own_spool";
+    const ken = await developerKey("Ken");
+    await send("/api/records", ken.apiKey, {
+      records: [
+        envelope(ken.id, KEN_SESSION, "work_context", {
+          id: ref,
+          sessionId: KEN_SESSION,
+          title: "Batch the downloads",
+          status: "analyzing",
+          createdAt: new Date().toISOString(),
+        }),
+      ],
+    });
+    await spoolDelivery(hubUrl, ref);
+    await spoolDeliveryIn(nickHome, hubUrl, "outcome-nick-gone", "wc_ken_gone_session");
+
+    // Act
+    const result = await call({ ref, outcome: "followed" });
+
+    // Assert — recorded, and the gone session's record was not sent in Nick's session's name
+    expect(result.text).toContain(`Recorded: the hint at ${ref}`);
+    const ctx = await contextFor(nickEnv);
+    expect(await holdsUnsentDelivery(ctx.hub, "wc_ken_gone_session")).toBe(true);
+  });
+
   test("review #14: a hint the hub has not received yet is never answered 'never reached you'", async () => {
-    // Arrange — the hub cannot take the spooled delivery and does not know the ref
+    // Arrange — the hub does not know the ref; no session on this machine is live for that hub
     const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
-    hostileAnswer = () =>
-      Response.json(
-        { ok: false, error: { code: "unknown_ref", message: "no hint with that id reached you on this repo" } },
-        { status: 422 },
-      );
+    hostileAnswer = () => unknownRef();
     await spoolDelivery(`http://127.0.0.1:${String(hostileHub.port)}`, "wc_ken_held");
 
     // Act
     const result = await call({ ref: "wc_ken_held", outcome: "followed" }, env);
 
+    // Assert — what is true: nobody live here can send it (round 3)
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain(DELIVERY_HELD_NO_LIVE_SESSION);
+    expect(result.text).not.toContain("reached you on this repo");
+  });
+
+  test("round 3: a live session's held hint that cannot be sent yet says it is sent after the next tool call", async () => {
+    // Arrange — a home whose one live session belongs to a hub that refuses records and knows no ref
+    const stuck = `http://127.0.0.1:${String(hostileHub.port)}`;
+    hostileAnswer = () => unknownRef();
+    const home = await homeWith([{ key: "stuck-one", session: NICK_SESSION, hub: stuck }]);
+    await spoolDeliveryIn(home, stuck, "stuck-one", "wc_ken_stuck");
+
+    // Act
+    const result = await call({ ref: "wc_ken_stuck", outcome: "followed" }, envFor(home, stuck));
+
+    // Assert
+    expect(result.text).toContain(DELIVERY_STILL_ON_THIS_MACHINE);
+  });
+
+  test("round 3: with several live sessions in this checkout, nothing is sent in a guessed one's name", async () => {
+    // Arrange — two live sessions on the same root; the held delivery is in the first one's spool
+    const stuck = `http://127.0.0.1:${String(hostileHub.port)}`;
+    hostileAnswer = () => unknownRef();
+    const home = await homeWith([
+      { key: "twin-a", session: NICK_SESSION, hub: stuck },
+      { key: "twin-b", session: "cc_outcome-nick-twin", hub: stuck },
+    ]);
+    await spoolDeliveryIn(home, stuck, "twin-a", "wc_ken_twin");
+    hostileCalls.length = 0;
+
+    // Act
+    const result = await call({ ref: "wc_ken_twin", outcome: "followed" }, envFor(home, stuck));
+
+    // Assert — no records were sent at all, and the answer says why
+    expect(result.text).toContain(DELIVERY_HELD_AMBIGUOUS);
+    expect(hostileCalls).not.toContain("/api/records");
+  });
+
+  test("round 3: a session that went silent is not revived to send a held hint", async () => {
+    // Arrange — the one state here stopped beating hours ago
+    const stuck = `http://127.0.0.1:${String(hostileHub.port)}`;
+    hostileAnswer = () => unknownRef();
+    const home = await homeWith([{ key: "silent-one", session: NICK_SESSION, hub: stuck, silentHours: 6 }]);
+    await spoolDeliveryIn(home, stuck, "silent-one", "wc_ken_silent");
+    hostileCalls.length = 0;
+
+    // Act
+    const result = await call({ ref: "wc_ken_silent", outcome: "followed" }, envFor(home, stuck));
+
+    // Assert
+    expect(result.text).toContain(DELIVERY_HELD_NO_LIVE_SESSION);
+    expect(hostileCalls).not.toContain("/api/records");
+  });
+
+  test("round 3: a held delivery of another ref is not this one — the hub's own refusal is the answer", async () => {
+    // Arrange — the spool holds a pointer at one ref; the agent names another the hub never saw
+    await spoolDelivery(hubUrl, "wc_ken_other_held");
+
+    // Act
+    const result = await call({ ref: "wc_nobody_here", outcome: "followed" });
+
     // Assert
     expect(result.isError).toBe(true);
-    expect(result.text).toContain(DELIVERY_STILL_ON_THIS_MACHINE);
-    expect(result.text).not.toContain("reached you on this repo");
+    expect(result.text).toContain("no hint with that id reached you");
   });
 
   test("an override without its reason is refused before any round trip", async () => {
