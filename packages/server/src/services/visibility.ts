@@ -61,11 +61,13 @@
  *                                   questions), the questions inbox (the
  *                                   briefing's and answerable=1), the
  *                                   landed-change stop (POST /api/landed/
- *                                   context), suspect and the /ui pages. A
- *                                   question's title is
- *                                   judged by its CONTEXT's owner, not its
- *                                   asker. A title a person or host wrote
- *                                   stays
+ *                                   context), the pilot's label walk (GET
+ *                                   /api/pilot-marks/unlabeled) and report
+ *                                   (prior work), suspect and the /ui
+ *                                   pages. A question's or a delivery's
+ *                                   title is judged by its CONTEXT's owner,
+ *                                   never by who asked or who received it.
+ *                                   A title a person or host wrote stays
  *   - base commit                 — omitted from the work-context listing
  *                                   and every diagnosis; "" (unknown) on
  *                                   hint candidates

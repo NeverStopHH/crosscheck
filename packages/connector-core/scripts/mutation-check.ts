@@ -18080,6 +18080,27 @@ export const MUTATIONS: readonly Mutation[
       "the marker fails the datetime parse, is caught to undefined, and the " +
       "stop prints `started at an unknown time` after all",
   },
+  {
+    // Review round 3, H3: the pilot surfaces title what was delivered.
+    label: "crosscheck pilot label names an opted-out teammate's context by its branch",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "        : projectRow(hidden, { developerId: row.owner_developer_id, repo: input.repo }, candidate);",
+    to: "        : candidate;",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the label walk shows Nick the hint he was given under Robin's " +
+      "fallback title, which is the branch she is on",
+  },
+  {
+    label: "the pilot report's prior work names an opted-out teammate's context by its branch",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    projectRow(hidden, { developerId: row.owner_developer_id, repo }, {",
+    to: "    projectRow(new Set<string>(), { developerId: row.owner_developer_id, repo }, {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the report carries no person by design, then titles the work its " +
+      "readers opened with the branch of the teammate who did it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18410,7 +18431,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 10
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 5
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 7
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

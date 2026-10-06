@@ -103,6 +103,38 @@ describe("the questions inbox (review round 3, H1)", () => {
   });
 });
 
+describe("the pilot surfaces (review round 3, H3)", () => {
+  test("crosscheck pilot label lists the hint about Robin's context under the withheld title", async () => {
+    const world = await seedOptedOutWorld();
+
+    const unlabeled = await getAs(world, "nick", url("/api/pilot-marks/unlabeled", { repo: REPO, withinMinutes: "600" }));
+
+    expect(unlabeled.status).toBe(200);
+    expect(secretsIn(unlabeled.body)).toEqual([]);
+    expect((JSON.parse(unlabeled.body) as { data: { candidates: readonly { id: string; title: string | null }[] } })
+      .data.candidates).toEqual([expect.objectContaining({ id: "hd_robin_1", title: WITHHELD_TITLE })]);
+  });
+
+  test("the pilot report's prior work names Robin's opened context under the withheld title", async () => {
+    const world = await seedOptedOutWorld();
+
+    const asNick = await getAs(world, "nick", url("/api/pilot/report", { repo: REPO, days: "14" }));
+    const asRobin = await getAs(world, "robin", url("/api/pilot/report", { repo: REPO, days: "14" }));
+
+    expect(asNick.status).toBe(200);
+    expect(secretsIn(asNick.body)).toEqual([]);
+    expect(priorWorkTitles(asNick.body)).toEqual({ [ROBIN_CONTEXT]: WITHHELD_TITLE });
+    expect(priorWorkTitles(asRobin.body)).toEqual({ [ROBIN_CONTEXT]: `${SECRET_BRANCH} @ api` });
+  });
+});
+
+const priorWorkTitles = (body: string): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    (JSON.parse(body) as {
+      data: { duplicateWork: { priorWork: readonly { workContextId: string; title: string }[] } };
+    }).data.duplicateWork.priorWork.map((work) => [work.workContextId, work.title]),
+  );
+
 /** A commit of Robin's on the file Nick is about to edit — the landed stop's input. */
 const LANDED_SHA = "abcdef1234567";
 

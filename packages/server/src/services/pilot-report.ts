@@ -93,6 +93,8 @@ import {
 } from "./pilot-label-figures.ts";
 import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import type { PilotAnswerSurface } from "./pilot.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -230,6 +232,12 @@ export interface PilotReport {
 export interface ReadPilotReportInput {
   readonly repo: string;
   readonly days: number;
+  /**
+   * Who reads it. The report names no person, but its prior work is titled
+   * with teammates' contexts, and a fallback title names where its owner is
+   * (services/live-location.ts).
+   */
+  readonly viewerDeveloperId: string;
 }
 
 const zeroChannels = (): Record<DeliveryChannel, number> =>
@@ -265,6 +273,7 @@ const readDuplicateWork = async (
   repo: string,
   since: Date,
   until: Date,
+  hidden: HiddenLocations,
 ): Promise<ProofDuplicateWork> => {
   const windowed = sql`s.repo = ${repo}
     AND hd.delivered_at >= ${since.toISOString()}::timestamptz
@@ -339,10 +348,12 @@ const readDuplicateWork = async (
   const named = await deps.db.execute<{
     work_context_id: string;
     title: string;
+    owner_developer_id: string;
     opened_by: number;
     total: number;
   }>(sql`
     SELECT wc.id AS work_context_id, wc.title AS title,
+           owner.developer_id AS owner_developer_id,
            count(DISTINCT d.session_id)::int AS opened_by,
            count(*) OVER ()::int AS total
     FROM (
@@ -353,7 +364,7 @@ const readDuplicateWork = async (
     ) d
     JOIN work_contexts wc ON wc.id = d.pointed
     JOIN agent_sessions owner ON owner.id = wc.session_id AND owner.repo = ${repo}
-    GROUP BY wc.id, wc.title
+    GROUP BY wc.id, wc.title, owner.developer_id
     ORDER BY opened_by DESC, wc.id ASC
     LIMIT ${PILOT_REPORT_MAX_PRIOR_WORK}`);
 
@@ -369,11 +380,13 @@ const readDuplicateWork = async (
     surfaced += row.surfaced;
     opened += row.opened;
   }
-  const priorWork = named.rows.map((row) => ({
-    workContextId: row.work_context_id,
-    title: row.title,
-    openedBySessions: row.opened_by,
-  }));
+  const priorWork = named.rows.map((row) =>
+    projectRow(hidden, { developerId: row.owner_developer_id, repo }, {
+      workContextId: row.work_context_id,
+      title: row.title,
+      openedBySessions: row.opened_by,
+    }),
+  );
   const priorWorkTotal = named.rows[0]?.total ?? 0;
   return {
     surfaced,
@@ -854,7 +867,13 @@ export const readPilotReport = async (
   const [sessionSet, duplicateWork, collisions, attribution, precision, cohorts, integrity] =
     await Promise.all([
       readSessionSet(deps, input.repo),
-      readDuplicateWork(deps, input.repo, since, until),
+      readDuplicateWork(
+        deps,
+        input.repo,
+        since,
+        until,
+        await locationHiddenFrom(deps.db, input.viewerDeveloperId),
+      ),
       readCollisions(deps, input.repo, since, until),
       readAttribution(deps, input.repo, since, until),
       readPrecision(deps, input.repo, { since, until }, labelsSince),

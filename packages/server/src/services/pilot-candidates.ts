@@ -25,6 +25,7 @@ import {
 } from "../constants.ts";
 import { agentSessions, hintDeliveries } from "../db/schema.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -142,6 +143,8 @@ type UnlabeledRow = {
   readonly ref_id: string;
   readonly delivered_at: string | Date;
   readonly title: string | null;
+  /** Whose context the delivery pointed at — the title names where they are. */
+  readonly owner_developer_id: string | null;
 };
 
 /**
@@ -179,12 +182,13 @@ export const readUnlabeledInterventions = async (
   const since = new Date(deps.now().getTime() - input.withinMinutes * MS_PER_MINUTE);
   const rows = await deps.db.execute<UnlabeledRow>(sql`
     SELECT hd.id, hd.session_id, hd.channel, hd.ref_kind, hd.ref_id, hd.delivered_at,
-           wc.title AS title
+           wc.title AS title, pointed_owner.developer_id AS owner_developer_id
     FROM hint_deliveries hd
     JOIN agent_sessions s ON s.id = hd.session_id
     LEFT JOIN work_contexts wc ON wc.id = (${POINTED_WORK_CONTEXT})
       AND EXISTS (SELECT 1 FROM agent_sessions owner
                   WHERE owner.id = wc.session_id AND owner.repo = ${input.repo})
+    LEFT JOIN agent_sessions pointed_owner ON pointed_owner.id = wc.session_id
     JOIN team_settings ts ON ts.repo = s.repo
     WHERE s.repo = ${input.repo}
       AND s.started_at >= ts.pilot_labels_since
@@ -198,16 +202,24 @@ export const readUnlabeledInterventions = async (
       )
     ORDER BY hd.delivered_at DESC, hd.id ASC
     LIMIT ${PILOT_LABEL_MAX_CANDIDATES + 1}`);
+  const hidden = await locationHiddenFrom(deps.db, input.developerId);
   return {
-    candidates: rows.rows.slice(0, PILOT_LABEL_MAX_CANDIDATES).map((row) => ({
-      id: row.id,
-      sessionId: row.session_id,
-      channel: row.channel,
-      refKind: row.ref_kind,
-      refId: row.ref_id,
-      deliveredAt: new Date(row.delivered_at).toISOString(),
-      title: row.title,
-    })),
+    candidates: rows.rows.slice(0, PILOT_LABEL_MAX_CANDIDATES).map((row) => {
+      const candidate = {
+        id: row.id,
+        sessionId: row.session_id,
+        channel: row.channel,
+        refKind: row.ref_kind,
+        refId: row.ref_id,
+        deliveredAt: new Date(row.delivered_at).toISOString(),
+        title: row.title,
+      };
+      // The delivery is the caller's own; the TITLE is the pointed
+      // context's, and judged by its owner (services/live-location.ts).
+      return row.owner_developer_id === null
+        ? candidate
+        : projectRow(hidden, { developerId: row.owner_developer_id, repo: input.repo }, candidate);
+    }),
     more: rows.rows.length > PILOT_LABEL_MAX_CANDIDATES,
   };
 };
