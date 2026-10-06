@@ -31,6 +31,7 @@ import {
   ROBIN_NEW_FILE,
   ROBIN_PIN,
   NICK_CONTEXT,
+  NICK_EVIDENCE_AT,
   NICK_SESSION,
   REVALIDATED_AT,
   REPO,
@@ -517,6 +518,36 @@ describe("a withheld title is not in the search index (review round 4, H4)", () 
     const search = await getAs(world, "nick", url("/api/search", { repo: REPO, query: SECRET_BRANCH }));
 
     expect(robinIds(search.body)).toContain(ROBIN_CONTEXT);
+  });
+});
+
+describe("commit evidence counts only what a told developer collected (review round 4, H2)", () => {
+  interface Absences {
+    readonly data: {
+      readonly absences: readonly { readonly name?: string; readonly developerName?: string; readonly evidenceCollectedAt: string }[];
+      readonly coverage: { readonly sources: readonly { readonly source: string; readonly observedAt: string | null }[] };
+    };
+  }
+  const absencesOf = (body: string): Absences["data"] => (JSON.parse(body) as Absences).data;
+
+  test("the git rung and the absence findings never carry when her SessionStart collected", async () => {
+    const world = await seedOptedOutWorld();
+
+    const nick = await getAs(world, "nick", url("/api/absences", { repo: REPO }));
+    const own = await getAs(world, "robin", url("/api/absences", { repo: REPO }));
+
+    expect(secretsIn(nick.body)).toEqual([]);
+    expect(absencesOf(nick.body).coverage.sources.find((row) => row.source === "git")?.observedAt).toBe(NICK_EVIDENCE_AT);
+    expect(secretsIn(own.body)).toContain("commit evidence");
+  });
+
+  test("an author only her report names is not counted for a colleague", async () => {
+    const world = await seedOptedOutWorld();
+
+    const nick = await getAs(world, "nick", url("/api/absences", { repo: REPO }));
+
+    expect(nick.body).not.toContain("sam@example.com");
+    expect(nick.body).not.toContain("\"Sam\"");
   });
 });
 

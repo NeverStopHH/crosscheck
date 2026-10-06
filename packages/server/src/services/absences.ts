@@ -47,6 +47,10 @@ const absenceEvidenceWhere = (
     // Privacy (header): matched members respect opt-out and the viewer's
     // mutes; unmatched rows (developers.id NULL) have no subject to check.
     sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,
+    // And its COLLECTOR (review round 4, H2): evidenceCollectedAt is the
+    // collector's SessionStart, so an opted-out collector's rows count for
+    // nobody she is hidden from — the git rung reads the same rule.
+    visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy),
   );
 
 /**

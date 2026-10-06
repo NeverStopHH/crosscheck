@@ -18625,6 +18625,45 @@ export const MUTATIONS: readonly Mutation[
       "every fallback title is kept out of search whoever wrote it, and an " +
       "opt-in never brings hers back",
   },
+  // ── Review round 4, H2: commit evidence by TOLD collectors only ───────
+  {
+    label: "the git rung is dated by an opted-out collector's SessionStart",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      total: sql`count(*) filter (where ${isToldCollector})`,\n      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      total: sql`count(*)`,\n      newest: sql`max(${commitEvidence.collectedAt})`,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "every coverage record's git observedAt is the second her session " +
+      "started, whenever hers is the newest report",
+  },
+  {
+    label: "the git rung is dated by an opted-out collector's SessionStart (guard)",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      total: sql`count(*) filter (where ${isToldCollector})`,\n      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      total: sql`count(*)`,\n      newest: sql`max(${commitEvidence.collectedAt})`,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "every route that carries coverage carries her SessionStart",
+  },
+  {
+    label: "an absence finding says when an opted-out collector's session started",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "    visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy),\n  );",
+    to: "  );",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the briefing's «commit evidence 5d old» and each finding's " +
+      "evidenceCollectedAt are her SessionStart",
+  },
+  {
+    label: "an opted-out collector's report replaces a told one's about the same author",
+    file: `${SERVER}/src/services/commit-evidence.ts`,
+    from: "AND NOT (${isOptedOut(sql`excluded.reported_by`)} AND NOT ${isOptedOut(commitEvidence.reportedBy)})`,",
+    to: "`,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Nick's evidence about Ken is overwritten by hers and vanishes for every " +
+      "colleague, so the rung says somebody hidden reported",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18957,9 +18996,9 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/live-location-privacy.test.ts 20
+ * PRINTS: packages/server/test/live-location-privacy.test.ts 21
  * PRINTS: packages/server/test/live-location-projection.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 37
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 40
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

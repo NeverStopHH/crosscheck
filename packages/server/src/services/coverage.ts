@@ -680,10 +680,17 @@ const readGitCoverage = async (
   viewerDeveloperId: string,
   repo: string,
 ): Promise<CoverageSourceRecord> => {
+  // EVIDENCE COLLECTED BY TOLD DEVELOPERS ONLY (review round 4, H2). A row's
+  // collected_at is its collector's SessionStart — when they were at their
+  // machine — and an opted-out collector's is hers to keep: her rows neither
+  // date nor count the rung for anybody she is hidden from. reported_by is
+  // the collector, attributable on every row (NOT NULL), so there is no
+  // unknown-collector case to decide.
+  const isToldCollector = visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy);
   const rows = await deps.db
     .select({
-      total: sql`count(*)`,
-      newest: sql`max(${commitEvidence.collectedAt})`,
+      total: sql`count(*) filter (where ${isToldCollector})`,
+      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,
     })
     .from(commitEvidence)
     .where(eq(commitEvidence.repo, repo));

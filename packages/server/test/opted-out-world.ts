@@ -86,6 +86,7 @@ const TARGET_OFFSET_S = 4363;
 const LANDED_OFFSET_S = 4369;
 const PIN_OFFSET_S = 4375;
 const REVALIDATED_OFFSET_S = 4381;
+const COMMIT_EVIDENCE_OFFSET_S = 4387;
 const READ_OFFSET_S = 4401;
 const STALE_HOURS = 30;
 const SECONDS_PER_HOUR = 3600;
@@ -123,6 +124,10 @@ export const PIN_AT = at(PIN_OFFSET_S);
 export const ROBIN_PIN = "pin_robin_refresh";
 /** Her pull re-checked Nick's claim against HER clone: refCommit is SECRET_SHA. */
 export const REVALIDATED_AT = at(REVALIDATED_OFFSET_S);
+/** Her SessionStart reported who committed lately: its collectedAt is when she was there. */
+export const COMMIT_EVIDENCE_AT = at(COMMIT_EVIDENCE_OFFSET_S);
+/** When Nick's SessionStart reported the same — his, so a colleague may read it. */
+export const NICK_EVIDENCE_AT = at(0);
 export const ROBIN_NEW_FILE = "src/auth/cache.ts";
 /** A failure her agent observed after the opt-out: its target's createdAt is TARGET_AT. */
 export const ROBIN_FINGERPRINT = "sha256:0badc0de0badc0de";
@@ -165,6 +170,7 @@ export const SECRETS: readonly (readonly [label: string, value: string])[] = [
   ...instantForms(LANDED_AT).map((value) => ["landed report", value] as const),
   ...instantForms(PIN_AT).map((value) => ["pin verified", value] as const),
   ...instantForms(REVALIDATED_AT).map((value) => ["revalidation", value] as const),
+  ...instantForms(COMMIT_EVIDENCE_AT).map((value) => ["commit evidence", value] as const),
 ];
 
 /** The labels of every secret `body` carries — empty when it carries none. */
@@ -280,6 +286,12 @@ const nickWork = (): readonly Record<string, unknown>[] => [
   recordEnvelope(
     "claim",
     validClaimBody({ id: "clm_nick", workContextId: NICK_CONTEXT, authorSessionId: NICK_SESSION, kind: "hypothesis", status: "proposed", body: "The rotation job overruns its window and drops the key" }),
+    { sessionId: NICK_SESSION },
+  ),
+  // Nick's SessionStart reported Ken's commits first; hers repeats it later.
+  recordEnvelope(
+    "commit_evidence",
+    { repo: REPO, collectedAt: NICK_EVIDENCE_AT, windowDays: 14, authors: [KEN_AUTHOR] },
     { sessionId: NICK_SESSION },
   ),
 ];
@@ -444,7 +456,25 @@ const robinActsAfterOptOut = async (harness: TestHarness, robin: TestDeveloper):
     })),
     "Robin's revalidation",
   );
+  harness.clock.advanceSeconds(COMMIT_EVIDENCE_OFFSET_S - REVALIDATED_OFFSET_S);
+  assertAccepted(
+    await postRecords(harness, robin, {
+      records: [
+        recordEnvelope(
+          "commit_evidence",
+          { repo: REPO, collectedAt: COMMIT_EVIDENCE_AT, windowDays: 14, authors: [KEN_AUTHOR, SAM_AUTHOR] },
+          { sessionId: ROBIN_LIVE },
+        ),
+      ],
+    }),
+    "Robin's commit evidence",
+  );
 };
+
+/** A teammate's commits, as any clone's git log sees them: Nick's report and hers both name him. */
+const KEN_AUTHOR = { name: "Ken", email: "ken@example.com", latestCommitAt: TEST_START_ISO, commitCount: 2 } as const;
+/** A committer with no crosscheck account, whom only HER report names. */
+const SAM_AUTHOR = { name: "Sam", email: "sam@example.com", latestCommitAt: TEST_START_ISO, commitCount: 1 } as const;
 
 export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
   const harness = await createTestHarness();
