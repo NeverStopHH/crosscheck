@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1621
+    # PRINTS: 1622
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -424,6 +424,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 21
     # PRINTS: packages/server/src/services/landed-notices.ts 28
+    # PRINTS: packages/server/src/services/landed.ts 1
     # PRINTS: packages/server/src/services/live-location.ts 9
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/passkeys.ts 7
@@ -582,7 +583,7 @@ jobs:
     # PRINTS: landed-notice.ts 5
     # PRINTS: landed-notices.ts 33
     # PRINTS: landed-why.ts 2
-    # PRINTS: landed.ts 3
+    # PRINTS: landed.ts 4
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2

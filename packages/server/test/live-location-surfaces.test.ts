@@ -18,6 +18,7 @@ import {
   HOST_CREATED_AT,
   HOST_TITLE,
   LOCAL_REPO,
+  NICK_SESSION,
   REPO,
   ROBIN_CONTEXT,
   ROBIN_DETACHED_CONTEXT,
@@ -28,6 +29,7 @@ import {
   ROBIN_SOLVED,
   SECRET_BRANCH,
   SECRET_LOCAL_BRANCH,
+  SECRET_SHA,
   UPDATED_AT,
   getAs,
   postAs,
@@ -300,6 +302,51 @@ describe("the title marker (review round 3, H4 and L1)", () => {
 
     expect(titleOf(kept.body, ROBIN_HOST_CONTEXT)).toBe(HOST_TITLE);
     expect(titleOf(renamed.body, ROBIN_HOST_CONTEXT)).toBe(WITHHELD_TITLE);
+  });
+});
+
+const landedAtOf = (body: string, id: string): string | null | undefined =>
+  (listed(body).find((row) => row.id === id) as { landedAt?: string | null } | undefined)?.landedAt;
+
+const reportLanded = async (
+  world: Awaited<ReturnType<typeof seedOptedOutWorld>>,
+  who: "nick" | "robin",
+  commits: readonly string[],
+): Promise<void> => {
+  const developer = who === "nick" ? world.nick : world.robin;
+  const sessionId = who === "nick" ? NICK_SESSION : ROBIN_LIVE;
+  const posted = await postRecords(world.harness, developer, {
+    records: [
+      recordEnvelope(
+        "landed_evidence",
+        { repo: REPO, defaultBranch: "main", checkedAt: world.harness.clock.now().toISOString(), commits },
+        { sessionId },
+      ),
+    ],
+  });
+  expect(posted.data?.rejected).toBe(0);
+};
+
+describe("the landed-evidence oracle (review round 3, M2)", () => {
+  test("a colleague's right guess at Robin's HEAD marks nothing of hers landed", async () => {
+    // A context is marked landed when a reported commit is its session's base
+    // commit — so a colleague who could report HER base commit and watch
+    // landedAt flip would read her HEAD back one guess at a time.
+    const world = await seedOptedOutWorld();
+
+    await reportLanded(world, "nick", [SECRET_SHA]);
+    const listing = await getAs(world, "robin", url("/api/work-contexts", { repo: REPO }));
+
+    expect(landedAtOf(listing.body, ROBIN_CONTEXT)).toBeNull();
+  });
+
+  test("her own sessions still mark her work landed", async () => {
+    const world = await seedOptedOutWorld();
+
+    await reportLanded(world, "robin", [SECRET_SHA]);
+    const listing = await getAs(world, "robin", url("/api/work-contexts", { repo: REPO }));
+
+    expect(landedAtOf(listing.body, ROBIN_CONTEXT)).not.toBeNull();
   });
 });
 

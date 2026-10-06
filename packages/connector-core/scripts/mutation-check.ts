@@ -18285,6 +18285,17 @@ export const MUTATIONS: readonly Mutation[
       "a declared intent lands on a context whose host title the hub then " +
       "judges by its shape",
   },
+  {
+    // Review round 3, M2: landedAt was an oracle for a hidden owner's HEAD.
+    label: "a colleague's landed evidence marks an opted-out teammate's work landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "        visiblePresenceCondition(developerId, agentSessions.developerId),",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Nick reports a guessed sha as landed and reads Robin's HEAD off " +
+      "whether her context's landedAt flips",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18617,7 +18628,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 10
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 19
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 20
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

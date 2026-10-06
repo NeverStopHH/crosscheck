@@ -20,7 +20,9 @@
  *
  * TRUST MODEL, same as commit evidence: any hub member may report, because
  * git ancestry is checkable from any clone and the hub maps commit → context
- * through (repo, base_commit) itself. A forged report can therefore mislabel
+ * through (repo, base_commit) itself — except about a developer who opted
+ * out of presence, whose contexts take evidence from their own sessions
+ * only (the base commit is their HEAD; see ingestLandedEvidence). A forged report can therefore mislabel
  * a context as landed — a wrong label with the same blast radius as forged
  * commit evidence, accepted and documented — but it cannot touch claims,
  * ranking (the solved floor keys on SOLVED, services/solved.ts), or another
@@ -40,6 +42,7 @@ import { agentSessions, workContexts } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { HandlerOutcome } from "./record-handlers.ts";
+import { visiblePresenceCondition } from "./visibility.ts";
 
 interface Deps {
   readonly db: Db;
@@ -58,7 +61,7 @@ interface Deps {
  */
 export const ingestLandedEvidence = async (
   deps: Deps,
-  _developerId: string,
+  developerId: string,
   body: LandedEvidence,
 ): Promise<HandlerOutcome> => {
   const sessionIds = deps.db
@@ -68,6 +71,14 @@ export const ingestLandedEvidence = async (
       and(
         eq(agentSessions.repo, body.repo),
         inArray(agentSessions.baseCommit, [...body.commits]),
+        // A HIDDEN OWNER'S SESSIONS TAKE EVIDENCE FROM THE OWNER ONLY. The
+        // stamp is visible to every colleague, so accepting anybody's report
+        // let a colleague submit a guessed sha, watch `landedAt` flip and
+        // read an opted-out developer's HEAD back one guess at a time
+        // (services/live-location.ts). The cost is stated in visibility.ts:
+        // teammates' SessionStart no longer marks her work landed; her own
+        // sessions still do.
+        visiblePresenceCondition(developerId, agentSessions.developerId),
       ),
     );
   await deps.db

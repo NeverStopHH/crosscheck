@@ -109,6 +109,14 @@
  * and fails on their branch or HEAD anywhere in a response — so a route added
  * later is covered without anybody remembering to list it here.
  *
+ * WRITES THAT WOULD READ IT BACK. `landedAt` is stamped when a reported
+ * commit is a session's base commit, and every colleague sees the stamp — so
+ * a colleague who could report a guessed sha about her sessions would read
+ * her HEAD back one guess at a time. Landed evidence about a hidden owner's
+ * sessions is therefore accepted from that owner only (services/landed.ts).
+ * The cost, stated: teammates' SessionStart no longer marks her work
+ * landed; only her own sessions do, so it reads unlanded longer than it is.
+ *
  * ACCEPTED: the withholding is itself visible. A colleague who sees a
  * teammate's work but never their presence line, or reads LOCATION_WITHHELD
  * and WITHHELD_TITLE, can tell that teammate opted out. That is the price of
