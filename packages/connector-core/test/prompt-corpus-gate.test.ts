@@ -11,6 +11,8 @@
  *     nothing and made no call; at most TASK_FALSE_FLOOR_MAX of them.
  * (c) A `task` row that names a tree shares two content words with it and
  *     arrives as a hint.
+ * (d) A `task` row whose words only a teammate's unreviewed DRAFT shares
+ *     earns no hint: drafts are invisible to the push path.
  *
  * Both rates are printed, so CI shows them on every run.
  */
@@ -110,6 +112,22 @@ const seedTrees = async (base: string, ken: { id: string; apiKey: string }): Pro
         confidence: 0.6,
         captureMode: "agent",
         provenance: "declared",
+        evidenceRefs: [],
+        createdAt: CREATED,
+      },
+    })),
+    ...(tree.drafts ?? []).map((draftBody, index) => ({
+      kind: "claim",
+      body: {
+        id: `clm_${tree.id}_draft_${String(index)}`,
+        workContextId: tree.id,
+        authorSessionId: OWNER_SESSION,
+        kind: "observation",
+        body: draftBody,
+        status: "proposed",
+        confidence: 0.4,
+        captureMode: "auto",
+        provenance: "derived",
         evidenceRefs: [],
         createdAt: CREATED,
       },
@@ -240,5 +258,11 @@ describe("the labelled prompt corpus through the whole hint pipeline", () => {
       .filter((outcome) => outcome.row.tree !== undefined && outcome.hint.length === 0)
       .map((outcome) => outcome.row.prompt);
     expect(missed).toEqual([]);
+  });
+
+  test("(d) a task row whose words only an unreviewed draft shares earns no hint", () => {
+    const drafted = outcomes.filter((outcome) => outcome.row.draftOnlyTree !== undefined);
+    expect(drafted.length).toBeGreaterThan(0);
+    expect(drafted.filter((outcome) => outcome.hint.length > 0).map((outcome) => outcome.row.prompt)).toEqual([]);
   });
 });

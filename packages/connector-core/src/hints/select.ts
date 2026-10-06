@@ -281,6 +281,22 @@ const isEligibleContext = (context: HintContextCandidate): boolean =>
   HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&
   clearsContentFloor(context);
 
+/**
+ * A claim that may drive a PUSHED hint — the hub's own rule, applied again
+ * for a hub that still ships the rows (server services/pushable-claims.ts):
+ * declared, and not refuted — a `rejected_approach` is "rejected" by
+ * definition and stays. A draft, discarded or not, is neither one of the
+ * tree's claims here nor a reason to point at it (draft-nudge review).
+ */
+const isPushableClaim = (claim: HintClaimCandidate): boolean =>
+  isDeclared(claim) && (claim.status !== "rejected" || claim.kind === "rejected_approach");
+
+/** The context with only the claims the push path may see. */
+const withPushableClaims = (context: HintContextCandidate): HintContextCandidate => ({
+  ...context,
+  claims: context.claims.filter(isPushableClaim),
+});
+
 /** Not the reader's own words, however the context they sit in matched. */
 const isForeignClaim = (
   claim: HintClaimCandidate,
@@ -338,7 +354,7 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     return SILENCE;
   }
   const seen = new Set(input.seenRefIds);
-  const eligible = input.candidates.filter(isEligibleContext);
+  const eligible = input.candidates.filter(isEligibleContext).map(withPushableClaims);
 
   // Substance pass over ALL eligible contexts first: an evidence-backed claim
   // in the second-ranked context beats a pointer at the first-ranked one.

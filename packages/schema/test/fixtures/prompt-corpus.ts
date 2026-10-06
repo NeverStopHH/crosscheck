@@ -15,7 +15,9 @@
  * step, continue, try again; the CI tree says monitor, checks, pass. A
  * content-free prompt that leaks one counted word beside another meets a
  * tree that holds both. A `task` row with a `tree` shares at least two
- * content words with that tree, so it MUST arrive as a hint.
+ * content words with that tree, so it MUST arrive as a hint; a `task` row
+ * with a `draftOnlyTree` shares them only with a teammate's unreviewed DRAFT
+ * there, so it must NOT (draft-nudge review).
  */
 
 export type PromptLabel = "content_free" | "task";
@@ -27,6 +29,8 @@ export interface CorpusTree {
   readonly title: string;
   readonly description: string;
   readonly claims: readonly string[];
+  /** Unreviewed derived drafts — invisible to the push path until confirmed. */
+  readonly drafts?: readonly string[];
 }
 
 export interface CorpusPrompt {
@@ -36,6 +40,8 @@ export interface CorpusPrompt {
   readonly source: PromptSource;
   /** A `task` row that shares two content words with this tree: it must be hinted. */
   readonly tree?: string;
+  /** A `task` row whose words only a draft in this tree shares: it must not be. */
+  readonly draftOnlyTree?: string;
 }
 
 export const CORPUS_TREES: readonly CorpusTree[] = [
@@ -121,6 +127,13 @@ export const CORPUS_TREES: readonly CorpusTree[] = [
     description: "Duplicate rows in the task view",
     claims: ["The current user is joined twice when a task has two assignees."],
   },
+  {
+    id: "wc_draft_only",
+    title: "Nightly report formatting",
+    description: "Report layout",
+    claims: [],
+    drafts: ["The zebrafrobnicator cache poisons the quuxinator on every warm start"],
+  },
 ];
 
 const free = (prompt: string, language: PromptLanguage, source: PromptSource): CorpusPrompt => ({
@@ -128,6 +141,14 @@ const free = (prompt: string, language: PromptLanguage, source: PromptSource): C
   label: "content_free",
   language,
   source,
+});
+
+const draftOnly = (prompt: string, language: PromptLanguage, draftOnlyTree: string): CorpusPrompt => ({
+  prompt,
+  label: "task",
+  language,
+  source: "synthetic",
+  draftOnlyTree,
 });
 
 const task = (prompt: string, language: PromptLanguage, source: PromptSource, tree?: string): CorpusPrompt => ({
@@ -332,6 +353,9 @@ const SYNTHETIC_TASKS: readonly CorpusPrompt[] = [
     "synthetic",
     "wc_chunked_upload",
   ),
+  // Draft-nudge review: the only tree that shares these words holds them in an unreviewed draft
+  draftOnly("why does the zebrafrobnicator cache poison the quuxinator", "en", "wc_draft_only"),
+  draftOnly("warum vergiftet der zebrafrobnicator cache den quuxinator", "de", "wc_draft_only"),
 ];
 
 export const PROMPT_CORPUS: readonly CorpusPrompt[] = [

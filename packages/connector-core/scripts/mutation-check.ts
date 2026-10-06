@@ -3432,13 +3432,13 @@ export const MUTATIONS: readonly Mutation[
       "paths.ts states never happens to a report",
   },
   {
-    // Audit row V2-X4. The client-side declared-only gate stays either way;
-    // this is about the BYTES, which is the only half that holds against a
-    // connector nobody in this repo wrote.
+    // Audit row V2-X4, now held by the window itself (draft-nudge review):
+    // no draft ROW reaches the hint wire, so the body ternary that used to
+    // carry this guard is the second lock and no test can see it alone.
     label: "the hint wire ships an unpromoted draft's body",
     file: `${SERVER}/src/services/hints.ts`,
-    from: 'body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",',
-    to: "body: row.claim.body,",
+    from: "        pushableClaimCondition(),\n      ),\n    )\n    .orderBy(desc(claims.createdAt))",
+    to: "      ),\n    )\n    .orderBy(desc(claims.createdAt))",
     test: `${SERVER}/test/hints.test.ts`,
     because:
       "a machine guess nobody reviewed — including a ghost draft a THIRD " +
@@ -18033,6 +18033,46 @@ export const MUTATIONS: readonly Mutation[
     because: "every task notification spends the fire the developer's first real prompt was owed",
   },
   {
+    label: "a draft's words qualify its tree for a pushed hint",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        // A draft's words never qualify its tree (review 1006b, L6).\n        pushableClaimCondition(),\n",
+    to: "",
+    test: `${SERVER}/test/hint-draft-visibility.test.ts`,
+    because: "a tree whose title shares nothing with the prompt is pushed at a teammate through a model's unreviewed guess",
+  },
+  {
+    label: "a refuted claim lends its words to the push path",
+    file: `${SERVER}/src/services/pushable-claims.ts`,
+    from: "    or(ne(claims.status, REJECTED_STATUS), eq(claims.kind, REJECTED_APPROACH_KIND)),\n",
+    to: "",
+    test: `${SERVER}/test/hint-draft-visibility.test.ts`,
+    because: "a hypothesis its author rejected, or a discarded draft, still points a teammate at its tree",
+  },
+  {
+    label: "the selector counts a draft among a tree's claims",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  const eligible = input.candidates.filter(isEligibleContext).map(withPushableClaims);",
+    to: "  const eligible = input.candidates.filter(isEligibleContext);",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "\"It carries 1 claim\" — a hub that still ships the draft's row gets it pointed at, discarded or not",
+  },
+  {
+    label: "the selector points at a refuted claim",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  isDeclared(claim) && (claim.status !== \"rejected\" || claim.kind === \"rejected_approach\");",
+    to: "  isDeclared(claim);",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a hypothesis its author rejected is announced to a teammate as notes that may relate to their prompt",
+  },
+  {
+    label: "a rejected approach falls off the push path with the refuted claims",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  isDeclared(claim) && (claim.status !== \"rejected\" || claim.kind === \"rejected_approach\");",
+    to: "  isDeclared(claim) && claim.status !== \"rejected\";",
+    test: `${CORE}/test/hint-flow.test.ts`,
+    because: "the dead end a teammate already ruled out — negative knowledge, rejected by definition — is never mentioned again",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18284,14 +18324,14 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
- * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 8
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
- * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 13
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 15
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 5
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
@@ -18403,6 +18443,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-content-terms.test.ts 1
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
+ * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

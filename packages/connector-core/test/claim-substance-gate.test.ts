@@ -257,7 +257,7 @@ describe("negative knowledge is judged by its code, like every other claim", () 
     const { validity: _dropped, ...noValidity } = retracted;
 
     // Act + Assert
-    expect(select([retracted]).kind).toBe("pointer");
-    expect(select([noValidity as HintClaimCandidate]).kind).toBe("pointer");
+    expect(select([retracted]).kind).toBe("silence");
+    expect(select([noValidity as HintClaimCandidate]).kind).toBe("silence");
   });
 });

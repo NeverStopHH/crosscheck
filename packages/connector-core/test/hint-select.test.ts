@@ -159,17 +159,20 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
       provenance: "derived",
       captureMode: "auto",
     });
-    expect(select([context({}, [derivedNegative])]).kind).toBe("pointer");
-    expect(select([context({}, [derivedSettled])]).kind).toBe("pointer");
+    // …and since the draft-nudge review not a pointer either: a draft is
+    // not one of the tree's claims on the push path until confirmed.
+    expect(select([context({}, [derivedNegative])]).kind).toBe("silence");
+    expect(select([context({}, [derivedSettled])]).kind).toBe("silence");
   });
 
   test("an unknown provenance value is never substance — fail closed", () => {
     // The boundary schema admits ANY non-empty provenance string (hub.ts
     // z.string().min(1)), so a value this connector has never heard of can
     // arrive here. Only the positive "declared" — someone vouched — may be
-    // injected; everything else degrades to a pointer, not substance.
+    // injected; everything else stays off the push path — no substance, no
+    // pointer (draft-nudge review).
     const unknownProvenance = claim({ id: "clm_weird", provenance: "weird" });
-    expect(select([context({}, [unknownProvenance])]).kind).toBe("pointer");
+    expect(select([context({}, [unknownProvenance])]).kind).toBe("silence");
   });
 
   test("a claim whose body the hub withheld is a pointer, never «»", () => {

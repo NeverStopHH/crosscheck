@@ -50,6 +50,7 @@ import {
   exactTokens,
   searchWorkContexts,
 } from "./search.ts";
+import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
@@ -338,20 +339,13 @@ const listClaimsForContext = async (
         // muted author's claims inside an unmuted teammate's tree, and a
         // hint must not carry them to this reader (services/visibility.ts).
         notMutedCondition(readerDeveloperId, agentSessions.developerId),
+        // Only what somebody vouched for (services/pushable-claims.ts): a
+        // draft or a refuted claim is neither one of the tree's claims on
+        // this path nor a row a flood of could evict declared substance.
+        pushableClaimCondition(),
       ),
     )
-    // Window MEMBERSHIP prefers declared rows: the conclusion summarizer's
-    // whole purpose is more derived drafts per context, and the declared-only
-    // injection gate runs client side AFTER this bound — a flood of newer
-    // drafts must not evict the declared substance a reader could have been
-    // handed, or hints degrade to pointers where evidence existed. Membership
-    // only: the returned list is re-sorted newest-first below, so consumers
-    // still see the hub's claim order, and the pointer claimCount still
-    // counts every row in the window whatever its provenance.
-    .orderBy(
-      sql`(${claims.provenance} = ${DECLARED_PROVENANCE}) desc`,
-      desc(claims.createdAt),
-    )
+    .orderBy(desc(claims.createdAt))
     // One row past the window, read only to learn that rows stayed behind.
     .limit(HINT_MAX_CLAIMS_PER_CONTEXT + 1);
   const rows = fetched.slice(0, HINT_MAX_CLAIMS_PER_CONTEXT);
@@ -415,8 +409,9 @@ const listClaimsForContext = async (
     // influenced through a model, and it rides this wire like any other claim
     // body of its context (DESIGN.md §3).
     //
-    // The ROW still travels: a pointer states how many claims it withholds,
-    // and dropping the row would make that count lie.
+    // Redundant since the window holds only declared rows (the WHERE above):
+    // kept as the second lock, so a widened window can never put a draft's
+    // bytes on the wire.
     //
     // Positive equality on the declared value, the same rule the selector
     // applies, so the wire cannot drift into allowing what the renderer
@@ -603,6 +598,8 @@ const listClaimTermMaxima = async (
         sql`${claims.tsv} @@ ${anyToken}`,
         notSuperseded(db),
         notMutedCondition(readerDeveloperId, agentSessions.developerId),
+        // A draft's words never qualify its tree (review 1006b, L6).
+        pushableClaimCondition(),
       ),
     )
     .groupBy(claims.workContextId);

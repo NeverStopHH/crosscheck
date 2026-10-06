@@ -166,12 +166,12 @@ describe("a weak or unbacked match keeps today's pointer", () => {
     );
   });
 
-  test("a derived decision — a draft — is a pointer", () => {
-    expect(select([context([decision({ provenance: "derived" })])]).kind).toBe("pointer");
+  test("a derived decision — a draft — drives no hint at all (draft-nudge review)", () => {
+    expect(select([context([decision({ provenance: "derived" })])]).kind).toBe("silence");
   });
 
-  test("a rejected decision is never substance", () => {
-    expect(select([context([decision({ status: "rejected" })])]).kind).toBe("pointer");
+  test("a rejected decision is never substance, nor a reason to point", () => {
+    expect(select([context([decision({ status: "rejected" })])]).kind).toBe("silence");
   });
 
   test("a superseded decision is never substance", () => {
@@ -273,5 +273,36 @@ describe("the ONE most relevant claim, plus the pointer to the rest", () => {
       { ...context([decision(), decision({ id: "clm_obs", kind: "observation", matchedTerms: 0 })]), claimsTruncated: true },
     ]);
     expect(selection.kind === "claim" ? selection.isRestLowerBound : null).toBe(true);
+  });
+});
+
+describe("drafts and refuted claims never drive a pushed hint (draft-nudge review)", () => {
+  /** A derived, unreviewed draft — as a hub that still ships the row sends it. */
+  const draft = (overrides: Partial<HintClaimCandidate> = {}): HintClaimCandidate =>
+    decision({ id: "clm_draft", kind: "observation", provenance: "derived", captureMode: "auto", body: "", ...overrides });
+
+  test("a tree whose only claim is a draft gets no pointer", () => {
+    expect(select([context([draft()])]).kind).toBe("silence");
+  });
+
+  test("… nor once the author discarded it", () => {
+    expect(select([context([draft({ id: "clm_discard", status: "rejected" })])]).kind).toBe("silence");
+  });
+
+  test("a refuted hypothesis is no claim to point at", () => {
+    expect(select([context([decision({ id: "clm_refuted", kind: "hypothesis", status: "rejected", evidenceRefCount: 0 })])]).kind).toBe(
+      "silence",
+    );
+  });
+
+  test("once confirmed, the declared claim is pointed at — and the draft beside it is not counted", () => {
+    const selection = select([context([decision({ id: "clm_confirmed", kind: "observation", evidenceRefCount: 0 }), draft()])]);
+    expect(selection.kind).toBe("pointer");
+    expect(selection.kind === "pointer" ? selection.claimCount : -1).toBe(1);
+  });
+
+  test("a substance hint does not count a draft among the claims it leaves behind", () => {
+    const selection = select([context([decision(), draft()])]);
+    expect(selection.kind === "claim" ? selection.restCount : -1).toBe(0);
   });
 });

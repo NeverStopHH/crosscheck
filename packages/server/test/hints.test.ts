@@ -628,7 +628,7 @@ describe("candidate pool integrity", () => {
     );
   });
 
-  test("an unpromoted draft's body never leaves the hub, only its row", async () => {
+  test("an unpromoted draft never leaves the hub, neither its body nor its row", async () => {
     // Arrange (audit row V2-X4): a teammate's context carrying one DECLARED
     // evidence-backed claim and one derived, unreviewed draft. Nobody has
     // vouched for the draft and no reader's renderer may show it as
@@ -683,14 +683,9 @@ describe("candidate pool integrity", () => {
 
     // Assert
     expect(payload).not.toContain("MACHINE GUESS");
-    // The ROW still travels: a pointer tells the reader how many claims it
-    // withholds, so withholding the body must not shrink that count.
-    expect(candidate?.claims.map((row) => row.id)).toContain(
-      "clm_unpromoted_draft",
-    );
-    expect(
-      candidate?.claims.find((row) => row.id === "clm_unpromoted_draft")?.body,
-    ).toBe("");
+    // Nor the ROW (draft-nudge review): a draft is not one of the tree's
+    // claims on the push path, so no pointer counts it as one it withholds.
+    expect(payload).not.toContain("clm_unpromoted_draft");
     // …and the control, on the same response: this is a rule about who
     // vouched for a body, not a renderer that stopped sending bodies.
     expect(
