@@ -359,6 +359,16 @@ describe("sharingFindings — what the workers booked", () => {
     expect(sharingSummary(value)).toContain("2 model runs still in flight");
   });
 
+  test("fires older than the kept ring are settled with its oldest entry (review round 3, survivor O6)", () => {
+    // Nine fires, the ring keeps seven: the two it let go started before its
+    // oldest entry, so they have had at least as long
+    const value = input({
+      live: [session({ summarizerFireCount: 9, ...firedAt(...Array.from({ length: 7 }, () => 30 * MINUTE_MS)) })],
+    });
+
+    expect(detailFor(value, "workers_silent")).toContain("9 model runs went more than");
+  });
+
   test("each ended session's runs are settled one by one against its end", () => {
     // The probe: the host kills the hook's children, and the person exits a
     // minute after each session's last fire — six sessions, none blamed.

@@ -18607,6 +18607,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "a hub whose two pages disagree is believed past its own totals, and the nudge counts more due drafts than exist",
   },
+  {
+    label: "fires older than the kept ring are never settled",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "    (oldest !== undefined && isRunSettled(oldest, until) ? unrecorded : 0);",
+    to: "    0;",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a session past DERIVE_FIRES_KEPT fires undercounts its silent runs by every one the ring let go",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18877,7 +18885,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 3
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 29
+ * PRINTS: packages/connector-core/test/sharing.test.ts 30
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
