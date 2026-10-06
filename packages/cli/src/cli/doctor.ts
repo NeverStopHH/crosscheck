@@ -121,6 +121,7 @@ import {
   getPasskeyAnnouncements,
   getPins,
   getSuspect,
+  getHubStatus,
   getIntentPositions,
   getPrivacySettings,
   getQuestions,
@@ -1711,6 +1712,26 @@ const checkIntentLedger = async (ctx: HubContext): Promise<Check> => {
     unpositioned * 2 > total ? "WARN" : "PASS",
     "intent ledger",
     detail,
+  );
+};
+
+/**
+ * An upgraded hub rebuilds its older search docs in the background, and
+ * until it has, search finds those work contexts by their claims only — a
+ * thin result with no visible reason (review round 4, M2). A line only while
+ * that is true: none at zero, and none from an older hub without the
+ * endpoint, rather than a zero it was never told.
+ */
+const checkSearchRebuild = async (ctx: HubContext): Promise<Check | null> => {
+  const result = await getHubStatus(ctx);
+  if (!result.ok || result.data.searchDocsPending === 0) {
+    return null;
+  }
+  return check(
+    "WARN",
+    "search index",
+    `hub is still rebuilding ${String(result.data.searchDocsPending)} search documents; ` +
+      "until it finishes, search finds them by their claims only",
   );
 };
 
@@ -3727,6 +3748,7 @@ export const runDoctor = async (
     intentLedgerCheck,
     pilotReport,
     passkeyAnnouncements,
+    searchRebuildCheck,
   ] = await Promise.all([
     // ONE GET for both: the absence findings and the coverage record ride
     // the same response (03 §3.5), so reading them twice would be a second
@@ -3765,6 +3787,7 @@ export const runDoctor = async (
     // 04a §4.3: an enrolment still cooling off is a WARN until a person has
     // looked at it — counts here, names on `crosscheck status`.
     getPasskeyAnnouncements(hubCtx),
+    checkSearchRebuild(hubCtx),
   ]);
   // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
   // only known once the registry above has answered, so it cannot join the
@@ -3799,6 +3822,7 @@ export const runDoctor = async (
     privacyCheck,
     intentLedgerCheck,
     passkeyDoctorCheck(announcementAnswerOf(passkeyAnnouncements), config.hubUrl),
+    ...(searchRebuildCheck === null ? [] : [searchRebuildCheck]),
   ];
 
   const skewCheck = ((): Check => {

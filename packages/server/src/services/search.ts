@@ -28,6 +28,7 @@ import {
   inArray,
   isNotNull,
   ne,
+  not,
   notExists,
   or,
   sql,
@@ -44,6 +45,7 @@ import {
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
+import { staleDraftDoc } from "./stale-docs.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
@@ -476,7 +478,18 @@ const listFtsTier = async (
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(scopeCondition(scope), sql`${workContexts.tsv} @@ ${tsquery}`))
+    .where(
+      and(
+        scopeCondition(scope),
+        sql`${workContexts.tsv} @@ ${tsquery}`,
+        // A DOC THE UPGRADE HAS NOT REACHED YET still folds drafts' and
+        // discards' words in (services/stale-docs.ts), and a match in it says
+        // nothing about which claim matched: it does not answer here until it
+        // is rebuilt — the claim pass below still finds the context, each
+        // claim marked as it is (review round 4, M2).
+        not(staleDraftDoc(db)),
+      ),
+    )
     .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc)
     .limit(TIER_CANDIDATES);
 
@@ -594,6 +607,9 @@ const listVectorTier = async (
         scopeCondition(scope),
         isNotNull(workContexts.embedding),
         eq(workContexts.embeddingModel, embedder.model),
+        // Minted from a doc that still folds drafts in: not until the
+        // upgrade rebuilds it (the doc pass's rule above; round 4, M2).
+        not(staleDraftDoc(db)),
       ),
     )
     .orderBy(distance)

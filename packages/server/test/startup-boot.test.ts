@@ -24,7 +24,8 @@ const BOOT_TIMEOUT_MS = 30_000;
 /** A SIGTERM that takes longer than this is a hang, not a shutdown. */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 const CLEANUP_LINE = "[crosscheck] draft link cleanup:";
-const DOC_UPGRADE_LINE = "[crosscheck] doc upgrade:";
+/** The pass's closing line — its start line comes first and says only what is waiting. */
+const DOC_UPGRADE_LINE = "[crosscheck] doc upgrade: 1 work context doc(s) rebuilt without drafts";
 
 /** Ephemeral-range port, random so parallel runs cannot collide (never the hub's 7100). */
 const randomPort = (): number => 20_000 + Math.floor(Math.random() * 20_000);

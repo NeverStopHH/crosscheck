@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1718
+    # PRINTS: 1727
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -178,7 +178,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor-sharing.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 54
+    # PRINTS: packages/cli/src/cli/doctor.ts 56
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-io.ts 8
@@ -402,6 +402,7 @@ jobs:
     # PRINTS: packages/server/src/routes/events.ts 1
     # PRINTS: packages/server/src/routes/fence-waivers.ts 1
     # PRINTS: packages/server/src/routes/hints.ts 2
+    # PRINTS: packages/server/src/routes/hub-status.ts 1
     # PRINTS: packages/server/src/routes/landed.ts 3
     # PRINTS: packages/server/src/routes/passkeys.ts 1
     # PRINTS: packages/server/src/routes/pilot-marks.ts 2
@@ -430,7 +431,7 @@ jobs:
     # PRINTS: packages/server/src/services/developer-settings.ts 1
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 7
-    # PRINTS: packages/server/src/services/doc-upgrade.ts 7
+    # PRINTS: packages/server/src/services/doc-upgrade.ts 8
     # PRINTS: packages/server/src/services/draft-link-cleanup.ts 17
     # PRINTS: packages/server/src/services/drafts.ts 3
     # PRINTS: packages/server/src/services/embedding-backfill.ts 5
@@ -457,7 +458,7 @@ jobs:
     # PRINTS: packages/server/src/services/retention-registry.ts 9
     # PRINTS: packages/server/src/services/retention.ts 24
     # PRINTS: packages/server/src/services/search-tokens.ts 4
-    # PRINTS: packages/server/src/services/search.ts 19
+    # PRINTS: packages/server/src/services/search.ts 21
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
     # PRINTS: packages/server/src/services/sessions.ts 13
@@ -466,7 +467,8 @@ jobs:
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
     # PRINTS: packages/server/src/services/solved.ts 1
-    # PRINTS: packages/server/src/services/startup-upgrades.ts 4
+    # PRINTS: packages/server/src/services/stale-docs.ts 2
+    # PRINTS: packages/server/src/services/startup-upgrades.ts 5
     # PRINTS: packages/server/src/services/suspect.ts 2
     # PRINTS: packages/server/src/services/team-settings.ts 2
     # PRINTS: packages/server/src/services/time-window.ts 1
@@ -536,7 +538,7 @@ jobs:
     # PRINTS: developer-settings.ts 1
     # PRINTS: developers.ts 13
     # PRINTS: diagnosis.ts 7
-    # PRINTS: doc-upgrade.ts 7
+    # PRINTS: doc-upgrade.ts 8
     # PRINTS: doctor-global.ts 4
     # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
@@ -544,7 +546,7 @@ jobs:
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor-sharing.ts 3
-    # PRINTS: doctor.ts 72
+    # PRINTS: doctor.ts 74
     # PRINTS: draft-backlog.ts 8
     # PRINTS: draft-link-cleanup.ts 17
     # PRINTS: draft-nudge-spent.ts 5
@@ -587,6 +589,7 @@ jobs:
     # PRINTS: hint.ts 7
     # PRINTS: hints.ts 5
     # PRINTS: hook-budget.ts 2
+    # PRINTS: hub-status.ts 1
     # PRINTS: hub.ts 13
     # PRINTS: index.ts 5
     # PRINTS: init-global.ts 2
@@ -682,7 +685,7 @@ jobs:
     # PRINTS: schemas.ts 1
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4
-    # PRINTS: search.ts 20
+    # PRINTS: search.ts 22
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 10
     # PRINTS: seq-cost.ts 8
@@ -706,7 +709,8 @@ jobs:
     # PRINTS: solved.ts 1
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
-    # PRINTS: startup-upgrades.ts 4
+    # PRINTS: stale-docs.ts 2
+    # PRINTS: startup-upgrades.ts 5
     # PRINTS: stats.ts 1
     # PRINTS: status.ts 10
     # PRINTS: stop.ts 4

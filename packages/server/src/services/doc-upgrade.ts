@@ -43,17 +43,17 @@
  * run, an old doc only keeps matching as it did before the upgrade, so
  * nothing waits on it — and a large hub is not held offline while it runs.
  */
-import { and, asc, eq, exists, gt, lt, ne, not, sql } from "drizzle-orm";
+import { and, asc, gt, lt, not, sql } from "drizzle-orm";
 
-import { DOC_UPGRADE_BATCH } from "../constants.ts";
+import { DOC_UPGRADE_BATCH, DOC_UPGRADE_PROGRESS_PAGES } from "../constants.ts";
 import type { Db } from "../db/client.ts";
-import { claims, workContexts } from "../db/schema.ts";
+import { workContexts } from "../db/schema.ts";
 import type { Embedder } from "./embedder.ts";
 import { embedContextDocs } from "./embedding-backfill.ts";
 import type { EmbedOutcome } from "./embedding-backfill.ts";
 import { yieldToEventLoop } from "./event-loop.ts";
 import { NORMALIZED_DOC_VERSION, refreshNormalizedDoc } from "./normalized-doc.ts";
-import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
+import { BEFORE_EVERY_ID, countPendingDocs, holdsNonDeclaredClaim } from "./stale-docs.ts";
 
 interface Deps {
   readonly db: Db;
@@ -70,28 +70,6 @@ export interface DocUpgradeReport {
   /** Of the rebuilt, the ones whose vector could not be minted (healed by the backfill). */
   readonly embedFailures: number;
 }
-
-/** No id sorts before this, so the first page starts at the beginning. */
-const BEFORE_EVERY_ID = "";
-
-/** A non-declared claim of the context in hand — what makes its old doc wrong. */
-const holdsNonDeclaredClaim = (db: Db, after: string) =>
-  exists(
-    db
-      .select({ one: sql`1` })
-      .from(claims)
-      .where(
-        and(
-          eq(claims.workContextId, workContexts.id),
-          // BOUNDED BY THE CURSOR TOO (review round 4, L2): redundant with the
-          // join, but it hands the planner the same range on claims that the
-          // page has on work contexts, so each page's semi-join starts at the
-          // cursor instead of re-reading every claim before it.
-          gt(claims.workContextId, after),
-          ne(claims.provenance, DECLARED_PROVENANCE),
-        ),
-      ),
-  );
 
 /**
  * DECLARED-ONLY CONTEXTS ARE STAMPED, NOT REBUILT (review round 4, L2): their
@@ -151,37 +129,63 @@ const upgradePage = async (deps: Deps, ids: readonly string[]): Promise<EmbedOut
   return deps.embedder === null ? NO_EMBEDS : embedContextDocs(deps.db, deps.embedder, ids);
 };
 
-const upgradeFrom = async (
-  deps: Deps,
-  batch: number,
-  after: string,
-  done: DocUpgradeReport,
-): Promise<DocUpgradeReport> => {
-  const ids = await stalePage(deps.db, after, batch);
+/** One run of the pass: its page size, and where it says how far it got. */
+interface Run {
+  readonly deps: Deps;
+  readonly batch: number;
+  readonly progress: (line: string) => void;
+  readonly progressEveryPages: number;
+  /** Docs waiting when the run began — what "X of N" counts against. */
+  readonly pending: number;
+}
+
+const upgradeFrom = async (run: Run, after: string, pages: number, done: DocUpgradeReport): Promise<DocUpgradeReport> => {
+  const ids = await stalePage(run.deps.db, after, run.batch);
   const last = ids[ids.length - 1];
   if (last === undefined) {
     return done;
   }
-  const embeds = await upgradePage(deps, ids);
-  await yieldToEventLoop();
-  return upgradeFrom(deps, batch, last, {
+  const embeds = await upgradePage(run.deps, ids);
+  const next: DocUpgradeReport = {
     ...done,
     contexts: done.contexts + ids.length,
     reembedded: done.reembedded + embeds.embedded,
     embedFailures: done.embedFailures + embeds.failed,
-  });
+  };
+  if ((pages + 1) % run.progressEveryPages === 0) {
+    run.progress(`${String(next.contexts)} of ${String(run.pending)} rebuilt`);
+  }
+  await yieldToEventLoop();
+  return upgradeFrom(run, last, pages + 1, next);
 };
+
+const SILENT = (): void => undefined;
 
 export const upgradeNormalizedDocs = async (
   deps: Deps,
-  options: { readonly batch?: number } = {},
+  options: {
+    readonly batch?: number;
+    /** Where the pass says it started and how far it got (review round 4, M2). */
+    readonly progress?: (line: string) => void;
+    readonly progressEveryPages?: number;
+  } = {},
 ): Promise<DocUpgradeReport> => {
   const stamped = await stampDeclaredOnly(deps.db);
+  const pending = await countPendingDocs(deps.db);
+  const progress = options.progress ?? SILENT;
+  if (pending > 0) {
+    progress(
+      `starting: ${String(pending)} work context doc(s) still fold drafts in; ` +
+        "until each is rebuilt it is found by its claims only",
+    );
+  }
   await yieldToEventLoop();
-  return upgradeFrom(deps, options.batch ?? DOC_UPGRADE_BATCH, BEFORE_EVERY_ID, {
-    contexts: 0,
-    stamped,
-    reembedded: 0,
-    embedFailures: 0,
-  });
+  const run: Run = {
+    deps,
+    batch: options.batch ?? DOC_UPGRADE_BATCH,
+    progress,
+    progressEveryPages: options.progressEveryPages ?? DOC_UPGRADE_PROGRESS_PAGES,
+    pending,
+  };
+  return upgradeFrom(run, BEFORE_EVERY_ID, 0, { contexts: 0, stamped, reembedded: 0, embedFailures: 0 });
 };

@@ -18505,7 +18505,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the doc upgrade rebuilds contexts that hold no draft",
-    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    file: `${SERVER}/src/services/stale-docs.ts`,
     from: "          ne(claims.provenance, DECLARED_PROVENANCE),\n",
     to: "",
     test: `${SERVER}/test/doc-upgrade.test.ts`,
@@ -18634,8 +18634,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up doc upgrade never yields to the event loop",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "  const embeds = await upgradePage(deps, ids);\n  await yieldToEventLoop();\n",
-    to: "  const embeds = await upgradePage(deps, ids);\n",
+    from: "  await yieldToEventLoop();\n  return upgradeFrom(run, last, pages + 1, next);\n",
+    to: "  return upgradeFrom(run, last, pages + 1, next);\n",
     test: `${SERVER}/test/doc-upgrade-load.test.ts`,
     because: "the hub answers no request for the whole pass — 18 873 ms on a 30 000-context hub",
   },
@@ -18826,7 +18826,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the boot never runs the doc upgrade",
     file: `${SERVER}/src/services/startup-upgrades.ts`,
-    from: "    run: () => upgradeNormalizedDocs({ db, embedder }),\n",
+    from: "    run: () => upgradeNormalizedDocs({ db, embedder }, { progress: docUpgradeProgress }),\n",
     to: "    run: () => Promise.resolve({ contexts: 0, stamped: 0, reembedded: 0, embedFailures: 0 }),\n",
     test: `${SERVER}/test/startup-boot.test.ts`,
     because: "an upgraded hub's search keeps finding discarded drafts' words as ordinary matches",
@@ -18846,6 +18846,78 @@ export const MUTATIONS: readonly Mutation[
     to: "          run: () => Promise.resolve({ embedded: 0, failed: 0 }),\n",
     test: `${SERVER}/test/startup-upgrades.test.ts`,
     because: "a vector lost to a keyless start or a provider's 503 never comes back",
+  },
+  {
+    label: "search answers from a stale doc that still folds a draft in",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "        // claim marked as it is (review round 4, M2).\n        not(staleDraftDoc(db)),\n",
+    to: "        // claim marked as it is (review round 4, M2).\n",
+    test: `${SERVER}/test/doc-upgrade-window.test.ts`,
+    because: "until the upgrade reaches it, a teammate's prompt is pushed a tree on a discarded draft's word",
+  },
+  {
+    label: "the vector tier answers from a vector of a doc that still folds a draft in",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "        // upgrade rebuilds it (the doc pass's rule above; round 4, M2).\n        not(staleDraftDoc(db)),\n",
+    to: "        // upgrade rebuilds it (the doc pass's rule above; round 4, M2).\n",
+    test: `${SERVER}/test/doc-upgrade-window.test.ts`,
+    because: "until the upgrade reaches it, a context surfaces on the meaning of its drafts",
+  },
+  {
+    label: "a stale doc of a declared-only context counts as folding a draft in",
+    file: `${SERVER}/src/services/stale-docs.ts`,
+    from: "AND ${holdsNonDeclaredClaim(db)})`;",
+    to: "AND TRUE)`;",
+    test: `${SERVER}/test/doc-upgrade-window.test.ts`,
+    because: "every context of an upgraded hub drops out of the doc pass until a pass that never rebuilds it has run",
+  },
+  {
+    label: "the hub status reports no search docs pending",
+    file: `${SERVER}/src/routes/hub-status.ts`,
+    from: "    ok(c, { searchDocsPending: await countPendingDocs(deps.db) }),\n",
+    to: "    ok(c, { searchDocsPending: 0 }),\n",
+    test: `${SERVER}/test/doc-upgrade-window.test.ts`,
+    because: "a teammate whose search comes back thin during the upgrade is never told why",
+  },
+  {
+    label: "the doc upgrade never logs its progress",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "    run.progress(`${String(next.contexts)} of ${String(run.pending)} rebuilt`);\n",
+    to: "",
+    test: `${SERVER}/test/doc-upgrade-window.test.ts`,
+    because: "a long pass on a big hub looks exactly like a hung one",
+  },
+  {
+    label: "the doc upgrade never logs its start",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "  if (pending > 0) {\n    progress(",
+    to: "  if (pending < 0) {\n    progress(",
+    test: `${SERVER}/test/doc-upgrade-window.test.ts`,
+    because: "the log never says how many docs are still waiting when the pass begins",
+  },
+  {
+    label: "the boot drops the doc upgrade's progress lines",
+    file: `${SERVER}/src/services/startup-upgrades.ts`,
+    from: "    log.info(`[crosscheck] doc upgrade: ${line}`);\n",
+    to: "",
+    test: `${SERVER}/test/startup-upgrades.test.ts`,
+    because: "the start and progress the pass reports reach no log",
+  },
+  {
+    label: "doctor never says the hub is still rebuilding search documents",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(searchRebuildCheck === null ? [] : [searchRebuildCheck]),\n",
+    to: "",
+    test: `${CLI}/test/doctor-search-rebuild.test.ts`,
+    because: "a teammate whose search comes back thin during the upgrade is never told why",
+  },
+  {
+    label: "doctor prints a search-rebuild line on a hub with nothing left to rebuild",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (!result.ok || result.data.searchDocsPending === 0) {\n",
+    to: "  if (!result.ok) {\n",
+    test: `${CLI}/test/doctor-search-rebuild.test.ts`,
+    because: "every doctor run on a healthy hub ends in a warning about a rebuild that finished long ago",
   },
 ];
 
@@ -18917,6 +18989,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 6
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
+ * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
  * PRINTS: packages/cli/test/doctor-sharing.test.ts 4
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
@@ -19172,6 +19245,7 @@ interface Outcome {
  * PRINTS: packages/server/test/doc-upgrade-load.test.ts 2
  * PRINTS: packages/server/test/doc-upgrade-race.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 4
+ * PRINTS: packages/server/test/doc-upgrade-window.test.ts 6
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 17
  * PRINTS: packages/server/test/draft-visibility.test.ts 8
@@ -19228,7 +19302,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/startup-boot.test.ts 3
- * PRINTS: packages/server/test/startup-upgrades.test.ts 2
+ * PRINTS: packages/server/test/startup-upgrades.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
  * PRINTS: packages/server/test/ui-feed.test.ts 3

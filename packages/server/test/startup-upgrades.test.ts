@@ -43,11 +43,15 @@ describe("runStartupUpgrades", () => {
     expect(report.links?.removed).toEqual([]);
     expect(report.docs).toMatchObject({ contexts: 2, reembedded: 2 });
     expect(report.vectors).toEqual({ embedded: 0, failed: 0 });
-    expect(captured.infos.map((line) => line.split(":")[0])).toEqual([
-      "[crosscheck] draft link cleanup",
-      "[crosscheck] doc upgrade",
-      "[crosscheck] vector backfill",
-    ]);
+    const expectedStarts = [
+      "[crosscheck] draft link cleanup: 0 cross-developer draft link(s) archived in claim_edges_removed and removed (pass dlc_",
+      "[crosscheck] doc upgrade: starting: 2 work context doc(s) still fold drafts in",
+      "[crosscheck] doc upgrade: 2 work context doc(s) rebuilt without drafts, 0 stamped current, 2 re-embedded",
+      "[crosscheck] vector backfill: 0 work context(s) embedded, 0 failed",
+    ];
+    expect(captured.infos.map((line, index) => line.startsWith(expectedStarts[index] ?? "\0"))).toEqual(
+      expectedStarts.map(() => true),
+    );
     expect(captured.errors).toEqual([]);
   });
 
@@ -65,7 +69,7 @@ describe("runStartupUpgrades", () => {
     expect(report.links).toBeNull();
     expect(report.docs?.contexts).toBe(2);
     expect(captured.errors).toEqual(["[crosscheck] draft link cleanup failed; the next start retries it"]);
-    expect(captured.infos.map((line) => line.split(":")[0])).toEqual(["[crosscheck] doc upgrade"]);
+    expect(captured.infos.map((line) => line.split(":")[0])).toEqual(["[crosscheck] doc upgrade", "[crosscheck] doc upgrade"]);
   });
 
   test("a doc upgrade that fails never keeps the vector backfill from running", async () => {

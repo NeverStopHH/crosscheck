@@ -154,9 +154,11 @@ describe("a hub upgraded across the declared-only doc rule", () => {
       const { robin } = await seedPreRoundHub(dataDir, embedder);
       const hub = await boot(dataDir, embedder);
       try {
-        // The probe's finding, reproduced on the reopened hub
+        // The probe's finding — the stale doc answering for the discarded
+        // word as an ordinary match — is closed even before the pass: a stale
+        // doc that holds a draft does not answer (round 4, M2)
         const before = await search(hub.harness, robin, DISCARDED_WORD);
-        expect(before.find((row) => row.id === WORK_CONTEXT_ID)?.derivedOnly).toBe(false);
+        expect(before.find((row) => row.id === WORK_CONTEXT_ID)).toBeUndefined();
 
         // Act
         const report = await upgradeNormalizedDocs({ db: hub.harness.db, embedder });

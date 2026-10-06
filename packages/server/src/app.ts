@@ -13,6 +13,7 @@ import { draftsRoutes } from "./routes/drafts.ts";
 import { eventsRoutes } from "./routes/events.ts";
 import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
+import { hubStatusRoutes } from "./routes/hub-status.ts";
 import { intentLedgerRoutes } from "./routes/intent-ledger.ts";
 import { landedRoutes } from "./routes/landed.ts";
 import { passkeyRoutes } from "./routes/passkeys.ts";
@@ -76,6 +77,9 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // renders every sentence exactly as before and reports healthy; this is
   // the one instrument that makes that visible rather than quiet.
   app.route("/api/intent-ledger", intentLedgerRoutes(deps));
+  // What the hub is still doing on its own after an upgrade — a count, read
+  // by any member, printed by doctor while it is not zero (round 4, M2).
+  app.route("/api/hub-status", hubStatusRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
   // The regression guard's two TEAM decisions — who may pin, and whether
   // `suspect` names sessions. Read by any member (everybody affected has to

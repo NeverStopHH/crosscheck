@@ -77,6 +77,10 @@ export const runStartupUpgrades = async (deps: {
 }): Promise<StartupUpgradeReport> => {
   const { db, embedder } = deps;
   const log = deps.log ?? CONSOLE_LOG;
+  // The doc upgrade's start and progress lines (review round 4, M2).
+  const docUpgradeProgress = (line: string): void => {
+    log.info(`[crosscheck] doc upgrade: ${line}`);
+  };
   const links = await runPass(log, {
     name: "draft link cleanup",
     onFailure: "the next start retries it",
@@ -86,7 +90,7 @@ export const runStartupUpgrades = async (deps: {
   const docs = await runPass(log, {
     name: "doc upgrade",
     onFailure: "the next start resumes it",
-    run: () => upgradeNormalizedDocs({ db, embedder }),
+    run: () => upgradeNormalizedDocs({ db, embedder }, { progress: docUpgradeProgress }),
     describe: describeDocUpgrade,
   });
   const vectors =

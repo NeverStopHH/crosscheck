@@ -2180,6 +2180,25 @@ export const getIntentPositions = (
     schema: IntentPositionsSchema,
   });
 
+/**
+ * What the hub is still doing on its own after an upgrade (server
+ * routes/hub-status.ts): how many search docs its start-up pass has yet to
+ * rebuild. An older hub has no such route — the result is then not ok, and
+ * a caller says nothing rather than a zero it was never told.
+ */
+const HubStatusSchema = z.looseObject({
+  searchDocsPending: z.number().int().min(0),
+});
+
+export type HubStatus = z.infer<typeof HubStatusSchema>;
+
+export const getHubStatus = (ctx: HubContext): Promise<HubResult<HubStatus>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/hub-status",
+    schema: HubStatusSchema,
+  });
+
 export const putPresenceOptOut = (
   ctx: HubContext,
   optOut: boolean,

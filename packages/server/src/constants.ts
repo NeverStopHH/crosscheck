@@ -138,6 +138,14 @@ export const SKELETON_BACKFILL_BATCH = 500;
 export const DOC_UPGRADE_BATCH = 100;
 
 /**
+ * How many pages of the doc upgrade go by between its progress lines: 10
+ * pages of DOC_UPGRADE_BATCH is a line per 1 000 contexts — about one every
+ * second on the review's 30 000-context hub — enough to show a long pass is
+ * moving without a line per page (review round 4, M2).
+ */
+export const DOC_UPGRADE_PROGRESS_PAGES = 10;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says
