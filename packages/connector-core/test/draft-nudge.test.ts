@@ -661,6 +661,31 @@ describe("deliverDraftNudge (real hub)", () => {
     }
   };
 
+  test("a page that already holds the whole backlog costs one GET (review round 2, survivor M3)", async () => {
+    // The oldest-first page is only worth its GET when the backlog runs past
+    // the newest-first one; asking again for three drafts the first page
+    // listed costs a prompt a round trip and its timeout for nothing.
+    let requests = 0;
+    const listed = Array.from({ length: 3 }, (_, i) => draft({ id: `clm_w${String(i)}`, createdAt: daysAgo(2 + i) }));
+    const fake = Bun.serve({
+      port: 0,
+      fetch: () => {
+        requests += 1;
+        return Response.json({ ok: true, data: { drafts: listed, total: 3, oldestCreatedAt: daysAgo(4), order: "newest" } });
+      },
+    });
+    try {
+      const s = await session("nudge-one-get", hub);
+
+      const text = await nudge(s, { hub: { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}` } });
+
+      expect(text).toContain("3 of your own auto-captured draft claims");
+      expect(requests).toBe(1);
+    } finally {
+      fake.stop(true);
+    }
+  });
+
   test("an older hub with no order echo: one round of GETs over six prompts, then the cooldown", async () => {
     expect(await unnameableLoop("nudge-loop-old-hub", undefined)).toEqual({ perRound: [2, 2], slot: null });
   });

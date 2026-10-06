@@ -221,6 +221,22 @@ describe("the slot is spent only once the nudge is actually in the prompt", () =
     }
   });
 
+  test("nothing due spends the slot, so later prompts look no more (review round 2, survivor M5)", async () => {
+    // Nothing shows, so nothing can be lost by spending it: without the
+    // commit every later prompt of the session fetches the drafts again.
+    let commits = 0;
+    const nothingDue = (): Promise<PreparedDraftNudge> =>
+      Promise.resolve({ text: "", commit: () => { commits += 1; return Promise.resolve(true); } });
+    const { injector, capture } = await pastTheBriefing("acp-nudge-nothing-due", nothingDue, "2000");
+    try {
+      await injector.decideLine(promptLine("and the next bit"));
+
+      expect(commits).toBe(1);
+    } finally {
+      await capture.shutdown(500).catch(() => undefined);
+    }
+  });
+
   test("a slot another prompt already spent is not shown", async () => {
     const taken = (): Promise<PreparedDraftNudge> =>
       Promise.resolve({ text: "TAKEN-NUDGE-TEXT", commit: () => Promise.resolve(false) });

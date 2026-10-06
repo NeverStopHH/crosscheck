@@ -192,6 +192,19 @@ describe("sharingFindings — what the workers booked", () => {
     expect(detail).not.toContain("every model run");
   });
 
+  test("a kind that never reported is not counted as working (review round 2, survivor M9)", () => {
+    // Only the intent ran, and it failed: no summarizer run reported at all,
+    // so "its summarizer runs answered 0 times, so the model is reachable"
+    // would be false twice over.
+    const value = input({
+      live: [session({ intentFireCount: 1, intentFailCount: 1, intentLastFailure: "timed out after 60 s" })],
+    });
+
+    const detail = detailFor(value, "runner_failing");
+    expect(detail).toContain("every model run that reported back failed (intent: 1 of 1; last: timed out after 60 s)");
+    expect(detail).not.toContain("answered 0");
+  });
+
   test("one answer is said as one time, not '1 times' (review round 2, L7)", () => {
     const value = input({
       live: [
@@ -301,6 +314,8 @@ describe("sharingFindings — what the workers booked", () => {
     });
 
     expect(causes(value)).not.toContain("workers_silent");
+    // ...nor in flight: the session is over (review round 2, survivor M6).
+    expect(sharingSummary(value)).not.toContain("in flight");
   });
 
   test("a live session's runs long past the grace window are silent", () => {

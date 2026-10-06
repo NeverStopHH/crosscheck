@@ -18327,6 +18327,38 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/sharing.test.ts`,
     because: "the pasteable line reads as broken English on the one-answer case it is most often pasted for",
   },
+  {
+    label: "the nudge asks for the oldest-first page even when the first page holds the whole backlog",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "listing.data.total !== null && listing.data.total > listing.data.drafts.length;",
+    to: "listing.data.total !== null && listing.data.total >= listing.data.drafts.length;",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "every attempt pays a second round trip and its timeout for rows it already has",
+  },
+  {
+    label: "the ACP proxy never spends the slot on nothing due",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "      if (prepared !== null && prepared.text.length === 0) {",
+    to: "      if (false) {",
+    test: `${ACP}/test/draft-nudge-inject.test.ts`,
+    because: "a session with no due draft fetches the drafts again on every prompt for the rest of its life",
+  },
+  {
+    label: "an ended session's unanswered runs are reported in flight",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  const live = d.endedAt === null && oldest !== undefined;",
+    to: "  const live = oldest !== undefined;",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a session long over reads as still working, and doctor waits on runs that can never land",
+  },
+  {
+    label: "runner_failing counts a kind that never reported as working",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "  const reporting = totals.kinds.filter((runs) => runs.answered + runs.failed > 0);",
+    to: "  const reporting = totals.kinds;",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the line says the model is reachable because a kind that never ran answered 0 times",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18442,7 +18474,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 4
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 8
- * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 4
+ * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 5
  * PRINTS: packages/connector-acp/test/injector.test.ts 6
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
@@ -18534,7 +18566,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 39
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 40
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
@@ -18597,7 +18629,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 27
+ * PRINTS: packages/connector-core/test/sharing.test.ts 29
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
