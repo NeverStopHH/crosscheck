@@ -18390,6 +18390,30 @@ export const MUTATIONS: readonly Mutation[
     because: "the renderer can reserve and nobody asks it to, so the answer a developer waited for loses its caveat (L3)",
   },
   {
+    label: "a mid-length trigger takes two swapped pairs",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "const DOUBLE_TRANSPOSITION_MIN_LETTERS = 10;",
+    to: "const DOUBLE_TRANSPOSITION_MIN_LETTERS = 8;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "the typo rule widens toward the words it must never take; the old one-edit rule survived exactly this (M5)",
+  },
+  {
+    label: "a four-letter trigger takes a swapped pair",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "const TRANSPOSITION_MIN_LETTERS = 5;",
+    to: "const TRANSPOSITION_MIN_LETTERS = 4;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "a short trigger's every scramble is steering, and the shorter the word the likelier a real one (M5)",
+  },
+  {
+    label: "a long trigger's two swapped pairs are no longer tolerated",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "const DOUBLE_TRANSPOSITION_MIN_LETTERS = 10;",
+    to: "const DOUBLE_TRANSPOSITION_MIN_LETTERS = 16;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"wiederuafnhemen\" — the live pilot's own spelling — is a task word again (M5)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18726,7 +18750,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/prompt-terms.test.ts 5
- * PRINTS: packages/schema/test/session-control.test.ts 4
+ * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/substance-sentence.test.ts 11
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2

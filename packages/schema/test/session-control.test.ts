@@ -59,6 +59,13 @@ describe("steering words are recognised, folded and with a typist's swaps", () =
       expect(steeringWordOf(word)).toBeNull();
     },
   );
+
+  test.each([
+    ["ocntineu", "two swaps in an eight-letter trigger"],
+    ["fhar", "one swap in a four-letter trigger"],
+  ])("%p is not a typo of a trigger — %s is more than its length allows (review 1006b, M5)", (word) => {
+    expect(steeringWordOf(word)).toBeNull();
+  });
 });
 
 describe("session-meta words are steering only beside a continuation verb and a reset report", () => {
