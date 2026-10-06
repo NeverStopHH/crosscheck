@@ -18358,6 +18358,63 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "a count nobody could read is printed as a month and a sentence about it",
   },
+  // ── 07 §13.11, review M5: the mutations that survived round 2 ────────────
+  {
+    label: "a noise label made after the month moves the closed month (survivor M1)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}",
+    to: "        AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS}",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "reading July before and after someone labels a July hint in August shows whose label it was",
+  },
+  {
+    label: "a delivery dated after the month is read into it when ingested before its end (survivor M2)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      ${before(sql`hd.delivered_at`, until)}\n",
+    to: "",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "an August hint inside the connector's clock skew is counted in July",
+  },
+  {
+    label: "a recipient who recorded nothing counts as a recorder (survivor M3)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      (SELECT count(DISTINCT recipient) FROM words)::int AS recorders,",
+    to: "      (SELECT count(DISTINCT recipient) FROM scoped)::int AS recorders,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "two silent teammates lift three people's words over the people-minimum, and a viewer subtracts",
+  },
+  {
+    label: "the author's own self-pointing hints count in their credit (survivor M5)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "    who: sql`s.developer_id <> ${input.developerId}`,",
+    to: "    who: sql`true`,",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "an author pads the count of how often teammates followed their work with their own follows",
+  },
+  {
+    label: "the view lets an outcome win a tie with the person's label (survivor M6)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at >= outcome_at) THEN 'noise'",
+    to: "      CASE WHEN noise_at IS NOT NULL AND (outcome_at IS NULL OR noise_at > outcome_at) THEN 'noise'",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "the person's verdict loses to a word said in the same millisecond, against D-O7",
+  },
+  {
+    label: "the write path lets an outcome win a tie with the person's label (survivor M7)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "  if (noise !== undefined && (latest === undefined || noise.createdAt.getTime() >= latest.createdAt.getTime())) {",
+    to: "  if (noise !== undefined && (latest === undefined || noise.createdAt.getTime() > latest.createdAt.getTime())) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the answer says a word stands that every figure overrules with the label",
+  },
+  {
+    label: "an enrolment exactly at the month's end makes that month recordable (survivor M11)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      enrolment.start.getTime() < end.getTime() && (enrolment.end === null || enrolment.end.getTime() > start.getTime()),",
+    to: "      enrolment.start.getTime() <= end.getTime() && (enrolment.end === null || enrolment.end.getTime() > start.getTime()),",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "a month with no enrolled instant reads as one below the minimums instead of one never recordable",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18680,8 +18737,8 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 3
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 10
- * PRINTS: packages/server/test/hint-outcomes.test.ts 17
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 12
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 18
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
@@ -18700,7 +18757,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 19
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 23
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

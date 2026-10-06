@@ -35,6 +35,7 @@ import {
   SECONDS_TO_AUGUST,
   createCrowd,
   deliverTo,
+  labelNoise,
   recordCrowdWords,
 } from "./fixtures/hint-outcome-crowd.ts";
 import type { Crowd } from "./fixtures/hint-outcome-crowd.ts";
@@ -49,6 +50,7 @@ import {
   REPO,
   createOutcomeWorld,
   deliveryRecord,
+  enrol,
   recordOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
@@ -468,5 +470,55 @@ describe("enrolment history (review M3)", () => {
       countedFromIso: null,
       withheld: "not_recordable",
     });
+  });
+});
+
+describe("the closed month's edges (review M5: surviving mutations)", () => {
+  test("M1: a noise label made after the month never moves the month's figures", async () => {
+    // Arrange — a printed July; in August Nick labels a July hint noise, and a minute passes
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    const before = await outcomesOf(crowd);
+
+    // Act
+    await labelNoise(crowd, crowd.nick, crowd.delivered.kenContext);
+    crowd.harness.clock.advanceSeconds(60);
+    const after = await outcomesOf(crowd);
+
+    // Assert
+    expect(before["figures"]).not.toBeNull();
+    expect(after).toEqual(before);
+  });
+
+  test("M2: a delivery dated after the month ended is not in it, even when the hub got it before", async () => {
+    // Arrange — 23:59 on July 31 by the hub's clock; the connector's clock already says August
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(7 * 86_400 + 14 * SECONDS_PER_HOUR + 59 * 60);
+    await postRecords(world.harness, world.mike, {
+      records: [deliveryRecord(MIKE_SESSION, "work_context", NICK_CONTEXT, "prompt_hint", "2026-08-01T00:01:00.000Z")],
+    });
+    world.harness.clock.advanceSeconds(2 * 86_400);
+
+    // Act
+    const interventions = await julyInterventions(world);
+
+    // Assert — the world's four July hints, not five
+    expect(interventions).toBe(4);
+  });
+
+  test("M11: an enrolment that starts exactly at the month's end makes nothing of that month recordable", async () => {
+    // Arrange — enrolled at 2026-08-01T00:00:00.000Z sharp; read in August, the closed month is July
+    const world = await createOutcomeWorld({ enrolled: false });
+    world.harness.clock.advanceSeconds(7 * 86_400 + 15 * SECONDS_PER_HOUR);
+    expect(world.harness.clock.now().toISOString()).toBe("2026-08-01T00:00:00.000Z");
+    await enrol(world.harness);
+    world.harness.clock.advanceSeconds(86_400);
+
+    // Act
+    const outcomes = await outcomesOf(world);
+
+    // Assert
+    expect(outcomes).toMatchObject({ periodStartIso: "2026-07-01T00:00:00.000Z", withheld: "not_recordable", countedFromIso: null });
   });
 });

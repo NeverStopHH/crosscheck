@@ -28,10 +28,11 @@ import {
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { SECONDS_TO_AUGUST, createCrowd, recordCrowdWords } from "./fixtures/hint-outcome-crowd.ts";
-import { TEST_ADMIN_TOKEN, jsonRequest, postRecords } from "./helpers.ts";
+import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
 import type { TestDeveloper } from "./helpers.ts";
 
 const SECONDS_PER_DAY = 86_400;
+const KEN_SECOND_SESSION = "cc_bbbbbbbb-2222-4222-8222-222222222222";
 const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z" };
 const OVERRIDE_REASON = "kept the developer key; the repo key mixes two people's caches";
 
@@ -311,5 +312,47 @@ describe("enrolment history in the person's own view (review M3, P4)", () => {
     expect(view).toMatchObject(tally({ received: 3, overrode: 1, followed: 0, unmarked: 2 }));
     expect(JSON.stringify(view["reasons"])).toContain(OVERRIDE_REASON);
     expect(later.status).toBe(201);
+  });
+});
+
+describe("ties and self-pointing hints (review M5: surviving mutations)", () => {
+  test("M6: an outcome and the person's noise label at the same instant — the label stands in the view", async () => {
+    // Arrange — the clock does not move between the word and the label (D-O7)
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "noise",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+
+    // Act
+    const view = await viewOf(await readMine(world, world.nick));
+
+    // Assert
+    expect(view).toMatchObject(tally({ received: 3, noise: 1, unmarked: 2 }));
+  });
+
+  test("M5: a hint pointing at the author's own work is never part of the author's credit", async () => {
+    // Arrange — the printed crowd; and Ken, in a second session, followed a pointer at his own context
+    const crowd = await createCrowd();
+    await recordCrowdWords(crowd);
+    await registerTestSession(crowd.harness, crowd.ken.apiKey, { id: KEN_SECOND_SESSION, repo: REPO });
+    await postRecords(crowd.harness, crowd.ken, {
+      records: [deliveryRecord(KEN_SECOND_SESSION, "work_context", KEN_CONTEXT, "prompt_hint")],
+    });
+    await recordOutcome(crowd, crowd.ken, { ref: KEN_CONTEXT, outcome: "followed", session: KEN_SECOND_SESSION });
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const ken = await viewOf(await readMine(crowd, crowd.ken));
+
+    // Assert — the four teammates' five follows, not six
+    expect(ken["yourWork"]).toEqual({ ...JULY, followed: 5, withheld: null });
   });
 });

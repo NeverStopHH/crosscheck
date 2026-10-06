@@ -1281,3 +1281,12 @@ outcomes block this client cannot read — nothing is shown from it`; for the cr
 teammates' hints: this hub sent a count this client cannot read — nothing is shown from it`), while every other
 proof and the person's own view still print. This holds for both answers and for both kinds of mismatch, a
 block too old and a block too new.
+
+*M5 — mutations that survived round 2, each now killed by a test and an anchor.* A noise label made after the
+month never moves it (M1); a delivery the connector dated after the month's end is not in it, even when the hub
+received it before (M2); a recipient who recorded nothing is no recorder (M3 — the three-recorders test with
+two silent teammates); a hint pointing at the author's own work never counts in their credit, excluded on the
+hub (M5); a label and an outcome at the same instant leave the label standing, in the view (M6) and in the
+write path (M7); an enrolment that starts exactly at the month's end makes nothing of that month recordable
+(M11). M15 (any held delivery taken for any ref), M18 (the CLI's sender) and M20 (an ambiguous session) are
+killed with the POST-first fix above — M20's "no flush when ambiguous" is now the intended rule.
