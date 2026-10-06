@@ -433,7 +433,7 @@ const runnerFailingRule: Rule = (_input, totals) => {
   return finding(
     "runner_failing",
     `your agent ${KIND_LOSS[first.kind]} because every ${first.kind} run that reported back failed (${counts(first)}; last: ${last}) — ` +
-      `its ${working.map((runs) => runs.kind).join(" and ")} runs answered ${String(answered)} times, so the model is reachable; ${RUNNER_FIX}`,
+      `its ${working.map((runs) => runs.kind).join(" and ")} runs answered ${String(answered)} ${answered === 1 ? "time" : "times"}, so the model is reachable; ${RUNNER_FIX}`,
     `${KIND_SHORT[first.kind]} — every ${first.kind} run failed (last: ${last})`,
   );
 };

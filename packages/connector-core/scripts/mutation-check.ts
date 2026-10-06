@@ -18319,6 +18319,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/sharing.test.ts`,
     because: "runs booked without a start time vanish from every line instead of being named",
   },
+  {
+    label: "doctor says a model answered '1 times'",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: '${String(answered)} ${answered === 1 ? "time" : "times"}, so the model is reachable',
+    to: "${String(answered)} times, so the model is reachable",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "the pasteable line reads as broken English on the one-answer case it is most often pasted for",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18589,7 +18597,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 26
+ * PRINTS: packages/connector-core/test/sharing.test.ts 27
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2

@@ -192,6 +192,22 @@ describe("sharingFindings — what the workers booked", () => {
     expect(detail).not.toContain("every model run");
   });
 
+  test("one answer is said as one time, not '1 times' (review round 2, L7)", () => {
+    const value = input({
+      live: [
+        session({
+          summarizerFireCount: 1,
+          summarizerNoneCount: 1,
+          intentFireCount: 1,
+          intentFailCount: 1,
+          intentLastFailure: "timed out after 60 s",
+        }),
+      ],
+    });
+
+    expect(detailFor(value, "runner_failing")).toContain("its summarizer runs answered 1 time, so the model is reachable");
+  });
+
   test("when every kind failed, 'every model run' is true and the counts say so", () => {
     const value = input({
       live: [
