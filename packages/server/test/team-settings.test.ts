@@ -16,12 +16,13 @@
  * to" depends on knowing whether anybody ever pressed the switch.
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
 import type { DbExecutor } from "../src/db/client.ts";
-import { readEnrolledForUpdate } from "../src/services/team-settings.ts";
+import { readSettingsForUpdate, writeTeamSettings } from "../src/services/team-settings.ts";
 
 import {
   addTestDeveloperWithSession,
@@ -311,25 +312,54 @@ describe("pilot enrolment", () => {
     expect(afterRejoining.pilotLabelsSince).toBe(harness.clock.now().toISOString());
   });
 
-  test("review LOW: what a toggle turns from is read under the settings row's lock", async () => {
-    // Arrange — PGlite has one connection, so two racing toggles cannot be staged;
-    // what is pinned is the SQL the toggle reads with: FOR UPDATE, inside its transaction
+  test("review LOW: what a write starts from — the whole settings row — is read under the row's lock", async () => {
+    // Arrange — PGlite has one connection, so two racing writers cannot be staged to wait on the
+    // lock; what is pinned is the SQL the write reads with: the whole row, FOR UPDATE, in its transaction
     const issued: SQL[] = [];
     const executor = {
       execute: async (query: SQL) => {
         issued.push(query);
-        return await Promise.resolve({ rows: [{ pilot_enrolled: true }] });
+        return await Promise.resolve({
+          rows: [
+            {
+              pin_policy: "anyone",
+              suspect_attribution: "sessions",
+              pilot_enrolled: true,
+              pilot_labels_since: "2026-07-24T09:00:00.000Z",
+              pilot_outcomes_since: "2026-07-24T09:00:00.000Z",
+              updated_at: "2026-07-24T09:00:00.000Z",
+            },
+          ],
+        });
       },
     } as unknown as DbExecutor;
 
     // Act
-    const wasEnrolled = await readEnrolledForUpdate(executor, REPO);
+    const current = await readSettingsForUpdate(executor, REPO);
 
     // Assert
-    expect(wasEnrolled).toBe(true);
+    expect(current).toMatchObject({ pilotEnrolled: true, pilotLabelsSince: "2026-07-24T09:00:00.000Z" });
     expect(issued.map((query) => new PgDialect().sqlToQuery(query).sql)).toEqual([
-      "SELECT pilot_enrolled FROM team_settings WHERE repo = $1 FOR UPDATE",
+      "SELECT pin_policy, suspect_attribution, pilot_enrolled, pilot_labels_since, pilot_outcomes_since, updated_at FROM team_settings WHERE repo = $1 FOR UPDATE",
     ]);
+  });
+
+  test("review LOW (P4): two writes at once — the one naming no enrolment keeps when labels became available", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const deps = { db: harness.db, now: harness.clock.now };
+
+    // Act — PGlite queues the two transactions; the second used to start from a read made before the first
+    await Promise.all([
+      writeTeamSettings(deps, { repo: REPO, pilotEnrolled: true }),
+      writeTeamSettings(deps, { repo: REPO }),
+    ]);
+    const row = await harness.db.execute(
+      sql`SELECT pilot_enrolled AS e, pilot_labels_since IS NOT NULL AS l FROM team_settings`,
+    );
+
+    // Assert
+    expect(row.rows).toEqual([{ e: true, l: true }]);
   });
 });
 

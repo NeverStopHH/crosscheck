@@ -1170,6 +1170,8 @@ export const pilotEnrolments = pgTable(
     index("pilot_enrolments_repo_started_idx").on(table.repo, table.startedAt),
     // AT MOST ONE OPEN INTERVAL PER REPO, a database fact: a second "on" fails loudly.
     uniqueIndex("pilot_enrolments_one_open_idx").on(table.repo).where(sql`${table.endedAt} IS NULL`),
+    // An interval never ends before it starts (round-5 LOW-1).
+    check("pilot_enrolments_ends_after_start", sql`${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}`),
   ],
 );
 

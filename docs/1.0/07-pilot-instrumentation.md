@@ -1425,3 +1425,9 @@ a hub had then; never later than its outcome). Labels still bound a left repo's 
 enrolment at its instant. And only an inferred bound is `reconstructed` — a start earlier than the stamp, or the
 end of a repo that left; an upgrade that only took the stamp is not, and its line says neither "again" nor
 "reconstructed". On a 0.10 upgrade every pre-upgrade delivery is refused `before_outcomes`.
+
+*LOW-1 — the toggle read part of its row before the lock (P4).* §13.12 locked only `pilot_enrolled`; the rest of
+the row was read before the transaction, so of two writes at once, the one naming no enrolment carried a stale
+`pilot_labels_since` (null) over the toggle beside it. Every settings write now reads the WHOLE row under its
+lock inside its own transaction, and takes `now` after the lock. And an interval never ends before it starts:
+`CHECK (ended_at IS NULL OR ended_at >= started_at)`, added once to a table that predates it.

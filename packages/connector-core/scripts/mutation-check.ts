@@ -18706,8 +18706,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the toggle reads what it turns from without the row's lock",
     file: `${SERVER}/src/services/team-settings.ts`,
-    from: "    sql`SELECT pilot_enrolled FROM team_settings WHERE repo = ${repo} FOR UPDATE`,",
-    to: "    sql`SELECT pilot_enrolled FROM team_settings WHERE repo = ${repo}`,",
+    from: "pilot_outcomes_since, updated_at FROM team_settings WHERE repo = ${repo} FOR UPDATE`,",
+    to: "pilot_outcomes_since, updated_at FROM team_settings WHERE repo = ${repo}`,",
     test: `${SERVER}/test/team-settings.test.ts`,
     because: "two toggles at once both decide from the same stale read and open two intervals or none",
   },
@@ -18985,6 +18985,23 @@ export const MUTATIONS: readonly Mutation[
     to: "    PERFORM 1;",
     test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
     because: "the old key is dropped and nothing replaces it, so two rows can share an id",
+  },
+  // ── 07 §13.13, round-5 LOW-1: the toggle starts from the locked row ──
+  {
+    label: "a write starts from no stored row at all (P4)",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    const current = await readSettingsForUpdate(tx, input.repo);",
+    to: "    const current = defaultSettingsFor(input.repo);",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "a write naming no enrolment turns the pilot off and wipes when labels became available",
+  },
+  {
+    label: "an interval may end before it starts",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "      CHECK (ended_at IS NULL OR ended_at >= started_at);",
+    to: "      CHECK (true);",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a backwards interval is stored, and whileEnrolled reads it as no time at all",
   },
 ];
 
@@ -19297,7 +19314,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 14
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 15
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -19360,7 +19377,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
- * PRINTS: packages/server/test/team-settings.test.ts 3
+ * PRINTS: packages/server/test/team-settings.test.ts 4
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1

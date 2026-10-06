@@ -91,6 +91,17 @@ interface Deps {
   readonly now: Clock;
 }
 
+/** The answer for a repo nobody configured: the defaults, and no instant at all. */
+const defaultSettingsFor = (repo: string): TeamSettingsView => ({
+  repo,
+  pinPolicy: DEFAULT_TEAM_SETTINGS.pinPolicy,
+  suspectAttribution: DEFAULT_TEAM_SETTINGS.suspectAttribution,
+  pilotEnrolled: DEFAULT_TEAM_SETTINGS.pilotEnrolled,
+  pilotLabelsSince: null,
+  pilotOutcomesSince: null,
+  updatedAt: null,
+});
+
 export const readTeamSettings = async (
   deps: Deps,
   repo: string,
@@ -109,15 +120,7 @@ export const readTeamSettings = async (
     .limit(1);
   const row = rows[0];
   if (row === undefined) {
-    return {
-      repo,
-      pinPolicy: DEFAULT_TEAM_SETTINGS.pinPolicy,
-      suspectAttribution: DEFAULT_TEAM_SETTINGS.suspectAttribution,
-      pilotEnrolled: DEFAULT_TEAM_SETTINGS.pilotEnrolled,
-      pilotLabelsSince: null,
-      pilotOutcomesSince: null,
-      updatedAt: null,
-    };
+    return defaultSettingsFor(repo);
   }
   return {
     repo,
@@ -144,18 +147,42 @@ const sinceAfter = (stored: string | null, wasEnrolled: boolean, nextEnrolled: b
   return stored === null ? null : new Date(stored);
 };
 
+type SettingsLockRow = {
+  readonly pin_policy: TeamPinPolicy;
+  readonly suspect_attribution: TeamSuspectAttribution;
+  readonly pilot_enrolled: boolean;
+  readonly pilot_labels_since: string | Date | null;
+  readonly pilot_outcomes_since: string | Date | null;
+  readonly updated_at: string | Date;
+};
+
+const isoOrNull = (value: string | Date | null): string | null => (value === null ? null : new Date(value).toISOString());
+
 /**
- * WHETHER THE REPO IS ENROLLED, read under its settings row's lock inside the
- * toggle's own transaction (review LOW): two toggles at once each decide from
- * what the other committed, never both from one stale read made before
- * either began. PGlite has one connection, so the lock is pinned by the SQL
- * this issues (team-settings test), not by a race it could stage.
+ * WHAT A WRITE STARTS FROM — the whole settings row, read under its lock
+ * inside the write's own transaction (reviews LOW, round-5 LOW-1): two writes
+ * at once each start from what the other committed, never from a read made
+ * before either began — a write naming no enrolment once carried a stale
+ * `pilot_labels_since` (null) over the toggle beside it (P4). PGlite has one
+ * connection, so the lock is pinned by the SQL this issues, not by a race.
  */
-export const readEnrolledForUpdate = async (tx: DbExecutor, repo: string): Promise<boolean> => {
-  const rows = await tx.execute<{ pilot_enrolled: boolean }>(
-    sql`SELECT pilot_enrolled FROM team_settings WHERE repo = ${repo} FOR UPDATE`,
+export const readSettingsForUpdate = async (tx: DbExecutor, repo: string): Promise<TeamSettingsView> => {
+  const rows = await tx.execute<SettingsLockRow>(
+    sql`SELECT pin_policy, suspect_attribution, pilot_enrolled, pilot_labels_since, pilot_outcomes_since, updated_at FROM team_settings WHERE repo = ${repo} FOR UPDATE`,
   );
-  return rows.rows[0]?.pilot_enrolled === true;
+  const row = rows.rows[0];
+  if (row === undefined) {
+    return defaultSettingsFor(repo);
+  }
+  return {
+    repo,
+    pinPolicy: row.pin_policy,
+    suspectAttribution: row.suspect_attribution,
+    pilotEnrolled: row.pilot_enrolled,
+    pilotLabelsSince: isoOrNull(row.pilot_labels_since),
+    pilotOutcomesSince: isoOrNull(row.pilot_outcomes_since),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
 };
 
 /**
@@ -208,11 +235,12 @@ export const writeTeamSettings = async (
   deps: Deps,
   input: WriteTeamSettingsInput,
 ): Promise<TeamSettingsView> => {
-  const current = await readTeamSettings(deps, input.repo);
-  const now = deps.now();
   const next = await deps.db.transaction(async (tx) => {
-    // review LOW: what the toggle turns from is read under the row's lock, here, not before the transaction
-    const wasEnrolled = await readEnrolledForUpdate(tx, input.repo);
+    // reviews LOW, round-5 LOW-1: the whole row this write starts from is read under its lock,
+    // here, and `now` is taken after the lock, so no instant predates the write it is part of
+    const current = await readSettingsForUpdate(tx, input.repo);
+    const now = deps.now();
+    const wasEnrolled = current.pilotEnrolled;
     const pilotEnrolled = input.pilotEnrolled ?? wasEnrolled;
     const row = {
       repo: input.repo,

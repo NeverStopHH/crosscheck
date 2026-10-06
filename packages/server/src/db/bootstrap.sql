@@ -1179,6 +1179,15 @@ BEGIN
   END IF;
 END $$;
 ALTER TABLE pilot_enrolments ADD COLUMN IF NOT EXISTS reconstructed boolean NOT NULL DEFAULT false;
+-- An interval never ends before it starts (round-5 LOW-1), a database fact; added once to a
+-- table that predates it (ADD CONSTRAINT has no IF NOT EXISTS).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pilot_enrolments_ends_after_start') THEN
+    ALTER TABLE pilot_enrolments ADD CONSTRAINT pilot_enrolments_ends_after_start
+      CHECK (ended_at IS NULL OR ended_at >= started_at);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS pilot_enrolments_repo_started_idx ON pilot_enrolments (repo, started_at);
 -- At most one open interval per repo: a second "on" fails loudly, never doubles.
 CREATE UNIQUE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;

@@ -127,6 +127,19 @@ describe("hint_outcomes DDL sync", () => {
     await expect(second).rejects.toThrow();
   });
 
+  test("review LOW: an interval never ends before it starts — a database fact", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+
+    // Act
+    const backwards = (async () =>
+      await harness.db.execute(sql`INSERT INTO pilot_enrolments (id, repo, started_at, ended_at)
+        VALUES ('pe_backwards', 'github.com/acme/api', '2026-07-24T09:00:00Z', '2026-07-24T08:00:00Z')`))();
+
+    // Assert
+    await expect(backwards).rejects.toThrow();
+  });
+
   test("review MEDIUM-1 (P1): a hub that ran the round-3 bootstrap starts, and keeps its intervals", async () => {
     // Arrange — the round-3 shape: keyed by (repo, started_at), no id, no reconstructed flag
     const harness = await createTestHarness();
