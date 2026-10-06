@@ -18583,6 +18583,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ui-feed.test.ts`,
     because: "every vouched row grows a \"declared\" label and the draft's stops standing out — and the label is payload text, not the renderer's",
   },
+  {
+    label: "a SessionStart re-fire drops the nudge's cooldown",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        draftNudgeRetryAt: previous.draftNudgeRetryAt,\n",
+    to: "",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "every compact or resume re-asks a hub that just failed on the very next prompt",
+  },
+  {
+    label: "a SessionStart re-fire drops the session's finished turns",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        stopTurnCount: previous.stopTurnCount,\n",
+    to: "",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "the nudge waits for a first finished turn the session had long ago, and doctor reads a compacted session as a short one",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18790,7 +18806,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 45
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 47
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

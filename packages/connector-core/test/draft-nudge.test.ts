@@ -928,6 +928,38 @@ describe("the nudge slot survives a SessionStart re-fire", () => {
     // Assert
     expect(refired.draftNudge).toBe("delivered");
   });
+
+  test("a re-fire keeps the nudge's cooldown and the session's finished turns (review round 3, LOW-11)", async () => {
+    // Arrange: a session cooling down after a failed fetch, three turns in
+    const s = await session("nudge-refire-cooldown", hub, 3);
+    const current = await readSessionState(s.home, HOST_KEY);
+    if (current === null) {
+      throw new Error("no session state");
+    }
+    const retryAt = new Date(Date.now() + DRAFT_NUDGE_RETRY_COOLDOWN_MS).toISOString();
+    await writeSessionState(s.home, { ...current, draftNudgeRetryAt: retryAt });
+    const previous = await readSessionState(s.home, HOST_KEY);
+
+    // Act: compact or resume re-fires SessionStart inside the live session
+    const refired = withCarriedCapture(
+      {
+        hostSessionKey: HOST_KEY,
+        crosscheckSessionId: SESSION_ID,
+        workContextId: WORK_CONTEXT_ID,
+        repoId: REPO_ID,
+        repoRoot: s.repo,
+        hubUrl: hub.hubUrl,
+        developerId: hub.developerId,
+        startedAt: new Date().toISOString(),
+      },
+      previous,
+    );
+
+    // Assert: a dropped cooldown re-fetches at once; dropped turns make the
+    // nudge wait for a "first" finished turn the session already had
+    expect(refired.draftNudgeRetryAt).toBe(retryAt);
+    expect(refired.stopTurnCount).toBe(3);
+  });
 });
 
 describe("the briefing's own-drafts section tells the same backlog", () => {

@@ -887,6 +887,13 @@ export const withCarriedCapture = (
         toolWindowMisses: previous.toolWindowMisses,
         // The nudge is once per SESSION, and a re-fire is the same session.
         draftNudge: previous.draftNudge,
+        // ...and so is its cooldown: dropped, the re-fire's first prompt
+        // asks the hub that just failed again at once (review round 3).
+        draftNudgeRetryAt: previous.draftNudgeRetryAt,
+        // The turns this session already finished: dropped, the nudge waits
+        // for a "first" finished turn the session had long ago, and doctor
+        // counts a compacted session as a short one.
+        stopTurnCount: previous.stopTurnCount,
       };
 
 /**
