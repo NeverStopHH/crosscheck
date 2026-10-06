@@ -302,6 +302,13 @@ export interface SearchQuery {
    * last lexical door. Omitted on the search route: a teammate who searches
    * asked, and the result says when a draft was the only match
    * (`derivedOnly`). The hint branch wires it into services/hints.ts.
+   *
+   * TODO(merge with the hint branch — review round 4, M3): NO CALLER SETS
+   * THIS on this branch. When the hint branch merges, its
+   * services/hints.ts `listHintCandidates` must pass
+   * `excludeDerivedClaims: true` to its `searchWorkContexts` call; until
+   * then a prompt hint can still be pushed on an unreviewed draft's
+   * claim-body word (the review's hint-window probe, its last assertion).
    */
   readonly excludeDerivedClaims?: boolean | undefined;
   readonly limit: number;
