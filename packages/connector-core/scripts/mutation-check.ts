@@ -18079,6 +18079,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/similarity-gate.test.ts`,
     because: "the connector cannot say a linked claim is a draft when the hub never sends what it is",
   },
+  {
+    label: "the claim_added event drops the claim's provenance",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    provenance: body.provenance,\n  });",
+    to: "  });",
+    test: `${SERVER}/test/ui-feed.test.ts`,
+    because: "the feed cannot tell a machine draft from a vouched claim when the event never says which",
+  },
+  {
+    label: "the web feed shows a draft's claim_added row like a vouched one",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: "    provenanceLabel: provenanceLabel(event.payload),\n",
+    to: "    provenanceLabel: null,\n",
+    test: `${SERVER}/test/ui-feed.test.ts`,
+    because: "a teammate reading the feed takes an unreviewed guess for somebody's finding",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

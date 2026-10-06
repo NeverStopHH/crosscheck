@@ -13,6 +13,7 @@ import {
   createHarnessWithSession,
   createTestHarness,
   createTestDeveloper,
+  fetchEvents,
   recordEnvelope,
   registerTestSession,
   postRecords,
@@ -151,5 +152,39 @@ describe("intent updates on the feed (trial finding #16)", () => {
     expect(html).toContain("updated work context");
     expect(html).toContain(">intent</span>");
     expect(html).not.toContain("SECRET-SHAPED-SENTINEL");
+  });
+
+  test("a draft's claim_added row says derived; a vouched claim's row does not", async () => {
+    // Arrange: one machine draft, one declared claim, in the same tree
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_draft", captureMode: "auto", provenance: "derived", confidence: 0.4, kind: "hypothesis" }),
+        ),
+        recordEnvelope("claim", validClaimBody({ id: "clm_vouched", kind: "decision", body: "We pin the pool size" })),
+      ],
+    });
+    const cookie = await loginUi(harness, developer.apiKey);
+
+    // Act
+    const html = await (await uiGet(harness, "/ui/feed", cookie)).text();
+
+    // Assert: the event carries the provenance and the row renders it
+    const adds = (await fetchEvents(harness, developer.apiKey)).filter((event) => event.kind === "claim_added");
+    expect(adds.map((event) => [event.payload["claimId"], event.payload["provenance"]])).toEqual(
+      expect.arrayContaining([
+        ["clm_draft", "derived"],
+        ["clm_vouched", "declared"],
+      ]),
+    );
+    const rows = html.split("<li").filter((row) => row.includes("added a claim"));
+    const draftRow = rows.find((row) => row.includes(">hypothesis</span>"));
+    const vouchedRow = rows.find((row) => row.includes(">decision</span>"));
+    expect(draftRow).toContain(">derived</span>");
+    expect(vouchedRow).toBeDefined();
+    expect(vouchedRow).not.toContain("derived");
   });
 });
