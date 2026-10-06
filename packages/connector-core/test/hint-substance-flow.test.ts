@@ -18,7 +18,7 @@ import { hintBodyHash } from "../src/hints/echo.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import {
   SELF_DEVELOPER_ID,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
 } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
@@ -102,7 +102,7 @@ const flowInput = (f: Fixture) => ({
  * claims of his that are not substance.
  */
 const decisionTree = (matchedTerms: number): Record<string, unknown> => {
-  const base = rejectedApproachCandidate();
+  const base = injectableCandidate();
   const [claim] = base["claims"] as readonly Record<string, unknown>[];
   return {
     ...base,

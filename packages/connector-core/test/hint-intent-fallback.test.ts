@@ -17,7 +17,7 @@ import { readSessionState, writeSessionState } from "../src/state/session-state.
 import {
   CANDIDATE_BODY,
   SELF_DEVELOPER_ID,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
 } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
@@ -105,7 +105,7 @@ const flowInput = (f: Fixture, prompt: string) => ({
 
 /** The canned injectable candidate, as a hub answers it when the intent stood in. */
 const intentMatchedCandidate = (): Record<string, unknown> => ({
-  ...rejectedApproachCandidate(),
+  ...injectableCandidate(),
   matchedOn: "intent",
 });
 

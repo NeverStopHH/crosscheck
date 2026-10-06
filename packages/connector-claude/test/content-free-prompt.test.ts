@@ -18,7 +18,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
 import {
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
 import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
@@ -176,7 +176,7 @@ describe("capture after a content-free prompt is capture as usual", () => {
     // Arrange — this hub would answer with an injectable candidate
     const prompted = await fixture("cf-harness");
     const control = await fixture("cf-harness-control");
-    prompted.hub.setCandidates([rejectedApproachCandidate()]);
+    prompted.hub.setCandidates([injectableCandidate()]);
 
     // Act
     const hint = await runHook("user-prompt-submit", promptPayload(prompted, TASK_NOTIFICATION), prompted.env);

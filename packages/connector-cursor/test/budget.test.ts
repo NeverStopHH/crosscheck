@@ -55,7 +55,7 @@ import {
 } from "../../connector-claude/test/fixtures/slow-hub.ts";
 import {
   CANDIDATE_BODY,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
@@ -180,7 +180,7 @@ describe("fail-open within budget", () => {
         if (pathname === "/api/hints/candidates") {
           return Response.json({
             ok: true,
-            data: { candidates: [rejectedApproachCandidate()] },
+            data: { candidates: [injectableCandidate()] },
           });
         }
         if (pathname.endsWith("/heartbeat")) {
@@ -317,7 +317,7 @@ describe("fail-open within budget", () => {
         if (pathname === "/api/hints/candidates") {
           return Response.json({
             ok: true,
-            data: { candidates: [rejectedApproachCandidate()] },
+            data: { candidates: [injectableCandidate()] },
           });
         }
         if (pathname.endsWith("/heartbeat")) {

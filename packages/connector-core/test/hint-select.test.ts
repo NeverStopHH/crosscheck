@@ -15,12 +15,13 @@ const claim = (
 ): HintClaimCandidate => ({
   id: "clm_1",
   workContextId: "wc_1",
-  kind: "rejected_approach",
-  status: "rejected",
+  kind: "root_cause",
+  status: "likely_root_cause",
   confidence: 0.8,
   provenance: "declared",
   captureMode: "agent",
   evidenceRefCount: 1,
+  evidenceBacked: true,
   authorDeveloperId: TEAMMATE,
   authorDeveloperName: "Nick",
   body: "Retrying the refresh call does not help; the key is gone",
@@ -85,12 +86,17 @@ const select = (
   });
 
 describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
-  test("injects an evidence-backed rejected_approach as substance", () => {
+  test("injects an evidence-backed settled root cause as substance", () => {
     const selection = select([context()]);
     expect(selection.kind).toBe("claim");
     if (selection.kind === "claim") {
       expect(selection.claim.id).toBe("clm_1");
     }
+  });
+
+  test("an evidence-backed rejected_approach is a pointer — the owner's decision (review 1006b, H4)", () => {
+    const negative = claim({ kind: "rejected_approach", status: "rejected" });
+    expect(select([context({}, [negative])]).kind).toBe("pointer");
   });
 
   test("injects an evidence-backed likely_root_cause", () => {

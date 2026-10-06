@@ -17442,7 +17442,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a weak match delivers a teammate's finding as substance",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  isInjectable(claim) && (isNegativeKnowledge(claim) || isStrongMatch(claim, context));",
+    from: "  isInjectable(claim) && isStrongMatch(claim, context);",
     to: "  isInjectable(claim);",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "one shared word puts a teammate's sentence in the agent's context unasked — the single-token path the pilot condemned",
@@ -17450,8 +17450,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an evidence-backed decision on a strong match stays a pointer",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedDecision(claim));",
-    to: "  (isNegativeKnowledge(claim) || isSettled(claim));",
+    from: "  (isSettledRootCause(claim) || isStatedDecision(claim));",
+    to: "  isSettledRootCause(claim);",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a decision can never reach a settled status, so it stays behind a get_diagnosis no agent makes",
   },
@@ -17474,8 +17474,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the least relevant claim of a tree is delivered first",
     file: `${CORE}/src/hints/select.ts`,
-    from: "    (left, right) => (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0),",
-    to: "    () => 0,",
+    from: "  [...claims].sort((left, right) => (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0));",
+    to: "  [...claims];",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the hint carries the newest backed claim rather than the one the prompt is about",
   },
@@ -17559,21 +17559,58 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "an unverified cause lands in a healthy agent's context as a teammate's finding — the anchoring principle 5 forbids",
   },
+  // SUPERSEDED AND REMOVED, 2026-10-06 — "a rejected approach needs a strong
+  // match it never needed" and "rejected approaches lose their place at the
+  // front of a tree". A rejected approach is a pointer now (review 1006b, H4,
+  // the owner's decision), so neither its exemption from relevance nor its
+  // place at the front of the offering order exists to break.
   {
-    label: "a rejected approach needs a strong match it never needed",
+    label: "a rejected approach is pushed as substance again",
     file: `${CORE}/src/hints/select.ts`,
-    from: "(isNegativeKnowledge(claim) || isStrongMatch(claim, context))",
-    to: "isStrongMatch(claim, context)",
+    from: "  (isSettledRootCause(claim) || isStatedDecision(claim));",
+    to: "  (claim.kind === \"rejected_approach\" || isSettledRootCause(claim) || isStatedDecision(claim));",
     test: `${CORE}/test/hint-substance-select.test.ts`,
-    because: "the dead end a teammate already ruled out stops reaching the reader unless its sentence repeats the prompt's words",
+    because: "the owner's decision (H4) is undone: a dead end is inlined under a teammate's name",
   },
   {
-    label: "rejected approaches lose their place at the front of a tree",
+    label: "a settled status makes any kind substance",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  ...claims.filter(isNegativeKnowledge),\n  ...[...claims.filter((claim) => !isNegativeKnowledge(claim))].sort(",
-    to: "  ...[...claims].sort(",
+    from: "  claim.kind === \"root_cause\" && INJECTABLE_STATUSES.has(claim.status);",
+    to: "  INJECTABLE_STATUSES.has(claim.status);",
     test: `${CORE}/test/hint-substance-select.test.ts`,
-    because: "a more word-rich decision is pushed over the dead end §4 privileges",
+    because: "an observation marked partially_confirmed, or a hypothesis marked likely_root_cause, is pushed as a recorded finding (H4)",
+  },
+  {
+    label: "an evidence count alone buys substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS && claim.evidenceBacked === true;",
+    to: "  claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS;",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a ref to nothing, to the claim itself or to a guess satisfies the count and the finding is inlined",
+  },
+  {
+    label: "a claim's reference to itself counts as evidence",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      AND cited.id <> citing.id\n",
+    to: "",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a root cause that cites its own id is evidence-backed and pushed as substance",
+  },
+  {
+    label: "a cited guess counts as evidence",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      AND NOT (cited.kind = ${HYPOTHESIS_KIND} AND cited.status IN (${PROPOSED_STATUS}, ${REJECTED_STATUS}))`);",
+    to: "      `);",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a cause backed only by a proposed or rejected hypothesis — a guess on a guess — is inlined as a finding",
+  },
+  {
+    label: "the hub never says a claim's evidence resolves",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    evidenceBacked: backed.has(row.claim.id),",
+    to: "    evidenceBacked: false,",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "no finding is ever substance again — the pilot's 95 pointers and 0 opens",
   },
   {
     label: "a claim with no sentence worth showing is pushed as substance",
@@ -18331,7 +18368,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 8
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
- * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 15
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 16
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 5
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
@@ -18444,6 +18481,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-content-terms.test.ts 1
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
+ * PRINTS: packages/server/test/hint-evidence-backed.test.ts 3
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

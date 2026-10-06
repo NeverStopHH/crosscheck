@@ -31,7 +31,7 @@ import {
   CANDIDATE_CONTEXT_ID,
   SELF_DEVELOPER_ID,
   proposedOnlyCandidate,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
   targetsOnlyCandidate,
 } from "./fixtures/hint-hub.ts";
@@ -356,7 +356,7 @@ describe("selectAndRenderHint (the extracted UserPromptSubmit recipe)", () => {
       // Fresh state per payload: the cap and seen-set must not mute later
       // payloads of the loop.
       await writeSessionState(f.home, freshState({ repo: f.repo, hubUrl: f.hub.url }));
-      const base = rejectedApproachCandidate();
+      const base = injectableCandidate();
       const workContext = base["workContext"] as Record<string, unknown>;
       const claims = base["claims"] as readonly Record<string, unknown>[];
       f.hub.setCandidates([

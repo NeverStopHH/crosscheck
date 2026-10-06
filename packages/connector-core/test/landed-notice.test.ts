@@ -28,7 +28,7 @@ import { renderEditWarning } from "../src/hints/render.ts";
 import type { LandedChanges, LandedCommit } from "../src/landed-changes/probe.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
-import { answeredQuestion, rejectedApproachCandidate, startHintHub } from "./fixtures/hint-hub.ts";
+import { answeredQuestion, injectableCandidate, startHintHub } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -669,7 +669,7 @@ describe("told only while the budget spares room to show it", () => {
     async () => {
       const fake = startHintHub();
       fakeHubs.push(fake);
-      fake.setCandidates([rejectedApproachCandidate()]);
+      fake.setCandidates([injectableCandidate()]);
       fake.setNotices([notice({ stoppedAt: new Date().toISOString() })]);
       const where = await fakeSession("notice-no-room-pointer", fake);
 

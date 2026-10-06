@@ -43,12 +43,13 @@ const claim = (
 ): HintClaimCandidate => ({
   id: "clm_1",
   workContextId: "wc_1",
-  kind: "rejected_approach",
-  status: "rejected",
+  kind: "root_cause",
+  status: "likely_root_cause",
   confidence: 0.8,
   provenance: "declared",
   captureMode: "agent",
   evidenceRefCount: 1,
+  evidenceBacked: true,
   authorDeveloperId: TEAMMATE,
   authorDeveloperName: "Nick",
   body: "Retrying the refresh call does not help; the key is gone",
@@ -208,13 +209,15 @@ describe("negative knowledge is judged by its code, like every other claim", () 
    * With that settled, this gate refuses §5's full set — `stale`,
    * `invalidated` and `superseded` — verbatim.
    */
-  test("a rejected approach whose code did not move stays substance", () => {
+  test("a rejected approach whose code did not move is a pointer since H4", () => {
     // Arrange: the corpus's own shape — kind rejected_approach, status
-    // rejected, one evidence ref, declared — revalidated and unchanged.
-    const negative = claim();
+    // rejected, one evidence ref, declared — revalidated and unchanged. The
+    // owner's decision (review 1006b, H4): negative knowledge is pointed at,
+    // never inlined.
+    const negative = claim({ kind: "rejected_approach", status: "rejected" });
 
     // Act + Assert
-    expect(select([negative]).kind).toBe("claim");
+    expect(select([negative]).kind).toBe("pointer");
   });
 
   test("a rejected approach whose code moved drops to a pointer", () => {

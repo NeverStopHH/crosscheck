@@ -57,13 +57,17 @@ export interface HintHub {
 
 export const TEAMMATE_DEVELOPER_ID = "dev_nick";
 export const SELF_DEVELOPER_ID = "dev_self";
-export const CANDIDATE_CLAIM_ID = "clm_rejected";
+export const CANDIDATE_CLAIM_ID = "clm_cause";
 export const CANDIDATE_CONTEXT_ID = "wc_nick";
 export const CANDIDATE_BODY =
   "Retrying the refresh call does not help; the key is gone";
 
-/** One injectable candidate: Nick's evidence-backed rejected approach. */
-export const rejectedApproachCandidate = (): Record<string, unknown> => ({
+/**
+ * One injectable candidate: Nick's settled, evidence-backed root cause — the
+ * hub resolved its evidence (review 1006b, H4: only a settled root cause or a
+ * stated decision is substance; a rejected approach is a pointer).
+ */
+export const injectableCandidate = (): Record<string, unknown> => ({
   workContext: {
     id: CANDIDATE_CONTEXT_ID,
     title: "Refresh 500s after key rotation",
@@ -79,12 +83,13 @@ export const rejectedApproachCandidate = (): Record<string, unknown> => ({
     {
       id: CANDIDATE_CLAIM_ID,
       workContextId: CANDIDATE_CONTEXT_ID,
-      kind: "rejected_approach",
-      status: "rejected",
+      kind: "root_cause",
+      status: "likely_root_cause",
       confidence: 0.8,
       provenance: "declared",
       captureMode: "agent",
       evidenceRefCount: 1,
+      evidenceBacked: true,
       authorDeveloperId: TEAMMATE_DEVELOPER_ID,
       authorDeveloperName: "Nick",
       body: CANDIDATE_BODY,
@@ -97,9 +102,19 @@ export const rejectedApproachCandidate = (): Record<string, unknown> => ({
   ],
 });
 
+/** The same tree carrying Nick's rejected approach instead: a pointer since H4. */
+export const rejectedApproachCandidate = (): Record<string, unknown> => {
+  const base = injectableCandidate();
+  const claims = base["claims"] as readonly Record<string, unknown>[];
+  return {
+    ...base,
+    claims: [{ ...claims[0], id: "clm_rejected", kind: "rejected_approach", status: "rejected" }],
+  };
+};
+
 /** The same context carrying only a bare proposed hypothesis. */
 export const proposedOnlyCandidate = (): Record<string, unknown> => {
-  const base = rejectedApproachCandidate();
+  const base = injectableCandidate();
   const claims = base["claims"] as readonly Record<string, unknown>[];
   return {
     ...base,
@@ -132,7 +147,7 @@ const derivedCandidateIntent = (): Record<string, unknown> => ({
  * invisible, and now earns a pointer.
  */
 export const intentOnlyCandidate = (): Record<string, unknown> => {
-  const base = rejectedApproachCandidate();
+  const base = injectableCandidate();
   return {
     ...base,
     workContext: {
@@ -198,7 +213,7 @@ export const solvedFingerprintMatch = (): Record<string, unknown> => ({
  * now yields a targets-only pointer.
  */
 export const targetsOnlyCandidate = (): Record<string, unknown> => {
-  const base = rejectedApproachCandidate();
+  const base = injectableCandidate();
   return {
     ...base,
     claims: [],
@@ -241,7 +256,7 @@ export const startHintHub = (
     records: 0,
     other: 0,
   };
-  let candidates: readonly unknown[] = [rejectedApproachCandidate()];
+  let candidates: readonly unknown[] = [injectableCandidate()];
   let answers: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
   let coverage: unknown = undefined;

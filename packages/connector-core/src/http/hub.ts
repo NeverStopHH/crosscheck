@@ -1442,6 +1442,11 @@ export const HintClaimCandidateSchema = z.looseObject({
   provenance: z.string().min(1),
   captureMode: z.string().min(1).optional(),
   evidenceRefCount: z.number().int().min(0).default(0),
+  // The hub's verdict that a cited ref RESOLVES — to another existing claim,
+  // not a proposed or rejected hypothesis (review 1006b, H4). Absent from an
+  // older hub, and then no claim is substance: an unresolved count is not
+  // evidence.
+  evidenceBacked: z.boolean().optional(),
   authorDeveloperId: z.string().min(1),
   authorDeveloperName: z.string().min(1).optional(),
   body: z.string(),

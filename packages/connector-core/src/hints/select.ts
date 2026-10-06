@@ -2,23 +2,24 @@
  * The hint selector — where the anchoring asymmetry is STRUCTURE, not wording
  * (DESIGN.md §4, normative).
  *
- * Proactively injectable substance is exactly:
- *   (a) a rejected_approach claim WITH evidence — negative knowledge cannot
- *       anchor a wrong theory, only save a dead end;
- *   (b) a likely_root_cause / partially_confirmed claim WITH evidence; and
- *   (c) a stated DECISION, still proposed, WITH evidence (the 2026-10 pilot:
- *       95 hints, 0 opened — a decision can never reach a settled status, so
- *       it was pointer-only forever, behind a get_diagnosis no agent made) —
- * (b) and (c) ONLY ON A STRONG MATCH: the claim itself shares
- * HINT_MIN_SHARED_TERMS words with what was matched, or the match is an error
- * fingerprint. Trust and relevance are both required to assert something
- * unasked (§4 "Solved before" states the same narrowing for the briefing).
- * (a) keeps the rule it always had, and is still scanned first.
- * Everything else — bare proposed hypotheses and PROPOSED ROOT CAUSES above
- * all (principle 5: an unverified cause pushed unasked as "a teammate's
- * recorded finding" anchors the wrong theory), and any (b)/(c) claim on a
- * weak match — reaches the reader only as a POINTER: context id + title, no
- * body. The pointer variant of the return type carries no claim at all, so a
+ * Proactively injectable substance is exactly (review 1006b, H4):
+ *   (b) a ROOT CAUSE whose status is settled (likely_root_cause,
+ *       partially_confirmed); and
+ *   (c) a stated DECISION, still proposed (the 2026-10 pilot: 95 hints, 0
+ *       opened — a decision can never reach a settled status, so it was
+ *       pointer-only forever, behind a get_diagnosis no agent made) —
+ * both EVIDENCE-BACKED in the hub's sense (a cited ref resolves to another
+ * claim that is not a proposed or rejected hypothesis) and both ONLY ON A
+ * STRONG MATCH: the claim itself shares HINT_MIN_SHARED_TERMS words with what
+ * was matched, or the match is an error fingerprint. Trust and relevance are
+ * both required to assert something unasked (§4 "Solved before" states the
+ * same narrowing for the briefing). The old (a), a rejected approach, is a
+ * pointer now — the owner's decision.
+ * Everything else — rejected approaches, bare proposed hypotheses and
+ * PROPOSED ROOT CAUSES above all (principle 5: an unverified cause pushed
+ * unasked as "a teammate's recorded finding" anchors the wrong theory), any
+ * other kind under a settled status, and any (b)/(c) claim on a weak match —
+ * reaches the reader only as a POINTER: context id + title, no body. The pointer variant of the return type carries no claim at all, so a
  * body cannot leak through it by construction; test/hint-select.test.ts and
  * test/hint-substance-select.test.ts pin every branch and
  * scripts/mutation-check.ts re-breaks the load-bearing ones.
@@ -110,14 +111,23 @@ export interface SelectHintInput {
 
 const SILENCE = { kind: "silence" } as const satisfies HintSelection;
 
+/**
+ * EVIDENCE THAT RESOLVES (review 1006b, H4): the hub's verdict that a cited
+ * ref is another existing claim and not a proposed or rejected hypothesis —
+ * a count alone is satisfied by a ref to nothing, to the claim itself or to a
+ * guess. The count stays beside it as the second lock; a hub too old to send
+ * the verdict buys no substance.
+ */
 const hasEvidence = (claim: HintClaimCandidate): boolean =>
-  claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS;
+  claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS && claim.evidenceBacked === true;
 
-const isNegativeKnowledge = (claim: HintClaimCandidate): boolean =>
-  claim.kind === "rejected_approach";
-
-const isSettled = (claim: HintClaimCandidate): boolean =>
-  INJECTABLE_STATUSES.has(claim.status);
+/**
+ * (b) of the header: a ROOT CAUSE whose status is settled — never another
+ * kind under a settled status (an observation "partially_confirmed" is still
+ * an observation; review 1006b, H4).
+ */
+const isSettledRootCause = (claim: HintClaimCandidate): boolean =>
+  claim.kind === "root_cause" && INJECTABLE_STATUSES.has(claim.status);
 
 /**
  * (c) of the header: a DECISION its author stated and nobody has taken back.
@@ -166,26 +176,17 @@ const isStrongMatch = (
 };
 
 /**
- * The order a tree's claims are offered in: rejected approaches FIRST, in the
- * hub's order — their rule is the one they always had (§4: negatives are
- * privileged) — then everything else most relevant first, more shared words
- * before fewer, the hub's order on a tie (a stable sort over a copy).
+ * The order a tree's claims are offered in: most relevant first, more shared
+ * words before fewer, the hub's order on a tie (a stable sort over a copy).
  */
 const offeringOrder = (
   claims: readonly HintClaimCandidate[],
-): readonly HintClaimCandidate[] => [
-  ...claims.filter(isNegativeKnowledge),
-  ...[...claims.filter((claim) => !isNegativeKnowledge(claim))].sort(
-    (left, right) => (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0),
-  ),
-];
+): readonly HintClaimCandidate[] =>
+  [...claims].sort((left, right) => (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0));
 
-/**
- * Whether this claim may be pushed as substance from this tree: trust, and —
- * for everything but a rejected approach, whose rule predates it — relevance.
- */
+/** Whether this claim may be pushed as substance from this tree: trust and relevance, both. */
 const isDeliverable = (claim: HintClaimCandidate, context: HintContextCandidate): boolean =>
-  isInjectable(claim) && (isNegativeKnowledge(claim) || isStrongMatch(claim, context));
+  isInjectable(claim) && isStrongMatch(claim, context);
 
 /**
  * Machine-derived claims are never substance (DESIGN.md §3: Tier-1 drafts
@@ -260,7 +261,7 @@ const isInjectable = (claim: HintClaimCandidate): boolean =>
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
   isCodeCurrent(claim) &&
-  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedDecision(claim));
+  (isSettledRootCause(claim) || isStatedDecision(claim));
 
 /**
  * THE CONTENT FLOOR, LOOKED AT AGAIN. The hub keeps only candidates that

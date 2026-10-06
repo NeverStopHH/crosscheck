@@ -5,7 +5,7 @@
  * nobody reads).
  *
  * The rule has TWO halves and both are required. TRUST, as before: declared,
- * a body, evidence (HINT_MIN_EVIDENCE_REFS), not superseded or rejected, code
+ * a body, evidence that resolves (the hub's evidenceBacked), not superseded or rejected, code
  * still current — never a draft. RELEVANCE, new: the claim ITSELF shares
  * HINT_MIN_SHARED_TERMS words with what was matched, or the match is content
  * identity (an error fingerprint). Evidence makes a claim trustworthy; the
@@ -33,6 +33,7 @@ const decision = (overrides: Partial<HintClaimCandidate> = {}): HintClaimCandida
   provenance: "declared",
   captureMode: "agent",
   evidenceRefCount: 1,
+  evidenceBacked: true,
   authorDeveloperId: TEAMMATE,
   authorDeveloperName: "Ken",
   body: "Keep the chunked upload; the single PUT hits the gateway body limit above 2 GB.",
@@ -81,17 +82,15 @@ describe("a strong, evidence-backed match is substance", () => {
     expect(selectedClaimId([context([cause])])).toBe("clm_cause");
   });
 
-  test("a rejected approach with evidence, as it always was — whatever words it shares", () => {
-    // Negative knowledge cannot anchor a wrong theory, only save a dead end
-    // (§4 (a)); its rule is the one it had before the relevance half existed.
-    const negative = decision({ id: "clm_neg", kind: "rejected_approach", status: "rejected", matchedTerms: 0 });
-    expect(selectedClaimId([context([negative])])).toBe("clm_neg");
+  test("a settled root cause of either settled status, evidence-backed and strongly matched", () => {
+    const partial = decision({ id: "clm_partial", kind: "root_cause", status: "partially_confirmed" });
+    expect(selectedClaimId([context([partial])])).toBe("clm_partial");
   });
 
-  test("a rejected approach still goes first, ahead of a more relevant decision", () => {
+  test("a decision beside a rejected approach is offered; the rejected approach never is", () => {
     const closer = decision({ id: "clm_closer", matchedTerms: 4 });
-    const negative = decision({ id: "clm_neg", kind: "rejected_approach", status: "rejected", matchedTerms: 0 });
-    expect(selectedClaimId([context([closer, negative])])).toBe("clm_neg");
+    const negative = decision({ id: "clm_neg", kind: "rejected_approach", status: "rejected", matchedTerms: 6 });
+    expect(selectedClaimId([context([closer, negative])])).toBe("clm_closer");
   });
 
   test("a tree clearly about the prompt lends its strength to a claim that shares one word", () => {
@@ -107,6 +106,29 @@ describe("a strong, evidence-backed match is substance", () => {
     expect(selectedClaimId([context([decision({ matchedTerms: 0 })], fingerprint)])).toBe(
       "clm_decision",
     );
+  });
+});
+
+describe("only a settled root cause or a stated decision is ever substance (review 1006b, H4)", () => {
+  test.each([
+    ["a rejected approach", { kind: "rejected_approach", status: "rejected" }],
+    ["an observation, partially confirmed", { kind: "observation", status: "partially_confirmed" }],
+    ["a hypothesis marked likely_root_cause", { kind: "hypothesis", status: "likely_root_cause" }],
+    ["evidence, partially confirmed", { kind: "evidence", status: "partially_confirmed" }],
+  ] as const)("%s is a pointer, however strongly it matched", (_, shape) => {
+    expect(select([context([decision({ ...shape, matchedTerms: 6 })])]).kind).toBe("pointer");
+  });
+
+  test("evidence the hub could not resolve backs nothing", () => {
+    // A ref to the claim itself, to nothing, or to a proposed or rejected
+    // hypothesis — the hub says false, whatever the count
+    const cause = decision({ kind: "root_cause", status: "likely_root_cause", evidenceRefCount: 2, evidenceBacked: false });
+    expect(select([context([cause])]).kind).toBe("pointer");
+  });
+
+  test("a hub too old to say whether evidence resolves buys no substance", () => {
+    const { evidenceBacked: _absent, ...withoutVerdict } = decision();
+    expect(select([context([withoutVerdict])]).kind).toBe("pointer");
   });
 });
 
@@ -245,10 +267,10 @@ describe("the ONE most relevant claim, plus the pointer to the rest", () => {
     expect(selectedClaimId([context([first, closer])])).toBe("clm_closer");
   });
 
-  test("on equal relevance a rejected approach still goes first", () => {
+  test("on equal relevance the hub's order decides — a rejected approach is never offered (H4)", () => {
     const positive = decision({ id: "clm_positive" });
     const negative = decision({ id: "clm_negative", kind: "rejected_approach", status: "rejected" });
-    expect(selectedClaimId([context([positive, negative])])).toBe("clm_negative");
+    expect(selectedClaimId([context([negative, positive])])).toBe("clm_positive");
   });
 
   test("the selection counts every claim of the tree it leaves behind", () => {

@@ -135,6 +135,11 @@ export type HintMatchedOn = "prompt" | "intent";
 /** Same-author revision edge (DESIGN.md §5); its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
+/** A cited guess: a hypothesis still proposed, or one its author rejected. */
+const HYPOTHESIS_KIND = "hypothesis";
+const PROPOSED_STATUS = "proposed";
+const REJECTED_STATUS = "rejected";
+
 /**
  * How many distinct LEXEMES of `terms` the document matches — the count
  * HINT_MIN_SHARED_TERMS is stated in. One subquery over at most
@@ -178,6 +183,13 @@ export interface HintClaimCandidate {
   readonly provenance: string;
   readonly captureMode: string;
   readonly evidenceRefCount: number;
+  /**
+   * At least one evidence ref RESOLVES — to an existing claim that is not
+   * this one and not a hypothesis still proposed or rejected (review 1006b,
+   * H4). The count above is satisfied by a ref to nothing, to the claim's
+   * own id or to a guess; substance is gated on this.
+   */
+  readonly evidenceBacked: boolean;
   readonly authorDeveloperId: string;
   readonly authorDeveloperName: string;
   readonly body: string;
@@ -358,6 +370,10 @@ const listClaimsForContext = async (
     now,
     rows.map((row) => row.claim.id),
   );
+  const backed = await listEvidenceBacked(
+    db,
+    rows.map((row) => row.claim.id),
+  );
   // WAS ANYTHING ACTUALLY RUN behind each of these (1.0 spec 08 §3.1), in
   // ONE read for the context rather than one per claim. A hint is unsolicited
   // and carries a confidence, and 08 §3.6 names a bare confidence as the
@@ -397,6 +413,7 @@ const listClaimsForContext = async (
     provenance: row.claim.provenance,
     captureMode: row.claim.captureMode,
     evidenceRefCount: row.claim.evidenceRefs.length,
+    evidenceBacked: backed.has(row.claim.id),
     authorDeveloperId: row.authorDeveloperId,
     authorDeveloperName: row.authorDeveloperName,
     // WITHHELD unless somebody vouched for it (audit row V2-X4). A derived,
@@ -427,6 +444,29 @@ const listClaimsForContext = async (
     createdAt: row.claim.createdAt.toISOString(),
   }));
   return { claims: windowed, truncated: fetched.length > rows.length };
+};
+
+/**
+ * Which of `claimIds` cite at least one evidence ref that RESOLVES (review
+ * 1006b, H4): to an existing claim other than the citing one, and not a
+ * hypothesis still proposed or rejected — a guess is not evidence. One query
+ * for the whole window. Resolution is a read-time question by design (refs
+ * are stored unresolved: schema claim.ts), so the answer can change as the
+ * cited rows arrive.
+ */
+const listEvidenceBacked = async (db: Db, claimIds: readonly string[]): Promise<ReadonlySet<string>> => {
+  if (claimIds.length === 0) {
+    return new Set();
+  }
+  const result = await db.execute<{ id: string }>(sql`
+    SELECT DISTINCT citing.id AS id
+    FROM claims AS citing
+    CROSS JOIN LATERAL jsonb_array_elements_text(citing.evidence_refs) AS ref(target)
+    JOIN claims AS cited ON cited.id = ref.target
+    WHERE citing.id IN (${sql.join(claimIds.map((id) => sql`${id}`), sql`, `)})
+      AND cited.id <> citing.id
+      AND NOT (cited.kind = ${HYPOTHESIS_KIND} AND cited.status IN (${PROPOSED_STATUS}, ${REJECTED_STATUS}))`);
+  return new Set(result.rows.map((row) => row.id));
 };
 
 /**
