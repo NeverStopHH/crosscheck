@@ -21,6 +21,8 @@ import { PULLED_DELIVERY_CHANNEL } from "@crosscheck/schema";
 import { realpathBestEffort, sessionSlug } from "../config/paths.ts";
 import type { RepoIdentity } from "../git/repo-identity.ts";
 import type { HubContext, HubResult } from "../http/client.ts";
+import { NOISE_MARK_WINDOW_MINUTES } from "../constants.ts";
+import { getMarkCandidates } from "../http/pilot.ts";
 import type { MarkCandidate, MarkCandidates } from "../http/pilot.ts";
 import { readLiveSessionStates } from "../state/session-state.ts";
 import { flushSpool } from "./flush.ts";
@@ -155,8 +157,33 @@ export const onePerPointer = (candidates: readonly MarkCandidate[]): readonly Ma
  * it the hub already has (last week's), superseding a word said there.
  */
 export const heldDeliveryIdOf = async (hub: HubContext, identity: RepoIdentity, ref: string): Promise<string | null> => {
-  const held = await heldCandidates(hub, await sendingSessions(hub, identity));
+  // round-5 LOW-3: inside the window the no-id candidates use — an hour-old line stuck in a spool is not today's
+  const since = hub.now().getTime() - NOISE_MARK_WINDOW_MINUTES * MS_PER_MINUTE;
+  const held = (await heldCandidates(hub, await sendingSessions(hub, identity))).filter(
+    (candidate) => Date.parse(candidate.deliveredAt) >= since,
+  );
   return held.find((candidate) => candidate.refId === ref || candidate.id === ref)?.id ?? null;
+};
+
+/**
+ * THE SAME POINTER'S TWIN, ALREADY ON THE HUB (round-5 LOW-3). When a held
+ * delivery cannot be sent now, a prompt hint or tripwire ask of the same ref
+ * in the same session that the hub already has is the same intervention
+ * (M4): a word on it covers the pointer. Null when the hub has none — never
+ * another session's delivery of the ref, which is another pointer.
+ */
+const hubTwinOf = async (hub: HubContext, identity: RepoIdentity, heldId: string): Promise<string | null> => {
+  const held = (await readSpoolLines(hub.home, hub.repoKey))
+    .map(heldCandidateOf)
+    .find((candidate) => candidate !== null && candidate.id === heldId);
+  if (held === undefined || held === null) {
+    return null;
+  }
+  const listed = await getMarkCandidates(hub, { repo: identity.repoId, sessions: [held.sessionId], ref: held.refId });
+  if (!listed.ok) {
+    return null;
+  }
+  return listed.data.candidates.find((candidate) => candidate.sessionId === held.sessionId && candidate.id !== heldId)?.id ?? null;
 };
 
 /**
@@ -189,7 +216,8 @@ export interface HeldRetry<T> {
   /** The ref or delivery id that was posted — "any recent one" is chosen before, from candidates. */
   readonly ref: string;
   readonly budgetMs: number;
-  readonly call: () => Promise<HubResult<T>>;
+  /** Makes the call about one ref or delivery id: the one posted, or the pointer's twin on the hub (LOW-3). */
+  readonly call: (ref: string) => Promise<HubResult<T>>;
   /** True when the hub's answer is "I know no such delivery of yours". */
   readonly isUnknown: (result: HubResult<T>) => boolean;
 }
@@ -216,6 +244,11 @@ export const answerAfterSendingHeld = async <T>(retry: HeldRetry<T>, first: HubR
   // and unregistered lives); going through flushSpool is what makes that branch's
   // hold rule apply to this outcome-triggered send too once the two are merged.
   await flushSpool(retry.hub, lookup.sender, retry.budgetMs);
-  const again = await retry.call();
-  return (await stillHeld(retry, again)) ? { kind: "held", why: "unsent" } : { kind: "answered", result: again };
+  const again = await retry.call(retry.ref);
+  if (!(await stillHeld(retry, again))) {
+    return { kind: "answered", result: again };
+  }
+  // round-5 LOW-3: the send failed or overran, but the same pointer's twin may already be on the hub
+  const twin = await hubTwinOf(retry.hub, retry.identity, retry.ref);
+  return twin === null ? { kind: "held", why: "unsent" } : { kind: "answered", result: await retry.call(twin) };
 };

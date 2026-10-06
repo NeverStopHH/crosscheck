@@ -224,12 +224,12 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   // so the word never lands on an older delivery of the same ref the hub already has.
   const posted = (await heldDeliveryIdOf(ctx.hub, ctx.identity, ref)) ?? ref;
   // The AGENT's route (07 §13.12): what an agent says never overturns the person's own word.
-  const call = (): Promise<HubResult<RecordedOutcome>> =>
+  const call = (about: string): Promise<HubResult<RecordedOutcome>> =>
     postHintOutcome(
       ctx.hub,
       {
         repo: ctx.identity.repoId,
-        ref: posted,
+        ref: about,
         outcome,
         ...(reason === undefined ? {} : { reason }),
         ...(session === undefined ? {} : { session }),
@@ -246,7 +246,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
       call,
       isUnknown: isUnknownRef,
     },
-    await call(),
+    await call(posted),
   );
   return answer.kind === "held" ? toolFailure(HELD_SENTENCE[answer.why]) : answerText(ctx, ref, answer.result);
 };

@@ -1488,3 +1488,10 @@ window of its FIRST countable delivery) applied to the person's own rolling wind
 about today's twin of a pointer first delivered before the window was recorded (201) and never shown. The rule
 now holds for CLOSED months only — the team line and the credit, which must never count one intervention twice;
 the rolling window counts any pointer with a delivery inside it, so the person reads what they just said.
+
+*LOW-3 — held first, bounded; and the hub twin when the send fails.* The held-first lookup by ref (§13.12 H-A) now
+looks only inside the window the no-id candidates use (`NOISE_MARK_WINDOW_MINUTES`), so an hour-old line stuck
+in a spool is never taken for today's delivery. And when the held delivery cannot be sent — the flush fails or
+overruns — but the same pointer's twin (a prompt hint or tripwire ask of the ref in the same session) is
+already on the hub, the word or label is recorded on that twin: one intervention (M4). Only with no such twin
+is the answer "held, not sent". Never another session's delivery: that is another pointer.

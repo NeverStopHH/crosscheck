@@ -191,16 +191,16 @@ const record = async (
   const posted = (await heldDeliveryIdOf(ctx, identity, ref)) ?? ref;
   // At a terminal, the PERSON's route — never overturned by an agent's word; without one, the
   // AGENT's (07 §13.13 HIGH-1): the agent's Bash tool runs this very command with the same key.
-  const call = (): Promise<HubResult<RecordedOutcome>> =>
+  const call = (about: string): Promise<HubResult<RecordedOutcome>> =>
     postHintOutcome(
       ctx,
-      { repo: identity.repoId, ref: posted, outcome, ...(reason === undefined ? {} : { reason }) },
+      { repo: identity.repoId, ref: about, outcome, ...(reason === undefined ? {} : { reason }) },
       via,
     );
   // POST FIRST (07 §13.11): held records are sent only when the hub does not know a ref held here.
   const answer = await answerAfterSendingHeld(
     { hub: ctx, identity, ref: posted, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown: isUnknownRef },
-    await call(),
+    await call(posted),
   );
   if (answer.kind === "held") {
     return held(answer.why);

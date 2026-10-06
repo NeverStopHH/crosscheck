@@ -62,6 +62,8 @@ let server: ReturnType<typeof Bun.serve>;
 let oldHub: ReturnType<typeof Bun.serve>;
 /** A round-4 hub: it records outcomes, but has no person's door yet (07 §13.13 LOW-7). */
 let personlessHub: ReturnType<typeof Bun.serve>;
+/** The real hub, but it cannot take records right now — a held delivery cannot be sent (LOW-3). */
+let recordlessHub: ReturnType<typeof Bun.serve>;
 /** A hub that cannot take records yet and knows no delivery — a spooled hint's view of the world. */
 let stuckHub: ReturnType<typeof Bun.serve>;
 let hubUrl: string;
@@ -174,6 +176,17 @@ beforeAll(async () => {
         ? Response.json({ ok: false, error: { code: "not_enrolled", message: "not in the pilot" } }, { status: 422 })
         : Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
   });
+  recordlessHub = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/api/records") {
+        return Response.json({ ok: false, error: { code: "unavailable", message: "try later" } }, { status: 503 });
+      }
+      const body = request.method === "GET" ? undefined : await request.text();
+      return await fetch(`${hubUrl}${url.pathname}${url.search}`, { method: request.method, headers: request.headers, body });
+    },
+  });
   stuckHub = Bun.serve({
     port: 0,
     fetch: (request) => {
@@ -229,6 +242,7 @@ afterAll(async () => {
   server.stop(true);
   oldHub.stop(true);
   personlessHub.stop(true);
+  recordlessHub.stop(true);
   stuckHub.stop(true);
   await Promise.all([repo, ...homes].map((path) => rm(path, { recursive: true, force: true })));
 });
@@ -678,6 +692,38 @@ describe("review H-A: a pointer still on this machine is never passed over for a
     // Assert — not "superseding the earlier overrode": that was another session's pointer
     expect(result.stdout).toStartWith(`recorded: ${ref} — followed. `);
     expect(mine.data.reasons.map((each) => each.reason)).toContain(reason);
+  });
+
+  test("round-5 LOW-3: a held twin that cannot be sent is not 'held' when the same pointer's twin is on the hub", async () => {
+    // Arrange — the prompt hint reached the hub; its tripwire twin, newer, is still in the spool,
+    // and the hub cannot take records right now
+    const recordless = `http://127.0.0.1:${String(recordlessHub.port)}`;
+    const session = "cc_aaaaaaaa-2222-4333-8444-555555555555";
+    const ref = "wc_ken_ha_unsendable";
+    await send("POST", "/api/sessions", nick.apiKey, {
+      id: session,
+      agentKind: "claude-code",
+      repo: REPO_ID,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "implementing",
+    });
+    const onTheHub = await deliver(session, ref);
+    const home = await homeWithLive(session, recordless);
+    await appendRecords(home, repoKey(recordless, REPO_ID), session.replace("cc_", ""), [tripwireRecord(session, ref)], new Date());
+
+    // Act
+    const result = await cli(home, ["followed", ref], { hub: recordless });
+
+    // Assert — one intervention: the word lands on the twin the hub has
+    expect(result.stdout).toStartWith(`recorded: ${ref} — followed`);
+    const mine = (await (
+      await fetch(`${hubUrl}/api/hint-outcomes/mine?repo=${encodeURIComponent(REPO_ID)}`, {
+        headers: { Authorization: `Bearer ${nick.apiKey}` },
+      })
+    ).json()) as { data: { followed: number } };
+    expect(mine.data.followed).toBeGreaterThan(0);
+    expect(onTheHub).toStartWith("hd_");
   });
 
   test("crosscheck followed with no id offers a pointer still held here beside an older one, newest first", async () => {

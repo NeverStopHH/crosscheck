@@ -19129,6 +19129,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "a word about one session's hint lands on another session's pointer of the same ref",
   },
+  // ── 07 §13.13, LOW-3: held first inside the window, and the hub twin when it cannot be sent ──
+  {
+    label: "held first takes a held delivery of the ref from any time",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  const since = hub.now().getTime() - NOISE_MARK_WINDOW_MINUTES * MS_PER_MINUTE;",
+    to: "  const since = 0;",
+    test: `${CORE}/test/held-first-outcome.test.ts`,
+    because: "an hour-old line stuck in a spool is taken for today's delivery of the ref",
+  },
+  {
+    label: "an unsendable held twin is 'held' though the pointer's twin is on the hub",
+    file: `${CORE}/src/spool/held-deliveries.ts`,
+    from: "  return twin === null ? { kind: \"held\", why: \"unsent\" } : { kind: \"answered\", result: await retry.call(twin) };",
+    to: "  return { kind: \"held\", why: \"unsent\" };",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person is told nothing was recorded while the hub already has the same intervention",
+  },
+  {
+    label: "crosscheck followed re-posts the held id instead of the hub twin",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "      { repo: identity.repoId, ref: about, outcome, ...(reason === undefined ? {} : { reason }) },",
+    to: "      { repo: identity.repoId, ref: posted, outcome, ...(reason === undefined ? {} : { reason }) },",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the fallback asks the hub about the delivery it cannot know, and the word is refused",
+  },
   // ── 07 §13.13, LOW-2: the rolling view shows what was just said (P5). (HAVING in the rolling
   // case too is an equivalent mutant: the WHERE already keeps only in-window deliveries.) ──
   {
@@ -19224,7 +19249,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 22
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 24
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
@@ -19350,7 +19375,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
- * PRINTS: packages/connector-core/test/held-first-outcome.test.ts 4
+ * PRINTS: packages/connector-core/test/held-first-outcome.test.ts 5
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4

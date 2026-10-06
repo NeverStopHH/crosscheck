@@ -24,7 +24,12 @@ import { prepareMcp } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import { readLiveSessionStates, writeSessionState } from "../src/state/session-state.ts";
 import { appendRecords } from "../src/spool/append.ts";
-import { holdsUnsentDelivery, onePerPointer, withHeldCandidates } from "../src/spool/held-deliveries.ts";
+import {
+  heldDeliveryIdOf,
+  holdsUnsentDelivery,
+  onePerPointer,
+  withHeldCandidates,
+} from "../src/spool/held-deliveries.ts";
 import { repoKey } from "../src/config/paths.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -203,6 +208,41 @@ describe("withHeldCandidates (review H-A): what a live session here still holds,
 
     // Assert
     expect(merged.candidates.map((each) => each.refId)).toEqual(["wc_recent"]);
+  });
+});
+
+describe("heldDeliveryIdOf (round-5 LOW-3): held first, inside the window the candidates use", () => {
+  test("a held delivery of the ref older than the window is not taken for today's", async () => {
+    // Arrange — an hour-and-more-old delivery of one ref, a fresh one of another
+    const stale = envelope(nick.id, NEW_SESSION, "hint_delivery", {
+      id: hintDeliveryId(NEW_SESSION, "wc_held_stale"),
+      sessionId: NEW_SESSION,
+      refKind: "work_context",
+      refId: "wc_held_stale",
+      channel: "prompt_hint",
+      deliveredAt: new Date(Date.now() - 120 * 60_000).toISOString(),
+    });
+    const fresh = envelope(nick.id, NEW_SESSION, "hint_delivery", {
+      id: hintDeliveryId(NEW_SESSION, "wc_held_fresh"),
+      sessionId: NEW_SESSION,
+      refKind: "work_context",
+      refId: "wc_held_fresh",
+      channel: "prompt_hint",
+      deliveredAt: new Date().toISOString(),
+    });
+    await appendRecords(home, repoKey(hubUrl, REPO_ID), NEW_KEY, [stale, fresh], new Date());
+    const setup = await prepareMcp(env, repo);
+    if (!setup.ok) {
+      throw new Error(setup.message);
+    }
+
+    // Act
+    const staleId = await heldDeliveryIdOf(setup.ctx.hub, setup.ctx.identity, "wc_held_stale");
+    const freshId = await heldDeliveryIdOf(setup.ctx.hub, setup.ctx.identity, "wc_held_fresh");
+
+    // Assert
+    expect(staleId).toBeNull();
+    expect(freshId).toBe(hintDeliveryId(NEW_SESSION, "wc_held_fresh"));
   });
 });
 

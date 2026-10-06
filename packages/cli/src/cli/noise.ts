@@ -153,13 +153,13 @@ const noCandidates = (result: HubResult<MarkCandidates>): boolean => result.ok &
 const askHub = async <T>(
   target: Target,
   ref: string,
-  call: () => Promise<HubResult<T>>,
+  call: (about: string) => Promise<HubResult<T>>,
   isUnknown: HeldRetry<T>["isUnknown"],
 ): Promise<{ readonly held: CliResult } | { readonly result: HubResult<T> }> => {
   const { ctx, identity } = target;
   const answer = await answerAfterSendingHeld(
     { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown },
-    await call(),
+    await call(ref),
   );
   return answer.kind === "held"
     ? { held: { stdout: heldLine(answer.why), exitCode: EXIT_FAIL } }
@@ -167,11 +167,12 @@ const askHub = async <T>(
 };
 
 const mark = async (target: Target, deliveryId: string, shortcut: LabelShortcut): Promise<CliResult> => {
-  const call = (): Promise<HubResult<MarkResult>> =>
+  // the delivery named, or — when it cannot be sent now — the same pointer's twin on the hub (round-5 LOW-3)
+  const call = (onDelivery: string): Promise<HubResult<MarkResult>> =>
     postPilotMark(target.ctx, {
       repo: target.identity.repoId,
       refKind: HUB_KIND,
-      refId: deliveryId,
+      refId: onDelivery,
       label: shortcut.label,
     });
   const asked = await askHub(target, deliveryId, call, (result) => !result.ok && result.code === UNKNOWN_REF);
@@ -198,8 +199,8 @@ const markByRef = async (target: Target, ref: string, shortcut: LabelShortcut): 
   if (held !== null) {
     return mark(target, held, shortcut);
   }
-  const call = (): Promise<HubResult<MarkCandidates>> =>
-    getMarkCandidates(target.ctx, { repo: target.identity.repoId, ref });
+  const call = (about: string): Promise<HubResult<MarkCandidates>> =>
+    getMarkCandidates(target.ctx, { repo: target.identity.repoId, ref: about });
   const asked = await askHub(target, ref, call, noCandidates);
   if ("held" in asked) {
     return asked.held;
