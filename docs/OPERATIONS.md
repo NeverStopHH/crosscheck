@@ -16,8 +16,6 @@ CROSSCHECK_DATA_DIR=/path/to/data bun -e '
 ' /path/to/statement.sql
 ```
 
-A hub on Postgres (`DATABASE_URL`) takes the same SQL through `psql`.
-
 ## Start-up passes
 
 After the hub is serving it runs, in the background and in this order:
@@ -45,6 +43,10 @@ ON CONFLICT DO NOTHING;
 ```
 
 To restore a single link, add `AND r.id = '<edge id>'`. A restored link carries origin `restored`, which the cleanup never matches, so later starts leave it in place. A link whose claim or session no longer exists is skipped.
+
+## One hub process per data dir
+
+Two hub processes on one `CROSSCHECK_DATA_DIR` are not supported, and neither is a script that opens the dir while the hub runs. Each PGlite process runs its own PostgreSQL, with its own buffer cache, over the dir, and takes no lock that another process would see, so two processes write over each other's pages. The start-up passes also assume they are the only writer: two hubs would run them at the same time over the same rows. The hub refuses a port that is already taken, but it cannot tell that another process holds its data dir. Run one hub per dir, and stop it before running SQL against the dir.
 
 ## Downgrading is not supported
 
