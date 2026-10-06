@@ -33,7 +33,7 @@
  * run, an old doc only keeps matching as it did before the upgrade, so
  * nothing waits on it — and a large hub is not held offline while it runs.
  */
-import { and, asc, eq, exists, gt, lt, ne, sql } from "drizzle-orm";
+import { and, asc, eq, exists, gt, lt, ne, not, sql } from "drizzle-orm";
 
 import { DOC_UPGRADE_BATCH } from "../constants.ts";
 import type { Db } from "../db/client.ts";
@@ -50,12 +50,48 @@ interface Deps {
 export interface DocUpgradeReport {
   /** Contexts whose doc this run rebuilt. */
   readonly contexts: number;
-  /** Of those, the ones handed to the embedder afterwards. */
+  /** Declared-only contexts this run stamped current without a rebuild. */
+  readonly stamped: number;
+  /** Of the rebuilt, the ones handed to the embedder afterwards. */
   readonly reembedded: number;
 }
 
 /** No id sorts before this, so the first page starts at the beginning. */
 const BEFORE_EVERY_ID = "";
+
+/** A non-declared claim of the context in hand — what makes its old doc wrong. */
+const holdsNonDeclaredClaim = (db: Db, after: string) =>
+  exists(
+    db
+      .select({ one: sql`1` })
+      .from(claims)
+      .where(
+        and(
+          eq(claims.workContextId, workContexts.id),
+          // BOUNDED BY THE CURSOR TOO (review round 4, L2): redundant with the
+          // join, but it hands the planner the same range on claims that the
+          // page has on work contexts, so each page's semi-join starts at the
+          // cursor instead of re-reading every claim before it.
+          gt(claims.workContextId, after),
+          ne(claims.provenance, DECLARED_PROVENANCE),
+        ),
+      ),
+  );
+
+/**
+ * DECLARED-ONLY CONTEXTS ARE STAMPED, NOT REBUILT (review round 4, L2): their
+ * doc is the same under both rules, so the version is all that is wrong — and
+ * left at 0 they were re-scanned by every start's first page (20 000 of them
+ * on the review's 50 000-context probe). One UPDATE, once.
+ */
+const stampDeclaredOnly = async (db: Db): Promise<number> => {
+  const stamped = await db
+    .update(workContexts)
+    .set({ docVersion: NORMALIZED_DOC_VERSION })
+    .where(and(lt(workContexts.docVersion, NORMALIZED_DOC_VERSION), not(holdsNonDeclaredClaim(db, BEFORE_EVERY_ID))))
+    .returning({ id: workContexts.id });
+  return stamped.length;
+};
 
 /** One page of contexts still built under an older rule that hold a non-declared claim. */
 const stalePage = async (db: Db, after: string, batch: number): Promise<readonly string[]> => {
@@ -66,12 +102,7 @@ const stalePage = async (db: Db, after: string, batch: number): Promise<readonly
       and(
         gt(workContexts.id, after),
         lt(workContexts.docVersion, NORMALIZED_DOC_VERSION),
-        exists(
-          db
-            .select({ one: sql`1` })
-            .from(claims)
-            .where(and(eq(claims.workContextId, workContexts.id), ne(claims.provenance, DECLARED_PROVENANCE))),
-        ),
+        holdsNonDeclaredClaim(db, after),
       ),
     )
     .orderBy(asc(workContexts.id))
@@ -119,13 +150,17 @@ const upgradeFrom = async (
   const reembedded = await upgradePage(deps, ids);
   await yieldToEventLoop();
   return upgradeFrom(deps, batch, last, {
+    ...done,
     contexts: done.contexts + ids.length,
     reembedded: done.reembedded + reembedded,
   });
 };
 
-export const upgradeNormalizedDocs = (
+export const upgradeNormalizedDocs = async (
   deps: Deps,
   options: { readonly batch?: number } = {},
-): Promise<DocUpgradeReport> =>
-  upgradeFrom(deps, options.batch ?? DOC_UPGRADE_BATCH, BEFORE_EVERY_ID, { contexts: 0, reembedded: 0 });
+): Promise<DocUpgradeReport> => {
+  const stamped = await stampDeclaredOnly(deps.db);
+  await yieldToEventLoop();
+  return upgradeFrom(deps, options.batch ?? DOC_UPGRADE_BATCH, BEFORE_EVERY_ID, { contexts: 0, stamped, reembedded: 0 });
+};

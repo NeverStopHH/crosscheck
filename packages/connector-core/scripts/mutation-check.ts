@@ -18506,8 +18506,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the doc upgrade rebuilds contexts that hold no draft",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "            .where(and(eq(claims.workContextId, workContexts.id), ne(claims.provenance, DECLARED_PROVENANCE))),",
-    to: "            .where(eq(claims.workContextId, workContexts.id)),",
+    from: "          ne(claims.provenance, DECLARED_PROVENANCE),\n",
+    to: "",
     test: `${SERVER}/test/doc-upgrade.test.ts`,
     because: "every context's vector is dropped and re-minted for a doc that did not change",
   },
@@ -18634,10 +18634,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up doc upgrade never yields to the event loop",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "  await yieldToEventLoop();\n",
-    to: "",
+    from: "  const reembedded = await upgradePage(deps, ids);\n  await yieldToEventLoop();\n",
+    to: "  const reembedded = await upgradePage(deps, ids);\n",
     test: `${SERVER}/test/doc-upgrade-load.test.ts`,
     because: "the hub answers no request for the whole pass — 18 873 ms on a 30 000-context hub",
+  },
+  {
+    label: "the doc upgrade leaves declared-only contexts at version 0 for every start to re-scan",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "  const stamped = await stampDeclaredOnly(deps.db);",
+    to: "  const stamped = 0;",
+    test: `${SERVER}/test/doc-upgrade.test.ts`,
+    because: "every start's first page walks every declared-only context again — 20 000 on the review's probe hub",
   },
 ];
 
@@ -18962,7 +18970,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-load.test.ts 1
- * PRINTS: packages/server/test/doc-upgrade.test.ts 5
+ * PRINTS: packages/server/test/doc-upgrade.test.ts 6
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 4
  * PRINTS: packages/server/test/draft-visibility.test.ts 8
  * PRINTS: packages/server/test/drafts.test.ts 4
