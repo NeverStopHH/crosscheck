@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  DERIVE_FIRES_KEPT,
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   MAX_BRIEFING_SOLVED_REFS,
   MAX_SHOWN_LANDED_NOTICE_IDS,
@@ -111,6 +112,17 @@ const dropRetiredToolWindowKeys = (value: unknown): unknown => {
     ),
   );
 };
+
+/** One model run's start, as the fire's gate booked it (`deriveFires`). */
+const DeriveFireSchema = z.object({
+  at: z.string().min(1),
+});
+
+export type DeriveFire = z.infer<typeof DeriveFireSchema>;
+
+/** The ring after one more fire: appended, the newest DERIVE_FIRES_KEPT kept. */
+export const withDeriveFire = (fires: readonly DeriveFire[], firedAt: Date): DeriveFire[] =>
+  [...fires, { at: firedAt.toISOString() }].slice(-DERIVE_FIRES_KEPT);
 
 const SessionStateObjectSchema = z.looseObject({
   /**
@@ -606,13 +618,14 @@ const SessionStateObjectSchema = z.looseObject({
    */
   draftNudgeRetryAt: z.string().min(1).nullable().default(null),
   /**
-   * When the newest summarizer or derived-intent fire was booked — what lets
-   * doctor tell a model run still in flight (or one that finished after
-   * SessionEnd, with nowhere left to book its answer) from a worker that
-   * never reported back (derive/sharing.ts DERIVE_RUN_GRACE_MS). Null on a
-   * state written before it existed, which doctor then never blames.
+   * When each summarizer or derived-intent fire was booked, oldest first, the
+   * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
+   * flight (or one that finished after SessionEnd, with nowhere left to book
+   * its answer) from a worker that never reported back, RUN BY RUN
+   * (derive/sharing.ts). Empty on a state written before it existed, whose
+   * runs doctor then never blames.
    */
-  lastDeriveFireAt: z.string().min(1).nullable().default(null),
+  deriveFires: z.array(DeriveFireSchema).default([]),
 });
 
 /**
@@ -1546,6 +1559,6 @@ export const deriveSessionState = (
     toolWindowMisses: 0,
     draftNudge: null,
     draftNudgeRetryAt: null,
-    lastDeriveFireAt: null,
+    deriveFires: [],
   };
 };

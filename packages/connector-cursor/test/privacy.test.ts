@@ -302,7 +302,7 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
   toolWindowMisses: 0,
   draftNudge: null,
   draftNudgeRetryAt: null,
-  lastDeriveFireAt: null,
+  deriveFires: [],
     outsideRootDrops: 0,
     knownWorktreeRoots: [],
     editToolFires: 0,

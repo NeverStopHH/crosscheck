@@ -45,6 +45,11 @@ const session = (overrides: Partial<SessionState> = {}, endedAt: Date | null = n
 
 const DAY_MS = 86_400_000;
 
+/** A session's fire ring: one run per age, oldest first, as the gates book it. */
+const firedAt = (...agesMs: readonly number[]): Pick<SessionState, "deriveFires"> => ({
+  deriveFires: agesMs.map((ageMs) => ({ at: ago(ageMs) })),
+});
+
 /** The doctor's view of the hub's listing: exact unless an older hub cut it at its cap. */
 const ownDrafts = (
   size: number,
@@ -225,7 +230,7 @@ describe("sharingFindings — what the workers booked", () => {
     const value = input({
       ended: [
         session(
-          { intentFireCount: 2, intentRefusedCount: 1, intentSkippedCount: 1, lastDeriveFireAt: ago(60 * MINUTE_MS) },
+          { intentFireCount: 2, intentRefusedCount: 1, intentSkippedCount: 1, ...firedAt(60 * MINUTE_MS, 60 * MINUTE_MS) },
           new Date(NOW.getTime() - 30 * MINUTE_MS),
         ),
       ],
@@ -251,16 +256,16 @@ describe("sharingFindings — what the workers booked", () => {
 
   test("runs that never reported back, long before their session ended, are a silent worker", () => {
     const value = input({
-      ended: [session({ summarizerFireCount: 1, intentFireCount: 1, lastDeriveFireAt: ago(60 * MINUTE_MS) }, new Date(NOW.getTime() - 30 * MINUTE_MS))],
+      ended: [session({ summarizerFireCount: 1, intentFireCount: 1, ...firedAt(60 * MINUTE_MS, 60 * MINUTE_MS) }, new Date(NOW.getTime() - 30 * MINUTE_MS))],
     });
 
     expect(causes(value)).toContain("workers_silent");
-    expect(detailFor(value, "workers_silent")).toContain("2 model runs started more than");
+    expect(detailFor(value, "workers_silent")).toContain("2 model runs went more than");
   });
 
   test("runs started moments ago are in flight, not silent — and the summary says so", () => {
     const value = input({
-      live: [session({ summarizerFireCount: 1, intentFireCount: 1, lastDeriveFireAt: ago(10_000) })],
+      live: [session({ summarizerFireCount: 1, intentFireCount: 1, ...firedAt(10_000, 10_000) })],
     });
 
     expect(causes(value)).not.toContain("workers_silent");
@@ -271,7 +276,7 @@ describe("sharingFindings — what the workers booked", () => {
     // SessionEnd deletes the state file a late answer would be booked in.
     const ended = new Date(NOW.getTime() - 5 * MINUTE_MS);
     const value = input({
-      ended: [session({ summarizerFireCount: 1, intentFireCount: 1, lastDeriveFireAt: new Date(ended.getTime() - 20_000).toISOString() }, ended)],
+      ended: [session({ summarizerFireCount: 1, intentFireCount: 1, ...firedAt(5 * MINUTE_MS + 20_000, 5 * MINUTE_MS + 20_000) }, ended)],
     });
 
     expect(causes(value)).not.toContain("workers_silent");
@@ -279,10 +284,41 @@ describe("sharingFindings — what the workers booked", () => {
 
   test("a live session's runs long past the grace window are silent", () => {
     const value = input({
-      live: [session({ summarizerFireCount: 1, intentFireCount: 1, lastDeriveFireAt: ago(20 * MINUTE_MS) })],
+      live: [session({ summarizerFireCount: 1, intentFireCount: 1, ...firedAt(20 * MINUTE_MS, 20 * MINUTE_MS) })],
     });
 
     expect(causes(value)).toContain("workers_silent");
+  });
+
+  test("one fresh fire never hides the older runs that went silent (review round 2)", () => {
+    // The probe: five fires, four of them half an hour old and unanswered,
+    // the newest 30 s ago — settled by the NEWEST fire, all five read as in
+    // flight and doctor passed.
+    const value = input({
+      live: [session({ summarizerFireCount: 5, ...firedAt(30 * MINUTE_MS, 30 * MINUTE_MS, 30 * MINUTE_MS, 30 * MINUTE_MS, 30_000) })],
+    });
+
+    expect(detailFor(value, "workers_silent")).toContain("4 model runs went more than");
+    expect(sharingSummary(value)).toContain("1 model run still in flight");
+  });
+
+  test("each ended session's runs are settled one by one against its end", () => {
+    // The probe: the host kills the hook's children, and the person exits a
+    // minute after each session's last fire — six sessions, none blamed.
+    const sessions = Array.from({ length: 6 }, (_, i) => {
+      const endedAgo = (i + 1) * 3 * 60 * MINUTE_MS;
+      return session(
+        { summarizerFireCount: 3, intentFireCount: 1, ...firedAt(endedAgo + 60 * MINUTE_MS, endedAgo + 30 * MINUTE_MS, endedAgo + 10 * MINUTE_MS, endedAgo + MINUTE_MS) },
+        new Date(NOW.getTime() - endedAgo),
+      );
+    });
+
+    const value = input({ ended: sessions });
+
+    // Three of each session's four runs had their time before it ended; the
+    // last one may have answered after the state file was gone.
+    expect(detailFor(value, "workers_silent")).toContain("18 model runs went more than");
+    expect(sharingSummary(value)).not.toContain("in flight");
   });
 
   test("runs with no recorded start time are never blamed on the host", () => {

@@ -66,7 +66,7 @@ describe("intent transforms", () => {
     const firedAt = new Date("2026-10-05T12:00:00.000Z");
     const fired = withIntentFire(baseState(), firedAt);
     expect(fired.intentFireCount).toBe(1);
-    expect(fired.lastDeriveFireAt).toBe(firedAt.toISOString());
+    expect(fired.deriveFires).toEqual([{ at: firedAt.toISOString() }]);
     expect(withIntentNone(fired).intentNoneCount).toBe(1);
     expect(withIntentSet(fired).intentSetCount).toBe(1);
     const failed = withIntentFailure(fired, "exit 1: Not logged in");

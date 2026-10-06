@@ -25,6 +25,7 @@ import {
   SUMMARIZER_MAX_FIRES_PER_SESSION,
 } from "../../constants.ts";
 import { cutWellFormed } from "../../briefing/cut.ts";
+import { withDeriveFire } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
 
 /**
@@ -238,7 +239,7 @@ export const withSummarizerFire = (
   firedAt: Date,
 ): SessionState => ({
   ...state,
-  lastDeriveFireAt: firedAt.toISOString(),
+  deriveFires: withDeriveFire(state.deriveFires, firedAt),
   summarizerFireCount: state.summarizerFireCount + 1,
   summarizerLastFireTurn: state.stopTurnCount,
   summarizerEstimatedTokens:

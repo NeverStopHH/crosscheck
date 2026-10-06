@@ -53,7 +53,7 @@ const DigestSchema = z.object({
   intentLastFailure: said,
   intentRefusedCount: count,
   intentSkippedCount: count,
-  lastDeriveFireAt: said,
+  deriveFires: z.array(z.object({ at: z.string().min(1) })).catch([]),
   endedAt: said,
 });
 

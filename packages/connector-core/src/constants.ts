@@ -1482,6 +1482,14 @@ export const DOCTOR_SHARING_SILENT_FIRES_WARN = 2;
  */
 export const DERIVE_RUN_GRACE_MS = 2 * SUMMARIZER_TIMEOUT_MS;
 /**
+ * Fire instants a session keeps, newest last (state/session-state.ts
+ * `deriveFires`), so doctor settles EACH run against its own start rather
+ * than the session's newest — one fresh fire used to make every older silent
+ * run read as in flight. Every fire a session can make: its summarizer cap
+ * plus the one derived-intent fire.
+ */
+export const DERIVE_FIRES_KEPT = SUMMARIZER_MAX_FIRES_PER_SESSION + 1;
+/**
  * Sessions with not one derived-intent fire before doctor says no session
  * opened with a substantive prompt. Two, because one session is one prompt.
  */

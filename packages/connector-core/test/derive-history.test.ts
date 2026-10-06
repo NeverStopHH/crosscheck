@@ -57,6 +57,7 @@ describe("foldDeriveHistory", () => {
       intentFailCount: 1,
       intentRefusedCount: 1,
       intentSkippedCount: 1,
+      deriveFires: [{ at: "2026-10-05T11:00:00.000Z" }, { at: "2026-10-05T11:20:00.000Z" }],
     });
     await seed(at, "second-uuid", {
       summarizerFireCount: 1,
@@ -79,6 +80,11 @@ describe("foldDeriveHistory", () => {
     // session's answers would read as runs that never reported back.
     expect(history.sessions[1]?.intentRefusedCount).toBe(1);
     expect(history.sessions[1]?.intentSkippedCount).toBe(1);
+    // Each run's start, so doctor can still settle it run by run.
+    expect(history.sessions[1]?.deriveFires).toEqual([
+      { at: "2026-10-05T11:00:00.000Z" },
+      { at: "2026-10-05T11:20:00.000Z" },
+    ]);
   });
 
   test("is bounded to the newest DERIVE_HISTORY_MAX_SESSIONS and counts every fold", async () => {

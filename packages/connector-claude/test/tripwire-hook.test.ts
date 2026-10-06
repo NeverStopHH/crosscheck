@@ -112,7 +112,7 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   toolWindowMisses: 0,
   draftNudge: null,
   draftNudgeRetryAt: null,
-  lastDeriveFireAt: null,
+  deriveFires: [],
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,

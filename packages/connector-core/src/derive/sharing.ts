@@ -50,7 +50,7 @@ import {
   MS_PER_SECOND,
   SUMMARIZER_CHILD_ENV,
 } from "../constants.ts";
-import type { SessionState } from "../state/session-state.ts";
+import type { DeriveFire, SessionState } from "../state/session-state.ts";
 
 /** The derive counters of ONE session — what the history keeps of it. */
 export type DeriveDigest = Pick<
@@ -72,7 +72,7 @@ export type DeriveDigest = Pick<
   | "intentLastFailure"
   | "intentRefusedCount"
   | "intentSkippedCount"
-  | "lastDeriveFireAt"
+  | "deriveFires"
 > & {
   /** When the session ended; null while it is live. */
   readonly endedAt: string | null;
@@ -96,7 +96,7 @@ export const digestOf = (state: SessionState, endedAt: Date | null = null): Deri
   intentLastFailure: state.intentLastFailure,
   intentRefusedCount: state.intentRefusedCount,
   intentSkippedCount: state.intentSkippedCount,
-  lastDeriveFireAt: state.lastDeriveFireAt,
+  deriveFires: state.deriveFires,
   endedAt: endedAt === null ? null : endedAt.toISOString(),
 });
 
@@ -163,10 +163,11 @@ interface Totals {
   readonly lastNoSlice: string | null;
   readonly intentFires: number;
   readonly intentsSet: number;
-  /** Fires and outcomes of sessions whose newest run is past DERIVE_RUN_GRACE_MS. */
-  readonly settledFires: number;
+  /** Runs past their grace that no outcome accounts for (settlementOfSession). */
+  readonly silentRuns: number;
+  /** Outcomes of the sessions that have any settled run. */
   readonly settledOutcomes: number;
-  /** Unanswered runs of LIVE sessions still inside the grace window. */
+  /** Unanswered runs of LIVE sessions still inside their grace. */
   readonly inFlight: number;
 }
 
@@ -213,28 +214,62 @@ const outcomesOf = (d: DeriveDigest): number =>
 
 const firesOf = (d: DeriveDigest): number => d.summarizerFireCount + d.intentFireCount;
 
-/**
- * Whether a session's runs have had their time. Measured from its NEWEST
- * fire — its earlier runs are older still — to now, or to SessionEnd for an
- * ended session, whose late answer had no state file to land in. No recorded
- * fire time is never settled: missing evidence does not get to blame the host.
- */
-const isSettled = (d: DeriveDigest, now: Date): boolean => {
-  const fired = d.lastDeriveFireAt === null ? Number.NaN : Date.parse(d.lastDeriveFireAt);
-  const until = d.endedAt === null ? now.getTime() : Date.parse(d.endedAt);
+/** Whether one run has had its time by `until` (now, or its session's end). */
+const isRunSettled = (fire: DeriveFire, until: number): boolean => {
+  const fired = Date.parse(fire.at);
   return !Number.isNaN(fired) && !Number.isNaN(until) && until - fired >= DERIVE_RUN_GRACE_MS;
+};
+
+/** What one session's runs came to, each settled on its own. */
+interface RunSettlement {
+  /** Runs that have had their time. */
+  readonly settled: number;
+  /** Of those, the ones no booked outcome accounts for. */
+  readonly silent: number;
+  /** Unanswered runs of a LIVE session still inside their grace. */
+  readonly inFlight: number;
+}
+
+/**
+ * EACH RUN AGAINST ITS OWN START (review round 2): settling a session by its
+ * NEWEST fire let one fresh run make every older silent one read as in
+ * flight. A run is settled once it has had DERIVE_RUN_GRACE_MS, counted to
+ * now — or to SessionEnd for an ended session, whose late answer had no state
+ * file to land in, so an ended session's unsettled run is neither silent nor
+ * in flight. Fires older than the kept ring started before its oldest entry
+ * and are settled whenever that one is. Outcomes carry no run id, so they are
+ * credited to the oldest runs first — the reading that blames the fewest. A
+ * run with no recorded start is never settled: missing evidence does not get
+ * to blame the host.
+ */
+const settlementOfSession = (d: DeriveDigest, now: Date): RunSettlement => {
+  const until = d.endedAt === null ? now.getTime() : Date.parse(d.endedAt);
+  const fires = firesOf(d);
+  const outcomes = outcomesOf(d);
+  const oldest = d.deriveFires[0];
+  const unrecorded = Math.max(0, fires - d.deriveFires.length);
+  const settled =
+    d.deriveFires.filter((fire) => isRunSettled(fire, until)).length +
+    (oldest !== undefined && isRunSettled(oldest, until) ? unrecorded : 0);
+  const silent = Math.max(0, settled - outcomes);
+  const live = d.endedAt === null && oldest !== undefined;
+  return {
+    settled,
+    silent,
+    inFlight: live ? Math.max(0, fires - outcomes - silent) : 0,
+  };
 };
 
 const settlementOf = (
   digests: readonly DeriveDigest[],
   now: Date,
-): Pick<Totals, "settledFires" | "settledOutcomes" | "inFlight"> => {
-  const settled = digests.filter((d) => isSettled(d, now));
-  const liveInFlight = digests.filter((d) => d.endedAt === null && d.lastDeriveFireAt !== null && !isSettled(d, now));
+): Pick<Totals, "silentRuns" | "settledOutcomes" | "inFlight"> => {
+  const sessions = digests.map((d) => ({ d, runs: settlementOfSession(d, now) }));
+  const withSettled = sessions.filter(({ runs }) => runs.settled > 0);
   return {
-    settledFires: sumOf(settled, firesOf),
-    settledOutcomes: sumOf(settled, outcomesOf),
-    inFlight: sumOf(liveInFlight, (d) => Math.max(0, firesOf(d) - outcomesOf(d))),
+    silentRuns: sessions.reduce((sum, { runs }) => sum + runs.silent, 0),
+    settledOutcomes: sumOf(withSettled.map(({ d }) => d), outcomesOf),
+    inFlight: sessions.reduce((sum, { runs }) => sum + runs.inFlight, 0),
   };
 };
 
@@ -387,13 +422,13 @@ const runnerFailingRule: Rule = (_input, totals) => {
 };
 
 const workersSilentRule: Rule = (_input, totals) =>
-  totals.settledFires >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.settledOutcomes === 0
+  totals.silentRuns >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.settledOutcomes === 0
     ? finding(
         "workers_silent",
-        `your agent shares nothing because ${String(totals.settledFires)} model runs started more than ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s ago (or that long before their session ended) never reported back: ` +
+        `your agent shares nothing because ${String(totals.silentRuns)} model runs went more than ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s without reporting back (each counted from its own start to now, or to its session's end): ` +
           "the detached worker did not start, or died with the hook that spawned it; " +
           "fix: run the summarizer runner check below — if it passes, the host is killing the hook's children, so send this doctor output to whoever runs your crosscheck",
-        `no drafts or intents — ${String(totals.settledFires)} model runs never reported back`,
+        `no drafts or intents — ${String(totals.silentRuns)} model runs never reported back`,
       )
     : null;
 
@@ -495,7 +530,7 @@ export const sharingSummary = (input: SharingInput): string => {
   const inFlight =
     totals.inFlight === 0
       ? ""
-      : `, ${String(totals.inFlight)} model runs still in flight (started under ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s ago)`;
+      : `, ${String(totals.inFlight)} model run${totals.inFlight === 1 ? "" : "s"} still in flight (started under ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s ago)`;
   return (
     `${String(input.live.length)} live and ${String(input.ended.length)} recently ended session${totals.sessions === 1 ? "" : "s"}: ` +
     `${String(totals.drafts)} drafts and ${String(totals.intentsSet)} intents derived${unreviewed}${inFlight} — nothing found that keeps this agent from sharing`

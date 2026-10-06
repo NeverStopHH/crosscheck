@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1637
+    # PRINTS: 1641
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -273,7 +273,7 @@ jobs:
     # PRINTS: derive/intent/gate.ts 1
     # PRINTS: derive/intent/prompt.ts 1
     # PRINTS: derive/intent/worker.ts 4
-    # PRINTS: derive/sharing.ts 21
+    # PRINTS: derive/sharing.ts 23
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 2
@@ -347,14 +347,14 @@ jobs:
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
-    # PRINTS: state/derive-history.ts 4
+    # PRINTS: state/derive-history.ts 5
     # PRINTS: state/draft-nudge-spent.ts 1
     # PRINTS: state/git-lane-cost.ts 2
     # PRINTS: state/loss-ledger.ts 10
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 21
+    # PRINTS: state/session-state.ts 22
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
@@ -522,7 +522,7 @@ jobs:
     # PRINTS: declarations.ts 5
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
-    # PRINTS: derive-history.ts 4
+    # PRINTS: derive-history.ts 5
     # PRINTS: derive.ts 2
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
@@ -680,13 +680,13 @@ jobs:
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 6
-    # PRINTS: session-state.ts 21
+    # PRINTS: session-state.ts 22
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 15
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
-    # PRINTS: sharing.ts 21
+    # PRINTS: sharing.ts 23
     # PRINTS: similarity-gate.ts 1
     # PRINTS: skeleton-identity.ts 8
     # PRINTS: slice.ts 2

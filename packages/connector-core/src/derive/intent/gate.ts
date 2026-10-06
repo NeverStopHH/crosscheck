@@ -11,6 +11,7 @@ import {
   SUMMARIZER_FAILURE_MAX_CHARS,
 } from "../../constants.ts";
 import { cutWellFormed } from "../../briefing/cut.ts";
+import { withDeriveFire } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
 
 /**
@@ -47,7 +48,7 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
 /** One fire, booked BEFORE the spawn (the Stop hook's ordering contract). */
 export const withIntentFire = (state: SessionState, firedAt: Date): SessionState => ({
   ...state,
-  lastDeriveFireAt: firedAt.toISOString(),
+  deriveFires: withDeriveFire(state.deriveFires, firedAt),
   intentFireCount: state.intentFireCount + 1,
 });
 
