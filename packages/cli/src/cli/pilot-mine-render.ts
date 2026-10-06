@@ -19,7 +19,7 @@
  */
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
-import type { MyHintOutcomes, SourceTally } from "@crosscheck/connector-core/http/hint-outcomes.ts";
+import type { Credit, MyHintOutcomes, SourceTally } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { quoted } from "@crosscheck/connector-core/mcp/render.ts";
 import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
 
@@ -112,15 +112,21 @@ const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums: leavi
  * the caller's work — or why there is no number, never a "followed 0" that
  * a teammate's one changed word could move.
  */
-const creditWords = (credit: MyHintOutcomes["yourWork"]): string => {
+const creditWords = (credit: Credit): string => {
   if (credit.withheld === null && credit.followed !== null) {
     return `followed ${plural(credit.followed, "time")} — counted once, leaving out any one person, at least ${PEOPLE_MINIMUM} people recorded outcomes about it`;
   }
   return credit.withheld === "not_recordable" ? NOT_RECORDABLE_CREDIT : BELOW_MINIMUMS_CREDIT;
 };
 
+/** 07 §13.11 (round 3): a credit this client cannot read is one line, and the person's own view still prints. */
+const UNREADABLE_CREDIT_LINE =
+  "your own work, in teammates' hints: this hub sent a count this client cannot read — nothing is shown from it";
+
 const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
-  `your own work, in teammates' hints, ${monthOf(credit.periodStartIso)}: ${creditWords(credit)}`;
+  "unreadable" in credit
+    ? UNREADABLE_CREDIT_LINE
+    : `your own work, in teammates' hints, ${monthOf(credit.periodStartIso)}: ${creditWords(credit)}`;
 
 const footerLines = (view: MyHintOutcomes): readonly string[] => [
   creditLine(view.yourWork),

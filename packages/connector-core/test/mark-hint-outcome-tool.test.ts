@@ -640,17 +640,27 @@ describe("the source credit on the wire (review #10)", () => {
     yourWork: { periodStartIso: "2026-09-01T00:00:00.000Z", periodEndIso: "2026-10-01T00:00:00.000Z", ...yourWork },
   });
 
-  test("a credit is a count or a withholding — one with both, or neither, is unreadable", () => {
+  test("a credit is a count or a withholding — one with both, or neither, is unreadable, and only it", () => {
     // Act
     const counted = MyHintOutcomesSchema.safeParse(view({ followed: 4, withheld: null }));
-    const withheld = MyHintOutcomesSchema.safeParse(view({ followed: null, withheld: "too_few_recorders" }));
-    const both = MyHintOutcomesSchema.safeParse(view({ followed: 4, withheld: "too_few_recorders" }));
+    const withheld = MyHintOutcomesSchema.safeParse(view({ followed: null, withheld: "below_minimums" }));
+    const both = MyHintOutcomesSchema.safeParse(view({ followed: 4, withheld: "below_minimums" }));
     const neither = MyHintOutcomesSchema.safeParse(view({ followed: null, withheld: null }));
 
-    // Assert — a number beside "withheld" would print what the hub held back
-    expect(counted.success).toBe(true);
-    expect(withheld.success).toBe(true);
-    expect(both.success).toBe(false);
-    expect(neither.success).toBe(false);
+    // Assert — a number beside "withheld" would print what the hub held back; the view still arrives
+    expect(counted.success && counted.data.yourWork).toMatchObject({ followed: 4, withheld: null });
+    expect(withheld.success && withheld.data.yourWork).toMatchObject({ followed: null, withheld: "below_minimums" });
+    expect(both.success && both.data.yourWork).toEqual({ unreadable: true });
+    expect(neither.success && neither.data.yourWork).toEqual({ unreadable: true });
+  });
+
+  test("round 3: a credit block in an older hub's shape never rejects the person's own view", () => {
+    // Act — the shape a hub from before review #10 sent
+    const older = MyHintOutcomesSchema.safeParse({ ...view({}), yourWork: { followed: 2 } });
+
+    // Assert
+    expect(older.success).toBe(true);
+    expect(older.data?.yourWork).toEqual({ unreadable: true });
+    expect(older.data?.repo).toBe(REPO_ID);
   });
 });

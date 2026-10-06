@@ -47,6 +47,7 @@ import type {
   PilotLabelFigures,
   PilotRepair,
   PilotReport,
+  UnreadableBlock,
 } from "@crosscheck/connector-core/http/pilot.ts";
 
 import { monthOf } from "./outcome-render.ts";
@@ -348,7 +349,10 @@ const legacyNoiseLines = (proof: PilotReport["precision"]): readonly string[] =>
  */
 const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key`;
 
-type OutcomeBlock = NonNullable<PilotReport["outcomes"]>;
+type OutcomeBlock = Exclude<NonNullable<PilotReport["outcomes"]>, UnreadableBlock>;
+
+/** 07 §13.11 (round 3): a block this client cannot read is one line — never zeros, never the whole report lost. */
+const UNREADABLE_OUTCOMES_LINE = `${INDENT}hint outcomes: this hub sent an outcomes block this client cannot read — nothing is shown from it`;
 
 /**
  * Why a figure is withheld: one generic sentence (review M1) — the minimums
@@ -419,6 +423,9 @@ const outcomeLine = (report: PilotReport): string => {
   const block = report.outcomes;
   if (block === undefined) {
     return `${INDENT}hint outcomes: this hub does not record them`;
+  }
+  if ("unreadable" in block) {
+    return UNREADABLE_OUTCOMES_LINE;
   }
   const month = monthOf(block.periodStartIso);
   const figures = block.withheld === null && block.figures !== null && block.figures.interventions > 0 ? block.figures : null;

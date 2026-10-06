@@ -276,7 +276,7 @@ describe("PilotReportSchema", () => {
     expect(parsed.data?.outcomes).toBeUndefined();
   });
 
-  test("D-O5: an outcomes figure missing a count, or contradicting its withholding, is unreadable", () => {
+  test("D-O5, round 3: an outcomes figure missing a count, or contradicting its withholding, is unreadable — and only it", () => {
     // Arrange — "followed 0" from a count that never arrived is AT-9's lie,
     // and figures beside "withheld" would print what the hub withheld
     const block = {
@@ -296,10 +296,20 @@ describe("PilotReportSchema", () => {
     });
     const shown = PilotReportSchema.safeParse({ ...wireReport(), outcomes: { ...block, withheld: null, figures: counts } });
 
+    // Assert — the block is unreadable, never zeros; the rest of the report still arrives
+    expect(missing.success && missing.data.outcomes).toEqual({ unreadable: true });
+    expect(both.success && both.data.outcomes).toEqual({ unreadable: true });
+    expect(shown.success && shown.data.outcomes).toMatchObject({ withheld: null, figures: counts });
+  });
+
+  test("round 3: an outcomes block this client cannot read never rejects the whole report", () => {
+    // Act — a newer hub's shape, or plain garbage, in the one block
+    const garbage = PilotReportSchema.safeParse({ ...wireReport(), outcomes: "a shape from the future" });
+
     // Assert
-    expect(missing.success).toBe(false);
-    expect(both.success).toBe(false);
-    expect(shown.success).toBe(true);
+    expect(garbage.success).toBe(true);
+    expect(garbage.data?.outcomes).toEqual({ unreadable: true });
+    expect(garbage.data?.duplicateWork.surfaced).toBe(312);
   });
 
   test("an uninstrumented surface keeps its null — it never becomes an empty record", () => {

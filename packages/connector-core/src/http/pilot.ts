@@ -90,6 +90,51 @@ const LabelFiguresSchema = z.looseObject({
 export type PilotLabelFigures = z.infer<typeof LabelFiguresSchema>;
 
 /**
+ * THE OUTCOMES BLOCK (07 §13.9–§13.11). Strict inside — a count that did not
+ * arrive is not zero, and figures beside "withheld" are not printed — but
+ * strict about ITSELF only: a block this client cannot read is answered as
+ * unreadable, and the rest of the report is still read (round 3).
+ */
+const OutcomeBlockSchema = z
+  .looseObject({
+    periodStartIso: z.string().min(1),
+    periodEndIso: z.string().min(1),
+    recordableSinceIso: z.string().nullable(),
+    countedFromIso: z.string().nullable(),
+    /** 07 §13.11 (review M3): the pilot paused inside the counted part. Absent from an older hub, which never paused. */
+    pausedInPeriod: z.boolean().optional(),
+    withheld: z.string().min(1).nullable(),
+    // 07 §13.11 (review M1): every count, the interventions too, rides only inside the figures.
+    figures: z
+      .looseObject({
+        interventions: CountSchema,
+        followed: CountSchema,
+        overrode: CountSchema,
+        notRelevantNow: CountSchema,
+        noise: CountSchema,
+        unmarked: CountSchema,
+      })
+      .nullable(),
+  })
+  .refine((block) => (block.withheld === null) === (block.figures !== null), {
+    message: "an outcome figure is either withheld or shown",
+  });
+
+export type OutcomeBlock = z.infer<typeof OutcomeBlockSchema>;
+
+/** A block this client could not read — said as such, never read as anything. */
+export interface UnreadableBlock {
+  readonly unreadable: true;
+}
+
+export const UNREADABLE_BLOCK: UnreadableBlock = { unreadable: true };
+
+const readOutcomeBlock = (raw: unknown): OutcomeBlock | UnreadableBlock => {
+  const parsed = OutcomeBlockSchema.safeParse(raw);
+  return parsed.success ? parsed.data : UNREADABLE_BLOCK;
+};
+
+/**
  * One sentence somebody typed beside a label. The LABEL is an open string:
  * the vocabulary is `PILOT_INTERVENTION_LABELS`, and a word this client has
  * no sentence for is printed as the word, cleaned, like a reason word.
@@ -179,33 +224,11 @@ export const PilotReportSchema = z.looseObject({
   // them"; a hub that sends one sends every count, none defaulted, because
   // "followed 0" read from a missing count is the AT-9 failure again.
   // Review #4: ONE CLOSED MONTH, and figures only above the disclosure
-  // minimums — `withheld` names why not, as an open word, and a block whose
-  // figures and withholding disagree is a report this client cannot read.
-  outcomes: z
-    .looseObject({
-      periodStartIso: z.string().min(1),
-      periodEndIso: z.string().min(1),
-      recordableSinceIso: z.string().nullable(),
-      countedFromIso: z.string().nullable(),
-      /** 07 §13.11 (review M3): the pilot paused inside the counted part. Absent from an older hub, which never paused. */
-      pausedInPeriod: z.boolean().optional(),
-      withheld: z.string().min(1).nullable(),
-      // 07 §13.11 (review M1): every count, the interventions too, rides only inside the figures.
-      figures: z
-        .looseObject({
-          interventions: CountSchema,
-          followed: CountSchema,
-          overrode: CountSchema,
-          notRelevantNow: CountSchema,
-          noise: CountSchema,
-          unmarked: CountSchema,
-        })
-        .nullable(),
-    })
-    .refine((block) => (block.withheld === null) === (block.figures !== null), {
-      message: "an outcome figure is either withheld or shown",
-    })
-    .optional(),
+  // minimums — `withheld` says why not, as an open word. 07 §13.11 (round 3):
+  // parsed LENIENTLY as a block — one this client cannot read, figures and
+  // withholding disagreeing included, is an "unreadable" block, never a
+  // report rejected whole, and never zeros.
+  outcomes: z.unknown().transform(readOutcomeBlock).optional(),
   // THE LIST MUST ARRIVE: a list that did not is a report this client cannot
   // read, for the same reason as a missing count. Its ENTRIES are printed as
   // the hub sent them — the hub sends both cohorts; this parse does not

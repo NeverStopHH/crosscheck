@@ -15,6 +15,8 @@ import { z } from "zod";
 import type { HintOutcome } from "@crosscheck/schema";
 
 import { hubRequest } from "./client.ts";
+import { UNREADABLE_BLOCK } from "./pilot.ts";
+import type { UnreadableBlock } from "./pilot.ts";
 import type { HubContext, HubResult } from "./client.ts";
 
 const CountSchema = z.number().int().min(0);
@@ -100,6 +102,30 @@ const OutcomeReasonSchema = z.looseObject({
 
 export type OutcomeReason = z.infer<typeof OutcomeReasonSchema>;
 
+/**
+ * The source credit (review #10): one closed month's follows of the caller's
+ * work, or the reason there is no number — never both. Strict inside, strict
+ * about itself only: a credit this client cannot read is said to be
+ * unreadable, and the rest of the person's view is still read.
+ */
+const CreditSchema = z
+  .looseObject({
+    periodStartIso: z.string().min(1),
+    periodEndIso: z.string().min(1),
+    followed: CountSchema.nullable(),
+    withheld: z.string().min(1).nullable(),
+  })
+  .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {
+    message: "a source credit is either withheld or counted",
+  });
+
+export type Credit = z.infer<typeof CreditSchema>;
+
+const readCredit = (raw: unknown): Credit | UnreadableBlock => {
+  const parsed = CreditSchema.safeParse(raw);
+  return parsed.success ? parsed.data : UNREADABLE_BLOCK;
+};
+
 export const MyHintOutcomesSchema = z.looseObject({
   repo: z.string().min(1),
   days: z.number().int().min(1),
@@ -112,20 +138,8 @@ export const MyHintOutcomesSchema = z.looseObject({
   bySourceBeyondList: CountSchema,
   reasons: z.array(OutcomeReasonSchema),
   reasonsBeyondList: CountSchema,
-  /**
-   * The source credit (review #10): one closed month's follows of the
-   * caller's work, or the reason there is no number — never both.
-   */
-  yourWork: z
-    .looseObject({
-      periodStartIso: z.string().min(1),
-      periodEndIso: z.string().min(1),
-      followed: CountSchema.nullable(),
-      withheld: z.string().min(1).nullable(),
-    })
-    .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {
-      message: "a source credit is either withheld or counted",
-    }),
+  /** 07 §13.11 (round 3): lenient as a block — an unreadable credit never rejects the person's own view. */
+  yourWork: z.unknown().transform(readCredit),
 });
 
 export type MyHintOutcomes = z.infer<typeof MyHintOutcomesSchema>;

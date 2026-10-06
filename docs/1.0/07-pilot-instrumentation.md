@@ -1271,3 +1271,13 @@ delivery id, the candidates by the ref the hint printed, or the recent ones with
 not know a delivery the spool holds does the one live session of this checkout send its own held records,
 after which the label is asked for once more; a delivery still held is answered with why, never "never reached
 you".
+
+*LOW — one unreadable outcome block rejected the whole answer.* The client's parse was strict about the
+outcomes block as part of the report, so a block in a shape it could not read — an older hub's credit
+`{ followed: N }`, a newer hub's field, figures beside a withholding — made `crosscheck pilot` or `--mine`
+unreadable whole. The blocks are now parsed **leniently as blocks and strictly inside**: a block this client
+cannot read becomes `{ unreadable: true }` — never zeros — and prints one line (`hint outcomes: this hub sent an
+outcomes block this client cannot read — nothing is shown from it`; for the credit, `your own work, in
+teammates' hints: this hub sent a count this client cannot read — nothing is shown from it`), while every other
+proof and the person's own view still print. This holds for both answers and for both kinds of mismatch, a
+block too old and a block too new.

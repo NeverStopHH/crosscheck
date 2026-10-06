@@ -125,3 +125,14 @@ describe("renderMyOutcomes' window under a paused pilot (review M3)", () => {
     );
   });
 });
+
+describe("renderMyOutcomes' credit it cannot read (round 3)", () => {
+  test("a credit this client cannot read is one line, and the person's own view still prints", () => {
+    // Act
+    const out = renderMyOutcomes({ ...viewSince("2026-08-10T12:00:00.000Z"), yourWork: { unreadable: true } });
+
+    // Assert
+    expect(out).toContain("your own work, in teammates' hints: this hub sent a count this client cannot read — nothing is shown from it");
+    expect(out.split("\n")[0]).toStartWith("your hint outcomes on github.com/acme/api");
+  });
+});

@@ -734,6 +734,15 @@ describe("renderPilot", () => {
     expect(lines).toEqual(["   hint outcomes, July 2026: none could be recorded — the pilot was paused here for the whole month"]);
   });
 
+  test("round 3: an outcomes block this client cannot read is one line, and the rest of the report prints", () => {
+    // Arrange
+    const out = renderPilot(view({ outcomes: { unreadable: true } }));
+
+    // Assert
+    expect(out).toContain("   hint outcomes: this hub sent an outcomes block this client cannot read — nothing is shown from it");
+    expect(out).toContain("crosscheck pilot:");
+  });
+
   test("D-O5: a hub that predates outcomes says so instead of printing a figure", () => {
     // Arrange & Act — the builder carries no outcomes block, as an older hub's report does
     const out = renderPilot(view());

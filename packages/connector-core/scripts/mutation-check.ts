@@ -17693,8 +17693,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an older hub's report reads as zero outcomes",
     file: `${CORE}/src/http/pilot.ts`,
-    from: '      message: "an outcome figure is either withheld or shown",\n    })\n    .optional(),',
-    to: '      message: "an outcome figure is either withheld or shown",\n    })\n    .default({ periodStartIso: "", periodEndIso: "", recordableSinceIso: null, countedFromIso: null, interventions: 0, withheld: null, figures: { followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 } }),',
+    from: "  outcomes: z.unknown().transform(readOutcomeBlock).optional(),",
+    to: '  outcomes: z.unknown().transform(readOutcomeBlock).default({ periodStartIso: "", periodEndIso: "", recordableSinceIso: null, countedFromIso: null, withheld: null, figures: { interventions: 0, followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 } }),',
     test: `${CORE}/test/pilot-client.test.ts`,
     because: "a hub that records no outcomes looks like a team whose hints led to nothing",
   },
@@ -17799,8 +17799,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the client prints figures the hub withheld",
     file: `${CORE}/src/http/pilot.ts`,
-    from: "    .refine((block) => (block.withheld === null) === (block.figures !== null), {",
-    to: "    .refine(() => true, {",
+    from: "  .refine((block) => (block.withheld === null) === (block.figures !== null), {",
+    to: "  .refine(() => true, {",
     test: `${CORE}/test/pilot-client.test.ts`,
     because: "a hub that sends numbers beside 'withheld' has them printed as if the minimums were met",
   },
@@ -17824,8 +17824,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the client prints a credit the hub withheld",
     file: `${CORE}/src/http/hint-outcomes.ts`,
-    from: "    .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {",
-    to: "    .refine(() => true, {",
+    from: "  .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {",
+    to: "  .refine(() => true, {",
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "a hub that sends a number beside 'withheld' has it printed as if the minimum were met",
   },
@@ -18325,6 +18325,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because: "'nothing reached a live session in the last hour' is printed for a hint shown a minute ago",
   },
+  // ── 07 §13.11, round 3: an unreadable block is one line, never the answer lost ─
+  {
+    label: "an outcomes block this client cannot read rejects the whole report",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "  outcomes: z.unknown().transform(readOutcomeBlock).optional(),",
+    to: "  outcomes: OutcomeBlockSchema.optional(),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because: "one newer field in one block loses every proof of `crosscheck pilot` at once",
+  },
+  {
+    label: "a credit this client cannot read rejects the person's whole view",
+    file: `${CORE}/src/http/hint-outcomes.ts`,
+    from: "  yourWork: z.unknown().transform(readCredit),",
+    to: "  yourWork: CreditSchema,",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "an older hub's one count costs the person their whole --mine",
+  },
+  {
+    label: "an unreadable outcomes block is printed as if it had been read",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (\"unreadable\" in block) {\n    return UNREADABLE_OUTCOMES_LINE;\n  }\n",
+    to: "",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "a block nobody could read prints as a withheld month with an unknown name",
+  },
+  {
+    label: "an unreadable credit is printed as if it had been read",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "  \"unreadable\" in credit\n    ? UNREADABLE_CREDIT_LINE",
+    to: "  false\n    ? UNREADABLE_CREDIT_LINE",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a count nobody could read is printed as a month and a sentence about it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18415,8 +18448,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 11
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 4
- * PRINTS: packages/cli/test/pilot-render.test.ts 29
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 5
+ * PRINTS: packages/cli/test/pilot-render.test.ts 30
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -18559,7 +18592,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 15
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 16
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -18570,7 +18603,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
- * PRINTS: packages/connector-core/test/pilot-client.test.ts 6
+ * PRINTS: packages/connector-core/test/pilot-client.test.ts 7
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
