@@ -48,6 +48,7 @@ import { MAX_HINT_OUTCOME_REASON_CHARS, SAFE_ID_PATTERN, reasonLength } from "@c
 import type { HintOutcome } from "@crosscheck/schema";
 
 import {
+  DELIVERY_HELD_NO_LIVE_SESSION_LINE,
   DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
@@ -134,7 +135,11 @@ const failed = (result: Extract<HubResult<unknown>, { ok: false }>): CliResult =
     ? { stdout: OUTCOMES_NOT_SERVED_LINE, exitCode: EXIT_FAIL }
     : { stdout: markFailureLine(result.kind, result.message), exitCode: result.kind === "network" ? EXIT_UNREACHABLE : EXIT_FAIL };
 
-const STILL_HERE: CliResult = { stdout: DELIVERY_STILL_ON_THIS_MACHINE_LINE, exitCode: EXIT_FAIL };
+/** What is true of a held delivery: a live session sends it after its next tool call; with none, the next to start does. */
+const stillHere = (hasLiveSession: boolean): CliResult => ({
+  stdout: hasLiveSession ? DELIVERY_STILL_ON_THIS_MACHINE_LINE : DELIVERY_HELD_NO_LIVE_SESSION_LINE,
+  exitCode: EXIT_FAIL,
+});
 
 const record = async (
   ctx: HubContext,
@@ -142,12 +147,13 @@ const record = async (
   ref: string,
   outcome: HintOutcome,
   reason: string | undefined,
+  hasLiveSession: boolean,
 ): Promise<CliResult> => {
   const posted = await postHintOutcome(ctx, { repo, ref, outcome, ...(reason === undefined ? {} : { reason }) });
   if (posted.ok) {
     return { stdout: outcomeRecordedLine(ref, posted.data), exitCode: EXIT_OK };
   }
-  return posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx, ref)) ? STILL_HERE : failed(posted);
+  return posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx, ref)) ? stillHere(hasLiveSession) : failed(posted);
 };
 
 /** The newest live session, in whose name held records are sent; null when none is live. */
@@ -176,7 +182,7 @@ const recordRecent = async (
   const [only] = candidates;
   if (only === undefined) {
     return (await holdsUnsentDelivery(ctx, null))
-      ? STILL_HERE
+      ? stillHere(true)
       : { stdout: nothingRecentLine(NOISE_MARK_WINDOW_MINUTES, command), exitCode: EXIT_OK };
   }
   if (candidates.length > 1 || more) {
@@ -185,7 +191,7 @@ const recordRecent = async (
       exitCode: EXIT_OK,
     };
   }
-  return record(ctx, repo, only.id, COMMAND_OUTCOME[command], reason);
+  return record(ctx, repo, only.id, COMMAND_OUTCOME[command], reason, true);
 };
 
 const runOutcome = async (
@@ -226,7 +232,7 @@ const runOutcome = async (
   await sendHeldRecords(ctx, senderOf(live.states), OUTCOME_FLUSH_BUDGET_MS);
   return args.id === undefined
     ? recordRecent(ctx, identity.repoId, live.states, command, args.reason)
-    : record(ctx, identity.repoId, args.id, COMMAND_OUTCOME[command], args.reason);
+    : record(ctx, identity.repoId, args.id, COMMAND_OUTCOME[command], args.reason, live.states.length > 0);
 };
 
 export const runFollowed = (argv: readonly string[], env: Env, cwd: string): Promise<CliResult> =>

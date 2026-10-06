@@ -17956,7 +17956,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "crosscheck followed <id> says 'never reached you' for a hint this machine holds",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "  return posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx, ref)) ? STILL_HERE : failed(posted);",
+    from: "  return posted.code === UNKNOWN_REF && (await holdsUnsentDelivery(ctx, ref)) ? stillHere(hasLiveSession) : failed(posted);",
     to: "  return failed(posted);",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the hub's honest sentence is false from where the person sits",
@@ -18242,6 +18242,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
     because: "the agent tells its person their own label does not stand",
   },
+  // ── 07 §13.11, review LOW: a held hint with no live session here ─────────
+  {
+    label: "crosscheck followed promises a held hint to a session that is not there",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: "  stdout: hasLiveSession ? DELIVERY_STILL_ON_THIS_MACHINE_LINE : DELIVERY_HELD_NO_LIVE_SESSION_LINE,",
+    to: "  stdout: DELIVERY_STILL_ON_THIS_MACHINE_LINE,",
+    test: `${CLI}/test/outcome-cli.test.ts`,
+    because: "the person waits for 'the session's next tool call' that no live session will make",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18327,7 +18336,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 10
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 11
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11

@@ -30,6 +30,7 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
 import {
+  DELIVERY_HELD_NO_LIVE_SESSION_LINE,
   DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
@@ -326,6 +327,21 @@ describe("crosscheck followed / overrode", () => {
     // Assert
     expect(byId.stdout).toBe(DELIVERY_STILL_ON_THIS_MACHINE_LINE);
     expect(recent.stdout).toBe(DELIVERY_STILL_ON_THIS_MACHINE_LINE);
+  });
+
+  test("review LOW: with no live session here, a held hint is never promised to 'the session's next tool call'", async () => {
+    // Arrange — the delivery is in the spool, but no session on this machine is live to send it
+    const stuck = `http://127.0.0.1:${String(stuckHub.port)}`;
+    const home = await makeHome("outcome-cli");
+    homes.push(home);
+    await spoolDelivery(home, stuck, LIVE, "wc_ken_orphan");
+
+    // Act
+    const result = await cli(home, ["followed", "wc_ken_orphan"], { hub: stuck });
+
+    // Assert — what is true: nothing live here sends it; the next session to start does
+    expect(result.stdout).toBe(DELIVERY_HELD_NO_LIVE_SESSION_LINE);
+    expect(result.stdout).not.toContain("next tool call");
   });
 
   test("a hub that predates outcomes says so", async () => {

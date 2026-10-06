@@ -1244,3 +1244,9 @@ still counted noise. Now:
   tie — the later one stands. The label still wins a tie with an outcome (D-O7). (The lock is exercised by
   real Postgres; the in-process PGlite hub serializes every query anyway, so the tests pin the ordering, not
   the lock.)
+
+*LOW — with no live session, the CLI promised "the session's next tool call".* `crosscheck followed <id>` on a
+hint still in the spool said it "is sent after the session's next tool call" even when no session on this
+machine was live to make one. With none live it now says what is true: `that hint reached you, but its delivery
+is still on this machine and no crosscheck session is live here to send it; nothing was recorded — it is sent
+when a session on this repo next starts, so run this again then` (a starting session drains the spool).

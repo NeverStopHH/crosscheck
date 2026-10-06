@@ -67,6 +67,10 @@ export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): str
   );
 };
 
+/** With no live session here nothing can send it now; a session starting on the repo does (07 §13.11). */
+export const DELIVERY_HELD_NO_LIVE_SESSION_LINE =
+  "that hint reached you, but its delivery is still on this machine and no crosscheck session is live here to send it; nothing was recorded — it is sent when a session on this repo next starts, so run this again then\n";
+
 export const DELIVERY_STILL_ON_THIS_MACHINE_LINE =
   "that hint reached you, but its delivery is still on this machine — it is sent after the session's next tool call, and it could not be sent just now; nothing was recorded, so run this again after that\n";
 
