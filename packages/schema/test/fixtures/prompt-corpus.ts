@@ -20,8 +20,10 @@
  * there, so it must NOT (draft-nudge review).
  */
 
+import { HOLDOUT_CONTENT_FREE, HOLDOUT_OPERATIONS, HOLDOUT_TASKS, HOLDOUT_TREES } from "./holdout-corpus.ts";
+
 export type PromptLabel = "content_free" | "task";
-export type PromptLanguage = "de" | "en";
+export type PromptLanguage = "de" | "en" | "mixed";
 export type PromptSource = "review" | "pilot" | "synthetic";
 
 export interface CorpusTree {
@@ -134,6 +136,7 @@ export const CORPUS_TREES: readonly CorpusTree[] = [
     claims: [],
     drafts: ["The zebrafrobnicator cache poisons the quuxinator on every warm start"],
   },
+  ...HOLDOUT_TREES,
 ];
 
 const free = (prompt: string, language: PromptLanguage, source: PromptSource): CorpusPrompt => ({
@@ -254,6 +257,7 @@ const SYNTHETIC_CONTENT_FREE: readonly CorpusPrompt[] = [
   free("sounds great, go ahead and continue", "en", "synthetic"),
   free("alright, next step please", "en", "synthetic"),
   free("thanks, keep going", "en", "synthetic"),
+  free("the limit cleared, carry on", "en", "synthetic"),
   free("probier es nochmal", "de", "synthetic"),
   free("ok weiter machen", "de", "synthetic"),
   free(
@@ -375,6 +379,9 @@ export const PROMPT_CORPUS: readonly CorpusPrompt[] = [
   ...PILOT_CONTENT_FREE,
   ...SYNTHETIC_CONTENT_FREE,
   ...RELABELLED_CONTENT_FREE,
+  ...HOLDOUT_CONTENT_FREE,
+  ...HOLDOUT_OPERATIONS,
   ...REVIEW_TASKS,
   ...SYNTHETIC_TASKS,
+  ...HOLDOUT_TASKS,
 ];

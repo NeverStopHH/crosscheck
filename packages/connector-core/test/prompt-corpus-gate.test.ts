@@ -6,15 +6,26 @@
  * with the corpus trees — in a fresh session that HAS an intent, so no
  * stand-in can hide.
  *
- * (a) A `content_free` row earns no hint, by any path: zero, always.
+ * (a) A `content_free` row makes NO hub call at all (hold-out review, H2):
+ *     not "the hub found nothing", which leans on what the trees happen to
+ *     say — the classifier decides it at home. Its hint rate is held to
+ *     CONTENT_FREE_HINT_MAX_RATE besides: zero.
  * (b) A `task` row is falsely floored when the connector decided it carried
- *     nothing and made no call; at most TASK_FALSE_FLOOR_MAX of them.
+ *     nothing and made no call; at most TASK_FALSE_FLOOR_MAX of them: zero.
  * (c) A `task` row that names a tree shares two content words with it and
  *     arrives as a hint.
  * (d) A `task` row whose words only a teammate's unreviewed DRAFT shares
  *     earns no hint: drafts are invisible to the push path.
  *
- * Both rates are printed, so CI shows them on every run.
+ * THIS CORPUS IS TRAINING DATA, AND THE GATE IS NOT THE MEASURE. Each review
+ * round evaluates the classifier on a FRESH hold-out — prompts and trees the
+ * round's author never saw — through this same pipeline, and accepts at most
+ * HOLDOUT_CONTENT_FREE_HINT_MAX_RATE content-free rows hinted and
+ * HOLDOUT_TASK_FLOOR_MAX_RATE task rows floored. Every hold-out failure then
+ * becomes a row here (the first hold-out is schema/test/fixtures/
+ * holdout-corpus.ts), so this gate only ever holds the line already won.
+ *
+ * Every rate is printed, so CI shows them on every run.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
@@ -29,8 +40,13 @@ import type { HubContext } from "../src/http/client.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
-/** Task rows the pipeline may judge content-free. Aim: none. */
+/** Content-free rows of the corpus the pipeline may hint. None. */
+const CONTENT_FREE_HINT_MAX_RATE = 0;
+/** Task rows of the corpus the pipeline may judge content-free. None. */
 const TASK_FALSE_FLOOR_MAX = 0;
+/** What a review round accepts on its FRESH hold-out (header): the measure, not this gate. */
+export const HOLDOUT_CONTENT_FREE_HINT_MAX_RATE = 0.02;
+export const HOLDOUT_TASK_FLOOR_MAX_RATE = 0.03;
 
 const ADMIN_TOKEN = "prompt-corpus-admin";
 const REPO_ID = "github.com/acme/api";
@@ -219,6 +235,7 @@ beforeAll(async () => {
     [
       `prompt corpus: ${String(PROMPT_CORPUS.length)} rows`,
       `  content-free rows with a hint: ${rate(contentFree.filter((outcome) => outcome.hint.length > 0).length, contentFree.length)}`,
+      `  content-free rows sent to hub: ${rate(contentFree.filter((outcome) => outcome.calledHub).length, contentFree.length)}`,
       `  task rows falsely floored:     ${rate(tasks.filter((outcome) => !outcome.calledHub).length, tasks.length)}`,
       `  task rows with a tree, hinted: ${rate(treeTasks.filter((outcome) => outcome.hint.length > 0).length, treeTasks.length)}`,
     ].join("\n"),
@@ -231,7 +248,7 @@ afterAll(async () => {
 });
 
 describe("the labelled prompt corpus through the whole hint pipeline", () => {
-  test("has at least 120 rows, both labels, both languages, every source", () => {
+  test("has at least 120 rows, both labels, every language, every source", () => {
     expect(PROMPT_CORPUS.length).toBeGreaterThanOrEqual(120);
     for (const field of ["label", "language", "source"] as const) {
       expect(new Set(PROMPT_CORPUS.map((row) => row[field])).size).toBeGreaterThan(1);
@@ -239,11 +256,18 @@ describe("the labelled prompt corpus through the whole hint pipeline", () => {
     expect(new Set(PROMPT_CORPUS.map((row) => row.source))).toEqual(new Set(["review", "pilot", "synthetic"]));
   });
 
-  test("(a) no content-free row earns a hint, by any path", () => {
-    const leaks = outcomes
-      .filter((outcome) => outcome.row.label === "content_free" && outcome.hint.length > 0)
+  test("(a) no content-free row reaches the hub at all", () => {
+    const sent = outcomes
+      .filter((outcome) => outcome.row.label === "content_free" && outcome.calledHub)
       .map((outcome) => outcome.row.prompt);
-    expect(leaks).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  test("(a) and none earns a hint, by any path", () => {
+    const contentFree = outcomes.filter((outcome) => outcome.row.label === "content_free");
+    const hinted = contentFree.filter((outcome) => outcome.hint.length > 0);
+    expect(hinted.map((outcome) => outcome.row.prompt)).toEqual([]);
+    expect(hinted.length / contentFree.length).toBeLessThanOrEqual(CONTENT_FREE_HINT_MAX_RATE);
   });
 
   test("(b) task rows falsely floored stay within TASK_FALSE_FLOOR_MAX", () => {

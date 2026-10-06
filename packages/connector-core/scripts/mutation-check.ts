@@ -18578,6 +18578,38 @@ export const MUTATIONS: readonly Mutation[
     because: "\"weiterr\" and \"macxhe\" stop being the words they are (H1 b)",
   },
   {
+    label: "\"try\" is no continuation trigger",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"ahead\", \"try\", \"weiter\",",
+    to: "\"ahead\", \"weiter\",",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "\"try harder\" reaches the hub as a task about trying (hold-out review, L2)",
+  },
+  {
+    label: "\"cleared\" is no meta word",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"verfugbar\", \"cleared\", \"lifted\",",
+    to: "\"verfugbar\", \"lifted\",",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "\"the limit cleared, carry on\" reaches the hub and points at the limit tree (hold-out review, L2)",
+  },
+  {
+    label: "\"kontingent\" is no meta word",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"quota\", \"quotas\", \"kontingent\", \"session\",",
+    to: "\"quota\", \"quotas\", \"session\",",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "\"Kontingent wieder voll, weiter\" reaches the hub as a task about the quota (hold-out review, L2)",
+  },
+  {
+    label: "the gate's content-free rows may reach the hub",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  if (classes.includes(null)) {\n    return false;\n  }",
+    to: "  if (classes.filter((wordClass) => wordClass === null).length > 1) {\n    return false;\n  }",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "a prompt with one word of no class beside commands passes as content-free, and a hold-out task like \"CI ist rot wegen lint\" is floored (H2)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18871,7 +18903,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
- * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 1
+ * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 5
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 5
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
