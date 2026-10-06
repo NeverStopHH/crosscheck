@@ -46,7 +46,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { humanPromptText, isContentFreePrompt, isHarnessTurn, shownSubstance } from "@crosscheck/schema";
+import { humanPromptText, isContentFreePrompt, isHarnessTurn, promptTerms, shownSubstance } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
   renderAnswerHint,
@@ -408,6 +408,8 @@ export const selectAndRenderHint = async (
     seenRefIds: [...state.deliveredHintRefs, ...state.briefingSolvedRefs],
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,
+    // What an old hub's candidates are recounted on (hold-out review, H4).
+    promptTerms: promptTerms(humanText).content,
   });
   const delivery = await renderSelection(
     {

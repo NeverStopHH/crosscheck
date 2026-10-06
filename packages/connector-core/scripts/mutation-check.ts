@@ -17538,8 +17538,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the selector points at a candidate below the content floor",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&\n  clearsContentFloor(context);",
-    to: "  HINT_ELIGIBLE_TIERS.has(context.workContext.tier);",
+    from: "    HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&\n    clearsContentFloor(context, input);",
+    to: "    HINT_ELIGIBLE_TIERS.has(context.workContext.tier);",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a hub that forgets the per-candidate floor gets its stray-word tree pointed at, with nothing on this side to stop it",
   },
@@ -18092,8 +18092,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the selector counts a draft among a tree's claims",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  const eligible = input.candidates.filter(isEligibleContext).map(withPushableClaims);",
-    to: "  const eligible = input.candidates.filter(isEligibleContext);",
+    from: "  const eligible = input.candidates.filter(isEligibleContext(input)).map(withPushableClaims);",
+    to: "  const eligible = input.candidates.filter(isEligibleContext(input));",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "\"It carries 1 claim\" — a hub that still ships the draft's row gets it pointed at, discarded or not",
   },
@@ -18818,6 +18818,54 @@ export const MUTATIONS: readonly Mutation[
     because: "a muted teammate's words still fill the reader's pool and push the answer out (M3)",
   },
   {
+    label: "an old hub's candidate keeps its free pass past the floor",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    ? recountsContentFloor(context, input)",
+    to: "    ? true",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a 0.10.0 hub ranked on drafts and floored nothing, and every candidate it sends is pointed at (H4)",
+  },
+  {
+    label: "a tree whose wire carries no body is recounted on its title alone",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    bodies.length > 0 &&\n",
+    to: "",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a title that shares the prompt's words points at a tree with nothing vouched for on the wire (H4)",
+  },
+  {
+    label: "a draft's body counts in the old-hub recount",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "an unreviewed draft's words qualify a tree an old hub ranked on them (H4, L6)",
+  },
+  {
+    label: "the reader's own body counts in the old-hub recount",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => isDeclared(claim) && claim.body.trim().length > 0)",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "the reader's own words point them at a teammate's tree (H4)",
+  },
+  {
+    label: "the flow recounts an old hub's candidates on nothing",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    promptTerms: promptTerms(humanText).content,",
+    to: "    promptTerms: [],",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub no candidate ever clears the recount, and every real task loses its hint (H4)",
+  },
+  {
+    label: "the flow recounts an old hub's candidates on raw words, steering included",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    promptTerms: promptTerms(humanText).content,",
+    to: "    promptTerms: humanText.toLowerCase().split(/[^\\p{L}\\p{N}]+/u),",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "\"please continue\" beside one task word clears an old hub's floor again (H4, H1)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -19072,6 +19120,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
+ * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 6
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10

@@ -86,6 +86,7 @@ const select = (claims: readonly HintClaimCandidate[]) =>
     seenRefIds: [],
     deliveredCount: 0,
     selfDeveloperId: SELF,
+    promptTerms: [],
   });
 
 describe("the substance gate asks about code", () => {

@@ -35,7 +35,7 @@ import {
   MAX_HINTS_PER_SESSION,
   SUBSTANCE_MATCH_KIND,
 } from "../constants.ts";
-import { substanceSentence } from "@crosscheck/schema";
+import { promptTokens, substanceSentence } from "@crosscheck/schema";
 
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
@@ -107,6 +107,13 @@ export interface SelectHintInput {
   readonly deliveredCount: number;
   /** The reader; their own claims are knowledge, not hints. */
   readonly selfDeveloperId: string | null;
+  /**
+   * The prompt's content terms by the shared rule (@crosscheck/schema
+   * promptTerms) — what the floor is RECOUNTED on when a hub too old to send
+   * `sharedTerms` sends a candidate (hold-out review, H4). Required, so no
+   * caller can skip the recount by forgetting it.
+   */
+  readonly promptTerms: readonly string[];
 }
 
 const SILENCE = { kind: "silence" } as const satisfies HintSelection;
@@ -269,18 +276,44 @@ const isInjectable = (claim: HintClaimCandidate): boolean =>
  * target the query named (server/src/services/hints.ts); this is the second
  * lock, the shape every rule in this file has. A tree that shares one stray
  * word is never pointed at — not even after the strong tree beside it was
- * delivered (the batch-1006 review's probe F). A hub too old to report the
- * number has no floor to check, and keeps its old behaviour.
+ * delivered (the batch-1006 review's probe F).
+ *
+ * A HUB TOO OLD TO REPORT THE NUMBER IS RECOUNTED HERE, AND FAILS CLOSED
+ * (hold-out review, H4): it ranked on its normalized document, drafts
+ * included, and floored nothing. So the prompt's content terms are counted
+ * against what the wire shows — the title, and each DECLARED foreign claim
+ * body — and HINT_MIN_SHARED_TERMS of them must stand on one; a tree whose
+ * wire carries no such body earns no hint at all.
  */
-const clearsContentFloor = (context: HintContextCandidate): boolean =>
-  context.sharedTerms === undefined ||
+const clearsContentFloor = (context: HintContextCandidate, input: SelectHintInput): boolean =>
   context.workContext.tier === "exact" ||
-  context.sharedTerms >= HINT_MIN_SHARED_TERMS;
+  (context.sharedTerms === undefined
+    ? recountsContentFloor(context, input)
+    : context.sharedTerms >= HINT_MIN_SHARED_TERMS);
 
-const isEligibleContext = (context: HintContextCandidate): boolean =>
-  context.workContext.tier !== undefined &&
-  HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&
-  clearsContentFloor(context);
+/** How many of the prompt's terms one statement shares, as written (fail closed: no stemming). */
+const sharedOn = (statement: string, terms: readonly string[]): number => {
+  const words = new Set(promptTokens(statement));
+  return terms.filter((term) => words.has(term)).length;
+};
+
+const recountsContentFloor = (context: HintContextCandidate, input: SelectHintInput): boolean => {
+  const bodies = context.claims
+    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)
+    .map((claim) => claim.body);
+  return (
+    bodies.length > 0 &&
+    Math.max(...[context.workContext.title, ...bodies].map((statement) => sharedOn(statement, input.promptTerms))) >=
+      HINT_MIN_SHARED_TERMS
+  );
+};
+
+const isEligibleContext =
+  (input: SelectHintInput) =>
+  (context: HintContextCandidate): boolean =>
+    context.workContext.tier !== undefined &&
+    HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&
+    clearsContentFloor(context, input);
 
 /**
  * A claim that may drive a PUSHED hint — the hub's own rule, applied again
@@ -355,7 +388,7 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     return SILENCE;
   }
   const seen = new Set(input.seenRefIds);
-  const eligible = input.candidates.filter(isEligibleContext).map(withPushableClaims);
+  const eligible = input.candidates.filter(isEligibleContext(input)).map(withPushableClaims);
 
   // Substance pass over ALL eligible contexts first: an evidence-backed claim
   // in the second-ranked context beats a pointer at the first-ranked one.

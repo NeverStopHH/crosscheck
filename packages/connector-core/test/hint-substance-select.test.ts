@@ -62,10 +62,12 @@ const context = (
   claims,
   matchedTargets,
   matchedOn: "prompt",
+  // A current hub's candidate: the floor's number travels with it.
+  sharedTerms: HINT_MIN_SHARED_TERMS,
 });
 
 const select = (candidates: readonly HintContextCandidate[]) =>
-  selectHint({ candidates, seenRefIds: [], deliveredCount: 0, selfDeveloperId: SELF });
+  selectHint({ candidates, seenRefIds: [], deliveredCount: 0, selfDeveloperId: SELF, promptTerms: [] });
 
 const selectedClaimId = (candidates: readonly HintContextCandidate[]): string | null => {
   const selection = select(candidates);
@@ -231,7 +233,7 @@ describe("the floor is per candidate, looked at again on this side", () => {
     sharedTerms: number | undefined,
     tier = "fts",
   ): HintContextCandidate => {
-    const base = context([decision({ id: `clm_${id}`, workContextId: id, kind: "observation", evidenceRefCount: 0 })]);
+    const { sharedTerms: _currentHubFloor, ...base } = context([decision({ id: `clm_${id}`, workContextId: id, kind: "observation", evidenceRefCount: 0 })]);
     return {
       ...base,
       workContext: { ...base.workContext, id, tier },
@@ -246,6 +248,7 @@ describe("the floor is per candidate, looked at again on this side", () => {
       seenRefIds: ["wc_upload"],
       deliveredCount: 1,
       selfDeveloperId: SELF,
+      promptTerms: [],
     });
     expect(selection.kind).toBe("silence");
   });
@@ -255,8 +258,8 @@ describe("the floor is per candidate, looked at again on this side", () => {
     expect(selection.kind).toBe("pointer");
   });
 
-  test("a hub too old to send the number keeps today's behaviour", () => {
-    expect(select([tree("wc_old", undefined)]).kind).toBe("pointer");
+  test("a hub too old to send the number is recounted here, and fails closed on nothing shared (hold-out review, H4)", () => {
+    expect(select([tree("wc_old", undefined)]).kind).toBe("silence");
   });
 });
 
