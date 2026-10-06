@@ -86,7 +86,7 @@ import {
 } from "./ghost-overlap.ts";
 import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
-import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
@@ -202,15 +202,17 @@ const listRecentContexts = async (
     .where(recentWorkCondition(repo, cutoff))
     .orderBy(desc(activityExpression), asc(workContexts.id))
     .limit(CONFERENCE_MAX_CONTEXTS);
-  return rows.map((row) => ({
-    id: row.id,
-    title: titleSeenBy(hidden, row.developerId, row.title, repo),
-    status: row.status,
-    intent: row.intent ?? null,
-    developerId: row.developerId,
-    developerName: row.developerName,
-    lastActiveAt: new Date(row.lastActiveAt).toISOString(),
-  }));
+  return rows.map((row) =>
+    projectRow(hidden, { developerId: row.developerId, repo }, {
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      intent: row.intent ?? null,
+      developerId: row.developerId,
+      developerName: row.developerName,
+      lastActiveAt: new Date(row.lastActiveAt).toISOString(),
+    }),
+  );
 };
 
 /**
@@ -527,20 +529,23 @@ const listOpenQuestions = async (
     )
     .orderBy(asc(questions.createdAt), asc(questions.id))
     .limit(CONFERENCE_MAX_QUESTIONS);
-  return rows.map((row) => ({
-    id: row.id,
-    authorDeveloperName: row.authorDeveloperName,
-    targetDeveloperName: row.targetDeveloperName,
-    workContextId: row.workContextId,
-    workContextTitle:
-      row.workContextTitle === null || row.contextOwnerId === null
-        ? row.workContextTitle
-        : titleSeenBy(hidden, row.contextOwnerId, row.workContextTitle, repo),
-    createdAt: row.createdAt.toISOString(),
-    isForReader:
-      row.targetDeveloperId === viewerDeveloperId ||
-      row.contextOwnerId === viewerDeveloperId,
-  }));
+  return rows.map((row) => {
+    const view = {
+      id: row.id,
+      authorDeveloperName: row.authorDeveloperName,
+      targetDeveloperName: row.targetDeveloperName,
+      workContextId: row.workContextId,
+      workContextTitle: row.workContextTitle,
+      createdAt: row.createdAt.toISOString(),
+      isForReader:
+        row.targetDeveloperId === viewerDeveloperId ||
+        row.contextOwnerId === viewerDeveloperId,
+    };
+    // The CONTEXT's owner, not the asker: the title names where they are.
+    return row.contextOwnerId === null
+      ? view
+      : projectRow(hidden, { developerId: row.contextOwnerId, repo }, view);
+  });
 };
 
 /**

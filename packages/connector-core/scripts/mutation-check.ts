@@ -17606,8 +17606,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub drops the session's branch from the listing",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    ...(row.branch === null ? {} : { branch: row.branch }),\n",
-    to: "",
+    from: "      developerContextCount: row.developerContextCount,\n      branch: row.branch,\n",
+    to: "      developerContextCount: row.developerContextCount,\n",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "the connector has only the titles to group by, and free-form titles on " +
@@ -17649,9 +17649,9 @@ export const MUTATIONS: readonly Mutation[
     // Review finding 8: the row's branch is the session's CURRENT branch,
     // presence-class data on a listing presence opt-out did not cover.
     label: "an opted-out teammate's live branch reaches the work-context listing",
-    file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "      branch: sql<string | null>`case when ${visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)} then ${agentSessions.branch} else null end`,",
-    to: "      branch: agentSessions.branch,",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  branch: \"omit\",\n",
+    to: "",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "a teammate who opted out of presence re-registers on feat/acquisition-talks " +
@@ -17727,8 +17727,8 @@ export const MUTATIONS: readonly Mutation[
     // branch an opted-out developer's teammates are not told.
     label: "an opted-out teammate's fallback title reaches other viewers",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  hidden.has(ownerDeveloperId) && isFallbackTitle(title, repo)",
-    to: "  false && isFallbackTitle(title, repo)",
+    from: "      (owner.repo === undefined || isFallbackTitle(value, owner.repo));",
+    to: "      false;",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "Robin opts out and re-registers on feat/acquisition-talks; her context " +
@@ -17738,8 +17738,8 @@ export const MUTATIONS: readonly Mutation[
     // Review M2: `baseCommit` is `rev-parse HEAD` of the live branch.
     label: "an opted-out teammate's base commit reaches other viewers",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "): string | undefined => (hidden.has(ownerDeveloperId) ? undefined : commit);",
-    to: "): string | undefined => commit;",
+    from: "  baseCommit: \"omit\",\n",
+    to: "",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "the listing and every diagnosis hand colleagues the HEAD of the branch " +
@@ -17748,8 +17748,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an opted-out author's claim commit reaches other viewers",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  hidden.has(authorDeveloperId) ? { ...validity, observedAtCommit: null } : validity;",
-    to: "  validity;",
+    from: "  observedAtCommit: \"null\",\n",
+    to: "",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "a claim filed without its own commit is bound to the session's base, so " +
@@ -17768,9 +17768,9 @@ export const MUTATIONS: readonly Mutation[
   {
     // Review M3: suspect keeps the colliding row and drops its live fields.
     label: "suspect names an opted-out teammate's live branch and last activity",
-    file: `${SERVER}/src/services/live-location.ts`,
-    from: "): string => (hidden.has(ownerDeveloperId) ? LOCATION_WITHHELD : value);",
-    to: "): string => value;",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "      return projectRow(\n        hidden,\n        { developerId: row.developerId, repo: input.repo },",
+    to: "      return projectRow(\n        new Set<string>(),\n        { developerId: row.developerId, repo: input.repo },",
     test: `${SERVER}/test/presence-optout.test.ts`,
     because:
       "GET /api/suspect with the path-only falsifier hands any colleague the " +
@@ -17803,8 +17803,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "search names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/search.ts`,
-    from: "        title: titleSeenBy(hidden, row.developerId, row.title, row.repo),",
-    to: "        title: row.title,",
+    from: "      projectRow(hidden, { developerId: row.developerId, repo: row.repo }, {\n        id: row.id,",
+    to: "      projectRow(new Set<string>(), { developerId: row.developerId, repo: row.repo }, {\n        id: row.id,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "search_related_work hands a colleague `feat/robin-relocates-to-zurich " +
@@ -17813,8 +17813,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the conference names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "    title: titleSeenBy(hidden, row.developerId, row.title, repo),",
-    to: "    title: row.title,",
+    from: "    projectRow(hidden, { developerId: row.developerId, repo }, {",
+    to: "    projectRow(new Set<string>(), { developerId: row.developerId, repo }, {",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "crosscheck conference prints every recent context's title, so an " +
@@ -17823,8 +17823,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a diagnosis names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "      title: titleSeenBy(\n        hidden,",
-    to: "      title: ((...args: [unknown, unknown, string, string]) => args[2])(\n        hidden,",
+    from: "    workContext: projectRow(\n      hidden,\n      owner,",
+    to: "    workContext: projectRow(\n      new Set<string>(),\n      owner,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "get_diagnosis, GET /api/work-contexts/:id and the /ui work-context page " +
@@ -17833,8 +17833,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a referee brief names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/referee.ts`,
-    from: "      titleSeenBy(hidden, row.ownerDeveloperId, row.title, row.repo),",
-    to: "      row.title,",
+    from: "      projectRow(hidden, { developerId: row.ownerDeveloperId, repo: row.repo }, { title: row.title })",
+    to: "      projectRow(new Set<string>(), { developerId: row.ownerDeveloperId, repo: row.repo }, { title: row.title })",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "get_referee_brief titles each side of a contradiction with its work " +
@@ -17843,8 +17843,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "suspect names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/suspect.ts`,
-    from: "        workContextTitle: titleSeenBy(hidden, row.developerId, row.workContextTitle, input.repo),",
-    to: "        workContextTitle: row.workContextTitle,",
+    from: "      return projectRow(\n        hidden,\n        { developerId: row.developerId, repo: input.repo },",
+    to: "      return projectRow(\n        new Set<string>(),\n        { developerId: row.developerId, repo: input.repo },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the suspect row withholds `branch` and then prints the same branch as " +
@@ -17853,8 +17853,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "hint candidates carry an opted-out teammate's HEAD as base commit",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      baseCommit: commitSeenBy(hidden, row.developerId, baseCommits.get(row.id) ?? \"\") ?? \"\",",
-    to: "      baseCommit: baseCommits.get(row.id) ?? \"\",",
+    from: "    workContext: projectRow(\n      hidden,\n      { developerId: row.developerId, repo: input.repo },",
+    to: "    workContext: projectRow(\n      new Set<string>(),\n      { developerId: row.developerId, repo: input.repo },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "every prompt hint about an opted-out teammate's work names the commit " +
@@ -17863,8 +17863,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "solved matches name an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/solved-matches.ts`,
-    from: "        title: titleSeenBy(hidden, row.developerId, row.title, row.repo),",
-    to: "        title: row.title,",
+    from: "      projectRow(hidden, { developerId: row.developerId, repo: row.repo }, {\n        title: row.title,",
+    to: "      projectRow(new Set<string>(), { developerId: row.developerId, repo: row.repo }, {\n        title: row.title,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the briefing's solved pointer titles an opted-out teammate's solved " +
@@ -17873,8 +17873,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a referee brief carries an opted-out author's HEAD as a claim's commit",
     file: `${SERVER}/src/services/referee.ts`,
-    from: "    validity: validitySeenBy(\n      hidden,\n      loaded.view.authorDeveloperId,\n      claimValidity(",
-    to: "    validity: ((_hidden: unknown, _author: unknown, validity: unknown) => validity)(\n      hidden,\n      loaded.view.authorDeveloperId,\n      claimValidity(",
+    from: "    validity: projectRow(\n      hidden,\n      { developerId: loaded.view.authorDeveloperId },",
+    to: "    validity: projectRow(\n      new Set<string>(),\n      { developerId: loaded.view.authorDeveloperId },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "a claim bound to its session's base names the author's live HEAD, and " +
@@ -17883,8 +17883,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "hint candidates carry an opted-out author's HEAD as a claim's commit",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      validity: validitySeenBy(hidden, claim.authorDeveloperId, claim.validity),",
-    to: "      validity: claim.validity,",
+    from: "      validity: projectRow(\n        hidden,\n        { developerId: claim.authorDeveloperId, repo: input.repo },",
+    to: "      validity: projectRow(\n        new Set<string>(),\n        { developerId: claim.authorDeveloperId, repo: input.repo },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the hint the reader's prompt is shown about an opted-out teammate's " +
@@ -17893,7 +17893,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a solved pointer carries an opted-out author's HEAD as its root cause's commit",
     file: `${SERVER}/src/services/solved-matches.ts`,
-    from: "            : validitySeenBy(hidden, cause.authorDeveloperId, validity);",
+    from: "            : projectRow(hidden, { developerId: cause.authorDeveloperId }, validity);",
     to: "            : validity;",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
@@ -17993,6 +17993,28 @@ export const MUTATIONS: readonly Mutation[
     because:
       "the corpus never attacks the single-line shape, and a teammate on one " +
       "branch prints as `1 topic, 1 session` over a topic line",
+  },
+  {
+    // Round 3: ONE projection (services/live-location.ts) — the vocabulary
+    // entry is what withholds the field on every row that carries it.
+    label: "the conference tells a colleague when an opted-out teammate was last active",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  lastActiveAt: \"marker\",\n",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "crosscheck conference prints `last active 4m ago` beside an opted-out " +
+      "teammate's context, which is when she was there",
+  },
+  {
+    label: "the conference report reads a withheld last activity as an unreadable time",
+    file: `${CORE}/src/conference/report.ts`,
+    from: "  if (iso === LOCATION_WITHHELD) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/conference-report.test.ts`,
+    because:
+      "the report says the hub sent a time it could not read, when the " +
+      "teammate chose not to share it",
   },
 ];
 
@@ -18189,7 +18211,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
- * PRINTS: packages/connector-core/test/conference-report.test.ts 2
+ * PRINTS: packages/connector-core/test/conference-report.test.ts 3
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 3
@@ -18324,6 +18346,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 10
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 1
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

@@ -50,7 +50,7 @@ import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import type { ClaimValidityInput } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { ClaimAxesRow } from "./evidence-axes.ts";
-import { locationHiddenFrom, titleSeenBy, validitySeenBy } from "./live-location.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
@@ -443,9 +443,9 @@ const buildPosition = async (
     ruledOut: ruledOut.ruledOut,
     ruledOutTruncated: ruledOut.truncated,
     supersededByClaimId,
-    validity: validitySeenBy(
+    validity: projectRow(
       hidden,
-      loaded.view.authorDeveloperId,
+      { developerId: loaded.view.authorDeveloperId },
       claimValidity(loaded.binding, revalidations.get(side.id), supersededByClaimId),
     ),
   };
@@ -472,7 +472,8 @@ const loadWorkContextTitles = async (
   return new Map(
     rows.map((row) => [
       row.id,
-      titleSeenBy(hidden, row.ownerDeveloperId, row.title, row.repo),
+      projectRow(hidden, { developerId: row.ownerDeveloperId, repo: row.repo }, { title: row.title })
+        .title,
     ]),
   );
 };

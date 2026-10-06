@@ -53,7 +53,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { locationHiddenFrom, locationSeenBy, titleSeenBy } from "./live-location.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import { readPin } from "./pins.ts";
 import { explanationTimingOf } from "./intent-ledger.ts";
 import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
@@ -600,24 +600,30 @@ export const suspectSessions = async (
       // The denominator the QUERY already ranked by: recomputing it here
       // would let the printed score disagree with the order the bound cut on.
       const authorTouches = row.authorTouches;
-      return {
-        sessionId: row.sessionId,
-        agentKind: row.agentKind,
-        // The row stays — it is the collision — and where its author is now,
-        // and when they last were, goes (services/live-location.ts).
-        branch: locationSeenBy(hidden, row.developerId, row.branch),
-        workContextId: row.workContextId,
-        workContextTitle: titleSeenBy(hidden, row.developerId, row.workContextTitle, input.repo),
-        intent: row.intent,
-        lastActiveAt: locationSeenBy(hidden, row.developerId, row.lastActiveAt.toISOString()),
-        overlap: row.overlap,
-        authorTouches,
-        lift: row.overlap / authorTouches,
-        sources: row.sources,
-        intentTiming: timings.get(row.workContextId) ?? null,
-        readerMuted: muted.has(row.developerId),
-        isSelf: row.developerId === readerDeveloperId,
-      };
+      // The row stays — it is the collision — and where its author is now,
+      // and when they last were, goes (services/live-location.ts). `branch`
+      // is a required non-empty string on this wire, so it takes the marker.
+      return projectRow(
+        hidden,
+        { developerId: row.developerId, repo: input.repo },
+        {
+          sessionId: row.sessionId,
+          agentKind: row.agentKind,
+          branch: row.branch,
+          workContextId: row.workContextId,
+          workContextTitle: row.workContextTitle,
+          intent: row.intent,
+          lastActiveAt: row.lastActiveAt.toISOString(),
+          overlap: row.overlap,
+          authorTouches,
+          lift: row.overlap / authorTouches,
+          sources: row.sources,
+          intentTiming: timings.get(row.workContextId) ?? null,
+          readerMuted: muted.has(row.developerId),
+          isSelf: row.developerId === readerDeveloperId,
+        },
+        { branch: "marker" },
+      );
     })
     .sort((left, right) => {
       if (right.lift !== left.lift) {

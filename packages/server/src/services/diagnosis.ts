@@ -17,13 +17,8 @@ import {
 } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
-import {
-  commitSeenBy,
-  locationHiddenFrom,
-  titleSeenBy,
-  validitySeenBy,
-} from "./live-location.ts";
-import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
@@ -285,7 +280,7 @@ export interface Diagnosis {
 
 const toWorkContextView = (
   row: WorkContextRow,
-  baseCommit: string | undefined,
+  baseCommit: string,
 ): WorkContextView => ({
   id: row.id,
   sessionId: row.sessionId,
@@ -293,7 +288,7 @@ const toWorkContextView = (
   description: row.description,
   intent: row.intent ?? null,
   status: row.status,
-  ...(baseCommit === undefined ? {} : { baseCommit }),
+  baseCommit,
   landedAt: toIsoOrNull(row.landedAt),
   createdAt: row.createdAt.toISOString(),
   updatedAt: toIsoOrNull(row.updatedAt),
@@ -412,9 +407,9 @@ export const listWorkContextsByRepo = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
-      // The presence predicate on this ONE field, not on the row: the row is
+      // Raw here, withheld per viewer by projectRow below: the row is
       // published knowledge, the live branch is where its author is now.
-      branch: sql<string | null>`case when ${visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)} then ${agentSessions.branch} else null end`,
+      branch: agentSessions.branch,
       // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
       // to carry: the join multiplied every context by its claims (100,000
       // rows aggregated to answer about 10,000) and could only ever count ONE
@@ -466,19 +461,17 @@ export const listWorkContextsByRepo = async (
     // teammate's freshest context is served before anyone's second.
     .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))
     .limit(limit);
-  return rows.map((row) => ({
-    ...toWorkContextView(
-      row.workContext,
-      commitSeenBy(hidden, row.developerId, row.baseCommit),
-    ),
-    title: titleSeenBy(hidden, row.developerId, row.workContext.title, repo),
-    developerId: row.developerId,
-    developerName: row.developerName,
-    claimCount: row.claimCount,
-    targetCount: row.targetCount,
-    developerContextCount: row.developerContextCount,
-    ...(row.branch === null ? {} : { branch: row.branch }),
-  }));
+  return rows.map((row) =>
+    projectRow(hidden, { developerId: row.developerId, repo }, {
+      ...toWorkContextView(row.workContext, row.baseCommit),
+      developerId: row.developerId,
+      developerName: row.developerName,
+      claimCount: row.claimCount,
+      targetCount: row.targetCount,
+      developerContextCount: row.developerContextCount,
+      branch: row.branch,
+    }),
+  );
 };
 
 /** The tree's targets, bounded, in deterministic (kind, value) order. */
@@ -574,6 +567,7 @@ export const getDiagnosis = async (
   if (contextRow === undefined) {
     return undefined;
   }
+  const owner = { developerId: contextRow.ownerDeveloperId, repo: contextRow.repo };
 
   // innerJoin, not leftJoin: every claim row reaches the table through
   // `checkOwnedSession`, which resolves the author session before the INSERT
@@ -631,18 +625,11 @@ export const getDiagnosis = async (
 
   return {
     repo: contextRow.repo,
-    workContext: {
-      ...toWorkContextView(
-        contextRow.workContext,
-        commitSeenBy(hidden, contextRow.ownerDeveloperId, contextRow.baseCommit),
-      ),
-      title: titleSeenBy(
-        hidden,
-        contextRow.ownerDeveloperId,
-        contextRow.workContext.title,
-        contextRow.repo,
-      ),
-    },
+    workContext: projectRow(
+      hidden,
+      owner,
+      toWorkContextView(contextRow.workContext, contextRow.baseCommit),
+    ),
     claims: claimRows.map((row) => {
       const view = toClaimView(
         row,
@@ -656,7 +643,11 @@ export const getDiagnosis = async (
       );
       return {
         ...view,
-        validity: validitySeenBy(hidden, row.authorDeveloperId, view.validity),
+        validity: projectRow(
+          hidden,
+          { developerId: row.authorDeveloperId, repo: contextRow.repo },
+          view.validity,
+        ),
       };
     }),
     edges: edgeRows.map(toClaimEdgeView),

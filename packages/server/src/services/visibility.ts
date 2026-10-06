@@ -44,8 +44,9 @@
  *                                   is presence, so the row goes
  *
  * Location FIELDS go everywhere else, per viewer, and the row stays — the
- * work, the claims and the collision are the product (services/live-
- * location.ts holds the substitutions):
+ * work, the claims and the collision are the product. ONE projection does
+ * it (services/live-location.ts `projectRow`, keyed by wire field name), and
+ * every serializer of these rows hands its rows to it:
  *
  *   - branch                      — the GET /api/work-contexts listing, in
  *                                   its SQL by this file's
@@ -67,7 +68,8 @@
  *                                   author's HEAD. The claim, its state and
  *                                   its binding stay; the reader just cannot
  *                                   revalidate it against their own clone
- *   - last-active time            — GET /api/suspect, as LOCATION_WITHHELD
+ *   - last-active time            — GET /api/suspect and GET /api/conference,
+ *                                   as LOCATION_WITHHELD
  *
  * Pinned route by route in test/live-location-privacy.test.ts, which calls
  * EVERY GET route the app registers as a colleague of an opted-out developer

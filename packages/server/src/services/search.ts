@@ -40,7 +40,7 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
-import { locationHiddenFrom, titleSeenBy } from "./live-location.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
@@ -668,11 +668,11 @@ const hydrate = async (
     }
     const solvedAt = solvedInfo.get(row.id);
     return [
-      {
+      projectRow(hidden, { developerId: row.developerId, repo: row.repo }, {
         id: row.id,
         developerId: row.developerId,
         developerName: row.developerName,
-        title: titleSeenBy(hidden, row.developerId, row.title, row.repo),
+        title: row.title,
         status: row.status,
         intent: row.intent ?? null,
         createdAt: row.createdAt.toISOString(),
@@ -683,7 +683,7 @@ const hydrate = async (
           ? "open"
           : "solved") as SearchResultKind,
         solvedAt: solvedAt === undefined ? null : solvedAt.toISOString(),
-      },
+      }),
     ];
   });
 };

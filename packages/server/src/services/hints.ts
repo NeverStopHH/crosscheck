@@ -36,7 +36,7 @@ import {
 } from "../db/schema.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
-import { commitSeenBy, locationHiddenFrom, validitySeenBy } from "./live-location.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
   exactTargetTokenConditions,
@@ -416,26 +416,35 @@ export const listHintCandidates = async (
     locationHiddenFrom(deps.db, callerDeveloperId),
   ]);
   return eligible.map((row) => ({
-    workContext: {
-      id: row.id,
-      title: row.title,
-      status: row.status,
-      intent: row.intent,
-      tier: row.tier,
-      developerId: row.developerId,
-      developerName: row.developerName,
+    workContext: projectRow(
+      hidden,
+      { developerId: row.developerId, repo: input.repo },
+      {
+        id: row.id,
+        title: row.title,
+        status: row.status,
+        intent: row.intent,
+        tier: row.tier,
+        developerId: row.developerId,
+        developerName: row.developerName,
+        baseCommit: baseCommits.get(row.id) ?? "",
+        resultKind: row.resultKind,
+        solvedAt: row.solvedAt,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      },
       // "" is this field's own "unknown" on the wire (connector hub.ts: the
       // drift label skips it), so a hidden owner's HEAD reads exactly as a
       // context whose base commit the hub never knew.
-      baseCommit: commitSeenBy(hidden, row.developerId, baseCommits.get(row.id) ?? "") ?? "",
-      resultKind: row.resultKind,
-      solvedAt: row.solvedAt,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    },
+      { baseCommit: "empty" },
+    ),
     claims: (claimsByContext.get(row.id) ?? []).map((claim) => ({
       ...claim,
-      validity: validitySeenBy(hidden, claim.authorDeveloperId, claim.validity),
+      validity: projectRow(
+        hidden,
+        { developerId: claim.authorDeveloperId, repo: input.repo },
+        claim.validity,
+      ),
     })),
     matchedTargets: matchedTargets.get(row.id) ?? [],
   }));

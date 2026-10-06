@@ -45,7 +45,7 @@ import {
   solvedCandidateCondition,
 } from "./solved.ts";
 import { loadClaimValidities } from "./claim-validity.ts";
-import { locationHiddenFrom, titleSeenBy, validitySeenBy } from "./live-location.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { notMutedCondition } from "./visibility.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
@@ -426,12 +426,12 @@ const hydrateMatches = async (
   return new Map(
     rows.map((row) => [
       row.id,
-      {
-        title: titleSeenBy(hidden, row.developerId, row.title, row.repo),
+      projectRow(hidden, { developerId: row.developerId, repo: row.repo }, {
+        title: row.title,
         developerName: row.developerName,
         repo: row.repo,
         landedAt: row.landedAt,
-      },
+      }),
     ]),
   );
 };
@@ -561,7 +561,7 @@ const toMatchViews = async (
           const validity = validityOf(cause, validities);
           return cause === undefined || validity === null
             ? validity
-            : validitySeenBy(hidden, cause.authorDeveloperId, validity);
+            : projectRow(hidden, { developerId: cause.authorDeveloperId }, validity);
         })(),
       },
     ];
