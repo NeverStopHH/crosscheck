@@ -18631,6 +18631,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "a garbled instant compares as NaN in the newest-first sort and evicts a fresh conversation's record",
   },
+  {
+    label: "the start-up doc upgrade never yields to the event loop",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "  await yieldToEventLoop();\n",
+    to: "",
+    test: `${SERVER}/test/doc-upgrade-load.test.ts`,
+    because: "the hub answers no request for the whole pass — 18 873 ms on a 30 000-context hub",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18953,6 +18961,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
+ * PRINTS: packages/server/test/doc-upgrade-load.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade.test.ts 5
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 4
  * PRINTS: packages/server/test/draft-visibility.test.ts 8

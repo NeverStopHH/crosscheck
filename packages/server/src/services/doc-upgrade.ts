@@ -93,6 +93,18 @@ const upgradePage = async (deps: Deps, ids: readonly string[]): Promise<number> 
   return ids.length;
 };
 
+/**
+ * A turn of the event loop. PGlite runs each statement synchronously and an
+ * awaited query settles through microtasks only, so a chain of them never
+ * lets a timer or an incoming request run: without this between pages, the
+ * whole pass held every request — the review measured one at 18 873 ms
+ * during a 30 000-context keyless pass (round 4, H1).
+ */
+const yieldToEventLoop = (): Promise<void> =>
+  new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+
 const upgradeFrom = async (
   deps: Deps,
   batch: number,
@@ -105,6 +117,7 @@ const upgradeFrom = async (
     return done;
   }
   const reembedded = await upgradePage(deps, ids);
+  await yieldToEventLoop();
   return upgradeFrom(deps, batch, last, {
     contexts: done.contexts + ids.length,
     reembedded: done.reembedded + reembedded,

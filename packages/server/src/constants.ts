@@ -127,9 +127,13 @@ export const SKELETON_BACKFILL_BATCH = 500;
 
 /**
  * Work contexts per page of the start-up doc rebuild (services/doc-upgrade.ts).
- * Each context costs a doc rebuild and, with an embedder, one embedding call,
- * so a page is bounded by this many of each — small enough that requests the
- * hub is already serving interleave between pages.
+ * A request that arrives during the pass waits for the PAGE it lands in, not
+ * the pass: PGlite runs every statement synchronously and awaited queries
+ * settle through microtasks, so requests run only where the pass yields to
+ * the event loop, which it does between pages (doc-upgrade.ts
+ * yieldToEventLoop). At ~0.7 ms per rebuilt context, a page is ~70 ms — the
+ * wait a request may see. Before the yield, "interleave between pages" was
+ * false: one request waited 18 873 ms on a 30 000-context pass (review round 4).
  */
 export const DOC_UPGRADE_BATCH = 100;
 
