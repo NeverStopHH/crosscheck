@@ -28,7 +28,7 @@ import type { Db } from "@crosscheck/server";
 import { HEAL_COOLDOWN_MS, MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
 import { repoKey, sessionSlug, spoolDataPath } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
-import { targetRecord } from "../src/capture/records.ts";
+import { targetRecord, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
 import { withSeq } from "../src/capture/seq.ts";
 import type { HubContext } from "../src/http/client.ts";
@@ -39,7 +39,7 @@ import { heartbeatMaybe } from "../src/flows/heartbeat.ts";
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declarations.ts";
 import { appendRecords } from "../src/spool/append.ts";
 import { readDropDetail } from "../src/spool/drops.ts";
-import { writeCursorOffset } from "../src/spool/cursor.ts";
+import { lineEnds, writeCountedLines, writeCursorOffset } from "../src/spool/cursor.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import type { SessionHealer } from "../src/spool/flush.ts";
@@ -747,6 +747,121 @@ describe("a flush whose hook dies inside the walk", () => {
     expect(afterCrash.byReason).toEqual({ unparsable: 1, rejected: 1 });
     expect(after.byReason).toEqual(afterCrash.byReason);
     expect(after.rejectedCauses).toEqual({ session_ended: 1 });
+  });
+});
+
+/**
+ * THE EDGES OF WHAT A REFUSED FLUSH KEEPS (review-2 LOW-6). Each test below
+ * pins one guard a reviewer's mutation removed without a test noticing.
+ */
+describe("what a refused flush keeps on disk, and what it spends", () => {
+  /** A heal-less flush, as SessionEnd's drain makes it. */
+  const flushWithoutHealer = (fx: Fixture, sessionId: string) =>
+    flushSpool(fx.hub, { sessionId, developerId }, GENEROUS_BUDGET_MS);
+
+  /** Moves the cursor past everything on disk, as a delivered batch would. */
+  const consumeAll = async (fx: Fixture): Promise<void> => {
+    const spool = await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey));
+    await writeCursorOffset(spool.dataPath, spool.cursorPath, spool.size, spool);
+  };
+
+  const workContextOf = (sessionId: string) =>
+    workContextRecord(
+      { workContextId: `wc_${sessionId}`, sessionId, title: "t", status: "analyzing" },
+      producerOf(sessionId),
+      new Date(),
+    );
+
+  test("another life's work context is not held for the flusher's heal (M1)", async () => {
+    // Arrange: an unregistered life, its own work context gone ahead; another
+    // life of the same conversation's work context on disk
+    const fx = await fixture("keep-writer", proxyUrl);
+    refuseRegisters = true;
+    const life = await register(fx);
+    refuseRegisters = false;
+    await consumeAll(fx);
+    await appendTo(fx, fx.hostSessionKey, [workContextOf(`${life.crosscheckSessionId}~r9`)]);
+
+    // Act
+    const outcome = await flushWithoutHealer(fx, life.crosscheckSessionId);
+
+    // Assert: refused for the flusher, spent and counted — not pinned
+    expect(outcome.outcome).toBe("flushed");
+    expect((await readDropDetail(fx.home, fx.key)).rejectedCauses).toEqual({ session_unknown: 1 });
+  });
+
+  test("an ended life's own work context is not held either: that life is never registered again (M2)", async () => {
+    // Arrange: a life registered, its work context still on disk, then ended
+    const fx = await fixture("keep-cause");
+    const life = await register(fx);
+    await endOnHub(life.crosscheckSessionId);
+
+    // Act
+    const outcome = await flushWithoutHealer(fx, life.crosscheckSessionId);
+
+    // Assert
+    expect(outcome.outcome).toBe("flushed");
+    expect((await readDropDetail(fx.home, fx.key)).rejectedCauses).toEqual({ session_ended: 1 });
+  });
+
+  test("an unregistered life's other records are not held — only its work context is (M12)", async () => {
+    // Arrange: an unregistered life whose work context went ahead, an edit of it on disk
+    const fx = await fixture("keep-kind", proxyUrl);
+    refuseRegisters = true;
+    const life = await register(fx);
+    refuseRegisters = false;
+    await consumeAll(fx);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/edit.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+
+    // Act
+    const outcome = await flushWithoutHealer(fx, life.crosscheckSessionId);
+
+    // Assert
+    expect(outcome.outcome).toBe("flushed");
+    expect((await readDropDetail(fx.home, fx.key)).rejectedCauses).toEqual({ session_unknown: 1 });
+  });
+
+  test("a refusal an earlier walk wrote down is not counted again when the batch goes (M5)", async () => {
+    // Arrange: an ended life's edit on disk, already written down by a walk
+    // that left the batch where it was
+    const fx = await fixture("noted-refusal");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/noted.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    const spool = await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey));
+    const end = lineEnds(spool.pending, 1, spool.offset)[0] ?? spool.size;
+    await writeCountedLines(spool.dataPath, spool.cursorPath, spool.offset, new Set([end]), spool);
+
+    // Act
+    const outcome = await flushWithoutHealer(fx, life.crosscheckSessionId);
+
+    // Assert: the batch went, and nothing new reached the ledger
+    expect(outcome.outcome).toBe("flushed");
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
+  });
+
+  test("a flush whose walk heals and delivers counts the batch's losses once (M14)", async () => {
+    // Arrange: an ended life; its refused edit and a torn line on disk
+    const fx = await fixture("losses-once");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(life.workContextId, "file", "src/after-end.ts", producerOf(life.crosscheckSessionId), new Date()),
+    ]);
+    await appendFile(spoolDataPath(fx.home, fx.key, sessionSlug(fx.hostSessionKey)), "{torn\n");
+
+    // Act: one flush — the walk heals, the batch goes
+    await flushAsHook(fx);
+
+    // Assert
+    expect(await stateId(fx)).toBe(`${life.crosscheckSessionId}~r1`);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ unparsable: 1, rejected: 1 });
   });
 });
 

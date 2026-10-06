@@ -17871,6 +17871,62 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 LOW-5: the cooldown cannot say a send would be refused, and the pinned batch is re-sent on every hook",
   },
+  {
+    label: "the flusher's own work context is held whoever wrote it (M1)",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '    return record?.["kind"] === "work_context" && writtenBy(record) === input.flusherSessionId;',
+    to: '    return record?.["kind"] === "work_context";',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: another life's work context pins the whole spool until a heal that cannot help it",
+  },
+  {
+    label: "an ended life's own work context is held for a heal that never comes (M2)",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '  cause === "session_unknown" &&\n',
+    to: "  true &&\n",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: an ended life is never registered again, and its batch stalls the spool behind it",
+  },
+  {
+    label: "any refused record of an unregistered life pins its batch (M12)",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '    return record?.["kind"] === "work_context" && writtenBy(record) === input.flusherSessionId;',
+    to: "    return writtenBy(record ?? {}) === input.flusherSessionId;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: a heal-less drain keeps every refused record on disk instead of counting it",
+  },
+  {
+    label: "a refusal an earlier walk wrote down is counted again when the batch goes (M5)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "!healed.counted.has(result.index) && !earlier.has(sendable[result.index]?.end ?? -1),",
+    to: "!healed.counted.has(result.index),",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: one refused record reads as two in the ledger and in the hub's loss_total",
+  },
+  {
+    label: "a batch's losses are written twice in a flush whose walk heals (M14)",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      running ??= run(sealed);",
+    to: "      running = run(sealed);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: every torn line of a batch a heal delivered is counted twice",
+  },
+  {
+    label: "a deferred SessionEnd never writes down the healed life's end (M8)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    await writeDownEnd(input, healed);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 LOW-6: the healed life is never ended from its marker, and the next resume lands on it under a fresh epoch",
+  },
+  {
+    label: "a SessionEnd whose state lock stays busy keeps the state (M11)",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  return closed === null ? closeState(home, hostSessionKey, crosscheckSessionId) : closed.moved;",
+    to: "  return closed === null ? null : closed.moved;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 LOW-6: a state file outlives its session and pins its spool against reap",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18128,9 +18184,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 22
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 27
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 21
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 23
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

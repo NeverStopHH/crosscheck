@@ -793,3 +793,61 @@ describe("a heal that lands the next life", () => {
     expect((await stateOf(fx))?.crosscheckSessionId).toBe(next);
   });
 });
+
+/**
+ * THE EDGES OF SessionEnd's COMPARED DELETE (review-2 LOW-6): a deferred end
+ * of a life a heal moved the state to, and a state lock that stays busy.
+ */
+describe("SessionEnd at the edges", () => {
+  const endLife = (fx: Fixture, crosscheckSessionId: string, flushBudgetMs: number) =>
+    endSessionFlow({
+      home: fx.home,
+      repoKey: fx.key,
+      hub: fx.hub,
+      hostSessionKey: fx.hostSessionKey,
+      crosscheckSessionId,
+      developerId,
+      flushBudgetMs,
+      now: () => new Date(),
+    });
+
+  test("with no room to deliver, defers the healed life's end too, and the next resume starts above it (M8)", async () => {
+    // Arrange: SessionEnd has read life K; a heal moved the state to K~r1
+    const fx = await fixture("deferred-healed");
+    const k = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, k.crosscheckSessionId);
+    await healerFor(fx)({ sessionId: k.crosscheckSessionId, cause: "session_ended" }, Date.now() + BUDGET_MS);
+    const healedLife = `${k.crosscheckSessionId}~r1`;
+
+    // Act: the end with no budget to drain, then a resume, its flush and its reap
+    const ended = await endLife(fx, k.crosscheckSessionId, 0);
+    const markers = await pendingEnds(fx);
+    const resumed = await register(fx);
+    await flushAsHook(fx);
+    await reapAsSessionStart(fx);
+
+    // Assert: both lives deferred, each from its own marker; the resume above both
+    expect(ended.ended).toBe(false);
+    expect(markers).toContain(`${sessionSlug(fx.hostSessionKey)}.r1.pending-life`);
+    expect(resumed.crosscheckSessionId).toBe(`${k.crosscheckSessionId}~r2`);
+    expect(await isEnded(healedLife)).toBe(true);
+    expect(await readSessionCausalOrder(db, healedLife)).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("whose state lock stays busy still deletes the state (M11)", async () => {
+    // Arrange
+    const fx = await fixture("busy-close");
+    const life = await register(fx);
+    await flushAsHook(fx);
+
+    // Act: the whole end runs while another holder keeps the state's lock
+    await withLock(sessionStateLockPath(fx.home, fx.hostSessionKey), null, async () => {
+      await endLife(fx, life.crosscheckSessionId, BUDGET_MS);
+      return null;
+    });
+
+    // Assert: no state file left to pin the spool
+    expect(await stateOf(fx)).toBeNull();
+  });
+});
