@@ -33,6 +33,13 @@ export const REJECT_CAUSES = [
    * (review-2 LOW-5) — the pilot's own failure class.
    */
   "author_unknown",
+  /**
+   * The work context a heal owed was refused by the hub for good — past
+   * OWED_WORK_CONTEXT_MAX_REFUSALS, or MAX_SPOOL_AGE_DAYS since the first —
+   * and released: it, and its life's records refused for want of it (review-2
+   * round 7, M3).
+   */
+  "owed_wc_refused",
   /** Any refusal this connector has no word for. */
   "other",
 ] as const;
@@ -89,6 +96,10 @@ export const REJECT_CAUSE_SENTENCES: Readonly<Record<RejectCause, string>> = {
     "because the session or work context they belong to was not on the hub — their own session's " +
     "register had not landed when another session delivered them; this connector now leaves such " +
     "records on disk for their own session while it lives",
+  owed_wc_refused:
+    "because the work context their session owed the hub after a heal was refused by the hub every time it was " +
+    "sent — this connector stops resending it after a bounded number of refusals, and counts it and the records " +
+    "that needed it here",
   other: "for a reason this connector does not name — the hub's response carries the sentence",
 };
 

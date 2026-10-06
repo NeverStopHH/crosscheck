@@ -425,6 +425,15 @@ hub took it, settles the debt for that work context. The one window left is a pa
 `set_intent` posts (the hub keeps whichever lands last); both run in the same conversation, and the hosts run a
 tool's hooks after the tool.
 
+**A debt the hub refuses is bounded, and never stalls the drain** (review-2 round 7, M3, P1). A work context the hub
+refused every time pinned its life's records for good, failed every drain of its own flusher, and held its
+SessionEnd open. The debt now keeps its refusal count and the time of its first refusal. A refusal is the hub's
+verdict on the record itself; a refusal of the session that sent it is the heal's to answer and never counts. A
+refused debt goes once per drain, because its spool is passed over for the rest of that drain while every other
+spool the flusher may send still goes. After `OWED_WORK_CONTEXT_MAX_REFUSALS` (3) refusals, or `MAX_SPOOL_AGE_DAYS`
+after the first, the debt is released: it is counted as one drop with its own cause, `owed_wc_refused`, and so are
+the life's records the hub refused for want of it, and the life's records then go like any others.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

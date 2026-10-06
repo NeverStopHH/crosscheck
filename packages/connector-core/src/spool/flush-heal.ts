@@ -33,7 +33,6 @@ import type { HubContext } from "../http/client.ts";
 import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
 import { conversationOf } from "../state/session-lineage.ts";
-import { isTaken } from "./owed-work-context.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
 
@@ -186,8 +185,8 @@ export interface HealInput {
    * goes now (spool/owed-work-context.ts owedRecordNow), or null.
    */
   readonly owedFor?: (sessionId: string) => Promise<Record<string, unknown> | null>;
-  /** Settles that work context once the hub took it. */
-  readonly settleOwed?: (record: Record<string, unknown>) => Promise<void>;
+  /** Hands on the hub's answer for that work context: settled, or one refusal counted. */
+  readonly answerOwed?: (record: Record<string, unknown>, answer: RecordResult | undefined) => Promise<void>;
 }
 
 /**
@@ -319,8 +318,8 @@ export const healAndResend = async (input: HealInput): Promise<HealedDelivery | 
   if (!again.ok) {
     return null;
   }
-  if (owed !== null && isTaken(again.data.results?.find((answer) => answer.index === 0))) {
-    await input.settleOwed?.(owed);
+  if (owed !== null) {
+    await input.answerOwed?.(owed, again.data.results?.find((answer) => answer.index === 0));
   }
   return { summary: merged(input.first, resent, again.data, ahead.length), heal, asked: true, counted };
 };

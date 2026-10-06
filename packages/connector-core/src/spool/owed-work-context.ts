@@ -28,6 +28,7 @@
  */
 import { z } from "zod";
 
+import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, OWED_WORK_CONTEXT_MAX_REFUSALS } from "../constants.ts";
 import {
   readJsonOrNull,
   removeFile,
@@ -42,31 +43,74 @@ import type { HubContext } from "../http/client.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import { underSessionStateLock } from "../state/session-state.ts";
+import { recordDrop } from "./drops.ts";
+import { rejectCauseOf } from "./reject-cause.ts";
 
-export interface OwedWorkContext {
+/** What a heal writes down: the life, and the work context it owes the hub. */
+export interface WorkContextDebt {
   /** The life the work context belongs to. */
   readonly sessionId: string;
   /** The work_context envelope, as the heal built it. */
   readonly record: Record<string, unknown>;
 }
 
+/** The debt as it stands: how often the hub has refused it, and since when (review-2 round 7, M3). */
+export interface OwedWorkContext extends WorkContextDebt {
+  readonly refusals: number;
+  readonly firstRefusedAt: string | null;
+}
+
 const OwedSchema = z.looseObject({
   sessionId: z.string().min(1),
   record: z.looseObject({ id: z.string().min(1), kind: z.literal("work_context") }),
+  refusals: z.number().int().min(0).optional(),
+  firstRefusedAt: z.string().min(1).optional(),
 });
+
+/** What the debt file holds: nothing, a debt, or bytes that are not one. */
+export type DebtFile =
+  | { readonly kind: "none" }
+  | { readonly kind: "owed"; readonly owed: OwedWorkContext }
+  | { readonly kind: "unreadable" };
+
+/**
+ * The debt file as it is — a file that exists and will not parse is its own
+ * answer, never "nothing owed" (doctor reports it, review-2 round 7 L4).
+ */
+export const readDebtFile = async (home: string, key: string, slug: string): Promise<DebtFile> => {
+  const path = spoolOwedWorkContextPath(home, key, slug);
+  if (!(await Bun.file(path).exists())) {
+    return { kind: "none" };
+  }
+  const parsed = OwedSchema.safeParse(await readJsonOrNull(path));
+  return parsed.success
+    ? {
+        kind: "owed",
+        owed: {
+          sessionId: parsed.data.sessionId,
+          record: parsed.data.record,
+          refusals: parsed.data.refusals ?? 0,
+          firstRefusedAt: parsed.data.firstRefusedAt ?? null,
+        },
+      }
+    : { kind: "unreadable" };
+};
 
 export const readOwedWorkContext = async (
   home: string,
   key: string,
   slug: string,
 ): Promise<OwedWorkContext | null> => {
-  const parsed = OwedSchema.safeParse(await readJsonOrNull(spoolOwedWorkContextPath(home, key, slug)));
-  return parsed.success ? { sessionId: parsed.data.sessionId, record: parsed.data.record } : null;
+  const file = await readDebtFile(home, key, slug);
+  return file.kind === "owed" ? file.owed : null;
 };
 
-/** Written by the heal's switch, under the state lock (flows/heal-session.ts). */
-export const oweWorkContext = async (home: string, key: string, slug: string, owed: OwedWorkContext): Promise<void> => {
-  await writePrivateFile(spoolOwedWorkContextPath(home, key, slug), `${JSON.stringify(owed)}\n`);
+/** Written by the heal's switch, under the state lock (flows/heal-session.ts) — a new debt, never refused. */
+export const oweWorkContext = async (home: string, key: string, slug: string, owed: WorkContextDebt): Promise<void> => {
+  await writePrivateFile(
+    spoolOwedWorkContextPath(home, key, slug),
+    `${JSON.stringify({ sessionId: owed.sessionId, record: owed.record })}\n`,
+  );
 };
 
 /** The host session a spool slug belongs to; null for a name no slug is. */
@@ -118,6 +162,76 @@ export const settleOwedOnIntent = (
   hostSessionKey: string,
   workContextId: string,
 ): Promise<void> => settleOwedWorkContext(home, key, sessionSlug(hostSessionKey), workContextId);
+
+/** What became of a debt the hub answered for (`answerOwed`). */
+export type OwedOutcome = "settled" | "refused" | "released" | "open";
+
+/** The causes that say the PRODUCER is dead to the hub: the heal's to answer, never the debt's refusal. */
+const OWN_SESSION_CAUSES: ReadonlySet<string> = new Set(["session_ended", "session_unknown"]);
+
+/** Whether the hub's refusal of a debt reached its bound: N refusals, or MAX_SPOOL_AGE_DAYS since the first. */
+const isPastBound = (refusals: number, firstRefusedAt: string, now: Date): boolean =>
+  refusals >= OWED_WORK_CONTEXT_MAX_REFUSALS ||
+  now.getTime() - Date.parse(firstRefusedAt) >= MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
+
+/**
+ * One more refusal on the debt for `workContextId` — and, past its bound, the
+ * debt RELEASED (review-2 round 7, M3): counted as one drop with its own
+ * cause, `owed_wc_refused`, and gone, so it neither pins its life's records
+ * for good nor holds SessionEnd open. Under the state lock, compared like a
+ * settle: a heal that owes another work context in between keeps its debt.
+ */
+const recordRefusal = async (
+  home: string,
+  key: string,
+  slug: string,
+  workContextId: unknown,
+  now: Date,
+): Promise<OwedOutcome> => {
+  const hostSessionKey = hostSessionKeyOf(slug);
+  if (hostSessionKey === null) {
+    return "open";
+  }
+  return underSessionStateLock<OwedOutcome>(home, hostSessionKey, "open", async () => {
+    const owed = await readOwedWorkContext(home, key, slug);
+    if (owed === null || workContextIdOf(owed.record) !== workContextId) {
+      return "open";
+    }
+    const refusals = owed.refusals + 1;
+    const firstRefusedAt = owed.firstRefusedAt ?? now.toISOString();
+    if (!isPastBound(refusals, firstRefusedAt, now)) {
+      await writePrivateFile(
+        spoolOwedWorkContextPath(home, key, slug),
+        `${JSON.stringify({ sessionId: owed.sessionId, record: owed.record, refusals, firstRefusedAt })}\n`,
+      );
+      return "refused";
+    }
+    await recordDrop(home, key, slug, 1, "rejected", now, { work_context: 1 }, { owed_wc_refused: 1 });
+    await removeFile(spoolOwedWorkContextPath(home, key, slug));
+    return "released";
+  });
+};
+
+/**
+ * The hub's answer for an owed work context it was sent: settled when it took
+ * it; one refusal counted when it refused the record itself; nothing when it
+ * refused the session that sent it — the heal answers that — or said nothing.
+ */
+export const answerOwed = async (
+  home: string,
+  key: string,
+  slug: string,
+  workContextId: unknown,
+  answer: RecordResult | undefined,
+  now: Date,
+): Promise<OwedOutcome> => {
+  if (isTaken(answer)) {
+    await settleOwedWorkContext(home, key, slug, workContextId);
+    return "settled";
+  }
+  const isRecordRefused = answer?.status === "rejected" && !OWN_SESSION_CAUSES.has(rejectCauseOf(answer.issues));
+  return isRecordRefused ? recordRefusal(home, key, slug, workContextId, now) : "open";
+};
 
 interface StateNaming {
   readonly crosscheckSessionId?: unknown;
@@ -191,8 +305,8 @@ const withoutAhead = (summary: IngestSummary): IngestSummary => {
 export interface OwedDelivery {
   /** The hub's answer for the batch, as if the owed record had not gone ahead. */
   readonly summary: IngestSummary;
-  /** The hub took the owed record: the debt may be settled. */
-  readonly owedTaken: boolean;
+  /** The hub's answer for the owed record itself (`answerOwed`). */
+  readonly owedAnswer: RecordResult | undefined;
 }
 
 /**
@@ -215,6 +329,6 @@ export const deliverOwed = async (
   }
   return {
     summary: withoutAhead(result.data),
-    owedTaken: isTaken(result.data.results?.find((answer) => answer.index === 0)),
+    owedAnswer: result.data.results?.find((answer) => answer.index === 0),
   };
 };

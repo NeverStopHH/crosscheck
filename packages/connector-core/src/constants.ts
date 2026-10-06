@@ -1640,6 +1640,17 @@ export const REGISTER_LADDER_MAX_ATTEMPTS = 12;
  */
 export const HEAL_COOLDOWN_MS = 5 * 60 * 1000;
 /**
+ * How many times the hub may refuse an owed work context before the debt is
+ * released (spool/owed-work-context.ts, review-2 round 7 M3). A refusal is
+ * the hub's verdict on the record itself — its own-session refusals are the
+ * heal's to answer and never count — and one drain sends a debt once, so
+ * three refusals are three drains that got the same answer. Released, the
+ * debt and the records it pinned are counted `owed_wc_refused`, so a debt the
+ * hub will never take neither pins its life's records for good nor holds its
+ * SessionEnd open; MAX_SPOOL_AGE_DAYS from the first refusal bounds it too.
+ */
+export const OWED_WORK_CONTEXT_MAX_REFUSALS = 3;
+/**
  * The least room a mid-life heal needs before it stamps an attempt: one
  * register round trip against a reachable hub, which answers in tens of
  * milliseconds. Below it the walk could not reach the hub, and stamping would

@@ -47,20 +47,21 @@ import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
 import { healAndResend, isRefusedLifeRecord } from "./flush-heal.ts";
 import {
+  answerOwed,
   deliverOwed,
   isOwedFor,
   owedRecordNow,
   readOwedWorkContext,
-  settleOwedWorkContext,
   workContextIdOf,
 } from "./owed-work-context.ts";
-import type { OwedWorkContext } from "./owed-work-context.ts";
+import type { OwedOutcome, OwedWorkContext } from "./owed-work-context.ts";
 import type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 import { lineTimestampMs } from "./lines.ts";
 import { withLock } from "./lock.ts";
 import { mayFlusherSend } from "./ownership.ts";
 import { readRefusedLives } from "./refused-lives.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
+import type { RejectCause } from "./reject-cause.ts";
 
 export type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 
@@ -155,9 +156,16 @@ const deliver = async (
   return result.ok ? result.data : null;
 };
 
+/** What a batch's send did: the hub's answer for the batch, and what became of the debt that went ahead of it. */
+interface Sent {
+  readonly summary: IngestSummary;
+  readonly debt: OwedOutcome | null;
+}
+
 /**
  * Sends the batch — with the owed work context at its head when the batch
- * carries the life it is owed for, settling the debt once the hub took it.
+ * carries the life it is owed for: settled once the hub took it, one refusal
+ * counted when the hub refused the record itself (spool/owed-work-context.ts).
  */
 const send = async (
   ctx: HubContext,
@@ -165,18 +173,24 @@ const send = async (
   spool: SessionSpool,
   owed: OwedWorkContext | null,
   records: readonly Record<string, unknown>[],
-): Promise<IngestSummary | null> => {
+): Promise<Sent | null> => {
   if (owed === null) {
-    return deliver(ctx, records);
+    const summary = await deliver(ctx, records);
+    return summary === null ? null : { summary, debt: null };
   }
   const delivery = await deliverOwed(ctx, spool.slug, owed, input.developerId, input.sessionId, records);
   if (delivery === null) {
     return null;
   }
-  if (delivery.owedTaken) {
-    await settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, workContextIdOf(owed.record));
-  }
-  return delivery.summary;
+  const debt = await answerOwed(
+    ctx.home,
+    ctx.repoKey,
+    spool.slug,
+    workContextIdOf(owed.record),
+    delivery.owedAnswer,
+    ctx.now(),
+  );
+  return { summary: delivery.summary, debt };
 };
 
 /** The work context this spool owes `sessionId`, built as it goes now — or null when it owes that life none. */
@@ -195,12 +209,10 @@ const isPinnedByDebt = async (
   spool: SessionSpool,
   summary: IngestSummary,
   sendable: readonly SpooledLine[],
-  lifeId: string,
 ): Promise<boolean> => {
   const owed = await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug);
   return (
     owed !== null &&
-    owed.sessionId === lifeId &&
     (summary.results ?? []).some((result) => {
       const line = sendable[result.index];
       return (
@@ -237,10 +249,28 @@ const kindsWithStatus = (
  * never the hub's sentence, which is another process's prose. A hub from
  * before per-record results sends none, and the count then carries no cause.
  */
-const rejectCauses = (results: readonly RecordResult[] | undefined): Counts =>
+const rejectCauses = (
+  results: readonly RecordResult[] | undefined,
+  causeOf: (result: RecordResult) => RejectCause,
+): Counts =>
   (results ?? [])
     .filter((result) => result.status === "rejected")
-    .reduce<Counts>((causes, result) => addCount(causes, rejectCauseOf(result.issues), 1), {});
+    .reduce<Counts>((causes, result) => addCount(causes, causeOf(result), 1), {});
+
+/**
+ * The cause a refused record is counted under: the hub's word for it — or,
+ * for a record of the life whose debt this batch released, `owed_wc_refused`
+ * (review-2 round 7, M3): the work context it needed was refused for good.
+ */
+const causeIn =
+  (sendable: readonly SpooledLine[], released: OwedWorkContext | null) =>
+  (result: RecordResult): RejectCause => {
+    const cause = rejectCauseOf(result.issues);
+    const line = sendable[result.index];
+    return cause === "author_unknown" && released !== null && line !== undefined && isOwedFor(released, line.record)
+      ? "owed_wc_refused"
+      : cause;
+  };
 
 /** What one batch did: how many records went, and whether it healed the producer. */
 interface BatchOutcome {
@@ -310,6 +340,13 @@ const flushOneBatch = async (
       ? { sent: 0, heal: null, healAsked: false, isPinned: false }
       : PINNED;
   }
+  // A DEBT RELEASED in this batch (review-2 round 7, M3) takes its life's
+  // records the hub refused for want of it along: counted `owed_wc_refused`,
+  // the cause that says why, never `author_unknown` as if nobody knew.
+  let released: OwedWorkContext | null = first.debt === "released" ? paying : null;
+  // ...and a debt the hub refused goes once per drain: the spool is passed
+  // over after this batch, so OWED_WORK_CONTEXT_MAX_REFUSALS counts drains.
+  let isDebtRefused = first.debt === "refused";
   // WHAT THIS BATCH HAS LOST WHATEVER COMES NEXT — torn lines, withheld
   // stragglers, refusals no heal can carry — written once: before a heal's
   // walk when one runs, so the register it sends already reports them
@@ -321,22 +358,29 @@ const flushOneBatch = async (
     developerId: input.developerId,
     flusherSessionId: input.sessionId,
     spooled: sendable.map((line) => line.record),
-    first,
+    first: first.summary,
     healer: input.heal,
     deadlineMs,
     beforeWalk: losses.write,
     owedFor: (sessionId) => owedNowFor(ctx, spool, sessionId),
-    settleOwed: (record) => settleOwedWorkContext(ctx.home, ctx.repoKey, spool.slug, workContextIdOf(record)),
+    answerOwed: async (record, answer) => {
+      const owedNow = await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug);
+      const outcome = await answerOwed(ctx.home, ctx.repoKey, spool.slug, workContextIdOf(record), answer, ctx.now());
+      released = outcome === "released" ? owedNow : released;
+      isDebtRefused = isDebtRefused || outcome === "refused";
+    },
   });
   if (healed === null) {
     return null;
   }
   const summary = healed.summary;
-  // A life's own records refused for the work context it is still owed are
+  // A life's records refused for the work context it is still owed are
   // NEEDED LATER (review-2 round 6, HIGH-1): the debt is paid at the head of
-  // the next batch, and spending them now loses them for a record in flight.
-  if (await isPinnedByDebt(ctx, spool, summary, sendable, healed.heal?.sessionId ?? input.sessionId)) {
-    return null;
+  // its next batch, and spending them now loses them for a record in flight.
+  // The spool is passed over for the rest of the drain (review-2 round 7, M3);
+  // the debt's own bound is what ends the wait.
+  if (await isPinnedByDebt(ctx, spool, summary, sendable)) {
+    return PINNED;
   }
   await losses.write([]);
   // The refusals a heal's walk already wrote down are not counted twice. An
@@ -374,7 +418,7 @@ const flushOneBatch = async (
       "rejected",
       ctx.now(),
       kindsWithStatus(records, uncounted, "rejected"),
-      rejectCauses(uncounted),
+      rejectCauses(uncounted, causeIn(sendable, released)),
     );
   }
   if (ignored > 0) {
@@ -393,7 +437,7 @@ const flushOneBatch = async (
   // file — same name, and on ext4 the same inode number too — and its records
   // start at offset 0.
   await writeCursorOffset(spool.dataPath, spool.cursorPath, consumed, spool);
-  return { sent: records.length, heal: healed.heal, healAsked: healed.asked, isPinned: false };
+  return { sent: records.length, heal: healed.heal, healAsked: healed.asked, isPinned: isDebtRefused };
 };
 
 /**
