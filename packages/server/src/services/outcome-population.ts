@@ -289,27 +289,21 @@ export const readPeriodAggregate = async (
 const LEFT_OUT = 1;
 
 /**
- * WHICH DISCLOSURE MINIMUM A PERIOD FAILS, or null when it may print — the
- * same answer whoever reads it (review H1). Every minimum must hold with any
- * single recorder's words left out: at least three other people's words,
- * about at least three people's work, ten or more of them. So a team of
- * three never prints. The team line checks all three; an author's credit is
- * about their own work, so only the people-minimum applies to it.
+ * WHETHER A PERIOD MAY PRINT — the same answer whoever reads it (review H1).
+ * Every minimum must hold with any single recorder's words left out: at least
+ * three other people's words, about at least three people's work, ten or more
+ * of them. So a team of three never prints. The team line checks all three;
+ * an author's credit is about their own work, so only the people-minimum
+ * applies to it. Whichever fails, the answer is ONE generic word (review M1).
  */
 export const withholdingOf = (
   aggregate: PeriodAggregate,
   checks: { readonly sources: boolean; readonly recorded: boolean },
 ): HintOutcomeWithholding | null => {
-  if (aggregate.interventions === 0) {
-    return "no_interventions";
-  }
-  if (aggregate.recorders - LEFT_OUT < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {
-    return "too_few_recorders";
-  }
-  if (checks.sources && aggregate.sourcesWithoutAnyOne < HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) {
-    return "too_few_sources";
-  }
-  return checks.recorded && aggregate.wordsWithoutLargest < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded
-    ? "too_few_recorded"
-    : null;
+  const meetsMinimums =
+    aggregate.interventions > 0 &&
+    aggregate.recorders - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders &&
+    (!checks.sources || aggregate.sourcesWithoutAnyOne >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) &&
+    (!checks.recorded || aggregate.wordsWithoutLargest >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded);
+  return meetsMinimums ? null : "below_minimums";
 };

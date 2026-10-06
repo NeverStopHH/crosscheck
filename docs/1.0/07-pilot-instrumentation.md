@@ -1211,3 +1211,14 @@ teammates who recorded about the author's work. **A team of three never gets the
 and every printed promise says so: the `--mine` footer, `mark_hint_outcome`'s description, `crosscheck
 followed / overrode`'s answer and usage, and the withheld lines. The owner's own view — per source teammate,
 what each hint led to, and the reasons — is unaffected and stays complete.
+
+*M1 — the withheld word named the minimum, and the count rode beside it (P2).* `too_few_recorded` is only
+reachable past the people and sources checks, so with `interventions` beside it Nick read that Ken and Mike
+had recorded exactly one word each. Now there is **one generic word**: a block is `not_recordable` (a fact
+about the repo's enrolment, not about people) or `below_minimums` — whichever minimum failed, including an
+empty month — and **no count rides on the wire or in `--json` while withheld**: `interventions` moved inside
+`figures`, which is null whenever the block is withheld. The client prints one sentence for every withheld word,
+an older hub's named minimum included: `hint outcomes, July 2026: withheld — below the disclosure minimums; a
+team of three never meets them`; the credit says `no count — below the disclosure minimums: leaving out any one
+person, at least 3 people must have recorded an outcome about it`, and a month outside the enrolment `nothing to
+count — the pilot was not enrolled here during it`.

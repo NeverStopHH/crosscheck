@@ -284,16 +284,15 @@ describe("PilotReportSchema", () => {
       periodEndIso: "2026-08-01T00:00:00.000Z",
       recordableSinceIso: "2026-06-03T09:00:00.000Z",
       countedFromIso: "2026-07-01T00:00:00.000Z",
-      interventions: 4,
     };
-    const counts = { followed: 1, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 2 };
+    const counts = { interventions: 4, followed: 1, overrode: 1, notRelevantNow: 0, noise: 0, unmarked: 2 };
     const { followed: _missing, ...short } = counts;
 
     // Act
     const missing = PilotReportSchema.safeParse({ ...wireReport(), outcomes: { ...block, withheld: null, figures: short } });
     const both = PilotReportSchema.safeParse({
       ...wireReport(),
-      outcomes: { ...block, withheld: "too_few_recorders", figures: counts },
+      outcomes: { ...block, withheld: "below_minimums", figures: counts },
     });
     const shown = PilotReportSchema.safeParse({ ...wireReport(), outcomes: { ...block, withheld: null, figures: counts } });
 

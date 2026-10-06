@@ -351,15 +351,12 @@ const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's 
 type OutcomeBlock = NonNullable<PilotReport["outcomes"]>;
 
 /**
- * Why a figure is withheld, for each minimum — each holding with any one
- * person's words left out (review #4, H1); a word this client lacks prints
- * as itself.
+ * Why a figure is withheld: one generic sentence (review M1) — the minimums
+ * hold with any one person's words left out (H1), so a team of three never
+ * meets them, and the line says so.
  */
-const WITHHELD_SENTENCE: Readonly<Record<string, string>> = {
-  too_few_recorders: `leaving out any one person, fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders)} people recorded an outcome`,
-  too_few_sources: `leaving out any one person's words, the rest are about fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work`,
-  too_few_recorded: `leaving out whoever recorded most, fewer than ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} words remain`,
-};
+const BELOW_MINIMUMS = "withheld — below the disclosure minimums";
+const NEVER_A_TEAM_OF_THREE = "; a team of three never meets them";
 
 /**
  * WHERE COUNTING STARTS, AND WHETHER IT PAUSED (07 §13.11, review M3) — each
@@ -396,11 +393,10 @@ const withheldOutcomeLine = (block: OutcomeBlock, month: string, withheld: strin
   if (withheld === "not_recordable") {
     return `${INDENT}hint outcomes, ${month}: none could be recorded — ${notRecordableWhy(block)}`;
   }
-  if (withheld === "no_interventions") {
-    return `${INDENT}hint outcomes, ${month}: no intervention reached anyone${clippedFrom(block)}`;
-  }
-  const why = WITHHELD_SENTENCE[withheld] ?? `withheld (${bareUntrusted(withheld)})`;
-  return `${INDENT}hint outcomes, ${month}: withheld — ${why}${clippedFrom(block)}, and a figure could single someone out`;
+  // ONE SENTENCE FOR EVERY OTHER WORD (review M1), an older hub's named
+  // minimum or a newer hub's unknown one alike: which minimum failed is
+  // itself what a viewer could subtract with.
+  return `${INDENT}hint outcomes, ${month}: ${BELOW_MINIMUMS}${clippedFrom(block)}${NEVER_A_TEAM_OF_THREE}`;
 };
 
 /**
@@ -425,13 +421,13 @@ const outcomeLine = (report: PilotReport): string => {
     return `${INDENT}hint outcomes: this hub does not record them`;
   }
   const month = monthOf(block.periodStartIso);
-  const figures = block.withheld === null && block.interventions > 0 ? block.figures : null;
+  const figures = block.withheld === null && block.figures !== null && block.figures.interventions > 0 ? block.figures : null;
   if (figures === null) {
-    return withheldOutcomeLine(block, month, block.withheld ?? "no_interventions");
+    return withheldOutcomeLine(block, month, block.withheld ?? "below_minimums");
   }
-  const per100 = (value: number): string => ((value / block.interventions) * 100).toFixed(RATE_DECIMALS);
+  const per100 = (value: number): string => ((value / figures.interventions) * 100).toFixed(RATE_DECIMALS);
   return (
-    `${INDENT}hint outcomes per 100 interventions, ${month} — the last whole month, fixed (${count(block.interventions)} reached someone${clippedFrom(block)}): ` +
+    `${INDENT}hint outcomes per 100 interventions, ${month} — the last whole month, fixed (${count(figures.interventions)} reached someone${clippedFrom(block)}): ` +
     `followed ${per100(figures.followed)} · overrode ${per100(figures.overrode)} · not relevant now ${per100(figures.notRelevantNow)} · ` +
     `noise ${per100(figures.noise)}${RECORDED_ARE_FLOORS} · unmarked ${per100(figures.unmarked)}${UNMARKED_IS_A_CEILING} — no target, nobody named`
   );

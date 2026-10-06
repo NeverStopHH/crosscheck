@@ -77,15 +77,17 @@ export const HINT_OUTCOME_DISCLOSURE_MINIMUMS = {
   recorded: 10,
 } as const;
 
-/** Why a shared outcome figure printed no number — the hub picks one, the CLI says it. */
+/**
+ * Why a shared outcome figure printed no number — the hub picks one, the CLI
+ * says it. ONE GENERIC WORD for every minimum (07 §13.11, review M1): naming
+ * which one failed — or sending the count beside it — told a viewer exactly
+ * how much the others had recorded.
+ */
 export const HINT_OUTCOME_WITHHOLDINGS = [
-  /** No moment of the period could record an outcome on this repo. */
+  /** No moment of the period was inside the repo's enrolment — a fact about the repo, not the people. */
   "not_recordable",
-  /** Nothing reached anyone in the counted part of the period. */
-  "no_interventions",
-  "too_few_recorders",
-  "too_few_sources",
-  "too_few_recorded",
+  /** Below the disclosure minimums, whichever: nothing reached anyone, too few people, too little. */
+  "below_minimums",
 ] as const;
 
 export type HintOutcomeWithholding = (typeof HINT_OUTCOME_WITHHOLDINGS)[number];

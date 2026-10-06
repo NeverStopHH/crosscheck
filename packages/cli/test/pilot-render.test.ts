@@ -545,9 +545,8 @@ describe("renderPilot", () => {
       ...JULY,
       recordableSinceIso: "2026-06-03T09:00:00.000Z",
       countedFromIso: JULY.periodStartIso,
-      interventions: 8,
       withheld: null,
-      figures: { followed: 4, overrode: 1, notRelevantNow: 1, noise: 1, unmarked: 1 },
+      figures: { interventions: 8, followed: 4, overrode: 1, notRelevantNow: 1, noise: 1, unmarked: 1 },
     };
 
     // Act
@@ -560,14 +559,13 @@ describe("renderPilot", () => {
     ]);
   });
 
-  test("review #4: below the disclosure minimums the line names the minimum and prints no figure", () => {
-    // Arrange — two people recorded: the team minus one's own view would be the other's
+  test("review #4, M1: below the disclosure minimums the line prints no figure and never names which minimum", () => {
+    // Arrange
     const outcomes = {
       ...JULY,
       recordableSinceIso: "2026-06-03T09:00:00.000Z",
       countedFromIso: JULY.periodStartIso,
-      interventions: 4,
-      withheld: "too_few_recorders",
+      withheld: "below_minimums",
       figures: null,
     };
 
@@ -575,20 +573,17 @@ describe("renderPilot", () => {
     const out = renderPilot(view({ outcomes }));
 
     // Assert
-    expect(out).toContain(
-      "   hint outcomes, July 2026: withheld — leaving out any one person, fewer than 3 people recorded an outcome, and a figure could single someone out",
-    );
+    expect(out).toContain("   hint outcomes, July 2026: withheld — below the disclosure minimums; a team of three never meets them");
     expect(out).not.toContain("per 100 interventions, July");
   });
 
-  test("D-O5: no intervention in the counted month says so, never 0.0", () => {
-    // Arrange
+  test("review M1: an older hub's named minimum prints as the generic sentence — never which one", () => {
+    // Arrange — a hub from before M1 named the minimum that failed
     const outcomes = {
       ...JULY,
       recordableSinceIso: "2026-06-03T09:00:00.000Z",
       countedFromIso: JULY.periodStartIso,
-      interventions: 0,
-      withheld: "no_interventions",
+      withheld: "too_few_recorded",
       figures: null,
     };
 
@@ -597,7 +592,7 @@ describe("renderPilot", () => {
 
     // Assert
     const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
-    expect(lines).toEqual(["   hint outcomes, July 2026: no intervention reached anyone"]);
+    expect(lines).toEqual(["   hint outcomes, July 2026: withheld — below the disclosure minimums; a team of three never meets them"]);
   });
 
   test("review #4: figures sent over no intervention still print no per-100, never NaN", () => {
@@ -606,9 +601,8 @@ describe("renderPilot", () => {
       ...JULY,
       recordableSinceIso: "2026-06-03T09:00:00.000Z",
       countedFromIso: JULY.periodStartIso,
-      interventions: 0,
       withheld: null,
-      figures: { followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 },
+      figures: { interventions: 0, followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 },
     };
 
     // Act
@@ -616,7 +610,7 @@ describe("renderPilot", () => {
 
     // Assert
     const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
-    expect(lines).toEqual(["   hint outcomes, July 2026: no intervention reached anyone"]);
+    expect(lines).toEqual(["   hint outcomes, July 2026: withheld — below the disclosure minimums; a team of three never meets them"]);
   });
 
   test("review #13: an empty month names no date when enrolment came before it — never the window start", () => {
@@ -626,8 +620,7 @@ describe("renderPilot", () => {
       periodEndIso: "2026-10-01T00:00:00.000Z",
       recordableSinceIso: "2026-07-24T09:00:00.000Z",
       countedFromIso: "2026-09-01T00:00:00.000Z",
-      interventions: 0,
-      withheld: "no_interventions",
+      withheld: "below_minimums",
       figures: null,
     };
 
@@ -636,7 +629,7 @@ describe("renderPilot", () => {
 
     // Assert
     const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
-    expect(lines).toEqual(["   hint outcomes, September 2026: no intervention reached anyone"]);
+    expect(lines).toEqual(["   hint outcomes, September 2026: withheld — below the disclosure minimums; a team of three never meets them"]);
   });
 
   test("review #13: a month enrolment clipped names the enrolment instant as where counting starts", () => {
@@ -645,8 +638,7 @@ describe("renderPilot", () => {
       ...JULY,
       recordableSinceIso: "2026-07-24T09:00:00.000Z",
       countedFromIso: "2026-07-24T09:00:00.000Z",
-      interventions: 0,
-      withheld: "no_interventions",
+      withheld: "below_minimums",
       figures: null,
     };
 
@@ -656,7 +648,7 @@ describe("renderPilot", () => {
     // Assert
     const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
     expect(lines).toEqual([
-      "   hint outcomes, July 2026: no intervention reached anyone, counted from 2026-07-24, when outcomes became recordable here",
+      "   hint outcomes, July 2026: withheld — below the disclosure minimums, counted from 2026-07-24, when outcomes became recordable here; a team of three never meets them",
     ]);
   });
 
@@ -667,7 +659,6 @@ describe("renderPilot", () => {
       periodEndIso: "2026-10-01T00:00:00.000Z",
       recordableSinceIso: "2026-10-05T09:00:00.000Z",
       countedFromIso: null,
-      interventions: 0,
       withheld: "not_recordable",
       figures: null,
     };
@@ -689,8 +680,7 @@ describe("renderPilot", () => {
       recordableSinceIso: "2026-06-03T09:00:00.000Z",
       countedFromIso: JULY.periodStartIso,
       pausedInPeriod: true,
-      interventions: 0,
-      withheld: "no_interventions",
+      withheld: "below_minimums",
       figures: null,
     };
 
@@ -700,7 +690,7 @@ describe("renderPilot", () => {
     // Assert
     const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
     expect(lines).toEqual([
-      "   hint outcomes, July 2026: no intervention reached anyone, counted only while the pilot was enrolled here",
+      "   hint outcomes, July 2026: withheld — below the disclosure minimums, counted only while the pilot was enrolled here; a team of three never meets them",
     ]);
   });
 
@@ -711,8 +701,7 @@ describe("renderPilot", () => {
       recordableSinceIso: "2026-06-03T09:00:00.000Z",
       countedFromIso: "2026-07-20T09:00:00.000Z",
       pausedInPeriod: false,
-      interventions: 0,
-      withheld: "no_interventions",
+      withheld: "below_minimums",
       figures: null,
     };
 
@@ -722,7 +711,7 @@ describe("renderPilot", () => {
     // Assert
     const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
     expect(lines).toEqual([
-      "   hint outcomes, July 2026: no intervention reached anyone, counted from 2026-07-20, when the pilot was enrolled here again",
+      "   hint outcomes, July 2026: withheld — below the disclosure minimums, counted from 2026-07-20, when the pilot was enrolled here again; a team of three never meets them",
     ]);
   });
 
@@ -733,7 +722,6 @@ describe("renderPilot", () => {
       recordableSinceIso: "2026-06-03T09:00:00.000Z",
       countedFromIso: null,
       pausedInPeriod: false,
-      interventions: 0,
       withheld: "not_recordable",
       figures: null,
     };

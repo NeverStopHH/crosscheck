@@ -179,7 +179,7 @@ describe("GET /api/hint-outcomes/mine", () => {
     const ken = await viewOf(await readMine(crowd, crowd.ken));
 
     // Assert — before H1 this printed "followed 2", and Ken, told by Nick what Nick said, knew Anna's
-    expect(ken["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "too_few_recorders" });
+    expect(ken["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "below_minimums" });
   });
 
   test("review #10: two people's words about a teammate's work print no count — a switch would show as a step", async () => {
@@ -194,7 +194,7 @@ describe("GET /api/hint-outcomes/mine", () => {
     const ken = await viewOf(await readMine(world, world.ken));
 
     // Assert
-    expect(ken["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "too_few_recorders" });
+    expect(ken["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "below_minimums" });
     expect(JSON.stringify(ken)).not.toContain(OVERRIDE_REASON);
   });
 

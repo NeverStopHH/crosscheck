@@ -14,9 +14,10 @@
  *   · ONE FIXED, CLOSED PERIOD — the last whole calendar month (UTC) — never
  *     the report's `days`, which could be stepped to isolate a day; counted as
  *     it stood at the month's end, so a word changed later never moves it;
- *   · NUMBERS ONLY ABOVE THE DISCLOSURE MINIMUMS: at least three people's
- *     words, about at least three people's work, ten words or more. Below any
- *     of them the block says which, and carries no figure.
+ *   · NUMBERS ONLY ABOVE THE DISCLOSURE MINIMUMS, each holding with any one
+ *     recorder's words left out (§13.11, H1): three people's words, about
+ *     three people's work, ten or more. Below them the block says only
+ *     "below_minimums" and carries no count at all (M1).
  *
  * Nothing in the block names a recipient or a source.
  */
@@ -37,6 +38,8 @@ interface Deps {
 }
 
 export interface OutcomeCounts {
+  /** Unasked interventions that reached someone in the counted part of the period. */
+  readonly interventions: number;
   readonly followed: number;
   readonly overrode: number;
   readonly notRelevantNow: number;
@@ -54,9 +57,7 @@ export interface OutcomeFigures {
   readonly countedFromIso: string | null;
   /** The pilot paused inside the counted part of the period: only its enrolled time is counted (review M3). */
   readonly pausedInPeriod: boolean;
-  /** Unasked deliveries that reached someone in the counted part of the period. */
-  readonly interventions: number;
-  /** Why no figure is shown, or null when it is. */
+  /** Why no figure is shown, or null when it is — and then no count rides anywhere (review M1). */
   readonly withheld: HintOutcomeWithholding | null;
   readonly figures: OutcomeCounts | null;
 }
@@ -70,7 +71,6 @@ const notRecordable = (
   recordableSinceIso,
   countedFromIso: null,
   pausedInPeriod: false,
-  interventions: 0,
   withheld: "not_recordable",
   figures: null,
 });
@@ -101,11 +101,11 @@ export const readOutcomeFigures = async (
     recordableSinceIso: input.outcomesSinceIso,
     countedFromIso: span.from.toISOString(),
     pausedInPeriod: span.paused,
-    interventions: aggregate.interventions,
     withheld,
     figures:
       withheld === null
         ? {
+            interventions: aggregate.interventions,
             followed: aggregate.followed,
             overrode: aggregate.overrode,
             notRelevantNow: aggregate.notRelevantNow,

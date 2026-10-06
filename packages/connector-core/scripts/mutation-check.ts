@@ -17701,7 +17701,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the outcomes line prints per-100 figures over no intervention",
     file: `${CLI}/src/cli/pilot-render.ts`,
-    from: "  const figures = block.withheld === null && block.interventions > 0 ? block.figures : null;",
+    from: "  const figures = block.withheld === null && block.figures !== null && block.figures.interventions > 0 ? block.figures : null;",
     to: "  const figures = block.withheld === null ? block.figures : null;",
     test: `${CLI}/test/pilot-render.test.ts`,
     because: "an empty population prints NaN or 0.0 as if somebody had measured it",
@@ -17759,24 +17759,24 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "two people's outcomes print as a team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "  if (aggregate.recorders - LEFT_OUT < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {",
-    to: "  if (false) {",
+    from: "    aggregate.recorders - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders &&",
+    to: "    true &&",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the team total minus one's own --mine is the other person's exact outcomes",
   },
   {
     label: "outcomes about one or two people's work print as a team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "  if (checks.sources && aggregate.sourcesWithoutAnyOne < HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) {",
-    to: "  if (false) {",
+    from: "    (!checks.sources || aggregate.sourcesWithoutAnyOne >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) &&",
+    to: "    true &&",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the author whose work every hint pointed at reads the team line as the overrides of their own work",
   },
   {
     label: "a handful of recorded outcomes prints as a team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "  return checks.recorded && aggregate.wordsWithoutLargest < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded\n    ? \"too_few_recorded\"\n    : null;",
-    to: "  return null;",
+    from: "    (!checks.recorded || aggregate.wordsWithoutLargest >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded);",
+    to: "    true;",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "with a few words in the month, one person's change of mind is one visible step in the figure",
   },
@@ -17832,8 +17832,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a credit over no hint reads as 'followed 0 times'",
     file: `${CLI}/src/cli/pilot-mine-render.ts`,
-    from: '  no_interventions: "no hint pointed at it",',
-    to: '  no_interventions: "followed 0 times",',
+    from: "const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums:",
+    to: "const BELOW_MINIMUMS_CREDIT = `followed 0 times — below the disclosure minimums:",
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "a month nobody was shown the work reads as a month everybody went another way",
   },
@@ -18139,8 +18139,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the people-minimum counts the viewer's own words",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "  if (aggregate.recorders - LEFT_OUT < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {",
-    to: "  if (aggregate.recorders < HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) {",
+    from: "    aggregate.recorders - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders &&",
+    to: "    aggregate.recorders >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders &&",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "in a team of three, the viewer subtracts their own words and reads each teammate's exact outcome",
   },
@@ -18167,6 +18167,31 @@ export const MUTATIONS: readonly Mutation[
     to: "const LEFT_OUT = 0;",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "three teammates' words about Ken's work print a count one of them can subtract to read the others'",
+  },
+  // ── 07 §13.11, review M1: one generic withheld word, and no count ─────────
+  {
+    label: "a withheld team block carries the intervention count",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "    pausedInPeriod: span.paused,\n    withheld,",
+    to: "    pausedInPeriod: span.paused,\n    interventions: aggregate.interventions,\n    withheld,",
+    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
+    because: "the count beside 'withheld' tells a viewer how much the others recorded, as P2 did",
+  },
+  {
+    label: "the team line names which minimum failed",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  return `${INDENT}hint outcomes, ${month}: ${BELOW_MINIMUMS}${clippedFrom(block)}${NEVER_A_TEAM_OF_THREE}`;",
+    to: "  return `${INDENT}hint outcomes, ${month}: withheld (${bareUntrusted(withheld)})${clippedFrom(block)}`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "an older hub's 'too_few_recorded' is printed, and the viewer learns exactly how little the others said",
+  },
+  {
+    label: "the credit names which minimum failed",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "  return credit.withheld === \"not_recordable\" ? NOT_RECORDABLE_CREDIT : BELOW_MINIMUMS_CREDIT;",
+    to: "  return credit.withheld === \"not_recordable\" ? NOT_RECORDABLE_CREDIT : `no count (${credit.withheld ?? \"\"})`;",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the author learns which minimum his teammates' words missed, and so roughly how many spoke",
   },
 ];
 
@@ -18258,8 +18283,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 3
- * PRINTS: packages/cli/test/pilot-render.test.ts 28
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 4
+ * PRINTS: packages/cli/test/pilot-render.test.ts 29
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -18510,7 +18535,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 18
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 19
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4

@@ -101,12 +101,11 @@ const reasonLines = (view: MyHintOutcomes): readonly string[] =>
 
 const PEOPLE_MINIMUM = String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders);
 
-/** Why a credit carries no number; a word this client lacks prints as itself. */
-const CREDIT_WITHHELD: Readonly<Record<string, string>> = {
-  not_recordable: "nothing to count — outcomes became recordable here after it ended",
-  no_interventions: "no hint pointed at it",
-  too_few_recorders: `no count — leaving out any one person, fewer than ${PEOPLE_MINIMUM} people recorded an outcome about it, and a count could single someone out`,
-};
+/** Why a credit carries no number: the month was outside the repo's enrolment (07 §13.11, M3). */
+const NOT_RECORDABLE_CREDIT = "nothing to count — the pilot was not enrolled here during it";
+
+/** One generic sentence for every other word (review M1): which minimum failed is never said. */
+const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums: leaving out any one person, at least ${PEOPLE_MINIMUM} people must have recorded an outcome about it`;
 
 /**
  * THE SOURCE CREDIT (07 §13.10, review #10): one closed month's follows of
@@ -117,8 +116,7 @@ const creditWords = (credit: MyHintOutcomes["yourWork"]): string => {
   if (credit.withheld === null && credit.followed !== null) {
     return `followed ${plural(credit.followed, "time")} — counted once, leaving out any one person, at least ${PEOPLE_MINIMUM} people recorded outcomes about it`;
   }
-  const withheld = credit.withheld ?? "not_recordable";
-  return CREDIT_WITHHELD[withheld] ?? `no count (${bareUntrusted(withheld)})`;
+  return credit.withheld === "not_recordable" ? NOT_RECORDABLE_CREDIT : BELOW_MINIMUMS_CREDIT;
 };
 
 const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>

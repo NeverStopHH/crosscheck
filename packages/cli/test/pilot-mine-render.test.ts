@@ -68,22 +68,23 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     );
   });
 
-  test("below the minimum there is no number, and the line says why", () => {
+  test("review M1: below the minimum there is no number, and one generic sentence says why", () => {
     // Act
-    const line = creditLine({ ...JULY, followed: null, withheld: "too_few_recorders" });
+    const line = creditLine({ ...JULY, followed: null, withheld: "below_minimums" });
 
     // Assert
     expect(line).toBe(
-      "your own work, in teammates' hints, July 2026: no count — leaving out any one person, fewer than 3 people recorded an outcome about it, and a count could single someone out",
+      "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have recorded an outcome about it",
     );
   });
 
-  test("a month nothing pointed at the work says so, never 'followed 0 times'", () => {
+  test("review M1: an older hub's specific word prints as the same generic sentence, never 'followed 0 times'", () => {
     // Act
-    const line = creditLine({ ...JULY, followed: null, withheld: "no_interventions" });
+    const empty = creditLine({ ...JULY, followed: null, withheld: "no_interventions" });
+    const few = creditLine({ ...JULY, followed: null, withheld: "too_few_recorders" });
 
     // Assert
-    expect(line).toBe("your own work, in teammates' hints, July 2026: no hint pointed at it");
+    expect([empty, few]).toEqual(["your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have recorded an outcome about it", "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have recorded an outcome about it"]);
   });
 
   test("a month that ended before outcomes were recordable says so", () => {
@@ -97,7 +98,7 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
 
     // Assert
     expect(line).toBe(
-      "your own work, in teammates' hints, June 2026: nothing to count — outcomes became recordable here after it ended",
+      "your own work, in teammates' hints, June 2026: nothing to count — the pilot was not enrolled here during it",
     );
   });
 

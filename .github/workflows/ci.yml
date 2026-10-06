@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1631
+    # PRINTS: 1634
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -192,9 +192,9 @@ jobs:
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
-    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 4
+    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 5
     # PRINTS: packages/cli/src/cli/pilot-mine.ts 1
-    # PRINTS: packages/cli/src/cli/pilot-render.ts 31
+    # PRINTS: packages/cli/src/cli/pilot-render.ts 32
     # PRINTS: packages/cli/src/cli/pilot.ts 3
     # PRINTS: packages/cli/src/cli/pin-observability.ts 14
     # PRINTS: packages/cli/src/cli/pin-render.ts 7
@@ -439,7 +439,7 @@ jobs:
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 15
     # PRINTS: packages/server/src/services/pilot-label-figures.ts 12
-    # PRINTS: packages/server/src/services/pilot-outcome-figures.ts 3
+    # PRINTS: packages/server/src/services/pilot-outcome-figures.ts 4
     # PRINTS: packages/server/src/services/pilot-report.ts 20
     # PRINTS: packages/server/src/services/pilot-session-set.ts 9
     # PRINTS: packages/server/src/services/pilot.ts 28
@@ -624,10 +624,10 @@ jobs:
     # PRINTS: pilot-label.ts 8
     # PRINTS: pilot-mark.ts 5
     # PRINTS: pilot-marks.ts 2
-    # PRINTS: pilot-mine-render.ts 4
+    # PRINTS: pilot-mine-render.ts 5
     # PRINTS: pilot-mine.ts 1
-    # PRINTS: pilot-outcome-figures.ts 3
-    # PRINTS: pilot-render.ts 31
+    # PRINTS: pilot-outcome-figures.ts 4
+    # PRINTS: pilot-render.ts 32
     # PRINTS: pilot-report.ts 20
     # PRINTS: pilot-session-set.ts 9
     # PRINTS: pilot.ts 38

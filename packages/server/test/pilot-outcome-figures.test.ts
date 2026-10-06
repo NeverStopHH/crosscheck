@@ -15,8 +15,8 @@
  *   · prints figures only when, leaving out ANY one person's words — the
  *     viewer's own included, whoever views it (review H1) — at least three
  *     people's words about at least three people's work, ten or more, remain;
- *     otherwise it says which minimum was not met, and no figure. A team of
- *     three never meets them.
+ *     otherwise it says only "below_minimums" (review M1), with no count. A
+ *     team of three never meets them.
  *
  * IT STARTS WHERE OUTCOMES COULD BE RECORDED (the H1 lesson): a delivery from
  * before `pilot_outcomes_since` is outside the population, never "unmarked".
@@ -29,9 +29,12 @@ import { lastWholeMonth, readPeriodAggregate } from "../src/services/outcome-pop
 
 import {
   ANNA_CONTEXT,
+  ANNA_SESSION,
   LENA_CONTEXT,
+  LENA_SESSION,
   SECONDS_TO_AUGUST,
   createCrowd,
+  deliverTo,
   recordCrowdWords,
 } from "./fixtures/hint-outcome-crowd.ts";
 import type { Crowd } from "./fixtures/hint-outcome-crowd.ts";
@@ -57,6 +60,10 @@ const ENROLLED_ISO = "2026-07-24T09:00:00.000Z";
 
 const NICK_CONTEXT = `wc_${NICK_SESSION}`;
 const NICK_THIRD_SESSION = "cc_aaaaaaaa-3333-4333-8333-333333333333";
+const MIKE_SECOND = "cc_cccccccc-2222-4222-8222-222222222222";
+const ANNA_SECOND = "cc_dddddddd-2222-4222-8222-222222222222";
+const LENA_SECOND = "cc_eeeeeeee-2222-4222-8222-222222222222";
+const MAIN_SESSIONS = { nick: NICK_SESSION, mike: MIKE_SESSION, anna: ANNA_SESSION, lena: LENA_SESSION } as const;
 
 /** Words in the crowd, one per pointer, as [who, ref, outcome]. */
 const say = async (
@@ -107,9 +114,8 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
       recordableSinceIso: ENROLLED_ISO,
       countedFromIso: ENROLLED_ISO,
       pausedInPeriod: false,
-      interventions: 24,
       withheld: null,
-      figures: { followed: 9, overrode: 3, notRelevantNow: 2, noise: 1, unmarked: 9 },
+      figures: { interventions: 24, followed: 9, overrode: 3, notRelevantNow: 2, noise: 1, unmarked: 9 },
     });
   });
 
@@ -154,7 +160,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     const outcomes = await outcomesOf(world);
 
     // Assert
-    expect(outcomes["withheld"]).toBe("too_few_recorders");
+    expect(outcomes["withheld"]).toBe("below_minimums");
     expect(outcomes["figures"]).toBeNull();
     expect(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders).toBe(3);
   });
@@ -191,23 +197,91 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     const outcomes = await outcomesOf(crowd);
 
     // Assert — leaving Nick out, only two people's words remain
-    expect(outcomes["withheld"]).toBe("too_few_recorders");
+    expect(outcomes["withheld"]).toBe("below_minimums");
     expect(outcomes["figures"]).toBeNull();
   });
 
-  test("review H1 (P7): when, leaving one person out, every other word is about that person's work, no figure prints", async () => {
-    // Arrange — Nick, Mike, Anna and Lena speak only about Ken's work; Ken about theirs.
-    // Before H1 this printed, and Ken, subtracting his own four, read how the team treated his work.
+  test("review M1 (P2): a withheld month names no minimum and carries no count", async () => {
+    // Arrange — the review's P2: before M1, "too_few_recorded" with a count of 9 told Nick that
+    // Ken and Mike had recorded exactly one word each
+    const world = await createOutcomeWorld();
+    await postRecords(world.harness, world.ken, {
+      records: [deliveryRecord(KEN_SESSION, "work_context", NICK_CONTEXT, "prompt_hint")],
+    });
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    await recordOutcome(world, world.ken, { ref: NICK_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    await recordOutcome(world, world.mike, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine too" });
+    world.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const outcomes = await outcomesOf(world);
+
+    // Assert — one generic word; no count anywhere in the block
+    expect(outcomes["withheld"]).toBe("below_minimums");
+    expect(outcomes["figures"]).toBeNull();
+    expect(Object.keys(outcomes).sort()).toEqual([
+      "countedFromIso",
+      "figures",
+      "pausedInPeriod",
+      "periodEndIso",
+      "periodStartIso",
+      "recordableSinceIso",
+      "withheld",
+    ]);
+  });
+
+  test("review H1: three people with plenty of words about plenty of work still print nothing", async () => {
+    // Arrange — Nick, Mike and Anna each record five; fifteen words about five people's work.
+    // Only the people-minimum fails: leaving out any one of them leaves two.
     const crowd = await createCrowd();
     await say(crowd, [
       ["nick", KEN_CONTEXT, "followed"],
       ["nick", KEN_CLAIM, "overrode"],
-      ["mike", KEN_CONTEXT, "overrode"],
+      ["nick", MIKE_CONTEXT, "followed"],
+      ["nick", ANNA_CONTEXT, "followed"],
+      ["nick", LENA_CONTEXT, "followed"],
+      ["mike", KEN_CONTEXT, "followed"],
       ["mike", KEN_CLAIM, "followed"],
+      ["mike", NICK_CONTEXT, "overrode"],
+      ["mike", ANNA_CONTEXT, "followed"],
+      ["mike", LENA_CONTEXT, "followed"],
       ["anna", KEN_CONTEXT, "followed"],
       ["anna", KEN_CLAIM, "followed"],
-      ["lena", KEN_CONTEXT, "followed"],
-      ["lena", KEN_CLAIM, "overrode"],
+      ["anna", NICK_CONTEXT, "followed"],
+      ["anna", MIKE_CONTEXT, "overrode"],
+      ["anna", LENA_CONTEXT, "followed"],
+    ]);
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const outcomes = await outcomesOf(crowd);
+
+    // Assert
+    expect(outcomes["withheld"]).toBe("below_minimums");
+    expect(outcomes["figures"]).toBeNull();
+  });
+
+  test("review H1 (P7): when, leaving one person out, every other word is about that person's work, no figure prints", async () => {
+    // Arrange — Nick, Mike, Anna and Lena speak only about Ken's work, from two sessions each;
+    // Ken about theirs. Before H1 this printed, and Ken, subtracting his own four, read how the
+    // team treated his work. Only the sources minimum fails: sixteen words remain without Ken.
+    const crowd = await createCrowd();
+    const seconds = { nick: NICK_SECOND_SESSION, mike: MIKE_SECOND, anna: ANNA_SECOND, lena: LENA_SECOND } as const;
+    for (const who of ["nick", "mike", "anna", "lena"] as const) {
+      await registerTestSession(crowd.harness, crowd[who].apiKey, { id: seconds[who], repo: REPO });
+      await deliverTo(crowd, crowd[who], seconds[who], [
+        ["work_context", KEN_CONTEXT],
+        ["claim", KEN_CLAIM],
+      ]);
+      const pointers = [MAIN_SESSIONS[who], seconds[who]].flatMap((session) => [
+        deliveryIdFor(session, KEN_CONTEXT, "prompt_hint"),
+        deliveryIdFor(session, KEN_CLAIM, "prompt_hint"),
+      ]);
+      for (const id of pointers) {
+        await recordOutcome(crowd, crowd[who], { ref: id, outcome: "followed" });
+      }
+    }
+    await say(crowd, [
       ["ken", NICK_CONTEXT, "followed"],
       ["ken", MIKE_CONTEXT, "not_relevant_now"],
       ["ken", ANNA_CONTEXT, "followed"],
@@ -219,7 +293,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     const outcomes = await outcomesOf(crowd);
 
     // Assert
-    expect(outcomes["withheld"]).toBe("too_few_sources");
+    expect(outcomes["withheld"]).toBe("below_minimums");
     expect(outcomes["figures"]).toBeNull();
   });
 
@@ -245,7 +319,7 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     const outcomes = await outcomesOf(crowd);
 
     // Assert
-    expect(outcomes["withheld"]).toBe("too_few_recorded");
+    expect(outcomes["withheld"]).toBe("below_minimums");
     expect(outcomes["figures"]).toBeNull();
     expect(HINT_OUTCOME_DISCLOSURE_MINIMUMS).toEqual({ recorders: 3, sources: 3, recorded: 10 });
   });
@@ -277,11 +351,10 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     world.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
 
     // Act
-    const outcomes = await outcomesOf(world);
+    const interventions = await julyInterventions(world);
 
     // Assert — the world's four, not five
-    expect(outcomes["interventions"]).toBe(4);
-    expect(MIKE_SESSION).toBeDefined();
+    expect(interventions).toBe(4);
   });
 
   test("a repo nobody enrolled has no instant and no figure", async () => {
@@ -295,10 +368,10 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     expect(outcomes).toMatchObject({
       recordableSinceIso: null,
       countedFromIso: null,
-      interventions: 0,
       withheld: "not_recordable",
       figures: null,
     });
+    expect(outcomes).not.toHaveProperty("interventions");
   });
 
   test("review M3: enrolment stamps when outcomes first became recordable, and a re-enrolment never restamps it", async () => {
