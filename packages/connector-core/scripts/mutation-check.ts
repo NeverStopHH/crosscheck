@@ -17808,7 +17808,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a teammate's credit counts one or two recipients' words",
     file: `${SERVER}/src/services/hint-outcome-view.ts`,
-    from: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false });",
+    from: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });",
     to: '  const withheld = aggregate.interventions === 0 ? "no_interventions" : null;',
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "with two recipients the author's count drops by one the moment one of them switches to overrode",
@@ -18651,6 +18651,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "a tripwire ask in a pause refuses the word for a pointer whose prompt hint was enrolled",
   },
+  // ── 07 §13.12, review M-1: a credit counts only once three people FOLLOWED ──
+  {
+    label: "the credit's follower minimum forgets to leave one person out",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    (!checks.followers || aggregate.followers - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) &&",
+    to: "    (!checks.followers || aggregate.followers >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) &&",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "three followers and one who overrode print 'followed 3', and each follower reads the fourth's verdict",
+  },
+  {
+    label: "the credit is shown over recorders, not followers (probe B)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });",
+    to: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: false });",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "four teammates who each overrode the author print 'followed 0' — four verdicts in one number",
+  },
+  {
+    label: "the follower count counts everyone who recorded",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      count(DISTINCT recipient) FILTER (WHERE state = 'followed')::int AS followers,",
+    to: "      count(DISTINCT recipient)::int AS followers,",
+    test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
+    because: "a homogeneous override reads as enough followers, and 'followed 0' prints",
+  },
+  {
+    label: "the client prints a hub's 'followed 0' credit",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "  if (credit.withheld === null && credit.followed !== null && credit.followed > 0) {",
+    to: "  if (credit.withheld === null && credit.followed !== null) {",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "an older hub's zero reaches the author as every teammate's verdict at once",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18741,7 +18774,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 12
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 5
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 30
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
@@ -18974,7 +19007,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
- * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 12
+ * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 15
  * PRINTS: packages/server/test/hint-outcomes.test.ts 33
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3

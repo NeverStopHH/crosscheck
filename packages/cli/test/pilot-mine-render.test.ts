@@ -64,7 +64,7 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
 
     // Assert
     expect(line).toBe(
-      "your own work, in teammates' hints, July 2026: followed 4 times — counted once, leaving out any one person, at least 3 people recorded outcomes about it",
+      "your own work, in teammates' hints, July 2026: followed 4 times — shown once, leaving out any one person, at least 3 people followed it",
     );
   });
 
@@ -74,7 +74,17 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
 
     // Assert
     expect(line).toBe(
-      "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have recorded an outcome about it",
+      "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have followed it",
+    );
+  });
+
+  test("review M-1: a hub's count of 0 is never printed — the same generic sentence", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 0, withheld: null });
+
+    // Assert — "followed 0 times" is every recorder's verdict at once
+    expect(line).toBe(
+      "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have followed it",
     );
   });
 
@@ -84,7 +94,7 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     const few = creditLine({ ...JULY, followed: null, withheld: "too_few_recorders" });
 
     // Assert
-    expect([empty, few]).toEqual(["your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have recorded an outcome about it", "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have recorded an outcome about it"]);
+    expect([empty, few]).toEqual(["your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have followed it", "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have followed it"]);
   });
 
   test("a month that ended before outcomes were recordable says so", () => {

@@ -1344,6 +1344,13 @@ At the hub, a word named by a twin no figure can count — delivered before outc
 widest window — lands on the pointer's newest twin that one can, and is refused only when none can. (A pull in
 the same session shares the prompt hint's delivery id, so "not unsolicited" cannot come from a twin.)
 
+*M-1 — the credit printed "followed 0" from four people who each overrode (probe B).* A homogeneous figure is
+every recorder's verdict at once, readable by anyone who knows one of them. **The credit counts only once,
+leaving out any one recorder, at least three people FOLLOWED** (`followers − 1 ≥ 3`, the distinct recipients
+whose word stands at followed); otherwise it is the one generic sentence, now "at least 3 people must have
+followed it". A count of 0 therefore never prints — and the client refuses to print one an older hub sends.
+The team line's minimums are unchanged.
+
 *R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
 of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
 and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —

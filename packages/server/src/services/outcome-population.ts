@@ -222,6 +222,8 @@ export interface PeriodAggregate {
   readonly unmarked: number;
   /** People who recorded at least one word. */
   readonly recorders: number;
+  /** People whose word on at least one intervention stands at followed (review M-1). */
+  readonly followers: number;
   /** The fewest distinct people's work the words cover once any one recorder's words are left out. */
   readonly sourcesWithoutAnyOne: number;
   /** The words left once the recorder who said most is left out — the dominance rule. */
@@ -236,6 +238,7 @@ type AggregateRow = {
   readonly noise: number;
   readonly unmarked: number;
   readonly recorders: number;
+  readonly followers: number;
   readonly sources_without_any_one: number;
   readonly largest_recorder_words: number;
 };
@@ -273,6 +276,7 @@ export const readPeriodAggregate = async (
       count(*) FILTER (WHERE state = 'not_relevant_now')::int AS not_relevant_now,
       count(*) FILTER (WHERE state = 'noise')::int AS noise,
       count(*) FILTER (WHERE state = 'unmarked')::int AS unmarked,
+      count(DISTINCT recipient) FILTER (WHERE state = 'followed')::int AS followers,
       ${subtractionSafeColumns}
     FROM scoped`);
   const row = rows.rows[0];
@@ -285,6 +289,7 @@ export const readPeriodAggregate = async (
     noise: Number(row?.noise ?? 0),
     unmarked: Number(row?.unmarked ?? 0),
     recorders: Number(row?.recorders ?? 0),
+    followers: Number(row?.followers ?? 0),
     sourcesWithoutAnyOne: Number(row?.sources_without_any_one ?? 0),
     wordsWithoutLargest: recorded - Number(row?.largest_recorder_words ?? 0),
   };
@@ -299,15 +304,19 @@ const LEFT_OUT = 1;
  * three other people's words, about at least three people's work, ten or more
  * of them. So a team of three never prints. The team line checks all three;
  * an author's credit is about their own work, so only the people-minimum
- * applies to it. Whichever fails, the answer is ONE generic word (review M1).
+ * applies to it — and it is counted over the people who FOLLOWED (review
+ * M-1): a credit of "followed 0" from four people who each overrode is four
+ * verdicts in one number, and so is "followed 3" from three followers beside
+ * one who overrode. Whichever fails, the answer is ONE generic word (review M1).
  */
 export const withholdingOf = (
   aggregate: PeriodAggregate,
-  checks: { readonly sources: boolean; readonly recorded: boolean },
+  checks: { readonly sources: boolean; readonly recorded: boolean; readonly followers: boolean },
 ): HintOutcomeWithholding | null => {
   const meetsMinimums =
     aggregate.interventions > 0 &&
     aggregate.recorders - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders &&
+    (!checks.followers || aggregate.followers - LEFT_OUT >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders) &&
     (!checks.sources || aggregate.sourcesWithoutAnyOne >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources) &&
     (!checks.recorded || aggregate.wordsWithoutLargest >= HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded);
   return meetsMinimums ? null : "below_minimums";

@@ -178,7 +178,8 @@ const readYourWork = async (
     who: sql`s.developer_id <> ${input.developerId}`,
     sourceIs: input.developerId,
   });
-  const withheld = withholdingOf(aggregate, { sources: false, recorded: false });
+  // review M-1: a count only once, with any one person left out, three people FOLLOWED — never "followed 0"
+  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });
   return { ...stamps, followed: withheld === null ? aggregate.followed : null, withheld };
 };
 

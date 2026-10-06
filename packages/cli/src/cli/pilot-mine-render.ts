@@ -105,16 +105,17 @@ const PEOPLE_MINIMUM = String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorders);
 const NOT_RECORDABLE_CREDIT = "nothing to count — the pilot was not enrolled here during it";
 
 /** One generic sentence for every other word (review M1): which minimum failed is never said. */
-const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums: leaving out any one person, at least ${PEOPLE_MINIMUM} people must have recorded an outcome about it`;
+const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums: leaving out any one person, at least ${PEOPLE_MINIMUM} people must have followed it`;
 
 /**
- * THE SOURCE CREDIT (07 §13.10, review #10): one closed month's follows of
- * the caller's work — or why there is no number, never a "followed 0" that
- * a teammate's one changed word could move.
+ * THE SOURCE CREDIT (07 §13.10, review #10, M-1): one closed month's follows
+ * of the caller's work, shown only once three people followed it with any one
+ * left out — or why there is no number. Never a "followed 0", whoever sent it:
+ * a zero is every recorder's verdict at once.
  */
 const creditWords = (credit: Credit): string => {
-  if (credit.withheld === null && credit.followed !== null) {
-    return `followed ${plural(credit.followed, "time")} — counted once, leaving out any one person, at least ${PEOPLE_MINIMUM} people recorded outcomes about it`;
+  if (credit.withheld === null && credit.followed !== null && credit.followed > 0) {
+    return `followed ${plural(credit.followed, "time")} — shown once, leaving out any one person, at least ${PEOPLE_MINIMUM} people followed it`;
   }
   return credit.withheld === "not_recordable" ? NOT_RECORDABLE_CREDIT : BELOW_MINIMUMS_CREDIT;
 };

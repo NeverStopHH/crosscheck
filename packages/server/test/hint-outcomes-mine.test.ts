@@ -28,7 +28,7 @@ import {
   recordPersonOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
-import { SECONDS_TO_AUGUST, createCrowd, recordCrowdWords } from "./fixtures/hint-outcome-crowd.ts";
+import { NICK_CONTEXT, SECONDS_TO_AUGUST, createCrowd, recordCrowdWords } from "./fixtures/hint-outcome-crowd.ts";
 import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
 import type { TestDeveloper } from "./helpers.ts";
 
@@ -182,6 +182,37 @@ describe("GET /api/hint-outcomes/mine", () => {
 
     // Assert — before H1 this printed "followed 2", and Ken, told by Nick what Nick said, knew Anna's
     expect(ken["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "below_minimums" });
+  });
+
+  test("review M-1 (probe B): four teammates who each overrode the author's work print no count — never 'followed 0'", async () => {
+    // Arrange — Ken, Mike, Anna and Lena each set Nick's work aside in July
+    const crowd = await createCrowd();
+    for (const who of [crowd.ken, crowd.mike, crowd.anna, crowd.lena]) {
+      await recordOutcome(crowd, who, { ref: NICK_CONTEXT, outcome: "overrode", reason: "went my own way" });
+    }
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const nick = await viewOf(await readMine(crowd, crowd.nick));
+
+    // Assert — a homogeneous zero is four people's verdict, each readable by subtraction
+    expect(nick["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "below_minimums" });
+  });
+
+  test("review M-1: three who followed and one who overrode print no count — leaving one follower out leaves two", async () => {
+    // Arrange
+    const crowd = await createCrowd();
+    for (const who of [crowd.ken, crowd.mike, crowd.anna]) {
+      await recordOutcome(crowd, who, { ref: NICK_CONTEXT, outcome: "followed" });
+    }
+    await recordOutcome(crowd, crowd.lena, { ref: NICK_CONTEXT, outcome: "overrode", reason: "went my own way" });
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+
+    // Act
+    const nick = await viewOf(await readMine(crowd, crowd.nick));
+
+    // Assert
+    expect(nick["yourWork"]).toEqual({ ...JULY, followed: null, withheld: "below_minimums" });
   });
 
   test("review #10: two people's words about a teammate's work print no count — a switch would show as a step", async () => {
