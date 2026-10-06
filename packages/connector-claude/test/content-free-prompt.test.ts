@@ -87,6 +87,8 @@ const fixture = async (label: string): Promise<Fixture> => {
       CROSSCHECK_HUB_URL: hub.url,
       CROSSCHECK_API_KEY: "test-key",
       CROSSCHECK_TIMEOUT_MS: String(HTTP_TIMEOUT_MS),
+      // A fired intent worker must never reach a real model from a test.
+      CROSSCHECK_SUMMARIZER_CMD: "/usr/bin/false",
     },
   };
 };
@@ -210,6 +212,25 @@ describe("capture after a content-free prompt is capture as usual", () => {
       expect((await captureCounters(prompted)).editToolFires).toBe(1);
     },
   );
+});
+
+describe("a turn that carries no task never spends the session's one intent fire (H2)", () => {
+  const TASK_PROMPT = "why does the refresh call 500 after the key rotation on staging";
+
+  test.each(FLOORED_TURNS)("%p leaves the fire for the next real prompt", async (turn) => {
+    // Arrange
+    const f = await fixture("cf-intent-fire");
+
+    // Act — the floored turn, then a real task
+    await runHook("user-prompt-submit", promptPayload(f, turn), f.env);
+    const afterTurn = (await readSessionState(f.home, f.sessionId))?.intentFireCount;
+    await runHook("user-prompt-submit", promptPayload(f, TASK_PROMPT), f.env);
+    const afterTask = (await readSessionState(f.home, f.sessionId))?.intentFireCount;
+
+    // Assert
+    expect(afterTurn).toBe(0);
+    expect(afterTask).toBe(1);
+  });
 });
 
 describe("the prompt stays on this machine, and nothing travels in its place", () => {

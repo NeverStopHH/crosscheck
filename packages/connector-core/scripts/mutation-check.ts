@@ -18009,6 +18009,30 @@ export const MUTATIONS: readonly Mutation[
     because: "a long prompt whose task word comes late is judged on its preamble and floored",
   },
   {
+    label: "the intent fire parks the harness's words",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  const human = humanPromptText(prompt);\n  return isSubstantivePrompt(human)",
+    to: "  const human = prompt;\n  return isSubstantivePrompt(human)",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "a background notification as the first long turn spends the one fire and parks \"Monitor event: CI checks pass\" as the session's intent (H2)",
+  },
+  {
+    label: "a content-free prompt spends the session's one intent fire",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  return isSubstantivePrompt(human) && !isContentFreePrompt(human) ? human : null;",
+    to: "  return isSubstantivePrompt(human) ? human : null;",
+    test: `${CONNECTOR}/test/content-free-prompt.test.ts`,
+    because: "\"mache weiter, limit zuruckgesetzt, bitte …\" is long enough to be summarised as the session's task, and the real task after it gets no fire",
+  },
+  {
+    label: "the prompt hook fires the intent worker on the raw turn",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    const prompt = intentPromptOf(ctx.payload.prompt ?? \"\");",
+    to: "    const prompt = ctx.payload.prompt ?? \"\";",
+    test: `${CONNECTOR}/test/content-free-prompt.test.ts`,
+    because: "every task notification spends the fire the developer's first real prompt was owed",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18185,6 +18209,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
+ * PRINTS: packages/connector-claude/test/content-free-prompt.test.ts 2
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
@@ -18201,6 +18226,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 3
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1

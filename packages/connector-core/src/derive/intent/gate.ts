@@ -10,6 +10,8 @@ import {
   INTENT_MIN_PROMPT_CHARS,
   SUMMARIZER_FAILURE_MAX_CHARS,
 } from "../../constants.ts";
+import { humanPromptText, isContentFreePrompt } from "@crosscheck/schema";
+
 import { cutWellFormed } from "../../briefing/cut.ts";
 import type { SessionState } from "../../state/session-state.ts";
 
@@ -42,6 +44,20 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
   return trimmed
     .split(/[^\p{L}\p{N}]+/u)
     .some((token) => token.length >= HINT_MIN_TOKEN_CHARS);
+};
+
+/**
+ * What the session's ONE intent fire is spent on, or null (review 1006b, H2):
+ * never a turn the harness wrote, never a prompt that carries no task, and
+ * only the HUMAN text of a turn — the wrapper neither parks its words nor
+ * lends its length to the floor. A notification as the first long turn used
+ * to spend the fire and park "Monitor event: CI checks pass" as the intent.
+ * A turn that is all harness has no human text, so it fails the length
+ * floor below — `isHarnessTurn` is exactly that, and needs no second call.
+ */
+export const intentPromptOf = (prompt: string): string | null => {
+  const human = humanPromptText(prompt);
+  return isSubstantivePrompt(human) && !isContentFreePrompt(human) ? human : null;
 };
 
 /** One fire, booked BEFORE the spawn (the Stop hook's ordering contract). */

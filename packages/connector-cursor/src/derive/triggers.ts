@@ -46,7 +46,7 @@ import {
   withGhostClaimed,
 } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import {
-  isSubstantivePrompt,
+  intentPromptOf,
   withIntentFire,
 } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import {
@@ -116,8 +116,8 @@ export const maybeSpawnCursorIntentWorker = async (
   ctx: CursorHookContext,
 ): Promise<void> => {
   try {
-    const prompt = ctx.payload.prompt ?? "";
-    if (!isSubstantivePrompt(prompt)) {
+    const prompt = intentPromptOf(ctx.payload.prompt ?? "");
+    if (prompt === null) {
       return;
     }
     const state = await readSessionState(ctx.config.home, ctx.hostSessionKey);

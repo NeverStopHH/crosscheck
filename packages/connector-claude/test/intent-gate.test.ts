@@ -12,6 +12,7 @@ import {
 import { deriveSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import {
+  intentPromptOf,
   isSubstantivePrompt,
   withIntentFailure,
   withIntentFire,
@@ -58,6 +59,32 @@ describe("isSubstantivePrompt", () => {
 
   test("a prompt with no word of three characters never fires", () => {
     expect(isSubstantivePrompt("a b c d e f g h i j k l m n o p q r s t u v w x y z a b c d e f g")).toBe(false);
+  });
+});
+
+describe("intentPromptOf: what the one intent fire is spent on, and what is parked (review 1006b, H2)", () => {
+  test("a real task is parked as typed", () => {
+    expect(intentPromptOf(TASK)).toBe(TASK);
+  });
+
+  test.each([
+    ["a task notification", '<task-notification><summary>Monitor event: "PR #74 CI checks for 493ffb4f"</summary></task-notification>'],
+    ["the notification marker", "[SYSTEM NOTIFICATION - NOT USER INPUT]\nMonitor event: PR #74 CI checks pass on the branch"],
+    ["another agent's report", '<agent-message from="a7">[Subagent hand-back] Report: CI checks pass on PR 74</agent-message>'],
+    ["a long content-free prompt", "mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen"],
+    ["an English one", "please continue, the usage limit was reset, keep going"],
+  ])("%s never spends the fire", (_, turn) => {
+    expect(intentPromptOf(turn)).toBeNull();
+  });
+
+  test("around a wrapper, only the human text is parked", () => {
+    const turn = `<ide_opened_file>The user opened the file /repo/src/auth/refresh.ts in the IDE.</ide_opened_file>\n${TASK}`;
+    expect(intentPromptOf(turn)).toBe(TASK);
+  });
+
+  test("a wrapper does not lend its length to a short human remark", () => {
+    const turn = `<ide_opened_file>The user opened the file /repo/src/auth/refresh.ts in the IDE, a long path.</ide_opened_file>\nfix it`;
+    expect(intentPromptOf(turn)).toBeNull();
   });
 });
 

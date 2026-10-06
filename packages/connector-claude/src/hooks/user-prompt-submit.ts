@@ -60,7 +60,7 @@ import {
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
-import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
+import { intentPromptOf, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
@@ -132,8 +132,8 @@ const spawnIntentWorker = (ctx: HookContext, promptFile: string): void => {
  */
 const maybeSpawnIntentWorker = async (ctx: HookContext): Promise<void> => {
   try {
-    const prompt = ctx.payload.prompt ?? "";
-    if (!isSubstantivePrompt(prompt)) {
+    const prompt = intentPromptOf(ctx.payload.prompt ?? "");
+    if (prompt === null) {
       return;
     }
     const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
