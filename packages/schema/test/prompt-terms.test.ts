@@ -57,6 +57,7 @@ describe("content terms are the words left after the stop lists", () => {
     ["mache weiter", true],
     ["please continue", true],
     ["session limit reset, resume", true],
+    ["mach mal, bitte", true],
     ["reset the limits please", false],
     ["continue the database migration", false],
     ["", true],

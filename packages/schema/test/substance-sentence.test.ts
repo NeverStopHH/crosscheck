@@ -19,7 +19,11 @@ describe("the first sentence that carries content", () => {
     ["a German one-word acknowledgement is skipped", "Bestätigt. Der Cache-Schlüssel ändert sich bei jedem Deploy.", "Der Cache-Schlüssel ändert sich bei jedem Deploy."],
     ["a reference with too few words is skipped", "See PR #412. The fix pins the cache key per release.", "The fix pins the cache key per release."],
     ["a German abbreviation does not end the sentence", "Wir nutzen z. B. Redis für den Sitzungs-Cache. Danach folgt der Import aller Daten.", "Wir nutzen z. B. Redis für den Sitzungs-Cache."],
-    ["a named abbreviation does not end the sentence", "Wir prüfen den Upload bzw. Den Download für jeden Nutzer. Danach folgt der Import aller Daten.", "Wir prüfen den Upload bzw. Den Download für jeden Nutzer."],
+    [
+      "a named abbreviation does not end the sentence",
+      "Wir prüfen den Upload bzw. Den Download der großen Trainingsvideos für jeden Nutzer. Danach folgt der Import aller Daten.",
+      "Wir prüfen den Upload bzw. Den Download der großen Trainingsvideos für jeden Nutzer.",
+    ],
     ["an English abbreviation does not end the sentence", "Use a queue, e.g. SQS, for the upload callbacks. The callbacks retry three times.", "Use a queue, e.g. SQS, for the upload callbacks."],
     ["invisible characters and a full stop are not a sentence", "​​​. Real content follows here.", "Real content follows here."],
     ["a body with no content sentence at all is nothing", "Yes. Done. See PR #412.", ""],

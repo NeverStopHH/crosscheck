@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1634
+    # PRINTS: 1643
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -372,7 +372,7 @@ jobs:
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
     # PRINTS: packages/schema/src/file-ref.ts 5
-    # PRINTS: packages/schema/src/harness-turn.ts 12
+    # PRINTS: packages/schema/src/harness-turn.ts 13
     # PRINTS: packages/schema/src/landed-context.ts 3
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
@@ -380,9 +380,9 @@ jobs:
     # PRINTS: packages/schema/src/prompt-terms.ts 9
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
-    # PRINTS: packages/schema/src/session-control.ts 4
+    # PRINTS: packages/schema/src/session-control.ts 5
     # PRINTS: packages/schema/src/session.ts 2
-    # PRINTS: packages/schema/src/substance-sentence.ts 10
+    # PRINTS: packages/schema/src/substance-sentence.ts 13
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/schema/src/untrusted-text.ts 6
     # PRINTS: packages/server/src/constants.ts 1
@@ -424,7 +424,7 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
-    # PRINTS: packages/server/src/services/hints.ts 18
+    # PRINTS: packages/server/src/services/hints.ts 22
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
@@ -558,11 +558,11 @@ jobs:
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
-    # PRINTS: harness-turn.ts 12
+    # PRINTS: harness-turn.ts 13
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 17
-    # PRINTS: hints.ts 21
+    # PRINTS: hints.ts 25
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 13
     # PRINTS: index.ts 4
@@ -665,7 +665,7 @@ jobs:
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 28
     # PRINTS: seq-cost.ts 8
-    # PRINTS: session-control.ts 4
+    # PRINTS: session-control.ts 5
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
@@ -688,7 +688,7 @@ jobs:
     # PRINTS: status.ts 9
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
-    # PRINTS: substance-sentence.ts 10
+    # PRINTS: substance-sentence.ts 13
     # PRINTS: suspect-render.ts 3
     # PRINTS: suspect.ts 7
     # PRINTS: sweep.ts 3

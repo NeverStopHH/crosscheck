@@ -18158,6 +18158,78 @@ export const MUTATIONS: readonly Mutation[
     because: "\"1. … 2. Rest.\" shows two list items as if one were a qualifier of the other",
   },
   {
+    label: "the floor counts a retracted claim's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        sql`${claims.tsv} @@ ${anyToken}`,\n        notSuperseded(db),\n",
+    to: "        sql`${claims.tsv} @@ ${anyToken}`,\n",
+    test: `${SERVER}/test/hint-floor-integrity.test.ts`,
+    because: "a tree is pointed at through words its author took back, in a claim the reader is never shown (M5)",
+  },
+  {
+    label: "the floor counts a muted author's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        notMutedCondition(readerDeveloperId, agentSessions.developerId),\n        // A draft's words never qualify its tree (review 1006b, L6).\n",
+    to: "        // A draft's words never qualify its tree (review 1006b, L6).\n",
+    test: `${SERVER}/test/hint-floor-integrity.test.ts`,
+    because: "the developer a reader muted still decides which teammate tree that reader is pointed at (M5)",
+  },
+  {
+    label: "the pool is cut to the bound before the floor runs",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))\n    .slice(0, HINT_MAX_CONTEXTS);",
+    to: "    .slice(0, HINT_MAX_CONTEXTS)\n    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms));",
+    test: `${SERVER}/test/hint-floor-integrity.test.ts`,
+    because: "three trees that repeat one stray word crowd out the one tree that shares three (M5)",
+  },
+  {
+    label: "the hub judges the raw turn, the wrapper's words included",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const { content } = promptTerms(humanText);",
+    to: "  const { content } = promptTerms(input.query);",
+    test: `${SERVER}/test/hint-floor-integrity.test.ts`,
+    because: "an older connector's \"<ide_opened_file>… current task …\" makes \"ok weiter\" a task about the current user (M5)",
+  },
+  {
+    label: "\"mal\" is dropped from the steering words",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "\"einfach\", \"schon\", \"mal\", \"los\",",
+    to: "\"einfach\", \"schon\", \"los\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"mach mal, bitte\" carries a task word nobody wrote (M5)",
+  },
+  {
+    label: "one-letter words count as a shown sentence's content",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    .filter((token) => (token.match(/\\p{L}/gu)?.length ?? 0) >= 2)\n",
+    to: "    .filter((token) => (token.match(/\\p{L}/gu)?.length ?? 0) >= 1)\n",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Q x z.\" is pushed as a teammate's finding (M5)",
+  },
+  {
+    label: "a two-digit ordinal ends a sentence again",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "const ORDINAL_MARKER = /^\\(?\\d{1,3}[.)]$/u;",
+    to: "const ORDINAL_MARKER = /^\\(?\\d[.)]$/u;",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "item 12 of a list is shown without its number, as if it were the finding's first sentence (M5)",
+  },
+  {
+    label: "a named abbreviation ends the shown sentence",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    (token.endsWith(\".\") && ABBREVIATIONS.has(token.slice(0, -1).toLowerCase()))",
+    to: "    false",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Wir prüfen den Upload bzw.\" is all a German finding gets to say (M5)",
+  },
+  {
+    label: "the harness scan starts inside the leading whitespace",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const window = prompt.trimStart().slice(0, HARNESS_SCAN_MAX_CHARS);",
+    to: "  const window = prompt.slice(0, HARNESS_SCAN_MAX_CHARS);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a megabyte of pasted blanks fills the window and the human text after it is never read (M5)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18489,14 +18561,14 @@ interface Outcome {
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5
- * PRINTS: packages/schema/test/harness-turn.test.ts 12
+ * PRINTS: packages/schema/test/harness-turn.test.ts 13
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 4
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 5
  * PRINTS: packages/schema/test/session-control.test.ts 4
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/substance-sentence.test.ts 8
+ * PRINTS: packages/schema/test/substance-sentence.test.ts 11
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
@@ -18530,6 +18602,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 3
+ * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
