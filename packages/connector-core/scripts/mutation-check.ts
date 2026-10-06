@@ -18007,6 +18007,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/draft-nudge-inject.test.ts`,
     because: "a slot another prompt already spent is shown a second time",
   },
+  {
+    label: "unreviewed and discarded drafts fold into the doc a teammate's search matches",
+    file: `${SERVER}/src/services/normalized-doc.ts`,
+    from: "    .where(and(eq(claims.workContextId, workContextId), eq(claims.provenance, DECLARED_PROVENANCE)))",
+    to: "    .where(eq(claims.workContextId, workContextId))",
+    test: `${SERVER}/test/normalized-doc.test.ts`,
+    because: "a machine guess nobody vouched for — or one somebody discarded — makes the tree turn up in a teammate's search and hints",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18340,7 +18348,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/normalized-doc.test.ts 1
+ * PRINTS: packages/server/test/normalized-doc.test.ts 2
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
  * PRINTS: packages/server/test/passkeys.test.ts 6

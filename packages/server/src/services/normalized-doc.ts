@@ -20,6 +20,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 
 import { agentSessions, claims, workContextTargets, workContexts } from "../db/schema.ts";
 import { derivedTokenLine, repoLabelOf, titleForDoc } from "./search-tokens.ts";
+import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 
@@ -188,10 +189,18 @@ export const refreshNormalizedDoc = async (
     .where(eq(workContextTargets.workContextId, workContextId))
     .orderBy(asc(workContextTargets.value))
     .limit(NORMALIZED_DOC_MAX_TARGETS);
+  // DECLARED CLAIMS ONLY. This doc (and the embedding built from it) is what
+  // a TEAMMATE's search and hint candidates match against, so a body folded
+  // in here is a body that can surface the tree to someone who never asked
+  // about this author. An unreviewed draft is a machine guess nobody vouched
+  // for and a discard is one somebody rejected (an appended derived copy,
+  // status rejected): neither may make a tree turn up for anybody. A draft
+  // folds in the moment it is CONFIRMED — review_draft appends a declared
+  // revision, and that ingest rebuilds this doc.
   const claimRows = await db
     .select({ kind: claims.kind, body: claims.body })
     .from(claims)
-    .where(eq(claims.workContextId, workContextId))
+    .where(and(eq(claims.workContextId, workContextId), eq(claims.provenance, DECLARED_PROVENANCE)))
     .orderBy(desc(claims.createdAt))
     .limit(NORMALIZED_DOC_MAX_CLAIMS);
 

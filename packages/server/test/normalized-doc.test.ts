@@ -27,6 +27,7 @@ import {
   postRecords,
   recordEnvelope,
   validClaimBody,
+  validClaimEdgeBody,
   validWorkContextBody,
   WORK_CONTEXT_ID,
 } from "./helpers.ts";
@@ -316,3 +317,37 @@ describe("intent in the normalized doc (trial finding #16)", () => {
     );
   });
 });
+
+describe("only vouched claims fold into the doc a teammate's search and hints match", () => {
+  test("an unreviewed draft and a discarded one stay out; the confirmed revision goes in", async () => {
+    // Arrange: a draft, a discarded draft (rejected revision + supersedes), and
+    // a confirmed draft (declared revision + supersedes)
+    const { harness, developer } = await createHarnessWithSession();
+    const derived = (id: string, body: string, extra: Record<string, unknown> = {}): unknown =>
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id, body, captureMode: "auto", provenance: "derived", confidence: 0.4, ...extra }),
+      );
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        derived("clm_open_draft", "zebrafrobnicator poisons the cache"),
+        derived("clm_gone_draft", "quuxinator leaks file handles"),
+        derived("clm_gone_rev", "quuxinator leaks file handles", { status: "rejected" }),
+        recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_gone", fromClaimId: "clm_gone_rev", toClaimId: "clm_gone_draft", kind: "supersedes" })),
+        derived("clm_kept_draft", "wibblesnatch retries forever"),
+        recordEnvelope("claim", validClaimBody({ id: "clm_kept_rev", body: "wibblesnatch retries forever" })),
+        recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_kept", fromClaimId: "clm_kept_rev", toClaimId: "clm_kept_draft", kind: "supersedes" })),
+      ],
+    });
+
+    // Act
+    const doc = (await readNormalizedDoc(harness)) ?? "";
+
+    // Assert: a teammate can only ever match what somebody vouched for
+    expect(doc).not.toContain("zebrafrobnicator");
+    expect(doc).not.toContain("quuxinator");
+    expect(doc).toContain("wibblesnatch");
+  });
+});
+
