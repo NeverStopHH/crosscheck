@@ -159,6 +159,20 @@ export const findSimilarOwnClaim = async (
  * near-duplicate (review round 3). Between one developer's own claims the
  * pull-only edge stays, and get_diagnosis says what the far end is
  * (diagnosis.ts ExternalClaimRef).
+ *
+ * KNOWN LIMIT, MEASURED (review round 4): the hnsw index scan hands the
+ * filter its first hnsw.ef_search (40) candidates and stops, so a DERIVED
+ * body whose developer owns few embedded claims often finds no neighbour
+ * at all although one exists — on PGlite with 4 000 claims, 20 of them the
+ * developer's, 23 of 30 random probes came back empty. `SET LOCAL
+ * hnsw.iterative_scan = relaxed_order` fixes that (0 of 30 empty, median
+ * 2.3 → 3.8 ms) but makes a developer with NO other embedded claim — every
+ * newcomer's first draft — walk the index to hnsw.max_scan_tuples before it
+ * gives up: median 2.7 → 41 ms per ingest at 12 000 claims, inside the
+ * ingest transaction, on a runtime that blocks every request meanwhile. Not
+ * adopted for that latency; what is lost is a pull-only link between one
+ * developer's own claims, never a push across developers. (Probe:
+ * iterative-scan measurement in the round-5 report.)
  */
 const reachableNeighbour = (body: Claim, developerId: string) =>
   body.provenance === DECLARED_PROVENANCE
