@@ -13,6 +13,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import type { PresenceEntry } from "@crosscheck/connector-core/http/hub.ts";
 
 import { teammateLines } from "../src/cli/status.ts";
@@ -68,6 +69,14 @@ const render = (slot: Slot, payload: string): readonly string[] =>
     NOW,
   );
 
+/**
+ * Mara's one session is dropped, not printed, when the payload IS her name
+ * or her branch and sanitizes to nothing (connector-core briefing/render.ts
+ * toPresenceRow) — the only case her single line may be absent.
+ */
+const maraHasARow = (slot: Slot, payload: string): boolean =>
+  (slot !== "name" && slot !== "branch") || bareUntrusted(payload).length > 0;
+
 /** The four shapes the block emits. Bare fields carry no `·`, `«` or `»`. */
 const SINGLE_LINE =
   /^  - [^·«»]+(?: · [^·«»]*){2}(?: · \d+ sessions)?(?: · intent(?: \(derived\))?: «[^«»]*»)?$/;
@@ -92,6 +101,11 @@ describe("§4.4: the status teammates block holds its class against every payloa
     // would pass vacuously.
     expect(lines.some((line) => HEAD_LINE.test(line)), where).toBe(true);
     expect(lines.some((line) => TAIL_LINE.test(line)), where).toBe(true);
+    // And so did Mara's single-topic line, exactly once — Robin's entry can
+    // never take that shape — whenever she has a row at all.
+    expect(lines.filter((line) => SINGLE_LINE.test(line)), where).toHaveLength(
+      maraHasARow(slot, payload) ? 1 : 0,
+    );
     for (const line of lines) {
       assertUntrustedCharacters(line, where);
       expect(

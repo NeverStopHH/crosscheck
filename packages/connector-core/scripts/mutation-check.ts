@@ -17982,6 +17982,18 @@ export const MUTATIONS: readonly Mutation[
       "\"blocked on <label>\" prints teammate branch text on the presence line " +
       "and the injection corpus never attacks it",
   },
+  {
+    // Review L5: every line still matches SOME allowed shape, so only a
+    // test that requires the single-line shape notices it is gone.
+    label: "crosscheck status prints a one-topic teammate in the multi-topic shape",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  if (group.topics.length === 1 && only !== undefined) {",
+    to: "  if (false && only !== undefined) {",
+    test: `${CLI}/test/status-teammates-corpus.test.ts`,
+    because:
+      "the corpus never attacks the single-line shape, and a teammate on one " +
+      "branch prints as `1 topic, 1 session` over a topic line",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18083,7 +18095,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/status-intent.test.ts 1
- * PRINTS: packages/cli/test/status-teammates-corpus.test.ts 1
+ * PRINTS: packages/cli/test/status-teammates-corpus.test.ts 2
  * PRINTS: packages/cli/test/status-topics.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/terminal.test.ts 3
