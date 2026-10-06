@@ -1153,17 +1153,22 @@ UPDATE team_settings SET pilot_outcomes_since = now()
 -- interval, opened when enrolment turns on and closed when it turns off,
 -- never rewritten. An outcome is recordable and counted iff its delivery falls
 -- inside one, so a pause and a re-enrolment never erase the history before them.
+-- Keyed by its own id (review LOW): off and on again in one millisecond is a
+-- closed zero-length interval AND an open one at the same instant.
 CREATE TABLE IF NOT EXISTS pilot_enrolments (
+  id text PRIMARY KEY,
   repo text NOT NULL,
   started_at timestamptz NOT NULL,
-  ended_at timestamptz,
-  PRIMARY KEY (repo, started_at)
+  ended_at timestamptz
 );
+CREATE INDEX IF NOT EXISTS pilot_enrolments_repo_started_idx ON pilot_enrolments (repo, started_at);
+-- At most one open interval per repo: a second "on" fails loudly, never doubles.
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;
 -- An upgraded hub keeps the enrolment it already had as the first interval:
 -- open while the repo is enrolled; for one that left, closed at its last
 -- settings write — the best instant the old shape kept. Once per repo.
-INSERT INTO pilot_enrolments (repo, started_at, ended_at)
-  SELECT ts.repo, ts.pilot_outcomes_since,
+INSERT INTO pilot_enrolments (id, repo, started_at, ended_at)
+  SELECT 'pe_' || gen_random_uuid()::text, ts.repo, ts.pilot_outcomes_since,
          CASE WHEN ts.pilot_enrolled THEN NULL ELSE ts.updated_at END
   FROM team_settings ts
   WHERE ts.pilot_outcomes_since IS NOT NULL

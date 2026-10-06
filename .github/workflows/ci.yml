@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1694
+    # PRINTS: 1699
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -390,7 +390,7 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/src/constants.ts 1
-    # PRINTS: packages/server/src/db/bootstrap.sql 21
+    # PRINTS: packages/server/src/db/bootstrap.sql 22
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
     # PRINTS: packages/server/src/http/schemas.ts 1
@@ -465,7 +465,7 @@ jobs:
     # PRINTS: packages/server/src/services/solved-matches.ts 9
     # PRINTS: packages/server/src/services/solved.ts 1
     # PRINTS: packages/server/src/services/suspect.ts 2
-    # PRINTS: packages/server/src/services/team-settings.ts 6
+    # PRINTS: packages/server/src/services/team-settings.ts 10
     # PRINTS: packages/server/src/services/time-window.ts 1
     # PRINTS: packages/server/src/services/verdict.ts 4
     # PRINTS: packages/server/src/services/waiver-requests.ts 4
@@ -486,7 +486,7 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 21
+    # PRINTS: bootstrap.sql 22
     # PRINTS: briefing.ts 6
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
@@ -713,7 +713,7 @@ jobs:
     # PRINTS: suspect.ts 7
     # PRINTS: sweep.ts 3
     # PRINTS: target-paths.ts 1
-    # PRINTS: team-settings.ts 6
+    # PRINTS: team-settings.ts 10
     # PRINTS: telemetry-loss.ts 6
     # PRINTS: terminal.ts 3
     # PRINTS: time-window.ts 1

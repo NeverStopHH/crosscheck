@@ -14597,7 +14597,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "enrolling never stamps when labels became available",
     file: `${SERVER}/src/services/team-settings.ts`,
-    from: "  if (nextEnrolled && !current.pilotEnrolled) {",
+    from: "  if (nextEnrolled && !wasEnrolled) {",
     to: "  if (false) {",
     test: `${SERVER}/test/team-settings.test.ts`,
     because:
@@ -18058,7 +18058,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "enrolment opens no interval",
     file: `${SERVER}/src/services/team-settings.ts`,
-    from: "    await db.insert(pilotEnrolments).values({ repo, startedAt: now, endedAt: null }).onConflictDoNothing();",
+    from: "    await db.insert(pilotEnrolments).values({ id: `pe_${randomUUID()}`, repo, startedAt: now, endedAt: null });",
     to: "    await Promise.resolve(now);",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "an enrolled repo has no enrolled time, so every hint is refused as from before the pilot",
@@ -18684,6 +18684,47 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "an older hub's zero reaches the author as every teammate's verdict at once",
   },
+  // ── 07 §13.12, review LOW + survivor R6: the toggle, one open interval ──
+  {
+    label: "every settings write while enrolled opens a new interval (survivor R6)",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  if (isEnrolled && !wasEnrolled) {",
+    to: "  if (isEnrolled) {",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "an enrolled repo's history fills with overlapping intervals, one per pin-policy change",
+  },
+  {
+    label: "off and on in one millisecond drops the new interval (probe D)",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    await db.insert(pilotEnrolments).values({ id: `pe_${randomUUID()}`, repo, startedAt: now, endedAt: null });",
+    to: "    await db.insert(pilotEnrolments).values({ id: `pe_${repo}@${now.toISOString()}`, repo, startedAt: now, endedAt: null }).onConflictDoNothing();",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the repo reads as paused while it is enrolled, and every outcome is refused while_paused",
+  },
+  {
+    label: "the toggle reads what it turns from without the row's lock",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    sql`SELECT pilot_enrolled FROM team_settings WHERE repo = ${repo} FOR UPDATE`,",
+    to: "    sql`SELECT pilot_enrolled FROM team_settings WHERE repo = ${repo}`,",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because: "two toggles at once both decide from the same stale read and open two intervals or none",
+  },
+  {
+    label: "a settings write that names no enrolment turns the pilot off",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "    const pilotEnrolled = input.pilotEnrolled ?? wasEnrolled;",
+    to: "    const pilotEnrolled = input.pilotEnrolled ?? false;",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "changing the pin policy pauses the pilot",
+  },
+  {
+    label: "two open intervals per repo are allowed",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE UNIQUE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;",
+    to: "CREATE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;",
+    test: `${SERVER}/test/ddl-sync-hint-outcomes.test.ts`,
+    because: "a doubled 'on' leaves two open intervals and every enrolled delivery is counted twice",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18995,7 +19036,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
- * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 4
+ * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -19008,7 +19049,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 15
- * PRINTS: packages/server/test/hint-outcomes.test.ts 33
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 36
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
@@ -19058,7 +19099,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
- * PRINTS: packages/server/test/team-settings.test.ts 2
+ * PRINTS: packages/server/test/team-settings.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1

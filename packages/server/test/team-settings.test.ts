@@ -16,7 +16,12 @@
  * to" depends on knowing whether anybody ever pressed the switch.
  */
 import { describe, expect, test } from "bun:test";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+
+import type { DbExecutor } from "../src/db/client.ts";
+import { readEnrolledForUpdate } from "../src/services/team-settings.ts";
 
 import {
   addTestDeveloperWithSession,
@@ -304,6 +309,27 @@ describe("pilot enrolment", () => {
     expect(afterOtherWrite.pilotLabelsSince).toBe(enrolledAt);
     expect(afterLeaving.pilotLabelsSince).toBe(enrolledAt);
     expect(afterRejoining.pilotLabelsSince).toBe(harness.clock.now().toISOString());
+  });
+
+  test("review LOW: what a toggle turns from is read under the settings row's lock", async () => {
+    // Arrange — PGlite has one connection, so two racing toggles cannot be staged;
+    // what is pinned is the SQL the toggle reads with: FOR UPDATE, inside its transaction
+    const issued: SQL[] = [];
+    const executor = {
+      execute: async (query: SQL) => {
+        issued.push(query);
+        return await Promise.resolve({ rows: [{ pilot_enrolled: true }] });
+      },
+    } as unknown as DbExecutor;
+
+    // Act
+    const wasEnrolled = await readEnrolledForUpdate(executor, REPO);
+
+    // Assert
+    expect(wasEnrolled).toBe(true);
+    expect(issued.map((query) => new PgDialect().sqlToQuery(query).sql)).toEqual([
+      "SELECT pilot_enrolled FROM team_settings WHERE repo = $1 FOR UPDATE",
+    ]);
   });
 });
 

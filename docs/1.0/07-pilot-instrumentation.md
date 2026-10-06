@@ -1351,6 +1351,15 @@ whose word stands at followed); otherwise it is the one generic sentence, now "a
 followed it". A count of 0 therefore never prints — and the client refuses to print one an older hub sends.
 The team line's minimums are unchanged.
 
+*LOW — the toggle race, and off→on in one millisecond (probe D).* What a settings write turns enrolment from is
+now read inside its own transaction, under the `team_settings` row's lock (`FOR UPDATE`; PGlite has one
+connection, so the lock is pinned by the SQL it issues, not by a staged race). `pilot_enrolments` rows have
+their own id: keyed by (repo, started_at), off and on again in one millisecond closed the open interval at t
+and then silently dropped the new one at t, and the repo read as paused. A partial unique index keeps **at most
+one open interval per repo** as a database fact; nothing swallows a conflict, so a second "on" while enrolled is
+an error rather than a duplicate (survivor R6 is pinned by a write that repeats the enrolment). The table is new
+this round and unreleased, so its key changed in place.
+
 *R19 — the same word with a changed reason was swallowed by nothing, and pinned by nothing.* The reason is part
 of the word: said again with a different reason it is a new row, the revised sentence is what `--mine` quotes,
 and the answer carries `reasonRevised` and says "the reason revised (the earlier one kept in the history)" —

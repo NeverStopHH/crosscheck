@@ -24,7 +24,9 @@
  * with the defaults, and `status` prints the effective values either way, so
  * "what is this team set to" never depends on knowing whether a row exists.
  */
-import { and, eq, isNull } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+
+import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   TEAM_PIN_POLICIES,
   TEAM_SUSPECT_ATTRIBUTIONS,
@@ -135,16 +137,25 @@ export const readTeamSettings = async (
  * the gap between were never measured — and otherwise kept as it was,
  * leaving included: a team that leaves keeps the record of when it joined.
  */
-const sinceAfter = (
-  stored: string | null,
-  current: TeamSettingsView,
-  nextEnrolled: boolean,
-  now: Date,
-): Date | null => {
-  if (nextEnrolled && !current.pilotEnrolled) {
+const sinceAfter = (stored: string | null, wasEnrolled: boolean, nextEnrolled: boolean, now: Date): Date | null => {
+  if (nextEnrolled && !wasEnrolled) {
     return now;
   }
   return stored === null ? null : new Date(stored);
+};
+
+/**
+ * WHETHER THE REPO IS ENROLLED, read under its settings row's lock inside the
+ * toggle's own transaction (review LOW): two toggles at once each decide from
+ * what the other committed, never both from one stale read made before
+ * either began. PGlite has one connection, so the lock is pinned by the SQL
+ * this issues (team-settings test), not by a race it could stage.
+ */
+export const readEnrolledForUpdate = async (tx: DbExecutor, repo: string): Promise<boolean> => {
+  const rows = await tx.execute<{ pilot_enrolled: boolean }>(
+    sql`SELECT pilot_enrolled FROM team_settings WHERE repo = ${repo} FOR UPDATE`,
+  );
+  return rows.rows[0]?.pilot_enrolled === true;
 };
 
 /**
@@ -159,7 +170,10 @@ const firstEnrolledAt = (stored: string | null, nextEnrolled: boolean, now: Date
   return nextEnrolled ? now : null;
 };
 
-/** Opens an interval when enrolment turns on, closes the open one when it turns off — never rewrites one. */
+/**
+ * Opens an interval when enrolment turns on, closes the open one when it turns off — never rewrites one.
+ * No conflict is swallowed: a second open interval is the partial unique index's to refuse, loudly.
+ */
 const recordEnrolmentChange = async (
   db: DbExecutor,
   repo: string,
@@ -168,7 +182,7 @@ const recordEnrolmentChange = async (
   now: Date,
 ): Promise<void> => {
   if (isEnrolled && !wasEnrolled) {
-    await db.insert(pilotEnrolments).values({ repo, startedAt: now, endedAt: null }).onConflictDoNothing();
+    await db.insert(pilotEnrolments).values({ id: `pe_${randomUUID()}`, repo, startedAt: now, endedAt: null });
   }
   if (!isEnrolled && wasEnrolled) {
     await db
@@ -196,33 +210,23 @@ export const writeTeamSettings = async (
 ): Promise<TeamSettingsView> => {
   const current = await readTeamSettings(deps, input.repo);
   const now = deps.now();
-  const pilotEnrolled = input.pilotEnrolled ?? current.pilotEnrolled;
-  const next = {
-    repo: input.repo,
-    pinPolicy: input.pinPolicy ?? current.pinPolicy,
-    suspectAttribution: input.suspectAttribution ?? current.suspectAttribution,
-    pilotEnrolled,
-    pilotLabelsSince: sinceAfter(current.pilotLabelsSince, current, pilotEnrolled, now),
-    // 07 §13.9, §13.11: the first consent's instant, kept; a re-enrolment is a new interval.
-    pilotOutcomesSince: firstEnrolledAt(current.pilotOutcomesSince, pilotEnrolled, now),
-    updatedAt: now,
-  };
-  await deps.db.transaction(async (tx) => {
-    await tx
-      .insert(teamSettings)
-      .values(next)
-      .onConflictDoUpdate({
-        target: teamSettings.repo,
-        set: {
-          pinPolicy: next.pinPolicy,
-          suspectAttribution: next.suspectAttribution,
-          pilotEnrolled: next.pilotEnrolled,
-          pilotLabelsSince: next.pilotLabelsSince,
-          pilotOutcomesSince: next.pilotOutcomesSince,
-          updatedAt: next.updatedAt,
-        },
-      });
-    await recordEnrolmentChange(tx, input.repo, current.pilotEnrolled, pilotEnrolled, now);
+  const next = await deps.db.transaction(async (tx) => {
+    // review LOW: what the toggle turns from is read under the row's lock, here, not before the transaction
+    const wasEnrolled = await readEnrolledForUpdate(tx, input.repo);
+    const pilotEnrolled = input.pilotEnrolled ?? wasEnrolled;
+    const row = {
+      repo: input.repo,
+      pinPolicy: input.pinPolicy ?? current.pinPolicy,
+      suspectAttribution: input.suspectAttribution ?? current.suspectAttribution,
+      pilotEnrolled,
+      pilotLabelsSince: sinceAfter(current.pilotLabelsSince, wasEnrolled, pilotEnrolled, now),
+      // 07 §13.9, §13.11: the first consent's instant, kept; a re-enrolment is a new interval.
+      pilotOutcomesSince: firstEnrolledAt(current.pilotOutcomesSince, pilotEnrolled, now),
+      updatedAt: now,
+    };
+    await upsertSettings(tx, row);
+    await recordEnrolmentChange(tx, input.repo, wasEnrolled, pilotEnrolled, now);
+    return row;
   });
   return {
     ...next,
@@ -230,4 +234,23 @@ export const writeTeamSettings = async (
     pilotOutcomesSince: next.pilotOutcomesSince?.toISOString() ?? null,
     updatedAt: next.updatedAt.toISOString(),
   };
+};
+
+type SettingsRow = typeof teamSettings.$inferInsert;
+
+const upsertSettings = async (tx: DbExecutor, next: SettingsRow): Promise<void> => {
+  await tx
+    .insert(teamSettings)
+    .values(next)
+    .onConflictDoUpdate({
+      target: teamSettings.repo,
+      set: {
+        pinPolicy: next.pinPolicy,
+        suspectAttribution: next.suspectAttribution,
+        pilotEnrolled: next.pilotEnrolled,
+        pilotLabelsSince: next.pilotLabelsSince,
+        pilotOutcomesSince: next.pilotOutcomesSince,
+        updatedAt: next.updatedAt,
+      },
+    });
 };

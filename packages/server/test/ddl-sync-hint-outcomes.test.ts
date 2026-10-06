@@ -102,6 +102,22 @@ describe("hint_outcomes DDL sync", () => {
     expect(columns.rows.map((row) => String(row["c"]))).toEqual(drizzleColumns);
   });
 
+  test("review LOW: at most one open interval per repo is a database fact, and a zero-length one beside it is not a clash", async () => {
+    // Arrange — one interval closed at the very instant the next opens, then a second open one
+    const harness = await createTestHarness();
+    const at = "2026-07-24T09:00:00Z";
+    await harness.db.execute(sql`INSERT INTO pilot_enrolments (id, repo, started_at, ended_at)
+      VALUES ('pe_closed', 'github.com/acme/api', ${at}, ${at}), ('pe_open', 'github.com/acme/api', ${at}, NULL)`);
+
+    // Act
+    const second = (async () =>
+      await harness.db.execute(sql`INSERT INTO pilot_enrolments (id, repo, started_at, ended_at)
+        VALUES ('pe_second', 'github.com/acme/api', '2026-07-25T09:00:00Z', NULL)`))();
+
+    // Assert
+    await expect(second).rejects.toThrow();
+  });
+
   test("review M3: an upgraded hub keeps the enrolment it already had as its first interval", async () => {
     // Arrange — the shape before the history: one repo enrolled, one that left, one never enrolled
     const harness = await createTestHarness();

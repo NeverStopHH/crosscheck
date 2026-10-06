@@ -415,6 +415,45 @@ describe("POST /api/hint-outcomes", () => {
     expect(await errorOf(response)).toMatchObject({ code: "while_paused" });
   });
 
+  test("review LOW (probe D): off and on again in one millisecond leaves the repo enrolled, with an open interval", async () => {
+    // Arrange — the clock does not move between the two writes
+    const world = await createOutcomeWorld();
+    const put = async (pilotEnrolled: boolean): Promise<Response> =>
+      await world.harness.app.request("/api/team-settings", jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled }));
+    await put(false);
+    await put(true);
+
+    // Act
+    const recorded = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    const open = await world.harness.db.execute(sql`SELECT count(*)::int AS n FROM pilot_enrolments WHERE ended_at IS NULL`);
+
+    // Assert
+    expect(recorded.status).toBe(201);
+    expect(open.rows).toEqual([{ n: 1 }]);
+  });
+
+  test("survivor R6: a settings write while already enrolled opens no second interval", async () => {
+    // Arrange — enrolled already; enrolled said again, and the pin policy changed
+    const world = await createOutcomeWorld();
+    world.harness.clock.advanceSeconds(60);
+    const again = await world.harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pilotEnrolled: true }),
+    );
+    world.harness.clock.advanceSeconds(60);
+
+    // Act
+    const policy = await world.harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pinPolicy: "anyone" }),
+    );
+    const intervals = await world.harness.db.execute(sql`SELECT ended_at AS e FROM pilot_enrolments`);
+
+    // Assert
+    expect([again.status, policy.status]).toEqual([200, 200]);
+    expect(intervals.rows).toEqual([{ e: null }]);
+  });
+
   test("review H-A: a pointer's twin older than every window records on its twin inside it", async () => {
     // Arrange — one long session: the prompt hint 91 days ago, its tripwire twin today
     const world = await createOutcomeWorld();

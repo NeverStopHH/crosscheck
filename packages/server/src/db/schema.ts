@@ -1149,12 +1149,23 @@ export const teamSettings = pgTable("team_settings", {
 export const pilotEnrolments = pgTable(
   "pilot_enrolments",
   {
+    /**
+     * A row's own id (review LOW): off and on again in one millisecond is a
+     * closed zero-length interval AND a new open one at the same instant —
+     * keyed by (repo, started_at), the second was silently dropped and the
+     * repo read as paused.
+     */
+    id: text("id").primaryKey(),
     repo: text("repo").notNull(),
     startedAt: timestamptz("started_at").notNull(),
     /** Null while the interval is open — the repo is enrolled now. */
     endedAt: timestamptz("ended_at"),
   },
-  (table) => [primaryKey({ columns: [table.repo, table.startedAt] })],
+  (table) => [
+    index("pilot_enrolments_repo_started_idx").on(table.repo, table.startedAt),
+    // AT MOST ONE OPEN INTERVAL PER REPO, a database fact: a second "on" fails loudly.
+    uniqueIndex("pilot_enrolments_one_open_idx").on(table.repo).where(sql`${table.endedAt} IS NULL`),
+  ],
 );
 
 /**
