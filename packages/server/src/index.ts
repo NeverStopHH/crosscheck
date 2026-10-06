@@ -10,6 +10,7 @@ import { reapStaleSessions } from "./services/sessions.ts";
 import { parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
 import { upgradeNormalizedDocs } from "./services/doc-upgrade.ts";
+import { removeCrossDeveloperDraftLinks } from "./services/draft-link-cleanup.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -276,21 +277,25 @@ export const startServer = async (): Promise<void> => {
       console.error("[crosscheck] skeleton identity backfill failed; unresolved rows are kept", error);
     },
   );
-  // DRAFTS OUT OF DOCS AN OLDER HUB BUILT (services/doc-upgrade.ts). After
-  // serving, for the same reason: until it has run an old doc matches as it
-  // did before the upgrade, and nothing waits on it. Paged and resumable;
+  // DRAFTS OUT OF WHAT AN OLDER HUB BUILT: the auto links its gate made into
+  // teammates' trees on a draft's strength (services/draft-link-cleanup.ts),
+  // then the docs that still fold drafts in (services/doc-upgrade.ts). After
+  // serving, for the same reason: until they have run the old rows behave as
+  // they did before the upgrade, and nothing waits on them. Both idempotent;
   // each start finishes what the last left.
-  void upgradeNormalizedDocs({ db, embedder }).then(
-    (report) => {
-      console.log(
-        `[crosscheck] doc upgrade: ${String(report.contexts)} work context doc(s) rebuilt without drafts, ` +
-          `${String(report.reembedded)} re-embedded`,
-      );
-    },
-    (error: unknown) => {
-      console.error("[crosscheck] doc upgrade failed; the next start resumes it", error);
-    },
-  );
+  void removeCrossDeveloperDraftLinks(db)
+    .then(async (linksRemoved) => ({ linksRemoved, docs: await upgradeNormalizedDocs({ db, embedder }) }))
+    .then(
+      ({ linksRemoved, docs }) => {
+        console.log(
+          `[crosscheck] draft upgrade: ${String(linksRemoved)} cross-developer draft link(s) removed, ` +
+            `${String(docs.contexts)} work context doc(s) rebuilt without drafts, ${String(docs.reembedded)} re-embedded`,
+        );
+      },
+      (error: unknown) => {
+        console.error("[crosscheck] draft upgrade failed; the next start resumes it", error);
+      },
+    );
   // The hub's own reaper (trial finding M6). HERE and not in `createApp`:
   // every test that builds an app would otherwise leak a timer, and the
   // registration path already reaps the registering developer's own sessions

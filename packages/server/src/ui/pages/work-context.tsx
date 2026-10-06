@@ -70,16 +70,56 @@ const ClaimCard: FC<{ readonly claim: ClaimView; readonly nowMs: number }> = ({
   </li>
 );
 
-const EdgeLine: FC<{ readonly edge: ClaimEdgeView }> = ({ edge }) => (
+/** What an edge's end IS, when this page knows the claim (in the tree, or linked from it). */
+interface EdgeEnd {
+  readonly provenance: string;
+  readonly status: string;
+}
+
+/**
+ * The trust labels an edge's end carries, as the claim cards carry them: an
+ * edge line names only ids, and an auto link into a draft or a discard read
+ * like a link between two vouched claims (review round 3). Renderer-owned
+ * literals; a vouched, live end carries none.
+ */
+const EndLabels: FC<{ readonly end: EdgeEnd | undefined }> = ({ end }) =>
+  end === undefined ? null : (
+    <>
+      {end.provenance === "derived" ? (
+        <>
+          {" "}
+          <span class="label provenance-derived">derived</span>
+        </>
+      ) : null}
+      {end.status === "rejected" ? (
+        <>
+          {" "}
+          <span class="label status-rejected">rejected</span>
+        </>
+      ) : null}
+    </>
+  );
+
+const EdgeLine: FC<{ readonly edge: ClaimEdgeView; readonly ends: ReadonlyMap<string, EdgeEnd> }> = ({ edge, ends }) => (
   <li class="entry">
-    <span class="meta">{capped(edge.fromClaimId, UI_MAX_LABEL_CHARS)}</span>{" "}
+    <span class="meta">{capped(edge.fromClaimId, UI_MAX_LABEL_CHARS)}</span>
+    <EndLabels end={ends.get(edge.fromClaimId)} />{" "}
     <span class="label">{capped(edge.kind, UI_MAX_LABEL_CHARS)}</span>{" "}
     <span class="meta">{capped(edge.toClaimId, UI_MAX_LABEL_CHARS)}</span>
+    <EndLabels end={ends.get(edge.toClaimId)} />
     {edge.note === null ? null : (
       <blockquote class="body">{capped(edge.note, UI_MAX_NOTE_CHARS)}</blockquote>
     )}
   </li>
 );
+
+const edgeEndsOf = (diagnosis: Diagnosis): ReadonlyMap<string, EdgeEnd> =>
+  new Map(
+    [...diagnosis.claims, ...diagnosis.externalClaims].map((claim) => [
+      claim.id,
+      { provenance: claim.provenance, status: claim.status },
+    ]),
+  );
 
 const ArtifactCard: FC<{ readonly artifact: ArtifactView }> = ({ artifact }) => (
   <li class="artifact">
@@ -173,7 +213,7 @@ export const WorkContextPage: FC<WorkContextPageProps> = ({
           <h2>Edges ({String(diagnosis.edges.length)})</h2>
           <ul class="plain">
             {diagnosis.edges.map((edge) => (
-              <EdgeLine edge={edge} />
+              <EdgeLine edge={edge} ends={edgeEndsOf(diagnosis)} />
             ))}
           </ul>
         </>

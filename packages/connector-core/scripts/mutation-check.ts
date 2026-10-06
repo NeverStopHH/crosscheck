@@ -18519,6 +18519,54 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/doc-upgrade.test.ts`,
     because: "every rebuilt context loses its embedding until some later ingest happens to touch it",
   },
+  {
+    label: "the start-up cleanup keeps the old gate's links into teammates' trees",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "        or(ne(fromClaim.provenance, DECLARED_PROVENANCE), ne(toClaim.provenance, DECLARED_PROVENANCE)),\n",
+    to: "        eq(claimEdges.id, \"no-edge-has-this-id\"),\n",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "an upgraded hub keeps listing a teammate's machine guess as related in every tree the old gate linked it into",
+  },
+  {
+    label: "the start-up cleanup deletes a developer's links between their own claims",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "        ne(fromSession.developerId, toSession.developerId),\n",
+    to: "",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a developer's own draft loses the pull-only link the gate still makes for it",
+  },
+  {
+    label: "the start-up cleanup deletes a person's own relates_to edge",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "        eq(claimEdges.note, AUTO_SIMILARITY_NOTE),\n",
+    to: "",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "a link a human drew between two trees is erased as if the gate had guessed it",
+  },
+  {
+    label: "the start-up cleanup deletes links between two vouched claims",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "        or(ne(fromClaim.provenance, DECLARED_PROVENANCE), ne(toClaim.provenance, DECLARED_PROVENANCE)),\n",
+    to: "",
+    test: `${SERVER}/test/draft-link-cleanup.test.ts`,
+    because: "the similarity links teammates' vouched findings earned are erased on every start",
+  },
+  {
+    label: "the work-context page's edge list hides that an end is a draft",
+    file: `${SERVER}/src/ui/pages/work-context.tsx`,
+    from: "      {end.provenance === \"derived\" ? (",
+    to: "      {false ? (",
+    test: `${SERVER}/test/ui-work-context.test.ts`,
+    because: "a link into a machine guess reads like a link between two vouched claims",
+  },
+  {
+    label: "the work-context page's edge list hides that an end was rejected",
+    file: `${SERVER}/src/ui/pages/work-context.tsx`,
+    from: "      {end.status === \"rejected\" ? (",
+    to: "      {false ? (",
+    test: `${SERVER}/test/ui-work-context.test.ts`,
+    because: "a link into a discarded claim reads like a link into a live one",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18842,6 +18890,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade.test.ts 5
+ * PRINTS: packages/server/test/draft-link-cleanup.test.ts 4
  * PRINTS: packages/server/test/draft-visibility.test.ts 8
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
@@ -18899,6 +18948,7 @@ interface Outcome {
  * PRINTS: packages/server/test/team-settings.test.ts 2
  * PRINTS: packages/server/test/ui-feed.test.ts 2
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
+ * PRINTS: packages/server/test/ui-work-context.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1

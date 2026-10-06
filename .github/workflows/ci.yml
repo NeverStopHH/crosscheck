@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1677
+    # PRINTS: 1683
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -430,6 +430,7 @@ jobs:
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 7
     # PRINTS: packages/server/src/services/doc-upgrade.ts 4
+    # PRINTS: packages/server/src/services/draft-link-cleanup.ts 4
     # PRINTS: packages/server/src/services/drafts.ts 3
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
@@ -474,6 +475,7 @@ jobs:
     # PRINTS: packages/server/src/ui/pages/feed.tsx 1
     # PRINTS: packages/server/src/ui/pages/passkeys.tsx 1
     # PRINTS: packages/server/src/ui/pages/waivers.tsx 2
+    # PRINTS: packages/server/src/ui/pages/work-context.tsx 2
     # PRINTS: packages/server/src/ui/session.ts 1
     # PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
     # PRINTS: packages/server/test/verdict-latency.test.ts 1
@@ -541,6 +543,7 @@ jobs:
     # PRINTS: doctor-sharing.ts 3
     # PRINTS: doctor.ts 72
     # PRINTS: draft-backlog.ts 7
+    # PRINTS: draft-link-cleanup.ts 4
     # PRINTS: draft-nudge-spent.ts 3
     # PRINTS: draft-nudge.ts 23
     # PRINTS: drafts.ts 4
@@ -733,6 +736,7 @@ jobs:
     # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 2
+    # PRINTS: work-context.tsx 2
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 9
