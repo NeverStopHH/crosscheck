@@ -37,6 +37,7 @@ import { readJsonOrNull, sessionStatePathForSlug } from "../config/paths.ts";
 import type { IngestSummary } from "../http/hub.ts";
 import { sessionSilentForMs } from "../state/session-scan.ts";
 import { STALE_SESSION_STATE_MS, markLifeRegistered } from "../state/session-state.ts";
+import { lineEnds, readCountedLines } from "./cursor.ts";
 import type { SessionSpool } from "./files.ts";
 import { lineTimestampMs } from "./lines.ts";
 import { isTaken } from "./owed-work-context.ts";
@@ -44,7 +45,14 @@ import { isTaken } from "./owed-work-context.ts";
 /** What of one spool a flusher may do now. */
 export interface Deliverable {
   readonly spool: SessionSpool;
-  /** Lines from the head that may be sent: up to the held life's first record. */
+  /** The life whose records stay where they are, or null when none is held. */
+  readonly held: string | null;
+  /**
+   * Lines of the next batch this flusher may settle: every line, or — while a
+   * life is held — every line of ANOTHER life not settled yet (review-2 round
+   * 6, LOW-4): a straggler an older life wrote behind the held life's first
+   * record goes now, and is noted so it never goes twice.
+   */
   readonly lines: number;
   /** Held lines at the head past the age bound: counted expired, not sent. */
   readonly expired: number;
@@ -146,16 +154,25 @@ export const deliverableOf = async (
 ): Promise<Deliverable> => {
   const head = spool.lines.slice(0, limit);
   const held = await heldLifeOf(home, spool.slug, flusherSessionId, now);
-  const firstHeld = held === null ? -1 : head.findIndex((line) => writerOf(line) === held);
-  if (firstHeld !== 0) {
-    return { spool, lines: firstHeld === -1 ? head.length : firstHeld, expired: 0 };
+  if (held === null) {
+    return { spool, held, lines: head.length, expired: 0 };
   }
   const cutoffMs = now.getTime() - MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
   const young = head.findIndex(
     (line) => writerOf(line) !== held || (lineTimestampMs(line) ?? spool.mtimeMs) >= cutoffMs,
   );
-  return { spool, lines: 0, expired: young === -1 ? head.length : young };
+  const expired = young === -1 ? head.length : young;
+  if (expired > 0) {
+    return { spool, held, lines: 0, expired };
+  }
+  const settled = await readCountedLines(spool.cursorPath, spool);
+  const ends = lineEnds(spool.pending, head.length, spool.offset);
+  const free = head.filter((line, index) => writerOf(line) !== held && !settled.has(ends[index] ?? -1));
+  return { spool, held, lines: free.length, expired: 0 };
 };
+
+/** Whether a spooled line was written by the life a hold is for. */
+export const isHeldLine = (held: string | null, line: string): boolean => held !== null && writerOf(line) === held;
 
 /** What doctor says while a hold exists: how many records, and when the first of them expires. */
 export interface HeldRecords {

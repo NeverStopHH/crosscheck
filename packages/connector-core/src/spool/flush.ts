@@ -37,7 +37,7 @@ import { withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
-import { bytesOfLines, lineEnds, readCountedLines, writeCursorOffset } from "./cursor.ts";
+import { bytesOfLines, lineEnds, readCountedLines, writeCountedLines, writeCursorOffset } from "./cursor.ts";
 import { batchLosses } from "./batch-losses.ts";
 import type { BatchLine, SpooledLine } from "./batch-losses.ts";
 import { addCount } from "./counts.ts";
@@ -46,7 +46,7 @@ import { recordDrop } from "./drops.ts";
 import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
 import { healAndResend, isRefusedLifeRecord } from "./flush-heal.ts";
-import { deliverableOf, forgetUnregistered } from "./held-lives.ts";
+import { deliverableOf, forgetUnregistered, isHeldLine } from "./held-lives.ts";
 import { deliverOwed, isOwedFor, readOwedWorkContext, settleOwedWorkContext } from "./owed-work-context.ts";
 import type { OwedWorkContext } from "./owed-work-context.ts";
 import type { Deliverable } from "./held-lives.ts";
@@ -224,18 +224,24 @@ const flushOneBatch = async (
   spool: SessionSpool,
   deadlineMs: number,
   refusedLives: ReadonlySet<string>,
-  limit: number,
+  held: string | null,
 ): Promise<BatchOutcome | null> => {
   // ONE SHORT OF THE LIMIT while a work context is owed for this spool: the
   // debt goes at the head of the batch (spool/owed-work-context.ts).
   const owed = await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug);
-  const batch = spool.lines.slice(0, Math.min(owed === null ? MAX_INGEST_BATCH : MAX_INGEST_BATCH - 1, limit));
+  const batch = spool.lines.slice(0, owed === null ? MAX_INGEST_BATCH : MAX_INGEST_BATCH - 1);
   const consumed = spool.offset + bytesOfLines(spool.pending, batch.length);
   const ends = lineEnds(spool.pending, batch.length, spool.offset);
-  const lines: readonly BatchLine[] = batch.map((line, index) => ({
+  // A held life's lines stay where they are (spool/held-lives.ts); every
+  // other line of the batch is settled now — sent, or counted — and a line
+  // an earlier flush settled behind a held one is passed, never sent twice.
+  const earlier = await readCountedLines(spool.cursorPath, spool);
+  const all: readonly (BatchLine & { readonly held: boolean })[] = batch.map((line, index) => ({
     record: parseLine(line),
     end: ends[index] ?? consumed,
+    held: isHeldLine(held, line),
   }));
+  const lines: readonly BatchLine[] = all.filter((line) => !line.held && !earlier.has(line.end));
   const isWithheld = (record: Record<string, unknown>): boolean =>
     isRefusedLifeRecord(record, refusedLives, input.sessionId);
   const sendable = lines.filter(
@@ -253,7 +259,6 @@ const flushOneBatch = async (
   // walk when one runs, so the register it sends already reports them
   // (review P3), else just below; and once per LINE across flushes, so a
   // batch a walk leaves on disk is not counted again (spool/batch-losses.ts).
-  const earlier = await readCountedLines(spool.cursorPath, spool);
   const losses = batchLosses(ctx, spool, lines, sendable, isWithheld, earlier);
   const healed = await healAndResend({
     ctx,
@@ -280,11 +285,9 @@ const flushOneBatch = async (
   // (spool/held-lives.ts, review-2 round 6 HIGH-2).
   await forgetUnregistered(ctx.home, spool.slug, healed.heal?.sessionId ?? input.sessionId, summary);
   await losses.write([]);
-  // The refusals a heal's walk already wrote down are not counted twice —
-  // this walk's, or an earlier one's that left the batch on disk.
-  const uncounted = (summary.results ?? []).filter(
-    (result) => !healed.counted.has(result.index) && !earlier.has(sendable[result.index]?.end ?? -1),
-  );
+  // The refusals a heal's walk already wrote down are not counted twice. An
+  // earlier walk's never reach this batch: a noted line is not sent again.
+  const uncounted = (summary.results ?? []).filter((result) => !healed.counted.has(result.index));
   // A 2xx is not a delivery. Ingest reports per-record outcomes, and a
   // record the hub REFUSED is discarded by the cursor write below exactly
   // like a torn line — so it is counted exactly like one. Nothing in the
@@ -335,8 +338,28 @@ const flushOneBatch = async (
   // this batch came from. A spool reaped and recreated mid-flush is a different
   // file — same name, and on ext4 the same inode number too — and its records
   // start at offset 0.
-  await writeCursorOffset(spool.dataPath, spool.cursorPath, consumed, spool);
+  //
+  // A HELD LIFE'S FIRST LINE STOPS THE CURSOR, not the batch (review-2 round
+  // 6, LOW-4): the cursor moves over the lines settled up to it, and every
+  // line settled beyond it — sent now, or counted — is noted on the cursor so
+  // no flush sends or counts it again.
+  const firstHeld = all.findIndex((line) => line.held);
+  const settledUpTo = firstHeld === -1 ? consumed : spool.offset + bytesOfLines(spool.pending, firstHeld);
+  await moveCursor(spool, settledUpTo, [...earlier, ...all.filter((line) => !line.held).map((line) => line.end)]);
   return { sent: records.length, heal: healed.heal, healAsked: healed.asked };
+};
+
+/**
+ * The cursor at `offset`, with the settled lines past it noted — a plain
+ * cursor when none is (spool/cursor.ts readCountedLines).
+ */
+const moveCursor = async (spool: SessionSpool, offset: number, settled: readonly number[]): Promise<void> => {
+  const beyond = new Set(settled.filter((end) => end > offset));
+  if (beyond.size === 0) {
+    await writeCursorOffset(spool.dataPath, spool.cursorPath, offset, spool);
+    return;
+  }
+  await writeCountedLines(spool.dataPath, spool.cursorPath, offset, beyond, spool);
 };
 
 /**
@@ -414,7 +437,11 @@ const nextDeliverable = async (
 /** Held records past the age bound: counted before the cursor passes them. */
 const expireHeld = async (ctx: HubContext, spool: SessionSpool, count: number): Promise<void> => {
   await recordDrop(ctx.home, ctx.repoKey, spool.slug, count, "expired", ctx.now());
-  await writeCursorOffset(spool.dataPath, spool.cursorPath, spool.offset + bytesOfLines(spool.pending, count), spool);
+  await moveCursor(
+    spool,
+    spool.offset + bytesOfLines(spool.pending, count),
+    [...(await readCountedLines(spool.cursorPath, spool))],
+  );
 };
 
 /**
@@ -471,7 +498,7 @@ const drain = async (
       target.spool,
       deadlineMs,
       refusedLives,
-      target.lines,
+      target.held,
     );
     if (delivered === null) {
       return { outcome: "failed", remaining: pendingTotal(spools) };

@@ -516,6 +516,40 @@ describe("a successor flush beside a live life the hub has not registered", () =
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
   });
 
+  test("holds that life's records only: another life's record behind them goes, once (review-2 round 6, LOW-4)", async () => {
+    // Arrange: D unregistered; behind D's first edit in D's own spool, a
+    // record another life wrote — a straggler a worker appended late
+    const fx = await fixture("held-per-life", proxyUrl);
+    refuseRegisters = true;
+    const deaf = await register(fx);
+    refuseRegisters = false;
+    const otherHost = `${fx.hostSessionKey}-other`;
+    const other = await register(fx, otherHost);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+    await appendTo(fx, fx.hostSessionKey, [
+      targetRecord(deaf.workContextId, "file", "src/deaf.ts", producerOf(deaf.crosscheckSessionId), new Date()),
+      targetRecord(other.workContextId, "file", "src/behind.ts", producerOf(other.crosscheckSessionId), new Date()),
+    ]);
+
+    // Act: two of O's flushes, then D's own
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+    const otherAfterFirst = await targetsOf(other.workContextId);
+    const postsBefore = recordPosts;
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+    const postsForSecond = recordPosts - postsBefore;
+    const deafBeforeHeal = await targetsOf(deaf.workContextId);
+    await flushAsHook(fx);
+
+    // Assert: the straggler went with O's first flush and never again; D's
+    // edit waited for D; nothing is left on disk
+    expect(otherAfterFirst).toEqual(["src/behind.ts"]);
+    expect(postsForSecond).toBe(0);
+    expect(deafBeforeHeal).toEqual([]);
+    expect(await targetsOf(deaf.workContextId)).toEqual(["src/deaf.ts"]);
+    expect((await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines.length).toBe(0);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
+  });
+
   test("holds them only while the life is live: after its end they are delivered and every refusal counted", async () => {
     // Arrange: life D unregistered with an edit, then ended; a registered conversation O
     const fx = await fixture("held-until-end", proxyUrl);

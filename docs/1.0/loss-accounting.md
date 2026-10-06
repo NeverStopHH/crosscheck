@@ -405,6 +405,13 @@ state file a corpse, by `sessionSilentForMs`) is never held; doctor says `N reco
 (expire on <date>)` while a hold exists; and Cursor's sessionStart and the ACP proxy's shutdown reap stale session
 states as Claude's SessionStart already did, so no host leaves corpses behind.
 
+**The hold is per life, not per file position** (review-2 round 6, LOW-4). A record of ANOTHER life can sit in the
+host session's own spool behind the held life's first record — a detached worker, or a hook that read the state
+before a resume switched it, appends late — and it waited as long as the hold did. The held life's first line now
+stops the cursor, not the batch: every other line of the batch is settled — sent, or counted — and those beyond the
+cursor are noted on it (the same note the counted losses use, `spool/cursor.ts`), so no flush sends or counts them
+twice and the cursor passes them once the hold ends.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

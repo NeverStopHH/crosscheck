@@ -17562,8 +17562,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a refusal the walk already wrote down is counted again",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "    (result) => !healed.counted.has(result.index) && !earlier.has(",
-    to: "    (result) => !earlier.has(",
+    from: "  const uncounted = (summary.results ?? []).filter((result) => !healed.counted.has(result.index));",
+    to: "  const uncounted = summary.results ?? [];",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "every record a heal's refusal cost is booked twice in the drop ledger",
   },
@@ -17810,8 +17810,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a held record past the age bound is kept for good",
     file: `${CORE}/src/spool/held-lives.ts`,
-    from: "  return { spool, lines: 0, expired: young === -1 ? head.length : young };",
-    to: "  return { spool, lines: 0, expired: 0 };",
+    from: "    return { spool, held, lines: 0, expired };",
+    to: "    return { spool, held, lines: 0, expired: 0 };",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 MEDIUM-1: a life that never registers and never ends pins its records past the bound every spool obeys, counted nowhere",
   },
@@ -17898,8 +17898,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a refusal an earlier walk wrote down is counted again when the batch goes (M5)",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "!healed.counted.has(result.index) && !earlier.has(sendable[result.index]?.end ?? -1),",
-    to: "!healed.counted.has(result.index),",
+    from: "  const lines: readonly BatchLine[] = all.filter((line) => !line.held && !earlier.has(line.end));",
+    to: "  const lines: readonly BatchLine[] = all.filter((line) => !line.held);",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 LOW-6: one refused record reads as two in the ledger and in the hub's loss_total",
   },
@@ -17938,8 +17938,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a batch is not sized one short while a work context is owed",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "Math.min(owed === null ? MAX_INGEST_BATCH : MAX_INGEST_BATCH - 1, limit)",
-    to: "Math.min(MAX_INGEST_BATCH, limit)",
+    from: "spool.lines.slice(0, owed === null ? MAX_INGEST_BATCH : MAX_INGEST_BATCH - 1)",
+    to: "spool.lines.slice(0, MAX_INGEST_BATCH)",
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 6 HIGH-1: a full backlog plus the work context is past the hub's batch limit and refused whole, every flush",
   },
@@ -18054,6 +18054,22 @@ export const MUTATIONS: readonly Mutation[
     to: "    ? name.slice(0, -PENDING_END_SUFFIX.length)",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 6 LOW-2: `<slug>@r1.pending-end` has no spool of its own, so the life is ended while its records are still on disk",
+  },
+  {
+    label: "a held life's first record holds every line behind it",
+    file: `${CORE}/src/spool/held-lives.ts`,
+    from: "  return { spool, held, lines: free.length, expired: 0 };",
+    to: "  return { spool, held, lines: 0, expired: 0 };",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 LOW-4: a straggler another life wrote behind the held life's first record waits as long as the hold does",
+  },
+  {
+    label: "a line settled behind a held one is sent again",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  await moveCursor(spool, settledUpTo, [...earlier, ...all.filter((line) => !line.held).map((line) => line.end)]);",
+    to: "  await moveCursor(spool, settledUpTo, [...earlier]);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 LOW-4: every flush while the hold lasts posts the same straggler again",
   },
 ];
 
@@ -18313,7 +18329,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 28
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 30
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 27
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
