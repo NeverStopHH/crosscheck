@@ -154,6 +154,7 @@ export const applyCrossSimilarity = async (
       id: claims.id,
       status: claims.status,
       provenance: claims.provenance,
+      developerId: agentSessions.developerId,
       similarity: sql<number>`1 - (${distance})`,
     })
     .from(claims)
@@ -180,6 +181,18 @@ export const applyCrossSimilarity = async (
     nearest === undefined ||
     nearest.similarity <= SIMILARITY_DEDUP_THRESHOLD
   ) {
+    return;
+  }
+
+  // NEVER INTO A TEAMMATE'S TREE ON A DRAFT'S STRENGTH. An auto edge between
+  // two developers' claims where either side is derived (an unreviewed draft,
+  // or the rejected copy a discard appends) would put a machine guess into
+  // somebody else's tree — a push the draft promise forbids. Between one
+  // developer's own claims the pull-only edge stays, and get_diagnosis says
+  // what the far end is (diagnosis.ts ExternalClaimRef).
+  const eitherDerived =
+    body.provenance !== DECLARED_PROVENANCE || nearest.provenance !== DECLARED_PROVENANCE;
+  if (eitherDerived && nearest.developerId !== developerId) {
     return;
   }
 

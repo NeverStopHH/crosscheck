@@ -190,6 +190,9 @@ export interface ExternalClaimRef {
   readonly id: string;
   readonly kind: string;
   readonly workContextId: string;
+  /** So the reader can tell a linked draft or discard from a vouched claim. */
+  readonly provenance: string;
+  readonly status: string;
 }
 
 /** One deterministic target of the tree (file, symbol, fingerprint …). */
@@ -487,6 +490,8 @@ const listExternalClaimRefs = async (
       id: claims.id,
       kind: claims.kind,
       workContextId: claims.workContextId,
+      provenance: claims.provenance,
+      status: claims.status,
     })
     .from(claims)
     .where(inArray(claims.id, externalIds));

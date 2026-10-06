@@ -1085,6 +1085,9 @@ export const ExternalClaimRefSchema = z.looseObject({
   id: z.string().min(1),
   kind: z.string().min(1),
   workContextId: z.string().min(1),
+  /** Optional: an older hub sends neither, and the line then says nothing more. */
+  provenance: z.string().min(1).optional().catch(undefined),
+  status: z.string().min(1).optional().catch(undefined),
 });
 
 export type ExternalClaimRef = z.infer<typeof ExternalClaimRefSchema>;

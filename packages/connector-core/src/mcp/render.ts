@@ -616,8 +616,23 @@ const edgeLine = (
   return `- ${safeId(edge.fromClaimId)} ${bare(edge.kind)} ${safeId(edge.toClaimId)} · by ${authorLabel(index, edge.authorSessionId)}${note}`;
 };
 
+/**
+ * What the far end of a cross-tree link IS, when it is not a vouched claim:
+ * an auto similarity link may reach an unreviewed draft or a discard of the
+ * same author, and the line must not read as a finding.
+ */
+const externalTrustFacts = (ref: ExternalClaimRef): readonly string[] => [
+  ...(ref.provenance === "derived" ? ["provenance derived (unreviewed draft)"] : []),
+  ...(ref.status === "rejected" ? ["status rejected"] : []),
+];
+
 const externalLine = (ref: ExternalClaimRef): string =>
-  `- ${safeId(ref.id)} · ${bare(ref.kind)} · in work context ${safeId(ref.workContextId)}`;
+  [
+    `- ${safeId(ref.id)}`,
+    bare(ref.kind),
+    ...externalTrustFacts(ref),
+    `in work context ${safeId(ref.workContextId)}`,
+  ].join(" · ");
 
 /**
  * One captured target — WHERE this investigation happened.

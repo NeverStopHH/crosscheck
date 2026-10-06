@@ -54,6 +54,8 @@ interface DiagnosisData {
     readonly id: string;
     readonly kind: string;
     readonly workContextId: string;
+    readonly provenance: string;
+    readonly status: string;
   }[];
   readonly truncated: boolean;
 }
@@ -289,7 +291,7 @@ describe("GET /api/work-contexts/:id/diagnosis", () => {
     const crossEdge = body.data.edges.find((edge) => edge.id === "edge_cross");
     expect(crossEdge?.kind).toBe("deeper_cause_of");
     expect(body.data.externalClaims).toEqual([
-      { id: "clm_foreign", kind: "hypothesis", workContextId: "wc_02" },
+      { id: "clm_foreign", kind: "hypothesis", workContextId: "wc_02", provenance: "declared", status: "proposed" },
     ]);
   });
 

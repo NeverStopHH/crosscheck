@@ -18047,6 +18047,38 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/mcp-render.test.ts`,
     because: "the agent reads a draft-only match as a teammate's finding on the topic",
   },
+  {
+    label: "a teammate's draft is auto-linked into another developer's tree",
+    file: `${SERVER}/src/services/similarity-gate.ts`,
+    from: "  if (eitherDerived && nearest.developerId !== developerId) {",
+    to: "  if (eitherDerived && nearest.developerId !== developerId && false) {",
+    test: `${SERVER}/test/similarity-gate.test.ts`,
+    because: "a machine guess nobody vouched for lands in a teammate's diagnosis as a related claim \u2014 a push the draft promise forbids",
+  },
+  {
+    label: "get_diagnosis hides that a linked claim is a draft",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  ...(ref.provenance === \"derived\" ? [\"provenance derived (unreviewed draft)\"] : []),\n",
+    to: "",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because: "a linked draft in another tree reads like a vouched claim",
+  },
+  {
+    label: "get_diagnosis hides that a linked claim was rejected",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  ...(ref.status === \"rejected\" ? [\"status rejected\"] : []),\n",
+    to: "",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because: "a discarded claim in another tree reads like a live one",
+  },
+  {
+    label: "the diagnosis route drops a linked claim's provenance",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "      provenance: claims.provenance,\n      status: claims.status,\n    })\n    .from(claims)\n    .where(inArray(claims.id, externalIds));",
+    to: "    })\n    .from(claims)\n    .where(inArray(claims.id, externalIds));",
+    test: `${SERVER}/test/similarity-gate.test.ts`,
+    because: "the connector cannot say a linked claim is a draft when the hub never sends what it is",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18288,7 +18320,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
- * PRINTS: packages/connector-core/test/mcp-render.test.ts 14
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 16
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
@@ -18411,6 +18443,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
+ * PRINTS: packages/server/test/similarity-gate.test.ts 2
  * PRINTS: packages/server/test/skeleton-identity.test.ts 17
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1

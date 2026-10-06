@@ -28,6 +28,7 @@ import {
   createHarnessWithSession,
   createTestHarness,
   createTestDeveloper,
+  jsonRequest,
   postRecords,
   recordEnvelope,
   registerTestSession,
@@ -208,6 +209,50 @@ describe("never across authors", () => {
   });
 });
 
+describe("a draft is never auto-linked into a teammate's tree", () => {
+  const derivedFields = { captureMode: "auto", provenance: "derived", confidence: 0.4 } as const;
+
+  test("a teammate's DRAFT near my declared claim gets no edge", async () => {
+    // Arrange
+    const { harness, developer } = await createGateHarness();
+    await postRecords(harness, developer, recordEnvelope("claim", validClaimBody({ body: LOGIN_OBSERVATION })));
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: SECOND_SESSION_ID });
+
+    // Act: Robin's summarizer drafts a near-duplicate into Nick's context
+    await postRecords(
+      harness,
+      robin,
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: "clm_robin_draft", authorSessionId: SECOND_SESSION_ID, body: LOGIN_REWORDED, ...derivedFields }),
+        { sessionId: SECOND_SESSION_ID },
+      ),
+    );
+
+    // Assert
+    expect(await harness.db.select().from(claimEdges)).toEqual([]);
+  });
+
+  test("my declared claim near a teammate's DRAFT gets no edge either", async () => {
+    const { harness, developer } = await createGateHarness();
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: SECOND_SESSION_ID });
+    await postRecords(harness, robin, recordEnvelope("work_context", validWorkContextBody({ id: "wc_robin", sessionId: SECOND_SESSION_ID }), { sessionId: SECOND_SESSION_ID }));
+    await postRecords(
+      harness,
+      robin,
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: "clm_robin_draft", workContextId: "wc_robin", authorSessionId: SECOND_SESSION_ID, body: LOGIN_OBSERVATION, ...derivedFields }),
+        { sessionId: SECOND_SESSION_ID },
+      ),
+    );
+
+    await postRecords(harness, developer, recordEnvelope("claim", validClaimBody({ id: "clm_mine", body: LOGIN_REWORDED })));
+
+    expect(await harness.db.select().from(claimEdges)).toEqual([]);
+  });
+});
+
 describe("cross-context near-duplicates", () => {
   test("keeps both and links them with an auto relates_to edge", async () => {
     // Arrange: the same developer investigating the same symptom in a second
@@ -351,6 +396,11 @@ describe("cross-context near-duplicates", () => {
     const edges = await harness.db.select().from(claimEdges);
     expect(edges.length).toBe(1);
     expect(edges[0]?.kind).toBe("relates_to");
+    // ...and the tree that edge reaches into says what the far end is: the
+    // linked claim is a draft, never presented as a vouched finding.
+    const response = await harness.app.request("/api/work-contexts/wc_01/diagnosis?telemetry=0", jsonRequest("GET", developer.apiKey));
+    const tree = (await response.json()) as { data: { externalClaims: { id: string; provenance?: string; status?: string }[] } };
+    expect(tree.data.externalClaims.find((ref) => ref.id === "clm_02")).toMatchObject({ provenance: "derived", status: "proposed" });
   });
 
   test("a developer's own cross-kind contradiction in one context is flagged", async () => {
