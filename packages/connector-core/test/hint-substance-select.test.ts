@@ -67,7 +67,7 @@ const context = (
 });
 
 const select = (candidates: readonly HintContextCandidate[]) =>
-  selectHint({ candidates, seenRefIds: [], deliveredCount: 0, selfDeveloperId: SELF, promptTerms: [] });
+  selectHint({ candidates, seenRefIds: [], deliveredCount: 0, selfDeveloperId: SELF, promptTerms: [], promptTopicalTerms: [] });
 
 const selectedClaimId = (candidates: readonly HintContextCandidate[]): string | null => {
   const selection = select(candidates);
@@ -249,6 +249,7 @@ describe("the floor is per candidate, looked at again on this side", () => {
       deliveredCount: 1,
       selfDeveloperId: SELF,
       promptTerms: [],
+      promptTopicalTerms: [],
     });
     expect(selection.kind).toBe("silence");
   });

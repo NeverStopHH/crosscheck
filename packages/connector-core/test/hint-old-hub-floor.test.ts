@@ -65,6 +65,7 @@ const selectionFor = (context: HintContextCandidate) =>
     deliveredCount: 0,
     selfDeveloperId: SELF,
     promptTerms: promptTerms(PROMPT).content,
+    promptTopicalTerms: promptTerms(PROMPT).topical,
   });
 
 describe("an old hub's candidate is recounted, and refused unless it clears the floor here", () => {
@@ -123,6 +124,28 @@ describe("an old hub's candidate is recounted, and refused unless it clears the 
     expect(selectionFor(context).kind).toBe("silence");
   });
 
+  test.each([
+    ["The session limit resets at midnight for every usage window", "silence"],
+    ["The zebrafrobnicator session limit is counted twice", "pointer"],
+  ] as const)("a body sharing only meta words is not the floor; one topical word beside them is (C1): %p", (body, kind) => {
+    // Arrange — session, limit, resets, usage are the session's machinery
+    const context = oldHubContext([claim({ body })]);
+    const terms = promptTerms("the session limit resets during the zebrafrobnicator usage report");
+
+    // Act
+    const selection = selectHint({
+      candidates: [context],
+      seenRefIds: [],
+      deliveredCount: 0,
+      selfDeveloperId: SELF,
+      promptTerms: terms.content,
+      promptTopicalTerms: terms.topical,
+    });
+
+    // Assert
+    expect(selection.kind).toBe(kind);
+  });
+
   test("a steering word never counts toward the recount", () => {
     // Arrange — the body shares "continue" and "please" and one task word
     const context = oldHubContext([claim({ body: "Please continue the zebrafrobnicator import" })]);
@@ -134,6 +157,7 @@ describe("an old hub's candidate is recounted, and refused unless it clears the 
       deliveredCount: 0,
       selfDeveloperId: SELF,
       promptTerms: promptTerms("please continue the zebrafrobnicator work").content,
+      promptTopicalTerms: promptTerms("please continue the zebrafrobnicator work").topical,
     });
 
     // Assert
@@ -200,6 +224,16 @@ describe("the flow recounts on the prompt's own content terms", () => {
     // Assert
     expect(hint).toContain("crosscheck pointer");
     expect(hint).not.toContain("crosscheck hint:");
+  });
+
+  test("a body sharing only the prompt's meta words is not, however many (C1)", async () => {
+    expect(
+      await hintFor(
+        "ohf-meta",
+        "the session limit resets during the zebrafrobnicator usage report",
+        "The session limit resets at midnight for every usage window",
+      ),
+    ).toBe("");
   });
 
   test("a body sharing the prompt's steering words and one task word is not", async () => {

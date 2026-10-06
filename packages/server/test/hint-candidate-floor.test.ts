@@ -266,18 +266,29 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
   });
 
   test.each([["why does the usage limit reset"], ["reset the limits please"], ["when does the limit reset?"]])(
-    "M3: %p is a task about the limit, and finds the tree about it",
+    "M3 + C1: %p is a task, but meta words alone never qualify a tree",
     async (prompt) => {
-      // Arrange
+      // Arrange — the tree's claim says limit and reset, and nothing topical the prompt says
       const { harness, robin } = await englishLimitTree();
 
       // Act
       const candidates = await fetchCandidates(harness, robin, { query: prompt });
 
-      // Assert
-      expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+      // Assert — round 3, C1: two meta words agreeing are the session's machinery
+      expect(candidates).toEqual([]);
     },
   );
+
+  test("C1, the control: one topical word beside the meta words finds the tree about it", async () => {
+    // Arrange
+    const { harness, robin } = await englishLimitTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: "why does the import limit reset" });
+
+    // Assert
+    expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+  });
 
   test("the control: one task word beside them makes it a prompt that matches", async () => {
     // Arrange

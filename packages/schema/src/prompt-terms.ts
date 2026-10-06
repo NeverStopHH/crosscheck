@@ -19,7 +19,7 @@
  * carries is decided on all of it, so a task word past the sixteenth token
  * still counts.
  */
-import { isContinuationTrigger, isSteeringWord, wordClassOf } from "./session-control.ts";
+import { isContinuationTrigger, isRestartVerb, isSteeringWord, wordClassOf } from "./session-control.ts";
 import type { WordClass } from "./session-control.ts";
 import { commandArguments } from "./slash-command.ts";
 import { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
@@ -53,6 +53,13 @@ export const isGermanPrompt = (tokens: readonly string[]): boolean =>
 export interface PromptTerms {
   /** Distinct content words, in order of first appearance. */
   readonly content: readonly string[];
+  /**
+   * The content words of NO closed class (hold-out review round 3, C1): the
+   * words that can name a topic. A candidate tree must share one of them on
+   * the statement that clears the content floor — two meta words agreeing
+   * ("session", "limit") are the session's machinery, never a topic.
+   */
+  readonly topical: readonly string[];
   readonly isGerman: boolean;
   /** No task: what is left is a command to the session (`isSessionCommand`). */
   readonly isContentFree: boolean;
@@ -72,13 +79,18 @@ const isCommandClass = (wordClass: WordClass | null): boolean =>
  *     "mach weiter, usage limit ist wieder da" (a);
  *   a conversation or operation word beside meta words only: "think again,
  *     shorter", "commit and push", "run the tests again" (c);
- *   one meta word and a steering word: "retry please".
+ *   one meta word and a steering word: "retry please";
+ *   a RESTART VERB beside meta words only: "rate limit is gone, retry",
+ *     "retry limit" (round 3, C1).
  * Meta words alone ask about the machinery — "why does the usage limit
- * reset", "retry limit" — and ONE word of no class makes a task: "run the
- * checkout e2e tests".
+ * reset", "session expires after 15 minutes" — and ONE word of no class
+ * makes a task: "run the checkout e2e tests".
  */
-const isSessionCommand = (tokens: readonly string[], content: readonly string[]): boolean => {
-  const classes = content.map(wordClassOf);
+const isSessionCommand = (
+  tokens: readonly string[],
+  content: readonly string[],
+  classes: readonly (WordClass | null)[],
+): boolean => {
   if (classes.includes(null)) {
     return false;
   }
@@ -87,6 +99,7 @@ const isSessionCommand = (tokens: readonly string[], content: readonly string[])
     topical.length === 0 ||
     tokens.some(isContinuationTrigger) ||
     topical.some(isCommandClass) ||
+    content.some(isRestartVerb) ||
     (topical.length === 1 && tokens.some((token) => isSteeringClass(wordClassOf(token))))
   );
 };
@@ -102,7 +115,9 @@ export const promptTerms = (text: string): PromptTerms => {
   // STEERING WORDS ARE NEVER TERMS (review 1006b, H1): not as a shared word
   // beside a real one. As written: a slip moves the verdict, never the terms.
   const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));
-  return { content, isGerman, isContentFree: isSessionCommand(tokens, content) };
+  const classes = content.map(wordClassOf);
+  const topical = content.filter((_, index) => classes[index] === null);
+  return { content, topical, isGerman, isContentFree: isSessionCommand(tokens, content, classes) };
 };
 
 /** Nothing task-bearing: what is left is a command to the session. */

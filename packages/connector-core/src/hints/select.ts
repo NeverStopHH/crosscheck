@@ -114,6 +114,12 @@ export interface SelectHintInput {
    * caller can skip the recount by forgetting it.
    */
   readonly promptTerms: readonly string[];
+  /**
+   * Those of the terms that belong to no closed class (promptTerms().topical,
+   * hold-out review round 3, C1): the recount needs one of them on the same
+   * statement as the second shared word. Required for the same reason.
+   */
+  readonly promptTopicalTerms: readonly string[];
 }
 
 const SILENCE = { kind: "silence" } as const satisfies HintSelection;
@@ -282,8 +288,10 @@ const isInjectable = (claim: HintClaimCandidate): boolean =>
  * (hold-out review, H4): it ranked on its normalized document, drafts
  * included, and floored nothing. So the prompt's content terms are counted
  * against what the wire shows — the title, and each DECLARED foreign claim
- * body — and HINT_MIN_SHARED_TERMS of them must stand on one; a tree whose
- * wire carries no such body earns no hint at all.
+ * body — and HINT_MIN_SHARED_TERMS of them must stand on one, at least one of
+ * them TOPICAL (round 3, C1: two meta words agreeing are the session's
+ * machinery, never a topic); a tree whose wire carries no such body earns no
+ * hint at all.
  */
 const clearsContentFloor = (context: HintContextCandidate, input: SelectHintInput): boolean =>
   context.workContext.tier === "exact" ||
@@ -291,21 +299,22 @@ const clearsContentFloor = (context: HintContextCandidate, input: SelectHintInpu
     ? recountsContentFloor(context, input)
     : context.sharedTerms >= HINT_MIN_SHARED_TERMS);
 
-/** How many of the prompt's terms one statement shares, as written (fail closed: no stemming). */
-const sharedOn = (statement: string, terms: readonly string[]): number => {
+/**
+ * Whether one statement clears the floor on its own, as written (fail
+ * closed: no stemming): HINT_MIN_SHARED_TERMS of the prompt's terms, one of
+ * them topical (C1).
+ */
+const clearsOn = (statement: string, input: SelectHintInput): boolean => {
   const words = new Set(promptTokens(statement));
-  return terms.filter((term) => words.has(term)).length;
+  const shared = (terms: readonly string[]): number => terms.filter((term) => words.has(term)).length;
+  return shared(input.promptTerms) >= HINT_MIN_SHARED_TERMS && shared(input.promptTopicalTerms) >= 1;
 };
 
 const recountsContentFloor = (context: HintContextCandidate, input: SelectHintInput): boolean => {
   const bodies = context.claims
     .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)
     .map((claim) => claim.body);
-  return (
-    bodies.length > 0 &&
-    Math.max(...[context.workContext.title, ...bodies].map((statement) => sharedOn(statement, input.promptTerms))) >=
-      HINT_MIN_SHARED_TERMS
-  );
+  return bodies.length > 0 && [context.workContext.title, ...bodies].some((statement) => clearsOn(statement, input));
 };
 
 const isEligibleContext =

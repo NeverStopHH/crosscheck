@@ -84,6 +84,7 @@ const select = (
         ? SELF_DEVELOPER
         : overrides.selfDeveloperId,
     promptTerms: [],
+    promptTopicalTerms: [],
   });
 
 describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {

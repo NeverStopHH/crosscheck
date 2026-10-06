@@ -45,6 +45,18 @@ export const META_WORDS: readonly string[] = [
   "left", "aufgehort",
 ];
 
+/**
+ * RESTART VERBS (hold-out review round 3, C1): what sets the session's own
+ * work going again. They keep their classes — "retry" and "restart" are meta
+ * words, "rerun" an operation, "resume" a trigger — and the verdict reads one
+ * beside nothing but meta words as a command: "rate limit is gone, retry",
+ * "restart the session". Beside a topic it is about that topic: "retry limit
+ * for failed imports is too low".
+ */
+export const RESTART_VERBS: readonly string[] = [
+  "retry", "retries", "rerun", "restart", "restarts", "resume", "resuming", "neustart",
+];
+
 export const CONVERSATION_CONTROL: readonly string[] = [
   "wait", "waiting", "stop", "stopp", "hold", "hang", "pause", "halt", "cancel", "abort", "warte",
   "warten", "moment", "kurz", "nein", "abbrechen", "never", "mind", "forget", "egal", "shorter",

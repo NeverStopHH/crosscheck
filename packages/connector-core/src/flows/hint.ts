@@ -410,6 +410,7 @@ export const selectAndRenderHint = async (
     selfDeveloperId: state.developerId,
     // What an old hub's candidates are recounted on (hold-out review, H4).
     promptTerms: promptTerms(humanText).content,
+    promptTopicalTerms: promptTerms(humanText).topical,
   });
   const delivery = await renderSelection(
     {

@@ -124,7 +124,8 @@ export const HOLDOUT_TASKS: readonly CorpusPrompt[] = [
   task("diff zeigt umbenannte Dateien nicht", "de"), task("renamed files missing in diff view", "en", "wc_diff"),
   task("who reviews my PR before merge?", "en", "wc_review"), task("StatsBomb rate limit", "en", "wc_ratelimit"),
   task("StatsBomb API usage limit reset", "en", "wc_ratelimit"), task("retry after StatsBomb reset", "en", "wc_ratelimit"),
-  task("session expires after 15 minutes", "en", "wc_session"), task("login session läuft zu früh ab", "mixed", "wc_session"),
+  // Round 3, C1: session, expires and minutes are all machinery — a task, but no tree's topic
+  task("session expires after 15 minutes", "en"), task("login session läuft zu früh ab", "mixed", "wc_session"),
   task("status endpoint stale after deploy", "en", "wc_status"), task("Upload bricht bei großen Videos ab", "de", "wc_upload_de"),
   task("e2e tests flaky", "en", "wc_e2e"), task("e2e tests schlagen immer wieder fehl", "mixed", "wc_e2e"),
   task("Docker build startet nicht", "mixed", "wc_build"), task("bun.lock merge conflict", "en", "wc_merge"),
@@ -151,7 +152,8 @@ export const HOLDOUT_TASKS: readonly CorpusPrompt[] = [
   task("Wait for DB in e2e", "en", "wc_e2e"), task("flaky tests again", "en", "wc_e2e"), task("CI?", "en"),
   task("DB down", "en"), task("UI kaputt", "mixed"), task("S3 403", "en"), task("k8s pod crash", "en"),
   task("PR #74 CI", "en"), task("go build fails", "en"), task("npm ci kaputt", "mixed"),
-  task("Retry-Limit nochmal hoch", "de", "wc_ratelimit"), task("usage limit für StatsBomb erhöhen", "mixed", "wc_ratelimit"),
+  // Round 3, C1: "hoch" is the one topical word, and the rate-limit tree does not say it
+  task("Retry-Limit nochmal hoch", "de"), task("usage limit für StatsBomb erhöhen", "mixed", "wc_ratelimit"),
   task("go on with the JWT refresh fix", "en", "wc_jwt"), task("mach weiter mit dem JWT refresh", "mixed", "wc_jwt"),
   task("weiter mit OOM im Worker", "de", "wc_oom"), task("continue the StatsBomb rate limit work", "en", "wc_ratelimit"),
   task("worker hängt beim SIGTERM", "mixed", "wc_worker_wait"), task("Worker stoppt nicht bei SIGTERM", "mixed", "wc_worker_wait"),

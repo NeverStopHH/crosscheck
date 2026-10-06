@@ -270,39 +270,45 @@ const SYNTHETIC_CONTENT_FREE: readonly CorpusPrompt[] = [
   free('<agent-message from="a1">Report: the checkout retries test passes now, next step is the idempotency key</agent-message>', "en", "synthetic"),
 ];
 
-/** The review's task prompts (review 1006b, M3 probe), verbatim. */
+/**
+ * The review's task prompts (review 1006b, M3 probe), verbatim.
+ *
+ * WITHOUT A TREE TO REACH SINCE ROUND 3's C1 (the topical-word rule): a
+ * question made of the session's machinery — "why does the usage limit
+ * reset", "Limit zurücksetzen" — or whose one topical word the limit tree
+ * does not say ("add a retry limit", "Retry-Limit erhöhen") still reaches
+ * the hub as a task, but shares nothing topical with the tree, and two meta
+ * words agreeing are never a topic. The owner's rule: no hint.
+ */
 const REVIEW_TASKS: readonly CorpusPrompt[] = [
-  task("reset usage limits", "en", "review", "wc_usage_limit"),
-  task("why does the usage limit reset", "en", "review", "wc_usage_limit"),
-  task("when does the limit reset?", "en", "review", "wc_usage_limit"),
-  task("retry limit", "en", "review", "wc_usage_limit"),
-  task("add a retry limit", "en", "review", "wc_usage_limit"),
+  task("reset usage limits", "en", "review"),
+  task("why does the usage limit reset", "en", "review"),
+  task("when does the limit reset?", "en", "review"),
+  task("add a retry limit", "en", "review"),
   task("usage limit resets too early", "en", "review", "wc_usage_limit"),
-  task("limit usage", "en", "review", "wc_usage_limit"),
-  task("usage reset", "en", "review", "wc_usage_limit"),
+  task("limit usage", "en", "review"),
+  task("usage reset", "en", "review"),
   task("reset preset", "en", "review", "wc_upload_limit"),
-  task("restart usage", "en", "review", "wc_usage_limit"),
   task("is the limit reset per user?", "en", "review", "wc_usage_limit"),
   task("continue the migration", "en", "review"),
   task("resume upload", "en", "review"),
   task("resett usage limitz", "en", "review"),
-  task("limit resets", "en", "review", "wc_usage_limit"),
-  task("reset the limits please", "en", "review", "wc_usage_limit"),
-  task("Retry limit reached?", "en", "review", "wc_usage_limit"),
-  task("retry limit restart", "en", "review", "wc_usage_limit"),
-  task("Limit zurücksetzen", "de", "review", "wc_upload_limit"),
-  task("Zurücksetzen der Limits", "de", "review", "wc_upload_limit"),
+  task("limit resets", "en", "review"),
+  task("reset the limits please", "en", "review"),
+  task("Retry limit reached?", "en", "review"),
+  task("Limit zurücksetzen", "de", "review"),
+  task("Zurücksetzen der Limits", "de", "review"),
   task("Preset zurücksetzen", "de", "review", "wc_upload_limit"),
-  task("Usage-Limit zurücksetzen", "de", "review", "wc_upload_limit"),
-  task("Wann wird das Limit zurückgesetzt?", "de", "review", "wc_upload_limit"),
-  task("Warum wird das Limit nicht zurückgesetzt?", "de", "review", "wc_upload_limit"),
-  task("bitte Usage zurücksetzen", "de", "review", "wc_upload_limit"),
-  task("Retry-Limit erhöhen", "de", "review", "wc_usage_limit"),
+  task("Usage-Limit zurücksetzen", "de", "review"),
+  task("Wann wird das Limit zurückgesetzt?", "de", "review"),
+  task("Warum wird das Limit nicht zurückgesetzt?", "de", "review"),
+  task("bitte Usage zurücksetzen", "de", "review"),
+  task("Retry-Limit erhöhen", "de", "review"),
   task("Limit erneut setzen", "de", "review", "wc_upload_limit"),
   task("Fortsetzung des Uploads", "de", "review", "wc_upload_limit"),
-  task("Reset-Limit nochmal", "de", "review", "wc_usage_limit"),
-  task("Limits einfach zurücksetzen", "de", "review", "wc_upload_limit"),
-  task("Limit schon zurückgesetzt?", "de", "review", "wc_upload_limit"),
+  task("Reset-Limit nochmal", "de", "review"),
+  task("Limits einfach zurücksetzen", "de", "review"),
+  task("Limit schon zurückgesetzt?", "de", "review"),
   task("Zurückgesetztes Limit", "de", "review"),
   task(
     "Okay, the limit was reset, so please continue and keep going with everything you were doing before, then fix the OAuth refresh race",
@@ -372,6 +378,10 @@ const RELABELLED_CONTENT_FREE: readonly CorpusPrompt[] = [
   free("Mach mal das Retry-Limit", "de", "review"),
   free("Neustart fortsetzen", "de", "review"),
   free("Retry nochmal", "de", "review"),
+  // Round 3, C1: a restart verb beside meta words only is a command too
+  free("retry limit", "en", "review"),
+  free("restart usage", "en", "review"),
+  free("retry limit restart", "en", "review"),
 ];
 
 export const PROMPT_CORPUS: readonly CorpusPrompt[] = [

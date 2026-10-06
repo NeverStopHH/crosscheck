@@ -69,6 +69,15 @@ describe("content terms are the words left after the stop lists", () => {
     expect(promptTerms("please continue with the checkout tests").content).toEqual(["checkout", "tests"]);
   });
 
+  test.each([
+    ["token refresh fails after key rotation", ["refresh", "fails", "key", "rotation"]],
+    ["run the checkout e2e tests", ["checkout", "e2e"]],
+    ["the usage limit banner shows wrong numbers", ["banner", "shows", "wrong", "numbers"]],
+    ["why does the usage limit reset", []],
+  ])("the TOPICAL terms of %p are its content terms of no closed class (C1)", (prompt, topical) => {
+    expect(promptTerms(prompt).topical).toEqual(topical);
+  });
+
   test("meta, conversation and operation words stay terms in a task prompt", () => {
     expect(promptTerms("continue the StatsBomb rate limit work").content).toEqual(["statsbomb", "rate", "limit", "work"]);
     expect(promptTerms("run the checkout e2e tests").content).toEqual(["run", "checkout", "e2e", "tests"]);
@@ -92,6 +101,11 @@ describe("content terms are the words left after the stop lists", () => {
     ["run the tests again", "agent operations and a conversation word (c)"],
     ["ok, commit and push, then open the PR and run the tests again please", "agent operations (c)"],
     ["retry please", "one meta word and a steering word"],
+    ["rate limit is gone, retry", "a restart verb beside meta words only (C1)"],
+    ["retry limit", "a restart verb beside a meta word (C1)"],
+    ["restart the session", "a restart verb beside a meta word (C1)"],
+    ["rerun", "a restart verb alone (C1)"],
+    ["retry", "a restart verb alone (C1)"],
     ["mach mal, bitte", "a trigger and two steering words"],
     ["/code-review", "a bare slash command (d)"],
     ["", "nothing at all"],
@@ -101,8 +115,8 @@ describe("content terms are the words left after the stop lists", () => {
 
   test.each([
     ["why does the usage limit reset", "meta words alone ask about the machinery"],
-    ["retry limit", "two meta words without a trigger"],
     ["reset the limits please", "two meta words and a steering word"],
+    ["retry limit for failed imports is too low", "a restart verb beside a topic"],
     ["session expires after 15 minutes", "meta words and their clock, no trigger"],
     ["run the checkout e2e tests", "one word of no class"],
     ["continue the database migration", "a trigger beside a topic"],

@@ -165,6 +165,18 @@ const sharedTermsSql = (document: SQL, terms: readonly string[]): SQL<number> =>
 
 
 /**
+ * THE FLOOR COUNT OF ONE STATEMENT (hold-out review round 3, C1): how many of
+ * the query's words it shares, provided at least one of them is TOPICAL — of
+ * no closed class (`@crosscheck/schema` promptTerms().topical) — and 0
+ * otherwise. Two meta words agreeing ("session", "limit") are the session's
+ * machinery, never a topic, and the topical word must stand on the same
+ * statement as the second one: a title of meta words beside a claim that
+ * shares one stray word is two weak statements, not one strong one.
+ */
+const floorTermsSql = (document: SQL, terms: readonly string[], topical: readonly string[]): SQL<number> =>
+  sql<number>`(CASE WHEN ${sharedTermsSql(document, topical)} >= 1 THEN ${sharedTermsSql(document, terms)} ELSE 0 END)`;
+
+/**
  * The context's own statement — what its owner said the work is — as one
  * document, so its words are counted apart from any one claim's.
  */
@@ -501,25 +513,35 @@ const listContextClaims = async (
   return new Map(workContextIds.map((id, index) => [id, lists[index] ?? EMPTY_WINDOW]));
 };
 
+/** What one statement shares with the query: every word, and the floor count (C1). */
+interface StatementTerms {
+  readonly all: number;
+  readonly floor: number;
+}
+
 /**
  * How many distinct query words each context's OWN statement shares — the
- * other half of the content floor beside its claims' counts. One bounded
- * query for every candidate id.
+ * other half of the content floor beside its claims' counts — and its floor
+ * count under the topical-word rule. One bounded query for every candidate id.
  */
 const listStatementTerms = async (
   db: Db,
   workContextIds: readonly string[],
-  tokens: readonly string[],
-): Promise<ReadonlyMap<string, number>> => {
-  if (workContextIds.length === 0 || tokens.length === 0) {
+  terms: QueryTerms,
+): Promise<ReadonlyMap<string, StatementTerms>> => {
+  if (workContextIds.length === 0 || terms.all.length === 0) {
     return new Map();
   }
   const rows = await db
-    .select({ id: workContexts.id, terms: sharedTermsSql(contextStatement, tokens) })
+    .select({
+      id: workContexts.id,
+      all: sharedTermsSql(contextStatement, terms.all),
+      floor: floorTermsSql(contextStatement, terms.all, terms.topical),
+    })
     .from(workContexts)
     .where(inArray(workContexts.id, workContextIds))
     .limit(workContextIds.length);
-  return new Map(rows.map((row) => [row.id, Number(row.terms)]));
+  return new Map(rows.map((row) => [row.id, { all: Number(row.all), floor: Number(row.floor) }]));
 };
 
 /** The base commit of each context's owning session, for the drift label. */
@@ -610,8 +632,9 @@ const listClaimTermMaxima = async (
   db: Db,
   readerDeveloperId: string,
   workContextIds: readonly string[],
-  tokens: readonly string[],
+  terms: QueryTerms,
 ): Promise<ReadonlyMap<string, number>> => {
+  const tokens = terms.all;
   if (workContextIds.length === 0 || tokens.length === 0) {
     return new Map();
   }
@@ -619,7 +642,8 @@ const listClaimTermMaxima = async (
   const rows = await db
     .select({
       id: claims.workContextId,
-      terms: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, tokens)})`,
+      // The best FLOOR count of one claim: the topical-word rule per claim (C1).
+      terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
@@ -699,11 +723,18 @@ const rankOnPushableText =
     return [...best.values()];
   };
 
+/** The query's words as the floor counts them. */
+interface QueryTerms {
+  /** The prompt's content terms, bounded — what the pool is ranked and counted on. */
+  readonly all: readonly string[];
+  /** Those of them that belong to no closed class (C1). */
+  readonly topical: readonly string[];
+}
+
 /** What one search is made of: the text, for its exact tier, and the content terms. */
 interface CandidateQuery {
   readonly text: string;
-  /** The prompt's content terms, bounded — what the pool is ranked and counted on. */
-  readonly terms: readonly string[];
+  readonly terms: QueryTerms;
   readonly repo: string;
   readonly on: HintMatchedOn;
 }
@@ -723,7 +754,7 @@ const matchCandidates = async (
       // RANKED ON CONTENT TERMS (review 1006b, M8): the raw tokens let a
       // German prompt's "das ist nicht die" fill the pool with every tree
       // that says them, before the floor below ever ran.
-      ftsTokens: query.terms,
+      ftsTokens: query.terms.all,
       // AND RANKED ON PUSHABLE TEXT ONLY (hold-out review, M3): what a hint
       // would never show cannot rank a tree into the pool either.
       rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),
@@ -742,21 +773,21 @@ const matchCandidates = async (
     .filter((row) => HINT_ELIGIBLE_TIERS.includes(row.tier))
     // Defense in depth only — exclusion already happened inside the search.
     .filter((row) => row.developerId !== callerDeveloperId);
-  const tokens = query.terms;
+  const tokens = query.terms.all;
   const poolIds = pool.map((row) => row.id);
   const [statementTerms, claimTerms] = await Promise.all([
-    listStatementTerms(deps.db, poolIds, tokens),
-    listClaimTermMaxima(deps.db, callerDeveloperId, poolIds, tokens),
+    listStatementTerms(deps.db, poolIds, query.terms),
+    listClaimTermMaxima(deps.db, callerDeveloperId, poolIds, query.terms),
   ]);
   // THE FLOOR, PER CANDIDATE: every tree a hint may name must itself share
   // HINT_MIN_SHARED_TERMS words on ONE of its statements — its own, or one
-  // visible claim — or hold a target the query named. Decided over the whole
-  // pool, then cut to the bound.
+  // visible claim — one of them TOPICAL (C1), or hold a target the query
+  // named. Decided over the whole pool, then cut to the bound.
   const qualified = pool
     .map((row) => ({
       row,
-      ownTerms: statementTerms.get(row.id) ?? 0,
-      sharedTerms: Math.max(statementTerms.get(row.id) ?? 0, claimTerms.get(row.id) ?? 0),
+      ownTerms: statementTerms.get(row.id)?.all ?? 0,
+      sharedTerms: Math.max(statementTerms.get(row.id)?.floor ?? 0, claimTerms.get(row.id) ?? 0),
     }))
     .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))
     .slice(0, HINT_MAX_CONTEXTS);
@@ -820,9 +851,10 @@ export const listHintCandidates = async (
   if (terms.isContentFree) {
     return [];
   }
+  const all = terms.content.slice(0, SEARCH_MAX_QUERY_TOKENS);
   return matchCandidates(deps, callerDeveloperId, {
     text: humanText,
-    terms: terms.content.slice(0, SEARCH_MAX_QUERY_TOKENS),
+    terms: { all, topical: all.filter((term) => terms.topical.includes(term)) },
     repo: input.repo,
     on: "prompt",
   });

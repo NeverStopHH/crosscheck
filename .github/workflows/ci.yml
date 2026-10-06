@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1728
+    # PRINTS: 1736
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -281,7 +281,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
-    # PRINTS: flows/hint.ts 25
+    # PRINTS: flows/hint.ts 26
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
@@ -297,7 +297,7 @@ jobs:
     # PRINTS: hints/delivery.ts 8
     # PRINTS: hints/precision.ts 2
     # PRINTS: hints/render.ts 29
-    # PRINTS: hints/select.ts 32
+    # PRINTS: hints/select.ts 33
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
     # PRINTS: http/hub.ts 14
@@ -379,7 +379,7 @@ jobs:
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
-    # PRINTS: packages/schema/src/prompt-terms.ts 18
+    # PRINTS: packages/schema/src/prompt-terms.ts 20
     # PRINTS: packages/schema/src/prompt-vocabulary.ts 4
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
@@ -432,7 +432,7 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-resolution.ts 3
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 5
-    # PRINTS: packages/server/src/services/hints.ts 29
+    # PRINTS: packages/server/src/services/hints.ts 33
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
@@ -570,8 +570,8 @@ jobs:
     # PRINTS: harness-turn.ts 16
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 5
-    # PRINTS: hint.ts 29
-    # PRINTS: hints.ts 32
+    # PRINTS: hint.ts 30
+    # PRINTS: hints.ts 36
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 14
     # PRINTS: index.ts 4
@@ -637,7 +637,7 @@ jobs:
     # PRINTS: probe.ts 39
     # PRINTS: profile.ts 2
     # PRINTS: project-copy.ts 9
-    # PRINTS: prompt-terms.ts 18
+    # PRINTS: prompt-terms.ts 20
     # PRINTS: prompt-vocabulary.ts 4
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
@@ -673,7 +673,7 @@ jobs:
     # PRINTS: search-tokens.ts 4
     # PRINTS: search.ts 13
     # PRINTS: secret-scan.ts 1
-    # PRINTS: select.ts 32
+    # PRINTS: select.ts 33
     # PRINTS: seq-cost.ts 8
     # PRINTS: session-control.ts 6
     # PRINTS: session-events.ts 9

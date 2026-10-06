@@ -22,6 +22,7 @@ import {
   META_WORDS,
   NEAR_MISS_WORDS,
   OTHER_STEERING,
+  RESTART_VERBS,
 } from "./prompt-vocabulary.ts";
 import { isSwapSlipOf, isTypingSlipOf } from "./typing-slip.ts";
 
@@ -101,3 +102,11 @@ export const isSteeringWord = (word: string): boolean => {
 
 /** A verb or particle that carries the session's work on, a slip included. */
 export const isContinuationTrigger = (word: string): boolean => wordClassOf(word) === "trigger";
+
+const RESTARTS: ReadonlySet<string> = new Set(RESTART_VERBS);
+
+/** A verb that sets the session's work going again (C1), a slip included. */
+export const isRestartVerb = (word: string): boolean => {
+  const folded = foldWord(word);
+  return RESTARTS.has(folded) || (!NEAR_MISSES.has(folded) && RESTARTS.has(slipTargetOf(folded)?.word ?? ""));
+};

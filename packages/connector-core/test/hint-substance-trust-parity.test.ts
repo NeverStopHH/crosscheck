@@ -70,6 +70,7 @@ describe("the hub's withholding rule and the selector's gate answer alike", () =
         deliveredCount: 0,
         selfDeveloperId: "dev_self",
         promptTerms: [],
+        promptTopicalTerms: [],
       });
       const shows = selection.kind === "claim";
       return shows !== qualifiesAsSubstance({ kind, status, provenance, body, resolvedEvidenceRefs: resolved });

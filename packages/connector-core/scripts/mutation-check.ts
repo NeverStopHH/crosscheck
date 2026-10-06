@@ -17409,9 +17409,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "words from two different claims count as agreeing on one statement",
+    // RETARGETED (round 3, C1): the per-claim count is the topical floor count now.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "terms: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, tokens)})`,",
-    to: "terms: sql<number>`sum(${sharedTermsSql(sql`${claims.tsv}`, tokens)})`,",
+    from: "terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,",
+    to: "terms: sql<number>`sum(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"weiter\" in a German claim plus \"limit\" in another make a limit note look like a task",
   },
@@ -18830,9 +18831,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a tree whose wire carries no body is recounted on its title alone",
+    // RETARGETED (round 3, C1): the recount asks each statement through clearsOn.
     file: `${CORE}/src/hints/select.ts`,
-    from: "    bodies.length > 0 &&\n",
-    to: "",
+    from: "  return bodies.length > 0 && [context.workContext.title, ...bodies].some(",
+    to: "  return [context.workContext.title, ...bodies].some(",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "a title that shares the prompt's words points at a tree with nothing vouched for on the wire (H4)",
   },
@@ -18910,11 +18912,76 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the hub sends every content term to SQL, unbounded",
+    // RETARGETED (round 3, C1): the bounded terms are named once, for both halves of the floor.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "    terms: terms.content.slice(0, SEARCH_MAX_QUERY_TOKENS),",
-    to: "    terms: terms.content,",
+    from: "  const all = terms.content.slice(0, SEARCH_MAX_QUERY_TOKENS);",
+    to: "  const all = terms.content;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "a pasted wall of text becomes one OR-query of hundreds of terms on the embedded database (L2, the review's survivor)",
+  },
+  {
+    label: "a statement of meta words only clears the floor",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  sql<number>`(CASE WHEN ${sharedTermsSql(document, topical)} >= 1 THEN",
+    to: "  sql<number>`(CASE WHEN 1 >= 1 THEN",
+    test: `${SERVER}/test/hint-topical-floor.test.ts`,
+    because: "\"session limit hit earlier, it's back now, continue\" points at the intent-only tree that says session and limit (round 3, C1)",
+  },
+  {
+    label: "a tree's own statement clears the floor on meta words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      floor: floorTermsSql(contextStatement, terms.all, terms.topical),",
+    to: "      floor: sharedTermsSql(contextStatement, terms.all),",
+    test: `${SERVER}/test/hint-topical-floor.test.ts`,
+    because: "an intent made of the session's machinery became the round-3 magnet, taking six of ten content-free hints (C1)",
+  },
+  {
+    label: "a claim clears the floor on meta words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, tokens, terms.topical)})`,",
+    to: "      terms: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, tokens)})`,",
+    test: `${SERVER}/test/hint-topical-floor.test.ts`,
+    because: "a claim that says usage, limit, reset and session qualifies its tree for every limit chatter (C1)",
+  },
+  {
+    label: "the hub counts every term as topical",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    terms: { all, topical: all.filter((term) => terms.topical.includes(term)) },",
+    to: "    terms: { all, topical: all },",
+    test: `${SERVER}/test/hint-topical-floor.test.ts`,
+    because: "the topical-word rule reads meta words as topics and floors nothing (C1)",
+  },
+  {
+    label: "the topical terms keep closed-class words",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const topical = content.filter((_, index) => classes[index] === null);",
+    to: "  const topical = content;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"why does the usage limit reset\" carries three topics, and the floor's topical half is the floor's other half again (C1)",
+  },
+  {
+    label: "a restart verb beside meta words is a task",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    content.some(isRestartVerb) ||\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"rate limit is gone, retry\" reaches the hub and finds the StatsBomb rate-limit root cause (round 3, C1)",
+  },
+  {
+    label: "the old-hub recount counts meta words as a topic",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  return shared(input.promptTerms) >= HINT_MIN_SHARED_TERMS && shared(input.promptTopicalTerms) >= 1;",
+    to: "  return shared(input.promptTerms) >= HINT_MIN_SHARED_TERMS;",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub, a body of session, limit and usage qualifies its tree for limit chatter (C1)",
+  },
+  {
+    label: "the flow hands the recount every term as topical",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    promptTopicalTerms: promptTerms(humanText).topical,",
+    to: "    promptTopicalTerms: promptTerms(humanText).content,",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "the selector's topical rule is fed the meta words it exists to discount (C1)",
   },
   {
     label: "the connector asks a hub about a content-free prompt",
@@ -18934,8 +19001,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the hint pool is ranked on raw tokens",
+    // RETARGETED (round 3, C1): the query's terms carry their topical half beside them.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      ftsTokens: query.terms,\n",
+    from: "      ftsTokens: query.terms.all,\n",
     to: "",
     test: `${SERVER}/test/hint-content-terms.test.ts`,
     because: "a German prompt's das/ist/nicht/die fill the 10-row pool with noise trees and the one tree it is about never reaches the floor (M8)",
@@ -19171,7 +19239,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
- * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 7
+ * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 9
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
@@ -19256,7 +19324,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 10
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 12
  * PRINTS: packages/schema/test/session-control.test.ts 6
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 3
@@ -19298,6 +19366,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
+ * PRINTS: packages/server/test/hint-topical-floor.test.ts 4
  * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

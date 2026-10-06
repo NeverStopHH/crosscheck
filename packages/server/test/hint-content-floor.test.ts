@@ -106,6 +106,9 @@ describe("a prompt that carries nothing task-bearing matches no teammate work", 
     ["continue"],
     ["macxhe weiter, limit ist zurukgsetz"],
     ["limit limits limiting"],
+    // Two topical words, one in each claim: "läuft" only in the observation,
+    // "gateway" only in the decision — two statements of one word each.
+    ["läuft das gateway"],
   ])("%p yields no candidates", async (prompt) => {
     // Arrange
     const { harness, robin } = await setup();
