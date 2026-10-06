@@ -1196,3 +1196,71 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     ]);
   });
 });
+
+describe("round-6 LOW-6: the person's own label sentences are in their --mine why", () => {
+  const label = async (
+    world: OutcomeWorld,
+    who: OutcomeWorld["nick"],
+    deliveryId: string,
+    mark: "noise" | "helpful",
+    reason: string,
+  ): Promise<void> => {
+    const response = await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", who.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: deliveryId,
+        mark,
+        presence: PIN_PRESENCE_TERMINAL,
+        reason,
+      }),
+    );
+    expect(response.status).toBe(201);
+  };
+
+  test("a noise label's sentence is listed beside the noise it stands at", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await label(world, world.nick, world.delivered.kenContext, "noise", "off target for this branch");
+
+    // Act
+    const view = await mineOf(world);
+
+    // Assert — before: stored, and never shown to the person who said it; listed once, as the noise
+    expect(view["reasons"]).toEqual([{ outcome: "noise", reason: "off target for this branch", source: "Ken" }]);
+  });
+
+  test("a helpful label's sentence is the person's why, beside the agent's own reason", async () => {
+    // Arrange
+    const world = await createOutcomeWorld();
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", reason: "reused his cache key decision" });
+    world.harness.clock.advanceSeconds(60);
+    await label(world, world.nick, world.delivered.kenContext, "helpful", "saved me an hour");
+
+    // Act
+    const view = await mineOf(world);
+
+    // Assert — newest first; the label's sentence on the label axis, the agent's on the outcome
+    expect(view["reasons"]).toEqual([
+      { outcome: "helpful", reason: "saved me an hour", source: "Ken" },
+      { outcome: "followed", reason: "reused his cache key decision", source: "Ken" },
+    ]);
+  });
+
+  test("only the caller's own labels: a teammate's sentence never reaches the caller or the source", async () => {
+    // Arrange — Mike's sentence on HIS delivery of Ken's context
+    const world = await createOutcomeWorld();
+    await label(world, world.mike, world.delivered.mikeGotKen, "noise", "not for the export path");
+
+    // Act
+    const nick = await mineOf(world);
+    const ken = ((await (await readMine(world, world.ken)).json()) as { data: Record<string, unknown> }).data;
+    const mike = ((await (await readMine(world, world.mike)).json()) as { data: Record<string, unknown> }).data;
+
+    // Assert
+    expect(JSON.stringify(nick)).not.toContain("not for the export path");
+    expect(JSON.stringify(ken)).not.toContain("not for the export path");
+    expect(mike["reasons"]).toContainEqual({ outcome: "noise", reason: "not for the export path", source: "Ken" });
+  });
+});

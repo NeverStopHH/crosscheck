@@ -89,6 +89,9 @@ const receivedLines = (view: MyHintOutcomes): readonly string[] =>
           : []),
       ];
 
+/** 07 §13.14 (round-6 LOW-6): a helpful label's sentence is the person's own label's, as the helpful line says. */
+const reasonWord = (outcome: string): string => (outcome === "helpful" ? "helpful (your label)" : outcomeWord(outcome));
+
 const reasonLines = (view: MyHintOutcomes): readonly string[] =>
   view.reasons.length === 0
     ? []
@@ -96,7 +99,7 @@ const reasonLines = (view: MyHintOutcomes): readonly string[] =>
         "why, newest first — as you or your agent wrote it:",
         ...view.reasons.map(
           (said) =>
-            `${INDENT}${outcomeWord(said.outcome)}${said.reasserted === true ? ", said again" : ""}, from ${sourceName(said.source)}: ${quoted(said.reason, MAX_PILOT_LABEL_REASON_UTF16_UNITS)}`,
+            `${INDENT}${reasonWord(said.outcome)}${said.reasserted === true ? ", said again" : ""}, from ${sourceName(said.source)}: ${quoted(said.reason, MAX_PILOT_LABEL_REASON_UTF16_UNITS)}`,
         ),
         ...(view.reasonsBeyondList > 0 ? [`${INDENT}(+${String(view.reasonsBeyondList)} more, not listed)`] : []),
       ];

@@ -59,8 +59,11 @@ export interface SourceTally extends HintOutcomeTally {
 }
 
 export interface OutcomeReason {
-  /** The word that stands — an outcome, or the person's noise said again with a sentence (round-5 LOW-6). */
-  readonly outcome: HintOutcome | "noise";
+  /**
+   * The word that stands — an outcome, or the person's noise (said again: round-5 LOW-6) — or the person's
+   * own helpful label, whose sentence sits beside the outcome's (round-6 LOW-6).
+   */
+  readonly outcome: HintOutcome | "noise" | "helpful";
   readonly reason: string;
   readonly source: string | null;
   /** Present, and true, only on the sentence of a noise said again (a re-assertion). */
@@ -114,7 +117,7 @@ type TallyRow = {
 };
 
 type ReasonRow = {
-  readonly outcome: HintOutcome | "noise";
+  readonly outcome: HintOutcome | "noise" | "helpful";
   readonly reason: string;
   readonly source: string | null;
   readonly reasserted: boolean;
@@ -164,10 +167,16 @@ const readReasons = async (
 ): Promise<readonly ReasonRow[]> => {
   const rows = await deps.db.execute<ReasonRow>(sql`
     ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
-    SELECT st.state AS outcome, st.reason, d.name AS source, st.reasserted, count(*) OVER ()::int AS total
-    FROM states st LEFT JOIN developers d ON d.id = st.source_id
-    WHERE st.reason IS NOT NULL
-    ORDER BY st.outcome_at DESC, st.id ASC
+    SELECT r.outcome, r.reason, d.name AS source, r.reasserted, count(*) OVER ()::int AS total
+    FROM (
+      SELECT st.state AS outcome, st.reason, st.reasserted, st.outcome_at AS at, st.id, st.source_id
+      FROM states st WHERE st.reason IS NOT NULL
+      UNION ALL
+      -- round-6 LOW-6: the person's own helpful sentence, on the label axis beside the outcome's reason
+      SELECT 'helpful', st.helpful_reason, false, st.helpful_at, st.id, st.source_id
+      FROM states st WHERE st.helpful_reason IS NOT NULL
+    ) r LEFT JOIN developers d ON d.id = r.source_id
+    ORDER BY r.at DESC, r.id ASC, r.outcome ASC
     LIMIT ${HINT_OUTCOME_MAX_REASONS}`);
   return rows.rows;
 };

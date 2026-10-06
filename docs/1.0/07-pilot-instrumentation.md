@@ -1606,3 +1606,11 @@ sentence is the whole line and has no field to mint, so it is now printed throug
 renderer-owned characters and instruction-shaped text still go, bounded by `MAX_HUB_MESSAGE_CHARS`, and its
 ordinary punctuation stays. An unreachable hub's error sits inside the CLI's own line ("hub unreachable: … —
 nothing was recorded") and stays bare.
+
+*LOW-6 — a label's own sentence was stored and never read (pre-existing).* The view selected NULL for a first
+noise label's sentence and for a helpful label's. `--mine`'s why now lists each label's own sentence: a noise
+label's beside the noise it stands at (once), and a helpful label's — the person's "and why" — on its own
+row, "helpful (your label), from Ken: «saved me an hour»", beside the outcome's own reason (`outcome:
+"helpful"` on the wire, additive: an older client prints the word as it is). Only the caller's own labels:
+a label is read only where `marked_by` is the delivery's recipient, `--mine` reads only the caller's
+deliveries, and the team line and the credit select no sentence at all.

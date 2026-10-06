@@ -216,7 +216,8 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     FROM sourced so
     LEFT JOIN LATERAL (
       SELECT l.word, l.reason, l.at, l.id, l.reasserted, bool_or(l.word = 'helpful') OVER () AS has_helpful FROM (
-        SELECT 'noise' AS word, NULL AS reason, m.created_at AS at, m.id, false AS reasserted FROM pilot_marks m
+        -- round-6 LOW-6: each label's own sentence, the person's alone (marked_by = the recipient)
+        SELECT 'noise' AS word, m.reason AS reason, m.created_at AS at, m.id, false AS reasserted FROM pilot_marks m
         JOIN hint_deliveries md ON md.id = m.ref_id
         WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
           AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
@@ -228,7 +229,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
           AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}
         UNION ALL
-        SELECT 'helpful', NULL, h.created_at, h.id, false FROM pilot_marks h
+        SELECT 'helpful', h.reason, h.created_at, h.id, false FROM pilot_marks h
         JOIN hint_deliveries hd2 ON hd2.id = h.ref_id
         WHERE h.ref_kind = 'hint_delivery' AND hd2.session_id = so.session_id AND hd2.ref_id = so.ref_id
           AND h.marked_by = so.recipient AND h.mark = 'helpful' ${before(sql`h.created_at`, until)}
@@ -236,7 +237,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       ORDER BY l.at DESC, l.id DESC LIMIT 1
     ) lab ON true
   ), stated AS (
-    SELECT la.id, la.recipient, la.source_id, la.has_helpful, la.label_word,
+    SELECT la.id, la.recipient, la.source_id, la.has_helpful, la.label_word, la.label_reason, la.label_at,
            said.word, said.reason, said.at AS outcome_at, said.reasserted, said.by_person
     FROM labelled la
     LEFT JOIN LATERAL (
@@ -267,7 +268,11 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       COALESCE(reasserted, false) AS reasserted,
       -- the person's newest label is helpful: read by the person's own view alone, beside the
       -- buckets — the team line and the credit never select it (round-6 HIGH-1, the helpful line)
-      COALESCE(label_word = 'helpful', false) AS helpful_label
+      COALESCE(label_word = 'helpful', false) AS helpful_label,
+      -- round-6 LOW-6: a helpful label's own sentence is the person's "and why", on the label axis
+      -- beside the outcome's reason; the person's own view alone reads it, as it reads helpful_label
+      CASE WHEN label_word = 'helpful' THEN label_reason END AS helpful_reason,
+      CASE WHEN label_word = 'helpful' THEN label_at END AS helpful_at
     FROM (
       SELECT st.*, (NOT COALESCE(st.by_person, false) AND st.word = 'not_relevant_now' AND st.has_helpful) AS vetoed
       FROM stated st

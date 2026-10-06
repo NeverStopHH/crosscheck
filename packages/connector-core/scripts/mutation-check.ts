@@ -19505,6 +19505,47 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because: "a hub floods the terminal with as much text as it likes",
   },
+  // ── 07 §13.14, round-6 LOW-6: each label's own sentence is in the person's why ──
+  {
+    label: "a noise label's sentence is never read",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        SELECT 'noise' AS word, m.reason AS reason, m.created_at AS at",
+    to: "        SELECT 'noise' AS word, NULL AS reason, m.created_at AS at",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's 'off target for this branch' is stored and never shown to them",
+  },
+  {
+    label: "a helpful label's sentence is never read",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "        SELECT 'helpful', h.reason, h.created_at, h.id, false FROM pilot_marks h",
+    to: "        SELECT 'helpful', NULL, h.created_at, h.id, false FROM pilot_marks h",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person's own 'and why' is stored and never shown to them",
+  },
+  {
+    label: "--mine never lists a helpful label's sentence",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      FROM states st WHERE st.helpful_reason IS NOT NULL",
+    to: "      FROM states st WHERE false",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the helpful sentence is read and dropped before the person sees it",
+  },
+  {
+    label: "a noise label's sentence is listed again as a helpful one",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "      CASE WHEN label_word = 'helpful' THEN label_reason END AS helpful_reason,",
+    to: "      label_reason AS helpful_reason,",
+    test: `${SERVER}/test/hint-outcomes.test.ts`,
+    because: "the person reads their noise sentence twice, once as praise",
+  },
+  {
+    label: "--mine prints a helpful sentence as if it were an outcome's",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: '(outcome === "helpful" ? "helpful (your label)" : outcomeWord(outcome))',
+    to: "outcomeWord(outcome)",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the person cannot tell their own label's sentence from their agent's word",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19596,7 +19637,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 15
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 11
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 12
  * PRINTS: packages/cli/test/pilot-render.test.ts 32
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
@@ -19830,7 +19871,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
- * PRINTS: packages/server/test/hint-outcomes.test.ts 59
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 63
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/in-memory-db.test.ts 2

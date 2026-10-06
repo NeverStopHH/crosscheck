@@ -197,6 +197,22 @@ describe("renderMyOutcomes' reasons (round-5 LOW-6)", () => {
     // Assert
     expect(out).toContain("noise, said again, from Ken: «still off target»");
   });
+
+  test("round-6 LOW-6: the person's helpful sentence is listed as their own label's", () => {
+    // Act
+    const out = renderMyOutcomes({
+      ...viewSince("2026-08-10T12:00:00.000Z"),
+      reasons: [
+        { outcome: "helpful", reason: "saved me an hour", source: "Ken" },
+        { outcome: "followed", reason: "reused his cache key decision", source: "Ken" },
+      ],
+    });
+
+    // Assert
+    expect(out).toContain(
+      "  helpful (your label), from Ken: «saved me an hour»\n  followed, from Ken: «reused his cache key decision»\n",
+    );
+  });
 });
 
 describe("renderMyOutcomes' credit it cannot read (round 3)", () => {
