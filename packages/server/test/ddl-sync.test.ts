@@ -644,7 +644,7 @@ describe("bootstrap.sql DDL sync", () => {
     expect(check.rows).toHaveLength(1);
   });
 
-  test("the four pilot tables really exist after a bootstrap", async () => {
+  test("the five pilot tables really exist after a bootstrap", async () => {
     // Arrange — the case above reads SQL as text. This one asks the database,
     // which is the only authority that settles whether the statements ran.
     const harness = await createTestHarness();
@@ -658,6 +658,8 @@ describe("bootstrap.sql DDL sync", () => {
     expect(rows.rows.map((row) => String(row["t"]))).toEqual([
       "pilot_attributions",
       "pilot_counters",
+      // 07 §13.11 (review M3): when each repo was in the pilot.
+      "pilot_enrolments",
       "pilot_marks",
       "pilot_sessions",
     ]);
