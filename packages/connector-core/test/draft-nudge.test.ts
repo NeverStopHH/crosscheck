@@ -609,6 +609,69 @@ describe("deliverDraftNudge (real hub)", () => {
     }
   });
 
+  /**
+   * THE REVIEW'S LOOP PROBE (round 2, MEDIUM-1): due drafts that no page this
+   * prompt obtained can name — an older hub with no order echo, or a budget
+   * too thin for the second GET — answered 6 prompts with 12 GETs. Whatever
+   * the reason no oldest-first page arrived, the attempt now waits out the
+   * cooldown, and the slot stays unspent for a prompt that can name them.
+   */
+  const unnameableLoop = async (
+    label: string,
+    spareMs: (() => number) | undefined,
+  ): Promise<{ readonly perRound: readonly number[]; readonly slot: string | null | undefined }> => {
+    let requests = 0;
+    const fresh = Array.from({ length: DRAFT_LISTING_CAP }, (_, i) =>
+      draft({ id: `clm_f${String(i)}`, createdAt: new Date(Date.now() - YOUNG_MS).toISOString() }),
+    );
+    const fake = Bun.serve({
+      port: 0,
+      fetch: () => {
+        requests += 1;
+        return Response.json({
+          ok: true,
+          data: { drafts: fresh, total: BACKLOG, oldestCreatedAt: new Date(Date.now() - 40 * MS_PER_DAY).toISOString() },
+        });
+      },
+    });
+    try {
+      const s = await session(label, hub);
+      const ctx = { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}` };
+      const start = Date.now();
+      const promptAt = (offsetMs: number): Promise<string> =>
+        deliverDraftNudge({
+          home: s.home,
+          hub: ctx,
+          hostSessionKey: HOST_KEY,
+          repoId: REPO_ID,
+          now: new Date(start + offsetMs),
+          personReads: true,
+          ...(spareMs === undefined ? {} : { spareMs }),
+        });
+      const firstRound: string[] = [];
+      for (let prompt = 0; prompt < 6; prompt += 1) {
+        firstRound.push(await promptAt(prompt * 60_000));
+      }
+      const afterFirst = requests;
+      expect(firstRound.every((text) => text === "")).toBe(true);
+      expect(await promptAt(DRAFT_NUDGE_RETRY_COOLDOWN_MS + 60_000)).toBe("");
+      return { perRound: [afterFirst, requests - afterFirst], slot: (await readSessionState(s.home, HOST_KEY))?.draftNudge };
+    } finally {
+      fake.stop(true);
+    }
+  };
+
+  test("an older hub with no order echo: one round of GETs over six prompts, then the cooldown", async () => {
+    expect(await unnameableLoop("nudge-loop-old-hub", undefined)).toEqual({ perRound: [2, 2], slot: null });
+  });
+
+  test("a budget too thin for the oldest-first GET: one GET over six prompts, then the cooldown", async () => {
+    // Spare enough for the first GET of an attempt, never for the second.
+    let calls = 0;
+    const spareMs = (): number => (calls++ % 2 === 0 ? 1000 : 10);
+    expect(await unnameableLoop("nudge-loop-thin", spareMs)).toEqual({ perRound: [1, 1], slot: null });
+  });
+
   test("nothing is published by the nudge itself", async () => {
     await withOwnHub("draft-nudge-nopublish", async (own) => {
       // Arrange

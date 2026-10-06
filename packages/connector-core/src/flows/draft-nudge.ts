@@ -116,7 +116,7 @@ const spentEarlier = async (input: DeliverDraftNudgeInput): Promise<boolean> => 
 type BacklogFetch =
   | { readonly kind: "skipped" }
   | { readonly kind: "failed" }
-  | { readonly kind: "backlog"; readonly backlog: DraftBacklog; readonly oldestFailed: boolean };
+  | { readonly kind: "backlog"; readonly backlog: DraftBacklog };
 
 const fetchBacklog = async (input: DeliverDraftNudgeInput): Promise<BacklogFetch> => {
   const hub = boundedHub(input);
@@ -130,20 +130,21 @@ const fetchBacklog = async (input: DeliverDraftNudgeInput): Promise<BacklogFetch
   const pastPage = listing.data.total !== null && listing.data.total > listing.data.drafts.length;
   const again = pastPage ? boundedHub(input) : null;
   if (again === null) {
-    return { kind: "backlog", backlog: backlogOf(listing.data), oldestFailed: false };
+    return { kind: "backlog", backlog: backlogOf(listing.data) };
   }
   const oldest = await getDraftListing(again, input.repoId, "oldest");
   return {
     kind: "backlog",
     backlog: backlogOf(listing.data, oldest.ok && oldest.data.order === "oldest" ? oldest.data : null),
-    oldestFailed: !oldest.ok,
   };
 };
 
 /**
  * A FAILED fetch is remembered for DRAFT_NUDGE_RETRY_COOLDOWN_MS: the nudge
  * is housekeeping, and an unresponsive hub must not cost every prompt one
- * more GET and its timeout. A budget too thin to look is not a failure.
+ * more GET and its timeout. So is an attempt that found due drafts it could
+ * not name, whatever the reason (prepareDraftNudge). A budget too thin for
+ * even the first GET is not a failure: nothing was asked, nothing is owed.
  */
 const isCoolingDown = (state: SessionState, now: Date): boolean =>
   state.draftNudgeRetryAt !== null && now.getTime() < Date.parse(state.draftNudgeRetryAt);
@@ -189,12 +190,14 @@ export const prepareDraftNudge = async (
     return { text, commit: () => claimSlot(input, "delivered") };
   }
   // NEVER SPENT WHILE A DUE DRAFT EXISTS: a draft this fetch could not name
-  // (the oldest-first page failed, or the hub could not say) is still owed a
-  // nudge, so the slot waits for a prompt that can name it.
+  // is still owed a nudge, so the slot waits for a prompt that can name it —
+  // and the wait is the cooldown, FOR ANY REASON no page named one: the
+  // oldest-first GET failed, an older hub ignored the order (no echo), the
+  // budget had no room for the second GET, or no due row had a line to print.
+  // Retrying on the next prompt asks the same question of the same hub; the
+  // review's probe measured 12 GETs over 6 prompts that way.
   if (countAtLeastAged(fetched.backlog, DRAFT_DUE_AGE_MS, input.now).count > 0) {
-    if (fetched.oldestFailed) {
-      await coolDown(input);
-    }
+    await coolDown(input);
     return null;
   }
   return { text: "", commit: () => claimSlot(input, "nothing_due") };

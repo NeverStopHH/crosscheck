@@ -18127,6 +18127,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "the clause that says old drafts are kept goes before the one that only sizes the backlog",
   },
+  {
+    label: "the nudge refetches on every prompt while due drafts stay unnameable",
+    file: `${CORE}/src/flows/draft-nudge.ts`,
+    from: "  if (countAtLeastAged(fetched.backlog, DRAFT_DUE_AGE_MS, input.now).count > 0) {\n    await coolDown(input);\n    return null;\n  }",
+    to: "  if (countAtLeastAged(fetched.backlog, DRAFT_DUE_AGE_MS, input.now).count > 0) {\n    return null;\n  }",
+    test: `${CORE}/test/draft-nudge.test.ts`,
+    because: "an older hub or a thin budget costs every prompt (or every Cursor tool call) two more GETs that cannot name a draft either",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18332,7 +18340,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 4
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 38
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 39
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
