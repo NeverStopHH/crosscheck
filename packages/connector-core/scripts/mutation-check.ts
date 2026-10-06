@@ -18050,8 +18050,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a teammate's draft is auto-linked into another developer's tree",
     file: `${SERVER}/src/services/similarity-gate.ts`,
-    from: "  if (eitherDerived && nearest.developerId !== developerId) {",
-    to: "  if (eitherDerived && nearest.developerId !== developerId && false) {",
+    from: "    : eq(agentSessions.developerId, developerId);\n",
+    to: "    : undefined;\n",
     test: `${SERVER}/test/similarity-gate.test.ts`,
     because: "a machine guess nobody vouched for lands in a teammate's diagnosis as a related claim \u2014 a push the draft promise forbids",
   },
@@ -18439,6 +18439,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/draft-visibility.test.ts`,
     because: "a pushed surface asking for vouched matches only is handed a tree on an unreviewed guess",
   },
+  {
+    label: "a declared claim may be auto-linked to a teammate's draft",
+    file: `${SERVER}/src/services/similarity-gate.ts`,
+    from: "    ? or(eq(agentSessions.developerId, developerId), eq(claims.provenance, DECLARED_PROVENANCE))\n",
+    to: "    ? undefined\n",
+    test: `${SERVER}/test/similarity-gate.test.ts`,
+    because: "a teammate's machine guess is linked into my tree, and — the nearest — hides their vouched near-duplicate",
+  },
+  {
+    label: "the similarity gate filters teammates' drafts after its LIMIT",
+    file: `${SERVER}/src/services/similarity-gate.ts`,
+    from: "        reachableNeighbour(body, developerId),\n",
+    to: "",
+    test: `${SERVER}/test/similarity-gate.test.ts`,
+    because: "the nearest row may be a teammate's draft, and every reachable near-duplicate behind it is never linked",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18805,7 +18821,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
- * PRINTS: packages/server/test/similarity-gate.test.ts 2
+ * PRINTS: packages/server/test/similarity-gate.test.ts 4
  * PRINTS: packages/server/test/skeleton-identity.test.ts 17
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
