@@ -8,6 +8,8 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { MAX_INGEST_BATCH } from "../src/constants.ts";
+import { NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS, NORMALIZED_DOC_MAX_TARGETS } from "../src/services/normalized-doc.ts";
 import { createFakeEmbedder } from "./fixtures/fake-embedder.ts";
 import {
   addTestDeveloperWithSession,
@@ -103,6 +105,63 @@ describe("a draft's words in a teammate's explicit search", () => {
       ],
     });
     const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02", branch: "x" });
+
+    const hit = (await search(harness, robin, DRAFT_WORD)).find((row) => row.id === WORK_CONTEXT_ID);
+
+    expect(hit?.derivedOnly).toBe(false);
+  });
+});
+
+/**
+ * A MATCH IS DRAFT-ONLY ONLY WHEN NOTHING ELSE MATCHED (review round 3,
+ * MEDIUM-6): a target, the title, or a vouched claim beside the draft makes
+ * it an ordinary match. Each case is built so that ONLY the named other match
+ * and the draft's words reach the query, which is what lets a wrong fusion
+ * rule show.
+ */
+describe("a draft beside any other match is never marked draft-only", () => {
+  const nickAndRobin = async (): Promise<{ harness: TestHarness; nick: TestDeveloper; robin: TestDeveloper }> => {
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02", branch: "x" });
+    return { harness, nick, robin };
+  };
+  const plainContext = (overrides: Record<string, unknown> = {}): unknown =>
+    recordEnvelope("work_context", validWorkContextBody({ title: "Unrelated title words", description: "nothing here", ...overrides }));
+  const target = (value: string): unknown => recordEnvelope("target", { workContextId: WORK_CONTEXT_ID, kind: "file", value });
+
+  test("an exact target match beside a draft-only claim match", async () => {
+    // Arrange: the matched target sorts past the doc's target cap, so the
+    // exact tier is the only one that sees it — the fts tier sees the draft
+    const { harness, nick, robin } = await nickAndRobin();
+    const filler = Array.from({ length: NORMALIZED_DOC_MAX_TARGETS }, (_, i) => target(`aa/f${String(i).padStart(3, "0")}.ts`));
+    await postRecords(harness, nick, { records: [plainContext(), ...filler.slice(0, MAX_INGEST_BATCH - 1)] });
+    await postRecords(harness, nick, { records: [...filler.slice(MAX_INGEST_BATCH - 1), target("zztargetonly"), draft("clm_draft")] });
+
+    // Act
+    const hit = (await search(harness, robin, `zztargetonly ${DRAFT_WORD}`)).find((row) => row.id === WORK_CONTEXT_ID);
+
+    // Assert
+    expect(hit?.derivedOnly).toBe(false);
+  });
+
+  test("a title match beside a draft-only claim match", async () => {
+    const { harness, nick, robin } = await nickAndRobin();
+    await postRecords(harness, nick, { records: [plainContext({ title: `The ${DRAFT_WORD} flakes` }), draft("clm_draft")] });
+
+    const hit = (await search(harness, robin, DRAFT_WORD)).find((row) => row.id === WORK_CONTEXT_ID);
+
+    expect(hit?.derivedOnly).toBe(false);
+  });
+
+  test("a vouched claim and a draft that both match", async () => {
+    // Arrange: the vouched claim's word sits past the doc's per-claim cut, so
+    // only the claim pass sees it — grouped with the draft's row
+    const { harness, nick, robin } = await nickAndRobin();
+    const pastTheCut = `${"filler words about nothing ".repeat(8)}then the ${DRAFT_WORD} shows up`;
+    expect(pastTheCut.indexOf(DRAFT_WORD)).toBeGreaterThan(NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS);
+    await postRecords(harness, nick, {
+      records: [plainContext(), recordEnvelope("claim", validClaimBody({ id: "clm_vouched", body: pastTheCut })), draft("clm_draft")],
+    });
 
     const hit = (await search(harness, robin, DRAFT_WORD)).find((row) => row.id === WORK_CONTEXT_ID);
 

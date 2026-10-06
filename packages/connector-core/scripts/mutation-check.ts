@@ -18407,6 +18407,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/draft-visibility.test.ts`,
     because: "on every hub with an embedder a match found only through a draft's words reads as vouched",
   },
+  {
+    label: "the last lexical tier alone decides the draft-only mark",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "  return (before ?? true) && row.derivedOnly === true;",
+    to: "  return row.derivedOnly === true;",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because: "a tree found by the file a teammate is editing reads as found only through a draft",
+  },
+  {
+    label: "a draft's claim row overrides the title match in the fts tier",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "    const derivedOnly = (known?.derivedOnly ?? true) && row.derivedOnly === true;",
+    to: "    const derivedOnly = row.derivedOnly === true;",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because: "a tree whose own title matches is labelled a draft-only match",
+  },
+  {
+    label: "one draft among the matching claims marks a vouched match draft-only",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "      declared: sql<boolean>`bool_or(${claims.provenance} = ${DECLARED_PROVENANCE})`,",
+    to: "      declared: sql<boolean>`bool_and(${claims.provenance} = ${DECLARED_PROVENANCE})`,",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because: "a teammate's vouched finding reads as an unreviewed guess because a draft said it too",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18729,7 +18753,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
- * PRINTS: packages/server/test/draft-visibility.test.ts 4
+ * PRINTS: packages/server/test/draft-visibility.test.ts 7
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
