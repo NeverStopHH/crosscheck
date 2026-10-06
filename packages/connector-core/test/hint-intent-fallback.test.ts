@@ -122,7 +122,7 @@ describe("what goes on the wire: never the intent in a prompt's place (owner dec
     expect(f.hub.calls.candidates).toBe(0);
   });
 
-  test.each([["mache weiter"], ["please continue, the limit was reset"], ["contineu please"], ["Limit zurückgesetzt, bitte fortfahren"]])(
+  test.each([["mache weiter"], ["please continue, the limit was reset"], ["contineu please"], ["Limit zurückgesetzt, bitte fortfahren"], ["/code-review"], ["/loop 5m /babysit-prs"]])(
     "a content-free %p makes no call, so a hub too old to floor it is never asked (L5)",
     async (prompt) => {
       // Arrange

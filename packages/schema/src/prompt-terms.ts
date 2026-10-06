@@ -24,6 +24,7 @@ import {
   isSessionMetaWord,
   steeringWordOf,
 } from "./session-control.ts";
+import { commandArguments } from "./slash-command.ts";
 import { ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
 
 /** Shorter tokens are not words to search on — the hub's and the connector's floor. */
@@ -66,7 +67,9 @@ const reportsTheSession = (tokens: readonly string[]): boolean =>
   tokens.some(isContinuationTrigger) && tokens.some(isResetReport);
 
 export const promptTerms = (text: string): PromptTerms => {
-  const tokens = promptTokens(text);
+  // A slash command's name is never a task word: only its arguments are
+  // scored (slash-command.ts).
+  const tokens = promptTokens(commandArguments(text));
   const isGerman = isGermanPrompt(tokens);
   const isFunctionWord = (token: string): boolean =>
     ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));

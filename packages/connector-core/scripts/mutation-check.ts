@@ -18454,6 +18454,46 @@ export const MUTATIONS: readonly Mutation[
     because: "\"Ich glaube, dass es passt.\" is shown as a teammate's finding (M4)",
   },
   {
+    label: "a slash command's name is scored as task words",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const tokens = promptTokens(commandArguments(text));",
+    to: "  const tokens = promptTokens(text);",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"/code-review\" reaches the review checklist on \"code\" and \"review\" (H1 d)",
+  },
+  {
+    label: "the connector sends a bare slash command to the hub",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const tokens = promptTokens(commandArguments(text));",
+    to: "  const tokens = promptTokens(text);",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "every \"/compact\" and \"/loop 5m /babysit-prs\" spends a call a 0.10.0 hub answers on the command's own words (H1 d)",
+  },
+  {
+    label: "a command passed as an argument is scored",
+    file: `${SCHEMA}/src/slash-command.ts`,
+    from: "  return rest.filter((word) => !isCommandName(word)).join(\" \");",
+    to: "  return rest.join(\" \");",
+    test: `${SCHEMA}/test/slash-command.test.ts`,
+    because: "\"/loop 5m /babysit-prs\" is a task about babysitting PRs (H1 d)",
+  },
+  {
+    label: "a path at the start of a prompt is read as a command",
+    file: `${SCHEMA}/src/slash-command.ts`,
+    from: "const COMMAND_NAME = /^\\/[\\p{L}\\p{N}][\\p{L}\\p{N}_.:-]*$/u;",
+    to: "const COMMAND_NAME = /^\\/[\\p{L}\\p{N}][\\p{L}\\p{N}_.:/-]*$/u;",
+    test: `${SCHEMA}/test/slash-command.test.ts`,
+    because: "\"/repo/src/limiter.ts rejects the upload\" loses the file it is about (H1 d)",
+  },
+  {
+    label: "a command anywhere in a sentence is stripped",
+    file: `${SCHEMA}/src/slash-command.ts`,
+    from: "  if (head === undefined || !isCommandName(head)) {\n    return text;\n  }",
+    to: "  if (head === undefined) {\n    return text;\n  }\n  if (!isCommandName(head)) {\n    return text.split(/\\s+/u).filter((word) => !isCommandName(word)).join(\" \");\n  }",
+    test: `${SCHEMA}/test/slash-command.test.ts`,
+    because: "\"why does /health return 503\" loses \"health\", the endpoint it asks about (H1 d)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : humanText.slice(0, MAX_SEARCH_QUERY_CHARS);",
@@ -18707,7 +18747,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
- * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 5
+ * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
@@ -18792,6 +18832,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/prompt-terms.test.ts 7
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/schema/test/slash-command.test.ts 3
  * PRINTS: packages/schema/test/substance-sentence.test.ts 12
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/absences.test.ts 7
@@ -18820,7 +18861,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-candidate-floor.test.ts 5
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 6
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 8

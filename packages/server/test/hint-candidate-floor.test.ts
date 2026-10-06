@@ -282,6 +282,36 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
   });
 });
 
+describe("a slash command is scored on its arguments only (hold-out review, H1 d)", () => {
+  /** A tree whose title says the command's name. */
+  const reviewTree = () =>
+    seedTree({ title: "Code review checklist", description: "Before merge" }, [
+      { id: "clm_review", body: "Every PR needs a code review before the merge checklist is signed." },
+    ]);
+
+  test("a bare \"/code-review\" — sent as it is by a connector that predates the rule — matches nothing", async () => {
+    // Arrange
+    const { harness, robin } = await reviewTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: "/code-review" });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test("its arguments still find the tree they share two words with", async () => {
+    // Arrange
+    const { harness, robin } = await reviewTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: "/code-review the merge checklist" });
+
+    // Assert
+    expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+  });
+});
+
 describe("a tree that shares one stray word is never a candidate", () => {
   test("probe F: \"ok\" beside the session's intent points at neither tree (M6)", async () => {
     // Arrange
