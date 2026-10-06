@@ -57,8 +57,13 @@
  *                                   reads as WITHHELD_TITLE on the work-
  *                                   context listing and diagnosis, search,
  *                                   hint candidates, referee briefs, the
- *                                   conference, suspect and the /ui pages. A
- *                                   title a person or host wrote stays
+ *                                   conference (its contexts AND its open
+ *                                   questions), the questions inbox (the
+ *                                   briefing's and answerable=1), suspect
+ *                                   and the /ui pages. A question's title is
+ *                                   judged by its CONTEXT's owner, not its
+ *                                   asker. A title a person or host wrote
+ *                                   stays
  *   - base commit                 — omitted from the work-context listing
  *                                   and every diagnosis; "" (unknown) on
  *                                   hint candidates

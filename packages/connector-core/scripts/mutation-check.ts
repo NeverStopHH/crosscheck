@@ -18016,6 +18016,28 @@ export const MUTATIONS: readonly Mutation[
       "the report says the hub sent a time it could not read, when the " +
       "teammate chose not to share it",
   },
+  {
+    // Review round 3, H1: the inbox titles a question with its CONTEXT.
+    label: "the questions inbox titles an opted-out teammate's context with her branch",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "      : projectRow(hidden, { developerId: row.contextOwnerId, repo: row.contextRepo ?? repo }, view);",
+    to: "      : view;",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a teammate asks Nick about Robin's context and the briefing's " +
+      "Questions for you prints «feat/robin-relocates-to-zurich @ api»",
+  },
+  {
+    // Review round 3, survivor A: no test seeded a question on her context.
+    label: "the conference titles a question with an opted-out teammate's branch",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "      : projectRow(hidden, { developerId: row.contextOwnerId, repo }, view);",
+    to: "      : view;",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "crosscheck conference lists open questions under the title of the " +
+      "context they are about, which for a fallback title is the branch",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18346,7 +18368,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-privacy.test.ts 10
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 1
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

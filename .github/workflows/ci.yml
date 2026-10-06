@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1595
+    # PRINTS: 1597
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -408,7 +408,7 @@ jobs:
     # PRINTS: packages/server/src/services/claim-validity.ts 6
     # PRINTS: packages/server/src/services/cloud-agent-identity.ts 1
     # PRINTS: packages/server/src/services/commit-evidence.ts 2
-    # PRINTS: packages/server/src/services/conference.ts 3
+    # PRINTS: packages/server/src/services/conference.ts 4
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
     # PRINTS: packages/server/src/services/coverage.ts 32
@@ -433,7 +433,7 @@ jobs:
     # PRINTS: packages/server/src/services/pilot.ts 26
     # PRINTS: packages/server/src/services/pins.ts 9
     # PRINTS: packages/server/src/services/presence.ts 1
-    # PRINTS: packages/server/src/services/questions.ts 8
+    # PRINTS: packages/server/src/services/questions.ts 9
     # PRINTS: packages/server/src/services/record-handlers.ts 22
     # PRINTS: packages/server/src/services/records.ts 2
     # PRINTS: packages/server/src/services/referee.ts 2
@@ -496,7 +496,7 @@ jobs:
     # PRINTS: cloud-agent-identity.ts 1
     # PRINTS: commit-evidence.ts 5
     # PRINTS: conference-cost.ts 1
-    # PRINTS: conference.ts 18
+    # PRINTS: conference.ts 19
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
     # PRINTS: constants.ts 10
@@ -629,7 +629,7 @@ jobs:
     # PRINTS: publish-claim.ts 2
     # PRINTS: publish.yml 2
     # PRINTS: pump.ts 1
-    # PRINTS: questions.ts 10
+    # PRINTS: questions.ts 11
     # PRINTS: reap.ts 1
     # PRINTS: record-handlers.ts 22
     # PRINTS: records.ts 3

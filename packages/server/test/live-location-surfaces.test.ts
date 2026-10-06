@@ -8,11 +8,12 @@
  * form and none of her SECRETS, and as Robin, who must still see her own.
  */
 import { describe, expect, test } from "bun:test";
-import { LOCATION_WITHHELD } from "@crosscheck/schema";
+import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
 import {
   REPO,
   ROBIN_CONTEXT,
+  SECRET_BRANCH,
   UPDATED_AT,
   getAs,
   secretsIn,
@@ -42,5 +43,58 @@ describe("the conference", () => {
       .toBe(LOCATION_WITHHELD);
     expect(conferenceContexts(asRobin.body).find((context) => context.id === ROBIN_CONTEXT)?.lastActiveAt)
       .toBe(UPDATED_AT);
+  });
+
+  test("lists the questions about Robin's contexts under the withheld title", async () => {
+    // Review round 3, survivor A: the conference's question list titles each
+    // question with the context it is about — the CONTEXT owner's location.
+    const world = await seedOptedOutWorld();
+
+    const asNick = await getAs(world, "nick", url("/api/conference", { repo: REPO }));
+    const asRobin = await getAs(world, "robin", url("/api/conference", { repo: REPO }));
+
+    expect(secretsIn(asNick.body)).toEqual([]);
+    expect(conferenceQuestionTitles(asNick.body)).toEqual({ q_ken_1: WITHHELD_TITLE, q_robin_1: WITHHELD_TITLE });
+    expect(conferenceQuestionTitles(asRobin.body)).toEqual({
+      q_ken_1: `${SECRET_BRANCH} @ api`,
+      q_robin_1: `${SECRET_BRANCH} @ api`,
+    });
+  });
+});
+
+interface InboxEntry {
+  readonly id: string;
+  readonly workContextTitle: string | null;
+}
+
+const titlesById = (entries: readonly InboxEntry[]): Readonly<Record<string, string | null>> =>
+  Object.fromEntries(entries.map((entry) => [entry.id, entry.workContextTitle]));
+
+const conferenceQuestionTitles = (body: string): Readonly<Record<string, string | null>> =>
+  titlesById(
+    (JSON.parse(body) as { data: { conference: { questions: readonly InboxEntry[] } } }).data
+      .conference.questions,
+  );
+
+describe("the questions inbox (review round 3, H1)", () => {
+  test("the briefing's Questions for you titles a question about Robin's context withheld", async () => {
+    const world = await seedOptedOutWorld();
+
+    const inbox = await getAs(world, "nick", url("/api/questions", { repo: REPO }));
+
+    expect(inbox.status).toBe(200);
+    expect(secretsIn(inbox.body)).toEqual([]);
+    expect(titlesById((JSON.parse(inbox.body) as { data: { inbox: readonly InboxEntry[] } }).data.inbox))
+      .toEqual({ q_ken_1: WITHHELD_TITLE, q_robin_1: WITHHELD_TITLE });
+  });
+
+  test("list_open_questions (answerable=1) titles it withheld too", async () => {
+    const world = await seedOptedOutWorld();
+
+    const answerable = await getAs(world, "nick", url("/api/questions", { repo: REPO, answerable: "1" }));
+
+    expect(answerable.status).toBe(200);
+    expect(secretsIn(answerable.body)).toEqual([]);
+    expect(answerable.body).toContain(WITHHELD_TITLE);
   });
 });
