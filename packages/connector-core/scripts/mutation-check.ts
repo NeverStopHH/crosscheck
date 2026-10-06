@@ -17941,6 +17941,47 @@ export const MUTATIONS: readonly Mutation[
       "a session on a branch named `detached@release` is treated as sitting " +
       "on the default branch, and its landed changes go unmarked",
   },
+  {
+    // Review L4: the key namespace and the tie-breaks had no anchor.
+    label: "a branch named detached-head joins the detached-HEAD topic",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "const branchKey = (rawBranchOrTitle: string): string => `branch:${rawBranchOrTitle}`;",
+    to: "const branchKey = (rawBranchOrTitle: string): string => rawBranchOrTitle;",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "without the `branch:` namespace a branch key can equal the detached " +
+      "topic's own key, and a real branch is merged into `<detached HEAD>`",
+  },
+  {
+    label: "topics alike in activity print in the order the hub sent them",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  compareText(left.label, right.label) ||\n  compareText(left.key, right.key);",
+    to: "  compareText(left.label, right.label);",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "two topics that redact alike swap places between briefings, so which " +
+      "status belongs to which line depends on row order the reader never sees",
+  },
+  {
+    label: "topics alike in activity are ordered by raw key over what the reader sees",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  compareText(left.label, right.label) ||",
+    to: "  0 ||",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "equal topics sort by an internal key the reader cannot see, so the " +
+      "printed order looks arbitrary next to the labels it shows",
+  },
+  {
+    label: "the briefing-topics corpus never reaches the blocked-on slot",
+    file: `${CORE}/src/render-surfaces.ts`,
+    from: "            ...(index === 0 ? { status: \"blocked\" } : {}),",
+    to: "",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "\"blocked on <label>\" prints teammate branch text on the presence line " +
+      "and the injection corpus never attacks it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18120,10 +18161,10 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
- * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 22
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
- * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 5
+ * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7

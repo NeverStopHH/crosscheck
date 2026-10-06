@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 
 import { MAX_TOPICS_PER_TEAMMATE } from "../src/constants.ts";
 import { groupTeammates, renderBriefing } from "../src/briefing/render.ts";
+import { RENDER_SURFACES } from "../src/render-surfaces.ts";
 import type { PresenceEntry } from "../src/http/hub.ts";
 
 const NOW = new Date("2026-08-21T12:00:00.000Z");
@@ -87,6 +88,25 @@ describe("a teammate's live sessions, grouped by topic", () => {
       "- Nick · branch <detached HEAD> · status analyzing · heartbeat 10s ago",
       "- Ken · branch detached HEAD · status analyzing · heartbeat 11s ago",
     ]);
+  });
+
+  test("the briefing-topics corpus fixture reaches the blocked-on slot with the payload in it", () => {
+    // The injection corpus attacks only the slots its fixture renders
+    // (render-surfaces.ts). "blocked on" prints the labels of NON-lead
+    // topics, so the payload's branch must be blocked and not the freshest
+    // — and still inside the bounded branch list, which it attacks too.
+    const surface = RENDER_SURFACES.find((candidate) => candidate.name === "briefing-topics");
+    if (surface?.kind !== "corpus") {
+      throw new Error("briefing-topics is no longer a corpus surface");
+    }
+
+    const presenceLine = surface
+      .render("rate limit fix")
+      .split("\n")
+      .find((line) => line.includes(" · branches "));
+
+    expect(presenceLine).toContain("branches feat/a, rate limit fix, feat/b and 2 more");
+    expect(presenceLine).toContain("· blocked on rate limit fix ·");
   });
 
   test("a live branch named detached@<word> is a branch", () => {

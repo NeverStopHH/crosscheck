@@ -351,6 +351,54 @@ describe("topics are keyed by the RAW branch, sanitized only for display", () =>
       "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
     ]);
   });
+
+  test("a branch literally named detached-head is not the detached-HEAD topic", () => {
+    // The detached topic's key IS `detached-head`; every branch key carries
+    // the `branch:` namespace, so not even a branch spelled like it can join.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached-head", title: "detached-head @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached@abc1234", title: "detached@abc1234 · Fix it @ api", createdAt: minutesAgo(3) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "detached@def5678", title: "detached@def5678 · Try again @ api", createdAt: minutesAgo(4) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 topics, 3 sessions:",
+      "  - 1 session, 1m ago, status analyzing: «detached-head»",
+      "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
+    ]);
+  });
+});
+
+describe("topics alike in activity are ordered deterministically", () => {
+  test("by the label the reader sees before the raw key", () => {
+    // Same recency, same session count, neither has recorded work: the label
+    // decides, and here it disagrees with the key (`[` sorts before `a`, the
+    // key `branch:alpha` before `branch:fix/…`), so only the label tie-break
+    // puts the redacted topic first.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "alpha", title: "alpha @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "fix/override-cache", title: "fix/override-cache @ api", createdAt: minutesAgo(1) }),
+    ]);
+
+    expect(sectionLines(rendered).filter((line) => line.startsWith("  - "))).toEqual([
+      "  - 1 session, 1m ago, status analyzing: «[redacted: title looked like an instruction]»",
+      "  - 1 session, 1m ago, status analyzing: «alpha»",
+    ]);
+  });
+
+  test("by the raw key when the labels are alike too, never by arrival order", () => {
+    // Both branches redact to one label, so only the key can order them;
+    // without it, the line order would be whatever order the hub sent.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "fix/override-cache", title: "fix/override-cache @ api", status: "blocked", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "feat/config-override", title: "feat/config-override @ api", createdAt: minutesAgo(1) }),
+    ]);
+
+    expect(sectionLines(rendered).filter((line) => line.startsWith("  - "))).toEqual([
+      "  - 1 session, 1m ago, status analyzing: «[redacted: title looked like an instruction]»",
+      "  - 1 session, 1m ago, status blocked: «[redacted: title looked like an instruction]»",
+    ]);
+  });
 });
 
 describe("the status a topic shows", () => {
