@@ -18695,6 +18695,57 @@ export const MUTATIONS: readonly Mutation[
       "«went quiet» with no word reads as a teammate's ordinary silence, and " +
       "the reader cannot tell the rung counted a session it may not name",
   },
+  // ── Review round 4, H5: the guard's survivors (guard-mutations.ts) ────
+  // Each plants her heartbeat on the diagnosis route in a spelling the old
+  // guard could not see; the hardened guard must go red on every one.
+  {
+    label: "guard survivor HDR: her heartbeat in a response header",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ t: s0.lastHeartbeatAt }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; c.header(\"x-last-seen\", own?.t?.toISOString() ?? \"\"); }\n    return ok(c, diagnosis);",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "a header carries the second her session last spoke, and the old guard read bodies only",
+  },
+  {
+    label: "guard survivor PG: her heartbeat in Postgres text form",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ t: s0.lastHeartbeatAt }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, seen: `${(own?.t?.toISOString() ?? \"\").replace(\"T\", \" \").slice(0, 19)}+00` }); }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "«2026-07-24 10:10:45+00» is the same instant, and the old guard matched ISO only",
+  },
+  {
+    label: "guard survivor AGE: seconds since her heartbeat",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ t: s0.lastHeartbeatAt }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, idleSeconds: Math.round((deps.now().getTime() - (own?.t?.getTime() ?? 0)) / 1000) }); }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "an age is an instant given the read's clock, and the old guard matched instants only",
+  },
+  {
+    label: "guard survivor MIN: her heartbeat to the minute",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ t: s0.lastHeartbeatAt }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, seenAround: (own?.t?.toISOString() ?? \"\").slice(0, 16) }); }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "«10:10» says when she was there to the minute, and the old guard matched the second",
+  },
+  {
+    label: "guard survivor PARAM: her branch behind a new ?verbose=1",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    if (c.req.query(\"verbose\") === \"1\") { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ b: s0.branch }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, branch: own?.b }); }\n    return ok(c, diagnosis);",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "a parameter no variant sends is a branch no walk reads, and the old table was hand-written",
+  },
+  {
+    label: "guard control CTRL: her raw branch on every diagnosis",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ b: s0.branch }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, branch: own?.b }); }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the control: the plainest leak there is, which every version of the guard catches",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19027,7 +19078,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/live-location-privacy.test.ts 21
+ * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 3
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 40
  * PRINTS: packages/server/test/normalized-doc.test.ts 1

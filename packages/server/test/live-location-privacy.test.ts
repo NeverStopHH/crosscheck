@@ -2,141 +2,42 @@
  * THE LIVE-LOCATION POLICY, held over EVERY route the hub serves — GET and
  * POST, with each route's own variants (test/live-location-routes.ts).
  *
- * Opt-out withholds a developer's LIVE LOCATION from every other viewer on
- * every hub route: current branch, HEAD/base commit, and heartbeat/last-active
- * time. Their work contexts, claims and diagnoses remain shared; that is what
- * the product is for (services/visibility.ts states it).
+ * Opt-out withholds a developer's live location — branch, commits, session
+ * start, heartbeat and update instants, fallback titles — from every
+ * structured field every hub route serves, and from presence
+ * (services/visibility.ts states it, and what it does not hide).
  *
- * WHAT MAKES IT ABLE TO FAIL, each one a way the previous guard passed while
+ * WHAT MAKES IT ABLE TO FAIL, each one a way an earlier guard passed while
  * a review found leaks:
  *   - the route list is the APP's, and a route the table does not name fails
  *     the walk — a new GET or POST cannot pass by being unknown
- *   - every route is walked with its OWN variants (the parameters its handler
- *     reads), not one shared query most routes ignore
+ *   - every route is walked with its OWN variants, and a route whose handler
+ *     READS a query or body parameter no variant supplies fails: the
+ *     parameters are recorded off the request as the handler asks for them
+ *     (review round 4, H5: a branch behind a new ?verbose=1 passed)
  *   - the secrets are every spelling of her location: both branches, both
- *     HEADs whole and by every prefix 7–12, and her session start, heartbeat,
- *     stale heartbeat and last update in ISO, ISO-seconds, epoch-ms and
- *     epoch-s form (test/opted-out-world.ts SECRETS)
+ *     HEADs whole and by every prefix 7–12, and every instant of hers in ANY
+ *     spelling within a minute — ISO, Postgres text, minute precision,
+ *     epoch, "N min ago", an idleSeconds-style age (opted-out-world.ts
+ *     leaksIn) — in the body AND the headers
  *   - the stream is read for its whole window, with an event of hers inside it
  *   - a route promised to show her row must show it (withheld), and a route
  *     that shows none must say why; her OWN view is checked route by route
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { HonoRequest } from "hono/request";
 import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
-import { TEST_ADMIN_TOKEN, jsonRequest } from "./helpers.ts";
-import { ROBIN_ID_PARAM, ROUTES } from "./live-location-routes.ts";
-import type { RouteSpec, Variant } from "./live-location-routes.ts";
-import { secretsIn, seedOptedOutWorld } from "./opted-out-world.ts";
-import type { OptedOutWorld, Viewer } from "./opted-out-world.ts";
-
-/** Two of the stream's 1000 ms polls and then some, so a row written inside the window is read. */
-const STREAM_WINDOW_MS = 2500;
-const STREAM_CHUNK_WAIT_MS = 200;
-
-/** Anything that is Robin's row: her name, address, contexts, claims, question, delivery or sessions. */
-const ROBIN_ROW =
-  /Robin|robin@example|wc_robin|clm_robin|q_robin|hd_robin|cc_44444444|cc_55555555|cc_66666666|cc_77777777/;
+import { ROUTES } from "./live-location-routes.ts";
+import type { RouteSpec } from "./live-location-routes.ts";
+import { ROBIN_ROW, appRoutes, concretePath, label, patternOf, walk } from "./live-location-walk.ts";
+import type { Answer } from "./live-location-walk.ts";
+import { leaksIn, secretsIn, seedOptedOutWorld } from "./opted-out-world.ts";
 
 const HTTP_OK_MIN = 200;
 const HTTP_OK_MAX = 299;
 const HTTP_CLIENT_ERROR_MIN = 400;
 const HTTP_CLIENT_ERROR_MAX = 499;
-
-interface Answer {
-  readonly key: string;
-  readonly variant: Variant;
-  readonly status: number;
-  readonly body: string;
-}
-
-const appRoutes = (world: OptedOutWorld): readonly string[] => [
-  ...new Set(
-    world.harness.app.routes
-      .filter((route) => route.method !== "ALL")
-      .map((route) => `${route.method} ${route.path}`),
-  ),
-];
-
-const methodOf = (key: string): string => key.split(" ")[0] ?? "GET";
-const patternOf = (key: string): RegExp =>
-  new RegExp(`^${(key.split(" ")[1] ?? "").replace(/:[A-Za-z]+/g, "[^/]+")}$`);
-
-const concretePath = (world: OptedOutWorld, variant: Variant): string =>
-  variant.path.replace(ROBIN_ID_PARAM, world.robin.developerId);
-
-const label = (answer: Answer): string =>
-  `${answer.key} ${answer.variant.path}${answer.variant.query === undefined ? "" : `?${new URLSearchParams(answer.variant.query).toString()}`}${answer.variant.as === "admin" ? " (admin)" : ""}`;
-
-/** A stream for its WHOLE window — every chunk, not the first. */
-const readStream = async (response: Response): Promise<string> => {
-  const reader = response.body?.getReader();
-  if (reader === undefined) {
-    return "";
-  }
-  const decoder = new TextDecoder();
-  const until = Date.now() + STREAM_WINDOW_MS;
-  let text = "";
-  while (Date.now() < until) {
-    const chunk = await Promise.race([
-      reader.read(),
-      new Promise<{ readonly done?: boolean; readonly value?: Uint8Array }>((resolve) =>
-        setTimeout(() => resolve({}), STREAM_CHUNK_WAIT_MS),
-      ),
-    ]);
-    if (chunk.value !== undefined) {
-      text += decoder.decode(chunk.value);
-    }
-    if (chunk.done === true) {
-      break;
-    }
-  }
-  await reader.cancel();
-  return text;
-};
-
-const requestOf = (world: OptedOutWorld, who: Viewer, key: string, variant: Variant): RequestInit => {
-  const developer = who === "nick" ? world.nick : world.robin;
-  const cookie = who === "nick" ? world.nickCookie : world.robinCookie;
-  const token = variant.as === "admin" ? TEST_ADMIN_TOKEN : developer.apiKey;
-  const method = methodOf(key);
-  if (method === "GET") {
-    return { headers: { Authorization: `Bearer ${token}`, Cookie: cookie } };
-  }
-  const init = jsonRequest(method, token, variant.body ?? {});
-  return { ...init, headers: { ...(init.headers as Record<string, string>), Cookie: cookie } };
-};
-
-const call = async (world: OptedOutWorld, who: Viewer, key: string, variant: Variant): Promise<Answer> => {
-  const search = variant.query === undefined ? "" : `?${new URLSearchParams(variant.query).toString()}`;
-  const response = await world.harness.app.request(
-    `${concretePath(world, variant)}${search}`,
-    requestOf(world, who, key, variant),
-  );
-  if (variant.during !== undefined) {
-    await variant.during(world);
-  }
-  const body = key.endsWith("/stream") ? await readStream(response) : await response.text();
-  return { key, variant, status: response.status, body };
-};
-
-/** Every called route's every variant, in table order: reads first, writes after. */
-const walk = async (world: OptedOutWorld, who: Viewer): Promise<readonly Answer[]> => {
-  const answers: Answer[] = [];
-  for (const [key, spec] of Object.entries(ROUTES)) {
-    if (spec.notCalled !== undefined) {
-      continue;
-    }
-    for (const variant of spec.variants) {
-      // The admin's view is nobody's self-view.
-      if (who === "robin" && variant.as === "admin") {
-        continue;
-      }
-      answers.push(await call(world, who, key, variant));
-    }
-  }
-  return answers;
-};
 
 const inRange = (status: number, min: number, max: number): boolean => status >= min && status <= max;
 
@@ -172,6 +73,138 @@ const colleagueProblems = (key: string, spec: RouteSpec, answers: readonly Answe
   return showsHer ? [`${key}: shows Robin's row, but the table says it does not (${spec.colleague.hidden})`] : [];
 };
 
+/**
+ * THE PARAMETERS A HANDLER READS, recorded as it reads them: a query name it
+ * asks for, a body key its schema looks up. Recorded per route while the
+ * walk calls it, so the table is checked against what the code accepts
+ * rather than against what somebody remembered to write down.
+ */
+interface ParameterLog {
+  readonly query: Set<string>;
+  readonly body: Set<string>;
+}
+
+const parameterLogs = new Map<string, ParameterLog>();
+let currentRoute: string | null = null;
+
+/**
+ * The current route's log — and only for a request to THAT route: a
+ * stream's `during` writes through other routes while it is read.
+ */
+const logOf = (path?: string): ParameterLog | undefined => {
+  if (currentRoute === null || (path !== undefined && !patternOf(currentRoute).test(path))) {
+    return undefined;
+  }
+  const log = parameterLogs.get(currentRoute) ?? { query: new Set<string>(), body: new Set<string>() };
+  parameterLogs.set(currentRoute, log);
+  return log;
+};
+
+/** Keys any reader looks up on any object — thenables, coercions — never parameters. */
+const NOT_PARAMETERS: ReadonlySet<string> = new Set(["then", "toJSON", "constructor", "valueOf", "toString"]);
+
+const recordingKeys = (value: unknown, into: (key: string) => void): unknown =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? new Proxy(value, {
+        get: (target, key, receiver) => {
+          if (typeof key === "string" && !NOT_PARAMETERS.has(key)) {
+            into(key);
+          }
+          return Reflect.get(target, key, receiver);
+        },
+        has: (target, key) => {
+          if (typeof key === "string") {
+            into(key);
+          }
+          return Reflect.has(target, key);
+        },
+      })
+    : value;
+
+interface RequestMethods {
+  query: (this: HonoRequest, key?: string) => unknown;
+  queries: (this: HonoRequest, key?: string) => unknown;
+  json: (this: HonoRequest) => Promise<unknown>;
+  parseBody: (this: HonoRequest, ...args: readonly unknown[]) => Promise<unknown>;
+}
+
+const requestProto = HonoRequest.prototype as unknown as RequestMethods;
+const originals: RequestMethods = {
+  query: requestProto.query,
+  queries: requestProto.queries,
+  json: requestProto.json,
+  parseBody: requestProto.parseBody,
+};
+
+const originalFromEntries = Object.fromEntries;
+
+const installRecorder = (): void => {
+  requestProto.query = function (this: HonoRequest, key?: string) {
+    if (key !== undefined) {
+      logOf(this.path)?.query.add(key);
+    }
+    return originals.query.call(this, key);
+  };
+  requestProto.queries = function (this: HonoRequest, key?: string) {
+    if (key !== undefined) {
+      logOf(this.path)?.query.add(key);
+    }
+    return originals.queries.call(this, key);
+  };
+  requestProto.json = async function (this: HonoRequest) {
+    const path = this.path;
+    return recordingKeys(await originals.json.call(this), (key) => logOf(path)?.body.add(key));
+  };
+  requestProto.parseBody = async function (this: HonoRequest, ...args: readonly unknown[]) {
+    const path = this.path;
+    return recordingKeys(await originals.parseBody.call(this, ...args), (key) => logOf(path)?.body.add(key));
+  };
+  // A handler that hands its WHOLE query to a schema (GET /api/waiver-requests,
+  // GET /api/fence-waivers) asks for no name; the schema's own lookups on the
+  // object are what it accepts, so they are recorded the same way.
+  Object.fromEntries = ((entries: Iterable<readonly [PropertyKey, unknown]>) => {
+    const built = originalFromEntries(entries);
+    return entries instanceof URLSearchParams
+      ? (recordingKeys(built, (key) => logOf()?.query.add(key)) as typeof built)
+      : built;
+  }) as typeof Object.fromEntries;
+};
+
+const removeRecorder = (): void => {
+  Object.assign(requestProto, originals);
+  Object.fromEntries = originalFromEntries;
+};
+
+/** The parameters a route's variants supply, per kind. */
+const exercised = (spec: RouteSpec): ParameterLog => ({
+  query: new Set(spec.variants.flatMap((variant) => Object.keys(variant.query ?? {}))),
+  body: new Set(
+    spec.variants.flatMap((variant) =>
+      typeof variant.body === "object" && variant.body !== null ? Object.keys(variant.body) : [],
+    ),
+  ),
+});
+
+const unexercisedProblems = (key: string, spec: RouteSpec): readonly string[] => {
+  const read = parameterLogs.get(key);
+  if (read === undefined) {
+    return [];
+  }
+  const supplied = exercised(spec);
+  const reasons = spec.unexercised ?? {};
+  return [
+    ...[...read.query]
+      .filter((name) => !supplied.query.has(name) && reasons[`?${name}`] === undefined)
+      .map((name) => `${key}: reads ?${name}, which no variant supplies`),
+    ...[...read.body]
+      .filter((name) => !supplied.body.has(name) && reasons[name] === undefined)
+      .map((name) => `${key}: reads body.${name}, which no variant supplies`),
+  ];
+};
+
+beforeAll(installRecorder);
+afterAll(removeRecorder);
+
 describe("the route table", () => {
   test("names exactly the routes the app registers, each with variants or a written reason", async () => {
     const world = await seedOptedOutWorld();
@@ -199,18 +232,24 @@ describe("the route table", () => {
 describe("an opted-out developer's live location reaches no other viewer, on any route", () => {
   test("Nick reads no location of Robin's in any variant of any route, and sees her rows where promised", async () => {
     const world = await seedOptedOutWorld();
+    const now = world.harness.clock.now();
 
-    const answers = await walk(world, "nick");
+    const answers = await walk(world, "nick", (key) => {
+      currentRoute = key;
+    });
+    currentRoute = null;
 
     // Every problem at once, so one run names every route that needs work.
     const problems = [
       ...answers.flatMap((answer) => [
         ...statusProblem(ROUTES[answer.key] as RouteSpec, answer),
-        ...secretsIn(answer.body).map((secret) => `${label(answer)}: leaks her ${secret}`),
+        ...leaksIn(answer.body, now).map((secret) => `${label(answer)}: leaks her ${secret}`),
+        ...leaksIn(answer.headers, now).map((secret) => `${label(answer)}: leaks her ${secret} in a header`),
       ]),
       ...[...byRoute(answers)].flatMap(([key, routeAnswers]) =>
         colleagueProblems(key, ROUTES[key] as RouteSpec, routeAnswers),
       ),
+      ...Object.entries(ROUTES).flatMap(([key, spec]) => unexercisedProblems(key, spec)),
     ];
     expect(problems).toEqual([]);
   }, 120_000);

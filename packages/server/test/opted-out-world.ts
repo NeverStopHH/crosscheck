@@ -75,19 +75,29 @@ export const DETACHED_TITLE = `detached@${SECRET_SHA2.slice(0, 9)} · Try the ot
 const at = (offsetSeconds: number): string =>
   new Date(Date.parse(TEST_START_ISO) + offsetSeconds * 1000).toISOString();
 
-const STARTED_OFFSET_S = 1234;
+/*
+ * THE TIMELINE IS SPACED FOR A TOLERANT GUARD (review round 4, H5). The
+ * guard counts any time within SECRET_TOLERANCE_MS of a secret instant as a
+ * leak, in whatever spelling — so every PUBLISHED instant (creation, the
+ * questions, the read itself, the read's minute) sits more than that from
+ * every secret, and the read falls on a whole minute. Her live session still
+ * counts as live at the read: its last record lands inside PRESENCE_TTL.
+ */
+const STARTED_OFFSET_S = 1100;
 const CREATED_OFFSET_S = 1300;
 const HOST_CREATED_OFFSET_S = 1360;
 const ASKED_OFFSET_S = 1400;
-const HEARTBEAT_OFFSET_S = 4321;
-const UPDATED_OFFSET_S = 4351;
-const DEDUP_OFFSET_S = 4357;
-const TARGET_OFFSET_S = 4363;
-const LANDED_OFFSET_S = 4369;
-const PIN_OFFSET_S = 4375;
-const REVALIDATED_OFFSET_S = 4381;
-const COMMIT_EVIDENCE_OFFSET_S = 4387;
-const READ_OFFSET_S = 4401;
+const HEARTBEAT_OFFSET_S = 4140;
+const UPDATED_OFFSET_S = 4170;
+const DEDUP_OFFSET_S = 4176;
+const TARGET_OFFSET_S = 4182;
+const LANDED_OFFSET_S = 4188;
+const PIN_OFFSET_S = 4194;
+const REVALIDATED_OFFSET_S = 4200;
+const LATE_SESSION_OFFSET_S = 4206;
+const LATE_SESSION_ENDED_OFFSET_S = 4212;
+const COMMIT_EVIDENCE_OFFSET_S = 4245;
+const READ_OFFSET_S = 4320;
 const STALE_HOURS = 30;
 const SECONDS_PER_HOUR = 3600;
 const OLD_DAYS = 90;
@@ -124,6 +134,12 @@ export const PIN_AT = at(PIN_OFFSET_S);
 export const ROBIN_PIN = "pin_robin_refresh";
 /** Her pull re-checked Nick's claim against HER clone: refCommit is SECRET_SHA. */
 export const REVALIDATED_AT = at(REVALIDATED_OFFSET_S);
+/** A session she started after the opt-out, and ended six seconds later. */
+export const ROBIN_AFTER = "cc_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+export const LATE_SESSION_AT = at(LATE_SESSION_OFFSET_S);
+export const LATE_SESSION_ENDED_AT = at(LATE_SESSION_ENDED_OFFSET_S);
+/** When every walk reads: a whole minute, more than the tolerance after her last act. */
+export const READ_AT = at(READ_OFFSET_S);
 /** Her SessionStart reported who committed lately: its collectedAt is when she was there. */
 export const COMMIT_EVIDENCE_AT = at(COMMIT_EVIDENCE_OFFSET_S);
 /** When Nick's SessionStart reported the same — his, so a colleague may read it. */
@@ -171,11 +187,94 @@ export const SECRETS: readonly (readonly [label: string, value: string])[] = [
   ...instantForms(PIN_AT).map((value) => ["pin verified", value] as const),
   ...instantForms(REVALIDATED_AT).map((value) => ["revalidation", value] as const),
   ...instantForms(COMMIT_EVIDENCE_AT).map((value) => ["commit evidence", value] as const),
+  ...instantForms(LATE_SESSION_AT).map((value) => ["late session start", value] as const),
+  ...instantForms(LATE_SESSION_ENDED_AT).map((value) => ["session end", value] as const),
 ];
 
 /** The labels of every secret `body` carries — empty when it carries none. */
 export const secretsIn = (body: string): readonly string[] => [
   ...new Set(SECRETS.filter(([, value]) => body.includes(value)).map(([label]) => label)),
+];
+
+/** Every instant that says when she was there, by label. */
+export const SECRET_INSTANTS: readonly (readonly [label: string, iso: string])[] = [
+  ["session start", STARTED_AT],
+  ["heartbeat", HEARTBEAT_AT],
+  ["context update", UPDATED_AT],
+  ["stale heartbeat", STALE_HEARTBEAT_AT],
+  ["re-observation", DEDUP_AT],
+  ["file touched", TARGET_AT],
+  ["landed report", LANDED_AT],
+  ["pin verified", PIN_AT],
+  ["revalidation", REVALIDATED_AT],
+  ["commit evidence", COMMIT_EVIDENCE_AT],
+  ["late session start", LATE_SESSION_AT],
+  ["session end", LATE_SESSION_ENDED_AT],
+];
+
+/**
+ * HOW NEAR COUNTS AS THE SAME INSTANT (review round 4, H5): a minute either
+ * way — a time rounded to the minute, an age in whole seconds or minutes, a
+ * clock a little off all still say when she was there.
+ */
+export const SECRET_TOLERANCE_MS = 60_000;
+
+const MS_PER_MINUTE = 60_000;
+
+/** Calendar times in any spelling a response could use: ISO, Postgres text, minute precision. */
+const CALENDAR_TIME = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?/g;
+/** Epoch seconds or milliseconds, standing alone. */
+const EPOCH = /(?<![\d.])\d{10}(?:\d{3})?(?![\d.])/g;
+/** An age a renderer wrote: "4m ago", "75 seconds ago", "1 min ago". */
+const RELATIVE_AGE = /(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minutes?)\s+ago/gi;
+/** A JSON number whose key says it is an age in seconds or ms: idleSeconds, ageMs, sinceSecondsAgo… */
+const AGE_FIELD = /"([A-Za-z_]*?(?:[Ss]econds|[Ss]ecs|Ms)(?:Ago)?)"\s*:\s*(\d+(?:\.\d+)?)/g;
+
+const calendarMs = (text: string): number => {
+  const iso = text.replace(" ", "T");
+  const zoned = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/.test(iso)
+    ? iso.replace(/([+-]\d{2})$/, "$1:00")
+    : `${iso}Z`;
+  return Date.parse(zoned);
+};
+
+const ageMs = (value: number, unit: string): number =>
+  /^m/i.test(unit) ? value * MS_PER_MINUTE : value * MS_PER_SECOND;
+
+/** Every time `text` states, absolute or as an age at `now`, in milliseconds. */
+const timesIn = (text: string, now: Date): readonly number[] => [
+  ...[...text.matchAll(CALENDAR_TIME)].map((match) => calendarMs(match[0])),
+  ...[...text.matchAll(EPOCH)].map((match) =>
+    match[0].length === 13 ? Number(match[0]) : Number(match[0]) * MS_PER_SECOND,
+  ),
+  ...[...text.matchAll(RELATIVE_AGE)].map((match) => now.getTime() - ageMs(Number(match[1]), match[2] ?? "s")),
+  ...[...text.matchAll(AGE_FIELD)].map((match) =>
+    now.getTime() - (/Ms$/.test(match[1] ?? "") ? Number(match[2]) : Number(match[2]) * MS_PER_SECOND),
+  ),
+].filter((ms) => !Number.isNaN(ms));
+
+/**
+ * THE TOLERANT SCAN: the label of every secret instant some time in `text`
+ * falls within SECRET_TOLERANCE_MS of — whatever its spelling, its
+ * precision, or whether it is an age.
+ */
+export const instantsNear = (
+  text: string,
+  instants: readonly (readonly [label: string, iso: string])[],
+  now: Date,
+): readonly string[] => {
+  const times = timesIn(text, now);
+  return instants
+    .filter(([, iso]) => times.some((ms) => Math.abs(ms - Date.parse(iso)) <= SECRET_TOLERANCE_MS))
+    .map(([label]) => `${label} (±${String(SECRET_TOLERANCE_MS / MS_PER_SECOND)} s)`);
+};
+
+export const instantLeaksIn = (text: string, now: Date): readonly string[] =>
+  instantsNear(text, SECRET_INSTANTS, now);
+
+/** Every leak `text` carries: the exact spellings, then the tolerant instants. */
+export const leaksIn = (text: string, now: Date): readonly string[] => [
+  ...new Set([...secretsIn(text), ...instantLeaksIn(text, now)]),
 ];
 
 export interface OptedOutWorld {
@@ -184,6 +283,7 @@ export interface OptedOutWorld {
   readonly ken: TestDeveloper;
   readonly robin: TestDeveloper;
   readonly nickCookie: string;
+  readonly kenCookie: string;
   readonly robinCookie: string;
 }
 
@@ -323,6 +423,13 @@ const seedTeam = async (harness: TestHarness): Promise<Pick<OptedOutWorld, "nick
   const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
   const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
   const robin = await createTestDeveloper(harness, "Robin", "robin@example.com");
+  // One second apart, so every listing ordered by creation orders them the
+  // same in every world — their ids, the tie-break, are random per seed.
+  for (const [index, developer] of [nick, ken, robin].entries()) {
+    await harness.db.execute(
+      sql`UPDATE developers SET created_at = ${new Date(Date.parse(TEST_START_ISO) - (3 - index) * MS_PER_SECOND).toISOString()} WHERE id = ${developer.developerId}`,
+    );
+  }
   await assertOk(await registerTestSession(harness, nick.apiKey, { id: NICK_SESSION }), "Nick's session");
   await assertOk(await registerTestSession(harness, ken.apiKey, { id: KEN_SESSION }), "Ken's session");
   assertAccepted(await postRecords(harness, nick, { records: nickWork() }), "Nick");
@@ -456,7 +563,18 @@ const robinActsAfterOptOut = async (harness: TestHarness, robin: TestDeveloper):
     })),
     "Robin's revalidation",
   );
-  harness.clock.advanceSeconds(COMMIT_EVIDENCE_OFFSET_S - REVALIDATED_OFFSET_S);
+  // A session started and ended after the opt-out: both instants are hers.
+  harness.clock.advanceSeconds(LATE_SESSION_OFFSET_S - REVALIDATED_OFFSET_S);
+  await assertOk(
+    await registerTestSession(harness, robin.apiKey, { id: ROBIN_AFTER, branch: SECRET_BRANCH, baseCommit: SECRET_SHA }),
+    "Robin's late session",
+  );
+  harness.clock.advanceSeconds(LATE_SESSION_ENDED_OFFSET_S - LATE_SESSION_OFFSET_S);
+  await assertOk(
+    await harness.app.request(`/api/sessions/${ROBIN_AFTER}/end`, jsonRequest("POST", robin.apiKey, { status: "done" })),
+    "Robin's late session's end",
+  );
+  harness.clock.advanceSeconds(COMMIT_EVIDENCE_OFFSET_S - LATE_SESSION_ENDED_OFFSET_S);
   assertAccepted(
     await postRecords(harness, robin, {
       records: [
@@ -492,20 +610,23 @@ export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
     deliveredAt: harness.clock.now(),
     pulledAt: new Date(harness.clock.now().getTime() + MS_PER_SECOND),
   });
-  // The stale session is OPEN but silent — what GET /api/sessions?open=1 lists.
-  await harness.db.execute(
-    sql`UPDATE agent_sessions SET last_heartbeat_at = ${STALE_HEARTBEAT_AT} WHERE id = ${ROBIN_STALE}`,
-  );
   await setPresenceOptOutViaApi(harness, robin.apiKey, true);
   await robinGoesOnWorking(harness, robin);
   await robinActsAfterOptOut(harness, robin);
-  harness.clock.advanceSeconds(READ_OFFSET_S - REVALIDATED_OFFSET_S);
+  // The stale session is OPEN but silent — what GET /api/sessions?open=1
+  // lists. Made stale AFTER her late session registered: registering reaps
+  // the caller's sessions silent past the reaper's window.
+  await harness.db.execute(
+    sql`UPDATE agent_sessions SET last_heartbeat_at = ${STALE_HEARTBEAT_AT} WHERE id = ${ROBIN_STALE}`,
+  );
+  harness.clock.advanceSeconds(READ_OFFSET_S - COMMIT_EVIDENCE_OFFSET_S);
   return {
     harness,
     nick,
     ken,
     robin,
     nickCookie: await loginUi(harness, nick.apiKey),
+    kenCookie: await loginUi(harness, ken.apiKey),
     robinCookie: await loginUi(harness, robin.apiKey),
   };
 };

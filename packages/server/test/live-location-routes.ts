@@ -18,6 +18,8 @@
  *   self       — "located": Robin's own reads must show her location (a
  *                SECRET); or the written reason this route carries none.
  */
+import { EMPTY_LOSS_REPORT } from "@crosscheck/schema";
+
 import { contradictionIdFor } from "../src/services/contradictions.ts";
 import { VALID_SESSION_BODY, recordEnvelope, registerTestSession, validClaimBody } from "./helpers.ts";
 import {
@@ -32,6 +34,8 @@ import {
   ROBIN_DETACHED_CONTEXT,
   ROBIN_LIVE,
   ROBIN_LOCAL_CONTEXT,
+  ROBIN_NEW_FILE,
+  ROBIN_PIN,
   ROBIN_SOLVED,
   SECRET_BRANCH,
   SECRET_SHA,
@@ -59,12 +63,25 @@ export interface RouteSpec {
   readonly self: "located" | { readonly none: string };
   /** A non-2xx answer every variant gives by design, and why. */
   readonly status?: { readonly code: number; readonly why: string };
+  /**
+   * A parameter the handler READS that no variant supplies, and why that is
+   * safe (`?name` for a query parameter, `name` for a body key). The guard
+   * records what each handler reads and fails on any other (review round 4,
+   * H5): a location behind an unwalked parameter is a location never checked.
+   */
+  readonly unexercised?: Readonly<Record<string, string>>;
 }
 
 /** A path parameter naming Robin's developer id, resolved per world. */
 export const ROBIN_ID_PARAM = ":robin";
 
 const CONTRADICTION = contradictionIdFor("clm_nick", "clm_robin");
+/** A default-branch commit the walker's own clone names — his, nothing of hers. */
+const WALKER_REF = "abcdef1234567";
+/** A waiver's term: two days after the read, inside every bound a request takes. */
+const WAIVER_UNTIL = "2026-07-26T10:00:00.000Z";
+/** A sequence position on the walker's own session's lane: the first of a fresh epoch. */
+const WALK_SEQ = { epoch: "0b0c4d2e-1f2a-4b3c-8d4e-5f6a7b8c9d0e", n: 0 } as const;
 const ROBIN_CONTEXTS = [ROBIN_CONTEXT, ROBIN_LOCAL_CONTEXT, ROBIN_DETACHED_CONTEXT, ROBIN_SOLVED];
 /** A session Robin starts WHILE a stream is read: its session_started event names her branch. */
 const ROBIN_LATE = "cc_77777777-8888-4999-8aaa-bbbbbbbbbbbb";
@@ -157,7 +174,10 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: "located",
   },
   "GET /api/fence-waivers": {
-    variants: [{ path: "/api/fence-waivers", query: { repo: REPO } }],
+    variants: [
+      { path: "/api/fence-waivers", query: { repo: REPO } },
+      { path: "/api/fence-waivers", query: { repo: REPO, pin: ROBIN_PIN } },
+    ],
     colleague: { hidden: NONE_SEEDED },
     self: { none: NONE_SEEDED },
   },
@@ -204,6 +224,7 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
     variants: [
       { path: "/api/pilot-marks/candidates", query: { repo: REPO, withinMinutes: "600" } },
       { path: "/api/pilot-marks/candidates", query: { repo: REPO, withinMinutes: "600", session: NICK_SESSION } },
+      { path: "/api/pilot-marks/candidates", query: { repo: REPO, withinMinutes: "600", ref: ROBIN_CONTEXT } },
     ],
     colleague: "withheld",
     self: { none: "the caller's own deliveries: Robin was delivered nothing in the seed" },
@@ -281,7 +302,11 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: "located",
   },
   "GET /api/suspect": {
-    variants: [{ path: "/api/suspect", query: { repo: REPO, path: FILE } }],
+    variants: [
+      { path: "/api/suspect", query: { repo: REPO, path: FILE } },
+      // Her pin, verified after the opt-out: the falsifier gate reads it.
+      { path: "/api/suspect", query: { repo: REPO, pin: ROBIN_PIN } },
+    ],
     colleague: "withheld",
     self: "located",
   },
@@ -291,7 +316,7 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: "team settings name no developer" },
   },
   "GET /api/waiver-requests": {
-    variants: [{ path: "/api/waiver-requests" }],
+    variants: [{ path: "/api/waiver-requests" }, { path: "/api/waiver-requests", query: { repo: REPO } }],
     colleague: { hidden: NONE_SEEDED },
     self: { none: NONE_SEEDED },
   },
@@ -310,7 +335,13 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
   },
   "GET /api/work-contexts/:id": { variants: byId("/api/work-contexts/:id"), colleague: "withheld", self: "located" },
   "GET /api/work-contexts/:id/diagnosis": {
-    variants: byId("/api/work-contexts/:id/diagnosis"),
+    variants: [
+      ...byId("/api/work-contexts/:id/diagnosis"),
+      // The pull a connector makes from a session, which records a delivery,
+      // and the one that leaves telemetry out.
+      { path: `/api/work-contexts/${ROBIN_CONTEXT}/diagnosis`, query: { session: NICK_SESSION } },
+      { path: `/api/work-contexts/${ROBIN_CONTEXT}/diagnosis`, query: { telemetry: "0" } },
+    ],
     colleague: "withheld",
     self: "located",
   },
@@ -408,7 +439,7 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
   },
   "POST /api/pilot-marks": {
     variants: [
-      { path: "/api/pilot-marks", body: { repo: REPO, refKind: "hint_delivery", refId: "hd_robin_1", mark: "helpful", presence: "controlling_terminal" } },
+      { path: "/api/pilot-marks", body: { repo: REPO, refKind: "hint_delivery", refId: "hd_robin_1", mark: "helpful", presence: "controlling_terminal", reason: "it named the file I was in" } },
     ],
     colleague: { hidden: "an ack of the caller's own label" },
     self: { none: WRITE_ACK },
@@ -424,20 +455,20 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: WRITE_ACK },
   },
   "POST /api/sessions": {
-    variants: [{ path: "/api/sessions", body: { ...VALID_SESSION_BODY, id: "cc_99999999-aaaa-4bbb-8ccc-dddddddddddd" } }],
+    variants: [{ path: "/api/sessions", body: { ...VALID_SESSION_BODY, id: "cc_99999999-aaaa-4bbb-8ccc-dddddddddddd", guarantees: [], losses: EMPTY_LOSS_REPORT, seq: WALK_SEQ } }],
     colleague: { hidden: "registers the caller's own session and answers with it" },
     self: { none: WRITE_ACK },
   },
   "POST /api/sessions/:id/heartbeat": {
     variants: [
       { path: `/api/sessions/${NICK_SESSION}/heartbeat`, body: { status: "implementing" } },
-      { path: `/api/sessions/${ROBIN_LIVE}/heartbeat`, body: { status: "implementing" }, refused: "not the caller's session: the refusal must not describe hers" },
+      { path: `/api/sessions/${ROBIN_LIVE}/heartbeat`, body: { status: "implementing", losses: EMPTY_LOSS_REPORT, seq: WALK_SEQ }, refused: "not the caller's session: the refusal must not describe hers" },
     ],
     colleague: { hidden: "a heartbeat of the caller's own session" },
     self: { none: WRITE_ACK },
   },
   "POST /api/sessions/:id/end": {
-    variants: [{ path: `/api/sessions/${ROBIN_LIVE}/end`, body: {}, refused: "not the caller's session: the refusal must not describe hers" }],
+    variants: [{ path: `/api/sessions/${ROBIN_LIVE}/end`, body: { status: "done", losses: EMPTY_LOSS_REPORT, seq: WALK_SEQ }, refused: "not the caller's session: the refusal must not describe hers" }],
     whyNoVariants: "ending the caller's own session would end the walk's; only the refusal about hers is walked",
     colleague: { hidden: "the refusal of somebody else's session" },
     self: { none: WRITE_ACK },
@@ -453,21 +484,33 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: WRITE_ACK },
   },
   "POST /api/pins": {
-    variants: refusedPost("/api/pins", "a pin needs a surface, files and a check; the refusal is walked"),
-    whyNoVariants: "creates the caller's own pin and answers with it — no colleague's row",
+    variants: [
+      ...refusedPost("/api/pins", "a pin needs a surface, files and a check; the refusal is walked"),
+      {
+        path: "/api/pins",
+        body: { id: "pin_nick_walk", repo: REPO, surface: "Rotation keeps the key", files: [FILE], check: "rotate, then refresh", presence: "controlling_terminal", verifiedAtCommit: WALKER_REF },
+      },
+    ],
     colleague: { hidden: "the caller's own pin" },
     self: { none: WRITE_ACK },
   },
   "POST /api/pins/sweep": {
-    variants: refusedPost("/api/pins/sweep", "a sweep needs the caller's pins; none are seeded"),
-    whyNoVariants: "updates the caller's own pins; the seed pins nothing",
-    colleague: { hidden: NONE_SEEDED },
+    variants: [
+      ...refusedPost("/api/pins/sweep", "a sweep needs a repo and its updates"),
+      // His clone's view of HER pin's path: a sweep any reader may report.
+      { path: "/api/pins/sweep", body: { repo: REPO, updates: [{ pinId: ROBIN_PIN, path: ROBIN_NEW_FILE, newPath: ROBIN_NEW_FILE }] } },
+    ],
+    colleague: { hidden: "an ack: how many path updates were applied" },
     self: { none: WRITE_ACK },
   },
   "POST /api/pins/:id/broke": {
-    variants: refusedPost("/api/pins/pin_none/broke", "no such pin"),
-    whyNoVariants: "breaks the caller's own pin; the seed pins nothing",
-    colleague: { hidden: NONE_SEEDED },
+    variants: [
+      { path: "/api/pins/pin_none/broke", body: { repo: REPO, presence: "controlling_terminal", brokeAtCommit: WALKER_REF }, refused: "no such pin" },
+      // He ran HER pin's check and it failed: a retraction any reader may record.
+      { path: `/api/pins/${ROBIN_PIN}/broke`, body: { repo: REPO, presence: "controlling_terminal", brokeAtCommit: WALKER_REF } },
+    ],
+    // The ack echoes her pin's id, the one the caller sent, and nothing else.
+    colleague: "withheld",
     self: { none: WRITE_ACK },
   },
   "POST /api/ci-runs": {
@@ -477,8 +520,19 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: WRITE_ACK },
   },
   "POST /api/claim-revalidations": {
-    variants: refusedPost("/api/claim-revalidations", "a revalidation batch has a shape of its own"),
-    whyNoVariants: "the caller's own revalidation readings: an ack",
+    variants: [
+      ...refusedPost("/api/claim-revalidations", "a revalidation batch has a shape of its own"),
+      // His own reading of his own claim: the answer reads back its validity.
+      {
+        path: "/api/claim-revalidations",
+        body: {
+          repo: REPO,
+          revalidated: 1,
+          total: 1,
+          entries: [{ claimId: "clm_nick", result: "unchanged", basis: "context_targets", refCommit: WALKER_REF, touchingCommits: [], touchingTotal: 0 }],
+        },
+      },
+    ],
     colleague: { hidden: "an ack of the caller's own readings" },
     self: { none: WRITE_ACK },
   },
@@ -495,9 +549,12 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: WRITE_ACK },
   },
   "POST /api/waiver-requests": {
-    variants: refusedPost("/api/waiver-requests", "a request names a waiver"),
-    whyNoVariants: "requests a waiver; none seeded",
-    colleague: { hidden: NONE_SEEDED },
+    variants: [
+      ...refusedPost("/api/waiver-requests", "a request names a pin and a term"),
+      // A waiver on HER pin: the request names the pin, never its pinner's location.
+      { path: "/api/waiver-requests", body: { repo: REPO, pinId: ROBIN_PIN, pinVersion: 1, reason: "the refresh fix lands tomorrow", expiresAt: WAIVER_UNTIL } },
+    ],
+    colleague: { hidden: "the caller's own request" },
     self: { none: WRITE_ACK },
   },
   "POST /api/waiver-requests/:id/withdraw": {
@@ -561,7 +618,7 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: "team configuration names no developer" },
   },
   "POST /ui/login": {
-    variants: refusedPost("/ui/login", "the login takes a form, not JSON"),
+    variants: [{ path: "/ui/login", body: { apiKey: "not-a-key" }, refused: "the login takes a form, not JSON" }],
     whyNoVariants: "exchanges a key for a cookie; answers with a redirect",
     colleague: { hidden: "a login" },
     self: { none: "a login" },
@@ -573,19 +630,19 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: "a logout" },
   },
   "POST /ui/artifacts/:id/approve": {
-    variants: refusedPost("/ui/artifacts/art_none/approve", "no such artifact; a form post"),
+    variants: [{ path: "/ui/artifacts/art_none/approve", body: { _csrf: "not-this-session" }, refused: "no such artifact; a form post" }],
     whyNoVariants: "approves the caller's own artifact; none seeded",
     colleague: { hidden: NONE_SEEDED },
     self: { none: WRITE_ACK },
   },
   "POST /ui/artifacts/:id/revoke": {
-    variants: refusedPost("/ui/artifacts/art_none/revoke", "no such artifact; a form post"),
+    variants: [{ path: "/ui/artifacts/art_none/revoke", body: { _csrf: "not-this-session" }, refused: "no such artifact; a form post" }],
     whyNoVariants: "revokes the caller's own artifact; none seeded",
     colleague: { hidden: NONE_SEEDED },
     self: { none: WRITE_ACK },
   },
   "POST /ui/passkeys/:id/revoke": {
-    variants: refusedPost("/ui/passkeys/pk_none/revoke", "no such passkey; a form post"),
+    variants: [{ path: "/ui/passkeys/pk_none/revoke", body: { _csrf: "not-this-session" }, refused: "no such passkey; a form post" }],
     whyNoVariants: "revokes the caller's own passkey; none seeded",
     colleague: { hidden: NONE_SEEDED },
     self: { none: WRITE_ACK },
