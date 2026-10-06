@@ -6,11 +6,44 @@
  * applied after a LIMIT would let hidden rows crowd includable ones out of
  * the bound.
  *
- * PRESENCE OPT-OUT (self-set, hides me from everyone else). THE POLICY:
- * opt-out withholds a developer's LIVE LOCATION from every other viewer on
- * every hub route: current branch, HEAD/base commit, and heartbeat/last-
- * active time. Their work contexts, claims and diagnoses remain shared;
- * that is what the product is for.
+ * PRESENCE OPT-OUT (self-set, hides me from everyone else). THE POLICY, in
+ * the words DESIGN.md uses (review round 4, narrowed on purpose):
+ *
+ *   Opt-out withholds your live location (branch, commits, session start,
+ *   heartbeat and update instants, fallback titles) from every structured
+ *   field every hub route serves, and from presence. It does not hide the
+ *   time that your shared work itself carries: when a claim or work context
+ *   was created, honest coverage that some session went silent, team-level
+ *   pilot counts, event sequence gaps, and words you write yourself. A
+ *   determined teammate can infer roughly when you work from the work you
+ *   share.
+ *
+ * WHAT IT DOES NOT HIDE — the residuals, each tagged so the executable
+ * boundary (test/live-location-differential.test.ts RESIDUALS) can point at
+ * the sentence that accepts a difference one action of hers makes:
+ *
+ *   «creation»  when a claim, work context, edge, question or pin was
+ *               created, and a solved tree's solvedAt (its newest claim's
+ *               creation): the shared row's own time
+ *   «coverage»  honest coverage that SOME session went quiet or reported:
+ *               the agent_event rung's state, its reason, and whether its
+ *               start may be printed — never whose session, never when
+ *               (`session_withheld`, services/coverage.ts)
+ *   «pilot»     team-level pilot counts: sessions, deliveries and pulls,
+ *               the integrity counters, which prior work was opened
+ *   «sequence»  event sequence gaps (the feed's ids, below)
+ *   «landed»    that her work landed, TO THE DAY, and what follows from
+ *               it: the conference leaves landed work out, the page says
+ *               landed
+ *   «content»   what her shared work says — a claim, a target's path, an
+ *   «words»     intent, a pin's surface, a status, a revalidation's
+ *               finding — the words she writes herself, and the counts and
+ *               rankings that follow from them
+ *
+ * Every one of them holds at a colleague's POLL interval: a colleague who
+ * reads again and again sees when a residual changed — when a claim
+ * appeared, when coverage went incomplete, when her work left the
+ * conference. That is what "roughly" means above.
  *
  * It is enforced at two grains. Whole ROWS go on the LIVE-presence surfaces,
  * where the row itself is the statement "this person is here now":
@@ -126,11 +159,13 @@
  * EVERY route the app registers — GET and POST, each with its own variants
  * from test/live-location-routes.ts — as a colleague of an opted-out
  * developer, and fails on any spelling of her location anywhere in an
- * answer: branch, HEAD and HEAD prefixes, and her session start, heartbeats
- * and last update in ISO and epoch form. A route the table does not name
- * fails it too, so a route added later cannot pass by being unknown; the
- * same walk as her checks, route by route, that her own view is never
- * withheld.
+ * answer, body or header: branch, HEAD and HEAD prefixes, and every instant
+ * of hers in any spelling within a minute (ISO, Postgres text, minute
+ * precision, epoch, an age). A route the table does not name fails it, and
+ * so does a parameter a handler reads that no variant sends; the same walk
+ * as her checks, route by route, that her own view is never withheld. And
+ * test/live-location-differential.test.ts walks two worlds that differ by
+ * ONE action of hers, failing on any difference not tagged above.
  *
  * WRITES THAT WOULD READ IT BACK. `landedAt` is stamped when a reported
  * commit is a session's base commit, and every colleague sees the stamp — so
@@ -153,12 +188,15 @@
  * FIELDS. A branch name or a sha a person, a host or an agent wrote INTO
  * text — a host's session title, a context's description, a claim or a
  * draft body — is published as written, and so is a copy the hub made
- * before the opt-out (an event row, a normalized search doc, a draft
- * composed from her claims). Recognising location inside prose would mean
+ * before the opt-out (an event row, a draft composed from her claims). The
+ * search index is not such a copy any more: a location title is kept out of
+ * it while its owner is opted out, and her docs are rebuilt when she
+ * toggles (services/live-location.ts isTitleWithheldFromIndex, review round
+ * 4, H4). Recognising location inside prose would mean
  * guessing at every word that looks like a ref, and it would redact real
  * knowledge on every false positive; the author controls what they write.
  *
- * ACCEPTED, AND NOT BUILT AROUND: the events feed's ids are ONE sequence
+ * «sequence» ACCEPTED, AND NOT BUILT AROUND: the events feed's ids are ONE sequence
  * every developer's rows share, and a hidden developer's rows are left out
  * of a colleague's feed (surface 4 above) — so the ids a colleague does
  * see have gaps where hers were. Sequence gaps reveal that some hidden
