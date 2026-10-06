@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1713
+    # PRINTS: 1718
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -396,6 +396,7 @@ jobs:
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
     # PRINTS: packages/server/src/http/schemas.ts 1
+    # PRINTS: packages/server/src/index.ts 1
     # PRINTS: packages/server/src/routes/absences.ts 2
     # PRINTS: packages/server/src/routes/drafts.ts 1
     # PRINTS: packages/server/src/routes/events.ts 1
@@ -465,6 +466,7 @@ jobs:
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
     # PRINTS: packages/server/src/services/solved.ts 1
+    # PRINTS: packages/server/src/services/startup-upgrades.ts 4
     # PRINTS: packages/server/src/services/suspect.ts 2
     # PRINTS: packages/server/src/services/team-settings.ts 2
     # PRINTS: packages/server/src/services/time-window.ts 1
@@ -586,7 +588,7 @@ jobs:
     # PRINTS: hints.ts 5
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 13
-    # PRINTS: index.ts 4
+    # PRINTS: index.ts 5
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 8
     # PRINTS: init-remove-plan.ts 5
@@ -704,6 +706,7 @@ jobs:
     # PRINTS: solved.ts 1
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
+    # PRINTS: startup-upgrades.ts 4
     # PRINTS: stats.ts 1
     # PRINTS: status.ts 10
     # PRINTS: stop.ts 4

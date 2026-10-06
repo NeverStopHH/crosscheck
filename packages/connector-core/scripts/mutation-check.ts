@@ -18807,6 +18807,46 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/similarity-gate.test.ts`,
     because: "a gate link can be told from a person's only by a note anyone can type",
   },
+  {
+    label: "the boot never runs the start-up upgrade passes",
+    file: `${SERVER}/src/index.ts`,
+    from: "  void runStartupUpgrades({ db, embedder });\n",
+    to: "",
+    test: `${SERVER}/test/startup-boot.test.ts`,
+    because: "an upgraded hub keeps every draft in its search docs and every old gate link, and no test notices",
+  },
+  {
+    label: "the boot never runs the link cleanup",
+    file: `${SERVER}/src/services/startup-upgrades.ts`,
+    from: "    run: () => removeCrossDeveloperDraftLinks(db),\n",
+    to: "    run: () => Promise.resolve({ passId: \"none\", repointed: [], removed: [] }),\n",
+    test: `${SERVER}/test/startup-boot.test.ts`,
+    because: "an upgraded hub keeps listing a teammate's machine guess in every tree the old gate linked it into",
+  },
+  {
+    label: "the boot never runs the doc upgrade",
+    file: `${SERVER}/src/services/startup-upgrades.ts`,
+    from: "    run: () => upgradeNormalizedDocs({ db, embedder }),\n",
+    to: "    run: () => Promise.resolve({ contexts: 0, stamped: 0, reembedded: 0, embedFailures: 0 }),\n",
+    test: `${SERVER}/test/startup-boot.test.ts`,
+    because: "an upgraded hub's search keeps finding discarded drafts' words as ordinary matches",
+  },
+  {
+    label: "a failing start-up pass stops the passes after it",
+    file: `${SERVER}/src/services/startup-upgrades.ts`,
+    from: "    return null;\n  }\n};",
+    to: "    throw error;\n  }\n};",
+    test: `${SERVER}/test/startup-upgrades.test.ts`,
+    because: "a cleanup that throws leaves every pre-round doc holding drafts until the cleanup is fixed",
+  },
+  {
+    label: "the boot never runs the vector backfill",
+    file: `${SERVER}/src/services/startup-upgrades.ts`,
+    from: "          run: () => backfillEmbeddings({ db, embedder }),\n",
+    to: "          run: () => Promise.resolve({ embedded: 0, failed: 0 }),\n",
+    test: `${SERVER}/test/startup-upgrades.test.ts`,
+    because: "a vector lost to a keyless start or a provider's 503 never comes back",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19187,6 +19227,8 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
+ * PRINTS: packages/server/test/startup-boot.test.ts 3
+ * PRINTS: packages/server/test/startup-upgrades.test.ts 2
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
  * PRINTS: packages/server/test/ui-feed.test.ts 3
