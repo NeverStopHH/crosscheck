@@ -15,6 +15,7 @@ import {
   SECONDS_PER_MINUTE,
   SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
+  SUMMARIZER_TIMEOUT_MS,
 } from "../constants.ts";
 import {
   readJsonOrNull,
@@ -113,16 +114,24 @@ const dropRetiredToolWindowKeys = (value: unknown): unknown => {
   );
 };
 
-/** One model run's start, as the fire's gate booked it (`deriveFires`). */
-const DeriveFireSchema = z.object({
+/**
+ * One model run's start and the deadline its worker was given, as the fire's
+ * gate booked them (`deriveFires`). An entry without a deadline was booked
+ * before it existed, under the default one.
+ */
+export const DeriveFireSchema = z.object({
   at: z.string().min(1),
+  deadlineMs: z.number().int().positive().default(SUMMARIZER_TIMEOUT_MS),
 });
 
 export type DeriveFire = z.infer<typeof DeriveFireSchema>;
 
 /** The ring after one more fire: appended, the newest DERIVE_FIRES_KEPT kept. */
-export const withDeriveFire = (fires: readonly DeriveFire[], firedAt: Date): DeriveFire[] =>
-  [...fires, { at: firedAt.toISOString() }].slice(-DERIVE_FIRES_KEPT);
+export const withDeriveFire = (
+  fires: readonly DeriveFire[],
+  firedAt: Date,
+  deadlineMs: number,
+): DeriveFire[] => [...fires, { at: firedAt.toISOString(), deadlineMs }].slice(-DERIVE_FIRES_KEPT);
 
 const SessionStateObjectSchema = z.looseObject({
   /**

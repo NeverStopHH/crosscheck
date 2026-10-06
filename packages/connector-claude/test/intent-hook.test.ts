@@ -173,6 +173,16 @@ describe("the first substantive prompt derives the session intent, exactly once"
     expect(state?.intentSetCount).toBe(1);
   });
 
+  test("the intent fire books the deadline its worker runs under", async () => {
+    const fix = await fixture("deadline");
+
+    await runHook("user-prompt-submit", promptPayload(fix, PROMPT), { ...fix.env, CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "45000" });
+
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.deriveFires.map((fire) => fire.deadlineMs)).toEqual([45_000]);
+    await waitForIntent(fix);
+  });
+
   test("a second substantive prompt does not fire again", async () => {
     const fix = await fixture("once");
     await runHook("user-prompt-submit", promptPayload(fix, PROMPT), fix.env);

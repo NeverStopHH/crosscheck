@@ -58,7 +58,7 @@ import {
   withSummarizerFire,
   withSummarizerSliceDropped,
 } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
-import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
+import { SUMMARIZER_PROMPT, resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -147,7 +147,7 @@ export const maybeSpawnAcpIntentWorker = async (
         return null;
       }
       fired = true;
-      return withIntentFire(fresh, new Date());
+      return withIntentFire(fresh, new Date(), resolveSummarizerTimeoutMs(ctx.env));
     });
     if (!fired) {
       return false;
@@ -267,7 +267,7 @@ export const runAcpSummarizerGate = async (
         return counted;
       }
       fired = true;
-      return withSummarizerFire(counted, estimateFireTokens(sliceText), new Date());
+      return withSummarizerFire(counted, estimateFireTokens(sliceText), new Date(), resolveSummarizerTimeoutMs(ctx.env));
     });
     if (!fired) {
       return false;

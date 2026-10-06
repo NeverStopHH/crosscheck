@@ -17874,8 +17874,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor blames the host for a model run still in flight",
     file: `${CORE}/src/derive/sharing.ts`,
-    from: "  return !Number.isNaN(fired) && !Number.isNaN(until) && until - fired >= DERIVE_RUN_GRACE_MS;",
-    to: "  return true;",
+    from: "    until - fired >= DERIVE_RUN_GRACE_FACTOR * fire.deadlineMs\n",
+    to: "    true\n",
     test: `${CORE}/test/sharing.test.ts`,
     because: "a run ten seconds old is reported as a worker that never reported back",
   },
@@ -17890,7 +17890,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a summarizer fire books no start time",
     file: `${CORE}/src/derive/summarizer/gate.ts`,
-    from: "  deriveFires: withDeriveFire(state.deriveFires, firedAt),\n  summarizerFireCount: state.summarizerFireCount + 1,",
+    from: "  deriveFires: withDeriveFire(state.deriveFires, firedAt, deadlineMs),\n  summarizerFireCount: state.summarizerFireCount + 1,",
     to: "  summarizerFireCount: state.summarizerFireCount + 1,",
     test: `${CONNECTOR}/test/stop-gate.test.ts`,
     because: "doctor can never tell a run in flight from a silent worker, so it never blames either",
@@ -17898,7 +17898,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an intent fire books no start time",
     file: `${CORE}/src/derive/intent/gate.ts`,
-    from: "  deriveFires: withDeriveFire(state.deriveFires, firedAt),\n  intentFireCount: state.intentFireCount + 1,",
+    from: "  deriveFires: withDeriveFire(state.deriveFires, firedAt, deadlineMs),\n  intentFireCount: state.intentFireCount + 1,",
     to: "  intentFireCount: state.intentFireCount + 1,",
     test: `${CONNECTOR}/test/intent-gate.test.ts`,
     because: "a session whose only run was the intent is never judged at all",
@@ -18218,15 +18218,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the fire ring keeps every fire a session ever made",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "  [...fires, { at: firedAt.toISOString() }].slice(-DERIVE_FIRES_KEPT);",
-    to: "  [...fires, { at: firedAt.toISOString() }];",
+    from: "): DeriveFire[] => [...fires, { at: firedAt.toISOString(), deadlineMs }].slice(-DERIVE_FIRES_KEPT);",
+    to: "): DeriveFire[] => [...fires, { at: firedAt.toISOString(), deadlineMs }];",
     test: `${CONNECTOR}/test/stop-gate.test.ts`,
     because: "the state file grows with every fire instead of staying bounded",
   },
   {
     label: "the derive history drops each run's start time",
     file: `${CORE}/src/state/derive-history.ts`,
-    from: "  deriveFires: z.array(z.object({ at: z.string().min(1) })).catch([]),\n",
+    from: "  deriveFires: z.array(DeriveFireSchema).catch([]),\n",
     to: "",
     test: `${CORE}/test/derive-history.test.ts`,
     because: "after SessionEnd no run can be settled, so a host that kills the workers is never named",
@@ -18238,6 +18238,70 @@ export const MUTATIONS: readonly Mutation[
     to: "        ? [asc(claims.createdAt)]\n        : [desc(claims.createdAt)]),",
     test: `${SERVER}/test/drafts.test.ts`,
     because: "both ends of the listing return the same tied rows, and the drafts between the pages reach neither the briefing nor the nudge",
+  },
+  {
+    label: "doctor settles a run at the default deadline's grace, whatever deadline it ran under",
+    file: `${CORE}/src/derive/sharing.ts`,
+    from: "    until - fired >= DERIVE_RUN_GRACE_FACTOR * fire.deadlineMs",
+    to: "    until - fired >= DERIVE_RUN_GRACE_MS",
+    test: `${CORE}/test/sharing.test.ts`,
+    because: "a machine that raised CROSSCHECK_SUMMARIZER_TIMEOUT_MS has its slow but healthy workers blamed on the host",
+  },
+  {
+    label: "the derive history forgets the deadline each run ran under",
+    file: `${CORE}/src/state/derive-history.ts`,
+    from: "  deriveFires: z.array(DeriveFireSchema).catch([]),\n",
+    to: "  deriveFires: z.array(z.object({ at: z.string().min(1) })).catch([]),\n",
+    test: `${CORE}/test/derive-history.test.ts`,
+    because: "after SessionEnd every run is settled at the default grace again",
+  },
+  {
+    label: "the Claude Stop hook books the default deadline, not the one its worker runs under",
+    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    from: "    return withSummarizerFire(counted, estimateFireTokens(sliceText), ctx.now(), resolveSummarizerTimeoutMs(ctx.env));",
+    to: "    return withSummarizerFire(counted, estimateFireTokens(sliceText), ctx.now(), 60_000);",
+    test: `${CONNECTOR}/test/stop-hook.test.ts`,
+    because: "a raised deadline is invisible to doctor, which then calls a healthy slow run silent",
+  },
+  {
+    label: "the Claude prompt hook books the default deadline for the intent run",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "      return withIntentFire(fresh, ctx.now(), resolveSummarizerTimeoutMs(ctx.env));",
+    to: "      return withIntentFire(fresh, ctx.now(), 60_000);",
+    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    because: "a raised deadline is invisible to doctor, which then calls a healthy slow run silent",
+  },
+  {
+    label: "the Cursor intent trigger books the default deadline",
+    file: `${CURSOR}/src/derive/triggers.ts`,
+    from: "      return withIntentFire(fresh, ctx.now(), resolveSummarizerTimeoutMs(ctx.env));",
+    to: "      return withIntentFire(fresh, ctx.now(), 60_000);",
+    test: `${CURSOR}/test/derive.test.ts`,
+    because: "a raised deadline is invisible to doctor, which then calls a healthy slow run silent",
+  },
+  {
+    label: "the Cursor summarizer trigger books the default deadline",
+    file: `${CURSOR}/src/derive/triggers.ts`,
+    from: "    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText), ctx.now(), resolveSummarizerTimeoutMs(ctx.env));",
+    to: "    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText), ctx.now(), 60_000);",
+    test: `${CURSOR}/test/derive.test.ts`,
+    because: "a raised deadline is invisible to doctor, which then calls a healthy slow run silent",
+  },
+  {
+    label: "the ACP intent trigger books the default deadline",
+    file: `${ACP}/src/derive/triggers.ts`,
+    from: "      return withIntentFire(fresh, new Date(), resolveSummarizerTimeoutMs(ctx.env));",
+    to: "      return withIntentFire(fresh, new Date(), 60_000);",
+    test: `${ACP}/test/derive.test.ts`,
+    because: "a raised deadline is invisible to doctor, which then calls a healthy slow run silent",
+  },
+  {
+    label: "the ACP summarizer trigger books the default deadline",
+    file: `${ACP}/src/derive/triggers.ts`,
+    from: "      return withSummarizerFire(counted, estimateFireTokens(sliceText), new Date(), resolveSummarizerTimeoutMs(ctx.env));",
+    to: "      return withSummarizerFire(counted, estimateFireTokens(sliceText), new Date(), 60_000);",
+    test: `${ACP}/test/derive.test.ts`,
+    because: "a raised deadline is invisible to doctor, which then calls a healthy slow run silent",
   },
 ];
 
@@ -18353,7 +18417,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 4
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
- * PRINTS: packages/connector-acp/test/derive.test.ts 6
+ * PRINTS: packages/connector-acp/test/derive.test.ts 8
  * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 4
  * PRINTS: packages/connector-acp/test/injector.test.ts 6
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
@@ -18397,6 +18461,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
@@ -18409,7 +18474,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
- * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
@@ -18444,7 +18509,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
- * PRINTS: packages/connector-core/test/derive-history.test.ts 6
+ * PRINTS: packages/connector-core/test/derive-history.test.ts 7
  * PRINTS: packages/connector-core/test/draft-nudge.test.ts 39
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
@@ -18508,7 +18573,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
- * PRINTS: packages/connector-core/test/sharing.test.ts 23
+ * PRINTS: packages/connector-core/test/sharing.test.ts 24
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
@@ -18523,7 +18588,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
- * PRINTS: packages/connector-cursor/test/derive.test.ts 3
+ * PRINTS: packages/connector-cursor/test/derive.test.ts 5
  * PRINTS: packages/connector-cursor/test/draft-nudge.test.ts 3
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4

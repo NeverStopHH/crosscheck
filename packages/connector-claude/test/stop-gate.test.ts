@@ -215,10 +215,11 @@ describe("debounce and hard cap (DESIGN.md §3: >=2 turns apart, 6/session)", ()
   test("withSummarizerFire records fire turn, count and token estimate", () => {
     const before = baseState({ stopTurnCount: 7, summarizerEstimatedTokens: 100 });
     const firedAt = new Date("2026-10-05T12:00:00.000Z");
-    const after = withSummarizerFire(before, 250, firedAt);
+    const after = withSummarizerFire(before, 250, firedAt, 90_000);
     expect(after.summarizerFireCount).toBe(1);
-    // When it fired: what tells doctor a run in flight from a silent worker.
-    expect(after.deriveFires).toEqual([{ at: firedAt.toISOString() }]);
+    // When it fired, and under what deadline: what tells doctor a run in
+    // flight from a silent worker.
+    expect(after.deriveFires).toEqual([{ at: firedAt.toISOString(), deadlineMs: 90_000 }]);
     expect(after.summarizerLastFireTurn).toBe(7);
     expect(after.summarizerEstimatedTokens).toBe(350);
     expect(before.summarizerFireCount).toBe(0);
@@ -231,7 +232,7 @@ describe("debounce and hard cap (DESIGN.md §3: >=2 turns apart, 6/session)", ()
     // its own now, so each needs its own instant.
     const instants = Array.from({ length: DERIVE_FIRES_KEPT + 2 }, (_, i) => new Date(Date.UTC(2026, 9, 5, 12, i)));
 
-    const after = instants.reduce((state, at) => withSummarizerFire(state, 10, at), baseState());
+    const after = instants.reduce((state, at) => withSummarizerFire(state, 10, at, 60_000), baseState());
 
     expect(after.summarizerFireCount).toBe(DERIVE_FIRES_KEPT + 2);
     expect(after.deriveFires.map((fire) => fire.at)).toEqual(

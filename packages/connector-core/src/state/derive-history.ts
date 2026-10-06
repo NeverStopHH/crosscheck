@@ -30,7 +30,7 @@ import {
 import { digestOf } from "../derive/sharing.ts";
 import type { DeriveDigest } from "../derive/sharing.ts";
 import { withLock } from "../spool/lock.ts";
-import { readSessionState } from "./session-state.ts";
+import { DeriveFireSchema, readSessionState } from "./session-state.ts";
 
 const count = z.number().int().min(0).catch(0);
 const said = z.string().nullable().catch(null);
@@ -53,7 +53,7 @@ const DigestSchema = z.object({
   intentLastFailure: said,
   intentRefusedCount: count,
   intentSkippedCount: count,
-  deriveFires: z.array(z.object({ at: z.string().min(1) })).catch([]),
+  deriveFires: z.array(DeriveFireSchema).catch([]),
   endedAt: said,
 });
 

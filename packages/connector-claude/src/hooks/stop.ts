@@ -38,7 +38,7 @@ import {
   withStopTurn,
   withSummarizerFire,
 } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
-import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
+import { SUMMARIZER_PROMPT, resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
 import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
@@ -150,7 +150,7 @@ export const handleStop = async (
       return counted;
     }
     fired = true;
-    return withSummarizerFire(counted, estimateFireTokens(sliceText), ctx.now());
+    return withSummarizerFire(counted, estimateFireTokens(sliceText), ctx.now(), resolveSummarizerTimeoutMs(ctx.env));
   });
 
   if (fired && slice !== null && transcriptPath !== undefined) {

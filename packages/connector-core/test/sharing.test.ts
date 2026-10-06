@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DOCTOR_SHARING_QUIET_TURNS_WARN,
   DRAFT_LISTING_CAP,
+  SUMMARIZER_TIMEOUT_MS,
 } from "../src/constants.ts";
 import { digestOf, sharingFindings, sharingSummary } from "../src/derive/sharing.ts";
 import type { DeriveDigest, OwnDraftsFact, SharingCause, SharingInput } from "../src/derive/sharing.ts";
@@ -45,10 +46,14 @@ const session = (overrides: Partial<SessionState> = {}, endedAt: Date | null = n
 
 const DAY_MS = 86_400_000;
 
-/** A session's fire ring: one run per age, oldest first, as the gates book it. */
-const firedAt = (...agesMs: readonly number[]): Pick<SessionState, "deriveFires"> => ({
-  deriveFires: agesMs.map((ageMs) => ({ at: ago(ageMs) })),
+/** A session's fire ring under one runner deadline: one run per age, oldest first. */
+const firedWithin = (deadlineMs: number, ...agesMs: readonly number[]): Pick<SessionState, "deriveFires"> => ({
+  deriveFires: agesMs.map((ageMs) => ({ at: ago(ageMs), deadlineMs })),
 });
+
+/** The same at the default deadline, as an untouched environment books it. */
+const firedAt = (...agesMs: readonly number[]): Pick<SessionState, "deriveFires"> =>
+  firedWithin(SUMMARIZER_TIMEOUT_MS, ...agesMs);
 
 /** The doctor's view of the hub's listing: exact unless an older hub cut it at its cap. */
 const ownDrafts = (
@@ -300,6 +305,27 @@ describe("sharingFindings — what the workers booked", () => {
 
     expect(detailFor(value, "workers_silent")).toContain("4 model runs went more than");
     expect(sharingSummary(value)).toContain("1 model run still in flight");
+  });
+
+  test("a raised deadline settles its runs at twice it, never at the default's (review round 2)", () => {
+    // The probe: CROSSCHECK_SUMMARIZER_TIMEOUT_MS at 300 s, each session ended
+    // 150 s after its run fired — inside the run's own deadline, so its
+    // answer may have come after the state file was gone. At the default
+    // grace (120 s) both were blamed on the host.
+    const raised = 300_000;
+    const endedAgo = [4000_000, 9000_000];
+    const sessionsUnder = (ring: (ageMs: number) => Pick<SessionState, "deriveFires">) =>
+      endedAgo.map((ms) => session({ summarizerFireCount: 1, ...ring(ms + 150_000) }, new Date(NOW.getTime() - ms)));
+
+    expect(causes(input({ ended: sessionsUnder((age) => firedWithin(raised, age)) }))).not.toContain("workers_silent");
+    expect(causes(input({ ended: sessionsUnder((age) => firedAt(age)) }))).toContain("workers_silent");
+  });
+
+  test("a live run inside twice its own raised deadline is in flight, not silent", () => {
+    const value = input({ live: [session({ summarizerFireCount: 2, ...firedWithin(300_000, 400_000, 400_000) })] });
+
+    expect(causes(value)).not.toContain("workers_silent");
+    expect(sharingSummary(value)).toContain("2 model runs still in flight");
   });
 
   test("each ended session's runs are settled one by one against its end", () => {

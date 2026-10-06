@@ -41,6 +41,7 @@ import {
   DOCTOR_SHARING_QUIET_INTENT_SESSIONS_WARN,
   DOCTOR_SHARING_QUIET_TURNS_WARN,
   DOCTOR_SHARING_SILENT_FIRES_WARN,
+  DERIVE_RUN_GRACE_FACTOR,
   DERIVE_RUN_GRACE_MS,
   DOCTOR_SUMMARIZER_REJECTED_WARN,
   DRAFT_NUDGE_MIN_AGE_HOURS,
@@ -214,10 +215,18 @@ const outcomesOf = (d: DeriveDigest): number =>
 
 const firesOf = (d: DeriveDigest): number => d.summarizerFireCount + d.intentFireCount;
 
-/** Whether one run has had its time by `until` (now, or its session's end). */
+/**
+ * Whether one run has had its time by `until` (now, or its session's end):
+ * DERIVE_RUN_GRACE_FACTOR times the deadline THAT run was given, so a raised
+ * CROSSCHECK_SUMMARIZER_TIMEOUT_MS is never judged at the default's grace.
+ */
 const isRunSettled = (fire: DeriveFire, until: number): boolean => {
   const fired = Date.parse(fire.at);
-  return !Number.isNaN(fired) && !Number.isNaN(until) && until - fired >= DERIVE_RUN_GRACE_MS;
+  return (
+    !Number.isNaN(fired) &&
+    !Number.isNaN(until) &&
+    until - fired >= DERIVE_RUN_GRACE_FACTOR * fire.deadlineMs
+  );
 };
 
 /** What one session's runs came to, each settled on its own. */
@@ -233,7 +242,7 @@ interface RunSettlement {
 /**
  * EACH RUN AGAINST ITS OWN START (review round 2): settling a session by its
  * NEWEST fire let one fresh run make every older silent one read as in
- * flight. A run is settled once it has had DERIVE_RUN_GRACE_MS, counted to
+ * flight. A run is settled once it has had its grace (isRunSettled), counted to
  * now — or to SessionEnd for an ended session, whose late answer had no state
  * file to land in, so an ended session's unsettled run is neither silent nor
  * in flight. Fires older than the kept ring started before its oldest entry
@@ -425,7 +434,7 @@ const workersSilentRule: Rule = (_input, totals) =>
   totals.silentRuns >= DOCTOR_SHARING_SILENT_FIRES_WARN && totals.settledOutcomes === 0
     ? finding(
         "workers_silent",
-        `your agent shares nothing because ${String(totals.silentRuns)} model runs went more than ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s without reporting back (each counted from its own start to now, or to its session's end): ` +
+        `your agent shares nothing because ${String(totals.silentRuns)} model runs went more than twice their deadline (${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s at the default) without reporting back, each counted from its own start to now or to its session's end: ` +
           "the detached worker did not start, or died with the hook that spawned it; " +
           "fix: run the summarizer runner check below — if it passes, the host is killing the hook's children, so send this doctor output to whoever runs your crosscheck",
         `no drafts or intents — ${String(totals.silentRuns)} model runs never reported back`,
@@ -530,7 +539,7 @@ export const sharingSummary = (input: SharingInput): string => {
   const inFlight =
     totals.inFlight === 0
       ? ""
-      : `, ${String(totals.inFlight)} model run${totals.inFlight === 1 ? "" : "s"} still in flight (started under ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s ago)`;
+      : `, ${String(totals.inFlight)} model run${totals.inFlight === 1 ? "" : "s"} still in flight (inside twice their deadline, ${String(DERIVE_RUN_GRACE_MS / MS_PER_SECOND)} s at the default)`;
   return (
     `${String(input.live.length)} live and ${String(input.ended.length)} recently ended session${totals.sessions === 1 ? "" : "s"}: ` +
     `${String(totals.drafts)} drafts and ${String(totals.intentsSet)} intents derived${unreviewed}${inFlight} — nothing found that keeps this agent from sharing`

@@ -45,10 +45,14 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
     .some((token) => token.length >= HINT_MIN_TOKEN_CHARS);
 };
 
-/** One fire, booked BEFORE the spawn (the Stop hook's ordering contract). */
-export const withIntentFire = (state: SessionState, firedAt: Date): SessionState => ({
+/**
+ * One fire, booked BEFORE the spawn (the Stop hook's ordering contract), with
+ * the deadline the spawned worker will run under (runner.ts
+ * resolveSummarizerTimeoutMs of the hook's environment).
+ */
+export const withIntentFire = (state: SessionState, firedAt: Date, deadlineMs: number): SessionState => ({
   ...state,
-  deriveFires: withDeriveFire(state.deriveFires, firedAt),
+  deriveFires: withDeriveFire(state.deriveFires, firedAt, deadlineMs),
   intentFireCount: state.intentFireCount + 1,
 });
 

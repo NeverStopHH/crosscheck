@@ -231,15 +231,18 @@ export const withStopTurn = (state: SessionState): SessionState => ({
 /**
  * One fire, recorded against the CURRENT turn: count, debounce anchor, and
  * the token estimate the cost surfaces sum (§10 risk 7 — estimates, and
- * marked as such wherever they are printed).
+ * marked as such wherever they are printed). `deadlineMs` is the deadline
+ * the spawned worker will run under (runner.ts resolveSummarizerTimeoutMs of
+ * the hook's environment, which the worker inherits).
  */
 export const withSummarizerFire = (
   state: SessionState,
   estimatedTokens: number,
   firedAt: Date,
+  deadlineMs: number,
 ): SessionState => ({
   ...state,
-  deriveFires: withDeriveFire(state.deriveFires, firedAt),
+  deriveFires: withDeriveFire(state.deriveFires, firedAt, deadlineMs),
   summarizerFireCount: state.summarizerFireCount + 1,
   summarizerLastFireTurn: state.stopTurnCount,
   summarizerEstimatedTokens:
