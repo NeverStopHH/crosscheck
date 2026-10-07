@@ -23888,6 +23888,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "the one documented way to overrule a connector's word does nothing",
   },
+  // Every connector says it at register (the review's OM11, OM12).
+  {
+    label: "Cursor's SessionStart never sends baseOnDefault",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "    baseCommit: ctx.identity.baseCommit,\n    baseOnDefault,\n",
+    to: "    baseCommit: ctx.identity.baseCommit,\n",
+    test: `${CURSOR}/test/register-base-on-default.test.ts`,
+    because: "every Cursor session reads as an older connector's, and a base already on main lands on a fresh date",
+  },
+  {
+    label: "the ACP proxy's session/new never sends baseOnDefault",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "      baseCommit: identity.baseCommit,\n      baseOnDefault,\n",
+    to: "      baseCommit: identity.baseCommit,\n",
+    test: `${ACP}/test/register-base-on-default.test.ts`,
+    because: "every ACP session reads as an older connector's, and a base already on main lands on a fresh date",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24016,6 +24033,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
+ * PRINTS: packages/connector-acp/test/register-base-on-default.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -24203,6 +24221,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 5
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
+ * PRINTS: packages/connector-cursor/test/register-base-on-default.test.ts 1
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
