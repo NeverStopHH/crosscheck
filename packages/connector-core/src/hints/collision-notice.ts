@@ -40,6 +40,7 @@ import {
   COLLISION_NOTICE_NAME_CHARS,
   COLLISION_NOTICE_PATH_CHARS,
   STATUSLINE_NAME_CHARS,
+  UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
 import { formatGhostAge } from "../briefing/ghost.ts";
 import { cutWellFormed } from "../briefing/cut.ts";
@@ -96,7 +97,45 @@ export const collisionKey = (developerId: string, workContextId: string): string
 const capped = (text: string, maxChars: number): string =>
   text.length <= maxChars ? text : `${cutWellFormed(text, maxChars - ELLIPSIS.length)}${ELLIPSIS}`;
 
+/**
+ * What a field on a PERSON's line loses beyond the BARE strip (review L2).
+ * The bare strip guards an agent's context; this line is read by a human on
+ * a terminal or an IDE panel that may render markdown, so it also drops
+ * every default-ignorable code point and any lone surrogate, the blank
+ * fillers that pad a name into a second "sentence" (U+3164, U+115F, U+FFA0,
+ * U+2800), the colon and dash lookalikes NFKC leaves alone (U+2236, U+A789,
+ * U+0589, U+2013, U+2015) beside the `:` and `—` the bare strip owns, and
+ * the markdown beacon characters `[ ] ( ) !`. Built from code-point NUMBERS,
+ * so no invisible or lookalike character sits in this file's source.
+ */
+const BLANK_FILLERS = String.fromCodePoint(0x3164, 0x115f, 0xffa0, 0x2800);
+const SEPARATOR_LOOKALIKES = String.fromCodePoint(0x2236, 0xa789, 0x0589, 0x2013, 0x2015);
+const INVISIBLE_CLASS = `\\p{Default_Ignorable_Code_Point}\\p{Cs}${BLANK_FILLERS}`;
+const PERSON_STRIP = new RegExp(`[${INVISIBLE_CLASS}${SEPARATOR_LOOKALIKES}\\[\\]()!]`, "gu");
+
+/**
+ * The invisible half of it, for a path the STATE keeps: brackets stay, so
+ * `app/(shop)/cart.tsx` and `app/shop/cart.tsx` remain two files.
+ */
+const STORED_STRIP = new RegExp(`[${INVISIBLE_CLASS}]`, "gu");
+
+/** Stripped BEFORE NFKC and again after it (NFKC folds `［` into `[`), whitespace folded. */
+const cleanedWith = (raw: string, strip: RegExp): string =>
+  bareCleaned(raw.replace(strip, ""))
+    .replace(strip, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 const isLowSurrogate = (unit: number): boolean => unit >= 0xdc00 && unit <= 0xdfff;
+
+/**
+ * The head of an untrusted value, bounded at the unsolicited cap BEFORE the
+ * left cut below: this line arrives unasked, so no byte from past
+ * UNSOLICITED_CLAIM_BODY_MAX_CHARS of what a teammate's row carried may reach
+ * it (test/anchoring-separation.test.ts) — a left cut alone would print the
+ * TAIL of a 10,000-character value. Every real path fits inside it whole.
+ */
+const unsolicitedHead = (raw: string): string => cutWellFormed(raw, UNSOLICITED_CLAIM_BODY_MAX_CHARS);
 
 /**
  * Cut from the LEFT at `maxChars`: the TAIL survives behind a visible
@@ -118,7 +157,8 @@ const cappedFromLeft = (text: string, maxChars: number): string => {
  * `src/overrides/button.tsx` and `src/overrides/input.tsx` would both become
  * the same marker and one teammate on two files would count as one.
  */
-const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);
+const storedPath = (path: string): string =>
+  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);
 
 /**
  * A field as the PERSON reads it — and, for a name or a branch, as the state
@@ -130,7 +170,7 @@ const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), C
  * ordinary word the filter fears, not an attack worth a marker.
  */
 const personField = (raw: string, maxChars: number): string => {
-  const cleaned = bareCleaned(raw);
+  const cleaned = cleanedWith(raw, PERSON_STRIP);
   return cleaned.length === 0 || tripsPhraseFilter(cleaned) ? "" : capped(cleaned, maxChars);
 };
 

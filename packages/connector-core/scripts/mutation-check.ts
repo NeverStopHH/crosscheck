@@ -23493,8 +23493,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the session state keeps a hub-sent path unsanitized and unbounded",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
-    to: "const storedPath = (path: string): string => path;",
+    from: "  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    to: "  path;",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a ghost row's shared value is written into the state file as the hub sent it, at any length",
   },
@@ -23608,8 +23608,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the state stores the redaction marker in place of a path",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
-    to: "const storedPath = (path: string): string => (tripsPhraseFilter(path) ? \"[redacted]\" : cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS));",
+    from: "  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    to: "  (tripsPhraseFilter(path) ? \"[redacted]\" : cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS));",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "two files under overrides/ collapse into one marker, and the person is told one file where there are two",
   },
@@ -23617,8 +23617,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a deep path is cut from the right and the file name is lost",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
-    to: "const storedPath = (path: string): string => capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
+    from: "  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    to: "  capped(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a monorepo path past the cap keeps its directories and drops PlayerMappingGrid.tsx, the one word the person needed",
   },
@@ -23629,6 +23629,39 @@ export const MUTATIONS: readonly Mutation[
     to: "  return `${ELLIPSIS}${tail}`;",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a lone surrogate is written into the state file and rendered on the person's line",
+  },
+  {
+    label: "the left cut prints the tail of an oversized value on an unsolicited line",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    to: "  cappedFromLeft(cleanedWith(path, STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    test: `${CORE}/test/anchoring-separation.test.ts`,
+    because: "bytes from ten thousand characters into a teammate's value reach a line nobody asked for",
+  },
+  // ── Review of feat/collision-visible, L2: the person-facing strip ──────
+  {
+    label: "a person's line keeps lookalike separators, blank fillers and markdown beacons",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const cleaned = cleanedWith(raw, PERSON_STRIP);",
+    to: "  const cleaned = bareCleaned(raw);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a name padded with U+2800 or carrying U+2236 and U+2013 forges a second verdict, and ![x](…) is a beacon in a markdown panel",
+  },
+  {
+    label: "the person-facing strip runs only before NFKC",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  bareCleaned(raw.replace(strip, \"\"))\n    .replace(strip, \"\")",
+    to: "  bareCleaned(raw.replace(strip, \"\"))",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "fullwidth brackets and bangs fold into markdown after the only strip has run",
+  },
+  {
+    label: "the state keeps invisibles and lone surrogates in a stored path",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const STORED_STRIP = new RegExp(`[${INVISIBLE_CLASS}]`, \"gu\");",
+    to: "const STORED_STRIP = new RegExp(\"[\\\\p{Default_Ignorable_Code_Point}]\", \"gu\");",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a lone surrogate and a blank filler are written into the session state as part of a path",
   },
 ];
 
@@ -23823,6 +23856,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
+ * PRINTS: packages/connector-core/test/anchoring-separation.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 3
@@ -23838,7 +23872,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 16
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 19
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1

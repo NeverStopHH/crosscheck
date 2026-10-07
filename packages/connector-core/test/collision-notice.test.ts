@@ -351,6 +351,60 @@ describe("teammate-derived fields cannot forge the notice's structure", () => {
     expect(/\p{Cs}/u.test(stored ?? "")).toBe(false);
   });
 
+  /**
+   * What a person-facing field loses BEYOND the bare strip (review L2): every
+   * default-ignorable and lone surrogate, the blank fillers, the colon and
+   * dash lookalikes the renderer's own separators can be forged with, and the
+   * markdown beacon characters.
+   */
+  const FORBIDDEN_POINTS = String.fromCodePoint(0x3164, 0x115f, 0xffa0, 0x2800, 0x2236, 0xa789, 0x0589, 0x2013, 0x2015);
+  const PERSON_FORBIDDEN = new RegExp(`[\\p{Default_Ignorable_Code_Point}\\p{Cs}${FORBIDDEN_POINTS}\\[\\]()!]`, "u");
+
+  test.each(["blank-fillers", "lone-surrogate", "colon-lookalikes", "dash-lookalikes", "markdown-beacon"])(
+    "%s leaves nothing a person could be fooled by in a name, a branch or a file name",
+    (id) => {
+      // Arrange
+      const payload = INJECTION_CORPUS.find((entry) => entry.id === id)?.payload ?? "";
+      const tripwire = tripwireCollision(tripwireRow({ developerName: payload, branch: payload }), `src/${payload}`);
+      const ghost = ghostCollisions([ghostRow({ developerName: payload, sharedTargets: [{ kind: "file", value: payload }] })]);
+
+      // Act
+      const notices = [tripwire, ...ghost].map((group) => renderCollisionNotice(group, NOW));
+      const indicator = renderOverlapIndicator([tripwire, ...ghost]);
+
+      // Assert: the renderer's own words carry none of these but the one
+      // parenthesis pair around the age, so any other hit is a field's
+      for (const text of [...notices, indicator]) {
+        const fieldsOnly = text.replace(/ \(last active [^)]*\)/, "");
+        expect(PERSON_FORBIDDEN.test(fieldsOnly), `${id}: ${text}`).toBe(false);
+      }
+      expect(payload.length).toBeGreaterThan(0);
+    },
+  );
+
+  test("fullwidth brackets NFKC folds into markdown are stripped after the fold too", () => {
+    // Arrange: fullwidth bang, brackets and parentheses, built from numbers
+    const fullwidth = String.fromCodePoint(0xff01, 0xff3b, 0x78, 0xff3d, 0xff08, 0x65, 0xff09);
+
+    // Act
+    const group = tripwireCollision(tripwireRow({ developerName: `Mike ${fullwidth}` }), FILE);
+
+    // Assert: on ONE pass — the name the state keeps is the name the person reads
+    expect(/[[\]()!]/.test(group.name)).toBe(false);
+    expect(/[[\]()!]/.test(renderCollisionNotice(group, NOW).replace(/ \(last active [^)]*\)/, ""))).toBe(false);
+  });
+
+  test("the state never keeps an invisible or a lone surrogate in a path", () => {
+    // Arrange: a lone surrogate, a braille blank and a hangul filler
+    const path = `src/a${String.fromCharCode(0xd800)}b${String.fromCodePoint(0x2800, 0x3164)}.ts`;
+
+    // Act
+    const [stored] = tripwireCollision(tripwireRow(), path).files;
+
+    // Assert
+    expect(stored).toBe("src/ab.ts");
+  });
+
   test.each(INJECTION_CORPUS.map((entry) => [entry.id, entry.payload] as const))(
     "%s holds the character invariants on both notice shapes",
     (_id, payload) => {
