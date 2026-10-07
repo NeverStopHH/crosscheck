@@ -118,6 +118,16 @@ describe("only a standing, vouched observation with content in the same repo is 
       recordEnvelope("claim", validClaimBody({ id: "clm_obs_rev_old", kind: "observation", body: "Old note." })),
       recordEnvelope("claim", validClaimBody({ id: "clm_obs_rev_new", kind: "observation", evidenceRefs: ["clm_obs_rev_old"], body: "The cache entry for the old kid survives every deploy" })),
       recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_obs_rev", fromClaimId: "clm_obs_rev_new", toClaimId: "clm_obs_rev_old", kind: "supersedes" })),
+      // L3: an observation in another repo, revised into this one
+      recordEnvelope("claim", validClaimBody({ id: "clm_moved_old", workContextId: "wc_other", authorSessionId: "ses_other", kind: "observation", body: "The other repo's kid cache keeps the rotated key" }), { sessionId: "ses_other" }),
+      recordEnvelope("claim", validClaimBody({ id: "clm_moved_new", kind: "observation", body: "The kid cache keeps the rotated key for an hour here too" })),
+      recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_moved", fromClaimId: "clm_moved_new", toClaimId: "clm_moved_old", kind: "supersedes" })),
+      cause("clm_cites_moved", ["clm_moved_old"]),
+      // and the opposite: an observation here, revised into another repo
+      recordEnvelope("claim", validClaimBody({ id: "clm_left_old", kind: "observation", body: "The kid cache here keeps the rotated key overnight" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_left_new", workContextId: "wc_other", authorSessionId: "ses_other", kind: "observation", body: "The other repo's kid cache keeps the rotated key overnight" }), { sessionId: "ses_other" }),
+      recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_left", fromClaimId: "clm_left_new", toClaimId: "clm_left_old", kind: "supersedes", authorSessionId: "ses_other" }), { sessionId: "ses_other" }),
+      cause("clm_cites_left", ["clm_left_old"]),
       // a revision citing the very claim it retracts
       cause("clm_rev_old", ["clm_trivial"]),
       cause("clm_rev_new", ["clm_rev_old"]),
@@ -135,6 +145,8 @@ describe("only a standing, vouched observation with content in the same repo is 
     ["a revised observation — it resolves to its standing revision", "clm_cites_revised", true],
     ["a retracted observation — it resolves to the retraction, which says nothing", "clm_cites_retracted", false],
     ["an observation in another repo", "clm_cites_other_repo", false],
+    ["an observation in another repo, revised into this one — the original counts too (round 3, L3)", "clm_cites_moved", false],
+    ["an observation here, revised into another repo — the head counts too", "clm_cites_left", false],
     ["an observation of one letter", "clm_cites_trivial", false],
     ["another root cause — a conclusion backs no conclusion", "clm_cites_cause", false],
     ["a decision that cites it back — a cycle backs nothing", "clm_cycle_a", false],

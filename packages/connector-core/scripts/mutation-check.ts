@@ -18717,17 +18717,19 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the hub resolves evidence across repos",
+    // RETARGETED (round 3, L3): the head's repo is checked beside the original's.
     file: `${SERVER}/src/services/evidence-resolution.ts`,
-    from: "    WHERE head_session.repo = citing_session.repo\n      AND NOT EXISTS (",
-    to: "    WHERE NOT EXISTS (",
+    from: "    WHERE head_session.repo = citing_session.repo\n",
+    to: "    WHERE TRUE\n",
     test: `${SERVER}/test/hint-evidence-backed.test.ts`,
     because: "an observation in another repo backs this repo's root cause (H5)",
   },
   {
     label: "the hub counts a revised-away claim as the head",
     file: `${SERVER}/src/services/evidence-resolution.ts`,
-    from: "    WHERE head_session.repo = citing_session.repo\n      AND NOT EXISTS (\n        SELECT 1 FROM claim_edges AS later\n        WHERE later.to_claim_id = head.id AND later.kind = ${SUPERSEDES_EDGE_KIND}\n      )`);",
-    to: "    WHERE head_session.repo = citing_session.repo`);",
+    // RETARGETED (round 3, L3): the original's repo check sits before the revision probe.
+    from: "      AND cited_session.repo = citing_session.repo\n      AND NOT EXISTS (\n        SELECT 1 FROM claim_edges AS later\n        WHERE later.to_claim_id = head.id AND later.kind = ${SUPERSEDES_EDGE_KIND}\n      )`);",
+    to: "      AND cited_session.repo = citing_session.repo`);",
     test: `${SERVER}/test/hint-evidence-backed.test.ts`,
     because: "a retracted observation still backs the cause beside its retraction (H5)",
   },
@@ -19371,6 +19373,14 @@ export const MUTATIONS: readonly Mutation[
     because: "a cause citing one observation by its old id and its revision reports two resolved refs on the wire (round 3, L2)",
   },
   {
+    label: "the cited original's repo is never checked",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "      AND cited_session.repo = citing_session.repo",
+    to: "      AND TRUE",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "another repo's observation, revised into this one, backs a cause here (round 3, L3)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19754,7 +19764,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 10
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
- * PRINTS: packages/server/test/hint-evidence-backed.test.ts 9
+ * PRINTS: packages/server/test/hint-evidence-backed.test.ts 10
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-long-prompt.test.ts 4

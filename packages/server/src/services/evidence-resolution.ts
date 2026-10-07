@@ -67,7 +67,12 @@ const headsOfRefs = (db: Db, claimIds: readonly string[]) =>
     JOIN agent_sessions AS head_session ON head_session.id = head_context.session_id
     JOIN work_contexts AS citing_context ON citing_context.id = citing.work_context_id
     JOIN agent_sessions AS citing_session ON citing_session.id = citing_context.session_id
+    JOIN claims AS cited ON cited.id = chain.cited_id
+    JOIN work_contexts AS cited_context ON cited_context.id = cited.work_context_id
+    JOIN agent_sessions AS cited_session ON cited_session.id = cited_context.session_id
     WHERE head_session.repo = citing_session.repo
+      -- the ORIGINAL too (round 3, L3): a revision in this repo does not bring another repo's observation in
+      AND cited_session.repo = citing_session.repo
       AND NOT EXISTS (
         SELECT 1 FROM claim_edges AS later
         WHERE later.to_claim_id = head.id AND later.kind = ${SUPERSEDES_EDGE_KIND}
