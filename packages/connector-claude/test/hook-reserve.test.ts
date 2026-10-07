@@ -52,10 +52,14 @@
  * stop asks the hub for its why only once the stop is booked, with no more
  * than the envelope still spares (hooks/landed-why.ts) — and once more by
  * UserPromptSubmit, which tells an author's notice only while the envelope
- * spares room to post it and still print it (connector-core hints/delivery.ts):
+ * spares room to post it and still print it (connector-core hints/delivery.ts)
+ * — and twice for a teammate collision (review L3): PreToolUse marks a group
+ * told, and the main thread's hooks drain a subagent's queued relay
+ * (hooks/collision-relay.ts), only while the envelope spares room to carry
+ * the line out:
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 9
+ * PRINTS: 11
  */
 import { describe, expect, test } from "bun:test";
 
