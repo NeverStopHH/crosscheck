@@ -57,8 +57,23 @@ const ACCEPTED_WRONG_TREE_SUBSTANCE: ReadonlyMap<string, string> = new Map([
   ["t095", "\"add pagination to /api/players\" agrees with the rate-limit tree's intent \"Add per-key rate limiting to the public API\" on two topical words, add and api"],
 ]);
 
+/**
+ * TASKS WRITTEN IN THE SAME BREATH AS A CONTINUATION (round 4, C1): floored by
+ * decision — a prompt that carries the session on gets no hint, whatever else
+ * it says. Named, so a new one shows; their rate is printed, never excused.
+ */
+const CONTINUATION_TASKS: ReadonlyMap<string, string> = new Map([
+  ["t056", "\"mach weiter, und danach …\""],
+  ["t058", "\"ok thanks, next: …\""],
+  ["t059", "\"passt, weiter. …\""],
+  ["t060", "\"continue, but first …\""],
+  ["t062", "\"jo weida, und dann …\""],
+  ["t070", "\"… before you continue with the list from earlier: …\""],
+]);
+
 /** Task rows with a tree that do not reach it, each with why. Nothing else may miss. */
 const KNOWN_TREE_MISSES: ReadonlyMap<string, string> = new Map([
+  ...CONTINUATION_TASKS,
   ["t040", "\"quota reset job runs at midnight twice\": job, runs and twice are closed or absent on the cron tree; the token-usage tree ranks first"],
   ["t050", "Austrian dialect, a documented residual"],
   ["t102", "\"deploy the session timeout fix to staging\": the PGlite tree's \"timeouts\" outranks"],
@@ -313,10 +328,12 @@ describe("the round-3 hold-out, as training data, through the whole hint pipelin
     expect(hinted.length / contentFreeRows().length).toBeLessThanOrEqual(HOLDOUT_CONTENT_FREE_HINT_MAX_RATE);
   });
 
-  test("(b) no task row is floored", () => {
-    const floored = taskRows().filter((outcome) => !outcome.calledHub);
+  test("(b) no task row is floored, but the continuation tasks (C1)", () => {
+    const floored = taskRows().filter((outcome) => !outcome.calledHub && !CONTINUATION_TASKS.has(outcome.row.id));
     expect(ids(floored)).toEqual([]);
     expect(floored.length / taskRows().length).toBeLessThanOrEqual(HOLDOUT_TASK_FLOOR_MAX_RATE);
+    // and every named continuation task is floored, so the list stays the decision's true cost
+    expect([...CONTINUATION_TASKS.keys()].filter((id) => outcomes.find((outcome) => outcome.row.id === id)?.calledHub !== false)).toEqual([]);
   });
 
   test("(c) no task row is shown substance from another tree, but the named residual", () => {

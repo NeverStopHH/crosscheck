@@ -19,6 +19,7 @@
  * carries is decided on all of it, so a task word past the sixteenth token
  * still counts.
  */
+import { hasContinuationSignal } from "./continuation.ts";
 import { humanPromptText } from "./harness-turn.ts";
 import { isContinuationTrigger, isRestartVerb, isSteeringWord, wordClassOf } from "./session-control.ts";
 import type { WordClass } from "./session-control.ts";
@@ -73,6 +74,11 @@ export interface PromptTerms {
   readonly isGerman: boolean;
   /** No task: what is left is a command to the session (`isSessionCommand`). */
   readonly isContentFree: boolean;
+  /**
+   * The prompt carries the session on — "next", "mach weiter", "carry on" —
+   * and gets no hint, whatever else it says (round 4, C1; continuation.ts).
+   */
+  readonly hasContinuation: boolean;
 }
 
 /** Clause boundaries (M7): sentence ends, commas, semicolons, colons, dashes and line breaks. */
@@ -167,6 +173,7 @@ export const promptTerms = (text: string): PromptTerms => {
     ranked: rankedTerms(scored, termsOf, classOf),
     isGerman,
     isContentFree: isSessionCommand(tokens, content, classes),
+    hasContinuation: hasContinuationSignal(scored),
   };
 };
 

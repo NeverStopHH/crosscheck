@@ -336,7 +336,10 @@ export const selectAndRenderHint = async (
   // (@crosscheck/schema prompt-terms.ts), so a hub too old to know it is
   // never asked (review 1006b, L5). Whether a prompt WITH content matches a
   // teammate's work is the hub's call — only the hub holds their words.
-  const promptQuery = terms.isContentFree ? "" : queryWindow(humanText);
+  // AND A PROMPT THAT CARRIES THE SESSION ON IS NOT ASKED ABOUT (round 4,
+  // C1): "cache fix is merged, next" reports on the session's own work and
+  // hands it back — no call, whatever else it says.
+  const promptQuery = terms.isContentFree || terms.hasContinuation ? "" : queryWindow(humanText);
   // NOTHING STANDS IN for a prompt that said nothing — not the session's
   // intent either (owner decision, review 1006b M6): no call at all, and the
   // turn is counted as floored whatever the session's budget (M7).

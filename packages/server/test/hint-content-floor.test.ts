@@ -124,6 +124,19 @@ describe("a prompt that carries nothing task-bearing matches no teammate work", 
     expect(candidates).toEqual([]);
   });
 
+  test("a task beside a continuation signal matches nothing, for a connector that still sends it (round 4, C1)", async () => {
+    // Arrange
+    const { harness, robin } = await setup();
+
+    // Act — the control below, with the session carried on
+    const candidates = await fetchCandidates(harness, robin, {
+      query: "why does the practice upload hit the body limit, next",
+    });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
   test("the control: two words of the prompt agreeing on the tree still match it", async () => {
     // Arrange
     const { harness, robin } = await setup();

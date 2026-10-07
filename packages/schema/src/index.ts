@@ -382,6 +382,7 @@ export {
 } from "./prompt-terms.ts";
 export type { ClassifiedPrompt, PromptTerms } from "./prompt-terms.ts";
 export { englishStem } from "./english-stem.ts";
+export { hasContinuationSignal } from "./continuation.ts";
 export {
   HINT_LONG_PROMPT_KNOWN_TERMS,
   HINT_LONG_PROMPT_MIN_TOPICAL,

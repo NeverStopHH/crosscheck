@@ -137,6 +137,21 @@ describe("what goes on the wire: never the intent in a prompt's place (owner dec
     },
   );
 
+  test.each([["continue, but first fix why the refresh call 500s after the key rotation"], ["the refresh call 500s after the key rotation, mach weiter"], ["cool, refresh fix is merged, next"]])(
+    "a prompt that carries the session on, %p, makes no call whatever else it says (round 4, C1)",
+    async (prompt) => {
+      // Arrange
+      const f = await fixture("if-continuation", SESSION_INTENT);
+
+      // Act
+      const text = await selectAndRenderHint(flowInput(f, prompt));
+
+      // Assert
+      expect(text).toBe("");
+      expect(f.hub.calls.candidates).toBe(0);
+    },
+  );
+
   test("a prompt with words is sent alone — the intent never rides beside it", async () => {
     // Arrange
     const f = await fixture("if-words", SESSION_INTENT);

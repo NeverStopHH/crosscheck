@@ -17434,7 +17434,8 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
     // RETARGETED (round 3, L4): the verdict is the hook's one classification.
-    from: "  const promptQuery = terms.isContentFree ? \"\" : queryWindow(humanText);",
+    // RETARGETED (round 4, C1): a continuation signal stays home beside it.
+    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryWindow(humanText);",
     to: "  const promptQuery = queryWindow(humanText);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
@@ -18966,7 +18967,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub searches a content-free prompt anyway",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (terms.isContentFree) {\n    return [];\n  }\n",
+    // RETARGETED (round 4, C1): a continuation signal is matched to nothing beside it.
+    from: "  if (terms.isContentFree || terms.hasContinuation) {\n    return [];\n  }\n",
     to: "",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"weiter\" reaches the exact tier and points at the tree that touched a symbol of that name (L2)",
@@ -19669,12 +19671,109 @@ export const MUTATIONS: readonly Mutation[
     because: "against a 0.10.0 hub \"CI rot, functional suite timeout\" is pointed at the PGlite tree the hub happened to rank first, where the tip hub names the CI tree (t008, round 3 follow-up)",
   },
   {
+    label: "the connector asks a hub about a prompt that carries the session on",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryWindow(humanText);",
+    to: "  const promptQuery = terms.isContentFree ? \"\" : queryWindow(humanText);",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "\"cool, cache fix is merged, next\" reaches a teammate's cache tree on the words of a status report (round 4, C1)",
+  },
+  {
+    label: "the hub matches a prompt that carries the session on",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  if (terms.isContentFree || terms.hasContinuation) {\n",
+    to: "  if (terms.isContentFree) {\n",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "a 0.10.0 connector, which knows no continuation, still gets \"…, next\" matched to the tree its report words share (round 4, C1)",
+  },
+  {
+    label: "the prompt's terms never carry the continuation signal",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    hasContinuation: hasContinuationSignal(scored),",
+    to: "    hasContinuation: false,",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "both halves read the flag, so no prompt that says \"carry on\" is ever held back (round 4, C1)",
+  },
+  {
+    label: "a continuation phrase is not read",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "    words.some((word, index) => isSignalWord(word) || isSignalPhrase(words, index)) ||",
+    to: "    words.some((word) => isSignalWord(word)) ||",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"yes the SSO login works on staging now, carry on\" reaches the SSO tree (round 4, C1)",
+  },
+  {
+    label: "a clause word signals beside the words of a task",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  clause.some(isClauseWord) && clause.every((word) => isClauseWord(word) || isSilentWord(word));",
+    to: "  clause.some(isClauseWord);",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"the roadmap for next quarter\" and Spanish \"los usuarios pierden la sesión\" lose their hint (round 4, C1)",
+  },
+  {
+    label: "a slip of a continuation word is not read",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  (!NEAR_MISSES.has(word) && CONTINUATION_SIGNAL_WORDS.some((signal) => isTypingSlipOf(word, signal) || isShortSwapSlipOf(word, signal)));",
+    to: "  false;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"wieter bitte\" and \"contiune\" carry the session on as surely as the words they slip from (round 4, C1)",
+  },
+  {
+    label: "a word of its own one slip from a continuation word signals",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  (!NEAR_MISSES.has(word) && CONTINUATION_SIGNAL_WORDS.some(",
+    to: "  (CONTINUATION_SIGNAL_WORDS.some(",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"the pdf writer drops the footer\" loses its hint because writer is one key from weiter (round 4, C1)",
+  },
+  {
+    label: "a swapped clause word is not read",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  (!NEAR_MISSES.has(word) && CONTINUATION_CLAUSE_WORDS.some((signal) => isSwapSlipOf(word, signal) || isShortSwapSlipOf(word, signal)));",
+    to: "  false;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"nxet\" is the hand's \"next\" (round 4, C1)",
+  },
+  {
+    label: "the dot inside a name ends a clause",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "const CLAUSE_BOUNDARY = /[.!?;:,]+(?=\\s|$)|[\\n\\r–—]+/u;",
+    to: "const CLAUSE_BOUNDARY = /[.!?;:,\\n\\r–—]+/u;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"next.js build fails on the edge runtime\" reads \"next\" as a clause of its own and loses its hint (round 4, C1)",
+  },
+  {
+    label: "a continuation word keeps its punctuation",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "    .map((word) => foldWord(word.replace(/^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$/gu, \"\")))",
+    to: "    .map((word) => foldWord(word))",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"go ahead.\" is not read, since \"ahead.\" is not \"ahead\" (round 4, C1)",
+  },
+  {
+    label: "passt is no continuation",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\"];",
+    to: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\"];",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"passt so\" hands the session back as surely as \"weiter\" (round 4, C1)",
+  },
+  {
+    label: "a short word keeps a clause word from signalling",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "const MIN_SAYING_CHARS = 3;",
+    to: "const MIN_SAYING_CHARS = 0;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"na dann mal los\" says nothing but that the session goes on (round 4, C1)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
     // RETARGETED (round 3, L4): the verdict is the hook's one classification.
-    from: "  const promptQuery = terms.isContentFree ? \"\" : queryWindow(humanText);",
-    to: "  const promptQuery = humanText.length === 0 ? \"\" : queryWindow(humanText);",
+    // RETARGETED (round 4, C1): the continuation signal beside it stays.
+    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryWindow(humanText);",
+    to: "  const promptQuery = humanText.length === 0 || terms.hasContinuation ? \"\" : queryWindow(humanText);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "a 0.10.0 hub, which knows no steering word, points \"mache weiter\" at the tree that says mache (L5)",
   },
@@ -19927,7 +20026,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
- * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
+ * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 7
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 15
  * PRINTS: packages/connector-core/test/hint-query-window.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
@@ -20008,6 +20107,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/content-floor.test.ts 3
+ * PRINTS: packages/schema/test/continuation.test.ts 10
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
  * PRINTS: packages/schema/test/file-ref.test.ts 5
@@ -20051,7 +20151,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 8
  * PRINTS: packages/server/test/hint-closed-stems.test.ts 2
- * PRINTS: packages/server/test/hint-content-floor.test.ts 6
+ * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 10
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2

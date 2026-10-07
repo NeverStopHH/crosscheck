@@ -890,7 +890,10 @@ export const listHintCandidates = async (
   // H1). The content terms are all the pool is ranked and counted on, so a
   // steering word never counts beside a real one either (review 1006b, H1).
   const terms = promptTerms(humanText);
-  if (terms.isContentFree) {
+  // And a prompt that carries the session on — "cache fix is merged, next" —
+  // is matched to nothing, whatever else it says, for every connector that
+  // still sends it (round 4, C1).
+  if (terms.isContentFree || terms.hasContinuation) {
     return [];
   }
   return matchCandidates(deps, callerDeveloperId, {

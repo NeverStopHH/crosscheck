@@ -50,6 +50,27 @@ const CONTENT_FREE_HINT_MAX_RATE = 0;
 /** Task rows of the corpus the pipeline may judge content-free. None. */
 const TASK_FALSE_FLOOR_MAX = 0;
 
+/**
+ * TASKS WRITTEN IN THE SAME BREATH AS A CONTINUATION (round 4, C1): a prompt
+ * that carries the session on gets no hint, whatever else it says, and these
+ * are the corpus's real tasks that decision costs — named, so a new one shows.
+ */
+const CONTINUATION_TASKS: ReadonlySet<string> = new Set([
+  "continue the migration",
+  "Okay, the limit was reset, so please continue and keep going with everything you were doing before, then fix the OAuth refresh race",
+  "continue the database migration on the orders table",
+  "continue button does nothing",
+  "continue the prisma migration",
+  "weiter mit dem Passwort-Reset",
+  "next step: password reset flow",
+  "go on with the JWT refresh fix",
+  "mach weiter mit dem JWT refresh",
+  "weiter mit OOM im Worker",
+  "continue the StatsBomb rate limit work",
+  "the limit was reset but StatsBomb still returns 429, continue debugging",
+  "session context lost after restart, keep going on that",
+]);
+
 const REPO_ID = CORPUS_REPO_ID;
 const NOW = CORPUS_NOW;
 const HOST_KEY = "corpus-reader-uuid";
@@ -159,16 +180,18 @@ describe("the labelled prompt corpus through the whole hint pipeline", () => {
     expect(hinted.length / contentFree.length).toBeLessThanOrEqual(CONTENT_FREE_HINT_MAX_RATE);
   });
 
-  test("(b) task rows falsely floored stay within TASK_FALSE_FLOOR_MAX", () => {
+  test("(b) task rows falsely floored stay within TASK_FALSE_FLOOR_MAX, but the continuation tasks (C1)", () => {
     const floored = outcomes
       .filter((outcome) => outcome.row.label === "task" && !outcome.calledHub)
       .map((outcome) => outcome.row.prompt);
-    expect(floored.length).toBeLessThanOrEqual(TASK_FALSE_FLOOR_MAX);
+    expect(floored.filter((prompt) => !CONTINUATION_TASKS.has(prompt)).length).toBeLessThanOrEqual(TASK_FALSE_FLOOR_MAX);
+    // and every named continuation task is floored, so the list stays the decision's true cost
+    expect([...CONTINUATION_TASKS].filter((prompt) => !floored.includes(prompt))).toEqual([]);
   });
 
-  test("(c) a task row that shares two words with a tree arrives as a hint", () => {
+  test("(c) a task row that shares two words with a tree arrives as a hint, but the continuation tasks", () => {
     const missed = outcomes
-      .filter((outcome) => outcome.row.tree !== undefined && outcome.hint.length === 0)
+      .filter((outcome) => outcome.row.tree !== undefined && outcome.hint.length === 0 && !CONTINUATION_TASKS.has(outcome.row.prompt))
       .map((outcome) => outcome.row.prompt);
     expect(missed).toEqual([]);
   });

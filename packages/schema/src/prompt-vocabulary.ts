@@ -26,6 +26,29 @@ export const CONTINUATION_TRIGGERS: readonly string[] = [
 ];
 
 /**
+ * CONTINUATION SIGNALS (hold-out review round 4, C1): what carries the
+ * session's work on, anywhere in a prompt — and a prompt that says one gets
+ * no hint at all, whatever else it says (continuation.ts). Narrower than the
+ * triggers above, which only read a prompt's verdict: "mach" and "keep" name
+ * tasks ("mach den token refresh fix", "keep the old signing key"), so they
+ * signal only in the phrases below. The first list signals anywhere and
+ * takes every slip a trigger takes. The second signals only in a CLAUSE that
+ * says nothing else — "…, next", "passt so", "na dann mal los" — and only
+ * with the swapped pair as a slip: "next quarter", "die Größe passt nicht",
+ * "wenn viel los ist" and Spanish "los usuarios" are words of a task, and one
+ * key from "passt" is "pass".
+ */
+export const CONTINUATION_SIGNAL_WORDS: readonly string[] = [
+  "continue", "continues", "continuing", "continued", "proceed", "proceeding", "weiter", "weida",
+  "wiiter", "weitermachen", "weitergehen", "weiterarbeiten", "fortfahren", "fortsetzen",
+];
+export const CONTINUATION_CLAUSE_WORDS: readonly string[] = ["next", "los", "passt"];
+export const CONTINUATION_PHRASES: readonly (readonly [string, string])[] = [
+  ["carry", "on"], ["go", "ahead"], ["go", "on"], ["keep", "going"], ["keep", "at"], ["fahr", "fort"],
+  ["leg", "los"], ["los", "gehts"], ["los", "geht"],
+];
+
+/**
  * FILLER AND DICTATION (hold-out review round 3, H1): what speech-to-text and
  * a hesitating hand leave in a prompt — "ähm", "hm", the dictated
  * punctuation ("Komma", "Punkt", "Fragezeichen", "neue Zeile", "period"),
