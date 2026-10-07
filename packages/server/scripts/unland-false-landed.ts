@@ -26,7 +26,9 @@
  * `--default-branch` names the repo's default branch (`main` or `origin/main`)
  * so sessions ON it are judged, as the ingest judges them; without it they
  * are not, and the output says so. `--stale-base` names a commit known to be
- * a stale checkout; repeatable.
+ * a stale checkout, by its full sha or a prefix of 7+ hex digits; repeatable.
+ * A prefix matching two landed bases stops the run before anything is
+ * judged, and one matching none is said.
  */
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -39,6 +41,7 @@ import {
   REPAIR_SCOPES,
   listLandedContexts,
   planLandedRepair,
+  resolveNamedBases,
   unlandContexts,
 } from "../src/services/landed-repair.ts";
 import type { RepairPlan, RepairScope } from "../src/services/landed-repair.ts";
@@ -183,17 +186,28 @@ const datedLine = (bases: readonly string[], dates: ReadonlyMap<string, Date>): 
   return `git dates: ${String(dated)} of ${String(bases.length)} bases dated, ${String(bases.length - dated)} not in that clone`;
 };
 
-const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<void> => {
+const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<number> => {
   deps.write(SCOPE_LINES[options.scope]);
   const rows = await listLandedContexts(db, options.scope);
   const bases = [...new Set(rows.map((row) => row.baseCommit))];
+  const named = resolveNamedBases(options.staleBases, bases);
+  if (named.ambiguous.length > 0) {
+    // A guess would un-land a context nobody named: nothing is judged at all.
+    for (const { prefix, matches } of named.ambiguous) {
+      deps.write(`--stale-base ${prefix} matches ${String(matches)} landed bases: give more of the sha`);
+    }
+    return EXIT_USAGE;
+  }
+  for (const prefix of named.unmatched) {
+    deps.write(`--stale-base ${prefix} matches no landed base`);
+  }
   const baseCommittedAt = options.gitDir === null ? null : await deps.readCommitDates(options.gitDir, bases);
   if (baseCommittedAt !== null) {
     deps.write(datedLine(bases, baseCommittedAt));
   }
   const plan = planLandedRepair(rows, {
     defaultBranch: options.defaultBranch,
-    namedBases: new Set(options.staleBases),
+    namedBases: named.resolved,
     baseCommittedAt,
   });
   deps.write(`landed contexts: ${String(plan.landed)}`);
@@ -204,9 +218,10 @@ const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<voi
   deps.write(PILOT_SNAPSHOT_REMINDER);
   if (!options.apply) {
     deps.write("dry run: nothing changed — run again with --apply to un-land them");
-    return;
+    return EXIT_OK;
   }
   deps.write(`un-landed ${String(await unlandContexts(db, plan.unland))} contexts`);
+  return EXIT_OK;
 };
 
 const exists = async (path: string): Promise<boolean> => {
@@ -260,11 +275,10 @@ export const runUnlandFalseLanded = async (argv: readonly string[], deps: Unland
   }
   const hub = await deps.openDb(parsed.options.dataDir);
   try {
-    await runOnHub(hub.db, parsed.options, deps);
+    return await runOnHub(hub.db, parsed.options, deps);
   } finally {
     await hub.close();
   }
-  return EXIT_OK;
 };
 
 /** `git rev-parse --git-dir` succeeds there — a work tree, a bare clone, a worktree. */

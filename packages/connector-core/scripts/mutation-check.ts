@@ -23855,6 +23855,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "`--data-dir --apply` names a data dir `--apply`, the reviewer's own slip",
   },
+  {
+    label: "the landed repair names a base by a prefix two bases share",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (named.ambiguous.length > 0) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "an ambiguous short sha un-lands a context the operator never named",
+  },
+  {
+    label: "a --stale-base prefix names no base unless typed in full",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "    lowered.filter(({ key }) => key.startsWith(prefix.toLowerCase())).map(({ base }) => base);",
+    to: "    lowered.filter(({ key }) => key === prefix.toLowerCase()).map(({ base }) => base);",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the short sha an operator copies from git log silently names nothing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24237,7 +24253,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/landed-repair.test.ts 16
+ * PRINTS: packages/server/test/landed-repair.test.ts 18
  * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5

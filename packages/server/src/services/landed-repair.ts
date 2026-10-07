@@ -116,6 +116,39 @@ export const falseLandingReason = (
     : null;
 };
 
+/** What the operator's `--stale-base` prefixes name among the judged bases. */
+export interface NamedBases {
+  /** Full bases a prefix named, each named by exactly one prefix match. */
+  readonly resolved: ReadonlySet<string>;
+  /** Prefixes that match more than one base, with how many. */
+  readonly ambiguous: readonly { readonly prefix: string; readonly matches: number }[];
+  /** Prefixes that match no judged base. */
+  readonly unmatched: readonly string[];
+}
+
+/**
+ * A `--stale-base` value names a base by PREFIX, as `git` would take it — the
+ * short sha an operator copies from a log. A prefix matching two bases names
+ * neither: a run that guessed would un-land a context nobody named, so the
+ * caller refuses it whole.
+ */
+export const resolveNamedBases = (
+  prefixes: readonly string[],
+  bases: readonly string[],
+): NamedBases => {
+  const lowered = [...new Set(bases)].map((base) => ({ base, key: base.toLowerCase() }));
+  const matchesOf = (prefix: string): readonly string[] =>
+    lowered.filter(({ key }) => key.startsWith(prefix.toLowerCase())).map(({ base }) => base);
+  const judged = prefixes.map((prefix) => ({ prefix, matches: matchesOf(prefix) }));
+  return {
+    resolved: new Set(judged.flatMap(({ matches }) => (matches.length === 1 ? matches : []))),
+    ambiguous: judged
+      .filter(({ matches }) => matches.length > 1)
+      .map(({ prefix, matches }) => ({ prefix, matches: matches.length })),
+    unmatched: judged.filter(({ matches }) => matches.length === 0).map(({ prefix }) => prefix),
+  };
+};
+
 /** What a run would change: the ids, and how many under each reason. */
 export const planLandedRepair = (
   rows: readonly LandedContextRow[],

@@ -208,6 +208,34 @@ describe("the dry run", () => {
   });
 });
 
+describe("--stale-base", () => {
+  test("a unique prefix of 7+ hex names the base; an ambiguous one changes nothing", async () => {
+    // Arrange: a second landed base sharing NAMED_BASE's first eight digits.
+    const { harness } = await seedHub();
+    const owner = await createTestDeveloper(harness, "Mira", "mira@example.com");
+    const twin = `${NAMED_BASE.slice(0, 8)}${"1".repeat(32)}`;
+    await registerTestSession(harness, owner.apiKey, { id: "ses_twin", branch: "feat/twin", baseCommit: twin });
+    await postRecords(harness, owner, {
+      records: [recordEnvelope("work_context", validWorkContextBody({ id: "wc_twin", sessionId: "ses_twin" }), { sessionId: "ses_twin" })],
+    });
+    await harness.db.update(workContexts).set({ landedAt: new Date(TEST_START_ISO) }).where(eq(workContexts.id, "wc_twin"));
+    const before = await landedIds(harness.db);
+
+    // Act
+    const ambiguous = await run(harness, [...DATA_DIR, "--scope", "all", "--stale-base", NAMED_BASE.slice(0, 8), "--apply"]);
+    const afterAmbiguous = await landedIds(harness.db);
+    const unique = await run(harness, [...DATA_DIR, "--stale-base", NAMED_BASE.slice(0, 9)]);
+    const nothing = await run(harness, [...DATA_DIR, "--stale-base", "fedcba9"]);
+
+    // Assert
+    expect(ambiguous.code).toBe(2);
+    expect(ambiguous.output).toContain("matches 2 landed bases");
+    expect(afterAmbiguous).toEqual(before);
+    expect(unique.output).toContain("operator-named base 1");
+    expect(nothing.output).toContain("--stale-base fedcba9 matches no landed base");
+  });
+});
+
 describe("--data-dir", () => {
   test("must name an existing hub data dir, never a typo or another flag", async () => {
     // Arrange: a missing path, a directory that is not a data dir, and the
