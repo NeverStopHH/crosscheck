@@ -127,6 +127,8 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     developerId,
     briefingPending: true,
     workContextTitle: title,
+    // Recovery has no host title (the payload carries none): always ours.
+    workContextTitleSource: "fallback",
     workContextStatus: IMPLEMENTING_STATUS,
   };
   // BEFORE the first append, always: `reap` infers "no writer left" from the
@@ -155,6 +157,7 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
           workContextId: derived.workContextId,
           sessionId: derived.crosscheckSessionId,
           title,
+          titleSource: "fallback",
           status: IMPLEMENTING_STATUS,
         },
         {

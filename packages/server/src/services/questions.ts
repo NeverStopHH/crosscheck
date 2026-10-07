@@ -62,6 +62,7 @@ import { ingestClaimWithin, prepareClaimVector } from "./record-handlers.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import { notMutedCondition } from "./visibility.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
@@ -739,28 +740,55 @@ const listInbox = async (
   repo: string,
   excludeMuted: boolean,
 ): Promise<readonly InboxQuestion[]> => {
-  const rows = await deps.db
-    .select({
-      question: questions,
-      authorDeveloperName: developers.name,
-      workContextTitle: workContexts.title,
-    })
-    .from(questions)
-    .innerJoin(developers, eq(questions.authorDeveloperId, developers.id))
-    .leftJoin(workContexts, eq(questions.workContextId, workContexts.id))
-    .where(inboxCondition(deps.now(), developerId, repo, excludeMuted))
-    .orderBy(desc(questions.createdAt))
-    .limit(MAX_QUESTIONS_LISTED);
-  return rows.map((row) => ({
-    id: row.question.id,
-    authorDeveloperId: row.question.authorDeveloperId,
-    authorDeveloperName: row.authorDeveloperName,
-    body: row.question.body,
-    workContextId: row.question.workContextId,
-    workContextTitle: row.workContextTitle,
-    createdAt: row.question.createdAt.toISOString(),
-    expiresAt: row.question.expiresAt.toISOString(),
-  }));
+  const [rows, hidden] = await Promise.all([
+    deps.db
+      .select({
+        question: questions,
+        authorDeveloperName: developers.name,
+        workContextTitle: workContexts.title,
+        // The CONTEXT's owner, not the asker: a fallback title names where
+        // that owner is (services/live-location.ts).
+        contextOwnerId: agentSessions.developerId,
+        contextRepo: agentSessions.repo,
+        contextBranch: agentSessions.branch,
+        contextTitleSource: workContexts.titleSource,
+      })
+      .from(questions)
+      .innerJoin(developers, eq(questions.authorDeveloperId, developers.id))
+      .leftJoin(workContexts, eq(questions.workContextId, workContexts.id))
+      .leftJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+      .where(inboxCondition(deps.now(), developerId, repo, excludeMuted))
+      .orderBy(desc(questions.createdAt))
+      .limit(MAX_QUESTIONS_LISTED),
+    locationHiddenFrom(deps.db, developerId),
+  ]);
+  return rows.map((row) => {
+    const view: InboxQuestion = {
+      id: row.question.id,
+      authorDeveloperId: row.question.authorDeveloperId,
+      authorDeveloperName: row.authorDeveloperName,
+      body: row.question.body,
+      workContextId: row.question.workContextId,
+      workContextTitle: row.workContextTitle,
+      createdAt: row.question.createdAt.toISOString(),
+      expiresAt: row.question.expiresAt.toISOString(),
+    };
+    // Two owners: the question is its asker's, the title its context's.
+    const asked = projectRow(hidden, { developerId: view.authorDeveloperId, kind: "question" }, view);
+    return row.contextOwnerId === null
+      ? asked
+      : {
+          ...asked,
+          ...projectRow(hidden, {
+            developerId: row.contextOwnerId,
+            titleFacts: {
+              repo: row.contextRepo ?? repo,
+              branch: row.contextBranch,
+              titleSource: row.contextTitleSource,
+            },
+          }, { workContextTitle: view.workContextTitle }),
+        };
+  });
 };
 
 /**

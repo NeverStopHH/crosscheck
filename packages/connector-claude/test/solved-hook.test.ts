@@ -288,6 +288,8 @@ describe("isOnDefaultBranch", () => {
   test("a feature branch does not, and an unknown default ref does not guess", () => {
     // Arrange + Act + Assert
     expect(isOnDefaultBranch("feat/thing", "origin/main")).toBe(false);
+    // A legal branch name that only LOOKS like a detached ref is a branch.
+    expect(isOnDefaultBranch("detached@release", "origin/main")).toBe(false);
     // Null default ref: landed collection is skipped downstream anyway, so
     // claiming "on the default branch" here would be a second guess.
     expect(isOnDefaultBranch("feat/thing", null)).toBe(false);

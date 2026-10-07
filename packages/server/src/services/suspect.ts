@@ -53,6 +53,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
 import { readPin } from "./pins.ts";
 import { explanationTimingOf } from "./intent-ledger.ts";
 import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
@@ -194,6 +195,9 @@ export const resolveSuspectScope = async (
   deps: Deps,
   repo: string,
   input: { readonly pinId?: string; readonly paths: readonly string[] },
+  // The pin's break and rename are their actors' instants, read as THIS
+  // viewer may (services/pins.ts pinSeenBy).
+  viewerDeveloperId: string,
 ): Promise<ScopeResult> => {
   if (input.pinId === undefined) {
     return {
@@ -216,7 +220,7 @@ export const resolveSuspectScope = async (
       },
     };
   }
-  const pin = await readPin(deps, input.pinId);
+  const pin = await readPin(deps, input.pinId, viewerDeveloperId);
   if (pin === null) {
     return { ok: false, reason: "pin_not_found" };
   }
@@ -252,6 +256,8 @@ export const resolveSuspectScope = async (
 interface CandidateRow {
   readonly workContextId: string;
   readonly workContextTitle: string;
+  /** Raw `title_source` — judged through titleSourceOf (services/live-location.ts). */
+  readonly titleSource: string | null;
   readonly intent: Record<string, unknown> | null;
   readonly sessionId: string;
   readonly agentKind: string;
@@ -301,11 +307,20 @@ const readCandidates = async (
   repo: string,
   files: readonly string[],
   since: Date,
+  readerDeveloperId: string,
 ): Promise<CandidateSet> => {
   if (files.length === 0) {
     return { rows: [], totalTouching: 0 };
   }
-  const activity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+  // As THIS reader may window by it: a teammate who opted out of presence is
+  // in the window by creation alone (services/live-location.ts), or being a
+  // candidate at all would say she touched the files' work recently.
+  const activity = activitySeenBy(
+    readerDeveloperId,
+    agentSessions.developerId,
+    workContexts.updatedAt,
+    workContexts.createdAt,
+  );
   const touching = deps.db.$with("touching").as(
     deps.db
       .select({
@@ -314,6 +329,7 @@ const readCandidates = async (
         // to "id" ambiguous — a runtime error, not a type error.
         workContextId: sql<string>`${workContexts.id}`.as("work_context_id"),
         workContextTitle: sql<string>`${workContexts.title}`.as("work_context_title"),
+        titleSource: sql<string | null>`${workContexts.titleSource}`.as("title_source"),
         intent: sql<Record<string, unknown> | null>`${workContexts.intent}`.as("intent"),
         sessionId: sql<string>`${agentSessions.id}`.as("session_id"),
         agentKind: sql<string>`${agentSessions.agentKind}`.as("agent_kind"),
@@ -340,6 +356,7 @@ const readCandidates = async (
       .groupBy(
         workContexts.id,
         workContexts.title,
+        workContexts.titleSource,
         workContexts.intent,
         agentSessions.id,
         agentSessions.agentKind,
@@ -380,6 +397,7 @@ const readCandidates = async (
     .select({
       workContextId: touching.workContextId,
       workContextTitle: touching.workContextTitle,
+      titleSource: touching.titleSource,
       intent: touching.intent,
       sessionId: touching.sessionId,
       agentKind: touching.agentKind,
@@ -407,6 +425,7 @@ const readCandidates = async (
     rows: rows.map((row) => ({
       workContextId: row.workContextId,
       workContextTitle: row.workContextTitle,
+      titleSource: row.titleSource,
       intent: row.intent ?? null,
       sessionId: row.sessionId,
       agentKind: row.agentKind,
@@ -541,6 +560,7 @@ export const suspectSessions = async (
     input.repo,
     input.scope.files,
     since,
+    readerDeveloperId,
   );
   const base = {
     falsifier: {
@@ -583,6 +603,7 @@ export const suspectSessions = async (
   }
   const developerIds = [...new Set(rows.map((row) => row.developerId))];
   const muted = await readMutedAuthors(deps, readerDeveloperId, developerIds);
+  const hidden = await locationHiddenFrom(deps.db, readerDeveloperId);
   // WAS THE STATED PLAN WRITTEN BEFORE THE CHANGE? (spec 06 §5, decision
   // 10.2.) This is the surface where the missing distinction costs most: it
   // names sessions beside their declared intent, and a reader who cannot tell
@@ -598,22 +619,33 @@ export const suspectSessions = async (
       // The denominator the QUERY already ranked by: recomputing it here
       // would let the printed score disagree with the order the bound cut on.
       const authorTouches = row.authorTouches;
-      return {
-        sessionId: row.sessionId,
-        agentKind: row.agentKind,
-        branch: row.branch,
-        workContextId: row.workContextId,
-        workContextTitle: row.workContextTitle,
-        intent: row.intent,
-        lastActiveAt: row.lastActiveAt.toISOString(),
-        overlap: row.overlap,
-        authorTouches,
-        lift: row.overlap / authorTouches,
-        sources: row.sources,
-        intentTiming: timings.get(row.workContextId) ?? null,
-        readerMuted: muted.has(row.developerId),
-        isSelf: row.developerId === readerDeveloperId,
-      };
+      // The row stays — it is the collision — and where its author is now,
+      // and when they last were, goes (services/live-location.ts). `branch`
+      // is a required non-empty string on this wire, so it takes the marker.
+      return projectRow(
+        hidden,
+        {
+          developerId: row.developerId,
+          titleFacts: { repo: input.repo, branch: row.branch, titleSource: titleSourceOf(row.titleSource) },
+        },
+        {
+          sessionId: row.sessionId,
+          agentKind: row.agentKind,
+          branch: row.branch,
+          workContextId: row.workContextId,
+          workContextTitle: row.workContextTitle,
+          intent: row.intent,
+          lastActiveAt: row.lastActiveAt.toISOString(),
+          overlap: row.overlap,
+          authorTouches,
+          lift: row.overlap / authorTouches,
+          sources: row.sources,
+          intentTiming: timings.get(row.workContextId) ?? null,
+          readerMuted: muted.has(row.developerId),
+          isSelf: row.developerId === readerDeveloperId,
+        },
+        { branch: "marker" },
+      );
     })
     .sort((left, right) => {
       if (right.lift !== left.lift) {

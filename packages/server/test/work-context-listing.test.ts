@@ -10,6 +10,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
+import { WITHHELD_TITLE } from "@crosscheck/schema";
 
 import { WORK_CONTEXT_LIST_MAX } from "../src/constants.ts";
 import {
@@ -18,6 +19,7 @@ import {
   jsonRequest,
   postRecords,
   recordEnvelope,
+  registerTestSession,
   validClaimBody,
   validWorkContextBody,
   WORK_CONTEXT_ID,
@@ -37,6 +39,7 @@ interface ListEntry {
   readonly developerContextCount: number;
   readonly title: string;
   readonly branch: string;
+  readonly baseCommit?: string;
 }
 
 const list = async (
@@ -463,5 +466,153 @@ describe("GET /api/work-contexts names each context's branch", () => {
     expect(rows.map((row) => [row.title, row.branch])).toEqual([
       ["Fix the login 500s on staging", "feat/auth"],
     ]);
+  });
+
+  test("an opted-out teammate's LIVE branch is withheld; the context stays, by its title", async () => {
+    // The branch on the row is the session's CURRENT one — re-registering
+    // moves it — so it is presence-class: where the developer is right now.
+    // Presence hides an opted-out developer; this listing must not say the
+    // same thing by another door.
+    const robinSession = "cc_44444444-5555-4666-8777-888888888888";
+    const setup = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+      { id: robinSession, branch: "feat/old" },
+    );
+    await postRecords(
+      setup.harness,
+      robin,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ id: "wc_robin", sessionId: robinSession, title: "Login 500s" }),
+        { sessionId: robinSession },
+      ),
+    );
+    const optOut = await setup.harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+    expect(optOut.status).toBe(200);
+    await registerTestSession(setup.harness, robin.apiKey, {
+      id: robinSession,
+      branch: "feat/acquisition-talks",
+    });
+
+    // Act: Nick's listing, and Robin's own
+    const asNick = await list(setup, `${REPO_QUERY}&since=14d`);
+    const asRobin = await list({ harness: setup.harness, developer: robin }, `${REPO_QUERY}&since=14d`);
+
+    // Assert: the context is published knowledge and stays; the live branch
+    // does not reach anyone but Robin
+    const seenByNick = asNick.find((row) => row.id === "wc_robin");
+    expect(seenByNick?.title).toBe("Login 500s");
+    expect(seenByNick?.branch).toBeUndefined();
+    expect(JSON.stringify(asNick)).not.toContain("feat/acquisition-talks");
+    expect(asRobin.find((row) => row.id === "wc_robin")?.branch).toBe("feat/acquisition-talks");
+  });
+
+  test("an opted-out teammate's FALLBACK title is withheld too — it is the branch", async () => {
+    // A session whose host supplied no title is named `<branch> @ <repo>` by
+    // the connector, so that title says where its author is. A title a
+    // person or host wrote is published knowledge and stays.
+    const robinSession = "cc_44444444-5555-4666-8777-888888888888";
+    const setup = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+      { id: robinSession, branch: "feat/acquisition-talks" },
+    );
+    await postRecords(setup.harness, robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_robin_fallback",
+            sessionId: robinSession,
+            title: "feat/acquisition-talks @ api",
+          }),
+          { sessionId: robinSession },
+        ),
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_robin_named",
+            sessionId: robinSession,
+            title: "Login 500s after key rotation",
+          }),
+          { sessionId: robinSession },
+        ),
+      ],
+    });
+    await setup.harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+
+    const asNick = await list(setup, `${REPO_QUERY}&since=14d`);
+    const asRobin = await list({ harness: setup.harness, developer: robin }, `${REPO_QUERY}&since=14d`);
+    const titleOf = (rows: readonly ListEntry[], id: string) =>
+      rows.find((row) => row.id === id)?.title;
+
+    expect(titleOf(asNick, "wc_robin_fallback")).toBe(WITHHELD_TITLE);
+    expect(titleOf(asNick, "wc_robin_named")).toBe("Login 500s after key rotation");
+    expect(JSON.stringify(asNick)).not.toContain("acquisition-talks");
+    expect(titleOf(asRobin, "wc_robin_fallback")).toBe("feat/acquisition-talks @ api");
+  });
+
+  test("an opted-out teammate's HEAD reaches no other viewer — not as base commit, not as a claim's commit", async () => {
+    // `baseCommit` is `rev-parse HEAD` of the live branch, and a claim filed
+    // without its own commit is bound to that same base. Both are location.
+    const robinSession = "cc_44444444-5555-4666-8777-888888888888";
+    const head = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00";
+    const setup = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+      { id: robinSession, baseCommit: head },
+    );
+    await postRecords(setup.harness, robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({ id: "wc_robin_head", sessionId: robinSession, title: "Key rotation audit" }),
+          { sessionId: robinSession },
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_head", workContextId: "wc_robin_head", authorSessionId: robinSession }),
+          { sessionId: robinSession },
+        ),
+      ],
+    });
+    await setup.harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+    const diagnosisAs = async (apiKey: string) =>
+      (await (
+        await setup.harness.app.request("/api/work-contexts/wc_robin_head", jsonRequest("GET", apiKey))
+      ).json()) as {
+        data: { workContext: { baseCommit?: string }; claims: { validity: { observedAtCommit: string | null } }[] };
+      };
+
+    // Act
+    const listedForNick = (await list(setup, `${REPO_QUERY}&since=14d`)).find((row) => row.id === "wc_robin_head");
+    const treeForNick = await diagnosisAs(setup.developer.apiKey);
+    const treeForRobin = await diagnosisAs(robin.apiKey);
+
+    // Assert: the row and the tree stay; the commit does not reach Nick
+    expect(listedForNick?.title).toBe("Key rotation audit");
+    expect(listedForNick?.baseCommit).toBeUndefined();
+    expect(treeForNick.data.workContext.baseCommit).toBeUndefined();
+    expect(treeForNick.data.claims[0]?.validity.observedAtCommit).toBeNull();
+    expect(JSON.stringify(treeForNick)).not.toContain(head.slice(0, 7));
+    // …and Robin's own reads keep it
+    expect(treeForRobin.data.workContext.baseCommit).toBe(head);
+    expect(treeForRobin.data.claims[0]?.validity.observedAtCommit).toBe(head);
   });
 });

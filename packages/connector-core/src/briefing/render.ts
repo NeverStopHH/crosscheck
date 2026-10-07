@@ -28,7 +28,7 @@ import {
 } from "../constants.ts";
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
-import { isDetachedBranch } from "../git/detached-branch.ts";
+import { isDetachedBranch, isDetachedTitleHead } from "../git/detached-branch.ts";
 import { repoLabel } from "../git/repo-label.ts";
 import {
   CLAIM_KINDS,
@@ -37,7 +37,7 @@ import {
   axesLabel,
   cloudAgentById,
 } from "@crosscheck/schema";
-import type { ClaimValidity } from "@crosscheck/schema";
+import type { ClaimValidity, SessionStatus } from "@crosscheck/schema";
 import type {
   ContradictionEntry,
   ContradictionSide,
@@ -179,11 +179,28 @@ interface Section {
 }
 
 /**
+ * Topic KEYS are RAW and namespaced; labels are sanitized for display only
+ * (briefing/topic-group.ts). Keyed on the sanitized label, `feat/config-
+ * override` and `fix/override-cache` were one topic under one redaction with
+ * the blocked one's status for both, and two branches that differ only past
+ * the title cap were one. A title-derived topic shares this namespace on
+ * purpose: the fallback title IS a branch name (`<branch> @ <repo>`), so a
+ * detached session whose title resolved `feat/x` joins the sessions on feat/x.
+ */
+const branchKey = (rawBranchOrTitle: string): string => `branch:${rawBranchOrTitle}`;
+
+/**
  * The ONE topic every detached-HEAD session of this repo shares, on every
  * teammate listing. Keyed by its sha, each worktree session would be a topic
- * of its own — exactly the shape the topic grouping exists to fold.
+ * of its own — exactly the shape the topic grouping exists to fold. The key
+ * lacks the `branch:` prefix, so no branch or title can equal it — a branch
+ * literally named `detached` is its own topic. The LABEL is framed in `<` `>`,
+ * characters the renderer owns: cleanUntrusted strips them from every branch
+ * and title a connector reports, so no branch — git's rules aside, since a
+ * connector need not obey them — can print what this prints.
  */
-export const DETACHED_TOPIC = "detached";
+const DETACHED_KEY = "detached-head";
+export const DETACHED_TOPIC = "<detached HEAD>";
 
 /** A live session as the topic grouping reads it (briefing/topic-group.ts). */
 export interface PresenceTopicRow extends TopicRow {
@@ -219,13 +236,15 @@ const toPresenceRow = (
 ): PresenceTopicRow | null => {
   const ageMs = ageMsFrom(entry.lastHeartbeatAt, now);
   const name = clean(entry.developerName);
-  const branch = isDetachedBranch(entry.branch) ? DETACHED_TOPIC : clean(entry.branch);
+  const detached = isDetachedBranch(entry.branch);
+  const branch = detached ? DETACHED_TOPIC : clean(entry.branch);
   if (ageMs === null || name.length === 0 || branch.length === 0) {
     return null;
   }
   return {
     developerId: entry.developerId,
-    topic: branch,
+    topicKey: detached ? DETACHED_KEY : branchKey(entry.branch),
+    label: branch,
     sessionKey: entry.sessionId,
     status: clean(entry.status),
     ageMs,
@@ -404,16 +423,34 @@ const renderGhostSection = (input: BriefingInput): Section => {
   };
 };
 
+const BLOCKED_STATUS: SessionStatus = "blocked";
+
+/**
+ * The live branches OTHER than the freshest whose sessions report blocked.
+ * The presence line's status is the freshest branch's, so a session stuck on
+ * another branch was invisible behind it — and a stuck session is the one
+ * fact about a teammate a reader most needs (TOPIC_STATUS_PRECEDENCE ranks
+ * it highest for the same reason). A blocked freshest branch already says
+ * so in its status and is not repeated.
+ */
+const blockedElsewhere = (group: TeammateGroup): readonly string[] =>
+  group.topics
+    .slice(1)
+    .filter((topic) => topic.status === BLOCKED_STATUS)
+    .map((topic) => topic.label);
+
 const renderPresenceSection = (input: BriefingInput): Section => {
   const teammates = groupTeammates(input.presence, input.now);
   const lines = teammates.slice(0, MAX_TEAMMATES).map((group) => {
     const label = group.branches.length === 1 ? "branch" : "branches";
     const drift =
       group.baseCommit === null ? undefined : input.drift?.[group.baseCommit];
+    const blocked = blockedElsewhere(group);
     const facts = [
       `- ${group.name}`,
       `${label} ${boundedTopicList(group.branches)}`,
       `status ${group.status}`,
+      ...(blocked.length === 0 ? [] : [`blocked on ${boundedTopicList(blocked)}`]),
       `heartbeat ${formatAge(group.ageMs)} ago`,
     ];
     // The intent LAST, after drift: the one framed value on a line that is
@@ -466,43 +503,53 @@ const hasRecordedWork = (context: WorkContextEntry): boolean =>
 /** A work context as the topic grouping reads it (briefing/topic-group.ts). */
 interface ContextTopicRow extends TopicRow {
   readonly context: WorkContextEntry;
-  /** The topic its TITLE names (titleTopic) — the label when a topic agrees. */
+  /** The RAW topic its title names (titleHead) — compared, never displayed. */
+  readonly titleHead: string;
+  /** The same, sanitized — the label when a topic's sessions agree. */
   readonly titleLabel: string;
 }
 
 /**
- * The topic a title names. The honest fallback title is `<branch> @ <repo>`
- * (flows/register-session.ts), and every row of this per-repo listing repeats
- * the same repo label, so it comes off — BEFORE sanitizing, so the title cap
- * is spent on the branch. Any other title (a host's own session title, a
- * detached `detached@<sha> · <subject>`) is its own topic, whole.
+ * The topic a title names, RAW. The honest fallback title is
+ * `<branch> @ <repo>` (flows/register-session.ts), and every row of this
+ * per-repo listing repeats the same repo label, so it comes off — before any
+ * sanitizing, so the title cap is spent on the branch. Any other title (a
+ * host's own session title, a detached `detached@<sha> · <subject>`) is its
+ * own topic, whole.
  */
-const titleTopic = (title: string, repoId: string): string => {
+const titleHead = (title: string, repoId: string): string => {
   const label = repoLabel(repoId);
   const suffix = label === null ? null : ` @ ${label}`;
-  const head =
-    suffix !== null && title.endsWith(suffix)
-      ? title.slice(0, title.length - suffix.length)
-      : title;
-  return sanitizeUntrusted(head);
+  return suffix !== null && title.endsWith(suffix)
+    ? title.slice(0, title.length - suffix.length)
+    : title;
 };
+
+/** A raw grouping key and the sanitized label it prints as. */
+interface TopicIdentity {
+  readonly key: string;
+  readonly label: string;
+}
 
 /**
  * The topic a work context belongs to: its session's OWN branch, which the
  * hub sends with the row (server services/diagnosis.ts) — a host-supplied
  * title ("Fix the login 500s") does not carry it, so free-form titles on one
  * branch would otherwise be separate topics. The title is the fallback only
- * where that branch says nothing: an older hub that sends none, or a detached
- * HEAD, whose session-start title may still have resolved the branch it sits
- * on (flows/work-context-title.ts). Whatever is still detached after that is
- * the one DETACHED_TOPIC, never keyed by sha.
+ * where that branch says nothing: an older hub that sends none, a teammate
+ * whose branch the hub withholds (presence opt-out), or a detached HEAD,
+ * whose session-start title may still have resolved the branch it sits on
+ * (flows/work-context-title.ts). Whatever is still detached after that is
+ * the one detached-HEAD topic, never keyed by sha.
  */
-const contextTopic = (context: WorkContextEntry, repoId: string): string => {
+const contextTopic = (context: WorkContextEntry, repoId: string): TopicIdentity => {
   if (context.branch !== undefined && !isDetachedBranch(context.branch)) {
-    return sanitizeUntrusted(context.branch);
+    return { key: branchKey(context.branch), label: sanitizeUntrusted(context.branch) };
   }
-  const fromTitle = titleTopic(context.title, repoId);
-  return isDetachedBranch(fromTitle) ? DETACHED_TOPIC : fromTitle;
+  const head = titleHead(context.title, repoId);
+  return isDetachedTitleHead(head)
+    ? { key: DETACHED_KEY, label: DETACHED_TOPIC }
+    : { key: branchKey(head), label: sanitizeUntrusted(head) };
 };
 
 const toContextRow = (
@@ -514,36 +561,39 @@ const toContextRow = (
   if (
     ageMs === null ||
     ageMs > CONTEXT_MAX_AGE_DAYS * MS_PER_DAY ||
-    topic.length === 0
+    topic.label.length === 0
   ) {
     return null;
   }
+  const head = titleHead(context.title, input.repoId);
   return {
     developerId: context.developerId,
-    topic,
+    topicKey: topic.key,
+    label: topic.label,
     // A row without its session id is its own session: never two rows
     // merged on a guess.
     sessionKey: context.sessionId ?? `wc:${context.id}`,
     status: sanitizeUntrusted(context.status),
     ageMs,
     hasRecordedWork: hasRecordedWork(context),
-    titleLabel: titleTopic(context.title, input.repoId),
+    titleHead: head,
+    titleLabel: sanitizeUntrusted(head),
     context,
   };
 };
 
 /**
  * What a topic is CALLED on its line, which is not always what it is KEYED
- * by. When every session in it says the same title, that title — a host's
- * own session title ("Login 500s on staging") tells a reader more than the
- * branch it runs on, and a fallback title IS the branch. When they disagree,
- * the branch they were grouped by: never one session's title speaking for
- * sessions that said something else.
+ * by. When every session in it says the same RAW title, that title — a
+ * host's own session title ("Login 500s on staging") tells a reader more
+ * than the branch it runs on, and a fallback title IS the branch. When they
+ * disagree — even if both sanitize alike — the branch they were grouped by:
+ * never one session's title speaking for sessions that said something else.
  */
 const topicLabel = (topic: Topic<ContextTopicRow>): string => {
-  const titles = new Set(topic.rows.map((row) => row.titleLabel));
-  const [shared] = titles;
-  return titles.size === 1 && shared !== undefined && shared.length > 0
+  const titles = new Set(topic.rows.map((row) => row.titleHead));
+  const shared = topic.rows[0]?.titleLabel ?? "";
+  return titles.size === 1 && shared.length > 0
     ? shared
     : topic.label;
 };

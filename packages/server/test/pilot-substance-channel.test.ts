@@ -111,7 +111,7 @@ const deliver = async (
 };
 
 const report = (world: World) =>
-  readPilotReport({ db: world.harness.db, now: () => NOW }, { repo: REPO, days: 56 });
+  readPilotReport({ db: world.harness.db, now: () => NOW }, { repo: REPO, days: 56, viewerDeveloperId: world.developer.developerId });
 
 describe("an inline finding is surfaced, in its own bucket", () => {
   test("it counts as surfaced and as prompt_substance, never as prompt_hint", async () => {

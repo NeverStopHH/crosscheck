@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WorkContextTitleSourceSchema } from "@crosscheck/schema";
 
 import {
   DERIVE_FIRES_KEPT,
@@ -427,6 +428,15 @@ const SessionStateObjectSchema = z.looseObject({
    */
   workContextTitle: z.string().min(1).nullable().default(null),
   workContextStatus: z.string().min(1).nullable().default(null),
+  /**
+   * How `workContextTitle` was written (@crosscheck/schema
+   * WORK_CONTEXT_TITLE_SOURCES), re-sent beside it by the intent writers so
+   * the hub's marker never lapses on an update. Null on a state file from
+   * before the marker, and on a value this build does not know — the hub
+   * then keeps what it stored while the title is unchanged. Optional, so a
+   * state built by an older writer (or a test) without it still parses.
+   */
+  workContextTitleSource: WorkContextTitleSourceSchema.nullable().optional().catch(null),
   /**
    * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
    * fire that lands nothing must be a number somebody can explain): fires
@@ -1566,6 +1576,7 @@ export const deriveSessionState = (
     summarizerLastUnreadable: null,
     workContextTitle: null,
     workContextStatus: null,
+    workContextTitleSource: null,
     intentFireCount: 0,
     intentNoneCount: 0,
     intentSetCount: 0,

@@ -31,6 +31,18 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   ended_at timestamptz
 );
 
+-- Every branch a developer's sessions ever reported (review round 5, H3):
+-- what the live-location projection judges an opted-out owner's unmarked
+-- titles against, without scanning the events table per read. Written as
+-- sessions register (services/developer-branches.ts); backfilled at boot
+-- below the events table.
+CREATE TABLE IF NOT EXISTS developer_branches (
+  developer_id text NOT NULL REFERENCES developers(id),
+  branch text NOT NULL,
+  first_seen timestamptz NOT NULL,
+  PRIMARY KEY (developer_id, branch)
+);
+
 -- Reap bookkeeping (review finding B2-01): tells a hub-inferred end from a
 -- connector-reported one, so the inferred one can be revoked when a record
 -- from that session proves it wrong. ALTER so one statement covers fresh
@@ -168,6 +180,25 @@ CREATE TABLE IF NOT EXISTS events (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- THE BRANCHES A HUB KNEW BEFORE developer_branches EXISTED (review round 5,
+-- H3): every session's current branch, and the branch every session_started
+-- event recorded (a re-registration moves the session's branch, and only the
+-- event still names the old one). Here, at boot, before the hub serves a read:
+-- an opted-out developer's unmarked title on such a branch is withheld from
+-- the first answer on. Idempotent (ON CONFLICT), and a re-run at every boot
+-- also catches up anything a release without the table registered. Only
+-- developers the hub still has: an event may name one since removed.
+INSERT INTO developer_branches (developer_id, branch, first_seen)
+SELECT developer_id, branch, min(seen) FROM (
+  SELECT developer_id, branch, started_at AS seen FROM agent_sessions
+  UNION ALL
+  SELECT payload->>'developerId', payload->>'branch', created_at FROM events
+   WHERE kind = 'session_started' AND payload->>'branch' IS NOT NULL
+) AS reported
+WHERE developer_id IN (SELECT id FROM developers)
+GROUP BY developer_id, branch
+ON CONFLICT DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS hint_deliveries (
   id text PRIMARY KEY,
   session_id text NOT NULL REFERENCES agent_sessions(id),
@@ -247,6 +278,12 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS landed_at timestamptz;
 -- coverage's path scope reads it beside the creating session. Null until the
 -- first update. ALTER so an existing hub gets it too.
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text REFERENCES agent_sessions(id);
+
+-- How the title was written, by the connector's own word ('fallback' is the
+-- session's branch, withheld from colleagues of an opted-out developer;
+-- 'host', 'person'). Null for a row an older connector wrote, which the hub
+-- judges by the title's shape. ALTER so an existing hub gets it too.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS title_source text;
 
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
@@ -346,6 +383,11 @@ INSERT INTO developer_emails (email, developer_id, is_primary, created_at)
 -- ALTER so one statement covers fresh databases and ones created before the
 -- column existed. Published knowledge is deliberately NOT touched by it.
 ALTER TABLE developers ADD COLUMN IF NOT EXISTS presence_opt_out boolean NOT NULL DEFAULT false;
+
+-- When the search index was rebuilt for the opt-out a developer has now
+-- (review round 5, M1); null while opted out = not yet, and the boot pass
+-- rebuilds it (services/developer-settings.ts).
+ALTER TABLE developers ADD COLUMN IF NOT EXISTS location_index_built_at timestamptz;
 
 -- Reader-side mutes: one row per (reader, muted) pair, filtering the READER's
 -- unasked surfaces only. Hub-side so a mute follows the reader across

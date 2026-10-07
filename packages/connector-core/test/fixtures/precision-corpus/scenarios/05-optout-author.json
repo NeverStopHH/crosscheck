@@ -16,8 +16,7 @@
       "sessionId": "s_quinn_flags",
       "title": "Feature flag cache keeps serving stale variants",
       "status": "analyzing",
-      "createdAt": "2026-08-01T00:00:00.000Z",
-      "updatedAt": "2026-08-01T05:00:00.000Z"
+      "createdAt": "2026-08-01T05:00:00.000Z"
     }
   ],
   "targets": [
@@ -35,7 +34,7 @@
       "captureMode": "agent",
       "provenance": "declared",
       "evidenceRefs": [],
-      "createdAt": "2026-08-01T00:05:00.000Z"
+      "createdAt": "2026-08-01T05:00:00.000Z"
     },
     {
       "id": "clm_fl_root",

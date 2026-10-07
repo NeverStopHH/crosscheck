@@ -50,6 +50,8 @@ import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import type { ClaimValidityInput } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { ClaimAxesRow } from "./evidence-axes.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
@@ -420,6 +422,8 @@ const buildPosition = async (
   side: CandidateSide,
   otherClaimId: string,
   workContextTitles: ReadonlyMap<string, string>,
+  hidden: HiddenLocations,
+  viewerDeveloperId: string,
 ): Promise<RefereePositionView | undefined> => {
   const [loaded] = await loadClaims(db, [side.id]);
   if (loaded === undefined) {
@@ -430,35 +434,58 @@ const buildPosition = async (
       walkEvidence(db, loaded, [otherClaimId]),
       listRuledOut(db, loaded.view.workContextId, loaded.view.authorDeveloperId),
       findSupersededBy(db, side.id),
-      loadRevalidations(db, now, [side.id]),
+      loadRevalidations(db, now, [side.id], viewerDeveloperId),
     ]);
+  // Every claim in the case file by its OWN author — the evidence may be a
+  // teammate's — so the age of her evidence is withheld wherever it rides
+  // (services/live-location.ts).
+  const byAuthor = (claim: RefereeClaimView): RefereeClaimView =>
+    projectRow(hidden, { developerId: claim.authorDeveloperId, kind: "claim" }, claim);
   return {
-    claim: loaded.view,
+    claim: byAuthor(loaded.view),
     workContextTitle: workContextTitles.get(loaded.view.workContextId) ?? "",
-    evidence: evidence.evidence,
+    evidence: evidence.evidence.map(byAuthor),
     evidenceTruncated: evidence.truncated,
-    ruledOut: ruledOut.ruledOut,
+    ruledOut: ruledOut.ruledOut.map(byAuthor),
     ruledOutTruncated: ruledOut.truncated,
     supersededByClaimId,
-    validity: claimValidity(
-      loaded.binding,
-      revalidations.get(side.id),
-      supersededByClaimId,
+    validity: projectRow(
+      hidden,
+      { developerId: loaded.view.authorDeveloperId, kind: "claim_validity" },
+      claimValidity(loaded.binding, revalidations.get(side.id), supersededByClaimId),
     ),
   };
 };
 
+/** Each side's title as THIS viewer may read it (services/live-location.ts). */
 const loadWorkContextTitles = async (
   db: Db,
   ids: readonly string[],
+  hidden: HiddenLocations,
 ): Promise<ReadonlyMap<string, string>> => {
   const unique = [...new Set(ids)];
   const rows = await db
-    .select({ id: workContexts.id, title: workContexts.title })
+    .select({
+      id: workContexts.id,
+      title: workContexts.title,
+      titleSource: workContexts.titleSource,
+      ownerDeveloperId: agentSessions.developerId,
+      repo: agentSessions.repo,
+      branch: agentSessions.branch,
+    })
     .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(inArray(workContexts.id, unique))
     .limit(unique.length);
-  return new Map(rows.map((row) => [row.id, row.title]));
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      projectRow(hidden, {
+        developerId: row.ownerDeveloperId,
+        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
+      }, { title: row.title }).title,
+    ]),
+  );
 };
 
 /**
@@ -469,6 +496,7 @@ export const getRefereeBrief = async (
   db: Db,
   now: Date,
   contradictionId: string,
+  viewerDeveloperId: string,
 ): Promise<RefereeBriefView | undefined> => {
   const pair: ContradictionView | undefined = await findContradictionById(
     db,
@@ -477,13 +505,15 @@ export const getRefereeBrief = async (
   if (pair === undefined) {
     return undefined;
   }
-  const titles = await loadWorkContextTitles(db, [
-    pair.claimA.workContextId,
-    pair.claimB.workContextId,
-  ]);
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
+  const titles = await loadWorkContextTitles(
+    db,
+    [pair.claimA.workContextId, pair.claimB.workContextId],
+    hidden,
+  );
   const [positionA, positionB, shared] = await Promise.all([
-    buildPosition(db, now, pair.claimA, pair.claimB.id, titles),
-    buildPosition(db, now, pair.claimB, pair.claimA.id, titles),
+    buildPosition(db, now, pair.claimA, pair.claimB.id, titles, hidden, viewerDeveloperId),
+    buildPosition(db, now, pair.claimB, pair.claimA.id, titles, hidden, viewerDeveloperId),
     listSharedTargets(db, pair.claimA.workContextId, pair.claimB.workContextId),
   ]);
   if (positionA === undefined || positionB === undefined) {

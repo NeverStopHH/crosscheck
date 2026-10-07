@@ -2748,9 +2748,11 @@ export const MUTATIONS: readonly Mutation[
     label: "the search since window stops running inside the tiers",
     file: `${SERVER}/src/services/search.ts`,
     from:
-      "      : sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) " +
+      "      : and(\n          sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) " +
       ">= ${scope.since.toISOString()}::timestamptz`,",
-    to: "      : undefined,",
+    to:
+      "      : undefined && and(\n          sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) " +
+      ">= ${scope.since.toISOString()}::timestamptz`,",
     test: `${SERVER}/test/search-filters.test.ts`,
     because:
       "`since: 14d` returns 60-day-old work as if it were this fortnight's, " +
@@ -3641,8 +3643,8 @@ export const MUTATIONS: readonly Mutation[
     // cannot recover a developer the hub's own bound never sent.
     label: "the listing bound is spent on one developer",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))",
-    to: "    .orderBy(desc(contextActivityAt))",
+    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))",
+    to: "    .orderBy(desc(activity), asc(workContexts.id))",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "a teammate running many short sessions fills all 200 rows and the " +
@@ -3693,7 +3695,7 @@ export const MUTATIONS: readonly Mutation[
     // ORDER BY hands back the freshest rows of ALL TIME.
     label: "the listing ignores the window the reader asked for",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "          : [gte(contextActivityAt, window.since)]),",
+    from: "          : [gte(contextActivityAt, window.since), gte(activity, window.since)]),",
     to: "          : []),",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
@@ -3942,8 +3944,8 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/sessions.ts`,
     from:
       "        lt(agentSessions.lastHeartbeatAt, cutoff)," + "\n" +
-      "        ...(options.mine === true",
-    to: "        ...(options.mine === true",
+      "        // Another developer's row with its branch, commit and heartbeat",
+    to: "        // Another developer's row with its branch, commit and heartbeat",
     test: `${SERVER}/test/session-reaper.test.ts`,
     because:
       "doctor's `unclosed sessions` line WARNs from a developer's first " +
@@ -11712,8 +11714,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the why names the oldest work, not the latest",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "      desc(agentSessions.startedAt),\n      desc(workContexts.createdAt),",
-    to: "      agentSessions.startedAt,\n      desc(workContexts.createdAt),",
+    from: "      sql`(case when ${visible} then ${agentSessions.startedAt} end) DESC NULLS LAST`,",
+    to: "      sql`(case when ${visible} then ${agentSessions.startedAt} end) ASC NULLS LAST`,",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a teammate's first attempt at the file is named, not the work that landed",
   },
@@ -11851,7 +11853,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a session that only touched the file after the commit wins",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "      sql`coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false) DESC`,",
+    from: "      sql`(${visible} AND coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false)) DESC`,",
     to: "      sql`1`,",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a follow-up begun just before the commit takes the credit for the work that made it",
@@ -11859,8 +11861,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an opted-out teammate's live work is shown",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "          visiblePresenceCondition(callerDeveloperId, agentSessions.developerId),",
-    to: "          sql`true`,",
+    from: "            not(visible),\n            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n",
+    to: "            not(visible),\n",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "an unasked stop reveals what a teammate who switched presence off is doing right now",
   },
@@ -11908,7 +11910,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a follow-up within the flush hour takes the credit",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "      sql`coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false) DESC`,",
+    from: "      sql`(${visible} AND coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false)) DESC`,",
     to: "      sql`1`,",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "work touched half an hour after the commit is named as the work behind it",
@@ -11924,8 +11926,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a just-ended opted-out session is hidden as if live",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "          isNotNull(agentSessions.endedAt),",
-    to: "          sql`false`,",
+    from: "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n          ),\n        ),",
+    to: "            or(sql`false`, lte(agentSessions.lastHeartbeatAt, live)),\n          ),\n        ),",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "an opted-out teammate's finished work goes unnamed for the presence window after every session",
   },
@@ -16603,17 +16605,20 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/coverage.ts`,
     // Re-pointed by the final review: a hidden gap now withholds gapSince
     // whole instead of filtering it, which stated a later start than the truth.
-    from: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;",
-    to: "  const isGapSinceWithheld = toCount(row?.hiddenLosses) > 0;",
+    // Re-pointed again by review round 5, M3: withheld while she has any
+    // session on the repo; the mutant withholds for her loss alone.
+    from: "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n",
+    to: "  const gapSince = (lost > toldLost)\n",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "get_diagnosis prints when an opted-out claim author last ran an agent",
   },
   {
     label: "an opted-out session's loss dates the agent rung's gap",
     file: `${SERVER}/src/services/coverage.ts`,
-    // Re-pointed by the final review, for the same reason.
-    from: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;",
-    to: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0;",
+    // Re-pointed by the final review, for the same reason, and by review
+    // round 5, M3: the mutant withholds for her gap alone.
+    from: "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n",
+    to: "  const gapSince = (gaps > toCount(row?.toldGaps))\n",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "an opted-out teammate's machine ledger dates the gap every teammate reads",
   },
@@ -17417,7 +17422,7 @@ export const MUTATIONS: readonly Mutation[
     // one branch minutes apart. A topic is the branch, not the session.
     label: "every session on one branch is its own topic again",
     file: `${CORE}/src/briefing/topic-group.ts`,
-    from: "  topics: [...bucket(rows, (row) => row.topic)]",
+    from: "  topics: [...bucket(rows, (row) => row.topicKey)]",
     to: "  topics: [...bucket(rows, (row) => row.sessionKey)]",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
@@ -17487,8 +17492,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "every topic keeps the repo label the whole listing repeats",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "    suffix !== null && title.endsWith(suffix)",
-    to: "    false",
+    from: "  return suffix !== null && title.endsWith(suffix)",
+    to: "  return false",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "each topic line spends the title cap on ` @ monorepo`, the one word the " +
@@ -17559,8 +17564,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "status groups teammates through the prose sanitizer instead of the bare one",
     file: `${CLI}/src/cli/status.ts`,
-    from: "groupTeammates(presence.data, now, bareUntrusted)",
-    to: "groupTeammates(presence.data, now)",
+    from: "groupTeammates(presence, now, bareUntrusted)",
+    to: "groupTeammates(presence, now)",
     test: `${CLI}/test/status-intent.test.ts`,
     because:
       "a display name carrying ` · ` mints a field on a line whose fields are " +
@@ -17602,7 +17607,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "detached sessions are one topic per sha again",
     file: `${CORE}/src/git/detached-branch.ts`,
-    from: "  branch === UNNAMED_HEAD_BRANCH || branch.startsWith(DETACHED_BRANCH_PREFIX);",
+    from: "  branch === UNNAMED_HEAD_BRANCH || DETACHED_REF_PATTERN.test(branch);",
     to: "  false;",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
@@ -17612,8 +17617,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a detached title is keyed by its sha",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  return isDetachedBranch(fromTitle) ? DETACHED_TOPIC : fromTitle;",
-    to: "  return fromTitle;",
+    from: "  return isDetachedTitleHead(head)",
+    to: "  return false",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "an older hub's detached rows, and detached sessions whose title could " +
@@ -17622,8 +17627,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "presence keys a detached session by its sha",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  const branch = isDetachedBranch(entry.branch) ? DETACHED_TOPIC : clean(entry.branch);",
-    to: "  const branch = clean(entry.branch);",
+    from: "  const detached = isDetachedBranch(entry.branch);",
+    to: "  const detached = false;",
     test: `${CORE}/test/briefing-presence-topics.test.ts`,
     because:
       "a teammate live in three detached worktrees prints three shas as three " +
@@ -17632,8 +17637,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub drops the session's branch from the listing",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    branch: row.branch,\n",
-    to: "",
+    from: "      developerContextCount: row.developerContextCount,\n      branch: row.branch,\n",
+    to: "      developerContextCount: row.developerContextCount,\n",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "the connector has only the titles to group by, and free-form titles on " +
@@ -17644,8 +17649,8 @@ export const MUTATIONS: readonly Mutation[
     // teammate's connector registered, a hostile hub can rewrite.
     label: "the session's branch reaches the briefing unsanitized",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "    return sanitizeUntrusted(context.branch);",
-    to: "    return context.branch;",
+    from: "    return { key: branchKey(context.branch), label: sanitizeUntrusted(context.branch) };",
+    to: "    return { key: branchKey(context.branch), label: context.branch };",
     test: `${CORE}/test/injection-corpus.test.ts`,
     because:
       "a branch carrying « » or a newline closes the topic frame early and " +
@@ -17654,7 +17659,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a topic is called by its branch even when every session shares one title",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  return titles.size === 1 && shared !== undefined && shared.length > 0",
+    from: "  return titles.size === 1 && shared.length > 0",
     to: "  return false",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
@@ -17664,8 +17669,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "one session's title speaks for a topic whose sessions disagree",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  const titles = new Set(topic.rows.map((row) => row.titleLabel));",
-    to: "  const titles = new Set(topic.rows.slice(0, 1).map((row) => row.titleLabel));",
+    from: "  const titles = new Set(topic.rows.map((row) => row.titleHead));",
+    to: "  const titles = new Set(topic.rows.slice(0, 1).map((row) => row.titleHead));",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "three subagents with three different tasks on one branch are labelled " +
@@ -21884,6 +21889,1503 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mark-cli.test.ts`,
     because: "the person at a terminal is refused and cannot see which variable made their terminal the agent's",
   },
+  {
+    // Review finding 8: the row's branch is the session's CURRENT branch,
+    // presence-class data on a listing presence opt-out did not cover.
+    label: "an opted-out teammate's live branch reaches the work-context listing",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  branch: \"omit\",\n",
+    to: "",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "a teammate who opted out of presence re-registers on feat/acquisition-talks " +
+      "and every colleague's briefing says so, while presence shows nothing",
+  },
+  {
+    // Review finding 9: grouping ran on the SANITIZED label.
+    label: "topics are grouped on their sanitized label again",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  topics: [...bucket(rows, (row) => row.topicKey)]",
+    to: "  topics: [...bucket(rows, (row) => row.label)]",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "feat/config-override and fix/override-cache merge under one redaction, and " +
+      "the blocked one's status speaks for the branch that is not blocked",
+  },
+  {
+    label: "a branch literally named detached joins the detached-HEAD topic",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "const DETACHED_KEY = \"detached-head\";",
+    to: "const DETACHED_KEY = \"branch:detached\";",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "a real branch's sessions are folded into the anonymous worktree pile and " +
+      "the branch disappears from the teammate's entry",
+  },
+  {
+    label: "a topic's title rule compares sanitized titles instead of raw ones",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const titles = new Set(topic.rows.map((row) => row.titleHead));",
+    to: "  const titles = new Set(topic.rows.map((row) => row.titleLabel));",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "two sessions whose different titles both redact read as agreeing, and the " +
+      "topic prints the redaction instead of the branch they share",
+  },
+  {
+    label: "the presence line hides a blocked branch behind the freshest one's status",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    .filter((topic) => topic.status === BLOCKED_STATUS)",
+    to: "    .filter(() => false)",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "a teammate stuck on fix/prod-outage reads `status analyzing` because a " +
+      "fresher session on another branch is still analyzing",
+  },
+  {
+    // The status block's corpus walk (review LOW): its topic lines print the
+    // grouped label, never the raw branch the hub sent.
+    label: "status prints a teammate's raw branch on a topic line",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    topic.label,\n    topic.status,",
+    to: "    topic.rows[0]?.entry.branch ?? \"\",\n    topic.status,",
+    test: `${CLI}/test/status-teammates-corpus.test.ts`,
+    because:
+      "a branch carrying « », a newline or ` · ` reaches the terminal raw and " +
+      "mints a frame, a line or a field of its own",
+  },
+  {
+    // Review H1: "own" drafts quote teammates (a ghost draft is a teammate's
+    // plan). Merged with the drafts branch, a briefing of own drafts ALONE
+    // heads that block with OWN_DRAFTS_QUOTED_DATA_NOTICE ("it may quote
+    // teammates") instead; any briefing with more keeps this notice.
+    label: "the briefing header drops the quoted-data notice",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}.${ownDraftsOnly ? \"\" : ` ${QUOTED_DATA_NOTICE}`}`;",
+    to: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}.`;",
+    test: `${CORE}/test/briefing-notice.test.ts`,
+    because:
+      "a drafts-only briefing frames a teammate's live plan in « » with nothing " +
+      "telling the agent the quoted text is data and not instruction",
+  },
+  {
+    // Review M1: the connector's fallback title `<branch> @ <repo>` IS the
+    // branch an opted-out developer's teammates are not told.
+    label: "an opted-out teammate's fallback title reaches other viewers",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "    (p.owner.titleFacts === undefined ||\n      isLocationTitle({ title: value, ...p.owner.titleFacts, branches: p.reportedBranches }));",
+    to: "    false;",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "Robin opts out and re-registers on feat/acquisition-talks; her context " +
+      "titled `feat/acquisition-talks @ api` says so to every colleague",
+  },
+  {
+    // Review M2: `baseCommit` is `rev-parse HEAD` of the live branch.
+    label: "an opted-out teammate's base commit reaches other viewers",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  baseCommit: \"omit\",\n",
+    to: "",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "the listing and every diagnosis hand colleagues the HEAD of the branch " +
+      "an opted-out developer is on, which names it as surely as the branch",
+  },
+  {
+    label: "an opted-out author's claim commit reaches other viewers",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  observedAtCommit: \"null\",\n",
+    to: "",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "a claim filed without its own commit is bound to the session's base, so " +
+      "its validity record carries the author's HEAD to every reader",
+  },
+  {
+    label: "a withheld claim commit reads as a claim recorded against no commit",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "    return \"its commit is not shared with you, so it cannot be checked against the code\";",
+    to: "    return \"recorded against no commit, so it cannot be checked against the code\";",
+    test: `${CORE}/test/claim-validity-render.test.ts`,
+    because:
+      "get_diagnosis tells the reader a teammate's claim was never bound to the " +
+      "code when it was, and its commit was only withheld from them",
+  },
+  {
+    // Review M3: suspect keeps the colliding row and drops its live fields.
+    label: "suspect names an opted-out teammate's live branch and last activity",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "      return projectRow(\n        hidden,\n        {\n          developerId: row.developerId,",
+    to: "      return projectRow(\n        new Set<string>(),\n        {\n          developerId: row.developerId,",
+    test: `${SERVER}/test/presence-optout.test.ts`,
+    because:
+      "GET /api/suspect with the path-only falsifier hands any colleague the " +
+      "branch an opted-out developer is on and when they were last there",
+  },
+  {
+    label: "the open-session listing shows an opted-out teammate's live session",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "          : visiblePresenceCondition(developerId, agentSessions.developerId),",
+    to: "          : undefined,",
+    test: `${SERVER}/test/presence-optout.test.ts`,
+    because:
+      "GET /api/sessions?open=1 lists every developer's branch and heartbeat, " +
+      "the presence block's content under another route",
+  },
+  {
+    label: "a withheld last-active reads as a hub that lost it",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from: "  iso === LOCATION_WITHHELD ? LOCATION_WITHHELD : ageOf(iso, now);",
+    to: "  ageOf(iso, now);",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "crosscheck suspect prints `last active unknown` for a teammate who chose " +
+      "not to share it, so the reader distrusts the hub instead",
+  },
+  // The live-location guard walks every GET route the app registers as a
+  // colleague of an opted-out developer. Each anchor below drops the
+  // withholding on ONE surface, and the guard — not a per-route test
+  // somebody had to remember to write — is the test that must fail.
+  {
+    label: "search names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "      projectRow(hidden, {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    to: "      projectRow(new Set<string>(), {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "search_related_work hands a colleague `feat/robin-relocates-to-zurich " +
+      "@ api` — the branch the listing withholds, under another field name",
+  },
+  {
+    label: "the conference names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    projectRow(hidden, { developerId: row.developerId, titleFacts:",
+    to: "    projectRow(new Set<string>(), { developerId: row.developerId, titleFacts:",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "crosscheck conference prints every recent context's title, so an " +
+      "opted-out teammate's live branch is one command away",
+  },
+  {
+    label: "a diagnosis names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    workContext: projectRow(\n      hidden,\n      owner,",
+    to: "    workContext: projectRow(\n      new Set<string>(),\n      owner,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "get_diagnosis, GET /api/work-contexts/:id and the /ui work-context page " +
+      "all title the tree with the branch its owner withheld",
+  },
+  {
+    label: "a referee brief names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/referee.ts`,
+    from: "      projectRow(hidden, {\n        developerId: row.ownerDeveloperId,",
+    to: "      projectRow(new Set<string>(), {\n        developerId: row.ownerDeveloperId,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "get_referee_brief titles each side of a contradiction with its work " +
+      "context, so the opted-out side's live branch rides the brief",
+  },
+  {
+    label: "suspect names an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "      return projectRow(\n        hidden,\n        {\n          developerId: row.developerId,",
+    to: "      return projectRow(\n        new Set<string>(),\n        {\n          developerId: row.developerId,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the suspect row withholds `branch` and then prints the same branch as " +
+      "its work-context title one field later",
+  },
+  {
+    label: "hint candidates carry an opted-out teammate's HEAD as base commit",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "          ...projectRow(\n            hidden,",
+    to: "          ...projectRow(\n            new Set<string>(),",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "every prompt hint about an opted-out teammate's work names the commit " +
+      "their live branch sits on",
+  },
+  {
+    label: "solved matches name an opted-out teammate's branch through a fallback title",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "      projectRow(hidden, {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    to: "      projectRow(new Set<string>(), {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the briefing's solved pointer titles an opted-out teammate's solved " +
+      "tree with the branch they were on when they solved it",
+  },
+  {
+    label: "a referee brief carries an opted-out author's HEAD as a claim's commit",
+    file: `${SERVER}/src/services/referee.ts`,
+    from: "    validity: projectRow(\n      hidden,\n      { developerId: loaded.view.authorDeveloperId, kind: \"claim_validity\" },",
+    to: "    validity: projectRow(\n      new Map(),\n      { developerId: loaded.view.authorDeveloperId, kind: \"claim_validity\" },",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "a claim bound to its session's base names the author's live HEAD, and " +
+      "the brief prints each side's validity for both developers",
+  },
+  {
+    label: "hint candidates carry an opted-out author's HEAD as a claim's commit",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      projectRow(hidden, { developerId: claim.authorDeveloperId, kind: \"claim\" }, claim),",
+    to: "      claim,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the hint the reader's prompt is shown about an opted-out teammate's " +
+      "claim names the commit that teammate's branch sits on",
+  },
+  {
+    label: "a solved pointer carries an opted-out author's HEAD as its root cause's commit",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: \"claim_validity\" }, validity);",
+    to: "            : validity;",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the solved pointer's root-cause validity carries the commit the " +
+      "opted-out teammate's session was on when they found it",
+  },
+  {
+    // Review L3: `detached@<hex sha>` exactly, never a prefix.
+    label: "a branch named detached@release folds into the detached-HEAD topic",
+    file: `${CORE}/src/git/detached-branch.ts`,
+    from: "  branch === UNNAMED_HEAD_BRANCH || DETACHED_REF_PATTERN.test(branch);",
+    to: "  branch === UNNAMED_HEAD_BRANCH || branch.startsWith(DETACHED_BRANCH_PREFIX);",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "somebody's real `detached@release` branch prints as `<detached HEAD>`, " +
+      "merged with every worktree session on the repo",
+  },
+  {
+    label: "a detached title with a commit subject splits from the detached-HEAD topic",
+    file: `${CORE}/src/git/detached-branch.ts`,
+    from: "  isDetachedBranch(head.split(DETACHED_SUBJECT_SEPARATOR, 1)[0] ?? head);",
+    to: "  isDetachedBranch(head);",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "an older hub's detached row titled `detached@<sha> · <subject>` becomes " +
+      "a topic of its own once the ref is matched exactly",
+  },
+  {
+    label: "a branch can print the renderer's detached-HEAD label",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "export const DETACHED_TOPIC = \"<detached HEAD>\";",
+    to: "export const DETACHED_TOPIC = \"detached HEAD\";",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "a connector that reports the branch `detached HEAD` prints exactly what " +
+      "the renderer prints for a detached worktree",
+  },
+  {
+    label: "session-start reads detached@release as a detached HEAD on the default branch",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  if (isDetachedBranch(branch)) {",
+    to: "  if (branch.startsWith(\"detached@\") || branch === \"HEAD\") {",
+    test: `${CONNECTOR}/test/solved-hook.test.ts`,
+    because:
+      "a session on a branch named `detached@release` is treated as sitting " +
+      "on the default branch, and its landed changes go unmarked",
+  },
+  {
+    // Review L4: the key namespace and the tie-breaks had no anchor.
+    label: "a branch named detached-head joins the detached-HEAD topic",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "const branchKey = (rawBranchOrTitle: string): string => `branch:${rawBranchOrTitle}`;",
+    to: "const branchKey = (rawBranchOrTitle: string): string => rawBranchOrTitle;",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "without the `branch:` namespace a branch key can equal the detached " +
+      "topic's own key, and a real branch is merged into `<detached HEAD>`",
+  },
+  {
+    label: "topics alike in activity print in the order the hub sent them",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  compareText(left.label, right.label) ||\n  compareText(left.key, right.key);",
+    to: "  compareText(left.label, right.label);",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "two topics that redact alike swap places between briefings, so which " +
+      "status belongs to which line depends on row order the reader never sees",
+  },
+  {
+    label: "topics alike in activity are ordered by raw key over what the reader sees",
+    file: `${CORE}/src/briefing/topic-group.ts`,
+    from: "  compareText(left.label, right.label) ||",
+    to: "  0 ||",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "equal topics sort by an internal key the reader cannot see, so the " +
+      "printed order looks arbitrary next to the labels it shows",
+  },
+  {
+    label: "the briefing-topics corpus never reaches the blocked-on slot",
+    file: `${CORE}/src/render-surfaces.ts`,
+    from: "            ...(index === 0 ? { status: \"blocked\" } : {}),",
+    to: "",
+    test: `${CORE}/test/briefing-presence-topics.test.ts`,
+    because:
+      "\"blocked on <label>\" prints teammate branch text on the presence line " +
+      "and the injection corpus never attacks it",
+  },
+  {
+    // Review L5: every line still matches SOME allowed shape, so only a
+    // test that requires the single-line shape notices it is gone.
+    label: "crosscheck status prints a one-topic teammate in the multi-topic shape",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  if (group.topics.length === 1 && only !== undefined) {",
+    to: "  if (false && only !== undefined) {",
+    test: `${CLI}/test/status-teammates-corpus.test.ts`,
+    because:
+      "the corpus never attacks the single-line shape, and a teammate on one " +
+      "branch prints as `1 topic, 1 session` over a topic line",
+  },
+  {
+    // Round 3: ONE projection (services/live-location.ts) — the vocabulary
+    // entry is what withholds the field on every row that carries it.
+    label: "the conference tells a colleague when an opted-out teammate was last active",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  lastActiveAt: \"marker\",\n",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "crosscheck conference prints `last active 4m ago` beside an opted-out " +
+      "teammate's context, which is when she was there",
+  },
+  {
+    label: "the conference report reads a withheld last activity as an unreadable time",
+    file: `${CORE}/src/conference/report.ts`,
+    from: "  if (iso === LOCATION_WITHHELD) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/conference-report.test.ts`,
+    because:
+      "the report says the hub sent a time it could not read, when the " +
+      "teammate chose not to share it",
+  },
+  {
+    // Review round 3, H1: the inbox titles a question with its CONTEXT.
+    label: "the questions inbox titles an opted-out teammate's context with her branch",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "          ...projectRow(hidden, {\n            developerId: row.contextOwnerId,\n            titleFacts: {\n",
+    to: "          ...projectRow(new Map(), {\n            developerId: row.contextOwnerId,\n            titleFacts: {\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a teammate asks Nick about Robin's context and the briefing's " +
+      "Questions for you prints «feat/robin-relocates-to-zurich @ api»",
+  },
+  {
+    // Review round 3, survivor A: no test seeded a question on her context.
+    label: "the conference titles a question with an opted-out teammate's branch",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "          ...projectRow(hidden, {\n            developerId: row.contextOwnerId,\n            titleFacts: { repo, branch: row.contextBranch,",
+    to: "          ...projectRow(new Map(), {\n            developerId: row.contextOwnerId,\n            titleFacts: { repo, branch: row.contextBranch,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "crosscheck conference lists open questions under the title of the " +
+      "context they are about, which for a fallback title is the branch",
+  },
+  {
+    // Review round 3, H2: an ended session's work is published, its
+    // author's whereabouts are not.
+    label: "the landed stop names an opted-out teammate's branch and when she started",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "        ...projectRow(hidden, {\n          developerId: found.developerId,",
+    to: "        ...projectRow(new Map(), {\n          developerId: found.developerId,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the PreToolUse stop at Robin's landed change prints her fallback title " +
+      "and the instant her session began, before Nick edits the file",
+  },
+  {
+    label: "a landed stop says when an opted-out teammate's session started",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  workStartedAt: \"marker\",\n",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "workStartedAt is the moment her session began, which is when she " +
+      "arrived at that work — a heartbeat by another name",
+  },
+  {
+    label: "the landed stop reads a withheld start time as unknown",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  if (iso === LOCATION_WITHHELD) {\n    return `start time ${LOCATION_WITHHELD}`;",
+    to: "  if (false) {\n    return `start time ${LOCATION_WITHHELD}`;",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because:
+      "the stop says the hub could not tell when the work started, when its " +
+      "author chose not to share it",
+  },
+  {
+    label: "the connector drops a withheld start time before the stop can say so",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    .union([z.literal(LOCATION_WITHHELD), z.iso.datetime({ offset: true })])",
+    to: "    .union([z.iso.datetime({ offset: true }), z.iso.datetime({ offset: true })])",
+    test: `${CORE}/test/landed-why-render.test.ts`,
+    because:
+      "the marker fails the datetime parse, is caught to undefined, and the " +
+      "stop prints `started at an unknown time` after all",
+  },
+  {
+    // Review round 3, H3: the pilot surfaces title what was delivered.
+    label: "crosscheck pilot label names an opted-out teammate's context by its branch",
+    file: `${SERVER}/src/services/pilot-candidates.ts`,
+    from: "            ...projectRow(hidden, {\n              developerId: row.owner_developer_id,",
+    to: "            ...projectRow(new Map(), {\n              developerId: row.owner_developer_id,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the label walk shows Nick the hint he was given under Robin's " +
+      "fallback title, which is the branch she is on",
+  },
+  {
+    label: "the pilot report's prior work names an opted-out teammate's context by its branch",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    projectRow(hidden, {\n      developerId: row.owner_developer_id,",
+    to: "    projectRow(new Set<string>(), {\n      developerId: row.owner_developer_id,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the report carries no person by design, then titles the work its " +
+      "readers opened with the branch of the teammate who did it",
+  },
+  {
+    // Review round 3, M1: when she last touched her work is where she was.
+    label: "every work-context read carries an opted-out teammate's last update",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  updatedAt: \"null\",\n",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the listing, the diagnosis, search and hint candidates hand colleagues " +
+      "the instant Robin last touched her context",
+  },
+  {
+    label: "a colleague's windows and orders follow an opted-out teammate's last touch",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "then ${updatedAt} else null end)`",
+    to: "then ${updatedAt} else ${updatedAt} end)`",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "with updatedAt withheld, a since= window or a freshest-first order " +
+      "still says she touched the work, by admitting it or putting it first",
+  },
+  {
+    label: "the listing's since= window admits an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "          : [gte(contextActivityAt, window.since), gte(activity, window.since)]),",
+    to: "          : [gte(contextActivityAt, window.since)]),",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a since= one minute ago lists Robin's context exactly when she has " +
+      "touched it in the last minute — her heartbeat, read off a filter",
+  },
+  {
+    label: "the listing ranks an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))",
+    to: "    .orderBy(sql`${contextRankPerDeveloper(contextActivityAt)} ASC`, desc(contextActivityAt), asc(workContexts.id))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the context she is on now leads her rows, which names it as surely as " +
+      "its updatedAt would",
+  },
+  {
+    label: "search's since= window admits an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "          sql`${activityFor(scope)} >= ${scope.since.toISOString()}::timestamptz`,",
+    to: "          sql`true`,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "search_related_work with since= returns her context only when she " +
+      "touched it inside the window",
+  },
+  {
+    label: "the conference windows an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    gte(activitySeenByReader(viewerDeveloperId), cutoff),\n",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a context of hers created a quarter ago enters the fortnight's report " +
+      "the moment she touches it again",
+  },
+  {
+    label: "the conference ranks an opted-out teammate's work by her last touch",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    .orderBy(desc(activitySeenByReader(viewerDeveloperId)), asc(workContexts.id))",
+    to: "    .orderBy(desc(activityExpression), asc(workContexts.id))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the report's first context of hers is the one she is on now",
+  },
+  {
+    // Review round 3, H4 + L1: the connector SAYS how it wrote the title.
+    label: "a host-marked title is withheld as if it were the branch",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    return facts.titleSource === \"fallback\";",
+    to: "    return true;",
+    test: `${SCHEMA}/test/fallback-title.test.ts`,
+    because:
+      "a host title that merely ends in ` @ api` — «Fix the 500 on POST /login " +
+      "@ api» — reads «untitled work» to every colleague",
+  },
+  {
+    label: "an unmarked bare-branch title on a local repo reaches colleagues",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    (facts.branch !== null && facts.title === facts.branch) ||",
+    to: "    false ||",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a no-remote repo's fallback is the bare branch, with no ` @ <label>` " +
+      "for the shape rule to spot",
+  },
+  {
+    // Review round 3, survivor I.
+    label: "an unmarked detached title reaches colleagues",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    DETACHED_TITLE_HEAD.test(facts.title)",
+    to: "    false",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "`detached@<sha> · <subject>` on a local repo names her HEAD, and no " +
+      "label marks it as a fallback",
+  },
+  {
+    label: "the hub drops the connector's title marker on ingest",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        titleSource: body.titleSource ?? null,",
+    to: "        titleSource: null,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "every marked host title is stored unmarked and judged by its shape " +
+      "again, so ` @ api` endings are withheld after all",
+  },
+  {
+    label: "an unmarked rename keeps a stale host marker",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      body.titleSource ?? (body.title === current.title ? current.titleSource : null),",
+    to: "      body.titleSource ?? current.titleSource,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "an older connector renames a host-titled context to its branch, and " +
+      "the old `host` vouches for a title nobody marked",
+  },
+  {
+    label: "the projection ignores the title marker",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "isLocationTitle({ title: value, ...p.owner.titleFacts, branches: p.reportedBranches })",
+    to: "isLocationTitle({ title: value, ...p.owner.titleFacts, titleSource: null, branches: p.reportedBranches })",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the marker is stored and never read, so a host title is judged by its " +
+      "shape on every surface",
+  },
+  {
+    label: "a Claude session title uploads marked as the connector's fallback",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  sanitizeSessionTitle(sessionTitle) === null ? \"fallback\" : \"host\";",
+    to: "  sanitizeSessionTitle(sessionTitle) === null ? \"fallback\" : \"fallback\";",
+    test: `${CONNECTOR}/test/detached-title.test.ts`,
+    because:
+      "the host's own title is withheld from colleagues as if it were the " +
+      "branch, the over-withholding the marker exists to end",
+  },
+  {
+    label: "the connector's work-context records drop the title marker",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "      ...(input.titleSource === undefined ? {} : { titleSource: input.titleSource }),",
+    to: "",
+    test: `${CONNECTOR}/test/detached-title.test.ts`,
+    because:
+      "no connector ever tells the hub how a title was written, and every " +
+      "row is judged by its shape",
+  },
+  {
+    label: "PostToolUse recovery uploads its fallback title unmarked",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "          titleSource: \"fallback\",",
+    to: "",
+    test: `${CONNECTOR}/test/detached-title.test.ts`,
+    because:
+      "a session whose hooks were installed mid-way uploads its branch as " +
+      "a title the hub can only guess at",
+  },
+  {
+    label: "the derived-intent update drops the title's marker",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "      titleSource: fresh.workContextTitleSource ?? undefined,\n",
+    to: "",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because:
+      "every intent update re-sends the title without saying how it was " +
+      "written, and the hub's marker rides on the title staying unchanged",
+  },
+  {
+    label: "set_intent drops the title's marker",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "    ...(own.workContextTitleSource === null ? {} : { titleSource: own.workContextTitleSource }),",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "a declared intent lands on a context whose host title the hub then " +
+      "judges by its shape",
+  },
+  {
+    // Review round 3, M2: landedAt was an oracle for a hidden owner's HEAD.
+    label: "a colleague's landed evidence marks an opted-out teammate's work landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "        visiblePresenceCondition(developerId, agentSessions.developerId),",
+    to: "",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Nick reports a guessed sha as landed and reads Robin's HEAD off " +
+      "whether her context's landedAt flips",
+  },
+  {
+    // Review round 3, L4: SHA-256 repositories name commits in 64 hex digits.
+    label: "a SHA-256 repository's detached HEAD is read as a branch",
+    file: `${CORE}/src/git/detached-branch.ts`,
+    from: "const FULL_SHA_HEX = 64;",
+    to: "const FULL_SHA_HEX = 40;",
+    test: `${CORE}/test/detached-branch.test.ts`,
+    because:
+      "every worktree session on a SHA-256 repo whose ref git prints in full " +
+      "becomes a topic of its own instead of the one detached-HEAD topic",
+  },
+  // Review round 3, M4: the guard's own survivors. Each is a defect the old
+  // guard walked past; the new one (GET+POST, per-route variants, every
+  // spelling of her location, the route table) must fail on each.
+  {
+    label: "survivor A: the conference titles a question by an opted-out teammate's branch (guard)",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "          ...projectRow(hidden, {\n            developerId: row.contextOwnerId,\n            titleFacts: { repo, branch: row.contextBranch,",
+    to: "          ...projectRow(new Map(), {\n            developerId: row.contextOwnerId,\n            titleFacts: { repo, branch: row.contextBranch,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the guard never seeded a question on her context, so no route it walked " +
+      "carried the conference's question titles",
+  },
+  {
+    label: "survivor I: an unmarked detached title reaches colleagues (guard)",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    DETACHED_TITLE_HEAD.test(facts.title)",
+    to: "    false",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the guard seeded no local repo and no detached title, so a rule that " +
+      "skipped them could not be seen",
+  },
+  {
+    label: "survivor K: a new GET route leaks raw titles only when asked with ?ref= (guard)",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "  router.get(\"/:id\", async (c) => {",
+    to:
+      "  router.get(\"/by-ref\", async (c) => {\n" +
+      "    if (c.req.query(\"ref\") === undefined) return ok(c, { titles: [] });\n" +
+      "    const { workContexts: table } = await import(\"../db/schema.ts\");\n" +
+      "    return ok(c, { titles: await deps.db.select({ title: table.title }).from(table) });\n" +
+      "  });\n" +
+      "  router.get(\"/:id\", async (c) => {",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "one shared query string never sets ?ref=, so a route that leaks only " +
+      "with it passed; the route table now names every route or fails",
+  },
+  {
+    label: "survivor L: a new POST route leaks raw titles (guard)",
+    file: `${SERVER}/src/routes/landed.ts`,
+    from: "  router.post(\"/authors\", async (c) => {",
+    to:
+      "  router.post(\"/peek\", async (c) => {\n" +
+      "    const { workContexts: table } = await import(\"../db/schema.ts\");\n" +
+      "    return ok(c, { titles: await deps.db.select({ title: table.title }).from(table) });\n" +
+      "  });\n" +
+      "  router.post(\"/authors\", async (c) => {",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the guard walked GET routes only, so any write that answered with " +
+      "rows was never read",
+  },
+  {
+    label: "survivor N: the listing adds a raw last-touch field under a new name (guard)",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "      branch: row.branch,\n    }),\n  );",
+    to: "      branch: row.branch,\n      seenAt: row.workContext.updatedAt?.toISOString() ?? null,\n    }),\n  );",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "the guard's secrets were branch and HEAD only, so an instant of hers " +
+      "under a name the projection does not know passed",
+  },
+  {
+    // Review round 4, C1: the landed stop's commit time is the caller's word.
+    label: "the landed stop compares a caller's commit time with an opted-out teammate's session start",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n",
+    to:
+      "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n" +
+      "            lte(agentSessions.startedAt, startedBy),\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Nick sweeps committedAt and reads Robin's session start back to the " +
+      "second from where the stop starts naming her work",
+  },
+  {
+    // Review round 4, L1: an order that hangs on nothing is a diff.
+    label: "equally fresh work is listed in the order the developer ids happen to sort",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))",
+    to: "    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "two hubs that differ only by something an opted-out teammate did list " +
+      "colleagues' equally fresh rows differently, and the order is the leak",
+  },
+  {
+    // Review round 4, L2: an unmarked bare-branch title names ANY branch she was on.
+    label: "an unmarked title equal to an earlier branch of hers is shown",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    (facts.branches ?? []).includes(facts.title) ||",
+    to: "    false ||",
+    test: `${SCHEMA}/test/fallback-title.test.ts`,
+    because:
+      "her session re-registers on another branch and the title naming the " +
+      "branch she was on reaches every colleague",
+  },
+  {
+    label: "the hub forgets the branches her sessions reported before",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  return branchesOf(db, rows.map((row) => row.id));",
+    to:
+      "  const ids = rows.map((row) => row.id);\n" +
+      "  const current = await db.execute<{ developer_id: string; branch: string }>(sql`SELECT developer_id, branch FROM agent_sessions WHERE developer_id IN ${ids}`);\n" +
+      "  return new Map(ids.map((id) => [id, current.rows.filter((row) => row.developer_id === id).map((row) => row.branch)]));",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "only her sessions' CURRENT branches are known, so a local repo's bare " +
+      "title on the branch she left is published",
+  },
+  // ── Review round 4, A2: withheld by default (H3, M3) ──────────────────
+  {
+    label: "the projection withholds an instant only when its field is named",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (LOCATION_BY_NAME.has(key) || isWithheldShape(key, value)) {",
+    to: "  if (LOCATION_BY_NAME.has(key) || Object.hasOwn(FIELD_FORMS, key)) {",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because:
+      "the denylist again: a field nobody named — a matched target's time, " +
+      "an evidence rung's age — carries her instant to every colleague",
+  },
+  {
+    label: "a field nobody named carries her instant to a colleague's hint",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (LOCATION_BY_NAME.has(key) || isWithheldShape(key, value)) {",
+    to: "  if (LOCATION_BY_NAME.has(key) || Object.hasOwn(FIELD_FORMS, key)) {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the hint about the file she touched says when she touched it, to the " +
+      "second, through a createdAt no vocabulary named",
+  },
+  {
+    label: "a row kind's allowlist shows every instant on the row",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (value === undefined || value === null || p.shown.has(path)) {",
+    to: "  if (value === undefined || value === null || p.shown.size > 0) {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a claim's createdAt being shareable lets its lastSeenAt through too: " +
+      "when she re-observed it",
+  },
+  {
+    label: "a re-observed claim says how often she saw it again",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = { dedupCount: 1 };",
+    to: "const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = {};",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the diagnosis prints «seen 2×» on her claim, and polling it says when " +
+      "her agent was back",
+  },
+  {
+    label: "her work's landing is shown to the instant her session reported it",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "    return [[key, toDay(value)]];",
+    to: "    return [[key, value]];",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "landed evidence about her sessions comes from her own SessionStart only, " +
+      "so landedAt is the second she was at her machine",
+  },
+  {
+    label: "nested rows pass through the projection unread",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  return [[key, isPlainObject(value) ? projectObject({ ...p, path }, value) : value]];",
+    to: "  return [[key, value]];",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because:
+      "an intent's capturedAt, a validity's reading, an evidence rung's age " +
+      "ride one level down and go out as they came in",
+  },
+  {
+    label: "a list keeps the commits it should withhold",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "    if (isWithheldShape(key, item)) {\n      return [];\n    }",
+    to: "    if (false) {\n      return [];\n    }",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "a list of her shas is shipped whole beside fields withheld one by one",
+  },
+  {
+    label: "a hint's matched target says when her session touched the file",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      projectRow(hidden, { developerId: row.developerId, kind: \"target\" }, target, { createdAt: \"null\" }),",
+    to: "      target,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the targets-only pointer prints «touched src/auth/cache.ts 4m ago» about " +
+      "an opted-out teammate (probe-target.ts)",
+  },
+  {
+    label: "a claim on her context is judged by the context's owner, not its author",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "      return projectRow(hidden, { developerId: row.authorDeveloperId, kind: \"claim\" }, view);",
+    to: "      return projectRow(hidden, { developerId: contextRow.ownerDeveloperId, kind: \"claim\" }, view);",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Ken's own claim on Robin's context loses its re-observation, and Robin's " +
+      "claim on a visible teammate's context would keep hers",
+  },
+  {
+    label: "her pin carries the HEAD she verified at and when",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "    ...projectRow(hidden, { developerId: actors.verifiedById }, verification, {",
+    to: "    ...projectRow(new Map(), { developerId: actors.verifiedById }, verification, {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "crosscheck pin list prints her HEAD and the minute she verified (M3)",
+  },
+  {
+    label: "her pin carries the HEAD she verified at and when (guard)",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "    ...projectRow(hidden, { developerId: actors.verifiedById }, verification, {",
+    to: "    ...projectRow(new Map(), { developerId: actors.verifiedById }, verification, {",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the route walk reads GET /api/pins with her pin seeded after the opt-out",
+  },
+  {
+    label: "the pin registry is aged by an opted-out pinner's verification",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "min(${pins.verifiedAt}) filter (where ${visiblePresenceCondition(viewerDeveloperId, pins.verifiedBy)})",
+    to: "min(${pins.verifiedAt})",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the registry's oldestVerifiedAt is her pin's verifiedAt whenever hers is " +
+      "the oldest, and the coverage line prints it",
+  },
+  {
+    label: "a referee brief dates an opted-out author's claim by her evidence",
+    file: `${SERVER}/src/services/referee.ts`,
+    from: "    projectRow(hidden, { developerId: claim.authorDeveloperId, kind: \"claim\" }, claim);",
+    to: "    claim;",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "each side's evidence rung carries the instant her session touched the file",
+  },
+  {
+    label: "a solved pointer dates an opted-out author's root cause by her evidence",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "          return projectRow(\n            hidden,\n            { developerId: cause.authorDeveloperId, kind: \"claim\" },\n            axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES,\n          );",
+    to: "          return axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES;",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the root cause's evidence rung carries the instant her session touched the file",
+  },
+  {
+    label: "the conference quotes an opted-out author's claim with the age of her evidence",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    projectRow(hidden, { developerId: row.authorDeveloperId, kind: \"claim\" }, {\n      id: row.id,",
+    to: "    projectRow(new Map(), { developerId: row.authorDeveloperId, kind: \"claim\" }, {\n      id: row.id,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because:
+      "crosscheck conference reads her ruled-out approach at standup with the " +
+      "instant her agent saw the failure it cites",
+  },
+  // ── Review round 4, A2: a revalidation is its REPORTER's (H3) ─────────
+  {
+    label: "a teammate's claim carries the ref an opted-out reporter re-checked it at",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "        refCommit: told ? row.refCommit : null,",
+    to: "        refCommit: row.refCommit,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "her pull re-checks Nick's claim against her clone, and the ref it read " +
+      "says which commit her checkout sat on",
+  },
+  {
+    label: "a teammate's claim carries the ref an opted-out reporter re-checked it at (guard)",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "        refCommit: told ? row.refCommit : null,",
+    to: "        refCommit: row.refCommit,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the referee brief prints Nick's position with the reading her pull took",
+  },
+  {
+    label: "a teammate's claim says when an opted-out reporter re-checked it",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "        revalidatedAt: told ? row.revalidatedAt : null,",
+    to: "        revalidatedAt: row.revalidatedAt,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "lastRevalidatedAt is the second her agent pulled the tree",
+  },
+  {
+    label: "a teammate's own reading of her claim is withheld as if it were hers",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  claim: [\"createdAt\", \"validity.touchingCommits\", \"validity.refCommit\", \"validity.lastRevalidatedAt\"],",
+    to: "  claim: [\"createdAt\", \"validity.touchingCommits\"],",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "Nick re-checks Robin's claim against his own clone and is then told " +
+      "his own reading is withheld (presence opt-out)",
+  },
+  // ── Review round 4, H4: a withheld title is not in the search index ───
+  {
+    label: "the search index keeps an opted-out teammate's fallback title",
+    file: `${SERVER}/src/services/normalized-doc.ts`,
+    from: "    title: (await isTitleWithheldFromIndex(db, workContextId)) ? \"\" : context.title,",
+    to: "    title: context.title,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "a colleague searches a guessed branch and is shown her work, the page " +
+      "withholding the very title the index matched (probe-search-guess.ts)",
+  },
+  {
+    label: "opting out leaves the docs built before it in the index",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "  const rebuilt = await reindexLocationTitles(deps.db, developerId);",
+    to: "  const rebuilt: readonly string[] = [];",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "every context she wrote before the toggle stays searchable by its " +
+      "branch, which is all of them on the day she opts out",
+  },
+  {
+    label: "the search index forgets a developer opted back in",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (row === undefined || !row.optedOut) {",
+    to: "  if (row === undefined) {",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "every fallback title is kept out of search whoever wrote it, and an " +
+      "opt-in never brings hers back",
+  },
+  // ── Review round 4, H2: commit evidence by TOLD collectors only ───────
+  {
+    label: "the git rung is dated by an opted-out collector's SessionStart",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      toldNewest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      toldNewest: sql`max(${commitEvidence.collectedAt})`,",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "every coverage record's git observedAt is the second her session " +
+      "started, whenever hers is the newest report",
+  },
+  {
+    label: "the git rung is dated by an opted-out collector's SessionStart (guard)",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      toldNewest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      toldNewest: sql`max(${commitEvidence.collectedAt})`,",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "every route that carries coverage carries her SessionStart",
+  },
+  {
+    label: "an absence finding says when an opted-out collector's session started",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      evidenceCollectedAt: row.isToldCollector ? row.collectedAt.toISOString() : LOCATION_WITHHELD,",
+    to: "      evidenceCollectedAt: row.collectedAt.toISOString(),",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because:
+      "the briefing's «commit evidence 5d old» and each finding's " +
+      "evidenceCollectedAt are her SessionStart",
+  },
+  {
+    label: "an opted-out collector's report is refused where a told one's stands",
+    file: `${SERVER}/src/services/commit-evidence.ts`,
+    from: "          setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at`,",
+    to: "          setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at AND NOT exists (select 1 from developers d where d.id = excluded.reported_by and d.presence_opt_out)`,",
+    test: `${SERVER}/test/commit-evidence-opt-out.test.ts`,
+    because:
+      "Ken's commit an hour ago is known only from her SessionStart; dropping " +
+      "her report leaves Nick's four-day-old row, and Ken reads as reported (C1)",
+  },
+  // ── Review round 4, H1: a hidden session is counted, never named ──────
+  {
+    label: "coverage names how an opted-out teammate's session went quiet",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  if (toCount(row?.toldGaps) === 0 && toldLost === 0) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because:
+      "get_diagnosis of her context names her session, and «session_silent» or " +
+      "«telemetry_lost» says what happened to it",
+  },
+  {
+    label: "a told session's gap is reported as an opted-out teammate's reap",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      toldReaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null and ${isTold})`,",
+    to: "      toldReaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because:
+      "reap-over-silence precedence picks her session's reap over Nick's own " +
+      "silence, which says hers was reaped",
+  },
+  {
+    label: "the coverage line drops the word for a withheld session",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  row.withheld === true ? WITHHELD_GAP_LABEL : (INCOMPLETE_LABELS[row.reason] ?? null);",
+    to: "  row.withheld === true ? null : (INCOMPLETE_LABELS[row.reason] ?? null);",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "«went quiet» with no word reads as a teammate's ordinary silence, and " +
+      "the reader cannot tell the rung counted a session it may not name",
+  },
+  // ── Review round 4, H5: the guard's survivors (guard-mutations.ts) ────
+  // Each plants her heartbeat on the diagnosis route in a spelling the old
+  // guard could not see; the hardened guard must go red on every one.
+  {
+    label: "guard survivor HDR: her heartbeat in a response header",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ t: s0.lastHeartbeatAt }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; c.header(\"x-last-seen\", own?.t?.toISOString() ?? \"\"); }\n    return ok(c, diagnosis);",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "a header carries the second her session last spoke, and the old guard read bodies only",
+  },
+  {
+    label: "guard survivor PG: her heartbeat in Postgres text form",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ t: s0.lastHeartbeatAt }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, seen: `${(own?.t?.toISOString() ?? \"\").replace(\"T\", \" \").slice(0, 19)}+00` }); }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "«2026-07-24 10:10:45+00» is the same instant, and the old guard matched ISO only",
+  },
+  {
+    label: "guard survivor AGE: seconds since her heartbeat",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ t: s0.lastHeartbeatAt }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, idleSeconds: Math.round((deps.now().getTime() - (own?.t?.getTime() ?? 0)) / 1000) }); }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "an age is an instant given the read's clock, and the old guard matched instants only",
+  },
+  {
+    label: "guard survivor MIN: her heartbeat to the minute",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ t: s0.lastHeartbeatAt }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, seenAround: (own?.t?.toISOString() ?? \"\").slice(0, 16) }); }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "«10:10» says when she was there to the minute, and the old guard matched the second",
+  },
+  {
+    label: "guard survivor PARAM: her branch behind a new ?verbose=1",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    if (c.req.query(\"verbose\") === \"1\") { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ b: s0.branch }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, branch: own?.b }); }\n    return ok(c, diagnosis);",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "a parameter no variant sends is a branch no walk reads, and the old table was hand-written",
+  },
+  {
+    label: "guard control CTRL: her raw branch on every diagnosis",
+    file: `${SERVER}/src/routes/work-contexts.ts`,
+    from: "    return ok(c, diagnosis);",
+    to: "    { const { agentSessions: s0, workContexts: w0 } = await import(\"../db/schema.ts\"); const { eq: eq0 } = await import(\"drizzle-orm\"); const own = (await deps.db.select({ b: s0.branch }).from(w0).innerJoin(s0, eq0(w0.sessionId, s0.id)).where(eq0(w0.id, c.req.param(\"id\"))))[0]; return ok(c, { ...diagnosis, branch: own?.b }); }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the control: the plainest leak there is, which every version of the guard catches",
+  },
+  // ── Review round 4, C: the boundary, executable (the differential) ────
+  // Leaks no secret SPELLING shows — a count, a stamp an action of hers
+  // makes — fail the two-world walk because they are on no residual list.
+  {
+    label: "a re-observed claim says how often she saw it again (differential)",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = { dedupCount: 1 };",
+    to: "const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = {};",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "dedupCount is no secret, so only the world without her re-observation tells it apart",
+  },
+  {
+    label: "her work's landing is shown to the instant her session reported it (differential)",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "    return [[key, toDay(value)]];",
+    to: "    return [[key, value]];",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "the landed residual is the day; the stamp to the second is her action's instant",
+  },
+  {
+    label: "the git rung is dated by an opted-out collector's SessionStart (differential)",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      toldNewest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      toldNewest: sql`max(${commitEvidence.collectedAt})`,",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "the rung's observedAt moves to the second her report was collected, which no residual names",
+  },
+  // ── Review round 4: nobody else is ever shown withheld ────────────────
+  {
+    label: "every row is projected as if its owner had opted out",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  const reportedBranches = hidden.get(owner.developerId);",
+    to: "  const reportedBranches = hidden.size > 0 ? [...hidden.values()][0] : undefined;",
+    test: `${SERVER}/test/live-location-told.test.ts`,
+    because:
+      "Nick's and Ken's own rows read «untitled work» and «withheld (presence " +
+      "opt-out)» the moment one teammate opts out, and a guard that looks only " +
+      "for her location has nothing to say about it",
+  },
+  // ── Review round 5, C1: withheld evidence never makes coverage better ──
+  {
+    label: "an opted-out collector's evidence is left out of the git rung's count",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      total: sql`count(*)`,\n      newest: sql`max(${commitEvidence.collectedAt})`,",
+    to: "      total: sql`count(*) filter (where ${isToldCollector})`,\n      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    test: `${SERVER}/test/commit-evidence-opt-out.test.ts`,
+    because:
+      "with her rows uncounted a colleague's rung reads complete while the " +
+      "commit only her SessionStart saw goes unreported (principle 5)",
+  },
+  {
+    label: "an opted-out collector's evidence is left out of the absence findings",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "    sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,\n  );",
+    to: "    sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,\n    visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy),\n  );",
+    test: `${SERVER}/test/commit-evidence-opt-out.test.ts`,
+    because: "«Ken inactive» disappears for every colleague because the one who saw his commit opted out",
+  },
+  // ── Review round 5, H1: her words are not a shape ─────────────────────
+  {
+    label: "her prose is shape-tested like any field",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  !PROSE_FIELDS.has(key) &&\n  !REFERENCE_FIELDS.has(key) &&",
+    to: "  !REFERENCE_FIELDS.has(key) &&",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because:
+      "a description, an intent or a question that opens with a log line's " +
+      "timestamp reaches her colleagues as «withheld (presence opt-out)»",
+  },
+  {
+    label: "text that merely opens with a time is withheld whole",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  (typeof value === \"string\" && WHOLE_CALENDAR_TIME.test(value) && !Number.isNaN(Date.parse(asIsoText(value))));",
+    to: "  (typeof value === \"string\" && /^\\d{4}-\\d{2}-\\d{2}/.test(value));",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "any field whose words start with a date is replaced, not just one that IS a date",
+  },
+  {
+    label: "the round-4 shape test returns: any text opening with a date, any bare sha, prose included",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "export const isWithheldShape = (key: string, value: unknown): boolean =>\n  !PROSE_FIELDS.has(key) &&\n  !REFERENCE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    to: "export const isWithheldShape = (_key: string, value: unknown): boolean =>\n  value instanceof Date || (typeof value === \"string\" && /^\\d{4}-\\d{2}-\\d{2}/.test(value)) || isBareHexOrEpoch(value);",
+    test: `${SERVER}/test/live-location-prose.test.ts`,
+    because:
+      "her question opens with the cutover time and her bisect claim's body is " +
+      "the sha: both reach Nick as «withheld (presence opt-out)» (review round 5, H1)",
+  },
+  {
+    label: "a bare sha or number is withheld in any field",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "(isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    to: "(isWholeInstant(value) || isBareHexOrEpoch(value));",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "a CI run number or a bisected sha cited as an id or a label is withheld as if it were her HEAD",
+  },
+  // ── Review round 5, H2: references are never shapes ───────────────────
+  {
+    label: "a claim's evidence refs and paths are shape-tested",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  !REFERENCE_FIELDS.has(key) &&\n",
+    to: "",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "an evidence ref or a path that looks like a date is dropped from her claim",
+  },
+  {
+    label: "her root cause's commit evidence is dropped and the connector reads her solved tree as open",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  !REFERENCE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    to: "  (isWholeInstant(value) || isBareHexOrEpoch(value));",
+    test: `${SERVER}/test/live-location-prose.test.ts`,
+    because:
+      "solvedAtFromTree counts evidence refs: with the bisected sha gone the " +
+      "connector says open while the hub says solved (solved parity)",
+  },
+  // ── Review round 5, H3: opting out costs colleagues nothing ───────────
+  {
+    label: "a hidden owner's branches are scanned from the events table on every read again",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  return branchesOf(db, rows.map((row) => row.id));",
+    to:
+      "  const ids = rows.map((row) => row.id);\n" +
+      "  const scanned = await db.execute<{ developer_id: string; branch: string }>(sql`SELECT developer_id, branch FROM agent_sessions WHERE developer_id IN ${ids} UNION SELECT payload->>'developerId', payload->>'branch' FROM events WHERE kind = 'session_started' AND payload->>'developerId' IN ${ids} AND payload->>'branch' IS NOT NULL`);\n" +
+      "  return new Map(ids.map((id) => [id, scanned.rows.filter((row) => row.developer_id === id).map((row) => row.branch)]));",
+    test: `${SERVER}/test/live-location-cost.test.ts`,
+    because:
+      "every colleague read pays a scan of the events table (hint candidates " +
+      "p50 107 ms against 10 at 500k events), and once retention prunes the " +
+      "events her title on a branch she left reaches colleagues",
+  },
+  {
+    label: "a colleague's hint candidates look her branches up twice",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      viewerDeveloperId: callerDeveloperId,\n      hidden,\n    },",
+    to: "      viewerDeveloperId: callerDeveloperId,\n    },",
+    test: `${SERVER}/test/live-location-cost.test.ts`,
+    because: "the search computes the hidden owners again inside the UserPromptSubmit hook's 400 ms budget",
+  },
+  {
+    label: "her ingest reads her branches for a title the connector already marked",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  const branches = titleSource === null ? await branchesOf(db, [row.developerId]) : new Map<string, readonly string[]>();",
+    to: "  const branches = await branchesOf(db, [row.developerId]);",
+    test: `${SERVER}/test/live-location-cost.test.ts`,
+    because: "every record of her ingest pays a lookup whose answer the marker already decided",
+  },
+  {
+    label: "a registration does not remember its branch",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    await recordDeveloperBranch(deps.db, developerId, insertedRow.branch, timestamp);\n",
+    to: "",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "her unmarked title on that branch reaches colleagues as soon as the session moves on",
+  },
+  {
+    label: "a re-registration that moves the branch does not remember the new one",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  await recordDeveloperBranch(deps.db, developerId, input.branch, timestamp);\n",
+    to: "",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "a title naming the branch a session moved to is judged against branches that never include it",
+  },
+  {
+    label: "the boot backfill forgets the branches only the events remember",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from:
+      "  UNION ALL\n  SELECT payload->>'developerId', payload->>'branch', created_at FROM events\n" +
+      "   WHERE kind = 'session_started' AND payload->>'branch' IS NOT NULL\n) AS reported",
+    to: ") AS reported",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "on an upgraded hub her title on a branch her session left reaches colleagues",
+  },
+  {
+    label: "the boot backfill forgets the sessions' current branches",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  SELECT developer_id, branch, started_at AS seen FROM agent_sessions\n  UNION ALL\n",
+    to: "",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "on an upgraded hub her title on the branch she is on now reaches colleagues",
+  },
+  {
+    label: "the boot backfill copies events naming a developer the hub no longer has",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "WHERE developer_id IN (SELECT id FROM developers)\nGROUP BY developer_id, branch",
+    to: "GROUP BY developer_id, branch",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "the foreign key refuses the row and the hub does not boot",
+  },
+  // ── Review round 5, H4: mixed versions keep the caveat ───────────────
+  {
+    label: "a withheld gap goes on the wire as a word a 0.10.0 connector cannot read",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "const WITHHELD_GAP_REASON: CoverageReason = \"session_silent\";",
+    to: "const WITHHELD_GAP_REASON: CoverageReason = \"telemetry_lost\";",
+    test: `${SERVER}/test/coverage-compat-0.10.test.ts`,
+    because:
+      "a 0.10.0 connector reads the rung unknown and, with git complete, its " +
+      "caveat on a non-empty answer disappears: a team where SOME session went " +
+      "quiet reads as fully watched",
+  },
+  {
+    label: "a withheld gap goes on the wire without its withheld flag",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "WITHHELD_GAP_REASON, gapSince, observedAt), withheld: true };",
+    to: "WITHHELD_GAP_REASON, gapSince, observedAt) };",
+    test: `${SERVER}/test/coverage-compat-0.10.test.ts`,
+    because: "a current connector prints «went quiet (unclosed)», a word about her session it was never told",
+  },
+  {
+    label: "every agent gap goes on the wire as withheld, told ones included",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  if (toCount(row?.toldGaps) === 0 && toldLost === 0) {",
+    to: "  if (gaps + lost > 0) {",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "a colleague's own silence, reap or loss is no longer named, so its remedy is lost",
+  },
+  {
+    label: "a coverage row whose reason is new reads unknown and loses its state",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: "  reason: z.enum(COVERAGE_REASONS).catch(\"hub_did_not_report\"),",
+    to: "  reason: z.enum(COVERAGE_REASONS),",
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because: "the next new word a hub sends costs every caveat it was the reason for",
+  },
+  {
+    label: "a garbled withheld flag costs the whole coverage row",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: "  withheld: z.literal(true).optional().catch(undefined),",
+    to: "  withheld: z.literal(true).optional(),",
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because: "an additive field read strictly turns an incomplete rung into unknown",
+  },
+  {
+    label: "a withheld gap is rendered by the wire's fixed word",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  row.withheld === true ? WITHHELD_GAP_LABEL : (INCOMPLETE_LABELS[row.reason] ?? null);",
+    to: "  INCOMPLETE_LABELS[row.reason] ?? null;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the line says her session went quiet «unclosed», which nobody told this connector",
+  },
+  {
+    label: "doctor drops the withheld flag from the coverage detail",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const withheld = row.withheld === true ? `, ${WITHHELD_GAP_LABEL}` : \"\";",
+    to: "  const withheld = \"\";",
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because: "doctor reads «session_silent» as a fact about a session the hub withheld",
+  },
+  // ── Review round 5, M1: an opt-out from before this release ──────────
+  {
+    label: "the boot pass leaves an opt-out from before this release in the index",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    .where(and(eq(developers.presenceOptOut, true), isNull(developers.locationIndexBuiltAt)));",
+    to: "    .where(sql`false`);",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "she never toggles again, so a colleague's guess at her branch finds her work for good",
+  },
+  {
+    label: "the boot pass marks an index it never rebuilt",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    await rebuildLocationIndex(deps, row.id, true);",
+    to: "    await deps.db.update(developers).set({ locationIndexBuiltAt: deps.now() }).where(eq(developers.id, row.id));",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "the mark says built and her branch title still matches a guess",
+  },
+  {
+    label: "the boot pass rebuilds every opted-out index on every boot",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    .where(and(eq(developers.presenceOptOut, true), isNull(developers.locationIndexBuiltAt)));",
+    to: "    .where(eq(developers.presenceOptOut, true));",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "every start of the hub pays a rebuild, and drops the vectors, of every opted-out developer's work",
+  },
+  {
+    label: "the toggle never marks the index it rebuilt",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "  if (isOptedOut) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "the next boot rebuilds what the toggle just built, once per opt-out no longer",
+  },
+  {
+    label: "opting back in keeps the mark of the opt-out before",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    .set({ presenceOptOut: optOut, locationIndexBuiltAt: null })",
+    to: "    .set({ presenceOptOut: optOut })",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "the mark says built for an opt-out she no longer has",
+  },
+  // ── Review round 5, M2: a rebuilt doc gets its vector back ────────────
+  {
+    label: "a doc the opt-out rebuild cleared is never re-embedded",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "  if (deps.embedder !== null) {\n    for (const workContextId of rebuilt) {",
+    to: "  if (false) {\n    for (const workContextId of rebuilt) {",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "on a hub with an embedder the vector tier misses her work until each context's next ingest",
+  },
+  {
+    label: "the presence toggle rebuilds without the hub's embedder",
+    file: `${SERVER}/src/routes/settings.ts`,
+    from: "      { db: deps.db, now: deps.now, embedder: deps.embedder },",
+    to: "      { db: deps.db, now: deps.now, embedder: null },",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "every toggle leaves the contexts it rebuilt without a vector",
+  },
+  // ── Review round 5, M3: the boundary's own strength ───────────────────
+  {
+    // The reviewer's m3: her quiet session's start, five minutes off, in
+    // the field the differential accepted whole.
+    label: "the withheld agent start carries her quiet session's start, five minutes off",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n    ? null\n",
+    to:
+      "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n" +
+      "    ? toIso((await deps.db.select({ at: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap} and not ${isTold}) + interval '5 minutes'` }).from(agentSessions).where(inScope(scope)))[0]?.at)\n",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because:
+      "a colleague reads when her session went quiet, offset past the guard's " +
+      "one-minute tolerance, and it moves every time she goes quiet again",
+  },
+  {
+    label: "the agent start is withheld only while her gap is in scope",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n",
+    to: "  const gapSince = (gaps > toCount(row?.toldGaps) || lost > toldLost)\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because:
+      "the start flips between a colleague's own instant and null as she " +
+      "heartbeats: whether she is quiet, read off one field",
+  },
+  {
+    label: "a context's creation reads as her newest claim's",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        createdAt: row.createdAt,\n",
+    to: "        createdAt: (claimsByContext.get(row.id) ?? [])[0]?.createdAt ?? row.createdAt,\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because:
+      "her action's instant rides a row that existed before it under a " +
+      "creation-shaped name, which the differential took for a creation",
+  },
+  // ── Review round 5, L1: the allowlist names paths ─────────────────────
+  {
+    label: "the allowlist matches a field by its name at any depth again",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (value === undefined || value === null || p.shown.has(path)) {",
+    to: "  if (value === undefined || value === null || [...p.shown].some((entry) => entry.split(\".\").at(-1) === key)) {",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "a createdAt nested in her claim — her session's start — passes as the claim's own creation",
+  },
+  {
+    label: "the referee's validity row is judged as a claim view",
+    file: `${SERVER}/src/services/referee.ts`,
+    from: "      { developerId: loaded.view.authorDeveloperId, kind: \"claim_validity\" },",
+    to: "      { developerId: loaded.view.authorDeveloperId, kind: \"claim\" },",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "the default-branch commits that touched her claim's files, published history, are dropped from the brief",
+  },
+  {
+    label: "a solved match's root-cause validity is judged as a claim view",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: \"claim_validity\" }, validity);",
+    to: "            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: \"claim\" }, validity);",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "a teammate's own reading of her root cause loses its ref and instant on the solved-tree pointer",
+  },
+  // ── Review round 5, L3: a target value is never a shape ───────────────
+  {
+    label: "a matched target is projected with no row kind",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      projectRow(hidden, { developerId: row.developerId, kind: \"target\" }, target, { createdAt: \"null\" }),",
+    to: "      projectRow(hidden, { developerId: row.developerId }, target, { createdAt: \"null\" }),",
+    test: `${SERVER}/test/live-location-prose.test.ts`,
+    because: "a target named by a date drops out of the very hint it matched, for her colleagues only",
+  },
+  {
+    label: "a target's value is shape-tested",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  target: [\"value\"],",
+    to: "  target: [],",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "what she worked on is withheld whenever its spelling happens to be a date",
+  },
+  // ── Review round 5: the reviewer's m2, kept as a regression anchor ────
+  {
+    label: "a withheld agent gap carries her newest heartbeat in a field of its own",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    return { ...sourceRecord(\"agent_event\", \"incomplete\", WITHHELD_GAP_REASON, gapSince, observedAt), withheld: true };",
+    to:
+      "    return { ...sourceRecord(\"agent_event\", \"incomplete\", WITHHELD_GAP_REASON, gapSince, observedAt), withheld: true, " +
+      "detail: toIso((await deps.db.select({ at: sql`max(${agentSessions.lastHeartbeatAt}) filter (where not ${isTold})` }).from(agentSessions).where(inScope(scope)))[0]?.at) };",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "a field nobody named carries when she last ran an agent on every coverage block she gaps",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -21941,7 +23443,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 12
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
- * PRINTS: packages/cli/test/coverage-cli.test.ts 5
+ * PRINTS: packages/cli/test/coverage-cli.test.ts 6
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
  * PRINTS: packages/cli/test/cursor-init.test.ts 1
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
@@ -21984,7 +23486,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 5
+ * PRINTS: packages/cli/test/pins-cli.test.ts 6
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
@@ -21992,6 +23494,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/status-intent.test.ts 1
+ * PRINTS: packages/cli/test/status-teammates-corpus.test.ts 2
  * PRINTS: packages/cli/test/status-topics.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/cli/test/terminal.test.ts 3
@@ -22032,6 +23535,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
+ * PRINTS: packages/connector-claude/test/detached-title.test.ts 3
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
@@ -22050,7 +23554,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-hook.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 4
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
@@ -22060,6 +23564,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
+ * PRINTS: packages/connector-claude/test/solved-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
@@ -22074,9 +23579,10 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
- * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 17
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 3
- * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 3
+ * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
@@ -22086,10 +23592,10 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
- * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
- * PRINTS: packages/connector-core/test/conference-report.test.ts 2
+ * PRINTS: packages/connector-core/test/conference-report.test.ts 3
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 3
@@ -22097,11 +23603,12 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
- * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 22
+ * PRINTS: packages/connector-core/test/coverage-wire.test.ts 5
  * PRINTS: packages/connector-core/test/crosscheck-home.test.ts 2
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
+ * PRINTS: packages/connector-core/test/detached-branch.test.ts 1
  * PRINTS: packages/connector-core/test/draft-nudge.test.ts 50
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
@@ -22131,7 +23638,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
- * PRINTS: packages/connector-core/test/landed-why-render.test.ts 5
+ * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
  * PRINTS: packages/connector-core/test/landing-branches.test.ts 6
  * PRINTS: packages/connector-core/test/landing-fetch-prompts.test.ts 6
@@ -22171,7 +23678,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 3
- * PRINTS: packages/connector-core/test/set-intent.test.ts 3
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 4
  * PRINTS: packages/connector-core/test/sharing.test.ts 30
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
@@ -22195,6 +23702,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/fallback-title.test.ts 2
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/hint-outcome.test.ts 2
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
@@ -22210,9 +23718,11 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
+ * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
- * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 3
+ * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
+ * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
@@ -22223,6 +23733,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
+ * PRINTS: packages/server/test/developer-branches.test.ts 5
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
@@ -22253,6 +23764,14 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
+ * PRINTS: packages/server/test/live-location-cost.test.ts 3
+ * PRINTS: packages/server/test/live-location-differential.test.ts 5
+ * PRINTS: packages/server/test/live-location-privacy.test.ts 27
+ * PRINTS: packages/server/test/live-location-projection.test.ts 9
+ * PRINTS: packages/server/test/live-location-prose.test.ts 3
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
+ * PRINTS: packages/server/test/live-location-told.test.ts 1
+ * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
  * PRINTS: packages/server/test/normalized-doc.test.ts 2
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
@@ -22269,6 +23788,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-sessions.test.ts 11
  * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
  * PRINTS: packages/server/test/pins.test.ts 4
+ * PRINTS: packages/server/test/presence-optout.test.ts 2
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2
@@ -22309,7 +23829,7 @@ interface Outcome {
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
- * PRINTS: packages/server/test/work-context-listing.test.ts 6
+ * PRINTS: packages/server/test/work-context-listing.test.ts 10
  */
 const greenGuards = new Map<string, boolean>();
 

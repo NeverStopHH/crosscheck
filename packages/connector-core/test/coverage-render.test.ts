@@ -163,6 +163,23 @@ describe("01a §3.7: the order block on the coverage line", () => {
     expect(fitsTheSeat(clause)).toBe(true);
   });
 
+  test("an opted-out teammate's quiet session is counted and never named (review round 4, H1; round 5, H4)", () => {
+    // Arrange: the hub withholds the instant and the kind of her gap. On the
+    // wire the reason is one every released client reads as a gap, and the
+    // additive flag says it is withheld.
+    const record = recordOf([
+      { ...row("agent_event", "incomplete", "session_silent", null, GAP_ISO), withheld: true },
+      row("git", "complete", "commits_reported", null, GAP_ISO),
+    ]);
+    // Act
+    const clause = coverageClause(record, NOW);
+    // Assert
+    expect(clause).toBe(
+      "Coverage incomplete: agent sessions on this repo went quiet (withheld: presence opt-out); git evidence reported; order: undeclared (hub_did_not_report).",
+    );
+    expect(fitsTheSeat(clause)).toBe(true);
+  });
+
   test("the git rung's instant is shortened to its day before anything is dropped", () => {
     // Arrange: 165 characters with the git rung's minute, the longest reason.
     const record = withOrder(
@@ -594,12 +611,17 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
   const everyShape = (): readonly CoverageRecord[] =>
     COVERAGE_STATES.flatMap((agentState) =>
       COVERAGE_REASONS.flatMap((agentReason) =>
-        COVERAGE_STATES.flatMap((gitState) =>
-          COVERAGE_REASONS.map((gitReason) =>
-            recordOf([
-              row("agent_event", agentState, agentReason, GAP_ISO, GAP_ISO),
-              row("git", gitState, gitReason, GAP_ISO, "2026-09-06T08:13:00.000Z"),
-            ]),
+        [false, true].flatMap((isWithheld) =>
+          COVERAGE_STATES.flatMap((gitState) =>
+            COVERAGE_REASONS.map((gitReason) =>
+              recordOf([
+                {
+                  ...row("agent_event", agentState, agentReason, GAP_ISO, GAP_ISO),
+                  ...(isWithheld ? { withheld: true as const } : {}),
+                },
+                row("git", gitState, gitReason, GAP_ISO, "2026-09-06T08:13:00.000Z"),
+              ]),
+            ),
           ),
         ),
       ),
@@ -612,15 +634,17 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
   });
 
   test("every clause fits the seat: at most two lines, each within MAX_COVERAGE_LINE_CHARS", () => {
-    // Arrange: 4 states x 18 reasons, squared — every shape the enum admits
-    // (16 reasons before loss-accounting added `telemetry_lost` and
-    // `record_kinds_ignored`; the literal moves with the enum on purpose, so
-    // a reason added without a render case is a red line here, not a silent
-    // widening of the sweep)
+    // Arrange: 4 states x 18 reasons, squared, with the agent rung withheld
+    // or not — every shape the wire admits (16 reasons before loss-accounting
+    // added `telemetry_lost` and `record_kinds_ignored`; review round 5, H4,
+    // carries a withheld gap as the additive `withheld` flag rather than a
+    // reason). The literal moves with the enum on purpose, so a reason added
+    // without a render case is a red line here, not a silent widening of the
+    // sweep.
     const shapes = everyShape();
 
     // Assert
-    expect(shapes.length).toBe(5184);
+    expect(shapes.length).toBe(10368);
     for (const record of shapes) {
       const clause = coverageClause(record, NOW);
       expect(fitsTheSeat(clause), clause).toBe(true);

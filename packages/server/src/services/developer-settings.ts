@@ -12,12 +12,14 @@
  * No outbox events are appended here on purpose: broadcasting "X just opted
  * out" would itself be a presence signal about X.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, notInArray, or, sql } from "drizzle-orm";
 
-import { developerEmails, developerMutes, developers } from "../db/schema.ts";
+import { agentSessions, developerEmails, developerMutes, developers, workContexts } from "../db/schema.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
+import { embedContextDoc, refreshNormalizedDoc } from "./normalized-doc.ts";
 import { listDeveloperEmails } from "./developers.ts";
 import type { DeveloperEmailView } from "./developers.ts";
+import type { Embedder } from "./embedder.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -49,6 +51,11 @@ interface Deps {
   readonly now: Clock;
 }
 
+/** What rebuilding her search index needs: the vector tier's embedder, null when keyless. */
+interface IndexDeps extends Deps {
+  readonly embedder: Embedder | null;
+}
+
 export const getDeveloperSettings = async (
   db: Db,
   developerId: string,
@@ -72,15 +79,104 @@ export const getDeveloperSettings = async (
   };
 };
 
+/**
+ * The setting, and the index after it. The mark is cleared first and set
+ * only once the rebuild is done, so a rebuild cut short leaves an opt-out
+ * the next boot finishes (rebuildOptedOutLocationIndexes).
+ */
 export const setPresenceOptOut = async (
-  db: Db,
+  deps: IndexDeps,
   developerId: string,
   optOut: boolean,
 ): Promise<void> => {
-  await db
+  await deps.db
     .update(developers)
-    .set({ presenceOptOut: optOut })
+    .set({ presenceOptOut: optOut, locationIndexBuiltAt: null })
     .where(eq(developers.id, developerId));
+  await rebuildLocationIndex(deps, developerId, optOut);
+};
+
+/**
+ * Her location-titled docs rebuilt for the setting she has, and their vectors
+ * with them (review round 5, M2): a rebuild clears a context's embedding
+ * (normalized-doc.ts), and with an embedder configured the vector tier would
+ * miss her work until each context's next ingest. Re-embedded here instead,
+ * one context at a time like an ingest's touched contexts; a failure costs
+ * that context's vector, never the toggle (embedContextDoc). An opt-out is
+ * marked built.
+ */
+const rebuildLocationIndex = async (
+  deps: IndexDeps,
+  developerId: string,
+  isOptedOut: boolean,
+): Promise<void> => {
+  const rebuilt = await reindexLocationTitles(deps.db, developerId);
+  if (deps.embedder !== null) {
+    for (const workContextId of rebuilt) {
+      await embedContextDoc(deps.db, deps.embedder, workContextId);
+    }
+  }
+  if (isOptedOut) {
+    await deps.db
+      .update(developers)
+      .set({ locationIndexBuiltAt: deps.now() })
+      .where(eq(developers.id, developerId));
+  }
+};
+
+/**
+ * ONCE PER OPT-OUT, AT BOOT (review round 5, M1). A developer who opted out
+ * on a release whose index did not follow the setting never toggles again,
+ * so her docs kept her branch titles and a colleague's guess at her branch
+ * still found her work. Every opted-out developer whose index was not built
+ * for her opt-out has it built here, before the hub serves; the mark makes a
+ * second boot, and an opt-out the toggle already rebuilt for, a no-op.
+ * Returns how many developers' indexes it rebuilt.
+ *
+ * INTEGRATION POINT (the batch merge with the drafts branch): that branch's
+ * `doc_version` stamp step marks a normalized doc current. It must not mark
+ * an opted-out developer's docs current while her `location_index_built_at`
+ * is null — they still hold her location titles until this pass has run.
+ */
+export const rebuildOptedOutLocationIndexes = async (deps: IndexDeps): Promise<number> => {
+  const pending = await deps.db
+    .select({ id: developers.id })
+    .from(developers)
+    .where(and(eq(developers.presenceOptOut, true), isNull(developers.locationIndexBuiltAt)));
+  for (const row of pending) {
+    await rebuildLocationIndex(deps, row.id, true);
+  }
+  return pending.length;
+};
+
+/** Titles a person or a host wrote: never a location, so never re-indexed. */
+const AUTHORED_TITLE_SOURCES = ["host", "person"] as const;
+
+/**
+ * THE SEARCH INDEX FOLLOWS THE SETTING, both ways (review round 4, H4): an
+ * opted-out owner's location title is kept out of the normalized doc
+ * (services/live-location.ts isTitleWithheldFromIndex), and her docs were
+ * built before she opted out. Only contexts whose title CAN be her location
+ * are rebuilt — a `host` or `person` title never is — once per toggle, which
+ * is rare by nature, and once at boot for an opt-out from before the index
+ * followed the setting (above). Returns the contexts it rebuilt, whose
+ * embeddings the rebuild cleared (rebuildLocationIndex re-embeds them).
+ */
+const reindexLocationTitles = async (db: Db, developerId: string): Promise<readonly string[]> => {
+  const rows = await db
+    .select({ id: workContexts.id })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(agentSessions.developerId, developerId),
+        or(isNull(workContexts.titleSource), notInArray(workContexts.titleSource, [...AUTHORED_TITLE_SOURCES])),
+      ),
+    );
+  for (const row of rows) {
+    await refreshNormalizedDoc(db, row.id);
+  }
+  return rows.map((row) => row.id);
 };
 
 /**

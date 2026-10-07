@@ -110,7 +110,9 @@ export {
   MAX_INTENT_SCOPE_ENTRIES,
   MAX_INTENT_SUMMARY_CHARS,
   TargetSchema,
+  WORK_CONTEXT_TITLE_SOURCES,
   WorkContextSchema,
+  WorkContextTitleSourceSchema,
 } from "./session.ts";
 export type {
   AgentSession,
@@ -120,6 +122,7 @@ export type {
   IntentScopeRole,
   Target,
   WorkContext,
+  WorkContextTitleSource,
 } from "./session.ts";
 
 export {
@@ -309,6 +312,14 @@ export {
 } from "./storable-text.ts";
 
 export { containsSecret } from "./secret-scan.ts";
+export {
+  LOCATION_WITHHELD,
+  WITHHELD_TITLE,
+  isFallbackTitle,
+  isLocationTitle,
+  repoLabel,
+} from "./fallback-title.ts";
+export type { TitleFacts } from "./fallback-title.ts";
 export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,

@@ -24,6 +24,7 @@ import { coverageNote } from "@crosscheck/connector-core/coverage/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { quoted, quotedBody, safeId } from "@crosscheck/connector-core/mcp/render.ts";
 import {
+  LOCATION_WITHHELD,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_PATH_CHARS,
   MAX_PIN_SURFACE_CHARS,
@@ -51,6 +52,14 @@ const ageOf = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? "unknown" : `${formatAge(now.getTime() - ms)} ago`;
 };
+
+/**
+ * A candidate's last activity. The hub withholds it for a teammate who opted
+ * out of presence (server services/live-location.ts) and says so; printing
+ * that as "unknown" would read as a hub that lost it.
+ */
+const lastActiveOf = (iso: string, now: Date): string =>
+  iso === LOCATION_WITHHELD ? LOCATION_WITHHELD : ageOf(iso, now);
 
 /**
  * WHY WE BELIEVE THE SURFACE IS BROKEN — first, always, and in the reader's
@@ -282,7 +291,7 @@ const candidateLines = (
       : []),
   ];
   return [
-    `${String(index + 1)}. session ${safeId(candidate.sessionId)} · ${bareUntrusted(candidate.agentKind)} · branch ${bareUntrusted(candidate.branch)} · last active ${ageOf(candidate.lastActiveAt, now)}`,
+    `${String(index + 1)}. session ${safeId(candidate.sessionId)} · ${bareUntrusted(candidate.agentKind)} · branch ${bareUntrusted(candidate.branch)} · last active ${lastActiveOf(candidate.lastActiveAt, now)}`,
     `   ${quoted(candidate.workContextTitle, MAX_WORK_CONTEXT_TITLE_CHARS)}`,
     ...(intent === null
       ? []

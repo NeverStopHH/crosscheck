@@ -72,6 +72,12 @@ export interface CoverageSourceRecord {
   /** ISO; null unless `incomplete`. */
   readonly gapSince: string | null;
   readonly observedAt: string | null;
+  /**
+   * The hub withheld whose gap this is (an opted-out teammate's; review
+   * round 5, H4). Additive: the reason beside it is a word every released
+   * connector reads as a gap, and this says not to read it as hers.
+   */
+  readonly withheld?: true;
 }
 
 export interface CoverageScope {
@@ -121,13 +127,32 @@ const toOrder = (raw: unknown): CoverageOrder => {
     : UNREPORTED_ORDER;
 };
 
+/**
+ * A reason this client has no word for costs the WORD, never the state
+ * (review round 5, H4): a newer hub's `incomplete` row read as `unknown`
+ * drops the caveat on every non-empty answer, which is the direction that
+ * looks better than the truth. A state it cannot read still costs the row.
+ */
 const CoverageSourceRecordSchema = z.looseObject({
   source: z.enum(COVERAGE_SOURCES),
   state: z.enum(COVERAGE_STATES),
-  reason: z.enum(COVERAGE_REASONS),
+  reason: z.enum(COVERAGE_REASONS).catch("hub_did_not_report"),
   gapSince: z.string().min(1).nullable().default(null),
   observedAt: z.string().min(1).nullable().default(null),
+  withheld: z.literal(true).optional().catch(undefined),
 });
+
+/** Rebuilt field by field: `withheld` is present only when true. */
+const toRow = (parsed: z.infer<typeof CoverageSourceRecordSchema>): CoverageSourceRecord => {
+  const row = {
+    source: parsed.source,
+    state: parsed.state,
+    reason: parsed.reason,
+    gapSince: parsed.gapSince,
+    observedAt: parsed.observedAt,
+  };
+  return parsed.withheld === true ? { ...row, withheld: true } : row;
+};
 
 const CoverageScopeSchema = z.looseObject({
   sinceIso: z.string().min(1),
@@ -186,7 +211,7 @@ export const parseCoverage = (raw: unknown): CoverageRecord => {
   for (const item of envelope.data.sources) {
     const row = CoverageSourceRecordSchema.safeParse(item);
     if (row.success && !bySource.has(row.data.source)) {
-      bySource.set(row.data.source, row.data);
+      bySource.set(row.data.source, toRow(row.data));
     }
   }
   return {

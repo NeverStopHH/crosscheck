@@ -39,6 +39,7 @@ import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type {
   CiBehaviorDelta,
   CiCoverage,
+  PresenceEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
@@ -134,6 +135,17 @@ const teammateStatusLines = (group: TeammateGroup): readonly string[] => {
     ...(hidden > 0 ? [`    ${moreTopicsTail(hidden, false)}`] : []),
   ];
 };
+
+/**
+ * The whole `teammates:` block from the hub's presence rows — exported as
+ * ONE pure function so the injection corpus walks exactly what the command
+ * prints (test/status-teammates-corpus.test.ts), not a copy of it.
+ */
+export const teammateLines = (
+  presence: readonly PresenceEntry[],
+  now: Date,
+): readonly string[] =>
+  groupTeammates(presence, now, bareUntrusted).flatMap(teammateStatusLines);
 
 /**
  * ONE `losses:` LINE, ABOVE ZERO ONLY (docs/1.0/loss-accounting.md §5.1),
@@ -506,7 +518,7 @@ export const runStatus = async (
   // spells (briefing/intent.ts). Grouped per teammate by topic, the
   // briefing's own grouping (`groupTeammates`, which also drops isSelf).
   const teammates = presence.ok
-    ? groupTeammates(presence.data, now, bareUntrusted).flatMap(teammateStatusLines)
+    ? teammateLines(presence.data, now)
     : ["  (hub unreachable)"];
 
   return {

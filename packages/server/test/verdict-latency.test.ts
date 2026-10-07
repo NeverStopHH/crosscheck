@@ -172,7 +172,7 @@ describe("VER-8 — what the verdict costs", () => {
       const resolved = await resolveSuspectScope(deps, REPO, {
         pinId: PIN,
         paths: [],
-      });
+      }, developer.developerId);
       expect(resolved.ok).toBe(true);
       if (!resolved.ok) {
         return;

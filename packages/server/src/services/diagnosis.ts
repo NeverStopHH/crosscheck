@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import { WORK_CONTEXT_LIST_MAX } from "../constants.ts";
 
@@ -17,6 +18,8 @@ import {
 } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { RowOwner } from "./live-location.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
@@ -64,10 +67,13 @@ export interface WorkContextView {
   readonly status: string;
   /**
    * The owning session's base commit — what the connector's drift label and
-   * landed ancestry check run against. "" only if the join ever misses
-   * (unreachable through ingest, same argument as the claim author join).
+   * landed ancestry check run against. OMITTED for a viewer the owner's live
+   * location is hidden from (services/live-location.ts): it is `rev-parse
+   * HEAD` of the live branch. Omitted rather than "", because every shipped
+   * connector reads it as `z.string().min(1).optional()` — absent is the
+   * shape an older hub already sends, and drift and landed simply skip.
    */
-  readonly baseCommit: string;
+  readonly baseCommit?: string;
   /** Merged-branch detection (DESIGN.md §5); null while unobserved. */
   readonly landedAt: string | null;
   readonly createdAt: string;
@@ -108,8 +114,14 @@ export interface WorkContextListEntry extends WorkContextView {
    * the connector groups a teammate's work by. A host-supplied title ("Fix
    * the login 500s") does not carry it, so free-form titles on one branch
    * would otherwise read as separate pieces of work.
+   *
+   * ABSENT for a developer the viewer may not be told about. This is the
+   * session's CURRENT branch — re-registering moves it — so it says where
+   * that developer is right now, which is presence, and presence opt-out
+   * hides it (services/visibility.ts). The context itself is published
+   * knowledge and stays; the connector falls back to its title.
    */
-  readonly branch: string;
+  readonly branch?: string;
 }
 
 export interface WorkContextListWindow {
@@ -271,6 +283,18 @@ export interface Diagnosis {
   readonly truncated: boolean;
 }
 
+/** A context's owner and the facts its title is judged by (services/live-location.ts). */
+const ownerOf = (
+  developerId: string,
+  repo: string,
+  branch: string,
+  row: WorkContextRow,
+): RowOwner => ({
+  developerId,
+  titleFacts: { repo, branch, titleSource: row.titleSource },
+  kind: "work_context",
+});
+
 const toWorkContextView = (
   row: WorkContextRow,
   baseCommit: string,
@@ -350,6 +374,17 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
 const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
 
 /**
+ * The same activity as THIS viewer may window and rank by it: a teammate who
+ * opted out of presence counts from creation alone (services/live-location.ts
+ * activitySeenBy), or the window and the order would say when she last
+ * touched her work — what the withheld `updatedAt` no longer says. The WHERE
+ * keeps `contextActivityAt` beside it: a superset, and the expression
+ * `work_contexts_activity_idx` is built on.
+ */
+const contextActivitySeenBy = (viewerDeveloperId: string): SQL<Date> =>
+  activitySeenBy(viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
+
+/**
  * How fresh this row is WITHIN its own developer: 1 is that person's newest.
  * Computed after the WHERE, so mutes and the caller's window narrow the set
  * before anybody is ranked inside it.
@@ -370,7 +405,10 @@ const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts
  * cannot push another out of the answer entirely" in
  * server/test/work-context-listing.test.ts.
  */
-const contextRankPerDeveloper = sql`row_number() over (partition by ${agentSessions.developerId} order by ${contextActivityAt} desc)`;
+// Ties go to the context id — never to whatever order the window met the
+// rows in, which is by DEVELOPER id, random per hub (review round 4, L1).
+const contextRankPerDeveloper = (activity: SQL<Date>): SQL =>
+  sql`row_number() over (partition by ${agentSessions.developerId} order by ${activity} desc, ${workContexts.id} asc)`;
 
 /**
  * How many contexts this row's developer has in the answer BEFORE the bound.
@@ -393,12 +431,16 @@ export const listWorkContextsByRepo = async (
     window.limit ?? WORK_CONTEXT_LIST_MAX,
     WORK_CONTEXT_LIST_MAX,
   );
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
+  const activity = contextActivitySeenBy(viewerDeveloperId);
   const rows = await db
     .select({
       workContext: workContexts,
       developerId: agentSessions.developerId,
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
+      // Raw here, withheld per viewer by projectRow below: the row is
+      // published knowledge, the live branch is where its author is now.
       branch: agentSessions.branch,
       // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
       // to carry: the join multiplied every context by its claims (100,000
@@ -418,9 +460,11 @@ export const listWorkContextsByRepo = async (
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
     // The viewer's mutes apply — this listing feeds the briefing's related-
-    // work pointers (an unasked surface). Opt-out does NOT: these rows are
-    // published knowledge, not live presence (services/visibility.ts). The
-    // by-id diagnosis read below stays unfiltered — that is the pull.
+    // work pointers (an unasked surface). Opt-out drops no ROW: these rows
+    // are published knowledge. It withholds their live location FIELDS —
+    // the branch above, the fallback title and base commit below
+    // (services/visibility.ts states the policy). The by-id diagnosis read
+    // below is not muted — that is the pull — and withholds the same fields.
     .where(
       and(
         eq(agentSessions.repo, repo),
@@ -439,7 +483,7 @@ export const listWorkContextsByRepo = async (
         // server/test/work-context-listing.test.ts.
         ...(window.since === undefined
           ? []
-          : [gte(contextActivityAt, window.since)]),
+          : [gte(contextActivityAt, window.since), gte(activity, window.since)]),
       ),
     )
     // Activity, not creation: it is the timestamp the rows are FILTERED by
@@ -447,17 +491,19 @@ export const listWorkContextsByRepo = async (
     // is built on — ordering by anything else would make the bound cut a
     // different set from the one the window selected. Rank first, so every
     // teammate's freshest context is served before anyone's second.
-    .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))
+    .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))
     .limit(limit);
-  return rows.map((row) => ({
-    ...toWorkContextView(row.workContext, row.baseCommit),
-    developerId: row.developerId,
-    developerName: row.developerName,
-    claimCount: row.claimCount,
-    targetCount: row.targetCount,
-    developerContextCount: row.developerContextCount,
-    branch: row.branch,
-  }));
+  return rows.map((row) =>
+    projectRow(hidden, ownerOf(row.developerId, repo, row.branch, row.workContext), {
+      ...toWorkContextView(row.workContext, row.baseCommit),
+      developerId: row.developerId,
+      developerName: row.developerName,
+      claimCount: row.claimCount,
+      targetCount: row.targetCount,
+      developerContextCount: row.developerContextCount,
+      branch: row.branch,
+    }),
+  );
 };
 
 /** The tree's targets, bounded, in deterministic (kind, value) order. */
@@ -497,6 +543,26 @@ const listEdgesTouching = async (
     .limit(limits.maxEdges);
 };
 
+/**
+ * Who stands behind each edge's author session — the edge is projected by
+ * its own author, as every nested row is (services/live-location.ts). One
+ * bounded read: the ids are the page's edges, already capped.
+ */
+const readSessionDevelopers = async (
+  db: Db,
+  sessionIds: readonly string[],
+): Promise<ReadonlyMap<string, string>> => {
+  const unique = [...new Set(sessionIds)];
+  if (unique.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({ id: agentSessions.id, developerId: agentSessions.developerId })
+    .from(agentSessions)
+    .where(inArray(agentSessions.id, unique));
+  return new Map(rows.map((row) => [row.id, row.developerId]));
+};
+
 const listExternalClaimRefs = async (
   db: Db,
   edges: readonly ClaimEdgeRow[],
@@ -534,8 +600,10 @@ export const getDiagnosis = async (
   db: Db,
   now: Date,
   workContextId: string,
+  viewerDeveloperId: string,
   limits: DiagnosisLimits = DEFAULT_DIAGNOSIS_LIMITS,
 ): Promise<Diagnosis | undefined> => {
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
   // innerJoin for the base commit: every context reaches the table through
   // checkOwnedSession (record-handlers.ts), so its session always exists.
   const contextRows = await db
@@ -543,6 +611,8 @@ export const getDiagnosis = async (
       workContext: workContexts,
       baseCommit: agentSessions.baseCommit,
       repo: agentSessions.repo,
+      branch: agentSessions.branch,
+      ownerDeveloperId: agentSessions.developerId,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -552,6 +622,12 @@ export const getDiagnosis = async (
   if (contextRow === undefined) {
     return undefined;
   }
+  const owner = ownerOf(
+    contextRow.ownerDeveloperId,
+    contextRow.repo,
+    contextRow.branch,
+    contextRow.workContext,
+  );
 
   // innerJoin, not leftJoin: every claim row reaches the table through
   // `checkOwnedSession`, which resolves the author session before the INSERT
@@ -580,6 +656,7 @@ export const getDiagnosis = async (
   );
   const targets = await listDiagnosisTargets(db, workContextId);
   const chain = await readIntentChain(db, workContextId);
+  const edgeAuthors = await readSessionDevelopers(db, edgeRows.map((edge) => edge.authorSessionId));
 
   // THE SUPERSEDED LEG COSTS NOTHING HERE. Every edge touching the tree's
   // claims is already loaded above, so the "is this claim a supersedes
@@ -594,7 +671,7 @@ export const getDiagnosis = async (
       .map((edge) => [edge.toClaimId, edge.fromClaimId] as const),
   );
   const [revalidations, surfaces, axes] = await Promise.all([
-    loadRevalidations(db, now, [...localClaimIds]),
+    loadRevalidations(db, now, [...localClaimIds], viewerDeveloperId),
     loadClaimSurfaces(db, [...localClaimIds]),
     // ONE read for the whole page, not one per claim: the ladder resolves a
     // batch of pointers set-wise and only descends per-claim where a ci_test
@@ -609,9 +686,13 @@ export const getDiagnosis = async (
 
   return {
     repo: contextRow.repo,
-    workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
-    claims: claimRows.map((row) =>
-      toClaimView(
+    workContext: projectRow(
+      hidden,
+      owner,
+      toWorkContextView(contextRow.workContext, contextRow.baseCommit),
+    ),
+    claims: claimRows.map((row) => {
+      const view = toClaimView(
         row,
         revalidations.get(row.claim.id),
         supersededBy.get(row.claim.id) ?? null,
@@ -620,9 +701,17 @@ export const getDiagnosis = async (
         // an answer: the weakest rung is the honest default, and inventing a
         // stronger one here would be the inversion the ladder exists to stop.
         axes.get(row.claim.id) ?? UNRESOLVED_AXES,
-      ),
-    ),
-    edges: edgeRows.map(toClaimEdgeView),
+      );
+      // The whole view by its AUTHOR, who may not be the context's owner:
+      // the re-observation, the validity reading and the evidence age are
+      // all hers (live-location.ts).
+      return projectRow(hidden, { developerId: row.authorDeveloperId, kind: "claim" }, view);
+    }),
+    edges: edgeRows.map((edge) => {
+      const author = edgeAuthors.get(edge.authorSessionId);
+      const view = toClaimEdgeView(edge);
+      return author === undefined ? view : projectRow(hidden, { developerId: author, kind: "edge" }, view);
+    }),
     externalClaims,
     targets,
     intentChain: chain.map((entry) => ({

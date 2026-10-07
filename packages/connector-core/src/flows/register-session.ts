@@ -12,7 +12,7 @@
  * titles from session metadata) stays in each connector; this flow takes the
  * already-resolved values.
  */
-import type { CausalGuaranteeTriple } from "@crosscheck/schema";
+import type { CausalGuaranteeTriple, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { repoLabel } from "../git/repo-label.ts";
 import { registerSession } from "../http/hub.ts";
@@ -79,6 +79,14 @@ export interface RegisterSessionFlowInput {
   /** Used when the hub does not answer (stored config identity). */
   readonly fallbackDeveloperId: string | null;
   readonly title: string;
+  /**
+   * How `title` was written — `host` for the host's own session title,
+   * `fallback` for this package's `<branch> @ <repo>` (or a detached ref):
+   * the hub withholds a fallback, which IS the branch, from colleagues of a
+   * developer who opted out of presence. Required, so no session-start path
+   * can register a title without saying which it is.
+   */
+  readonly titleSource: WorkContextTitleSource;
   readonly status: string;
   readonly now: Date;
   /**
@@ -235,6 +243,7 @@ export const registerSessionFlow = async (
     // title and status on their update record — kept here so they never
     // fabricate one (trial finding #16).
     workContextTitle: input.title,
+    workContextTitleSource: input.titleSource,
     workContextStatus: input.status,
     // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
     // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
@@ -295,6 +304,7 @@ export const registerSessionFlow = async (
           workContextId,
           sessionId: crosscheckSessionId,
           title: input.title,
+          titleSource: input.titleSource,
           status: input.status,
         },
         {

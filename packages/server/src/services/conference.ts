@@ -86,6 +86,8 @@ import {
 } from "./ghost-overlap.ts";
 import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -170,11 +172,21 @@ export interface ConferenceView {
   readonly windowDays: number;
 }
 
+/**
+ * A context's activity as THIS reader may window and rank by it: a teammate
+ * who opted out of presence counts from creation alone (services/live-
+ * location.ts activitySeenBy), or "in the window" and "first in the report"
+ * would say when she last touched her work.
+ */
+const activitySeenByReader = (viewerDeveloperId: string) =>
+  activitySeenBy(viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
+
 /** Unfinished work of this repo inside the window, whether or not attended. */
-const recentWorkCondition = (repo: string, cutoff: Date) =>
+const recentWorkCondition = (repo: string, cutoff: Date, viewerDeveloperId: string) =>
   and(
     eq(agentSessions.repo, repo),
     gte(activityExpression, cutoff),
+    gte(activitySeenByReader(viewerDeveloperId), cutoff),
     isNull(workContexts.landedAt),
   );
 
@@ -182,6 +194,8 @@ const listRecentContexts = async (
   deps: Deps,
   repo: string,
   cutoff: Date,
+  viewerDeveloperId: string,
+  hidden: HiddenLocations,
 ): Promise<readonly Omit<ConferenceContextView, "claims">[]> => {
   const rows = await deps.db
     .select({
@@ -192,22 +206,26 @@ const listRecentContexts = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       lastActiveAt: sql<string>`${activityExpression}`,
+      branch: agentSessions.branch,
+      titleSource: workContexts.titleSource,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    .where(recentWorkCondition(repo, cutoff))
-    .orderBy(desc(activityExpression), asc(workContexts.id))
+    .where(recentWorkCondition(repo, cutoff, viewerDeveloperId))
+    .orderBy(desc(activitySeenByReader(viewerDeveloperId)), asc(workContexts.id))
     .limit(CONFERENCE_MAX_CONTEXTS);
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    status: row.status,
-    intent: row.intent ?? null,
-    developerId: row.developerId,
-    developerName: row.developerName,
-    lastActiveAt: new Date(row.lastActiveAt).toISOString(),
-  }));
+  return rows.map((row) =>
+    projectRow(hidden, { developerId: row.developerId, titleFacts: { repo, branch: row.branch, titleSource: row.titleSource } }, {
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      intent: row.intent ?? null,
+      developerId: row.developerId,
+      developerName: row.developerName,
+      lastActiveAt: new Date(row.lastActiveAt).toISOString(),
+    }),
+  );
 };
 
 /**
@@ -220,12 +238,13 @@ const countContextsInWindow = async (
   deps: Deps,
   repo: string,
   cutoff: Date,
+  viewerDeveloperId: string,
 ): Promise<{ readonly total: number; readonly capped: boolean }> => {
   const rows = await deps.db
     .select({ id: workContexts.id })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(recentWorkCondition(repo, cutoff))
+    .where(recentWorkCondition(repo, cutoff, viewerDeveloperId))
     .limit(CONFERENCE_MAX_COUNTED_CONTEXTS);
   return {
     total: rows.length,
@@ -254,6 +273,7 @@ const cutBody = (body: string): string => {
 const listContextClaims = async (
   deps: Deps,
   workContextId: string,
+  hidden: HiddenLocations,
 ): Promise<readonly ConferenceClaimView[]> => {
   const rows = await deps.db
     .select({
@@ -263,6 +283,7 @@ const listContextClaims = async (
       confidence: claims.confidence,
       provenance: claims.provenance,
       body: claims.body,
+      authorDeveloperId: agentSessions.developerId,
       authorDeveloperName: developers.name,
       createdAt: claims.createdAt,
       // What the evidence ladder needs, off the same row. A conference report
@@ -301,17 +322,21 @@ const listContextClaims = async (
       axes.set(id, value);
     }
   }
-  return rows.map((row) => ({
-    id: row.id,
-    kind: row.kind,
-    status: row.status,
-    confidence: row.confidence,
-    provenance: row.provenance,
-    body: cutBody(row.body),
-    authorDeveloperName: row.authorDeveloperName,
-    axes: axes.get(row.id) ?? UNRESOLVED_AXES,
-    createdAt: row.createdAt.toISOString(),
-  }));
+  // Each claim by its AUTHOR (services/live-location.ts): the evidence rung's
+  // age is when her session observed the failure it cites.
+  return rows.map((row) =>
+    projectRow(hidden, { developerId: row.authorDeveloperId, kind: "claim" }, {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      confidence: row.confidence,
+      provenance: row.provenance,
+      body: cutBody(row.body),
+      authorDeveloperName: row.authorDeveloperName,
+      axes: axes.get(row.id) ?? UNRESOLVED_AXES,
+      createdAt: row.createdAt.toISOString(),
+    }),
+  );
 };
 
 interface ContextTargets {
@@ -494,6 +519,7 @@ const listOpenQuestions = async (
   deps: Deps,
   viewerDeveloperId: string,
   repo: string,
+  hidden: HiddenLocations,
 ): Promise<readonly ConferenceQuestionView[]> => {
   const authors = alias(developers, "conference_question_authors");
   const targets = alias(developers, "conference_question_targets");
@@ -501,12 +527,15 @@ const listOpenQuestions = async (
   const rows = await deps.db
     .select({
       id: questions.id,
+      authorDeveloperId: questions.authorDeveloperId,
       authorDeveloperName: authors.name,
       targetDeveloperId: questions.targetDeveloperId,
       targetDeveloperName: targets.name,
       workContextId: questions.workContextId,
       workContextTitle: workContexts.title,
       contextOwnerId: contextSessions.developerId,
+      contextBranch: contextSessions.branch,
+      contextTitleSource: workContexts.titleSource,
       createdAt: questions.createdAt,
     })
     .from(questions)
@@ -523,17 +552,31 @@ const listOpenQuestions = async (
     )
     .orderBy(asc(questions.createdAt), asc(questions.id))
     .limit(CONFERENCE_MAX_QUESTIONS);
-  return rows.map((row) => ({
-    id: row.id,
-    authorDeveloperName: row.authorDeveloperName,
-    targetDeveloperName: row.targetDeveloperName,
-    workContextId: row.workContextId,
-    workContextTitle: row.workContextTitle,
-    createdAt: row.createdAt.toISOString(),
-    isForReader:
-      row.targetDeveloperId === viewerDeveloperId ||
-      row.contextOwnerId === viewerDeveloperId,
-  }));
+  return rows.map((row) => {
+    const view = {
+      id: row.id,
+      authorDeveloperName: row.authorDeveloperName,
+      targetDeveloperName: row.targetDeveloperName,
+      workContextId: row.workContextId,
+      workContextTitle: row.workContextTitle,
+      createdAt: row.createdAt.toISOString(),
+      isForReader:
+        row.targetDeveloperId === viewerDeveloperId ||
+        row.contextOwnerId === viewerDeveloperId,
+    };
+    // Two owners: the question is its asker's; the title names where the
+    // CONTEXT's owner is, so it alone is judged by them.
+    const asked = projectRow(hidden, { developerId: row.authorDeveloperId, kind: "question" }, view);
+    return row.contextOwnerId === null
+      ? asked
+      : {
+          ...asked,
+          ...projectRow(hidden, {
+            developerId: row.contextOwnerId,
+            titleFacts: { repo, branch: row.contextBranch, titleSource: row.contextTitleSource },
+          }, { workContextTitle: view.workContextTitle }),
+        };
+  });
 };
 
 /**
@@ -549,14 +592,15 @@ export const readConference = async (
   const cutoff = new Date(
     deps.now().getTime() - CONFERENCE_ACTIVE_WINDOW_DAYS * MS_PER_DAY,
   );
+  const hidden = await locationHiddenFrom(deps.db, viewerDeveloperId);
   const [contexts, window, questionRows] = await Promise.all([
-    listRecentContexts(deps, repo, cutoff),
-    countContextsInWindow(deps, repo, cutoff),
-    listOpenQuestions(deps, viewerDeveloperId, repo),
+    listRecentContexts(deps, repo, cutoff, viewerDeveloperId, hidden),
+    countContextsInWindow(deps, repo, cutoff, viewerDeveloperId),
+    listOpenQuestions(deps, viewerDeveloperId, repo, hidden),
   ]);
   const ids = contexts.map((context) => context.id);
   const [claimLists, sliceTargets, contradictions] = await Promise.all([
-    Promise.all(ids.map((id) => listContextClaims(deps, id))),
+    Promise.all(ids.map((id) => listContextClaims(deps, id, hidden))),
     listSliceTargets(deps, ids),
     // SECOND, because it needs the slice. The deliberate-pull posture again:
     // no `excludeMutedForDeveloperId`, the same call findContradictionById

@@ -214,6 +214,9 @@ const appendIntent = async (
       workContextId: fresh.workContextId,
       sessionId: fresh.crosscheckSessionId,
       title: fresh.workContextTitle,
+      // The marker the title registered with, so an intent update never
+      // drops it (the hub keeps a stored one only while the title holds).
+      titleSource: fresh.workContextTitleSource ?? undefined,
       status: fresh.workContextStatus,
       intent: intent.data,
     },

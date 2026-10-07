@@ -98,6 +98,7 @@ const runAllThree = async (fx: { home: string; repo: string; key: string }, host
     hubUrl,
     fallbackDeveloperId: null,
     title: "main @ api",
+    titleSource: "fallback",
     status: "analyzing",
     now: NOW,
     guarantees: [],

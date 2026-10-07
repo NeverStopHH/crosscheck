@@ -45,6 +45,8 @@ import {
   solvedCandidateCondition,
 } from "./solved.ts";
 import { loadClaimValidities } from "./claim-validity.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import { notMutedCondition } from "./visibility.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { ClaimAxesRow } from "./evidence-axes.ts";
@@ -217,6 +219,15 @@ const listSharedTargetPairs = async (
   // The live side, bounded before it multiplies anything: the repo's freshest
   // active contexts, and no more of them than the cap. Ordered by activity so
   // the cap drops the stalest work rather than an arbitrary page.
+  // A teammate who opted out of presence is "live" by creation alone here
+  // (services/live-location.ts activitySeenBy): which solved trees the reader
+  // is shown must not move because she touched her work again.
+  const liveActivity = activitySeenBy(
+    viewerDeveloperId,
+    liveSessions.developerId,
+    liveContexts.updatedAt,
+    liveContexts.createdAt,
+  );
   const liveIds = deps.db
     .select({ id: liveContexts.id })
     .from(liveContexts)
@@ -228,12 +239,10 @@ const listSharedTargetPairs = async (
           sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`,
           cutoff,
         ),
+        gte(liveActivity, cutoff),
       ),
     )
-    .orderBy(
-      desc(sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`),
-      asc(liveContexts.id),
-    )
+    .orderBy(desc(liveActivity), asc(liveContexts.id))
     .limit(SOLVED_MATCH_MAX_LIVE_CONTEXTS);
   return deps.db
     .selectDistinct({
@@ -398,6 +407,7 @@ const listIntentMatchIds = async (
 const hydrateMatches = async (
   db: Db,
   ids: readonly string[],
+  hidden: HiddenLocations,
 ): Promise<
   ReadonlyMap<
     string,
@@ -413,7 +423,10 @@ const hydrateMatches = async (
       title: workContexts.title,
       landedAt: workContexts.landedAt,
       developerName: developers.name,
+      developerId: agentSessions.developerId,
       repo: agentSessions.repo,
+      branch: agentSessions.branch,
+      titleSource: workContexts.titleSource,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -422,12 +435,15 @@ const hydrateMatches = async (
   return new Map(
     rows.map((row) => [
       row.id,
-      {
+      projectRow(hidden, {
+        developerId: row.developerId,
+        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
+      }, {
         title: row.title,
         developerName: row.developerName,
         repo: row.repo,
         landedAt: row.landedAt,
-      },
+      }),
     ]),
   );
 };
@@ -456,11 +472,14 @@ const toMatchViews = async (
   now: Date,
   winners: readonly (MatchStrength & { id: string })[],
   solvedInfo: ReadonlyMap<string, Date>,
+  viewerDeveloperId: string,
 ): Promise<readonly SolvedMatchView[]> => {
+  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
   const [display, rootCauses] = await Promise.all([
     hydrateMatches(
       db,
       winners.map((winner) => winner.id),
+      hidden,
     ),
     // Bodies only for the trees that will be allowed to carry one, so a
     // file-matched tree's claim never leaves the hub at all.
@@ -481,6 +500,7 @@ const toMatchViews = async (
     db,
     now,
     [...rootCauses.values()].map((cause) => cause.claimId),
+    viewerDeveloperId,
   );
   // WAS ANYTHING RUN behind each root cause (08 §3.1) — and derived PER REPO,
   // which is the only correct way to do it here.
@@ -547,9 +567,20 @@ const toMatchViews = async (
           }
           // The weakest rung for a body that travels without one — never an
           // omission, which a reader would take for "no label reported".
-          return axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES;
+          // The rung's age is when HER evidence was observed: by its author.
+          return projectRow(
+            hidden,
+            { developerId: cause.authorDeveloperId, kind: "claim" },
+            axesByClaim.get(cause.claimId) ?? UNRESOLVED_AXES,
+          );
         })(),
-        rootCauseValidity: validityOf(rootCauses.get(winner.id), validities),
+        rootCauseValidity: (() => {
+          const cause = rootCauses.get(winner.id);
+          const validity = validityOf(cause, validities);
+          return cause === undefined || validity === null
+            ? validity
+            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: "claim_validity" }, validity);
+        })(),
       },
     ];
   });
@@ -633,7 +664,7 @@ export const listSolvedByFingerprint = async (
     }))
     .sort((left, right) => right.solvedAtMs - left.solvedAtMs)
     .slice(0, SOLVED_MATCH_MAX_PROBE_FINDINGS);
-  return toMatchViews(deps.db, deps.now(), winners, solvedInfo);
+  return toMatchViews(deps.db, deps.now(), winners, solvedInfo, viewerDeveloperId);
 };
 
 /**
@@ -704,5 +735,5 @@ export const listSolvedMatches = async (
     )
     .slice(0, SOLVED_MATCH_MAX_FINDINGS);
 
-  return toMatchViews(deps.db, deps.now(), winners, solvedInfo);
+  return toMatchViews(deps.db, deps.now(), winners, solvedInfo, viewerDeveloperId);
 };

@@ -55,6 +55,7 @@ export const pilotRoutes = (deps: AppDeps): Hono<AppEnv> => {
       await readPilotReport(deps, {
         repo: parsed.data.repo,
         days: parsed.data.days,
+        viewerDeveloperId: c.get("developer").id,
       }),
     );
   });

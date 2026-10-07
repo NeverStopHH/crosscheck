@@ -21,6 +21,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { agentSessions, claims, workContextTargets, workContexts } from "../db/schema.ts";
 import { derivedTokenLine, repoLabelOf, titleForDoc } from "./search-tokens.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
+import { isTitleWithheldFromIndex } from "./live-location.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 
@@ -214,7 +215,11 @@ export const refreshNormalizedDoc = async (
     .limit(NORMALIZED_DOC_MAX_CLAIMS);
 
   const doc = buildNormalizedDoc({
-    title: context.title,
+    // AN OPTED-OUT OWNER'S LOCATION TITLE NEVER ENTERS THE INDEX (review
+    // round 4, H4): this doc is the one copy every viewer searches, so the
+    // branch the pages withhold would still be matchable by a colleague's
+    // guess. The rule is live-location.ts's; the rest of the doc is untouched.
+    title: (await isTitleWithheldFromIndex(db, workContextId)) ? "" : context.title,
     status: context.status,
     repoLabel: repoLabelOf(context.repo),
     intentSummary: intentSummaryOf(context.intent),

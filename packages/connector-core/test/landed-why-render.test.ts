@@ -10,9 +10,11 @@
  * reason recorded".
  */
 import { describe, expect, test } from "bun:test";
+import { LOCATION_WITHHELD } from "@crosscheck/schema";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { renderEditWarning } from "../src/hints/render.ts";
+import { LandedContextMatchSchema } from "../src/http/hub.ts";
 import type { LandedContextMatch } from "../src/http/hub.ts";
 import type { LandedChanges, LandedCommit } from "../src/landed-changes/probe.ts";
 
@@ -76,6 +78,16 @@ describe("the teammate work behind a landed change", () => {
     const text = render([match({ workStartedAt: undefined })]);
 
     expect(text).toContain("before it landed (started at an unknown time): work context");
+  });
+
+  test("a work start the hub withheld (presence opt-out) says so, not that it is unknown", () => {
+    // Through the wire schema: the marker must survive the parse to be said.
+    const parsed = LandedContextMatchSchema.parse({ ...match(), workStartedAt: LOCATION_WITHHELD });
+
+    const text = render([parsed]);
+
+    expect(text).toContain(`before it landed (start time ${LOCATION_WITHHELD}): work context`);
+    expect(text).not.toContain("unknown time");
   });
 
   test("a work start in the future — a hub clock ahead of this one — is unknown too", () => {

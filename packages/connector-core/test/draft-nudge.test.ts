@@ -833,6 +833,7 @@ describe("the nudge slot survives the session that spent it", () => {
       hubUrl: own.hubUrl,
       fallbackDeveloperId: own.developerId,
       title: fallbackWorkContextTitle("main", REPO_ID),
+      titleSource: "fallback",
       status: "analyzing",
       now: new Date(),
       guarantees: guaranteeDeclarationFor(DEFAULT_AGENT_KIND),

@@ -241,6 +241,17 @@ const presenceWith = (payload: string): PresenceEntry => ({
   intent: intentWith(payload),
 });
 
+/** briefing-topics presence: feat/a (index 1) leads, the payload (0) next. */
+const TOPICS_BLOCKED_HEARTBEAT = "2026-08-18T11:54:00.000Z";
+const TOPICS_TRAILING_HEARTBEAT = "2026-08-18T11:53:00.000Z";
+
+const topicsHeartbeat = (index: number): string => {
+  if (index === 0) {
+    return TOPICS_BLOCKED_HEARTBEAT;
+  }
+  return index === 1 ? ISO : TOPICS_TRAILING_HEARTBEAT;
+};
+
 const workContextWith = (payload: string): WorkContextEntry => ({
   id: "wc_cc_11111111-2222-4333-8444-555555555555",
   developerId: "dev_other",
@@ -722,11 +733,17 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       renderBriefing({
         repoId: "github.com/acme/api",
         selfDeveloperId: "dev_self",
+        // The payload's branch is BLOCKED and second-freshest: not the lead
+        // (feat/a is fresher), so "blocked on <its label>" renders — the slot
+        // a lead topic never reaches — and still inside the bounded branch
+        // list, so that slot carries the payload too.
         presence: [payload, "feat/a", "feat/b", "feat/c", "feat/d"].map(
           (branch, index) => ({
             ...presenceWith(payload),
             sessionId: `cc_topics_${String(index)}`,
             branch,
+            lastHeartbeatAt: topicsHeartbeat(index),
+            ...(index === 0 ? { status: "blocked" } : {}),
           }),
         ),
         // The first two rows carry the payload as their SESSION branch — the

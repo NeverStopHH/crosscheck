@@ -160,7 +160,7 @@ const deliver = async (
 const report = (world: World, days = 56) =>
   readPilotReport(
     { db: world.harness.db, now: () => NOW },
-    { repo: REPO, days },
+    { repo: REPO, days, viewerDeveloperId: world.developer.developerId },
   );
 
 /** One human label on one delivery, by the test developer, an hour ago. */

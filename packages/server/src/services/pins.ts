@@ -43,6 +43,9 @@ import { readLiveWaivers } from "./waivers.ts";
 import type { LiveWaiver } from "./waivers.ts";
 import { readClosedWaivers, readPinFence } from "./waiver-terminations.ts";
 import type { ClosedWaiver, PinFence } from "./waiver-terminations.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
+import { visiblePresenceCondition } from "./visibility.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -326,13 +329,20 @@ export const markPinBroke = async (
 };
 
 /** One aggregate over the LIVE pins of one repo — the printed denominator. */
-const readCoverage = async (deps: Deps, repo: string): Promise<PinCoverage> => {
+const readCoverage = async (
+  deps: Deps,
+  repo: string,
+  viewerDeveloperId: string,
+): Promise<PinCoverage> => {
   const [live] = await deps.db
     .select({
       pins: countDistinct(pins.id),
       files: count(pinFiles.path),
       missingPaths: sql<number>`count(*) filter (where ${pinFiles.status} = 'missing')`,
-      oldestVerifiedAt: min(pins.verifiedAt),
+      // Over the verifications THIS viewer may date: the oldest one is a
+      // pinner's instant, and an opted-out pinner's is hers to withhold
+      // (pinSeenBy). Her pins still count above; they just do not age it.
+      oldestVerifiedAt: sql<Date | string | null>`min(${pins.verifiedAt}) filter (where ${visiblePresenceCondition(viewerDeveloperId, pins.verifiedBy)})`,
     })
     .from(pins)
     .leftJoin(pinFiles, eq(pinFiles.pinId, pins.id))
@@ -414,6 +424,37 @@ const toPinView = (
   missingPaths: files.filter((file) => file.status === "missing").length,
 });
 
+/** Who did each thing a pin row records — the owners its parts are judged by. */
+interface PinActors {
+  readonly verifiedById: string;
+  readonly brokeBy: string | null;
+  readonly renamedBy: string | null;
+}
+
+/**
+ * A pin as THIS viewer may read it (services/live-location.ts), each part by
+ * its OWN owner (review round 4, M3): the verification is the pinner's — the
+ * HEAD she verified at, and when — the break its breaker's, the rename its
+ * sweeper's. The marker for all four instants: a null `brokeAt` would read as
+ * a pin nobody broke, and every reader requires the verification as text.
+ * The fences are a grant's, decided on the record, and stay as they are.
+ */
+const pinSeenBy = (hidden: HiddenLocations, view: PinView, actors: PinActors): PinView => {
+  const { liveWaiver, closedWaiver, brokeAt, renamedAt, ...verification } = view;
+  const instant = (by: string | null, at: string | null): string | null =>
+    by === null ? at : projectRow(hidden, { developerId: by }, { at }, { at: "marker" }).at;
+  return {
+    ...projectRow(hidden, { developerId: actors.verifiedById }, verification, {
+      verifiedAtCommit: "marker",
+      verifiedAt: "marker",
+    }),
+    brokeAt: instant(actors.brokeBy, brokeAt),
+    renamedAt: instant(actors.renamedBy, renamedAt),
+    liveWaiver,
+    closedWaiver,
+  };
+};
+
 /**
  * The repo's registry, newest first, with every pin's files and author.
  *
@@ -426,6 +467,7 @@ const toPinView = (
 export const listPins = async (
   deps: Deps,
   repo: string,
+  viewerDeveloperId: string,
 ): Promise<PinRegistryView> => {
   const rows = await deps.db
     .select({
@@ -500,17 +542,22 @@ export const listPins = async (
   };
   const waivers = await readLiveWaivers(fenceInput);
   const closed = await readClosedWaivers(fenceInput);
+  const hidden = await locationHiddenFrom(deps.db, viewerDeveloperId);
   return {
     pins: rows.map((row) =>
-      toPinView(
+      pinSeenBy(
+        hidden,
+        toPinView(
+          row,
+          filesByPin.get(row.id) ?? [],
+          row.brokeBy === null ? null : breakerNames.get(row.brokeBy) ?? null,
+          row.renamedBy === null ? null : breakerNames.get(row.renamedBy) ?? null,
+          { liveWaiver: waivers.get(row.id) ?? null, closedWaiver: closed.get(row.id) ?? null },
+        ),
         row,
-        filesByPin.get(row.id) ?? [],
-        row.brokeBy === null ? null : breakerNames.get(row.brokeBy) ?? null,
-        row.renamedBy === null ? null : breakerNames.get(row.renamedBy) ?? null,
-        { liveWaiver: waivers.get(row.id) ?? null, closedWaiver: closed.get(row.id) ?? null },
       ),
     ),
-    coverage: await readCoverage(deps, repo),
+    coverage: await readCoverage(deps, repo, viewerDeveloperId),
   };
 };
 
@@ -518,6 +565,7 @@ export const listPins = async (
 export const readPin = async (
   deps: Deps,
   pinId: string,
+  viewerDeveloperId: string,
 ): Promise<PinView | null> => {
   const rows = await deps.db
     .select({
@@ -561,7 +609,7 @@ export const readPin = async (
       .limit(1);
     return rows[0]?.name ?? null;
   };
-  return toPinView(
+  const view = toPinView(
     row,
     files.map((file) => ({ path: file.path, status: file.status })),
     await nameOf(row.brokeBy),
@@ -577,6 +625,7 @@ export const readPin = async (
       now: deps.now(),
     }),
   );
+  return pinSeenBy(await locationHiddenFrom(deps.db, viewerDeveloperId), view, row);
 };
 
 export interface PinPathUpdate {

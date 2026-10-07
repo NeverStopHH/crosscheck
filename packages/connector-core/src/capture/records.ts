@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
-import type { Envelope, Intent, LandedStop } from "@crosscheck/schema";
+import type { Envelope, Intent, LandedStop, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { FOREIGN_SESSION_DELIVERY } from "./seq.ts";
 import type { DeliveryChannel } from "@crosscheck/schema";
@@ -34,6 +34,14 @@ export interface WorkContextRecordInput {
   readonly workContextId: string;
   readonly sessionId: string;
   readonly title: string;
+  /**
+   * How `title` was written (@crosscheck/schema WORK_CONTEXT_TITLE_SOURCES):
+   * `fallback` is the session's branch, which the hub withholds from
+   * colleagues of a developer who opted out of presence. Omitted only by a
+   * writer that does not know (a state file from before the marker) — the
+   * hub then keeps the stored marker while the title is unchanged.
+   */
+  readonly titleSource?: WorkContextTitleSource | undefined;
   readonly status: string;
   /**
    * Present only on an intent UPDATE (the derived-intent worker, `set_intent`):
@@ -54,6 +62,7 @@ export const workContextRecord = (
       id: input.workContextId,
       sessionId: input.sessionId,
       title: input.title,
+      ...(input.titleSource === undefined ? {} : { titleSource: input.titleSource }),
       status: input.status,
       ...(input.intent === undefined ? {} : { intent: input.intent }),
       createdAt: now.toISOString(),

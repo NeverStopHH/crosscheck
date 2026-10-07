@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 
 import { MAX_TOPICS_PER_TEAMMATE } from "../src/constants.ts";
 import { groupTeammates, renderBriefing } from "../src/briefing/render.ts";
+import { RENDER_SURFACES } from "../src/render-surfaces.ts";
 import type { PresenceEntry } from "../src/http/hub.ts";
 
 const NOW = new Date("2026-08-21T12:00:00.000Z");
@@ -70,8 +71,85 @@ describe("a teammate's live sessions, grouped by topic", () => {
     ]);
 
     expect(lines).toEqual([
-      "- Nick · branch detached · status analyzing · heartbeat 10s ago",
+      "- Nick · branch <detached HEAD> · status analyzing · heartbeat 10s ago",
     ]);
+  });
+
+  test("a live branch that calls itself the detached label cannot print it", () => {
+    // The `<` `>` are the renderer's: the sanitizer strips them from every
+    // branch a connector reports, so the forgery prints without them.
+    const ken = { sessionId: "cc_ken_0", developerId: "dev_ken", developerName: "Ken" };
+    const lines = presenceLines([
+      live(0, "detached@abc1234"),
+      live(1, "<detached HEAD>", ken),
+    ]);
+
+    expect(lines).toEqual([
+      "- Nick · branch <detached HEAD> · status analyzing · heartbeat 10s ago",
+      "- Ken · branch detached HEAD · status analyzing · heartbeat 11s ago",
+    ]);
+  });
+
+  test("the briefing-topics corpus fixture reaches the blocked-on slot with the payload in it", () => {
+    // The injection corpus attacks only the slots its fixture renders
+    // (render-surfaces.ts). "blocked on" prints the labels of NON-lead
+    // topics, so the payload's branch must be blocked and not the freshest
+    // — and still inside the bounded branch list, which it attacks too.
+    const surface = RENDER_SURFACES.find((candidate) => candidate.name === "briefing-topics");
+    if (surface?.kind !== "corpus") {
+      throw new Error("briefing-topics is no longer a corpus surface");
+    }
+
+    const presenceLine = surface
+      .render("rate limit fix")
+      .split("\n")
+      .find((line) => line.includes(" · branches "));
+
+    expect(presenceLine).toContain("branches feat/a, rate limit fix, feat/b and 2 more");
+    expect(presenceLine).toContain("· blocked on rate limit fix ·");
+  });
+
+  test("a live branch named detached@<word> is a branch", () => {
+    const lines = presenceLines([live(0, "detached@release")]);
+
+    expect(lines).toEqual([
+      "- Nick · branch detached@release · status analyzing · heartbeat 10s ago",
+    ]);
+  });
+
+  test("two live branches whose names sanitize alike stay two branches", () => {
+    // Grouped on the sanitized label, both redacted names were one branch
+    // with one status; keyed raw, they are two.
+    const [nick] = groupTeammates(
+      [live(0, "feat/config-override"), live(1, "fix/override-cache", { status: "blocked" })],
+      NOW,
+    );
+
+    expect(nick?.topics.map((topic) => [topic.sessions, topic.status])).toEqual([
+      [1, "analyzing"],
+      [1, "blocked"],
+    ]);
+  });
+
+  test("a blocked branch surfaces even when it is not the freshest", () => {
+    // The line's status is the freshest branch's; a session stuck on another
+    // branch was invisible behind it.
+    const lines = presenceLines([
+      live(0, "feat/fresh"),
+      live(1, "fix/prod-outage", { status: "blocked" }),
+    ]);
+
+    expect(lines[0]).toContain("· status analyzing · blocked on fix/prod-outage · heartbeat");
+  });
+
+  test("a blocked freshest branch is said once, by its status", () => {
+    const lines = presenceLines([
+      live(0, "fix/prod-outage", { status: "blocked" }),
+      live(1, "feat/other"),
+    ]);
+
+    expect(lines[0]).toContain("· status blocked · heartbeat");
+    expect(lines[0]).not.toContain("blocked on");
   });
 
   test("the status shown is the highest-ranked one on the freshest branch", () => {

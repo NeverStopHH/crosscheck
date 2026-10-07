@@ -33,6 +33,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -44,6 +45,13 @@ import {
 } from "../db/schema.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
+import {
+  activitySeenBy,
+  locationHiddenFrom,
+  projectRow,
+  updatedAtSeenBy,
+} from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { staleDraftDoc } from "./stale-docs.ts";
 import { notMutedCondition } from "./visibility.ts";
@@ -311,6 +319,20 @@ export interface SearchQuery {
    * claim-body word (the review's hint-window probe, its last assertion).
    */
   readonly excludeDerivedClaims?: boolean | undefined;
+  /**
+   * Who is reading. Required, never defaulted: an opted-out developer's
+   * fallback title — their branch — is withheld from every viewer but them
+   * (services/live-location.ts), and a search that did not know its reader
+   * could only fail open.
+   */
+  readonly viewerDeveloperId: string;
+  /**
+   * The hidden owners for `viewerDeveloperId`, when the caller already holds
+   * them (services/live-location.ts locationHiddenFrom): computed ONCE per
+   * request, so a caller that projects rows of its own does not pay for the
+   * lookup twice (review round 5, H3 — hint candidates did).
+   */
+  readonly hidden?: HiddenLocations | undefined;
   readonly limit: number;
 }
 
@@ -393,7 +415,19 @@ interface SearchScope {
   readonly developerId: string | undefined;
   /** R1's WHEN — see SearchQuery.since for why it is activity, not creation. */
   readonly since: Date | undefined;
+  /**
+   * Who asks. Every tier windows, ranks and ages by activity AS THIS VIEWER
+   * MAY SEE IT (services/live-location.ts activitySeenBy): a teammate who
+   * opted out counts from creation alone, or a `since=` window, a
+   * freshest-first order and the decay would each say when she last touched
+   * her work, which the withheld `updatedAt` no longer does.
+   */
+  readonly viewerDeveloperId: string;
 }
+
+/** `updated_at` as the scope's viewer may see it — the tiers' `updatedAt`. */
+const updatedAtFor = (scope: SearchScope): SQL<Date | null> =>
+  updatedAtSeenBy(scope.viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt);
 
 const scopeCondition = (scope: SearchScope) =>
   and(
@@ -411,7 +445,10 @@ const scopeCondition = (scope: SearchScope) =>
       : eq(agentSessions.developerId, scope.developerId),
     scope.since === undefined
       ? undefined
-      : sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) >= ${scope.since.toISOString()}::timestamptz`,
+      : and(
+          sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) >= ${scope.since.toISOString()}::timestamptz`,
+          sql`${activityFor(scope)} >= ${scope.since.toISOString()}::timestamptz`,
+        ),
     scope.excludeMutedForDeveloperId === undefined
       ? undefined
       : notMutedCondition(
@@ -420,7 +457,12 @@ const scopeCondition = (scope: SearchScope) =>
         ),
   );
 
-const activityDesc = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) DESC`;
+const activityFor = (scope: SearchScope): SQL<Date> =>
+  activitySeenBy(scope.viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
+
+/** Freshest first, ties to the id — never to the order the scan met the rows in. */
+const activityDesc = (scope: SearchScope): SQL =>
+  sql`${activityFor(scope)} DESC, ${workContexts.id} ASC`;
 
 const listExactTier = async (
   db: Db,
@@ -438,7 +480,7 @@ const listExactTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
     })
     .from(workContextTargets)
     .innerJoin(
@@ -447,8 +489,8 @@ const listExactTier = async (
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(and(scopeCondition(scope), or(...tokenConditions)))
-    .groupBy(workContexts.id, workContexts.createdAt, workContexts.updatedAt)
-    .orderBy(sql`count(*) DESC`, activityDesc)
+    .groupBy(workContexts.id, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)
+    .orderBy(sql`count(*) DESC`, activityDesc(scope))
     .limit(TIER_CANDIDATES);
 };
 
@@ -480,7 +522,7 @@ const listFtsTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       rank: sql<number>`ts_rank(${workContexts.tsv}, ${tsquery})`,
     })
     .from(workContexts)
@@ -497,7 +539,7 @@ const listFtsTier = async (
         not(staleDraftDoc(db)),
       ),
     )
-    .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc)
+    .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc(scope))
     .limit(TIER_CANDIDATES);
 
   // Claim bodies get their own pass: the doc caps out at
@@ -512,7 +554,7 @@ const listFtsTier = async (
     .select({
       id: claims.workContextId,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       rank: sql<number>`max(ts_rank(${claims.tsv}, ${tsquery}))`,
       declared: sql<boolean>`bool_or(${claims.provenance} = ${DECLARED_PROVENANCE})`,
     })
@@ -537,6 +579,7 @@ const listFtsTier = async (
       claims.workContextId,
       workContexts.createdAt,
       workContexts.updatedAt,
+      agentSessions.developerId,
     )
     .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
     .limit(TIER_CANDIDATES);
@@ -604,7 +647,7 @@ const listVectorTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       similarity: sql<number>`1 - (${distance})`,
     })
     .from(workContexts)
@@ -632,12 +675,12 @@ const listRecencyTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(scopeCondition(scope))
-    .orderBy(activityDesc)
+    .orderBy(activityDesc(scope))
     .limit(TIER_CANDIDATES);
 
 interface FusedEntry {
@@ -728,10 +771,13 @@ const hydrate = async (
   db: Db,
   entries: readonly FusedEntry[],
   solvedInfo: ReadonlyMap<string, Date>,
+  viewerDeveloperId: string,
+  known: HiddenLocations | undefined,
 ): Promise<readonly SearchResultView[]> => {
   if (entries.length === 0) {
     return [];
   }
+  const hidden = known ?? (await locationHiddenFrom(db, viewerDeveloperId));
   const ids = entries.map((entry) => entry.row.id);
   const rows = await db
     .select({
@@ -743,6 +789,9 @@ const hydrate = async (
       updatedAt: workContexts.updatedAt,
       developerId: agentSessions.developerId,
       developerName: developers.name,
+      repo: agentSessions.repo,
+      branch: agentSessions.branch,
+      titleSource: workContexts.titleSource,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -756,7 +805,11 @@ const hydrate = async (
     }
     const solvedAt = solvedInfo.get(row.id);
     return [
-      {
+      projectRow(hidden, {
+        developerId: row.developerId,
+        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
+        kind: "work_context",
+      }, {
         id: row.id,
         developerId: row.developerId,
         developerName: row.developerName,
@@ -772,7 +825,7 @@ const hydrate = async (
           : "solved") as SearchResultKind,
         solvedAt: solvedAt === undefined ? null : solvedAt.toISOString(),
         derivedOnly: entry.lexicalDerivedOnly === true,
-      },
+      }),
     ];
   });
 };
@@ -825,6 +878,8 @@ const floorEligibleIds = async (
     db,
     now,
     [...causes.values()].map((cause) => cause.claimId),
+    // State only: the floor reads `state`, and none of these readings ship.
+    null,
   );
   return new Set(
     [...causes]
@@ -854,6 +909,7 @@ export const searchWorkContexts = async (
     excludeMutedForDeveloperId: input.excludeMutedForDeveloperId,
     developerId: input.developerId,
     since: input.since,
+    viewerDeveloperId: input.viewerDeveloperId,
   };
 
   // A blank query asks "what is happening" — answered by recency alone. The
@@ -871,7 +927,13 @@ export const searchWorkContexts = async (
       new Set(solvedInfo.keys()),
     );
     return {
-      results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),
+      results: await hydrate(
+        deps.db,
+        fused.slice(0, limit),
+        solvedInfo,
+        input.viewerDeveloperId,
+        input.hidden,
+      ),
       vectorTierActive: false,
     };
   }
@@ -903,7 +965,13 @@ export const searchWorkContexts = async (
     floorIds,
   );
   return {
-    results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),
+    results: await hydrate(
+      deps.db,
+      fused.slice(0, limit),
+      solvedInfo,
+      input.viewerDeveloperId,
+      input.hidden,
+    ),
     vectorTierActive: vector.active,
   };
 };

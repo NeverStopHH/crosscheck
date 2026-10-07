@@ -31,6 +31,7 @@ import { realpathBestEffort } from "../config/paths.ts";
 import { SessionStateSchema } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
 import type { RepoIdentity } from "../git/repo-identity.ts";
+import type { WorkContextTitleSource } from "@crosscheck/schema";
 
 export interface OwnWorkContext {
   readonly hostSessionKey: string;
@@ -55,6 +56,8 @@ export interface OwnWorkContext {
    * the tool then says so rather than fabricating a title.
    */
   readonly workContextTitle: string | null;
+  /** How that title was written — re-sent on the update (the hub's marker). */
+  readonly workContextTitleSource: WorkContextTitleSource | null;
   readonly workContextStatus: string | null;
   readonly startedAt: string;
   /**
@@ -146,6 +149,7 @@ export const resolveOwnWorkContext = async (
     workContextId: chosen.workContextId,
     developerId: chosen.developerId,
     workContextTitle: chosen.workContextTitle,
+    workContextTitleSource: chosen.workContextTitleSource ?? null,
     workContextStatus: chosen.workContextStatus,
     startedAt: chosen.startedAt,
     sessionAmbiguous,

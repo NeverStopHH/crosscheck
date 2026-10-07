@@ -7,6 +7,7 @@
  * quoting a question that was addressed to somebody else.
  */
 import { describe, expect, test } from "bun:test";
+import { LOCATION_WITHHELD } from "@crosscheck/schema";
 
 import {
   CONFERENCE_ACTIVE_WINDOW_DAYS,
@@ -67,6 +68,31 @@ const corpusWith = (overrides: Partial<ConferenceCorpus>): ConferenceCorpus => (
 });
 
 describe("the conference report", () => {
+  test("a teammate who opted out of presence reads as withheld, not as an unreadable time", () => {
+    // Arrange: the hub keeps the context and withholds when its author was
+    // last on it (server services/live-location.ts).
+    const robin: ConferenceContext = {
+      ...contextWith(CONTEXT_A, "Robin", "Token refresh rework", "The refresh path trusts a rotated kid"),
+      lastActiveAt: LOCATION_WITHHELD,
+    };
+    const ken = contextWith(CONTEXT_B, "Ken", "Session store migration", "The store hands back a stale session");
+
+    // Act
+    const report = renderConferenceReport({
+      repoId: "github.com/acme/api",
+      corpus: corpusWith({ contexts: [robin, ken], contextsInWindow: 2 }),
+      findings: [{ sentence: "Both sessions change the refresh path", contexts: [robin, ken] }],
+      modelOutcome: { kind: "answered" },
+      now: NOW,
+    });
+
+    // Assert
+    expect(report).toContain(
+      `Robin, last active ${LOCATION_WITHHELD}: «Token refresh rework» — get_diagnosis ${CONTEXT_A}`,
+    );
+    expect(report).not.toContain("at an unreadable time");
+  });
+
   test("a finding names both sides, their trees and the claims it rests on", () => {
     // Arrange
     const nick = contextWith(CONTEXT_A, "Nick", "Token refresh rework", "The refresh path trusts a rotated kid");

@@ -47,8 +47,9 @@
  * their newest activity.
  *
  * IT IS PURE DATA. Nothing here renders, frames or sanitizes: the caller hands
- * in labels and statuses that are ALREADY sanitized for its own surface, and
- * gets back the groups. That is why this module is not in the §4.4
+ * in RAW keys to group by and labels and statuses ALREADY sanitized for its
+ * own surface — grouping never happens on sanitized text — and gets back the
+ * groups. That is why this module is not in the §4.4
  * render-surface registry — it names no render identifier and emits no text.
  */
 import type { SessionStatus } from "@crosscheck/schema";
@@ -56,8 +57,16 @@ import type { SessionStatus } from "@crosscheck/schema";
 /** What grouping needs from a row; the caller may carry anything else along. */
 export interface TopicRow {
   readonly developerId: string;
-  /** Already sanitized and non-empty — the caller drops the rest. */
-  readonly topic: string;
+  /**
+   * What the row is GROUPED by: RAW, never a sanitized label. Keyed on the
+   * label, two branches that both trip the phrase filter were one topic under
+   * one redaction with one status, and two branches differing only past the
+   * title cap were one. The caller namespaces it (briefing/render.ts), so a
+   * branch, a title and the detached-HEAD topic can never equal each other.
+   */
+  readonly topicKey: string;
+  /** What the row is CALLED: already sanitized, non-empty, display only. */
+  readonly label: string;
   /** What "N sessions" counts: one per session, however many rows it owns. */
   readonly sessionKey: string;
   /** Already sanitized; ranked by SESSION_STATUSES, never rewritten. */
@@ -68,6 +77,8 @@ export interface TopicRow {
 }
 
 export interface Topic<T extends TopicRow> {
+  /** The raw grouping key; two topics may share a `label`, never a key. */
+  readonly key: string;
   readonly label: string;
   /** In speaking order: `rows[0]` is the row that speaks for the topic. */
   readonly rows: readonly T[];
@@ -155,10 +166,11 @@ const distinctSessions = <T extends TopicRow>(rows: readonly T[]): number =>
 const newestAge = <T extends TopicRow>(rows: readonly T[]): number =>
   rows.reduce((newest, row) => Math.min(newest, row.ageMs), Number.POSITIVE_INFINITY);
 
-const toTopic = <T extends TopicRow>(label: string, rows: readonly T[]): Topic<T> => {
+const toTopic = <T extends TopicRow>(key: string, rows: readonly T[]): Topic<T> => {
   const ordered = [...rows].sort(bySpeakingOrder);
   return {
-    label,
+    key,
+    label: ordered[0]?.label ?? "",
     rows: ordered,
     sessions: distinctSessions(ordered),
     ageMs: newestAge(ordered),
@@ -178,7 +190,8 @@ const byActivity = <T extends TopicRow>(left: Topic<T>, right: Topic<T>): number
   Number(right.hasRecordedWork) - Number(left.hasRecordedWork) ||
   left.ageMs - right.ageMs ||
   right.sessions - left.sessions ||
-  compareText(left.label, right.label);
+  compareText(left.label, right.label) ||
+  compareText(left.key, right.key);
 
 /**
  * Rows bucketed by a key. The Map is this function's own builder and never
@@ -201,8 +214,8 @@ const toTeammate = <T extends TopicRow>(
   rows: readonly T[],
 ): TeammateTopics<T> => ({
   developerId,
-  topics: [...bucket(rows, (row) => row.topic)]
-    .map(([label, topicRows]) => toTopic(label, topicRows))
+  topics: [...bucket(rows, (row) => row.topicKey)]
+    .map(([key, topicRows]) => toTopic(key, topicRows))
     .sort(byActivity),
   sessions: distinctSessions(rows),
   ageMs: newestAge(rows),

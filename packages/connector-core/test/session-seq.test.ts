@@ -410,6 +410,7 @@ describe("SEQ-5 — a busy lock must mint a new epoch, never restart the old one
         hubUrl: DEAD_HUB_URL,
         fallbackDeveloperId: "dev_self",
         title: "main @ api",
+        titleSource: "fallback",
         status: "analyzing",
         now: new Date(),
         guarantees: [],

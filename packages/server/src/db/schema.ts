@@ -62,6 +62,7 @@ import {
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
   SESSION_STATUSES,
+  WORK_CONTEXT_TITLE_SOURCES,
   CAUSAL_GUARANTEES,
   GUARANTEE_KINDS,
   STORED_GUARANTEE_REASONS,
@@ -106,6 +107,15 @@ export const developers = pgTable("developers", {
    * already read on every authenticated request.
    */
   presenceOptOut: boolean("presence_opt_out").notNull().default(false),
+  /**
+   * When the search index was last rebuilt for the opt-out this developer
+   * has now (review round 5, M1): set when her location-titled docs were
+   * rebuilt without their location titles, cleared when she opts back in.
+   * Null while opted out means nothing rebuilt them yet — an opt-out from
+   * before the index followed the setting — and the boot pass does
+   * (services/developer-settings.ts rebuildOptedOutLocationIndexes).
+   */
+  locationIndexBuiltAt: timestamptz("location_index_built_at"),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
 }, (table) => [
   // The unknown-developer refusal reads a bounded, name-ordered page of this
@@ -240,6 +250,32 @@ export const agentSessions = pgTable(
   ],
 );
 
+/**
+ * EVERY BRANCH A DEVELOPER'S SESSIONS EVER REPORTED (review round 5, H3).
+ *
+ * The live-location projection withholds an unmarked title that equals ANY
+ * branch of an opted-out owner's (review round 4, L2), and it learned those
+ * branches by scanning the events table — unindexed and unpruned — on every
+ * read, every record of her ingest and every context of a toggle. Written
+ * here as sessions register (and re-register on another branch)
+ * (services/developer-branches.ts), backfilled at every boot from the
+ * sessions and events a hub already holds (db/bootstrap.sql, idempotent),
+ * read by developer. The memory outlives
+ * the events table's retention, which is the point. Mirrored in
+ * db/bootstrap.sql.
+ */
+export const developerBranches = pgTable(
+  "developer_branches",
+  {
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    branch: text("branch").notNull(),
+    firstSeen: timestamptz("first_seen").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.developerId, table.branch] })],
+);
+
 export const workContexts = pgTable("work_contexts", {
   id: text("id").primaryKey(),
   sessionId: text("session_id")
@@ -281,6 +317,14 @@ export const workContexts = pgTable("work_contexts", {
    * reads it beside `session_id` (services/coverage.ts touchedScope).
    */
   updatedBySessionId: text("updated_by_session_id").references(() => agentSessions.id),
+  /**
+   * How the title was written, by the connector's own word (@crosscheck/schema
+   * WORK_CONTEXT_TITLE_SOURCES): `fallback` is the session's branch, which the
+   * hub withholds from colleagues of a developer who opted out of presence.
+   * Null for a row an older connector wrote — judged by the title's shape
+   * (services/live-location.ts).
+   */
+  titleSource: text("title_source", { enum: WORK_CONTEXT_TITLE_SOURCES }),
 }, (table) => [
   // `session_id` is a foreign key, which Postgres does NOT index on its own.
   // services/presence.ts reads the newest context of every live session to

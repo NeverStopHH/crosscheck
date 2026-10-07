@@ -119,17 +119,17 @@ describe("a draft's words in a teammate's explicit search", () => {
  * derived claims inside the claim pass's own WHERE — never after its LIMIT.
  */
 describe("searchWorkContexts' excludeDerivedClaims", () => {
-  const searchDirect = (harness: TestHarness, excludeDerivedClaims: boolean) =>
+  const searchDirect = (harness: TestHarness, viewer: TestDeveloper, excludeDerivedClaims: boolean) =>
     searchWorkContexts(
       { db: harness.db, now: harness.clock.now, embedder: null },
-      { query: DRAFT_WORD, repo: VALID_SESSION_BODY.repo, limit: 10, excludeDerivedClaims },
+      { query: DRAFT_WORD, repo: VALID_SESSION_BODY.repo, limit: 10, excludeDerivedClaims, viewerDeveloperId: viewer.developerId },
     );
 
   test("a tree found only through a draft's words is not found at all", async () => {
-    const { harness } = await seed(false);
+    const { harness, robin } = await seed(false);
 
-    const excluded = await searchDirect(harness, true);
-    const included = await searchDirect(harness, false);
+    const excluded = await searchDirect(harness, robin, true);
+    const included = await searchDirect(harness, robin, false);
 
     expect(excluded.results.some((row) => row.id === WORK_CONTEXT_ID)).toBe(false);
     expect(included.results.find((row) => row.id === WORK_CONTEXT_ID)?.derivedOnly).toBe(true);
@@ -146,7 +146,7 @@ describe("searchWorkContexts' excludeDerivedClaims", () => {
       ],
     });
 
-    const excluded = await searchDirect(harness, true);
+    const excluded = await searchDirect(harness, nick, true);
 
     expect(excluded.results.find((row) => row.id === WORK_CONTEXT_ID)?.derivedOnly).toBe(false);
   });

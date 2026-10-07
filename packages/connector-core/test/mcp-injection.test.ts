@@ -408,6 +408,7 @@ const REFEREE_VALIDITY_LINE = new RegExp(
       "a revision replaced it",
       "its author rejected it",
       "recorded against no commit, so it cannot be checked against the code",
+      "its commit is not shared with you, so it cannot be checked against the code",
       // The `current` clause names the ref state it was measured against,
       // because the reading is taken on whatever copy of the default branch
       // this clone holds and nothing on that path fetches. Both shapes are

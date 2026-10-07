@@ -76,7 +76,7 @@ const preRoundTree = async (
 const search = (hub: WindowHub, query: string, embedder: Embedder | null = null) =>
   searchWorkContexts(
     { db: hub.harness.db, now: hub.harness.clock.now, embedder },
-    { query, repo: VALID_SESSION_BODY.repo, limit: SEARCH_LIMIT },
+    { query, repo: VALID_SESSION_BODY.repo, limit: SEARCH_LIMIT, viewerDeveloperId: hub.robin.developerId },
   );
 
 const hint = (hub: WindowHub, query: string) =>
@@ -135,13 +135,13 @@ describe("before the doc upgrade reaches a context that holds a draft", () => {
 
   test("a stale doc of a context with declared claims only is the same under both rules, and still answers", async () => {
     // Arrange: an older hub's doc, never stamped, no draft in the context
-    const { harness } = await inMemoryUpgradeHub();
+    const { harness, nick } = await inMemoryUpgradeHub();
     await seedPreRoundContexts(harness.db, 1, { withDraft: false });
 
     // Act
     const { results } = await searchWorkContexts(
       { db: harness.db, now: harness.clock.now, embedder: null },
-      { query: "zebrafrobnicator", repo: VALID_SESSION_BODY.repo, limit: SEARCH_LIMIT },
+      { query: "zebrafrobnicator", repo: VALID_SESSION_BODY.repo, limit: SEARCH_LIMIT, viewerDeveloperId: nick.developerId },
     );
 
     // Assert

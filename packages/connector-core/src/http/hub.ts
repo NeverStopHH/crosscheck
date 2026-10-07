@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CausalGuaranteeTriple, TelemetryLossReport } from "@crosscheck/schema";
-import { COMMIT_SHA_PATTERN, ClaimValiditySchema } from "@crosscheck/schema";
+import { COMMIT_SHA_PATTERN, ClaimValiditySchema, LOCATION_WITHHELD } from "@crosscheck/schema";
 import type { ClaimRevalidationEntry, LandedContextRequest } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import {
@@ -2412,8 +2412,15 @@ export const LandedContextMatchSchema = z.looseObject({
   title: z.string().min(1),
   developerName: z.string().min(1),
   intent: tolerantIntent,
-  /** When the session behind the work started; the stop prints its age. */
-  workStartedAt: z.iso.datetime({ offset: true }).optional().catch(undefined),
+  /**
+   * When the session behind the work started; the stop prints its age. Or
+   * the hub's LOCATION_WITHHELD for an author who opted out of presence
+   * (server services/live-location.ts), kept so the stop can say so.
+   */
+  workStartedAt: z
+    .union([z.literal(LOCATION_WITHHELD), z.iso.datetime({ offset: true })])
+    .optional()
+    .catch(undefined),
 });
 
 export type LandedContextMatch = z.infer<typeof LandedContextMatchSchema>;

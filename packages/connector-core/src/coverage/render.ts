@@ -162,6 +162,16 @@ const INCOMPLETE_LABELS: Record<string, string> = {
 };
 
 /**
+ * A gap the hub withheld (review round 5, H4): counted, never named — whose
+ * session, and how it went quiet, is the opted-out teammate's to keep. The
+ * hub's flag replaces the reason's word, which is a fixed one for old clients.
+ */
+export const WITHHELD_GAP_LABEL = "withheld: presence opt-out";
+
+const incompleteLabel = (row: CoverageSourceRecord): string | null =>
+  row.withheld === true ? WITHHELD_GAP_LABEL : (INCOMPLETE_LABELS[row.reason] ?? null);
+
+/**
  * THE TWO LOSS REASONS (docs/1.0/loss-accounting.md §4.6) open the sentence
  * differently: a session that went QUIET and a session that LOST records are
  * two facts, and the second is the one the connector wrote down itself. The
@@ -211,7 +221,7 @@ const agentEventFragment = (
       // and only the age says the fact is ageing rather than recurring.
       return `${quiet}${parenthetical([
         age,
-        form.labels ? (INCOMPLETE_LABELS[row.reason] ?? null) : null,
+        form.labels ? incompleteLabel(row) : null,
       ])}`;
     }
     case "unknown": {

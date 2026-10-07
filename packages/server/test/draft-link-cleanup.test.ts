@@ -289,7 +289,7 @@ describe("a link whose draft was since confirmed moves to the confirmed claim", 
     expect(await relatesTo(trees.harness)).toEqual([
       { id: "edge_old_gate", from_claim_id: "clm_nick_rev", to_claim_id: "clm_robin", author_session_id: NICK_SESSION_ID, origin: "similarity_gate" },
     ]);
-    const robinsTree = await getDiagnosis(trees.harness.db, new Date(), "wc_robin");
+    const robinsTree = await getDiagnosis(trees.harness.db, new Date(), "wc_robin", trees.robin.developerId);
     expect(robinsTree?.externalClaims.map((claim) => [claim.id, claim.provenance])).toEqual([["clm_nick_rev", "declared"]]);
   });
 

@@ -43,6 +43,8 @@ import {
 } from "../db/schema.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
   exactTargetTokenConditions,
@@ -325,6 +327,7 @@ const listClaimsForContext = async (
     db,
     now,
     rows.map((row) => row.claim.id),
+    readerDeveloperId,
   );
   // WAS ANYTHING ACTUALLY RUN behind each of these (1.0 spec 08 §3.1), in
   // ONE read for the context rather than one per claim. A hint is unsolicited
@@ -512,6 +515,7 @@ const carriesContent = (matched: readonly MatchedCandidate[]): boolean =>
 const matchCandidates = async (
   deps: Deps,
   callerDeveloperId: string,
+  hidden: HiddenLocations,
   query: { readonly text: string; readonly repo: string; readonly on: HintMatchedOn },
 ): Promise<readonly MatchedCandidate[]> => {
   const searched = await searchWorkContexts(
@@ -529,6 +533,8 @@ const matchCandidates = async (
       // must neither surface nor crowd (services/visibility.ts).
       excludeMutedForDeveloperId: callerDeveloperId,
       limit: SEARCH_POOL_LIMIT,
+      viewerDeveloperId: callerDeveloperId,
+      hidden,
     },
   );
   const eligible = searched.results
@@ -553,22 +559,43 @@ const matchCandidates = async (
     return {
       candidate: {
         workContext: {
-          id: row.id,
           title: row.title,
-          status: row.status,
-          intent: row.intent,
-          tier: row.tier,
-          developerId: row.developerId,
-          developerName: row.developerName,
-          baseCommit: baseCommits.get(row.id) ?? "",
-          resultKind: row.resultKind,
-          solvedAt: row.solvedAt,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          matchedTerms: ownTerms,
+          ...projectRow(
+            hidden,
+            // No title facts: the title above is the search row's, which the
+            // search already projected for this viewer by its marker and branch;
+            // judged again without them, a host title would be withheld too.
+            { developerId: row.developerId, kind: "work_context" },
+            {
+              id: row.id,
+              status: row.status,
+              intent: row.intent,
+              tier: row.tier,
+              developerId: row.developerId,
+              developerName: row.developerName,
+              baseCommit: baseCommits.get(row.id) ?? "",
+              resultKind: row.resultKind,
+              solvedAt: row.solvedAt,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+              matchedTerms: ownTerms,
+            },
+            // "" is this field's own "unknown" on the wire (connector hub.ts: the
+            // drift label skips it), so a hidden owner's HEAD reads exactly as a
+            // context whose base commit the hub never knew.
+            { baseCommit: "empty" },
+          ),
         },
-        claims: contextClaims,
-        matchedTargets: matchedTargets.get(row.id) ?? [],
+        // Each nested row by its OWN owner: a claim by its author, who may not
+        // be the context's; a matched target by the context's owner, whose
+        // session touched the file — and its `createdAt` is WHEN, so it is not
+        // a creation time the allowlist shows (live-location.ts).
+        claims: contextClaims.map((claim) =>
+          projectRow(hidden, { developerId: claim.authorDeveloperId, kind: "claim" }, claim),
+        ),
+        matchedTargets: (matchedTargets.get(row.id) ?? []).map((target) =>
+          projectRow(hidden, { developerId: row.developerId, kind: "target" }, target, { createdAt: "null" }),
+        ),
         matchedOn: query.on,
       },
       // The claims counted are the ones the window returned — mutes and
@@ -589,7 +616,10 @@ export const listHintCandidates = async (
   callerDeveloperId: string,
   input: HintCandidatesQuery,
 ): Promise<readonly HintContextCandidate[]> => {
-  const fromPrompt = await matchCandidates(deps, callerDeveloperId, {
+  // ONCE per request, for both passes: the search projects its rows with it,
+  // and so does this (review round 5, H3 — the hook's budget is 400 ms).
+  const hidden = await locationHiddenFrom(deps.db, callerDeveloperId);
+  const fromPrompt = await matchCandidates(deps, callerDeveloperId, hidden, {
     text: input.query,
     repo: input.repo,
     on: "prompt",
@@ -601,7 +631,7 @@ export const listHintCandidates = async (
   if (intent.length === 0) {
     return [];
   }
-  const fromIntent = await matchCandidates(deps, callerDeveloperId, {
+  const fromIntent = await matchCandidates(deps, callerDeveloperId, hidden, {
     text: intent,
     repo: input.repo,
     on: "intent",
