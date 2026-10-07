@@ -19,11 +19,16 @@
  *
  * THIS CORPUS IS TRAINING DATA, AND THE GATE IS NOT THE MEASURE. Each review
  * round evaluates the classifier on a FRESH hold-out — prompts and trees the
- * round's author never saw — through this same pipeline, and accepts at most
- * HOLDOUT_CONTENT_FREE_HINT_MAX_RATE content-free rows hinted and
- * HOLDOUT_TASK_FLOOR_MAX_RATE task rows floored. Every hold-out failure then
- * becomes a row here (the first hold-out is schema/test/fixtures/
- * holdout-corpus.ts), so this gate only ever holds the line already won.
+ * round's author never saw — through this same pipeline, under the protocol
+ * in fixtures/holdout-protocol.ts: at most HOLDOUT_CONTENT_FREE_HINT_MAX_RATE
+ * content-free rows hinted, HOLDOUT_TASK_FLOOR_MAX_RATE task rows floored and
+ * HOLDOUT_WRONG_TREE_SUBSTANCE_MAX_RATE task rows shown substance from another
+ * tree (all hard), with the content-free rows that still reach the hub
+ * reported against HOLDOUT_REACHED_HUB_SOFT_TARGET (soft). Every hold-out
+ * failure then becomes training data: the first hold-out is rows here
+ * (schema/test/fixtures/holdout-corpus.ts), the second, with trees too rich
+ * for this gate's shape, runs in holdout-round3-gate.test.ts. So this gate
+ * only ever holds the line already won.
  *
  * Every rate is printed, so CI shows them on every run.
  */
@@ -44,9 +49,6 @@ import { makeHome, makeRepo } from "./helpers.ts";
 const CONTENT_FREE_HINT_MAX_RATE = 0;
 /** Task rows of the corpus the pipeline may judge content-free. None. */
 const TASK_FALSE_FLOOR_MAX = 0;
-/** What a review round accepts on its FRESH hold-out (header): the measure, not this gate. */
-export const HOLDOUT_CONTENT_FREE_HINT_MAX_RATE = 0.02;
-export const HOLDOUT_TASK_FLOOR_MAX_RATE = 0.03;
 
 const ADMIN_TOKEN = "prompt-corpus-admin";
 const REPO_ID = "github.com/acme/api";
