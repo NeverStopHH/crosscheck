@@ -86,9 +86,12 @@
  * Location FIELDS go everywhere else, per viewer, and the row stays — the
  * work, the claims and the collision are the product. ONE projection does
  * it (services/live-location.ts `projectRow`), WITHHOLDING BY DEFAULT: every
- * value that is an instant or a commit goes, at any depth, unless the row's
- * kind lists it as the time the shared work itself carries (a claim's,
- * context's, edge's or question's createdAt). Every serializer of these rows
+ * value that IS an instant goes, at any depth — and a bare sha or epoch in a
+ * field typed as an instant or a commit — unless the row's kind lists it as
+ * the time the shared work itself carries (a claim's, context's, edge's or
+ * question's createdAt). Her words are never judged by their shape: a body,
+ * description, summary, reason, note, surface or check that opens with a
+ * timestamp or IS a sha is published as written (review round 5, H1). Every serializer of these rows
  * hands its rows to it, each nested row by its own owner:
  *
  *   - branch                      — the GET /api/work-contexts listing, in

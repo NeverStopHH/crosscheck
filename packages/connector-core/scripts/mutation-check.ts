@@ -18420,7 +18420,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the projection withholds an instant only when its field is named",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  if (LOCATION_BY_NAME.has(key) || isInstantOrCommit(value)) {",
+    from: "  if (LOCATION_BY_NAME.has(key) || isWithheldShape(key, value)) {",
     to: "  if (LOCATION_BY_NAME.has(key) || Object.hasOwn(FIELD_FORMS, key)) {",
     test: `${SERVER}/test/live-location-projection.test.ts`,
     because:
@@ -18430,7 +18430,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a field nobody named carries her instant to a colleague's hint",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  if (LOCATION_BY_NAME.has(key) || isInstantOrCommit(value)) {",
+    from: "  if (LOCATION_BY_NAME.has(key) || isWithheldShape(key, value)) {",
     to: "  if (LOCATION_BY_NAME.has(key) || Object.hasOwn(FIELD_FORMS, key)) {",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
@@ -18480,7 +18480,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a list keeps the commits it should withhold",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "    if (isInstantOrCommit(item)) {\n      return [];\n    }",
+    from: "    if (isWithheldShape(key, item)) {\n      return [];\n    }",
     to: "    if (false) {\n      return [];\n    }",
     test: `${SERVER}/test/live-location-projection.test.ts`,
     because: "a list of her shas is shipped whole beside fields withheld one by one",
@@ -18803,6 +18803,43 @@ export const MUTATIONS: readonly Mutation[
     to: "    sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,\n    visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy),\n  );",
     test: `${SERVER}/test/commit-evidence-opt-out.test.ts`,
     because: "«Ken inactive» disappears for every colleague because the one who saw his commit opted out",
+  },
+  // ── Review round 5, H1: her words are not a shape ─────────────────────
+  {
+    label: "her prose is shape-tested like any field",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  !PROSE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    to: "  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because:
+      "a description, an intent or a question that opens with a log line's " +
+      "timestamp reaches her colleagues as «withheld (presence opt-out)»",
+  },
+  {
+    label: "text that merely opens with a time is withheld whole",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  (typeof value === \"string\" && WHOLE_CALENDAR_TIME.test(value) && !Number.isNaN(Date.parse(asIsoText(value))));",
+    to: "  (typeof value === \"string\" && /^\\d{4}-\\d{2}-\\d{2}/.test(value));",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "any field whose words start with a date is replaced, not just one that IS a date",
+  },
+  {
+    label: "the round-4 shape test returns: any text opening with a date, any bare sha, prose included",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "export const isWithheldShape = (key: string, value: unknown): boolean =>\n  !PROSE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    to: "export const isWithheldShape = (_key: string, value: unknown): boolean =>\n  value instanceof Date || (typeof value === \"string\" && /^\\d{4}-\\d{2}-\\d{2}/.test(value)) || isBareHexOrEpoch(value);",
+    test: `${SERVER}/test/live-location-prose.test.ts`,
+    because:
+      "her question opens with the cutover time and her bisect claim's body is " +
+      "the sha: both reach Nick as «withheld (presence opt-out)» (review round 5, H1)",
+  },
+  {
+    label: "a bare sha or number is withheld in any field",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "(isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    to: "(isWholeInstant(value) || isBareHexOrEpoch(value));",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "a CI run number or a bisected sha cited as an id or a label is withheld as if it were her HEAD",
   },
 ];
 
@@ -19139,7 +19176,8 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-differential.test.ts 3
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
- * PRINTS: packages/server/test/live-location-projection.test.ts 3
+ * PRINTS: packages/server/test/live-location-projection.test.ts 6
+ * PRINTS: packages/server/test/live-location-prose.test.ts 1
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 39
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/normalized-doc.test.ts 1

@@ -207,21 +207,63 @@ export type WithheldForm = "omit" | "null" | "empty" | "marker";
  * `createdAt`, a pin's `verifiedAt`). A field added later is withheld before
  * anybody remembers it.
  *
- *   an instant   a Date; text that opens with a calendar date (ISO, the
- *                Postgres text form, minute precision); a number of epoch
- *                size, in seconds or milliseconds
- *   a commit     7 to 64 hex digits and nothing else — every abbreviation
- *                git prints, and a digits-only epoch spelled as text
+ *   an instant   a Date, or text that is ENTIRELY a calendar time — ISO,
+ *                the Postgres text form, minute or day precision — and
+ *                parses as one; nothing before it or after it
+ *   a commit     7 to 64 hex digits, a digits-only epoch, or an epoch-sized
+ *   or epoch     number — ONLY in a field whose type is an instant or a
+ *                commit (INSTANT_OR_COMMIT_FIELD): elsewhere a bare sha or
+ *                number is somebody's words or an id
+ *
+ * HER WORDS ARE NOT A SHAPE (review round 5, H1). The first version withheld
+ * any text that OPENED like a date, and any bare sha: a description, an
+ * intent, a question or a claim body that starts with a log line's
+ * timestamp, or a claim whose body is the bisected commit, reached her
+ * colleagues as LOCATION_WITHHELD. Prose fields are never shape-tested;
+ * location by NAME (LOCATION_BY_NAME) still applies to them.
  */
-const INSTANT_TEXT = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}|$)/;
-const COMMIT_LIKE = /^[0-9a-f]{7,64}$/i;
+const WHOLE_CALENDAR_TIME =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?$/;
+const HEX_OR_DIGITS = /^[0-9a-f]{7,64}$/i;
 /** 2001-09-09 in epoch seconds: no count or score on a row gets this large. */
 const EPOCH_SIZED = 1_000_000_000;
+/** The wire's names for instant and commit fields: `…At`, `…Ms`, `…Commit(s)`, `sha`, `head`. */
+const INSTANT_OR_COMMIT_FIELD = /(?:At|Ms|Commit|Commits|Sha)$|^(?:sha|head)$/;
+/** Words a person or an agent wrote: never withheld for their shape. */
+const PROSE_FIELDS: ReadonlySet<string> = new Set([
+  "body",
+  "description",
+  "summary",
+  "reason",
+  "note",
+  "surface",
+  "check",
+  "question",
+  "text",
+]);
 
-export const isInstantOrCommit = (value: unknown): boolean =>
+/** Postgres text `2026-07-24 10:12:07+00` and a zone-less time, as Date.parse reads ISO. */
+const asIsoText = (text: string): string => {
+  const iso = text.replace(" ", "T");
+  // A date alone has no zone to read: its dashes are not an offset.
+  if (!iso.includes("T") || /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso)) {
+    return iso;
+  }
+  return /[+-]\d{2}$/.test(iso) ? `${iso}:00` : `${iso}Z`;
+};
+
+const isWholeInstant = (value: unknown): boolean =>
   value instanceof Date ||
-  (typeof value === "number" && Math.abs(value) >= EPOCH_SIZED) ||
-  (typeof value === "string" && (INSTANT_TEXT.test(value) || COMMIT_LIKE.test(value)));
+  (typeof value === "string" && WHOLE_CALENDAR_TIME.test(value) && !Number.isNaN(Date.parse(asIsoText(value))));
+
+const isBareHexOrEpoch = (value: unknown): boolean =>
+  (typeof value === "string" && HEX_OR_DIGITS.test(value)) ||
+  (typeof value === "number" && Math.abs(value) >= EPOCH_SIZED);
+
+/** Is `value`, held in field `key`, an instant or a commit by its shape? */
+export const isWithheldShape = (key: string, value: unknown): boolean =>
+  !PROSE_FIELDS.has(key) &&
+  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));
 
 /**
  * THE FORMS, by wire field name: HOW a withheld field is written, never
@@ -325,14 +367,18 @@ const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown
 const projectObject = (p: Projection, row: object): Record<string, unknown> =>
   Object.fromEntries(Object.entries(row).flatMap((entry) => projectEntry(p, entry)));
 
-/** A list's withheld members are dropped: no list on the wire is positional. */
-const projectList = (p: Projection, list: readonly unknown[]): readonly unknown[] =>
+/**
+ * A list's withheld members are dropped: no list on the wire is positional.
+ * Each member is judged by the LIST's field (`key`): a list of commits is a
+ * commit field, a list of words is not.
+ */
+const projectList = (p: Projection, key: string, list: readonly unknown[]): readonly unknown[] =>
   list.flatMap((item) => {
-    if (isInstantOrCommit(item)) {
+    if (isWithheldShape(key, item)) {
       return [];
     }
     if (Array.isArray(item)) {
-      return [projectList(p, item)];
+      return [projectList(p, key, item)];
     }
     return [isPlainObject(item) ? projectObject(p, item) : item];
   });
@@ -362,12 +408,12 @@ const projectEntry = (
   if (DAY_PRECISION.has(key)) {
     return [[key, toDay(value)]];
   }
-  if (LOCATION_BY_NAME.has(key) || isInstantOrCommit(value)) {
+  if (LOCATION_BY_NAME.has(key) || isWithheldShape(key, value)) {
     const form = formOf(p.forms, key, value);
     return form === "omit" ? [] : [[key, withheldValue(form)]];
   }
   if (Array.isArray(value)) {
-    return [[key, projectList(p, value)]];
+    return [[key, projectList(p, key, value)]];
   }
   return [[key, isPlainObject(value) ? projectObject(p, value) : value]];
 };

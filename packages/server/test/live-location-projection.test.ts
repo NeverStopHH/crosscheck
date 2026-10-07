@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { LOCATION_WITHHELD } from "@crosscheck/schema";
 
-import { isInstantOrCommit, projectRow } from "../src/services/live-location.ts";
+import { isWithheldShape, projectRow } from "../src/services/live-location.ts";
 import type { HiddenLocations } from "../src/services/live-location.ts";
 
 const ROBIN = "dev_robin";
@@ -20,15 +20,14 @@ const INSTANT = "2026-07-24T09:20:34.000Z";
 type Projected = Readonly<Record<string, unknown>>;
 
 describe("a hidden owner's row is withheld by value, not by name", () => {
-  test("a field nobody named is withheld when it holds an instant, in every spelling", () => {
+  test("a field nobody named is withheld when it IS an instant, in every spelling", () => {
     // Arrange
     const row = {
       iso: INSTANT,
       pgText: "2026-07-24 09:20:34.123+00",
       minute: "2026-07-24T09:20",
       day: "2026-07-24",
-      epochSeconds: 1_785_000_000,
-      epochMs: 1_785_000_000_000,
+      seenAtMs: 1_785_000_000_000,
       asDate: new Date(INSTANT),
       words: "rotation finished inside its window",
       count: 3,
@@ -43,42 +42,56 @@ describe("a hidden owner's row is withheld by value, not by name", () => {
       pgText: LOCATION_WITHHELD,
       minute: LOCATION_WITHHELD,
       day: LOCATION_WITHHELD,
-      epochSeconds: LOCATION_WITHHELD,
-      epochMs: LOCATION_WITHHELD,
+      seenAtMs: LOCATION_WITHHELD,
       asDate: null,
       words: "rotation finished inside its window",
       count: 3,
     });
   });
 
-  test("a commit-like value is withheld whatever its field is called, and nothing shorter is", () => {
+  test("a commit or an epoch is withheld only where the field's type is a commit or an instant", () => {
     const seen: Projected = projectRow(HIDDEN, { developerId: ROBIN }, {
-      head: "beefbeefb1234567890abcdef1234567890abcd",
-      shortHead: "beefbee",
+      headCommit: "beefbeefb1234567890abcdef1234567890abcd",
+      sha: "beefbee",
+      runId: "18273645501",
+      buildNumber: 1_785_000_000,
       word: "deadline",
       id: "clm_robin",
-      sixHex: "abcdef",
     });
 
     expect(seen).toEqual({
-      head: LOCATION_WITHHELD,
-      shortHead: LOCATION_WITHHELD,
+      headCommit: LOCATION_WITHHELD,
+      sha: LOCATION_WITHHELD,
+      runId: "18273645501",
+      buildNumber: 1_785_000_000,
       word: "deadline",
       id: "clm_robin",
-      sixHex: "abcdef",
     });
+  });
+
+  test("her words are never a shape: prose that opens with a time, or is a bare sha, stays (H1)", () => {
+    const words = {
+      body: "beefbee",
+      description: "2026-10-06 14:30 deploy of v2.3.1 broke refresh",
+      summary: "2026-10-08 09:00 cutover must not log anyone out",
+      note: INSTANT,
+      surface: "2026-07-24",
+      check: "1785000000",
+    };
+
+    expect(projectRow(HIDDEN, { developerId: ROBIN }, words)).toEqual(words);
   });
 
   test("nested objects are projected, and a list drops the members it withholds", () => {
     const seen: Projected = projectRow(HIDDEN, { developerId: ROBIN }, {
       intent: { summary: "rotate the key", capturedAt: INSTANT, seq: { epoch: "0b0c-uuid", n: 3 } },
-      commits: ["beefbee", "not a sha"],
+      headCommits: ["beefbee", "not a sha"],
       rows: [{ at: INSTANT, path: "src/auth/cache.ts" }],
     });
 
     expect(seen).toEqual({
       intent: { summary: "rotate the key", seq: { epoch: "0b0c-uuid", n: 3 } },
-      commits: ["not a sha"],
+      headCommits: ["not a sha"],
       rows: [{ at: LOCATION_WITHHELD, path: "src/auth/cache.ts" }],
     });
   });
@@ -112,18 +125,23 @@ describe("a hidden owner's row is withheld by value, not by name", () => {
   });
 });
 
-describe("what counts as an instant or a commit", () => {
+describe("what counts as an instant or a commit, in which field", () => {
   test.each([
-    [INSTANT, true],
-    ["2026-07-24 09:20:34+00", true],
-    ["1785000000", true],
-    [1_785_000_000, true],
-    [999_999_999, false],
-    ["0123abc", true],
-    ["0123ab", false],
-    ["sha256:0123abcdef", false],
-    ["feat/robin-relocates-to-zurich", false],
-  ] as const)("%p → %p", (value, expected) => {
-    expect(isInstantOrCommit(value)).toBe(expected);
+    ["at", INSTANT, true],
+    ["at", "2026-07-24 09:20:34+00", true],
+    ["at", "2026-07-24T09:20:34Z and then some", false],
+    ["at", "2026-13-45", false],
+    ["checkedAt", "1785000000", true],
+    ["checkedAt", 1_785_000_000, true],
+    ["checkedAt", 999_999_999, false],
+    ["refCommit", "0123abc", true],
+    ["refCommit", "0123ab", false],
+    ["label", "0123abc", false],
+    ["label", 1_785_000_000, false],
+    ["body", INSTANT, false],
+    ["value", "sha256:0123abcdef", false],
+    ["branchName", "feat/robin-relocates-to-zurich", false],
+  ] as const)("%p holding %p → %p", (key, value, expected) => {
+    expect(isWithheldShape(key, value)).toBe(expected);
   });
 });
