@@ -50,6 +50,8 @@ const BUDGET_MS = 3000;
 /** A request timeout the held re-send outlasts. */
 const SHORT_TIMEOUT_MS = 300;
 const HOLD_PAST_TIMEOUT_MS = 600;
+/** The unreadable-debt probe's backlog (review-2 round 8, L3): sent 0, 11 remaining. */
+const BACKLOG = 11;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -604,6 +606,26 @@ describe("one life per batch (review-2 round 7)", () => {
     expect(next?.crosscheckSessionId).toBe(`${first.crosscheckSessionId}~r1`);
     expect(rows).toHaveLength(1);
     expect(await isOwed(fx)).toBe(false);
+  });
+
+  test("an unreadable debt holds no drain: the records behind it still go (review-2 round 8, L3)", async () => {
+    // Arrange: an older conversation, all delivered and its state gone, whose
+    // debt file is torn; a live one with a backlog behind it
+    const fx = await fixture("unreadable-debt");
+    const older = `${fx.hostSessionKey}-older`;
+    await register(fx, older);
+    await flushSpool(fx.hub, { sessionId: (await readSessionState(fx.home, older))?.crosscheckSessionId ?? "", developerId }, BUDGET_MS);
+    await rm(sessionStatePath(fx.home, older), { force: true });
+    await writeFile(spoolOwedWorkContextPath(fx.home, fx.key, sessionSlug(older)), "{\"sessionId\": ");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, targets(life, BACKLOG, "behind-torn-debt"), new Date());
+
+    // Act
+    await flushAsHook(fx);
+
+    // Assert
+    expect(await targetsOf(life.workContextId)).toBe(BACKLOG);
   });
 
   test("a debt with no record left to carry it is paid alone by the next drain", async () => {

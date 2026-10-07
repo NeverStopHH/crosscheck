@@ -32,7 +32,7 @@ import {
   MAX_FLUSH_BATCHES_PER_HOOK,
   MAX_INGEST_BATCH,
 } from "../constants.ts";
-import { spoolFlushLockPath, spoolOwedWorkContextPath } from "../config/paths.ts";
+import { spoolFlushLockPath } from "../config/paths.ts";
 import { withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
@@ -530,9 +530,14 @@ const oldestFirst = (
 ): number =>
   backlogAgeMs(left) - backlogAgeMs(right) || left.slug.localeCompare(right.slug);
 
-/** Whether a spool with nothing left to send still owes its life's work context. */
-const owesAlone = (ctx: HubContext, spool: SessionSpool): Promise<boolean> =>
-  Bun.file(spoolOwedWorkContextPath(ctx.home, ctx.repoKey, spool.slug)).exists();
+/**
+ * Whether a spool with nothing left to send still owes its life's work
+ * context — one it can READ (review-2 round 8, L3): a torn debt file is
+ * nothing to pay, and as the oldest pending spool it took every batch of the
+ * drain and sent nothing, while every other backlog waited behind it.
+ */
+const owesAlone = async (ctx: HubContext, spool: SessionSpool): Promise<boolean> =>
+  (await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug)) !== null;
 
 /** Every spool with a record to send — or a work context it still owes with none (flushOneBatch). */
 const pendingSpools = async (

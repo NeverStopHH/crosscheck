@@ -18128,6 +18128,14 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 7: the lone debt is left for a batch that never comes",
   },
   {
+    label: "a spool with a torn debt file counts as owing",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  (await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug)) !== null;",
+    to: "  (await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug)) !== undefined;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8, L3 (unreadable-debt probe): it takes every batch of the drain, sends nothing, and 11 records wait behind it",
+  },
+  {
     label: "the owed work context goes with the status the heal saw",
     file: `${CORE}/src/spool/owed-work-context.ts`,
     from: '      status: textOr(named?.workContextStatus, body["status"]),',
@@ -19034,7 +19042,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 21
- * PRINTS: packages/connector-core/test/owed-work-context.test.ts 14
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 15
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8

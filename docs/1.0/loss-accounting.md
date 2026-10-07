@@ -646,6 +646,12 @@ three ways in:
 Before the fix, 35 of 40 replays of the five seeds broke I3; after it, none did. Their fixed scenarios are ordinary
 tests, and no seed is open in the sweep any more.
 
+**A torn debt file holds no drain** (review-2 round 8, L3). A spool with nothing left to send counted as pending
+whenever its debt file existed. With a torn file there was nothing to pay, yet as the oldest pending spool it took
+every batch of the drain. The unreadable-debt probe sent 0 records, and 11 waited behind it. A spool now owes alone only
+a debt it can read. The torn file goes when reap removes its spool, as every debt does. `owed-work-context.test.ts` replays the probe, and all 11
+records land.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and
