@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join, relative } from "node:path";
 
 import type { AttemptFacts, AttemptInput } from "../bench/at7/attempt.ts";
 import type { VoidReason } from "../bench/at7/detect.ts";
@@ -124,15 +124,44 @@ describe("runSweep", () => {
     expect(result.outcomes).toHaveLength(3);
   });
 
+  /**
+   * Only the part of a work root the SWEEP chose is judged: the path below
+   * the base, resolved as the driver resolves it (`realpath(workBase)`). The
+   * base is the caller's — here a random mkdtemp name, and
+   * `sweep-work-J8P2wM` once matched /P[1-5]/ on a run with nothing wrong. A
+   * single segment of twelve hex digits, so no slot, arm or payload can sit in
+   * it or in a directory between it and the base.
+   */
+  const expectOpaqueUnder = async (base: string): Promise<void> => {
+    const resolvedBase = await realpath(base);
+    expect(seen.length).toBeGreaterThan(0);
+    for (const input of seen) {
+      const chosen = relative(resolvedBase, input.workRoot);
+      expect(chosen).toMatch(/^[0-9a-f]{12}$/);
+      expect(chosen).not.toMatch(/control|P[1-5]|attempt|runs/);
+      expect(input.resultsDir).toBe(join(outDir, "attempts", input.attemptId));
+    }
+  };
+
   test("every attempt sits under an opaque id that names no slot, arm or payload (A2.4)", async () => {
     // Act
     await sweep(async (input) => factsFor(input));
 
     // Assert
-    for (const input of seen) {
-      expect(basename(input.workRoot)).toMatch(/^[0-9a-f]{12}$/);
-      expect(input.workRoot).not.toMatch(/control|P[1-5]|attempt|runs/);
-      expect(input.resultsDir).toBe(join(outDir, "attempts", input.attemptId));
+    await expectOpaqueUnder(workBase);
+  });
+
+  test("the check reads only what the sweep chose, never its base's random name (sweep-work-J8P2wM)", async () => {
+    // Arrange: a base whose own name spells a slot, an arm and the sweep's dirs
+    const spelled = await mkdtemp(join(tmpdir(), "sweep-work-P2-control-attempt-runs-"));
+    try {
+      // Act
+      await sweep(async (input) => factsFor(input), { workBase: spelled });
+
+      // Assert
+      await expectOpaqueUnder(spelled);
+    } finally {
+      await rm(spelled, { recursive: true, force: true });
     }
   });
 
