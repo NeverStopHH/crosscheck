@@ -118,6 +118,27 @@ describe("every relevance count is topical (H3 + M6) — a task's meta words inc
     expect(byTree.get(RATE_TREE)?.topicalTerms).toBe(2);
   });
 
+  test("no count takes a weak word (round 4, decision 3): a claim's and a tree's own", async () => {
+    // Arrange — the title and the claim say "new users" beside invoice and pdf
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const records = [
+      recordEnvelope("work_context", validWorkContextBody({ id: "wc_weak", title: "Invoice PDF rendering fails for new users", description: "Signup" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_weak_obs", workContextId: "wc_weak", body: "New users see the invoice PDF twice." })),
+    ];
+    const seeded = await postRecords(harness, nick, { records });
+    expect(seeded.data?.accepted).toBe(records.length);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+    const search = new URLSearchParams({ repo: VALID_SESSION_BODY.repo, query: "invoice pdf rendering fails for new users" });
+
+    // Act
+    const response = await harness.app.request(`/api/hints/candidates?${search.toString()}`, jsonRequest("GET", robin.apiKey));
+    const [tree] = ((await response.json()) as { data: { candidates: readonly WireCandidate[] } }).data.candidates;
+
+    // Assert — invoice, pdf, rendering, fails on the title; invoice, pdf on the claim; "new" and "users" nowhere
+    expect(tree?.workContext.matchedTerms).toBe(4);
+    expect(claimOf(tree, "clm_weak_obs")?.matchedTerms).toBe(2);
+  });
+
   test("a tree's strength counts its claims too, not only its own statement", async () => {
     // Arrange + Act
     const byTree = await candidates();

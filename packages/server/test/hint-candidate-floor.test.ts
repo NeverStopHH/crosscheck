@@ -278,6 +278,19 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
     expect(candidates).toEqual([]);
   });
 
+  test("H1, without a continuation: \"mache bitte den Upload\" — the steering words still never count", async () => {
+    // Arrange — the German limit tree says Upload, and Mache and bitte beside
+    // it; no "weiter", so the continuation rule (round 4, C1) is not what
+    // keeps this silent
+    const { harness, robin } = await germanLimitTree();
+
+    // Act — one shared task word is not two
+    const candidates = await fetchCandidates(harness, robin, { query: "mache bitte den Upload" });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
   test.each([["why does the usage limit reset"], ["reset the limits please"], ["when does the limit reset?"]])(
     "round 4, M1: %p is a task, and its meta words reach the tree that says them",
     async (prompt) => {
@@ -365,6 +378,20 @@ describe("a slash command is scored on its arguments only (hold-out review, H1 d
 
     // Act
     const candidates = await fetchCandidates(harness, robin, { query: "/code-review" });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test("a bare \"/security-audit\" matches nothing either — its name's words are no weak words (round 4, decision 3)", async () => {
+    // Arrange — "code" and "review" are weak words now, so the review tree
+    // alone cannot tell a command's name from its arguments
+    const { harness, robin } = await seedTree({ title: "Security audit of the payments service", description: "Before release" }, [
+      { id: "clm_audit", body: "The security audit found two endpoints without authorization checks." },
+    ]);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: "/security-audit" });
 
     // Assert
     expect(candidates).toEqual([]);

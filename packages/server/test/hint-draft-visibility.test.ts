@@ -100,6 +100,22 @@ describe("a tree whose only match is a draft gets no hint", () => {
     expect(candidates).toEqual([]);
   });
 
+  test("nor when another tree makes the draft's words known words (round 4, L1)", async () => {
+    // Arrange — the hub knows only words a visible statement says, so the
+    // draft's words are unknown above and could not count anyway; a second
+    // tree whose own title says "cache" and "quuxinator" makes them known
+    const { harness, robin } = await treeWith(
+      [draft(), recordEnvelope("work_context", validWorkContextBody({ id: "wc_known", title: "Quuxinator cache on warm start" }))],
+      "Zebrafrobnicator migration notes",
+    );
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin);
+
+    // Assert — the tree that says the words, never the one whose draft did
+    expect(candidates.map((candidate) => candidate.workContext.id)).toEqual(["wc_known"]);
+  });
+
   test("a refuted declared hypothesis lends no word either", async () => {
     // Arrange
     const { harness, robin } = await treeWith([

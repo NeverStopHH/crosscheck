@@ -114,6 +114,51 @@ describe("meta words: no topic in a prompt that carries the session on, a topic 
   });
 });
 
+/**
+ * WEAK WORDS ARE NEVER THE TOPICAL ONE (round 4, decision 3): since a task's
+ * meta words are topical (M1), the words a floor statement may share and
+ * still not be about the task are the weak ones — add, new, users — and a
+ * statement that shares only those clears nothing, however many it shares.
+ */
+describe("weak words: never the topical word a floor statement needs (round 4, decision 3)", () => {
+  const WEAK_PROMPT = "add new users to the billing ledger";
+
+  test("a tree's own statement that shares only weak words is no candidate", async () => {
+    // Arrange
+    const { harness, robin } = await seedTree({ title: "Add new users without invites", description: "Onboarding" }, []);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, WEAK_PROMPT);
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test("a claim that shares only weak words is no candidate", async () => {
+    // Arrange
+    const { harness, robin } = await seedTree({ title: "Nightly report formatting", description: "Columns" }, [
+      { id: "clm_weak", body: "Add new users without invites." },
+    ]);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, WEAK_PROMPT);
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test("the control: a topical word beside them on the same statement is a candidate", async () => {
+    // Arrange
+    const { harness, robin } = await seedTree({ title: "Add new users to the billing export", description: "Onboarding" }, []);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, WEAK_PROMPT);
+
+    // Assert
+    expect(candidates.map((candidate) => candidate.workContext.id)).toEqual([WORK_CONTEXT_ID]);
+  });
+});
+
 describe("the topical word stands on the floor statement itself (C1, generalised)", () => {
   test("a title sharing one word beside a claim sharing another is no candidate", async () => {
     // Arrange — title: banner alone; claim: flickers alone

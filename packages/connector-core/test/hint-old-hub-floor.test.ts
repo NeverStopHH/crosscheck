@@ -263,6 +263,30 @@ describe("the flow recounts on the prompt's own content terms", () => {
     expect(hint).not.toContain("crosscheck hint:");
   });
 
+  describe("with every count strict substance (C2) asks for, but no verdict on the evidence", () => {
+    /** The settled cause on its own tree, counted as C2 needs it, the hub's verdict on its evidence as given. */
+    const settledCauseOnItsTree = (verdict: Record<string, unknown>) => (body: string): Record<string, unknown> => {
+      const wire = oldHubWire(body);
+      const [only] = wire["claims"] as readonly Record<string, unknown>[];
+      return {
+        ...wire,
+        workContext: { ...(wire["workContext"] as Record<string, unknown>), title: "Zebrafrobnicator cache on warm start", matchedTerms: 2 },
+        claims: [{ ...only, kind: "root_cause", status: "likely_root_cause", evidenceRefCount: 1, matchedTerms: 3, distinctTerms: 1, ...verdict }],
+      };
+    };
+
+    test("a hub that sent no verdict: a pointer still (L2)", async () => {
+      const hint = await hintFor("ohf-no-verdict-own", PROMPT, "The zebrafrobnicator cache poisons the quuxinator on every warm start.", settledCauseOnItsTree({}));
+      expect(hint).toContain("crosscheck pointer");
+      expect(hint).not.toContain("crosscheck hint:");
+    });
+
+    test("the control: a hub that vouches for the evidence gets the cause inline", async () => {
+      const hint = await hintFor("ohf-verdict-own", PROMPT, "The zebrafrobnicator cache poisons the quuxinator on every warm start.", settledCauseOnItsTree({ evidenceBacked: true }));
+      expect(hint).toContain("crosscheck hint:");
+    });
+  });
+
   test("round 4, M1: a body sharing a task's meta words is pointed at, as the tip hub points", async () => {
     expect(
       await hintFor(
@@ -352,6 +376,19 @@ describe("the flow recounts on the prompt's own content terms", () => {
 
       // Assert — the ranked terms of all of it went on the wire, and the recount counts them
       expect(hint).toContain("crosscheck pointer");
+    });
+
+    test("the recount counts what was sent: task words the cap cut from a long prompt's terms count for nothing", async () => {
+      // Arrange — two hundred distinct words nobody wrote, ranked before the
+      // task: the terms the connector sends stop at MAX_SEARCH_QUERY_CHARS,
+      // before the task's words, so the old hub never searched on them
+      const lead = Array.from({ length: 200 }, (_, index) => `quokkafiller${String(index).padStart(3, "0")}`).join(" ");
+
+      // Act
+      const hint = await hintFor("ohf-cut", `${lead}. The zebrafrobnicator cache poisons the quuxinator`, "The zebrafrobnicator cache poisons the quuxinator on every warm start");
+
+      // Assert
+      expect(hint).toBe("");
     });
 
     test("words no statement on the wire says take no counted slot: the task after forty of them still counts (M7)", async () => {

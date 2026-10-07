@@ -147,6 +147,56 @@ describe("a tree the pool holds on one word of its own title is not lifted over 
     // Act + Assert
     expect(await fetchIds(harness, robin, PROMPT)).toEqual([]);
   });
+
+  /**
+   * KNOWN ELSEWHERE (round 4, L1): the hub's known words are only what a
+   * visible statement says, so a hidden claim's words are usually unknown
+   * and could not count anyway. A second teammate tree whose own title says
+   * "cache" and "quuxinator" makes them known words — and the hidden claim
+   * still must not lift the first tree with them.
+   */
+  const knownElsewhere = () =>
+    recordEnvelope("work_context", validWorkContextBody({ id: "wc_known", title: "Quuxinator cache on warm start", description: "x" }));
+
+  test("the control, known elsewhere: a visible claim's words lift it beside the tree that knows them", async () => {
+    const { harness, nick, robin } = await world(ONE_WORD_TITLE);
+    await postRecords(harness, nick, { records: [knownElsewhere(), recordEnvelope("claim", validClaimBody({ id: "clm_seen", body: BODY }))] });
+
+    expect([...(await fetchIds(harness, robin, PROMPT))].sort()).toEqual([WORK_CONTEXT_ID, "wc_known"].sort());
+  });
+
+  test("a retracted claim's words do not, though another tree makes them known words", async () => {
+    // Arrange
+    const { harness, nick, robin } = await world(ONE_WORD_TITLE);
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        knownElsewhere(),
+        recordEnvelope("claim", validClaimBody({ id: "clm_old", body: BODY })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_new", body: "Nothing in the warm start path after all." })),
+        recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_rev", fromClaimId: "clm_new", toClaimId: "clm_old", kind: "supersedes" })),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(4);
+
+    // Act + Assert — the tree that says the words, never the one whose retracted claim did
+    expect(await fetchIds(harness, robin, PROMPT)).toEqual(["wc_known"]);
+  });
+
+  test("a muted author's words do not, though another tree makes them known words", async () => {
+    // Arrange
+    const { harness, nick, robin } = await world(ONE_WORD_TITLE);
+    expect((await postRecords(harness, nick, { records: [knownElsewhere()] })).data?.accepted).toBe(1);
+    const mike = await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", { id: MIKE_SESSION });
+    const seeded = await postRecords(harness, mike, {
+      records: [recordEnvelope("claim", validClaimBody({ id: "clm_mike", authorSessionId: MIKE_SESSION, body: BODY }), { sessionId: MIKE_SESSION })],
+    });
+    expect(seeded.data?.accepted).toBe(1);
+    const muted = await harness.app.request("/api/settings/mutes", jsonRequest("POST", robin.apiKey, { developer: "Mike" }));
+    expect(muted.status).toBe(200);
+
+    // Act + Assert
+    expect(await fetchIds(harness, robin, PROMPT)).toEqual(["wc_known"]);
+  });
 });
 
 describe("the floor runs over the whole pool before the bound", () => {
@@ -190,6 +240,26 @@ describe("the hub judges the human text, never the wrapper an older connector st
       harness,
       robin,
       "<ide_opened_file>The user opened the file /repo/README.md in the IDE. This may or may not be related to the current task.</ide_opened_file>\nok weiter",
+    );
+
+    // Assert
+    expect(ids).toEqual([]);
+  });
+
+  test("the same around \"ok danke\", a content-free turn with no continuation in it", async () => {
+    // Arrange — "weiter" carries the session on (round 4, C1) and silences
+    // the turn by itself; "ok danke" is silent only because the hub judges
+    // the human text and not the wrapper's "current", "task" and "user"
+    const { harness, nick, robin } = await world();
+    await postRecords(harness, nick, {
+      records: [recordEnvelope("claim", validClaimBody({ id: "clm_ide", body: "The current user is joined twice when a task has two assignees." }))],
+    });
+
+    // Act
+    const ids = await fetchIds(
+      harness,
+      robin,
+      "<ide_opened_file>The user opened the file /repo/README.md in the IDE. This may or may not be related to the current task.</ide_opened_file>\nok danke",
     );
 
     // Assert

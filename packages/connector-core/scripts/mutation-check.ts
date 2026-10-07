@@ -18082,8 +18082,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "only the first sixteen tokens of a prompt are judged",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    .map((token) => token.toLowerCase());",
-    to: "    .map((token) => token.toLowerCase())\n    .slice(0, 16);",
+    // RETARGETED (round 4, L1 follow-up): the tokens are read word by word now; the cut is on the whole prompt's.
+    from: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]);",
+    to: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]).slice(0, 16);",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "a long prompt whose task word comes late is judged on its preamble and floored",
   },
@@ -18671,16 +18672,18 @@ export const MUTATIONS: readonly Mutation[
     file: `${SCHEMA}/src/prompt-vocabulary.ts`,
     from: "\"verfugbar\", \"cleared\", \"lifted\",",
     to: "\"verfugbar\", \"lifted\",",
-    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
-    because: "\"the limit cleared, carry on\" reaches the hub and points at the limit tree (hold-out review, L2)",
+    // RETARGETED (round 5): the corpus row says "carry on", which floors it by itself (C1); the verdict is pinned directly.
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"cleared, thanks\" reaches the hub as a task and points at the limit tree (hold-out review, L2)",
   },
   {
     label: "\"kontingent\" is no meta word",
     file: `${SCHEMA}/src/prompt-vocabulary.ts`,
     from: "\"quota\", \"quotas\", \"kontingent\", \"session\",",
     to: "\"quota\", \"quotas\", \"session\",",
-    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
-    because: "\"Kontingent wieder voll, weiter\" reaches the hub as a task about the quota (hold-out review, L2)",
+    // RETARGETED (round 5): the corpus row says "weiter", which floors it by itself (C1); the verdict is pinned directly.
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"Kontingent, danke\" reaches the hub as a task about the quota (hold-out review, L2)",
   },
   {
     label: "the gate's content-free rows may reach the hub",
@@ -20724,7 +20727,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
- * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 5
+ * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 3
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 5
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
@@ -20770,7 +20773,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 38
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 40
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4

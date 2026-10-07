@@ -148,6 +148,13 @@ describe("content terms are the words left after the stop lists", () => {
     expect(promptTerms("see src/auth/refresh.ts. it throws").ranked).toContain("src/auth/refresh.ts");
   });
 
+  test.each([["cleared, thanks"], ["Kontingent, danke"]])("a meta word beside thanks is a command to the session, no task: %p", (prompt) => {
+    // "cleared" and "Kontingent" are meta words (hold-out review, L2): one of
+    // them and a steering word make no task. The corpus rows that pinned them
+    // carry "carry on" and "weiter" now, which floor them by themselves (C1).
+    expect(isContentFreePrompt(prompt)).toBe(true);
+  });
+
   test("round 4, L1: the parts decide the verdict — \"commit/push\" stays a command to the session", () => {
     expect(promptTerms("commit/push").content).toEqual(["commit", "push"]);
     expect(promptTerms("commit/push").isContentFree).toBe(true);
