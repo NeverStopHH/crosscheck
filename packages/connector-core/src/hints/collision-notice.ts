@@ -102,20 +102,75 @@ const capped = (text: string, maxChars: number): string =>
   text.length <= maxChars ? text : `${cutWellFormed(text, maxChars - ELLIPSIS.length)}${ELLIPSIS}`;
 
 /**
- * What a field on a PERSON's line loses beyond the BARE strip (review L2).
- * The bare strip guards an agent's context; this line is read by a human on
- * a terminal or an IDE panel that may render markdown, so it also drops
- * every default-ignorable code point and any lone surrogate, the blank
- * fillers that pad a name into a second "sentence" (U+3164, U+115F, U+FFA0,
- * U+2800), the colon and dash lookalikes NFKC leaves alone (U+2236, U+A789,
- * U+0589, U+2013, U+2015) beside the `:` and `—` the bare strip owns, and
- * the markdown beacon characters `[ ] ( ) !`. Built from code-point NUMBERS,
- * so no invisible or lookalike character sits in this file's source.
+ * What a field on a PERSON's line loses beyond the BARE strip (review L2,
+ * and round two's L5). The bare strip guards an agent's context; this line is
+ * read by a human on a terminal or an IDE panel that may render markdown, so
+ * it also DROPS every default-ignorable code point and any lone surrogate,
+ * the blank fillers that pad a name into a second "sentence" (U+3164, U+115F,
+ * U+FFA0, U+2800), the markdown beacon characters `[ ] ( ) !` and the
+ * emphasis markers `*` and `~`. Built from code-point NUMBERS, so no
+ * invisible or lookalike character sits in this file's source.
  */
 const BLANK_FILLERS = String.fromCodePoint(0x3164, 0x115f, 0xffa0, 0x2800);
-const SEPARATOR_LOOKALIKES = String.fromCodePoint(0x2236, 0xa789, 0x0589, 0x2013, 0x2015);
 const INVISIBLE_CLASS = `\\p{Default_Ignorable_Code_Point}\\p{Cs}${BLANK_FILLERS}`;
-const PERSON_STRIP = new RegExp(`[${INVISIBLE_CLASS}${SEPARATOR_LOOKALIKES}\\[\\]()!]`, "gu");
+const PERSON_DROP = new RegExp(`[${INVISIBLE_CLASS}\\[\\]()!*~]`, "gu");
+
+/**
+ * The lookalikes of the separators this line and the statusline segment own
+ * — `:`, `—`, `·` — that NFKC leaves alone, so a name like `Mike <BULLET
+ * OPERATOR> 9 files` or `crosscheck<TRIANGULAR COLON> all clear` cannot mint
+ * a second fact. Every dash
+ * punctuation but the ASCII hyphen a real name or branch carries (`\p{Pd}`
+ * minus U+002D), the colons (MODIFIER LETTER TRIANGULAR, HALF TRIANGULAR and
+ * RAISED COLON, ARMENIAN FULL STOP, HEBREW SOF PASUQ, the Syriac colons,
+ * RUNIC MULTIPLE PUNCTUATION, MONGOLIAN COLON, TWO DOT and TRICOLON
+ * punctuation, RATIO, LISU TONE MYA JEU, MODIFIER LETTER COLON, the vertical
+ * presentation colon), the middle dots and dot operators (GREEK ANO TELEIA,
+ * RUNIC SINGLE PUNCTUATION, BULLET, HYPHENATION POINT, BULLET and DOT
+ * OPERATOR, WORD SEPARATOR and RAISED DOT, KATAKANA and halfwidth katakana
+ * MIDDLE DOT, SINOLOGICAL DOT, CANADIAN FINAL MIDDLE DOT, Z NOTATION SPOT),
+ * and the horizontal rules a dash can be drawn with (box drawing
+ * horizontals, HORIZONTAL LINE EXTENSION, MINUS SIGN, HEAVY MINUS SIGN).
+ * Replaced by a SPACE, never deleted: the katakana middle dot is how a
+ * Japanese name separates given from family name, and the two halves stay
+ * two words where deleting it would fuse them into one.
+ */
+const COLON_LOOKALIKES = String.fromCodePoint(
+  0x02d0, 0x02d1, 0x02f8, 0x0589, 0x05c3, 0x0703, 0x0704, 0x0705, 0x0706, 0x0707, 0x0708, 0x0709, 0x16ec,
+  0x1804, 0x205a, 0x205d, 0x2236, 0xa4fd, 0xa789, 0xfe13,
+);
+const DOT_LOOKALIKES = String.fromCodePoint(
+  0x0387, 0x16eb, 0x2022, 0x2027, 0x2219, 0x22c5, 0x2e31, 0x2e33, 0x30fb, 0xff65, 0xa78f, 0x1427, 0x2981,
+);
+const RULE_LOOKALIKES = String.fromCodePoint(
+  0x2500, 0x2501, 0x2504, 0x2505, 0x2508, 0x2509, 0x254c, 0x254d, 0x2550, 0x23af, 0x2212, 0x2796,
+);
+const SEPARATOR_LOOKALIKES = new RegExp(
+  `[${COLON_LOOKALIKES}${DOT_LOOKALIKES}${RULE_LOOKALIKES}]|(?!-)\\p{Pd}`,
+  "gu",
+);
+
+/**
+ * An underscore that could open or close emphasis: one NOT between two
+ * letters or digits. CommonMark never emphasises an intraword `_`, so
+ * `player_mapping.ts` and `feat/refresh_v2` keep theirs.
+ */
+const LOOSE_UNDERSCORE = /(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/gu;
+
+/**
+ * A bare `www.` host, which GitHub-flavoured markdown links with no scheme at
+ * the start, after whitespace, or after an `_` (the only one of its other
+ * openers the strip keeps): the dot goes, the letters stay.
+ */
+const BARE_WWW = /(^|[\s_])(www)\./giu;
+
+/** One pass of the person strip — run before NFKC and again after it, which folds `＊` into `*`. */
+const personPass = (text: string): string =>
+  text
+    .replace(PERSON_DROP, "")
+    .replace(SEPARATOR_LOOKALIKES, " ")
+    .replace(LOOSE_UNDERSCORE, "")
+    .replace(BARE_WWW, "$1$2");
 
 /**
  * The invisible half of it, for a path the STATE keeps: brackets stay, so
@@ -123,10 +178,16 @@ const PERSON_STRIP = new RegExp(`[${INVISIBLE_CLASS}${SEPARATOR_LOOKALIKES}\\[\\
  */
 const STORED_STRIP = new RegExp(`[${INVISIBLE_CLASS}]`, "gu");
 
-/** Stripped BEFORE NFKC and again after it (NFKC folds `［` into `[`), whitespace folded. */
+/** Stripped BEFORE NFKC and again after it, whitespace folded. */
 const cleanedWith = (raw: string, strip: RegExp): string =>
   bareCleaned(raw.replace(strip, ""))
     .replace(strip, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** The person strip BEFORE NFKC and again after it (NFKC folds `［` into `[`), whitespace folded. */
+const personCleaned = (raw: string): string =>
+  personPass(bareCleaned(personPass(raw)))
     .replace(/\s+/g, " ")
     .trim();
 
@@ -174,7 +235,7 @@ const storedPath = (path: string): string =>
  * ordinary word the filter fears, not an attack worth a marker.
  */
 const personField = (raw: string, maxChars: number): string => {
-  const cleaned = cleanedWith(raw, PERSON_STRIP);
+  const cleaned = personCleaned(raw);
   return cleaned.length === 0 || tripsPhraseFilter(cleaned) ? "" : capped(cleaned, maxChars);
 };
 

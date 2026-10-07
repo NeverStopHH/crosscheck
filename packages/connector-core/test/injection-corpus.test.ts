@@ -96,7 +96,7 @@
  *    1516, is 2200 - 684 and follows from the two below it.
  *
  * VERIFY: bun -e 'const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(INJECTION_CORPUS.length)'
- * PRINTS: 72
+ * PRINTS: 77
  *
  * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
  * PRINTS: 11
@@ -544,14 +544,17 @@ const CORPUS_SHAPE: Readonly<Record<InjectionCategory, number>> = {
   // +2 and +2 for the person-facing collision line (review L2): blank
   // fillers and a lone surrogate; colon and dash lookalikes.
   invisible: 24,
-  homoglyph: 6,
+  // +3 in round two of the same review: the colon, dash and dot-operator
+  // lookalikes NFKC leaves alone that the first round missed.
+  homoglyph: 9,
   // 2 → 6 when the wire cap rose: four cases attack at the new maximum body
   // length (a phrase buried deep, a frame escape at the tail, astral pairs
   // across the cut, and the exact boundary), because room a corpus never
   // entered is room nothing defends.
   oversize: 6,
-  // +1 for the same line: a markdown image and link beacon.
-  structure: 5,
+  // +1 for the same line: a markdown image and link beacon; +2 in round two:
+  // emphasis markers and a bare `www.` autolink.
+  structure: 7,
   // 7 → 9 with 07 §13: the outcome clause and the `--mine` tally line, forged.
   "self-mimicry": 9,
 };
