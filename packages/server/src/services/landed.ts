@@ -31,12 +31,19 @@
  * default branch can be NEW (ancestryLandsContext):
  *   - never for a detached session, whatever else is known — its HEAD is a
  *     checkout of a commit, and its session's work happens elsewhere;
+ *   - never for a session ON the default branch the report names
+ *     (isDefaultBranch, the connector's own isOnDefaultBranch rule): 6 of the
+ *     pilot hub's 16 fresh-dated false stamps were sessions on main, whose
+ *     base is main's tip by construction;
  *   - by the connector's word where it gave one: `base_on_default`, its own
  *     ancestry probe at register — true never lands, false lands;
- *   - for a connector from before that word, only when the report dates the
+ *   - for a connector from before that word, only until
+ *     LANDED_UNFLAGGED_FALLBACK_ENDS_AT, and only when the report dates the
  *     base (`commitDates`) and the base was committed no more than
- *     LANDED_STALE_BASE_HOURS before the context opened. An undated base is
- *     not stamped: its age is unknown, and unknown is not evidence.
+ *     LANDED_STALE_BASE_HOURS before the session TOOK it (`base_changed_at`)
+ *     — not before its context opened, which a pull onto an older commit
+ *     days later makes look young. An undated base is not stamped: its age
+ *     is unknown, and unknown is not evidence.
  * Every refusal leaves the context unlanded, the direction in which it stays
  * visible to every collision check. The hub has no default-branch history
  * to derive "already on main at creation" from — commit evidence is one
@@ -60,10 +67,10 @@
  * never invent one.
  */
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import { isDetachedBranch } from "@crosscheck/schema";
+import { isDefaultBranch, isDetachedBranch } from "@crosscheck/schema";
 import type { LandedEvidence } from "@crosscheck/schema";
 
-import { LANDED_STALE_BASE_HOURS } from "../constants.ts";
+import { LANDED_STALE_BASE_HOURS, LANDED_UNFLAGGED_FALLBACK_ENDS_AT } from "../constants.ts";
 import { agentSessions, workContexts } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -76,35 +83,52 @@ interface Deps {
 }
 
 const MS_PER_HOUR = 3_600_000;
+const UNFLAGGED_FALLBACK_ENDS_MS = Date.parse(LANDED_UNFLAGGED_FALLBACK_ENDS_AT);
 
 /** What the rule reads about one open context and the session that owns it. */
 export interface LandingCandidate {
   readonly branch: string;
   /** The connector's word at register; null when it gave none. */
   readonly baseOnDefault: boolean | null;
-  readonly contextCreatedAt: Date;
+  /** When the session took its base: base_changed_at, else its start. */
+  readonly baseAdoptedAt: Date;
 }
 
-/** A base committed more than LANDED_STALE_BASE_HOURS before its context opened. */
-export const isStaleBase = (baseCommittedAt: Date, contextCreatedAt: Date): boolean =>
-  baseCommittedAt.getTime() < contextCreatedAt.getTime() - LANDED_STALE_BASE_HOURS * MS_PER_HOUR;
+/** What the rule reads about the report itself. */
+export interface LandingReport {
+  /** The default branch the reporter checked against; null when it named none. */
+  readonly defaultBranch: string | null;
+  /** When the hub judges it — its own clock. */
+  readonly at: Date;
+}
+
+/** A base committed more than LANDED_STALE_BASE_HOURS before the session took it. */
+export const isStaleBase = (baseCommittedAt: Date, baseAdoptedAt: Date): boolean =>
+  baseCommittedAt.getTime() < baseAdoptedAt.getTime() - LANDED_STALE_BASE_HOURS * MS_PER_HOUR;
 
 /**
  * May "this base commit is on the default branch now" stamp this context?
- * The module header gives the three rules and why; `baseCommittedAt` is the
+ * The module header gives the rules and why; `baseCommittedAt` is the
  * report's date for the base, when it gave one.
  */
 export const ancestryLandsContext = (
   candidate: LandingCandidate,
   baseCommittedAt: Date | undefined,
+  report: LandingReport,
 ): boolean => {
   if (isDetachedBranch(candidate.branch)) {
+    return false;
+  }
+  if (isDefaultBranch(candidate.branch, report.defaultBranch)) {
     return false;
   }
   if (candidate.baseOnDefault !== null) {
     return !candidate.baseOnDefault;
   }
-  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.contextCreatedAt);
+  if (report.at.getTime() >= UNFLAGGED_FALLBACK_ENDS_MS) {
+    return false;
+  }
+  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.baseAdoptedAt);
 };
 
 const commitDatesOf = (body: LandedEvidence): ReadonlyMap<string, Date> =>
@@ -131,10 +155,11 @@ export const ingestLandedEvidence = async (
   const candidates = await deps.db
     .select({
       id: workContexts.id,
-      contextCreatedAt: workContexts.createdAt,
       baseCommit: agentSessions.baseCommit,
       branch: agentSessions.branch,
       baseOnDefault: agentSessions.baseOnDefault,
+      baseChangedAt: agentSessions.baseChangedAt,
+      startedAt: agentSessions.startedAt,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -154,8 +179,10 @@ export const ingestLandedEvidence = async (
       ),
     );
   const committedAt = commitDatesOf(body);
+  const report: LandingReport = { defaultBranch: body.defaultBranch ?? null, at: deps.now() };
   const landing = candidates
-    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit)))
+    .map((row) => ({ ...row, baseAdoptedAt: row.baseChangedAt ?? row.startedAt }))
+    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit), report))
     .map((row) => row.id);
   if (landing.length > 0) {
     await deps.db

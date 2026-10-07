@@ -3,7 +3,7 @@
  * first (pilot finding, 2026-10-05; services/landed-repair.ts says which).
  *
  *   bun packages/server/scripts/unland-false-landed.ts --data-dir <dir> \
- *     [--git-dir <clone>] [--stale-base <sha>]... [--apply]
+ *     [--default-branch <ref>] [--git-dir <clone>] [--stale-base <sha>]... [--apply]
  *
  * STOP THE HUB FIRST, AND RUN IT ON A COPY FIRST. A PGlite data dir is one
  * process's (docs/OPERATIONS.md), and opening it runs this version's
@@ -15,7 +15,10 @@
  * title, a branch or a sha, so its output can be pasted anywhere. `--git-dir`
  * names a clone of the repo to date base commits in (git's committer date);
  * without one, a base's age is not judged and the output says so.
- * `--stale-base` names a commit known to be a stale checkout; repeatable.
+ * `--default-branch` names the repo's default branch (`main` or `origin/main`)
+ * so sessions ON it are judged, as the ingest judges them; without it they
+ * are not, and the output says so. `--stale-base` names a commit known to be
+ * a stale checkout; repeatable.
  */
 import { COMMIT_SHA_PATTERN } from "@crosscheck/schema";
 
@@ -29,7 +32,7 @@ import {
 import type { RepairPlan } from "../src/services/landed-repair.ts";
 
 const USAGE =
-  "usage: unland-false-landed.ts --data-dir <dir> [--git-dir <clone>] [--stale-base <sha>]... [--apply]";
+  "usage: unland-false-landed.ts --data-dir <dir> [--default-branch <ref>] [--git-dir <clone>] [--stale-base <sha>]... [--apply]";
 const EXIT_OK = 0;
 const EXIT_USAGE = 2;
 /** One `git log` per this many bases — an argv bound, not a cost bound. */
@@ -51,6 +54,7 @@ export interface UnlandDeps {
 
 interface Options {
   readonly dataDir: string;
+  readonly defaultBranch: string | null;
   readonly gitDir: string | null;
   readonly staleBases: readonly string[];
   readonly apply: boolean;
@@ -58,7 +62,7 @@ interface Options {
 
 type Parsed = { readonly ok: true; readonly options: Options } | { readonly ok: false; readonly error: string };
 
-const VALUE_FLAGS = new Set(["--data-dir", "--git-dir", "--stale-base"]);
+const VALUE_FLAGS = new Set(["--data-dir", "--default-branch", "--git-dir", "--stale-base"]);
 
 /** argv as flag/value pairs; a flag that takes a value consumes the next word. */
 const tokenize = (argv: readonly string[]): readonly (readonly [string, string | null])[] => {
@@ -99,6 +103,7 @@ const parseArgs = (argv: readonly string[]): Parsed => {
     ok: true,
     options: {
       dataDir,
+      defaultBranch: valuesOf("--default-branch").at(-1) ?? null,
       gitDir: valuesOf("--git-dir").at(-1) ?? null,
       staleBases: staleBases.map((sha) => sha.toLowerCase()),
       apply: pairs.some(([flag]) => flag === "--apply"),
@@ -106,10 +111,13 @@ const parseArgs = (argv: readonly string[]): Parsed => {
   };
 };
 
-const reasonLine = (plan: RepairPlan, judgedAge: boolean): string =>
+const reasonLine = (plan: RepairPlan, options: Options, judgedAge: boolean): string =>
   [
     `connector said so ${String(plan.byReason.flagged)}`,
     `detached ${String(plan.byReason.detached)}`,
+    options.defaultBranch === null
+      ? "on the default branch not judged (no --default-branch)"
+      : `on the default branch ${String(plan.byReason.default)}`,
     `operator-named base ${String(plan.byReason.named)}`,
     judgedAge ? `stale base ${String(plan.byReason.stale)}` : "stale base not judged (no --git-dir)",
   ].join(" · ");
@@ -120,11 +128,15 @@ const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<voi
     options.gitDir === null
       ? null
       : await deps.readCommitDates(options.gitDir, [...new Set(rows.map((row) => row.baseCommit))]);
-  const plan = planLandedRepair(rows, { namedBases: new Set(options.staleBases), baseCommittedAt });
+  const plan = planLandedRepair(rows, {
+    defaultBranch: options.defaultBranch,
+    namedBases: new Set(options.staleBases),
+    baseCommittedAt,
+  });
   deps.write(`landed contexts: ${String(plan.landed)}`);
   deps.write(
     `stamped by base ancestry with the base already on the default branch: ${String(plan.unland.length)} ` +
-      `(${reasonLine(plan, baseCommittedAt !== null)})`,
+      `(${reasonLine(plan, options, baseCommittedAt !== null)})`,
   );
   if (!options.apply) {
     deps.write("dry run: nothing changed — run again with --apply to un-land them");

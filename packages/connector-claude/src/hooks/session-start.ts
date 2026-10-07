@@ -1,3 +1,4 @@
+import { isDefaultBranch } from "@crosscheck/schema";
 import type { SeqField, WorkContextTitleSource } from "@crosscheck/schema";
 import {
   HTTP_NOT_FOUND,
@@ -87,11 +88,8 @@ export const isOnDefaultBranch = (
   if (isDetachedBranch(branch)) {
     return true;
   }
-  if (defaultBranchRef === null) {
-    return false;
-  }
-  const localName = defaultBranchRef.split("/").at(-1) ?? defaultBranchRef;
-  return branch === localName || branch === defaultBranchRef;
+  // The same spelling the hub refuses to land by (@crosscheck/schema).
+  return isDefaultBranch(branch, defaultBranchRef);
 };
 
 const MS_PER_DAY = 86_400_000;

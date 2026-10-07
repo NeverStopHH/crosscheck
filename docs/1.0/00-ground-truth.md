@@ -109,6 +109,7 @@ PK `(reader_developer_id, muted_developer_id)`. Reader-side only: filters the
 | `branch` | text | |
 | `base_commit` | text | drift is rendered against this |
 | `base_on_default` | boolean NULL | the connector's word at register: was `base_commit` ALREADY reachable from the default branch? NULL = it did not say (a connector from before the field, or git could not answer). Read by the landed rule (§1.5) |
+| `base_changed_at` | timestamptz NULL | when the session took `base_commit` (hub clock): set at register, moved by a re-register only onto a new base. The landed rule's age is measured from it; NULL on older rows, read as `started_at` |
 | `status` | text enum `SESSION_STATUSES` | |
 | `started_at` / `last_heartbeat_at` / `ended_at` | timestamptz | |
 | `reaped_at` | timestamptz NULL | `schema.ts:146` — **set only when the HUB guessed**; a connector-requested end leaves it null |
@@ -147,9 +148,10 @@ be new work:
 | the session | stamped by a reported base? |
 |---|---|
 | on a detached HEAD (`isDetachedBranch`, `@crosscheck/schema`) | never |
+| ON the default branch the report names (`isDefaultBranch`, `@crosscheck/schema`) | never |
 | `base_on_default` true | never |
 | `base_on_default` false | yes |
-| `base_on_default` NULL (older connector) | only if the report's `commitDates` dates the base no more than `LANDED_STALE_BASE_HOURS` = 24 before the context's `created_at`; undated → no |
+| `base_on_default` NULL (older connector) | until `LANDED_UNFLAGGED_FALLBACK_ENDS_AT` (2026-11-04) only, and only if the report's `commitDates` dates the base no more than `LANDED_STALE_BASE_HOURS` = 24 before the session took it (`base_changed_at`); undated → no |
 
 Before this rule a teammate's report stamped every open context whose base was
 an ancestor of main — a long-lived worktree session detached at a six-week-old

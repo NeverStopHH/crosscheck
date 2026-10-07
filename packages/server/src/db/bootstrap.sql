@@ -70,6 +70,10 @@ ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;
 -- base that was already there is never read as this session's work landing
 -- (services/landed.ts).
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS base_on_default boolean;
+-- When the session took its base_commit (hub clock): set at register, moved
+-- by a re-register only when the base differs. A base's age is judged against
+-- it. NULL on older rows; readers fall back to started_at.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS base_changed_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);

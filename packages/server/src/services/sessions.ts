@@ -186,6 +186,7 @@ export const registerSession = async (
       branch: input.branch,
       baseCommit: input.baseCommit,
       baseOnDefault: input.baseOnDefault ?? null,
+      baseChangedAt: timestamp,
       status: input.status,
       startedAt: timestamp,
       lastHeartbeatAt: timestamp,
@@ -260,6 +261,8 @@ export const registerSession = async (
       branch: input.branch,
       baseCommit: input.baseCommit,
       baseOnDefault: carriedBaseOnDefault(existing, input),
+      // When the session took this base: only a new base moves it.
+      baseChangedAt: existing.baseCommit === input.baseCommit ? existing.baseChangedAt : timestamp,
       lastHeartbeatAt: timestamp,
       ...lossColumns(input.losses, timestamp),
     })

@@ -23426,7 +23426,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an old connector's stale base is stamped landed",
     file: `${SERVER}/src/services/landed.ts`,
-    from: "  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.contextCreatedAt);",
+    from: "  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.baseAdoptedAt);",
     to: "  return baseCommittedAt !== undefined;",
     test: `${SERVER}/test/landed.test.ts`,
     because:
@@ -23436,8 +23436,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an old connector's undated base is stamped landed",
     file: `${SERVER}/src/services/landed.ts`,
-    from: "  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.contextCreatedAt);",
-    to: "  return baseCommittedAt === undefined || !isStaleBase(baseCommittedAt, candidate.contextCreatedAt);",
+    from: "  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.baseAdoptedAt);",
+    to: "  return baseCommittedAt === undefined || !isStaleBase(baseCommittedAt, candidate.baseAdoptedAt);",
     test: `${SERVER}/test/landed.test.ts`,
     because:
       "a report that cannot date the base stamps it anyway — unknown age read as new work",
@@ -23445,7 +23445,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "every base on the default branch stamps its context again, and ghost checks lose it",
     file: `${SERVER}/src/services/landed.ts`,
-    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit)))",
+    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit), report))",
     to: "    .filter(() => true)",
     test: `${SERVER}/test/ghost-overlap.test.ts`,
     because:
@@ -23455,7 +23455,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "every base on the default branch stamps its context again, and the conference loses it",
     file: `${SERVER}/src/services/landed.ts`,
-    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit)))",
+    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit), report))",
     to: "    .filter(() => true)",
     test: `${SERVER}/test/conference.test.ts`,
     because: "unfinished work drops out of the case file as if it had merged",
@@ -23577,8 +23577,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the landed repair un-lands a session that said its base was new, on its date",
     file: `${SERVER}/src/services/landed-repair.ts`,
-    from: "  return row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.contextCreatedAt)",
-    to: "  return committedAt !== undefined && isStaleBase(committedAt, row.contextCreatedAt)",
+    from: "  return row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)",
+    to: "  return committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)",
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "a real landing is undone on a heuristic its connector's own word contradicts",
   },
@@ -23666,6 +23666,63 @@ export const MUTATIONS: readonly Mutation[
     to: "  sql`coalesce(${targetTouchedAt(target)} >= ${cutoff.toISOString()}::timestamptz, false)`;",
     test: `${SERVER}/test/conference.test.ts`,
     because: "whether her context counts as a sweep, and so whether it pairs, says when she touched its files",
+  },
+  // A base already on the default branch, however it got there.
+  {
+    label: "a session ON the default branch is stamped landed by its base",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  if (isDefaultBranch(candidate.branch, report.defaultBranch)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a session on main reads merged the moment anybody reports main's tip, and its files leave collision checks",
+  },
+  {
+    label: "the default branch is matched only by its remote-tracking spelling",
+    file: `${SCHEMA}/src/default-branch.ts`,
+    from: "  return branch === localName || branch === defaultBranchRef;",
+    to: "  return branch === defaultBranchRef;",
+    test: `${SCHEMA}/test/default-branch.test.ts`,
+    because: "a session on `main` is not recognised against a report naming `origin/main`, the one spelling reports use",
+  },
+  {
+    label: "a base's age is judged from when its session started, not when it took the base",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    .map((row) => ({ ...row, baseAdoptedAt: row.baseChangedAt ?? row.startedAt }))",
+    to: "    .map((row) => ({ ...row, baseAdoptedAt: row.startedAt }))",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a long session that pulls a five-day-old main reads that base as younger than its work and lands it",
+  },
+  {
+    label: "a re-register on the same base moves when the session took it",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "      baseChangedAt: existing.baseCommit === input.baseCommit ? existing.baseChangedAt : timestamp,",
+    to: "      baseChangedAt: timestamp,",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "every SessionStart re-fire makes an old checkout look freshly taken",
+  },
+  {
+    label: "a session's register never records when it took its base",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "      baseChangedAt: timestamp,\n      status: input.status,",
+    to: "      status: input.status,",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "the age rule falls back to the session start for every new session, and a pull later reads young",
+  },
+  {
+    label: "the unflagged date fallback never ends",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  if (report.at.getTime() >= UNFLAGGED_FALLBACK_ENDS_MS) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a guess that was wrong 9 times in 16 on the pilot hub keeps stamping connectors nobody updates",
+  },
+  {
+    label: "the landed repair spares a session on the default branch",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "    return \"default\";",
+    to: "    return null;",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the stamps an older hub made on sessions ON main, the commonest false fresh-dated kind, stay",
   },
 ];
 
@@ -23985,6 +24042,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/default-branch.test.ts 1
  * PRINTS: packages/schema/test/fallback-title.test.ts 2
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/hint-outcome.test.ts 2
@@ -24048,8 +24106,8 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/landed-repair.test.ts 6
- * PRINTS: packages/server/test/landed.test.ts 7
+ * PRINTS: packages/server/test/landed-repair.test.ts 7
+ * PRINTS: packages/server/test/landed.test.ts 12
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27

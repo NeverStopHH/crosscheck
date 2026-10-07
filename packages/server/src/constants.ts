@@ -813,6 +813,24 @@ export const LANDED_NOTICE_MAX_PER_PAIR = 20;
  * dates come from laptops, and clock skew is minutes against it.
  */
 export const LANDED_STALE_BASE_HOURS = 24;
+
+/**
+ * WHEN THE DATE FALLBACK ENDS. After this instant (the hub's clock) a session
+ * whose connector never said whether its base was already on the default
+ * branch does not land by base ancestry at all; before it, it lands on a
+ * dated base no older than LANDED_STALE_BASE_HOURS (services/landed.ts).
+ *
+ * WHY A CUT AT ALL: the fallback guesses. On the pilot hub 9 of 16
+ * fresh-dated stamps it would have made were still false — a base that was
+ * fresh AND already on main — so it is a bridge for connectors from before
+ * `baseOnDefault` (0.10.x and older), not a rule to keep.
+ *
+ * WHY 2026-11-04: four weeks after the fix (2026-10-07). The pilot team takes
+ * connector releases within days; a connector still not sending the field a
+ * month on is an install nobody updates, and its sessions then stay unlanded
+ * — visible to every collision check, the safe direction.
+ */
+export const LANDED_UNFLAGGED_FALLBACK_ENDS_AT = "2026-11-04T00:00:00.000Z";
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

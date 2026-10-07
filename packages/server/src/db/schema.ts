@@ -200,6 +200,15 @@ export const agentSessions = pgTable(
      * never evidence that this session's work landed (services/landed.ts).
      */
     baseOnDefault: boolean("base_on_default"),
+    /**
+     * When the session took `base_commit` (the hub's clock): set at register
+     * and moved by a re-register only when the base differs. A base's age is
+     * judged against THIS — how old the commit was when the session checked
+     * it out — never against when a work context opened, which a pull onto
+     * an older commit days later would make look young (services/landed.ts).
+     * NULL on a row from before the column; readers fall back to started_at.
+     */
+    baseChangedAt: timestamptz("base_changed_at"),
     status: text("status", { enum: SESSION_STATUSES }).notNull(),
     startedAt: timestamptz("started_at").notNull(),
     lastHeartbeatAt: timestamptz("last_heartbeat_at").notNull(),

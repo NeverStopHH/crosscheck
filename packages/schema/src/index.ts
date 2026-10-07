@@ -245,6 +245,8 @@ export {
   UNNAMED_HEAD_BRANCH,
   isDetachedBranch,
 } from "./detached-branch.ts";
+
+export { isDefaultBranch } from "./default-branch.ts";
 export {
   LANDED_AUTHORS_MAX_EMAILS,
   LANDED_CONTEXT_MAX_COMMITS,

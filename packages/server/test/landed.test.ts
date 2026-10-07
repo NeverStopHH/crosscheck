@@ -18,6 +18,7 @@
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
+import { LANDED_UNFLAGGED_FALLBACK_ENDS_AT } from "../src/constants.ts";
 import { agentSessions } from "../src/db/schema.ts";
 import {
   addTestDeveloperWithSession,
@@ -43,6 +44,9 @@ const DETACHED_BRANCH = "detached@51eae4d8f";
 const STALE_COMMITTED_AT = "2026-06-12T09:00:00.000Z";
 /** An hour before the context opened: the session's own branch tip. */
 const FRESH_COMMITTED_AT = "2026-07-24T08:00:00.000Z";
+/** Five days after the context opened; five days before a re-register ten days in. */
+const FIVE_DAYS_AFTER_START = "2026-07-29T09:00:00.000Z";
+const TEN_DAYS_S = 10 * 86_400;
 
 /** A session whose connector said its base was NOT on the default branch. */
 const NEW_WORK = { baseOnDefault: false } as const;
@@ -326,7 +330,103 @@ describe("only the session's own work landing stamps it", () => {
   });
 });
 
+describe("a base that was on the default branch already, however it got there", () => {
+  test("a session ON the default branch is never stamped, whatever its connector said", async () => {
+    // Arrange: two sessions on `main` — a current connector that said "not
+    // on main" (an unpushed local commit, say) and an older one with a
+    // fresh-dated base. The report names origin/main.
+    const { harness, developer } = await createHarnessWithSession({ branch: "main", ...NEW_WORK });
+    await registerTestSession(harness, developer.apiKey, { id: "ses_main_old", branch: "main", baseCommit: STALE_BASE });
+    await seedContext(harness, developer);
+    await seedContext(harness, developer, { id: "wc_main_old", sessionId: "ses_main_old" });
+    const teammate = await addReporter(harness);
+
+    // Act
+    await report(
+      harness,
+      teammate,
+      landedEvidenceBody([BASE_COMMIT, STALE_BASE], [{ sha: STALE_BASE, committedAt: FRESH_COMMITTED_AT }]),
+      "ses_robin",
+    );
+
+    // Assert
+    expect(await landedAtOf(harness, developer.apiKey)).toBeNull();
+    expect(await landedAtOf(harness, developer.apiKey, "wc_main_old")).toBeNull();
+  });
+
+  test("a base's age is judged against when the session took it, not when its context opened", async () => {
+    // Arrange: an older connector's session opened its context ten days ago
+    // on base A, then re-registered today on base B — a commit five days old
+    // that it pulled. Measured from the context, B is younger than the work;
+    // measured from when the session took it, B is a five-day-old checkout.
+    const { harness, developer } = await createHarnessWithSession({ baseCommit: BASE_COMMIT });
+    await seedContext(harness, developer);
+    harness.clock.advanceSeconds(TEN_DAYS_S);
+    await registerTestSession(harness, developer.apiKey, { baseCommit: STALE_BASE });
+    const teammate = await addReporter(harness);
+
+    // Act
+    await report(
+      harness,
+      teammate,
+      landedEvidenceBody([STALE_BASE], [{ sha: STALE_BASE, committedAt: FIVE_DAYS_AFTER_START }]),
+      "ses_robin",
+    );
+
+    // Assert
+    expect(await landedAtOf(harness, developer.apiKey)).toBeNull();
+  });
+
+  test("the hub stores when a session's base last changed, and only a new base moves it", async () => {
+    // Arrange
+    const { harness, developer } = await createHarnessWithSession();
+    const changedAt = async (): Promise<string | undefined> =>
+      (
+        await harness.db
+          .select({ at: agentSessions.baseChangedAt })
+          .from(agentSessions)
+          .where(eq(agentSessions.id, VALID_SESSION_BODY.id))
+      )[0]?.at?.toISOString();
+    const registered = await changedAt();
+
+    // Act: a re-fire on the same base, then a pull onto a new one.
+    harness.clock.advanceSeconds(3_600);
+    await registerTestSession(harness, developer.apiKey);
+    const sameBase = await changedAt();
+    harness.clock.advanceSeconds(3_600);
+    await registerTestSession(harness, developer.apiKey, { baseCommit: STALE_BASE });
+    const newBase = await changedAt();
+
+    // Assert
+    expect(registered).toBe(TEST_START_ISO);
+    expect(sameBase).toBe(TEST_START_ISO);
+    expect(newBase).toBe(harness.clock.now().toISOString());
+  });
+});
+
 describe("a connector from before the flag", () => {
+  test("after the fallback's end date, an unflagged session never lands by ancestry", async () => {
+    // Arrange: a fresh-dated branch tip, reported after
+    // LANDED_UNFLAGGED_FALLBACK_ENDS_AT. Until then this lands (the next test).
+    const { harness, developer } = await createHarnessWithSession({ baseCommit: STALE_BASE });
+    await seedContext(harness, developer);
+    const teammate = await addReporter(harness);
+    harness.clock.advanceSeconds(
+      (Date.parse(LANDED_UNFLAGGED_FALLBACK_ENDS_AT) - Date.parse(TEST_START_ISO)) / 1000,
+    );
+
+    // Act
+    await report(
+      harness,
+      teammate,
+      { ...landedEvidenceBody([STALE_BASE], [{ sha: STALE_BASE, committedAt: FRESH_COMMITTED_AT }]), checkedAt: harness.clock.now().toISOString() },
+      "ses_robin",
+    );
+
+    // Assert
+    expect(await landedAtOf(harness, developer.apiKey)).toBeNull();
+  });
+
   test("a stale base is not stamped — an old checkout is not new work", async () => {
     // Arrange: no flag, on a named branch; the base was committed six weeks
     // before the context opened.

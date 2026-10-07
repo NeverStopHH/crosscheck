@@ -12,23 +12,26 @@
  *   - flagged:  the connector said so — `base_on_default` true;
  *   - detached: the session is on a detached HEAD, which the rule never
  *               lands, whatever else is known;
+ *   - default:  the session is ON the default branch the operator names
+ *               (`--default-branch`), which the rule never lands either;
  *   - named:    the operator names the commit (`--stale-base`) — a known
  *               stale detached commit, say;
  *   - stale:    a clone dates the base more than LANDED_STALE_BASE_HOURS
- *               before the context opened (`--git-dir`), for a session whose
- *               connector said nothing — the bound the ingest applies.
+ *               before the session took it (`--git-dir`; base_changed_at,
+ *               else its start), for a session whose connector said nothing
+ *               — the bound the ingest applies.
  * A base the connector said was NOT on the default branch keeps its stamp
  * against a date: its word is the better evidence. Without evidence a stamp
  * stays — the repair corrects what it can show, and guesses nothing.
  */
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
-import { isDetachedBranch } from "@crosscheck/schema";
+import { isDefaultBranch, isDetachedBranch } from "@crosscheck/schema";
 
 import { agentSessions, workContexts } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
 import { isStaleBase } from "./landed.ts";
 
-export const FALSE_LANDING_REASONS = ["flagged", "detached", "named", "stale"] as const;
+export const FALSE_LANDING_REASONS = ["flagged", "detached", "default", "named", "stale"] as const;
 export type FalseLandingReason = (typeof FALSE_LANDING_REASONS)[number];
 
 export interface LandedContextRow {
@@ -36,10 +39,13 @@ export interface LandedContextRow {
   readonly branch: string;
   readonly baseCommit: string;
   readonly baseOnDefault: boolean | null;
-  readonly contextCreatedAt: Date;
+  /** When the session took its base: base_changed_at, else its start. */
+  readonly baseAdoptedAt: Date;
 }
 
 export interface RepairEvidence {
+  /** The repo's default branch, as the operator names it; null — not judged. */
+  readonly defaultBranch: string | null;
   /** Commits the operator knows were stale checkouts. */
   readonly namedBases: ReadonlySet<string>;
   /** Committer dates from a clone; null when none was given — age not judged. */
@@ -53,18 +59,21 @@ export interface RepairPlan {
 }
 
 /** Every landed context with what the rule reads about its session. */
-export const listLandedContexts = (db: DbExecutor): Promise<readonly LandedContextRow[]> =>
-  db
-    .select({
-      id: workContexts.id,
-      branch: agentSessions.branch,
-      baseCommit: agentSessions.baseCommit,
-      baseOnDefault: agentSessions.baseOnDefault,
-      contextCreatedAt: workContexts.createdAt,
-    })
-    .from(workContexts)
-    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(isNotNull(workContexts.landedAt));
+export const listLandedContexts = async (db: DbExecutor): Promise<readonly LandedContextRow[]> =>
+  (
+    await db
+      .select({
+        id: workContexts.id,
+        branch: agentSessions.branch,
+        baseCommit: agentSessions.baseCommit,
+        baseOnDefault: agentSessions.baseOnDefault,
+        baseChangedAt: agentSessions.baseChangedAt,
+        startedAt: agentSessions.startedAt,
+      })
+      .from(workContexts)
+      .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+      .where(isNotNull(workContexts.landedAt))
+  ).map(({ baseChangedAt, startedAt, ...row }) => ({ ...row, baseAdoptedAt: baseChangedAt ?? startedAt }));
 
 /** Why this stamp should not have been made, or null when nothing shows it. */
 export const falseLandingReason = (
@@ -77,11 +86,14 @@ export const falseLandingReason = (
   if (isDetachedBranch(row.branch)) {
     return "detached";
   }
+  if (isDefaultBranch(row.branch, evidence.defaultBranch)) {
+    return "default";
+  }
   if (evidence.namedBases.has(row.baseCommit)) {
     return "named";
   }
   const committedAt = evidence.baseCommittedAt?.get(row.baseCommit);
-  return row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.contextCreatedAt)
+  return row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)
     ? "stale"
     : null;
 };

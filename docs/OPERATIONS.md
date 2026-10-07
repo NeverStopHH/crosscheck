@@ -53,11 +53,12 @@ Before 2026-10-07 a teammate's landed report stamped every open work context who
 cp -R /path/to/data /path/to/data-copy
 # 2. Dry run: prints counts only — never an id, title, branch or sha.
 bun packages/server/scripts/unland-false-landed.ts --data-dir /path/to/data-copy \
-  --git-dir /path/to/a/clone/of/the/repo --stale-base <known stale commit>
+  --default-branch origin/main --git-dir /path/to/a/clone/of/the/repo \
+  --stale-base <known stale commit>
 # 3. Only when the counts are what you expect, the same with --apply.
 ```
 
-A stamp is cleared when the evidence shows the base was already on the default branch at register: the connector said so, the session is on a detached HEAD, you named its base with `--stale-base` (repeatable), or the clone given to `--git-dir` dates the base (committer date) more than 24 hours before the context opened, for a session whose connector said nothing. Without `--git-dir` the age rule is not judged, and the output says so. A context whose connector said its base was *not* on the default branch keeps its stamp. Opening the dir runs this version's bootstrap, as a hub start would.
+A stamp is cleared when the evidence shows the base was already on the default branch at register: the connector said so, the session is on a detached HEAD, the session is ON the branch given to `--default-branch`, you named its base with `--stale-base` (repeatable), or the clone given to `--git-dir` dates the base (committer date) more than 24 hours before the session took it, for a session whose connector said nothing. Without `--default-branch` or `--git-dir` that rule is not judged, and the output says so. A context whose connector said its base was *not* on the default branch keeps its stamp. Opening the dir runs this version's bootstrap, as a hub start would.
 
 ## One hub process per data dir
 

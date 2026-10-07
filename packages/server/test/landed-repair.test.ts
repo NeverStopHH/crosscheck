@@ -42,6 +42,7 @@ const FRESH_BASE = "f4e5f4e5f4e5f4e5f4e5f4e5f4e5f4e5f4e5f4e5";
 const NEW_WORK_BASE = "9999888877776666555544443333222211110000";
 const NAMED_BASE = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
 const OPEN_BASE = "1234123412341234123412341234123412341234";
+const MAIN_BASE = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
 
 /**
  * Six weeks and one hour before the contexts open (TEST_START_ISO). The
@@ -71,6 +72,7 @@ const SESSIONS: readonly {
   // Falsely landed, each by one kind of evidence:
   { id: "ses_detached", context: "wc_detached", branch: "detached@51eae4d8f", base: DETACHED_BASE, landed: true },
   { id: "ses_flagged", context: "wc_flagged", branch: "feat/cut-from-main", base: FLAGGED_BASE, baseOnDefault: true, landed: true },
+  { id: "ses_on_main", context: "wc_on_main", branch: "main", base: MAIN_BASE, landed: true },
   { id: "ses_old", context: "wc_old", branch: "feat/old-checkout", base: OLD_BASE, landed: true },
   { id: "ses_named", context: "wc_named", branch: "feat/named-stale", base: NAMED_BASE, landed: true },
   // Truly landed, by everything there is to know:
@@ -140,7 +142,7 @@ const run = async (harness: TestHarness, argv: readonly string[]): Promise<Run> 
 };
 
 const DATA_DIR = ["--data-dir", "/nonexistent/seeded-in-memory-hub"];
-const EVIDENCE = ["--git-dir", "/nonexistent/clone", "--stale-base", NAMED_BASE];
+const EVIDENCE = ["--git-dir", "/nonexistent/clone", "--stale-base", NAMED_BASE, "--default-branch", "origin/main"];
 
 describe("the dry run", () => {
   test("counts the falsely landed by their evidence, changes nothing, and prints no content", async () => {
@@ -153,9 +155,11 @@ describe("the dry run", () => {
 
     // Assert
     expect(result.code).toBe(0);
-    expect(result.output).toContain("landed contexts: 6");
-    expect(result.output).toContain("base already on the default branch: 4");
-    expect(result.output).toContain("connector said so 1 · detached 1 · operator-named base 1 · stale base 1");
+    expect(result.output).toContain("landed contexts: 7");
+    expect(result.output).toContain("base already on the default branch: 5");
+    expect(result.output).toContain(
+      "connector said so 1 · detached 1 · on the default branch 1 · operator-named base 1 · stale base 1",
+    );
     expect(result.output).toContain("dry run: nothing changed");
     expect(await landedIds(harness.db)).toEqual(before);
     expect(secrets.filter((secret) => result.output.includes(secret))).toEqual([]);
@@ -168,9 +172,11 @@ describe("the dry run", () => {
     // Act
     const result = await run(harness, [...DATA_DIR, "--stale-base", NAMED_BASE]);
 
-    // Assert: the old checkout stays landed — no evidence, no change.
+    // Assert: the old checkout and the session on main stay landed — no
+    // evidence, no change.
     expect(result.output).toContain("base already on the default branch: 3");
     expect(result.output).toContain("stale base not judged (no --git-dir)");
+    expect(result.output).toContain("on the default branch not judged (no --default-branch)");
   });
 });
 
@@ -185,7 +191,7 @@ describe("--apply", () => {
 
     // Assert
     expect(applied.code).toBe(0);
-    expect(applied.output).toContain("un-landed 4 contexts");
+    expect(applied.output).toContain("un-landed 5 contexts");
     expect(await landedIds(harness.db)).toEqual(["wc_fresh", "wc_new_work"]);
     expect(again.output).toContain("base already on the default branch: 0");
     expect(secrets.filter((secret) => applied.output.includes(secret))).toEqual([]);
@@ -205,7 +211,7 @@ describe("opt-in, explicitly", () => {
     // Assert: usage errors, and the hub was never opened.
     expect([noDir.code, badSha.code, unknown.code]).toEqual([2, 2, 2]);
     expect(noDir.opened + badSha.opened + unknown.opened).toBe(0);
-    expect(await landedIds(harness.db)).toHaveLength(6);
+    expect(await landedIds(harness.db)).toHaveLength(7);
   });
 });
 

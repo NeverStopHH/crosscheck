@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2261
+    # PRINTS: 2268
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -398,6 +398,7 @@ jobs:
     # PRINTS: packages/schema/src/causal-guarantees.ts 9
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/commit-evidence.ts 2
+    # PRINTS: packages/schema/src/default-branch.ts 1
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/detached-branch.ts 3
     # PRINTS: packages/schema/src/enums.ts 3
@@ -473,8 +474,8 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
-    # PRINTS: packages/server/src/services/landed-repair.ts 3
-    # PRINTS: packages/server/src/services/landed.ts 7
+    # PRINTS: packages/server/src/services/landed-repair.ts 4
+    # PRINTS: packages/server/src/services/landed.ts 10
     # PRINTS: packages/server/src/services/live-location.ts 35
     # PRINTS: packages/server/src/services/noise-label.ts 3
     # PRINTS: packages/server/src/services/normalized-doc.ts 6
@@ -500,7 +501,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 23
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 19
+    # PRINTS: packages/server/src/services/sessions.ts 21
     # PRINTS: packages/server/src/services/similarity-gate.ts 4
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
@@ -569,6 +570,7 @@ jobs:
     # PRINTS: coverage.ts 49
     # PRINTS: crosscheck.ts 1
     # PRINTS: declarations.ts 5
+    # PRINTS: default-branch.ts 1
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
     # PRINTS: derive-history.ts 6
@@ -657,9 +659,9 @@ jobs:
     # PRINTS: landed-evidence.ts 1
     # PRINTS: landed-notice.ts 5
     # PRINTS: landed-notices.ts 33
-    # PRINTS: landed-repair.ts 3
+    # PRINTS: landed-repair.ts 4
     # PRINTS: landed-why.ts 2
-    # PRINTS: landed.ts 15
+    # PRINTS: landed.ts 18
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
@@ -755,7 +757,7 @@ jobs:
     # PRINTS: session-start.ts 13
     # PRINTS: session-state.ts 25
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 21
+    # PRINTS: sessions.ts 23
     # PRINTS: set-intent.ts 5
     # PRINTS: settings-merge.ts 2
     # PRINTS: settings.ts 1
