@@ -41,10 +41,13 @@ import {
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { setPresenceOptOutViaApi } from "./ui-helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
 const PINNED_A = "src/workbench/PlaybackControls.tsx";
 const PINNED_B = "src/workbench/usePlayback.ts";
+/** Past SUSPECT_WINDOW_DAYS before the harness clock's start. */
+const TWENTY_DAYS_BEFORE_START = "2026-07-04T09:00:00.000Z";
 
 interface CandidateView {
   readonly sessionId: string;
@@ -126,6 +129,8 @@ const seedTouches = async (
     readonly files: readonly string[];
     readonly intent?: Record<string, unknown>;
     readonly source?: string;
+    /** When the context opened; its touches are always recorded now. */
+    readonly createdAt?: string;
   },
 ): Promise<void> => {
   const records = [
@@ -136,7 +141,7 @@ const seedTouches = async (
         sessionId: input.sessionId,
         title: input.title,
         description: undefined,
-        createdAt: TEST_START_ISO,
+        createdAt: input.createdAt ?? TEST_START_ISO,
         ...(input.intent === undefined ? {} : { intent: input.intent }),
       }),
       { sessionId: input.sessionId },
@@ -331,6 +336,64 @@ describe("ranking", () => {
     expect(view.candidates[0]?.lift).toBeGreaterThan(
       view.candidates[1]?.lift ?? Number.POSITIVE_INFINITY,
     );
+  });
+
+  test("a long-lived context's touches in the window count, however long ago it opened", async () => {
+    // Arrange: Ken's worktree session opened its one context twenty days ago
+    // — past the fourteen-day window — and touched both pinned files today.
+    // Windowed by when the CONTEXT opened, those touches were out of the
+    // window, and the session that touched the break today was never named.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-long@example.com");
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    const ken = await addTestDeveloperWithSession(harness, "Ken", "ken-long@example.com", {
+      id: "ses_ken",
+    });
+    await createPin(harness, nick.apiKey);
+    await breakPin(harness, nick.apiKey);
+    await seedTouches(harness, ken, {
+      sessionId: "ses_ken",
+      contextId: "wc_ken_long",
+      title: "Long-lived worktree session",
+      files: [PINNED_A, PINNED_B, "src/workbench/other.ts"],
+      createdAt: TWENTY_DAYS_BEFORE_START,
+    });
+
+    // Act
+    const view = (await suspect(harness, nick.apiKey, "pin=pin_playback")).view;
+
+    // Assert: in the window, with every touch it made in it counted.
+    expect(view.outcome).toBe("ranked");
+    expect(view.candidates.map((candidate) => candidate.workContextId)).toEqual(["wc_ken_long"]);
+    expect(view.candidates[0]?.authorTouches).toBe(3);
+  });
+
+  test("an opted-out teammate's touches never move the window — her long-lived context counts from when it opened", async () => {
+    // Arrange: the same shape, but Ken opted out of presence. When he touched
+    // a file is his instant; read as the window it would tell Nick he is in
+    // the break's files today.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-hidden@example.com");
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    const ken = await addTestDeveloperWithSession(harness, "Ken", "ken-hidden@example.com", {
+      id: "ses_ken",
+    });
+    await createPin(harness, nick.apiKey);
+    await breakPin(harness, nick.apiKey);
+    await seedTouches(harness, ken, {
+      sessionId: "ses_ken",
+      contextId: "wc_ken_hidden",
+      title: "Long-lived worktree session",
+      files: [PINNED_A, PINNED_B],
+      createdAt: TWENTY_DAYS_BEFORE_START,
+    });
+    await setPresenceOptOutViaApi(harness, ken.apiKey, true);
+
+    // Act
+    const view = (await suspect(harness, nick.apiKey, "pin=pin_playback")).view;
+
+    // Assert: windowed by creation alone, as before the touch-time rule.
+    expect(view.candidates.map((candidate) => candidate.workContextId)).not.toContain("wc_ken_hidden");
   });
 
   test("includes the reader's OWN sessions — your agent is a suspect too", async () => {

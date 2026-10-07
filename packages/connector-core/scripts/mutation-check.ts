@@ -23591,6 +23591,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "the operator is told contexts were un-landed while every stamp stays",
   },
+  // The suspect window: what was touched in it is a question about the touch.
+  {
+    label: "suspect windows a long-lived context's touches by when it opened",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "          eq(agentSessions.repo, repo),\n          gt(touchedAt, since),",
+    to: "          eq(agentSessions.repo, repo),\n          gt(sql`${activity}`, since),",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because: "the worktree session that touched the break's files today is never named",
+  },
+  {
+    label: "suspect's denominator drops a long-lived context's touches",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "          // this author made in the window, a long-lived context's included.\n          gt(touchedAt, since),",
+    to: "          // this author made in the window, a long-lived context's included.\n          gt(sql`${activity}`, since),",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because: "lift is computed over fewer touches than the author made, and a sweep reads as focused",
+  },
+  {
+    label: "suspect windows an opted-out teammate's work by when she touched it",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "case when ${visiblePresenceCondition(readerDeveloperId, agentSessions.developerId)} then ${workContextTargets.createdAt} end",
+    to: "${workContextTargets.createdAt}",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because: "a colleague's suspect run says she was in the break's files today, an instant of hers",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24026,7 +24051,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/startup-boot.test.ts 3
  * PRINTS: packages/server/test/startup-upgrades.test.ts 3
- * PRINTS: packages/server/test/suspect.test.ts 5
+ * PRINTS: packages/server/test/suspect.test.ts 8
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
