@@ -580,6 +580,19 @@ goes through every check as the update it is. The residuals I1 allows are each s
   hub has it;
 - a record counted by a step that died between the ledger append and the cursor write past it.
 
+**The simulation runs set_intent's own write** (review-2 round 8, M5). The simulation re-implemented `set_intent` instead
+of calling it, and the tool's may-have-landed rule went unguarded. A plain 500, a timeout and an ignored post each
+survived a mutation (R7-M5, R7-M6, R7-M7). The write is now one function, `mcp/tools/intent-write.ts writeIntent`:
+
+- the status goes into the state first;
+- then the post;
+- then each answer decides what the state keeps, what is written down as refused, and whether an owed work context is
+  paid.
+
+The MCP tool calls it after its argument, secret, echo and contract checks. The simulation calls the same function,
+and a status the tool's arguments refuse writes nothing there too. Tests pin all three cases: a 500 or a timeout
+keeps the new status, and an ignored post puts the old one back.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

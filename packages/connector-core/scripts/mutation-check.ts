@@ -7266,7 +7266,7 @@ export const MUTATIONS: readonly Mutation[
     // The connector half of the same answer.
     label: "set_intent prints success over the hub's refusal to record",
     file: `${CORE}/src/mcp/tools/set-intent.ts`,
-    from: '  if (outcome?.status === "ignored") {',
+    from: '  if (written.outcome === "ignored") {',
     to: "  if (false) {",
     test: `${CORE}/test/set-intent.test.ts`,
     because:
@@ -18137,8 +18137,8 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "set_intent leaves the debt its post paid open",
-    file: `${CORE}/src/mcp/tools/set-intent.ts`,
-    from: "  await settleOwedOnIntent(ctx.config.home, ctx.repoKey, own.hostSessionKey, own.workContextId);\n",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "  await settleOwedOnIntent(deps.home, deps.repoKey, own.hostSessionKey, own.workContextId);\n",
     to: "",
     test: `${CORE}/test/set-intent.test.ts`,
     because: "review-2 round 7 (M1): the next flush pays the debt over the status set_intent just set",
@@ -18337,15 +18337,15 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "set_intent writes its status into the state only after the hub took it",
-    file: `${CORE}/src/mcp/tools/set-intent.ts`,
-    from: "  if (isNewStatus) {\n    await writeStatus(ctx, own, status);\n  }\n",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "  if (isNewStatus) {\n    await writeStatus(deps, own, status);\n  }\n",
     to: "",
     test: `${CORE}/test/set-intent.test.ts`,
     because: "review-2 round 7, simulation seed 10 (I4): killed between the post and the state write, the next re-fire or debt puts the old status back",
   },
   {
     label: "set_intent leaves a status the hub surely never took in the state",
-    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
     from: "    if (!mayHaveLanded(posted)) {\n      await keepOldStatus();\n    }\n",
     to: "",
     test: `${CORE}/test/set-intent.test.ts`,
@@ -18353,7 +18353,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "set_intent puts the old status back over a post that may have landed",
-    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
     from: "    if (!mayHaveLanded(posted)) {",
     to: "    if (true) {",
     test: `${CORE}/test/set-intent.test.ts`,
@@ -18361,8 +18361,8 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "set_intent refused as ended tells no flusher",
-    file: `${CORE}/src/mcp/tools/set-intent.ts`,
-    from: "      await recordRefusedLife(ctx.config.home, ctx.repoKey, own.crosscheckSessionId, ctx.now());\n",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "      await recordRefusedLife(deps.home, deps.repoKey, own.crosscheckSessionId, deps.now());\n",
     to: "",
     test: `${CORE}/test/set-intent.test.ts`,
     because: "review-2 round 7, simulation seed 1033 (I2): a successor files the ended life's records into it",
@@ -18664,6 +18664,30 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 8 M4: the per-record audit cannot tell which records the hub ignored",
   },
   {
+    label: "set_intent reads a plain HTTP 500 as surely not landed (R7-M5)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: '    : failure.kind === "malformed" || failure.status >= HTTP_SERVER_ERROR;',
+    to: '    : failure.kind === "malformed" || failure.status > HTTP_SERVER_ERROR;',
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 8 R7-M5: the old status is put back over a post a failing hub may have committed",
+  },
+  {
+    label: "set_intent reads a timeout as never sent (R7-M6)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: 'const NEVER_SENT: ReadonlySet<string> = new Set(["dns", "refused", "tls"]);',
+    to: 'const NEVER_SENT: ReadonlySet<string> = new Set(["dns", "refused", "tls", "timeout"]);',
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 8 R7-M6, the seed-1020 class: the old status is put back over a post that may have landed",
+  },
+  {
+    label: "set_intent keeps a status the hub ignored (R7-M7)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: '  if (result?.status === "ignored") {\n    await keepOldStatus();',
+    to: '  if (result?.status === "ignored") {\n    await Promise.resolve();',
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 8 R7-M7: the state holds a status the hub refused to record, and every later sender carries it",
+  },
+  {
     label: "a spool that is not there is stamped released",
     file: `${CORE}/src/spool/release.ts`,
     from: "  if ((await Bun.file(path).exists()) || !(await Bun.file(spoolDataPath(home, key, slug)).exists())) {",
@@ -18945,7 +18969,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 9
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 12
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2

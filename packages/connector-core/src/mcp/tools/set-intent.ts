@@ -46,27 +46,12 @@ import { renderGhostNotice } from "../../briefing/ghost.ts";
 import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
-import { getGhostChecks, postRecords } from "../../http/hub.ts";
-import { settleOwedOnIntent } from "../../spool/owed-work-context.ts";
-import { recordRefusedLife } from "../../spool/refused-lives.ts";
-import { rejectCauseOf } from "../../spool/reject-cause.ts";
-import {
-  readSessionState,
-  updateSessionState,
-  withGhostNotices,
-  withRecordedIntent,
-} from "../../state/session-state.ts";
+import { getGhostChecks } from "../../http/hub.ts";
+import { readSessionState, updateSessionState, withGhostNotices } from "../../state/session-state.ts";
+import { writeIntent } from "./intent-write.ts";
+import type { TitledWorkContext } from "./intent-write.ts";
 import { NO_SESSION, contractFailure, requireOwnContext } from "./publish-claim.ts";
-import {
-  allocateToolSeq,
-  envelopeFor,
-  hubFailure,
-  issuesOf,
-  parseArgs,
-  resultAt,
-} from "./shared.ts";
-import type { HubFailure } from "./shared.ts";
-import { seqAt } from "../../capture/seq.ts";
+import { envelopeFor, hubFailure, issuesOf, parseArgs } from "./shared.ts";
 
 /** A declared intent is the session's own statement — full confidence, by definition. */
 const DECLARED_CONFIDENCE = 1;
@@ -230,19 +215,6 @@ const deliverGhostNotice = async (
   return [notice.text];
 };
 
-/** Connection failures that mean the request never reached the hub, so nothing it carried landed. */
-const NEVER_SENT: ReadonlySet<string> = new Set(["dns", "refused", "tls"]);
-const HTTP_SERVER_ERROR = 500;
-
-/** Whether a failed post may still have landed: a timeout, a dropped connection, a gateway answering for the hub. */
-const mayHaveLanded = (failure: HubFailure): boolean =>
-  failure.kind === "network"
-    ? !NEVER_SENT.has(failure.cause ?? "unknown")
-    : failure.kind === "malformed" || failure.status >= HTTP_SERVER_ERROR;
-
-/** The work context's status as the session's state records it — what every other sender reads. */
-const writeStatus = (ctx: McpContext, own: OwnWorkContext, status: string | null): Promise<boolean> =>
-  updateSessionState(ctx.config.home, own.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: status }));
 
 export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> => {
   const parsed = parseArgs(ArgsSchema, args, definition.name);
@@ -309,50 +281,28 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   if (!rules.ok) {
     return contractFailure(rules.messages);
   }
-  const status = parsed.value.status ?? own.workContextStatus;
-  const body = {
-    id: own.workContextId,
-    sessionId: own.crosscheckSessionId,
-    title: own.workContextTitle,
-    status,
-    intent,
-    createdAt: own.startedAt,
+  // The write itself — the status into the state first, the post, what each
+  // answer leaves in the state — is mcp/tools/intent-write.ts, which the spool
+  // simulation calls too (review-2 round 8, M5).
+  const titled: TitledWorkContext = {
+    ...own,
+    workContextTitle: own.workContextTitle,
+    workContextStatus: own.workContextStatus,
   };
-  const producer = { sessionId: own.crosscheckSessionId, developerId: own.developerId };
-  // THE NEW STATUS GOES INTO THE STATE BEFORE THE POST (review-2 round 7,
-  // found by the spool simulation): every other sender of this work context —
-  // a SessionStart re-fire, a heal's debt — builds it from the state, so a
-  // hook killed between a post the hub took and the state write below had
-  // them put the old status back over the new one. A post that does not land
-  // puts the old one back.
-  const isNewStatus = parsed.value.status !== undefined && status !== own.workContextStatus;
-  if (isNewStatus) {
-    await writeStatus(ctx, own, status);
+  const written = await writeIntent(
+    {
+      home: ctx.config.home,
+      repoKey: ctx.repoKey,
+      hub: ctx.hub,
+      now: ctx.now,
+      envelope: (producer, body, seq) => envelopeFor(ctx, producer, "work_context", body, seq),
+    },
+    titled,
+    { summary: parsed.value.summary, status: parsed.value.status, intent },
+  );
+  if (written.outcome === "failed") {
+    return hubFailure(ctx, written.failure);
   }
-  const keepOldStatus = async (): Promise<void> => {
-    if (isNewStatus) {
-      await writeStatus(ctx, own, own.workContextStatus);
-    }
-  };
-  // BEFORE the envelope, never after the post: this tool writes state at the
-  // end of the call, and spec 01 §3.6's "fold it into the updateSessionState it
-  // already calls" would stamp a position on a record the hub has already
-  // stored. Under an ambiguous session no lock is taken at all and the record
-  // carries `allocation_failed` — the intent lands, its POSITION does not.
-  const seq = await allocateToolSeq(ctx, own, 1);
-  const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "work_context", body, seqAt(seq, 0)),
-  ]);
-  if (!posted.ok) {
-    // ...unless it may have landed after all — then the state keeps what the
-    // hub may now hold, and the next sender of this work context makes the two
-    // agree, rather than putting the old status back over it.
-    if (!mayHaveLanded(posted)) {
-      await keepOldStatus();
-    }
-    return hubFailure(ctx, posted);
-  }
-  const outcome = resultAt(posted.data.results, 0);
   // THE CAP IS AN ANSWER, NOT A SUCCESS. `ignored` is the hub's outcome for a
   // record that survived while the change inside it did not, and it is what
   // the 21st amendment gets: the ledger holds every version it keeps, so this
@@ -360,36 +310,17 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   // the author a thing that is not true on the one surface whose whole job is
   // to record the sentence — so it is a failure result, with the hub's own
   // words beside it.
-  if (outcome?.status === "ignored") {
-    await keepOldStatus();
+  if (written.outcome === "ignored") {
     return toolFailure(
-      quotingText(INTENT_CAP_REFUSAL, explainRejection(issuesOf(outcome))),
+      quotingText(INTENT_CAP_REFUSAL, explainRejection(issuesOf(written.result))),
     );
   }
-  if (outcome?.status === "rejected") {
-    await keepOldStatus();
-    if (rejectCauseOf(issuesOf(outcome)) === "session_ended") {
-      // The hub says this life is over: its records still on disk are
-      // withheld from every later flush (spool/refused-lives.ts, review-2
-      // round 7, found by the spool simulation).
-      await recordRefusedLife(ctx.config.home, ctx.repoKey, own.crosscheckSessionId, ctx.now());
-    }
+  if (written.outcome === "rejected") {
     return toolFailure(
-      quotingText("The hub did not accept that intent.", explainRejection(issuesOf(outcome))),
+      quotingText("The hub did not accept that intent.", explainRejection(issuesOf(written.result))),
     );
   }
-  // The state write carries THREE facts at once, and one lock round is the
-  // reason they are together: the status the hub now holds, the sentence the
-  // ghost worker will compare (`workContextIntent`), and the debt that makes
-  // it run (`ghostPending`). Best-effort like every state update on this path.
-  await updateSessionState(ctx.config.home, own.hostSessionKey, (fresh) => ({
-    ...withRecordedIntent(fresh, parsed.value.summary),
-    workContextStatus: parsed.value.status === undefined ? fresh.workContextStatus : status,
-  }));
-  // The hub holds this work context now, as set_intent just wrote it: a debt a
-  // heal left for it is paid (spool/owed-work-context.ts), and no later flush
-  // sends a copy over this status (review-2 round 7, M1).
-  await settleOwedOnIntent(ctx.config.home, ctx.repoKey, own.hostSessionKey, own.workContextId);
+  const outcome = written.result;
   const ghost = await deliverGhostNotice(ctx, own);
   // Audit row M14, the author's half. An intent is LABEL class — every surface
   // that shows it blanks it WHOLE when the phrase filter matches — so without

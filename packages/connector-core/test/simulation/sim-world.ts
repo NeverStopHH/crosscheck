@@ -25,6 +25,9 @@
 import { readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { PROTOCOL_VERSION, SessionStatusSchema } from "@crosscheck/schema";
+import type { SeqField } from "@crosscheck/schema";
+
 import {
   HTTP_TIMEOUT_MS,
   MAX_INGEST_BATCH,
@@ -40,7 +43,7 @@ import {
 } from "../../src/constants.ts";
 import { hookBudget } from "../../src/config/hook-budget.ts";
 import { repoKey, sessionSlug, sessionStatePath, spoolDir } from "../../src/config/paths.ts";
-import { targetRecord, withProducer, workContextRecord } from "../../src/capture/records.ts";
+import { targetRecord, withProducer } from "../../src/capture/records.ts";
 import type { Producer } from "../../src/capture/records.ts";
 import { seqAt, withSeq } from "../../src/capture/seq.ts";
 import type { HubContext } from "../../src/http/client.ts";
@@ -49,14 +52,13 @@ import { endSessionFlow } from "../../src/flows/end-session.ts";
 import { sessionHealer } from "../../src/flows/heal-session.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../../src/flows/register-session.ts";
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../../src/guarantees/declarations.ts";
+import { writeIntent } from "../../src/mcp/tools/intent-write.ts";
 import { appendRecords } from "../../src/spool/append.ts";
 import { bytesOfLines, writeCursorOffset } from "../../src/spool/cursor.ts";
 import { readDropDetail, recordDrop } from "../../src/spool/drops.ts";
 import { readAllSessionSpools, readSessionSpool } from "../../src/spool/files.ts";
 import { flushSpool } from "../../src/spool/flush.ts";
-import { settleOwedOnIntent } from "../../src/spool/owed-work-context.ts";
 import { reapSpool } from "../../src/spool/reap.ts";
-import { recordRefusedLife } from "../../src/spool/refused-lives.ts";
 import { rejectCauseOf } from "../../src/spool/reject-cause.ts";
 import { reapStaleSessionStates } from "../../src/state/session-reap.ts";
 import { allocateSeq, readSessionState, updateSessionState } from "../../src/state/session-state.ts";
@@ -371,59 +373,60 @@ const edit = async (world: World, c: number): Promise<void> => {
   await hookFlush(world, hostSessionKey, deadlineMs);
 };
 
-/** The status written to the state — read back after, so a write that landed before a crash still counts. */
-const writeStatus = async (world: World, hostSessionKey: string, workContextId: string, status: string | null) => {
-  try {
-    await updateSessionState(world.home, hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: status }));
-  } finally {
-    const state = await readSessionState(world.home, hostSessionKey);
-    world.writtenStatus.set(workContextId, state?.workContextStatus ?? "");
-  }
-};
+/** The work_context envelope set_intent posts, as the tool builds one (mcp/tools/shared.ts envelopeFor). */
+const intentEnvelope =
+  (world: World) =>
+  (producer: { readonly sessionId: string; readonly developerId: string | null }, body: unknown, seq: SeqField) => ({
+    cx: PROTOCOL_VERSION,
+    id: `env_${crypto.randomUUID()}`,
+    ts: new Date().toISOString(),
+    producer: { developerId: producer.developerId ?? world.hub.developerId, agentKind: AGENT_KIND, sessionId: producer.sessionId },
+    kind: "work_context",
+    body,
+    seq,
+  });
 
 /**
- * set_intent's write, in the tool's order (mcp/tools/set-intent.ts): the new
- * status into the state, then straight to the hub; a post the hub did not
- * take puts the old one back, one it took settles the debt for it.
+ * set_intent, through the tool's OWN write (mcp/tools/intent-write.ts, review-2
+ * round 8, M5): a status the tool's arguments refuse writes nothing, as the
+ * tool would; any other goes the tool's way. What the state holds after it —
+ * read back, so a write that landed before a crash still counts — is what
+ * every other sender reads.
  */
 const intent = async (world: World, c: number, status: string): Promise<void> => {
   const hostSessionKey = world.keys[c] ?? "";
   const state = await readSessionState(world.home, hostSessionKey);
-  if (state === null) {
+  if (state === null || state.workContextTitle === null || state.workContextStatus === null) {
     return;
   }
-  const isNew = status !== state.workContextStatus;
-  if (isNew) {
-    await writeStatus(world, hostSessionKey, state.workContextId, status);
+  if (!SessionStatusSchema.safeParse(status).success) {
+    return;
   }
-  const record = workContextRecord(
-    {
-      workContextId: state.workContextId,
-      sessionId: state.crosscheckSessionId,
-      title: state.workContextTitle ?? fallbackWorkContextTitle(BRANCH, REPO_ID),
+  const own = {
+    hostSessionKey,
+    crosscheckSessionId: state.crosscheckSessionId,
+    workContextId: state.workContextId,
+    developerId: state.developerId,
+    workContextTitle: state.workContextTitle,
+    workContextStatus: state.workContextStatus,
+    startedAt: state.startedAt,
+    sessionAmbiguous: false,
+  };
+  const summary = `Simulated intent: ${status}`;
+  const deps = { home: world.home, repoKey: world.key, hub: world.ctx, now: () => new Date(), envelope: intentEnvelope(world) };
+  try {
+    const written = await writeIntent(deps, own, {
+      summary,
       status,
-    },
-    producerOf(world, state.crosscheckSessionId),
-    new Date(),
-  );
-  const posted = await postRecords(world.ctx, [withProducer(record, world.hub.developerId, state.crosscheckSessionId)]);
-  if (!posted.ok) {
-    // Every failure the simulation injects is an HTTP 5xx: it may have landed, so the state keeps the new status.
-    return;
-  }
-  const answer = posted.data.results?.[0];
-  if (answer?.status !== "accepted" && answer?.status !== "duplicate") {
-    if (isNew) {
-      await writeStatus(world, hostSessionKey, state.workContextId, state.workContextStatus);
+      intent: { summary, provenance: "declared", confidence: 1, capturedAt: new Date().toISOString() },
+    });
+    if (written.outcome === "taken") {
+      world.latestStatus.set(state.workContextId, status);
     }
-    if (answer?.status === "rejected" && rejectCauseOf(answer.issues) === "session_ended") {
-      await recordRefusedLife(world.home, world.key, state.crosscheckSessionId, new Date());
-    }
-    return;
+  } finally {
+    const after = await readSessionState(world.home, hostSessionKey);
+    world.writtenStatus.set(state.workContextId, after?.workContextStatus ?? "");
   }
-  world.latestStatus.set(state.workContextId, status);
-  await writeStatus(world, hostSessionKey, state.workContextId, status);
-  await settleOwedOnIntent(world.home, world.key, hostSessionKey, state.workContextId);
 };
 
 const end = async (world: World, c: number): Promise<void> => {
