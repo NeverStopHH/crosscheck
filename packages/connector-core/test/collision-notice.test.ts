@@ -15,6 +15,7 @@ import {
   COLLISION_NOTICE_MAX_CHARS,
   COLLISION_NOTICE_MAX_LINES,
   COLLISION_NOTICE_PATH_CHARS,
+  MAX_COLLISION_FILES,
   MAX_COLLISION_NOTICES,
   PRESENCE_TTL_MS,
 } from "../src/constants.ts";
@@ -39,6 +40,7 @@ import {
   newCollisionKeys,
   withCarriedCapture,
   withCollisionNotices,
+  withQueuedCollisionRelays,
 } from "../src/state/session-state.ts";
 import type { CollisionNotice, SessionState } from "../src/state/session-state.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
@@ -558,6 +560,73 @@ describe("once per teammate and file group per session", () => {
     // Assert
     expect(refired.collisionNotices).toEqual(told.collisionNotices);
   });
+
+  test("a SessionStart re-fire keeps a subagent's relay still queued for the main thread (review L10)", () => {
+    // Arrange
+    const group = tripwireCollision(tripwireRow(), FILE);
+    const queued = withQueuedCollisionRelays(withCollisionNotices(state(), [group]), [group.key]);
+
+    // Act
+    const refired = withCarriedCapture(state(), queued);
+
+    // Assert
+    expect(refired.collisionRelayQueue).toEqual([group.key]);
+  });
+
+  test("the relay queue is capped, oldest out first (review L10)", () => {
+    // Arrange
+    const keys = Array.from({ length: MAX_COLLISION_NOTICES + 3 }, (_, index) => `key_${String(index)}`);
+
+    // Act
+    const capped = withQueuedCollisionRelays(state(), keys);
+
+    // Assert
+    expect(capped.collisionRelayQueue).toHaveLength(MAX_COLLISION_NOTICES);
+    expect(capped.collisionRelayQueue?.[0]).toBe("key_3");
+  });
+
+  test("a group's remembered files stop at MAX_COLLISION_FILES (review L10)", () => {
+    // Arrange: one teammate context, more distinct files than the record keeps
+    const groups = Array.from({ length: MAX_COLLISION_FILES + 5 }, (_, index) =>
+      tripwireCollision(tripwireRow(), `src/file_${String(index)}.ts`),
+    );
+
+    // Act
+    const grown = groups.reduce((next, group) => withCollisionNotices(next, [group]), state());
+
+    // Assert
+    const [told] = grown.collisionNotices ?? [];
+    expect(grown.collisionNotices).toHaveLength(1);
+    expect(told?.files).toHaveLength(MAX_COLLISION_FILES);
+    expect(told?.files[0]).toBe("src/file_0.ts");
+  });
+});
+
+describe("a name read back from the state file is cleaned again before the statusline shows it (review L10)", () => {
+  test.each(INJECTION_CORPUS.map((entry) => [entry.id, entry.payload] as const))(
+    "%s in a raw record stays inside the indicator's contract",
+    (_id, payload) => {
+      // Arrange: a record that never went through tripwireCollision — an
+      // older writer, a hand edit
+      const raw: CollisionNotice = {
+        key: "raw",
+        developerId: "dev_raw",
+        name: payload,
+        files: ["src/a.ts"],
+        fileCount: 1,
+        branch: null,
+        lastActiveAt: null,
+      };
+
+      // Act
+      const indicator = renderOverlapIndicator([raw]);
+
+      // Assert
+      expect(indicator.startsWith("⚠ overlap: ")).toBe(true);
+      expect(indicator.length).toBeLessThanOrEqual(COLLISION_INDICATOR_MAX_CHARS);
+      assertUntrustedCharacters(indicator, payload);
+    },
+  );
 });
 
 describe("many groups at once stay a few lines (review L4)", () => {

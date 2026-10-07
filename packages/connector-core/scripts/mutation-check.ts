@@ -23926,6 +23926,63 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
     because: "a session that starts on a backlog — the one whose drain spends the spare — never tells its person of the multi-day overlap",
   },
+  // ── Review of feat/collision-visible, L10: the relay's and the record's edges ──
+  {
+    label: "a compact drops a subagent's relay still queued for the main thread",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),",
+    to: "",
+    test: `${CONNECTOR}/test/collision-relay-hook.test.ts`,
+    because: "a subagent's hit marked told before the compact is never relayed after it, and nobody hears of it again",
+  },
+  {
+    label: "a subagent's own hook drains the main thread's relay",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "ctx.payload.agent_id !== undefined || budget",
+    to: "budget",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "a nested subagent's return takes the queue into a context the conversation never reads",
+  },
+  {
+    label: "the relay hands the main thread every group it was ever told",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "filter((notice) => queue.includes(notice.key))",
+    to: "filter(() => true)",
+    test: `${CONNECTOR}/test/collision-relay-hook.test.ts`,
+    because: "a teammate the person was already told about in place is announced again as a subagent's",
+  },
+  {
+    label: "a told group's file list grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "[...new Set([...told.files, ...group.files])].slice(0, MAX_COLLISION_FILES);",
+    to: "[...new Set([...told.files, ...group.files])];",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a long session against one teammate's work grows the state file every hook of the session reads",
+  },
+  {
+    label: "the relay queue grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "merged.length <= MAX_COLLISION_NOTICES ? merged : merged.slice(merged.length - MAX_COLLISION_NOTICES),",
+    to: "merged,",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a main thread that never prompts lets its subagents grow the queue every hook reads",
+  },
+  {
+    label: "the remembered groups grow without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "collisionNotices: merged.length <= MAX_COLLISION_NOTICES ? [...merged] : merged.slice(merged.length - MAX_COLLISION_NOTICES),",
+    to: "collisionNotices: [...merged],",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a session against many teammates grows the state file every hook of the session reads",
+  },
+  {
+    label: "the statusline prints a name from the state file as stored",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const name = capped(displayName(person.name), STATUSLINE_NAME_CHARS);",
+    to: "  const name = capped(person.name, STATUSLINE_NAME_CHARS);",
+    test: `${CONNECTOR}/test/collision-relay-hook.test.ts`,
+    because: "a record no renderer wrote — an older writer, a hand edit — reaches the terminal with its escapes and line breaks",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24074,6 +24131,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/collision-relay-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-visibility-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
@@ -24116,7 +24174,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
- * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 3
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
@@ -24141,7 +24199,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 27
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 30
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1

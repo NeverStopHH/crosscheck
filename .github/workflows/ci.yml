@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2293
+    # PRINTS: 2300
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -246,7 +246,7 @@ jobs:
     # PRINTS: capture/tool-events.ts 2
     # PRINTS: cli/settings-merge.ts 4
     # PRINTS: doctor.ts 1
-    # PRINTS: hooks/collision-relay.ts 4
+    # PRINTS: hooks/collision-relay.ts 6
     # PRINTS: hooks/ghost-notice.ts 1
     # PRINTS: hooks/index.ts 1
     # PRINTS: hooks/landed-why.ts 2
@@ -321,7 +321,7 @@ jobs:
     # PRINTS: guarantees/check.ts 17
     # PRINTS: guarantees/declarations.ts 5
     # PRINTS: guarantees/doctor.ts 3
-    # PRINTS: hints/collision-notice.ts 25
+    # PRINTS: hints/collision-notice.ts 26
     # PRINTS: hints/delivery.ts 7
     # PRINTS: hints/outcome-clause.ts 2
     # PRINTS: hints/precision.ts 2
@@ -379,7 +379,7 @@ jobs:
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 32
+    # PRINTS: state/session-state.ts 36
     # PRINTS: state/temp-sweep.ts 15
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -557,8 +557,8 @@ jobs:
     # PRINTS: claim-validity.ts 11
     # PRINTS: client.ts 12
     # PRINTS: cloud-agent-identity.ts 1
-    # PRINTS: collision-notice.ts 25
-    # PRINTS: collision-relay.ts 4
+    # PRINTS: collision-notice.ts 26
+    # PRINTS: collision-relay.ts 6
     # PRINTS: commit-evidence.ts 6
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 23
@@ -755,7 +755,7 @@ jobs:
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 14
-    # PRINTS: session-state.ts 32
+    # PRINTS: session-state.ts 36
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 18
     # PRINTS: set-intent.ts 5
