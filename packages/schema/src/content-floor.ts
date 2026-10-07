@@ -43,13 +43,17 @@ export const HINT_LONG_PROMPT_KNOWN_TERMS = 16;
 /** Topical words a long prompt's floor statement must share (M7); a short one needs one. */
 export const HINT_LONG_PROMPT_MIN_TOPICAL = 3;
 
-/** A word holding a digit: the database's simple dictionary keeps it as written. */
-const HAS_DIGIT = /\p{N}/u;
+/**
+ * A word the database's simple dictionary keeps as written: one holding a
+ * digit, or a whole path, host or address (round 4, L1) — "refresh.ts" is
+ * no inflection of "refresh.t".
+ */
+const KEPT_AS_WRITTEN = /[\p{N}./@]/u;
 
 /** A word's lexeme as the hub's database matches it. */
 export const termLexeme = (word: string): string => {
   const lower = word.toLowerCase();
-  return HAS_DIGIT.test(lower) ? lower : englishStem(lower);
+  return KEPT_AS_WRITTEN.test(lower) ? lower : englishStem(lower);
 };
 
 /**
@@ -94,16 +98,32 @@ const URL_WORD = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)(\/.*)?$/u;
  */
 const WHOLE_WORD = /^\/?[\p{L}\p{N}_-]+(?:[./@][\p{L}\p{N}_-]+)+$|^\/[\p{L}\p{N}_-]+$/u;
 
-/** One whitespace-delimited word's lexemes, as the database's parser and stemmer make them. */
-const wordLexemes = (word: string): readonly string[] => {
-  const url = URL_WORD.exec(word);
+/** A whitespace-delimited word lower-cased, quotes and sentence marks off its ends — a path's leading slash kept. */
+const trimmedWord = (word: string): string => word.toLowerCase().replace(/^[^\p{L}\p{N}/]+|[^\p{L}\p{N}]+$/gu, "");
+
+/**
+ * THE WHOLE FORMS OF ONE WORD (round 4, L1), as the database's parser keeps
+ * them: a URL's host with its path, its host and its path; a path, a host, a
+ * dotted name or an address as written; a plain word has none. The text's
+ * side (textLexemes) and the prompt's (promptTokens) read a word with this
+ * one function, so "/health" in a prompt meets "/health" in a statement.
+ */
+export const wholeFormsOf = (word: string): readonly string[] => {
+  const trimmed = trimmedWord(word);
+  const url = URL_WORD.exec(trimmed);
   if (url !== null) {
     const host = url[1] ?? "";
     const path = url[2] ?? "";
     return path.length > 0 ? [`${host}${path}`, host, path] : [host];
   }
-  if (WHOLE_WORD.test(word)) {
-    return [word];
+  return WHOLE_WORD.test(trimmed) ? [trimmed] : [];
+};
+
+/** One whitespace-delimited word's lexemes, as the database's parser and stemmer make them. */
+const wordLexemes = (word: string): readonly string[] => {
+  const whole = wholeFormsOf(word);
+  if (whole.length > 0) {
+    return whole;
   }
   return word
     .split(/[^\p{L}\p{N}]+/u)
@@ -119,9 +139,8 @@ const wordLexemes = (word: string): readonly string[] => {
 export const textLexemes = (text: string): ReadonlySet<string> =>
   new Set(
     text
-      .toLowerCase()
       .split(/\s+/u)
-      .map((word) => word.replace(/^[^\p{L}\p{N}/]+|[^\p{L}\p{N}]+$/gu, ""))
+      .map(trimmedWord)
       .filter((word) => word.length > 0)
       .flatMap(wordLexemes),
   );

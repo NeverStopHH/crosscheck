@@ -134,6 +134,26 @@ describe("content terms are the words left after the stop lists", () => {
     expect(promptTokens(prompt)).toEqual(tokens);
   });
 
+  test.each([
+    ["404 auf /health", ["404", "auf", "health", "/health"]],
+    ["the payment_intent.succeeded event", ["the", "payment", "intent", "succeeded", "payment_intent.succeeded", "event"]],
+    ["see src/auth/refresh.ts, please", ["see", "src", "auth", "refresh", "src/auth/refresh.ts", "please"]],
+    ["e.g. the cache", ["the", "cache"]],
+  ])("round 4, L1: a path or a dotted name is a word whole too, its parts kept: %p", (prompt, tokens) => {
+    expect(promptTokens(prompt)).toEqual(tokens);
+  });
+
+  test("round 4, L1: a whole form is a term beside a part that names a topic — a sentence's end does not cut it", () => {
+    expect(promptTerms("why is /health 404").ranked).toEqual(["health", "/health", "404"]);
+    expect(promptTerms("see src/auth/refresh.ts. it throws").ranked).toContain("src/auth/refresh.ts");
+  });
+
+  test("round 4, L1: the parts decide the verdict — \"commit/push\" stays a command to the session", () => {
+    expect(promptTerms("commit/push").content).toEqual(["commit", "push"]);
+    expect(promptTerms("commit/push").isContentFree).toBe(true);
+    expect(isContentFreePrompt("commit/push")).toBe(true);
+  });
+
   test("L2: a two-digit number stays below the floor — a date's or a count's part, never a topic", () => {
     expect(promptTokens("2026-10-06 at 08:15, 10 000 rows")).toEqual(["2026", "000", "rows"]);
   });

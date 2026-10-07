@@ -18,6 +18,7 @@ import {
   isClosedInflection,
   knownTermsIn,
   statementMatch,
+  termLexeme,
   textLexemes,
 } from "../src/content-floor.ts";
 import { promptTerms } from "../src/prompt-terms.ts";
@@ -49,6 +50,11 @@ describe("words match on their english lexemes, as the hub's database matches th
     // As PostgreSQL's parser reads them (ts_debug: file, host, email, url):
     // "europe" never matches "Europe/Berlin" on the hub, so it never does here
     expect([...textLexemes(text)].sort()).toEqual(lexemes);
+  });
+
+  test("a prompt that names the path agrees with the statement that says it (L1)", () => {
+    expect(statementMatch(floorOf("404 auf /health"), "/health returns 404 after the ingress rewrite").floor).toBe(2);
+    expect(termLexeme("refresh.ts")).toBe("refresh.ts");
   });
 
   test("a hyphenated word keeps its parts, as the database's does", () => {

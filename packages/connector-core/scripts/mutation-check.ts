@@ -19039,8 +19039,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the topical terms keep closed-class words",
     file: `${SCHEMA}/src/prompt-terms.ts`,
     // RETARGETED (round 4, M1): the round-3 set, words of no closed class, is the intent fire's `unclassed` now.
-    from: "    unclassed: content.filter((_, index) => classes[index] === null),",
-    to: "    unclassed: content,",
+    // RETARGETED (round 4, L1 follow-up): the terms are the parts' and their whole forms'.
+    from: "    unclassed: words.terms.filter((_, index) => classes[index] === null),",
+    to: "    unclassed: words.terms,",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"why does the usage limit reset\" carries three topics, and the floor's topical half is the floor's other half again (C1)",
   },
@@ -19251,8 +19252,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a command clause lends its terms to the search",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "        return isSessionCommand(words, terms, terms.map(classOf)) ? [] : terms;",
-    to: "        return terms;",
+    // RETARGETED (round 4, L1 follow-up): a clause's words are read by wordsOf.
+    from: "        return isSessionCommand(words.tokens, words.content, words.content.map(classOf)) ? [] : words.terms;",
+    to: "        return words.terms;",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"keep it short please\" spends a counted slot on \"short\" in a prompt about redis (round 3, M7)",
   },
@@ -19602,7 +19604,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the floor matches words as written again",
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "  return HAS_DIGIT.test(lower) ? lower : englishStem(lower);",
+    // RETARGETED (round 4, L1 follow-up): a whole path is kept as written too.
+    from: "  return KEPT_AS_WRITTEN.test(lower) ? lower : englishStem(lower);",
     to: "  return lower;",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "against a 0.10.0 hub \"the uploads keep failing at the gateway\" no longer reaches the upload tree the tip hub points at (round 3, follow-up)",
@@ -19610,7 +19613,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a word with a digit is stemmed",
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "  return HAS_DIGIT.test(lower) ? lower : englishStem(lower);",
+    // RETARGETED (round 4, L1 follow-up): a whole path is kept as written too.
+    from: "  return KEPT_AS_WRITTEN.test(lower) ? lower : englishStem(lower);",
     to: "  return englishStem(lower);",
     test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "\"e2es\" is matched as \"e2e\", where the database's simple dictionary keeps it as written (round 3, follow-up)",
@@ -19883,16 +19887,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a task's meta words are no topic again",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    topical: content.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
-    to: "    topical: content.filter((term, index) => classes[index] === null && !isWeakWord(term)),",
+    // RETARGETED (round 4, L1 follow-up): the terms are the parts' and their whole forms'.
+    from: "    topical: words.terms.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: words.terms.filter((term, index) => classes[index] === null && !isWeakWord(term)),",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"token refresh broken\" and \"rate limit not enforced\" reach no tree, since token, rate and limit count for nothing (round 4, M1)",
   },
   {
     label: "a slip of a steering word is topical",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    topical: content.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
-    to: "    topical: content.filter((term) => !isWeakWord(term)),",
+    // RETARGETED (round 4, L1 follow-up): the terms are the parts' and their whole forms'.
+    from: "    topical: words.terms.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: words.terms.filter((term) => !isWeakWord(term)),",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"contineu\" agrees with a tree that says \"continue\" as if it were a topic (round 4, M1)",
   },
@@ -19980,8 +19986,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a weak word is a topic",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    topical: content.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
-    to: "    topical: content.filter((_, index) => !isSteeringClass(classes[index] ?? null)),",
+    // RETARGETED (round 4, L1 follow-up): the terms are the parts' and their whole forms'.
+    from: "    topical: words.terms.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: words.terms.filter((_, index) => !isSteeringClass(classes[index] ?? null)),",
     test: `${SCHEMA}/test/weak-words.test.ts`,
     because: "\"add pagination to the users admin table\" is shown the SSO tree's decision on add and users (round 4, decision 3)",
   },
@@ -20223,15 +20230,17 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a path's parts are words of the text",
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "  if (WHOLE_WORD.test(word)) {\n    return [word];\n  }\n",
-    to: "",
+    // RETARGETED (round 4, L1 follow-up): the text's and the prompt's side share wholeFormsOf.
+    from: "  return WHOLE_WORD.test(trimmed) ? [trimmed] : [];",
+    to: "  return [];",
     test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "\"europe\" matches \"Europe/Berlin\" in the floor's count while the hub's index never knows it (round 4, L1)",
   },
   {
     label: "a URL's protocol and parts are words of the text",
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "  const url = URL_WORD.exec(word);",
+    // RETARGETED (round 4, L1 follow-up): the text's and the prompt's side share wholeFormsOf.
+    from: "  const url = URL_WORD.exec(trimmed);",
     to: "  const url = null as RegExpExecArray | null;",
     test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "\"https\" and the path's words count, where the database keeps the host and the path whole (round 4, L1)",
@@ -20239,8 +20248,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a path keeps the quotes around it",
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "      .map((word) => word.replace(/^[^\\p{L}\\p{N}/]+|[^\\p{L}\\p{N}]+$/gu, \"\"))",
-    to: "      .map((word) => word)",
+    // RETARGETED (round 4, L1 follow-up): one trim for the text's and the prompt's side.
+    from: "const trimmedWord = (word: string): string => word.toLowerCase().replace(/^[^\\p{L}\\p{N}/]+|[^\\p{L}\\p{N}]+$/gu, \"\");",
+    to: "const trimmedWord = (word: string): string => word.toLowerCase();",
     test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "\"Europe/Berlin\" in quotes is no path, and its parts count again (round 4, L1)",
   },
@@ -20325,6 +20335,62 @@ export const MUTATIONS: readonly Mutation[
     because: "the briefing's solved pointers silence the findings of their trees for the whole session (round 4, decision 11)",
   },
   {
+    label: "a prompt names no path whole",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]);",
+    to: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word)]);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"404 auf /health\" says \"health\", a word no statement that writes \"/health\" holds on the hub (round 4, L1 follow-up)",
+  },
+  {
+    label: "the hub never hears a path whole",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]);",
+    to: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word)]);",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "\"why is /health 404\" floors on one known word against the tree titled \"/health returns 404\" (round 4, L1 follow-up; K043, K085)",
+  },
+  {
+    label: "a two-letter dotted name is a word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "...wholeFormsOf(word).filter(isLongEnoughForm)]);",
+    to: "...wholeFormsOf(word)]);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"e.g.\" becomes a term below the length floor every other word is held to (round 4, L1 follow-up)",
+  },
+  {
+    label: "a whole form joins the terms without a topical part",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    isWholeForm(token) ? partsOf(token).some((part) => unclassedParts.has(part)) : contentParts.has(token),",
+    to: "    isWholeForm(token) ? true : contentParts.has(token),",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"commit/push\" carries a term no closed class names, and the session's commands look like a topic (round 4, L1 follow-up)",
+  },
+  {
+    label: "a whole form decides the verdict",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const written = promptTokens(classifiedWindow(commandArguments(text))).filter((token) => !isWholeForm(token));",
+    to: "  const written = promptTokens(classifiedWindow(commandArguments(text)));",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"commit/push\" is a task to the hooks' verdict, though its parts are the session's commands (round 4, L1 follow-up)",
+  },
+  {
+    label: "a sentence mark inside a word ends a clause",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "const CLAUSE_BOUNDARY = /[.!?;:,]+(?=\\s|$)|[\\n\\r–—]+/u;",
+    to: "const CLAUSE_BOUNDARY = /[.!?;:,\\n\\r–—]+/u;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"src/auth/refresh.ts\" is ranked as \"src/auth/refresh\", a word no statement says (round 4, L1 follow-up)",
+  },
+  {
+    label: "a path's lexeme is stemmed",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "const KEPT_AS_WRITTEN = /[\\p{N}./@]/u;",
+    to: "const KEPT_AS_WRITTEN = /\\p{N}/u;",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"refresh.ts\" is counted as \"refresh.t\", where the database keeps the host whole (round 4, L1 follow-up)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20339,8 +20405,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the session-command rule judges stop words too",
     file: `${SCHEMA}/src/prompt-terms.ts`,
     // RETARGETED (round 4, M4): one helper names every language's function words.
-    from: "  const isGerman = isGermanPrompt(written);\n  const isFunctionWord = functionWordsOf(written);",
-    to: "  const isGerman = isGermanPrompt(written);\n  const isFunctionWord = (_token: string): boolean => false;",
+    // RETARGETED (round 4, L1 follow-up): the language is read on a word's parts.
+    from: "  const isGerman = isGermanPrompt(parts);\n  const isFunctionWord = functionWordsOf(parts);",
+    to: "  const isGerman = isGermanPrompt(parts);\n  const isFunctionWord = (_token: string): boolean => false;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"weiter\" and \"alles\" are not session commands, so no real prompt of them is ever content-free",
   },
@@ -20668,7 +20735,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
- * PRINTS: packages/schema/test/content-floor.test.ts 8
+ * PRINTS: packages/schema/test/content-floor.test.ts 9
  * PRINTS: packages/schema/test/continuation.test.ts 12
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
@@ -20677,7 +20744,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 33
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 38
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4
@@ -20721,7 +20788,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 13
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
- * PRINTS: packages/server/test/hint-long-prompt.test.ts 7
+ * PRINTS: packages/server/test/hint-long-prompt.test.ts 8
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
  * PRINTS: packages/server/test/hint-strong-match.test.ts 12
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4

@@ -19,6 +19,7 @@
  * carries is decided on all of it, so a task word past the sixteenth token
  * still counts.
  */
+import { wholeFormsOf } from "./content-floor.ts";
 import { hasContinuationSignal } from "./continuation.ts";
 import { humanPromptText } from "./harness-turn.ts";
 import { WEAK_WORDS } from "./prompt-vocabulary.ts";
@@ -52,11 +53,49 @@ const isCapitalPair = (token: string): boolean => /^\p{Lu}{2}$/u.test(token);
 const isLetterDigitPair = (token: string): boolean => /^(?:\p{L}\p{N}|\p{N}\p{L})$/u.test(token);
 
 /** Lower-cased letter/digit runs of at least PROMPT_MIN_TOKEN_CHARS, two capitals or a letter and a digit, in order. */
-export const promptTokens = (text: string): readonly string[] =>
-  text
+const partsOf = (word: string): readonly string[] =>
+  word
     .split(/[^\p{L}\p{N}]+/u)
     .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token) || isLetterDigitPair(token))
     .map((token) => token.toLowerCase());
+
+/** A whole form is a word when it holds PROMPT_MIN_TOKEN_CHARS letters or digits: "e.g" is none. */
+const isLongEnoughForm = (form: string): boolean => (form.match(/[\p{L}\p{N}]/gu)?.length ?? 0) >= PROMPT_MIN_TOKEN_CHARS;
+
+/** A token holding a separator: a word's whole form, never one of its parts (L1). */
+const isWholeForm = (token: string): boolean => /[^\p{L}\p{N}]/u.test(token);
+
+/**
+ * A prompt's tokens, in order: each word's parts, and after them the word
+ * WHOLE when it is a path, a host or a dotted name (round 4, L1) — as the
+ * database's parser keeps it, through the one reading the text's side uses
+ * (content-floor.ts wholeFormsOf). A statement's "/health" is the lexeme
+ * "/health" to the hub, never "health"; a prompt that names it now says it.
+ */
+export const promptTokens = (text: string): readonly string[] =>
+  text.split(/\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]);
+
+/**
+ * THE PARTS DECIDE, A WHOLE FORM FOLLOWS (L1): the verdict, the language and
+ * the classes are read on a word's parts, as before; its whole form joins
+ * the terms when one of its parts is a term of no closed class — so
+ * "commit/push" stays a command to the session, and "src/auth/refresh.ts" is
+ * a topic whole and in parts.
+ */
+const wordsOf = (
+  written: readonly string[],
+  termsOf: (words: readonly string[]) => readonly string[],
+  classOf: (term: string) => WordClass | null,
+): { readonly tokens: readonly string[]; readonly content: readonly string[]; readonly terms: readonly string[] } => {
+  const tokens = [...new Set(written.filter((token) => !isWholeForm(token)))];
+  const content = termsOf(tokens);
+  const unclassedParts = new Set(content.filter((term) => classOf(term) === null));
+  const contentParts = new Set(content);
+  const terms = [...new Set(written)].filter((token) =>
+    isWholeForm(token) ? partsOf(token).some((part) => unclassedParts.has(part)) : contentParts.has(token),
+  );
+  return { tokens, content, terms };
+};
 
 const countWhere = (tokens: readonly string[], predicate: (token: string) => boolean): number =>
   tokens.filter(predicate).length;
@@ -119,8 +158,12 @@ export interface PromptTerms {
   readonly hasContinuation: boolean;
 }
 
-/** Clause boundaries (M7): sentence ends, commas, semicolons, colons, dashes and line breaks. */
-const CLAUSE_BOUNDARY = /[.!?;:,\n\r–—]+/u;
+/**
+ * Clause boundaries (M7): sentence ends, commas, semicolons and colons before
+ * a space or the end, dashes and line breaks. A mark INSIDE a word is no
+ * boundary (round 4, L1): "src/auth/refresh.ts" and "node.js" stay whole.
+ */
+const CLAUSE_BOUNDARY = /[.!?;:,]+(?=\s|$)|[\n\r–—]+/u;
 
 /**
  * HOW MUCH OF A PROMPT IS CLASSIFIED (hold-out review round 3, L4): its head
@@ -198,25 +241,29 @@ export const promptTerms = (text: string): PromptTerms => {
   // scored (slash-command.ts) — and of a long prompt, its head and its tail (L4).
   const scored = classifiedWindow(commandArguments(text));
   const written = promptTokens(scored);
-  const tokens = [...new Set(written)];
-  const isGerman = isGermanPrompt(written);
-  const isFunctionWord = functionWordsOf(written);
+  const parts = written.filter((token) => !isWholeForm(token));
+  const isGerman = isGermanPrompt(parts);
+  const isFunctionWord = functionWordsOf(parts);
   // STEERING WORDS ARE NEVER TERMS (review 1006b, H1): not as a shared word
   // beside a real one. As written: a slip moves the verdict, never the terms.
   const termsOf = (words: readonly string[]): readonly string[] =>
     words.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));
-  const content = termsOf(tokens);
   // Every word looked up once: a clause's words are the prompt's words.
-  const classByWord: ReadonlyMap<string, WordClass | null> = new Map(content.map((term) => [term, wordClassOf(term)]));
-  const classOf = (term: string): WordClass | null => (classByWord.has(term) ? (classByWord.get(term) ?? null) : wordClassOf(term));
-  const classes = content.map(classOf);
+  const classByWord: ReadonlyMap<string, WordClass | null> = new Map(
+    termsOf([...new Set(parts)]).map((term) => [term, wordClassOf(term)]),
+  );
+  // A whole form is a term only beside a part of no class (wordsOf): it has none.
+  const classOf = (term: string): WordClass | null =>
+    isWholeForm(term) ? null : classByWord.has(term) ? (classByWord.get(term) ?? null) : wordClassOf(term);
+  const words = wordsOf(written, termsOf, classOf);
+  const classes = words.terms.map(classOf);
   return {
-    content,
-    unclassed: content.filter((_, index) => classes[index] === null),
-    topical: content.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),
+    content: words.terms,
+    unclassed: words.terms.filter((_, index) => classes[index] === null),
+    topical: words.terms.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),
     ranked: rankedTerms(scored, termsOf, classOf),
     isGerman,
-    isContentFree: isSessionCommand(tokens, content, classes),
+    isContentFree: isSessionCommand(words.tokens, words.content, words.content.map(classOf)),
     hasContinuation: hasContinuationSignal(scored),
   };
 };
@@ -230,9 +277,8 @@ const rankedTerms = (
   const kept = [
     ...new Set(
       text.split(CLAUSE_BOUNDARY).flatMap((clause) => {
-        const words = [...new Set(promptTokens(clause))];
-        const terms = termsOf(words);
-        return isSessionCommand(words, terms, terms.map(classOf)) ? [] : terms;
+        const words = wordsOf(promptTokens(clause), termsOf, classOf);
+        return isSessionCommand(words.tokens, words.content, words.content.map(classOf)) ? [] : words.terms;
       }),
     ),
   ];
@@ -250,7 +296,8 @@ const rankedTerms = (
  * asking only this question does not.
  */
 export const isContentFreePrompt = (text: string): boolean => {
-  const written = promptTokens(classifiedWindow(commandArguments(text)));
+  // The parts decide (L1): a word's whole form adds no verdict.
+  const written = promptTokens(classifiedWindow(commandArguments(text))).filter((token) => !isWholeForm(token));
   const isFunctionWord = functionWordsOf(written);
   const tokens = [...new Set(written)];
   const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));

@@ -113,6 +113,25 @@ describe("the hub knows only the words a statement says (L1)", () => {
     expect(hub.all).not.toContain("europe");
   });
 
+  test("a prompt that names a path whole reaches the tree whose statement says it", async () => {
+    // Arrange — "/health" is one word to the database, never "health"
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const title = "/health returns 404 after the ingress rewrite";
+    const seeded = await postRecords(harness, nick, { records: [recordEnvelope("work_context", validWorkContextBody({ title, description: "Ingress" }))] });
+    expect(seeded.data?.accepted).toBe(1);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+    const terms = promptTerms("why is /health 404");
+
+    // Act
+    const floor = await hubFloorTermsOf(harness.db, VALID_SESSION_BODY.repo, terms);
+    const ids = await candidateIds(harness, robin, "why is /health 404");
+
+    // Assert — the hub's index and the shared lexeme rule agree, and the tree is reached
+    expect(floor.all).toEqual(knownTermsIn(terms.ranked, [`${title} Ingress`]));
+    expect(floor.all).toEqual(["/health", "404"]);
+    expect(ids).toEqual([WORK_CONTEXT_ID]);
+  });
+
   test("the reader's own work lends no known word", async () => {
     // Arrange — the reader's own tree says "ownword"; a teammate's says "export"
     const { harness, developer: nick } = await createHarnessWithSession();
