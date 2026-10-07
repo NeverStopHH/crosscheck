@@ -28,11 +28,28 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { HonoRequest } from "hono/request";
 import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
+// The CONNECTOR's own rule for "solved", for the parity check below — a
+// test-only import: the hub package does not depend on the connector.
+import { solvedAtFromTree } from "../../connector-core/src/mcp/render.ts";
+import { listSolvedInfo } from "../src/services/solved.ts";
+import { jsonRequest } from "./helpers.ts";
 import { ROUTES } from "./live-location-routes.ts";
 import type { RouteSpec } from "./live-location-routes.ts";
 import { ROBIN_ROW, appRoutes, concretePath, label, patternOf, walk } from "./live-location-walk.ts";
 import type { Answer } from "./live-location-walk.ts";
-import { leaksIn, secretsIn, seedOptedOutWorld } from "./opted-out-world.ts";
+import {
+  ROBIN_CONTEXT,
+  ROBIN_DETACHED_CONTEXT,
+  ROBIN_HOST_CONTEXT,
+  ROBIN_LOCAL_CONTEXT,
+  ROBIN_SOLVED,
+  leaksIn,
+  secretsIn,
+  seedOptedOutWorld,
+} from "./opted-out-world.ts";
+import type { OptedOutWorld } from "./opted-out-world.ts";
+
+const ROBIN_CONTEXT_IDS: readonly string[] = [ROBIN_CONTEXT, ROBIN_SOLVED, ROBIN_LOCAL_CONTEXT, ROBIN_DETACHED_CONTEXT, ROBIN_HOST_CONTEXT];
 
 const HTTP_OK_MIN = 200;
 const HTTP_OK_MAX = 299;
@@ -204,6 +221,42 @@ const unexercisedProblems = (key: string, spec: RouteSpec): readonly string[] =>
 
 beforeAll(installRecorder);
 afterAll(removeRecorder);
+
+/**
+ * SOLVED PARITY (review round 5, H2): a withheld field must never flip a
+ * conclusion. The connector decides "solved" from the diagnosis it is handed
+ * (connector-core mcp/render.ts solvedAtFromTree — evidence refs, status,
+ * edges); the hub decides it from its own rows (services/solved.ts). Round 4
+ * dropped evidence refs that looked like commits, so the connector said
+ * open where the hub said solved. Checked for every context of hers, in the
+ * opted-out world and with her opted back in.
+ */
+describe("the hub and the connector agree which of her trees are solved", () => {
+  const solvedBoth = async (world: OptedOutWorld): Promise<readonly string[]> => {
+    const hub = await listSolvedInfo(world.harness.db, ROBIN_CONTEXT_IDS);
+    return Promise.all(
+      ROBIN_CONTEXT_IDS.map(async (id) => {
+        const response = await world.harness.app.request(`/api/work-contexts/${id}/diagnosis?telemetry=0`, {
+          headers: { Authorization: `Bearer ${world.nick.apiKey}` },
+        });
+        const diagnosis = ((await response.json()) as { data: Parameters<typeof solvedAtFromTree>[0] }).data;
+        return `${id}: hub ${hub.has(id) ? "solved" : "open"}, connector ${solvedAtFromTree(diagnosis) === null ? "open" : "solved"}`;
+      }),
+    );
+  };
+  const agree = (line: string): boolean => /hub (\w+), connector \1$/.test(line);
+
+  test("in the opted-out world, and with her opted back in", async () => {
+    const world = await seedOptedOutWorld();
+    const optedOut = await solvedBoth(world);
+    const back = await world.harness.app.request("/api/settings/presence", jsonRequest("PUT", world.robin.apiKey, { optOut: false }));
+    expect(back.status).toBe(200);
+    const optedIn = await solvedBoth(world);
+
+    expect([...optedOut, ...optedIn].filter((line) => !agree(line))).toEqual([]);
+    expect(optedOut.some((line) => line.includes("hub solved"))).toBe(true);
+  });
+});
 
 describe("the route table", () => {
   test("names exactly the routes the app registers, each with variants or a written reason", async () => {

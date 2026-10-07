@@ -82,6 +82,15 @@ describe("a hidden owner's row is withheld by value, not by name", () => {
     expect(projectRow(HIDDEN, { developerId: ROBIN }, words)).toEqual(words);
   });
 
+  test("a claim's evidence and paths are references, never shapes, however they look (H2)", () => {
+    const refs = {
+      evidenceRefs: ["2026-10-06", "9f3c2a1b7d4e", "18273645501", "clm_robin_evidence"],
+      affectedPaths: ["2026-10-06", "src/auth/refresh.ts"],
+    };
+
+    expect(projectRow(HIDDEN, { developerId: ROBIN, kind: "claim" }, refs)).toEqual(refs);
+  });
+
   test("nested objects are projected, and a list drops the members it withholds", () => {
     const seen: Projected = projectRow(HIDDEN, { developerId: ROBIN }, {
       intent: { summary: "rotate the key", capturedAt: INSTANT, seq: { epoch: "0b0c-uuid", n: 3 } },

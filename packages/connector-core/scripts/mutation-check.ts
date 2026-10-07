@@ -18808,8 +18808,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "her prose is shape-tested like any field",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  !PROSE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
-    to: "  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    from: "  !PROSE_FIELDS.has(key) &&\n  !REFERENCE_FIELDS.has(key) &&",
+    to: "  !REFERENCE_FIELDS.has(key) &&",
     test: `${SERVER}/test/live-location-projection.test.ts`,
     because:
       "a description, an intent or a question that opens with a log line's " +
@@ -18826,7 +18826,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the round-4 shape test returns: any text opening with a date, any bare sha, prose included",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "export const isWithheldShape = (key: string, value: unknown): boolean =>\n  !PROSE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    from: "export const isWithheldShape = (key: string, value: unknown): boolean =>\n  !PROSE_FIELDS.has(key) &&\n  !REFERENCE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
     to: "export const isWithheldShape = (_key: string, value: unknown): boolean =>\n  value instanceof Date || (typeof value === \"string\" && /^\\d{4}-\\d{2}-\\d{2}/.test(value)) || isBareHexOrEpoch(value);",
     test: `${SERVER}/test/live-location-prose.test.ts`,
     because:
@@ -18840,6 +18840,25 @@ export const MUTATIONS: readonly Mutation[
     to: "(isWholeInstant(value) || isBareHexOrEpoch(value));",
     test: `${SERVER}/test/live-location-projection.test.ts`,
     because: "a CI run number or a bisected sha cited as an id or a label is withheld as if it were her HEAD",
+  },
+  // ── Review round 5, H2: references are never shapes ───────────────────
+  {
+    label: "a claim's evidence refs and paths are shape-tested",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  !REFERENCE_FIELDS.has(key) &&\n",
+    to: "",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "an evidence ref or a path that looks like a date is dropped from her claim",
+  },
+  {
+    label: "her root cause's commit evidence is dropped and the connector reads her solved tree as open",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  !REFERENCE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
+    to: "  (isWholeInstant(value) || isBareHexOrEpoch(value));",
+    test: `${SERVER}/test/live-location-prose.test.ts`,
+    because:
+      "solvedAtFromTree counts evidence refs: with the bisected sha gone the " +
+      "connector says open while the hub says solved (solved parity)",
   },
 ];
 
@@ -19176,8 +19195,8 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-differential.test.ts 3
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
- * PRINTS: packages/server/test/live-location-projection.test.ts 6
- * PRINTS: packages/server/test/live-location-prose.test.ts 1
+ * PRINTS: packages/server/test/live-location-projection.test.ts 7
+ * PRINTS: packages/server/test/live-location-prose.test.ts 2
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 39
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/normalized-doc.test.ts 1

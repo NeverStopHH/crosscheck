@@ -242,6 +242,16 @@ const PROSE_FIELDS: ReadonlySet<string> = new Set([
   "text",
 ]);
 
+/**
+ * REFERENCES, never shapes (review round 5, H2): a claim's evidence names
+ * other claims, CI runs or commits it rests on, and its affected paths name
+ * files — an evidence ref that looks like a commit IS one, of published
+ * history. Dropping one made the connector read her solved tree as open
+ * (mcp/render.ts solvedAtFromTree counts evidence refs) while the hub said
+ * solved.
+ */
+const REFERENCE_FIELDS: ReadonlySet<string> = new Set(["evidenceRefs", "affectedPaths"]);
+
 /** Postgres text `2026-07-24 10:12:07+00` and a zone-less time, as Date.parse reads ISO. */
 const asIsoText = (text: string): string => {
   const iso = text.replace(" ", "T");
@@ -263,6 +273,7 @@ const isBareHexOrEpoch = (value: unknown): boolean =>
 /** Is `value`, held in field `key`, an instant or a commit by its shape? */
 export const isWithheldShape = (key: string, value: unknown): boolean =>
   !PROSE_FIELDS.has(key) &&
+  !REFERENCE_FIELDS.has(key) &&
   (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));
 
 /**
